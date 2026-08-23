@@ -1,0 +1,363 @@
+//
+//  MLXObjCExample.m
+//  InferKitMLXObjCExamples
+//
+//  Proves that an Objective-C consumer (an FCPX plugin, an app) builds and drives a local MLX model
+//  through InferKit without writing Swift: a Swift model registers a factory by name, and this
+//  Objective-C code constructs the backend by that name and runs it through the NFKInferenceBackend
+//  protocol. Mirrors the "Running MLX models from Objective-C" section of Docs/examples.md — keep the
+//  two in sync. Running the forward needs the MLX Metal library (host-verified via xcodebuild); this
+//  verifies construction and the contract.
+//
+
+#import <XCTest/XCTest.h>
+#import <InferKit/InferKit.h>
+@import InferKitMLX;
+
+@interface MLXObjCExample : XCTestCase
+@end
+
+@implementation MLXObjCExample
+
+- (void)testObjectiveCBuildsAndDrivesAnMLXModelByName
+{
+	[NFKMLXReferenceModels registerGreenScreenKeyer];       // done once from Swift or Objective-C
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"green-screen-keyer"]);
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> keyer = [NFKMLXModelRegistry backendNamed:@"green-screen-keyer" weightsURL:nil error:&error];
+	XCTAssertNotNil(keyer, @"%@", error);
+	XCTAssertEqualObjects(keyer.backendIdentifier, @"green-screen-keyer");
+
+	// From here it is a normal InferKit backend: build a request and run it (off the render thread).
+	// NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: plate }];
+	// NFKInferenceResult *result = [keyer runInferenceForRequest:request error:&error];  // needs MLX runtime
+}
+
+- (void)testObjectiveCBuildsTheRealESRGANUpscalerByName
+{
+	// Real-ESRGAN is a real single-forward model (RRDBNet), not a stand-in. MetalForge registers it
+	// once and builds it by name; with a downloaded safetensors checkpoint the output is a 4× upscale.
+	[NFKMLXRealESRGAN register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"real-esrgan-x4"]);
+
+	// Building the generator constructs MLXNN layers, which initializes MLX; that needs the bundled
+	// metallib the Xcode build system provides but a plain `swift test` does not.
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> upscaler = [NFKMLXModelRegistry backendNamed:@"real-esrgan-x4" weightsURL:nil error:&error];
+	XCTAssertNotNil(upscaler, @"%@", error);
+	XCTAssertEqualObjects(upscaler.backendIdentifier, @"real-esrgan-x4");
+
+	// With real weights, MetalForge would download and build in one call, then run off the render thread:
+	// id<NFKInferenceBackend> u = [NFKMLXHub backendNamed:@"real-esrgan-x4" repo:@"org/real-esrgan"
+	//     weightsPath:@"RealESRGAN_x4plus.safetensors" revision:nil cacheDirectoryURL:nil error:&error];
+}
+
+- (void)testObjectiveCBuildsDepthAnythingByName
+{
+	[NFKMLXDepthAnything register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"depth-anything-v2-small"]);
+	// Building the DINOv2/DPT net initializes MLX (needs the bundled metallib), so build only under xcodebuild.
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> depth = [NFKMLXModelRegistry backendNamed:@"depth-anything-v2-small" weightsURL:nil error:&error];
+	XCTAssertNotNil(depth, @"%@", error);
+	XCTAssertEqualObjects(depth.backendIdentifier, @"depth-anything-v2-small");
+}
+
+- (void)testObjectiveCBuildsSAMSegmenterByName
+{
+	[NFKMLXSAM register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sam"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> sam = [NFKMLXModelRegistry backendNamed:@"sam" weightsURL:nil error:&error];
+	XCTAssertNotNil(sam, @"%@", error);
+	XCTAssertEqualObjects(sam.backendIdentifier, @"sam");
+}
+
+- (void)testObjectiveCBuildsU2NetBackgroundRemoverByName
+{
+	[NFKMLXU2Net register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"u2net"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"u2netp"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> cutout = [NFKMLXModelRegistry backendNamed:@"u2netp" weightsURL:nil error:&error];
+	XCTAssertNotNil(cutout, @"%@", error);
+	XCTAssertEqualObjects(cutout.backendIdentifier, @"u2netp");
+}
+
+- (void)testObjectiveCBuildsNAFNetRestorerByName
+{
+	[NFKMLXNAFNet register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"nafnet"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> restore = [NFKMLXModelRegistry backendNamed:@"nafnet" weightsURL:nil error:&error];
+	XCTAssertNotNil(restore, @"%@", error);
+	XCTAssertEqualObjects(restore.backendIdentifier, @"nafnet");
+}
+
+- (void)testObjectiveCBuildsRIFEFrameInterpolatorByName
+{
+	[NFKMLXRIFE register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"rife"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> rife = [NFKMLXModelRegistry backendNamed:@"rife" weightsURL:nil error:&error];
+	XCTAssertNotNil(rife, @"%@", error);
+	XCTAssertEqualObjects(rife.backendIdentifier, @"rife");
+}
+
+- (void)testObjectiveCBuildsRAFTOpticalFlowByName
+{
+	[NFKMLXRAFT register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"raft"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> raft = [NFKMLXModelRegistry backendNamed:@"raft" weightsURL:nil error:&error];
+	XCTAssertNotNil(raft, @"%@", error);
+	XCTAssertEqualObjects(raft.backendIdentifier, @"raft");
+}
+
+- (void)testObjectiveCBuildsLaMaInpainterByName
+{
+	[NFKMLXLaMa register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"lama-inpaint"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> inpaint = [NFKMLXModelRegistry backendNamed:@"lama-inpaint" weightsURL:nil error:&error];
+	XCTAssertNotNil(inpaint, @"%@", error);
+	XCTAssertEqualObjects(inpaint.backendIdentifier, @"lama-inpaint");
+}
+
+- (void)testObjectiveCBuildsMarigoldAndUpscalerByName
+{
+	[NFKMLXMarigold register];
+	[NFKMLXSDUpscaler register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"marigold-depth"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sd-x4-upscaler"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> depth = [NFKMLXModelRegistry backendNamed:@"marigold-depth" weightsURL:nil error:&error];
+	XCTAssertEqualObjects(depth.backendIdentifier, @"marigold-depth", @"%@", error);
+}
+
+- (void)testObjectiveCBuildsTextToImageByReleaseName
+{
+	// The release's own directory: unet/, vae/, text_encoder/, tokenizer/. Absent here, so this
+	// pins the ObjC entry point and its error, not a generated picture.
+	NSURL *absent = [NSURL fileURLWithPath:@"/nonexistent/stable-diffusion-v1-5"];
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelStableDiffusion15
+															directoryURL:absent
+																   error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+}
+
+- (void)testObjectiveCBuildsStableDiffusionInpaintByName
+{
+	[NFKMLXStableDiffusionInpaint register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sd-inpaint"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> inpaint = [NFKMLXModelRegistry backendNamed:@"sd-inpaint" weightsURL:nil error:&error];
+	XCTAssertNotNil(inpaint, @"%@", error);
+	XCTAssertEqualObjects(inpaint.backendIdentifier, @"sd-inpaint");
+
+	// The released weights come as two diffusers checkpoints, one per network, plus the text
+	// embedding the trained UNet cross-attends to (Docs/examples.md "Latent diffusion with real
+	// weights"). Missing files fail the build with an error rather than a half-loaded model.
+	NSURL *absent = [NSURL fileURLWithPath:@"/nonexistent/unet.safetensors"];
+	NSError *twoFileError = nil;
+	id<NFKInferenceBackend> released = [NFKMLXStableDiffusionInpaint backendWithUNetWeightsURL:absent
+	                                                                             vaeWeightsURL:absent
+	                                                                            textContextURL:nil
+	                                                                                     error:&twoFileError];
+	XCTAssertNil(released);
+	XCTAssertNotNil(twoFileError, @"a missing checkpoint reports, not crashes");
+}
+
+- (void)testObjectiveCBuildsWhisperByName
+{
+	[NFKMLXWhisper register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"whisper-tiny"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> whisper = [NFKMLXModelRegistry backendNamed:@"whisper-tiny" weightsURL:nil error:&error];
+	XCTAssertNotNil(whisper, @"%@", error);
+	XCTAssertEqualObjects(whisper.backendIdentifier, @"whisper-tiny");
+}
+
+- (void)testObjectiveCAsksWhisperForSegmentTimes
+{
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	// Timestamps are a different decode, so they are a parameter of the factory rather than a
+	// property of every result. The spans come back as NFKAudioSegments under NFKOutputSegments.
+	id<NFKInferenceBackend> whisper = [NFKMLXWhisper backendWithWeightsURL:nil
+																tokenizer:nil
+															   timestamps:YES
+																	error:&error];
+	XCTAssertNotNil(whisper, @"%@", error);
+	XCTAssertEqualObjects(whisper.backendIdentifier, @"whisper-tiny");
+	// A result from this backend carries NSArray<NFKAudioSegment *> under NFKOutputSegments beside
+	// the transcript under NFKOutputText.
+}
+
+- (void)testObjectiveCBuildsDemucsByName
+{
+	[NFKMLXDemucs register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"demucs"]);
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> demucs = [NFKMLXModelRegistry backendNamed:@"demucs" weightsURL:nil error:&error];
+	XCTAssertNotNil(demucs, @"%@", error);
+	XCTAssertEqualObjects(demucs.backendIdentifier, @"demucs");
+}
+
+- (void)testObjectiveCBuildsTextToSpeechByName
+{
+	// The speech backend stores a closure and constructs no MLX at build time, so this runs anywhere.
+	[NFKMLXReferenceModels registerToneSpeech];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"tone-speech"]);
+	NSError *error = nil;
+	id<NFKInferenceBackend> speech = [NFKMLXModelRegistry backendNamed:@"tone-speech" weightsURL:nil error:&error];
+	XCTAssertNotNil(speech, @"%@", error);
+	XCTAssertEqualObjects(speech.backendIdentifier, @"tone-speech");
+}
+
+- (void)testObjectiveCBuildsShippedModelsViaDirectFactories
+{
+	// The primary path for shipped models: build directly, no register-then-lookup. Building a net
+	// initializes MLX, so this runs under xcodebuild (the bundled metallib) and returns early otherwise.
+	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> upscaler = [NFKMLXRealESRGAN backendWithVariant:NFKMLXRealESRGANVariantX4 weightsURL:nil error:&error];
+	XCTAssertEqualObjects(upscaler.backendIdentifier, @"real-esrgan-x4", @"%@", error);
+
+	id<NFKInferenceBackend> depth = [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantBase weightsURL:nil error:&error];
+	XCTAssertEqualObjects(depth.backendIdentifier, @"depth-anything-v2-base", @"%@", error);
+
+	id<NFKInferenceBackend> cutout = [NFKMLXU2Net backendWithVariant:NFKMLXU2NetVariantLight weightsURL:nil error:&error];
+	XCTAssertEqualObjects(cutout.backendIdentifier, @"u2netp", @"%@", error);
+
+	id<NFKInferenceBackend> restore = [NFKMLXNAFNet backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(restore.backendIdentifier, @"nafnet", @"%@", error);
+
+	id<NFKInferenceBackend> inpaint = [NFKMLXLaMa backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(inpaint.backendIdentifier, @"lama-inpaint", @"%@", error);
+}
+
+- (void)testObjectiveCDownloadFactoryFailsCleanlyForAnInvalidRepo
+{
+	// The download-and-build factory (no registry): with real inputs it downloads then builds, off the
+	// render thread. An empty repo fails before any network or net construction, so this needs neither.
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend =
+		[NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantSmall
+										   repo:@""
+									weightsPath:@"model.safetensors"
+									   revision:nil
+							  cacheDirectoryURL:NSFileManager.defaultManager.temporaryDirectory
+										  error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+
+	// With a real repo (off the render thread):
+	// id<NFKInferenceBackend> real = [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantBase
+	//     repo:@"org/dav2" weightsPath:@"model.safetensors" revision:nil cacheDirectoryURL:nil error:&error];
+}
+
+- (void)testAnUnknownModelNameReturnsAnError
+{
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKMLXModelRegistry backendNamed:@"not-registered" weightsURL:nil error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+}
+
+- (void)testDownloadAndBuildFailsFastForAnUnregisteredModel
+{
+	// The full call downloads from Hugging Face then builds; an unregistered name fails before the
+	// download, so this needs no network.
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKMLXHub backendNamed:@"not-registered"
+														repo:@"org/model"
+												 weightsPath:@"model.safetensors"
+													revision:nil
+										   cacheDirectoryURL:nil
+													   error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+}
+
+- (void)testObjectiveCReachesTheMLXRuntimeKnobs
+{
+	// The Swift-only MLX globals (free-function seed, the GPU enum) are reachable from Objective-C
+	// through the NFKMLXRandom / NFKMLXGPU wrappers.
+	[NFKMLXRandom seed:42];
+
+	[NFKMLXGPU setCacheLimit:48 * 1024 * 1024];
+	XCTAssertEqual(NFKMLXGPU.cacheLimit, 48 * 1024 * 1024, @"the cache limit round-trips");
+	[NFKMLXGPU clearCache];
+	[NFKMLXGPU resetPeakMemory];
+	XCTAssertGreaterThanOrEqual(NFKMLXGPU.activeMemory, 0);
+	XCTAssertGreaterThanOrEqual(NFKMLXGPU.cacheMemory, 0);
+}
+
+- (void)testObjectiveCSelectsTheComputeDevice
+{
+	// MLX models the device as a Swift struct and a scoped function, so NFKMLXDevice is what an
+	// Objective-C caller has. The selection covers the work the block does on this thread, which is
+	// where a synchronous inference runs.
+	NFKMLXDeviceType outer = NFKMLXDevice.currentType;
+
+	__block NFKMLXDeviceType inner = outer;
+	[NFKMLXDevice performOnDeviceType:NFKMLXDeviceTypeCPU block:^{
+		inner = NFKMLXDevice.currentType;
+	}];
+
+	XCTAssertEqual(inner, NFKMLXDeviceTypeCPU);
+	XCTAssertEqual(NFKMLXDevice.currentType, outer, @"the previous device is restored");
+
+	// The shape a caller uses. The block covers this thread only, so it wraps the synchronous call and
+	// not submitInferenceJobForRequest:, whose queue takes the global device.
+	// [NFKMLXDevice performOnDeviceType:NFKMLXDeviceTypeCPU block:^{
+	//     result = [backend runInferenceForRequest:request error:&error];   // needs MLX runtime
+	// }];
+}
+
+@end

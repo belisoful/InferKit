@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 360" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="InferKit layers: the zero-dependency core, optional companion packages, and the consumer's engine, joined by runtime discovery.">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="358" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+
+  <text x="40" y="48" font-size="20" font-weight="700" fill="#1F2933">A dependency-free core; heavier engines link in optionally</text>
+
+  <!-- Core layer -->
+  <rect x="40" y="72" width="680" height="104" rx="12" fill="#EEF3FE" stroke="#2D6CDF" stroke-width="1.75"/>
+  <text x="60" y="97" font-size="14" font-weight="700" fill="#2D6CDF">InferKit — core (Objective-C, zero third-party deps)</text>
+  <rect x="60" y="110" width="150" height="50" rx="9" fill="#FFFFFF" stroke="#C7D6F5"/>
+  <text x="135" y="132" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2933">The contract</text>
+  <text x="135" y="149" text-anchor="middle" font-size="11" fill="#5A6672">Request · Result · Job</text>
+  <rect x="225" y="110" width="150" height="50" rx="9" fill="#FFFFFF" stroke="#C7D6F5"/>
+  <text x="300" y="132" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2933">Shipped backends</text>
+  <text x="300" y="149" text-anchor="middle" font-size="11" fill="#5A6672">passthrough · CoreML · remote</text>
+  <rect x="390" y="110" width="150" height="50" rx="9" fill="#FFFFFF" stroke="#C7D6F5"/>
+  <text x="465" y="132" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2933">Download / cache</text>
+  <text x="465" y="149" text-anchor="middle" font-size="11" fill="#5A6672">NFKHFHub</text>
+  <rect x="555" y="110" width="145" height="50" rx="9" fill="#FFFFFF" stroke="#C7D6F5"/>
+  <text x="627" y="132" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1F2933">Discovery</text>
+  <text x="627" y="149" text-anchor="middle" font-size="11" fill="#5A6672">NFKDynamicBackend</text>
+
+  <!-- Companions layer -->
+  <rect x="40" y="212" width="330" height="100" rx="12" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="60" y="237" font-size="14" font-weight="700" fill="#7A5AF8">Companion packages (optional)</text>
+  <rect x="60" y="250" width="140" height="46" rx="9" fill="#FFFFFF" stroke="#D6C9F9"/>
+  <text x="130" y="270" text-anchor="middle" font-size="12" font-weight="600" fill="#1F2933">InferKitMLX</text>
+  <text x="130" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">31 MLX models · SD</text>
+  <rect x="212" y="250" width="146" height="46" rx="9" fill="#FFFFFF" stroke="#D6C9F9"/>
+  <text x="285" y="270" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1F2933">InferKitFoundationModels</text>
+  <text x="285" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">on-device LLM</text>
+
+  <!-- Consumer engine -->
+  <rect x="410" y="212" width="310" height="100" rx="12" fill="#EBF7F2" stroke="#1F9D6B" stroke-width="1.75"/>
+  <text x="430" y="237" font-size="14" font-weight="700" fill="#1F9D6B">Your engine (any)</text>
+  <rect x="430" y="250" width="270" height="46" rx="9" fill="#FFFFFF" stroke="#C3E7D8"/>
+  <text x="565" y="270" text-anchor="middle" font-size="12" font-weight="600" fill="#1F2933">A class adopting NFKInferenceBackend</text>
+  <text x="565" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">or NFKDynamicBackendProvider (whisper.cpp…)</text>
+
+  <!-- discovery arrows from companions/engine up to Discovery box -->
+  <path d="M627 176 L627 196 L285 196 L285 208" fill="none" stroke="#94A3B8" stroke-width="1.75" marker-end="url(#a2)"/>
+  <path d="M627 196 L565 196 L565 208" fill="none" stroke="#94A3B8" stroke-width="1.75" marker-end="url(#a2)"/>
+  <text x="360" y="190" text-anchor="middle" font-size="11" fill="#64748B">discovered at runtime by class name — linked ⇒ available, absent ⇒ nil</text>
+</svg>

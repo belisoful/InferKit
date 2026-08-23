@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="From a Hugging Face repo, through download and cache, a safetensors checkpoint, and loadWeights, to a ready MLX module.">
+  <defs>
+    <marker id="wpa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="24" y="42" font-size="18" font-weight="700" fill="#1F2933">From a Hugging Face repo to a ready MLX module</text>
+
+  <!-- 1 HF repo -->
+  <rect x="24" y="120" width="126" height="64" rx="11" fill="#E6F6F6" stroke="#0EA5A5" stroke-width="2"/>
+  <text x="87" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">HF repo</text>
+  <text x="87" y="167" text-anchor="middle" font-size="10" fill="#5A6672">org/model</text>
+
+  <!-- 2 download -->
+  <rect x="166" y="120" width="126" height="64" rx="11" fill="#EAF1FD" stroke="#2D6CDF" stroke-width="2"/>
+  <text x="229" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">download</text>
+  <text x="229" y="167" text-anchor="middle" font-size="10" fill="#5A6672">cache on disk</text>
+
+  <!-- 3 safetensors -->
+  <rect x="308" y="120" width="126" height="64" rx="11" fill="#FFFFFF" stroke="#94A3B8" stroke-width="2"/>
+  <text x="371" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">safetensors</text>
+  <text x="371" y="167" text-anchor="middle" font-size="10" fill="#5A6672">checkpoint</text>
+
+  <!-- 4 loadWeights -->
+  <rect x="450" y="120" width="126" height="64" rx="11" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="2"/>
+  <text x="513" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">loadWeights</text>
+  <text x="513" y="167" text-anchor="middle" font-size="10" fill="#5A6672">conv transpose</text>
+
+  <!-- 5 module -->
+  <rect x="592" y="120" width="126" height="64" rx="11" fill="#EBF7F2" stroke="#1F9D6B" stroke-width="2"/>
+  <text x="655" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">MLX module</text>
+  <text x="655" y="167" text-anchor="middle" font-size="10" fill="#5A6672">ready to run</text>
+
+  <!-- arrows -->
+  <line x1="150" y1="152" x2="164" y2="152" stroke="#94A3B8" stroke-width="2" marker-end="url(#wpa)"/>
+  <line x1="292" y1="152" x2="306" y2="152" stroke="#94A3B8" stroke-width="2" marker-end="url(#wpa)"/>
+  <line x1="434" y1="152" x2="448" y2="152" stroke="#94A3B8" stroke-width="2" marker-end="url(#wpa)"/>
+  <line x1="576" y1="152" x2="590" y2="152" stroke="#94A3B8" stroke-width="2" marker-end="url(#wpa)"/>
+
+  <text x="24" y="222" font-size="11.5" fill="#5A6672">Weights download at runtime, not bundled. The fetch blocks — run it off the render thread.</text>
+  <text x="24" y="244" font-size="11.5" fill="#5A6672">loadWeights transposes conv weights: PyTorch [out, in, kH, kW] → MLX [out, kH, kW, in].</text>
+</svg>

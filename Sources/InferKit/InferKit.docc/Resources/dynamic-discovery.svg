@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Dynamic discovery: a capability resolves to a provider class name, looked up at runtime; present classes build a backend, absent ones return nil.">
+  <defs>
+    <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="40" y="46" font-size="19" font-weight="700" fill="#1F2933">Optional engines, activated only when linked</text>
+
+  <!-- capability -->
+  <rect x="40" y="86" width="170" height="70" rx="11" fill="#E7F6F6" stroke="#0EA5A5" stroke-width="2"/>
+  <text x="125" y="115" text-anchor="middle" font-size="14" font-weight="700" fill="#1F2933">capability</text>
+  <text x="125" y="135" text-anchor="middle" font-size="11.5" fill="#0C8585">"stable-diffusion"</text>
+
+  <!-- provider name -->
+  <rect x="255" y="86" width="200" height="70" rx="11" fill="#FFFFFF" stroke="#0EA5A5" stroke-width="1.75"/>
+  <text x="355" y="112" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">provider class name</text>
+  <text x="355" y="132" text-anchor="middle" font-size="11" fill="#5A6672">NFKStableDiffusionProvider</text>
+
+  <!-- lookup diamond -->
+  <path d="M560 76 L636 121 L560 166 L484 121 Z" fill="#FFF6EC" stroke="#E8873A" stroke-width="2"/>
+  <text x="560" y="116" text-anchor="middle" font-size="12" font-weight="700" fill="#1F2933">linked in</text>
+  <text x="560" y="132" text-anchor="middle" font-size="12" font-weight="700" fill="#1F2933">the build?</text>
+
+  <line x1="212" y1="121" x2="251" y2="121" stroke="#94A3B8" stroke-width="2" marker-end="url(#a4)"/>
+  <line x1="457" y1="121" x2="482" y2="121" stroke="#94A3B8" stroke-width="2" marker-end="url(#a4)"/>
+  <text x="230" y="112" text-anchor="middle" font-size="10.5" fill="#64748B">maps to</text>
+
+  <!-- present -> backend -->
+  <rect x="470" y="196" width="250" height="60" rx="11" fill="#EBF7F2" stroke="#1F9D6B" stroke-width="2"/>
+  <text x="595" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">+makeInferenceBackend</text>
+  <text x="595" y="240" text-anchor="middle" font-size="11" fill="#1F9D6B">→ a working backend</text>
+  <path d="M560 166 L560 194" fill="none" stroke="#1F9D6B" stroke-width="2" marker-end="url(#a4)"/>
+  <text x="574" y="184" font-size="11" font-weight="600" fill="#1F9D6B">yes</text>
+
+  <!-- absent -> nil -->
+  <rect x="40" y="196" width="360" height="60" rx="11" fill="#F1F4F8" stroke="#64748B" stroke-width="2"/>
+  <text x="220" y="221" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">nil — the feature is simply unavailable</text>
+  <text x="220" y="240" text-anchor="middle" font-size="11" fill="#5A6672">no link error, no crash (NSClassFromString returns Nil)</text>
+  <path d="M484 138 L430 172 L400 196" fill="none" stroke="#64748B" stroke-width="2" marker-end="url(#a4)"/>
+  <text x="452" y="168" font-size="11" font-weight="600" fill="#64748B">no</text>
+</svg>

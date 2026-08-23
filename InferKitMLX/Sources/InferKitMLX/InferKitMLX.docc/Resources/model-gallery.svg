@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="The InferKitMLX model gallery grouped into four families: image-to-image, image analysis, video, and audio.">
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="32" y="40" font-size="19" font-weight="700" fill="#1F2933">The InferKitMLX model gallery</text>
+
+  <!-- Column 1: Image -> image -->
+  <rect x="24" y="60" width="168" height="30" rx="15" fill="#EAF1FD" stroke="#2D6CDF" stroke-width="1.75"/>
+  <text x="108" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#2D6CDF">Image → image</text>
+  <g font-size="11.5" fill="#3A4652">
+    <circle cx="36" cy="114" r="3" fill="#2D6CDF"/><text x="46" y="118">super-resolution</text>
+    <circle cx="36" cy="140" r="3" fill="#2D6CDF"/><text x="46" y="144">restoration</text>
+    <circle cx="36" cy="166" r="3" fill="#2D6CDF"/><text x="46" y="170">low-light</text>
+    <circle cx="36" cy="192" r="3" fill="#2D6CDF"/><text x="46" y="196">style transfer</text>
+    <circle cx="36" cy="218" r="3" fill="#2D6CDF"/><text x="46" y="222">colorization</text>
+    <circle cx="36" cy="244" r="3" fill="#2D6CDF"/><text x="46" y="248">inpainting</text>
+  </g>
+
+  <!-- Column 2: Image -> analysis -->
+  <rect x="208" y="60" width="168" height="30" rx="15" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="292" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#7A5AF8">Image → analysis</text>
+  <g font-size="11.5" fill="#3A4652">
+    <circle cx="220" cy="114" r="3" fill="#7A5AF8"/><text x="230" y="118">depth</text>
+    <circle cx="220" cy="140" r="3" fill="#7A5AF8"/><text x="230" y="144">segmentation</text>
+    <circle cx="220" cy="166" r="3" fill="#7A5AF8"/><text x="230" y="170">matting</text>
+    <circle cx="220" cy="192" r="3" fill="#7A5AF8"/><text x="230" y="196">detection</text>
+    <circle cx="220" cy="218" r="3" fill="#7A5AF8"/><text x="230" y="222">pose</text>
+    <circle cx="220" cy="244" r="3" fill="#7A5AF8"/><text x="230" y="248">embeddings</text>
+  </g>
+
+  <!-- Column 3: Video -->
+  <rect x="392" y="60" width="168" height="30" rx="15" fill="#E6F6F6" stroke="#0EA5A5" stroke-width="1.75"/>
+  <text x="476" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0E8C8C">Video</text>
+  <g font-size="11.5" fill="#3A4652">
+    <circle cx="404" cy="114" r="3" fill="#0EA5A5"/><text x="414" y="118">frame interpolation</text>
+    <circle cx="404" cy="140" r="3" fill="#0EA5A5"/><text x="414" y="144">optical flow</text>
+    <circle cx="404" cy="166" r="3" fill="#0EA5A5"/><text x="414" y="170">super-resolution</text>
+    <circle cx="404" cy="192" r="3" fill="#0EA5A5"/><text x="414" y="196">×4 upscaler</text>
+  </g>
+
+  <!-- Column 4: Audio -->
+  <rect x="576" y="60" width="168" height="30" rx="15" fill="#FFF3E8" stroke="#E8873A" stroke-width="1.75"/>
+  <text x="660" y="80" text-anchor="middle" font-size="12.5" font-weight="700" fill="#C56E24">Audio</text>
+  <g font-size="11.5" fill="#3A4652">
+    <circle cx="588" cy="114" r="3" fill="#E8873A"/><text x="598" y="118">source separation</text>
+    <circle cx="588" cy="140" r="3" fill="#E8873A"/><text x="598" y="144">transcription</text>
+    <circle cx="588" cy="166" r="3" fill="#E8873A"/><text x="598" y="170">voice activity</text>
+    <circle cx="588" cy="192" r="3" fill="#E8873A"/><text x="598" y="196">tagging</text>
+    <circle cx="588" cy="218" r="3" fill="#E8873A"/><text x="598" y="222">text-to-speech</text>
+  </g>
+
+  <text x="32" y="288" font-size="11" fill="#64748B">Thirty-plus real models, each behind the same NFKInferenceBackend contract.</text>
+</svg>

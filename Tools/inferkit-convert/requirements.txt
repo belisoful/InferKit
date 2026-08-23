@@ -1,0 +1,6 @@
+torch>=2.2
+# RoPE conversion drives the transformers KV-cache; the wrapper supports both the pre-4.54 Cache API
+# and the 4.54+ redesign (validated on 4.46 and 4.57), so no pin is required.
+transformers>=4.40
+coremltools>=9.0
+numpy>=1.24

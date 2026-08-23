@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="The inference contract: a request flows into a backend and returns a result, synchronously or through an async job.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+
+  <!-- Request node -->
+  <rect x="40" y="96" width="180" height="86" rx="12" fill="#FFFFFF" stroke="#2D6CDF" stroke-width="2"/>
+  <rect x="40" y="96" width="6" height="86" rx="3" fill="#2D6CDF"/>
+  <text x="130" y="126" text-anchor="middle" font-size="17" font-weight="700" fill="#1F2933">NFKInferenceRequest</text>
+  <text x="130" y="149" text-anchor="middle" font-size="13" fill="#5A6672">inputs · parameters</text>
+  <text x="130" y="167" text-anchor="middle" font-size="13" fill="#5A6672">outputModality</text>
+
+  <!-- Backend node -->
+  <rect x="290" y="96" width="180" height="86" rx="12" fill="#FFFFFF" stroke="#7A5AF8" stroke-width="2"/>
+  <rect x="290" y="96" width="6" height="86" rx="3" fill="#7A5AF8"/>
+  <text x="380" y="126" text-anchor="middle" font-size="17" font-weight="700" fill="#1F2933">NFKInferenceBackend</text>
+  <text x="380" y="149" text-anchor="middle" font-size="13" fill="#5A6672">runInferenceForRequest:</text>
+  <text x="380" y="167" text-anchor="middle" font-size="13" fill="#5A6672">the swappable engine</text>
+
+  <!-- Result node -->
+  <rect x="540" y="96" width="180" height="86" rx="12" fill="#FFFFFF" stroke="#1F9D6B" stroke-width="2"/>
+  <rect x="540" y="96" width="6" height="86" rx="3" fill="#1F9D6B"/>
+  <text x="630" y="126" text-anchor="middle" font-size="17" font-weight="700" fill="#1F2933">NFKInferenceResult</text>
+  <text x="630" y="149" text-anchor="middle" font-size="13" fill="#5A6672">named outputs</text>
+  <text x="630" y="167" text-anchor="middle" font-size="13" fill="#5A6672">text · image · …</text>
+
+  <!-- Arrows request -> backend -> result -->
+  <line x1="222" y1="139" x2="286" y2="139" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="472" y1="139" x2="536" y2="139" stroke="#94A3B8" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Job node (async path) -->
+  <rect x="290" y="228" width="180" height="48" rx="12" fill="#FFFFFF" stroke="#E8873A" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="380" y="250" text-anchor="middle" font-size="15" font-weight="700" fill="#1F2933">NFKInferenceJob</text>
+  <text x="380" y="267" text-anchor="middle" font-size="12" fill="#5A6672">progress · cancel · stream</text>
+
+  <!-- dashed branch backend <-> job -->
+  <line x1="380" y1="184" x2="380" y2="226" stroke="#E8873A" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="398" y="208" font-size="11.5" fill="#B4791F">submitInferenceJob…</text>
+
+  <!-- Title strip -->
+  <text x="40" y="52" font-size="20" font-weight="700" fill="#1F2933">One request → one result, through any backend</text>
+  <text x="40" y="74" font-size="13.5" fill="#5A6672">Synchronous for a quick call; the async job adds progress, cancellation, and streaming.</text>
+</svg>

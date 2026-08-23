@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+   Each FileRef names a package DIRECTORY, never its Package.swift: pointing at the manifest makes
+   Xcode treat that package as a dependency, with no schemes of its own.
+
+   The core is `self:` — the package this workspace lives inside — which is the form Xcode's own
+   generated package.xcworkspace uses, so the navigator labels it by package name. `group:.` labels it
+   literally "."; `group:../InferKit` labels it correctly but resolves against the PARENT directory, so
+   it breaks outright (empty scheme list) in any checkout not named exactly "InferKit" — a fork, or
+   GitHub's "Download ZIP", which yields InferKit-main.
+-->
+<Workspace
+   version = "1.0">
+   <FileRef
+      location = "self:">
+   </FileRef>
+   <FileRef
+      location = "group:InferKitMLX">
+   </FileRef>
+   <FileRef
+      location = "group:InferKitFoundationModels">
+   </FileRef>
+</Workspace>

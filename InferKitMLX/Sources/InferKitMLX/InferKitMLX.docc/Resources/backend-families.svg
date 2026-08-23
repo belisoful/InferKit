@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="The five bring-your-own base backends, each with the forward closure it takes and the shape it handles.">
+  <defs>
+    <marker id="bfa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="24" y="40" font-size="18" font-weight="700" fill="#1F2933">Bring your own model — pick the base backend</text>
+
+  <!-- column captions -->
+  <text x="126" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#64748B">BACKEND</text>
+  <text x="376" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#64748B">YOUR CLOSURE</text>
+  <text x="627" y="60" text-anchor="middle" font-size="10.5" font-weight="700" fill="#64748B">SHAPE</text>
+
+  <g font-family="ui-monospace, Menlo, monospace">
+  <!-- row 1 -->
+  <rect x="24" y="70" width="204" height="32" rx="9" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="126" y="91" text-anchor="middle" font-size="11" font-weight="700" fill="#1F2933">NFKMLXModuleBackend</text>
+  <rect x="246" y="70" width="260" height="32" rx="9" fill="#FFFFFF" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="376" y="90" text-anchor="middle" font-size="10.5" fill="#5A6672">(MLXArray) → MLXArray</text>
+  <rect x="524" y="70" width="206" height="32" rx="9" fill="#EEF2F7" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="627" y="90" text-anchor="middle" font-size="10.5" fill="#3A4652">image → image</text>
+
+  <!-- row 2 -->
+  <rect x="24" y="116" width="204" height="32" rx="9" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="126" y="137" text-anchor="middle" font-size="11" font-weight="700" fill="#1F2933">NFKMLXMattingBackend</text>
+  <rect x="246" y="116" width="260" height="32" rx="9" fill="#FFFFFF" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="376" y="136" text-anchor="middle" font-size="10.5" fill="#5A6672">(plate, hint) → [H,W,4]</text>
+  <rect x="524" y="116" width="206" height="32" rx="9" fill="#EEF2F7" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="627" y="136" text-anchor="middle" font-size="10.5" fill="#3A4652">keyer + matte</text>
+
+  <!-- row 3 -->
+  <rect x="24" y="162" width="204" height="32" rx="9" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="126" y="183" text-anchor="middle" font-size="11" font-weight="700" fill="#1F2933">NFKMLXTensorBackend</text>
+  <rect x="246" y="162" width="260" height="32" rx="9" fill="#FFFFFF" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="376" y="182" text-anchor="middle" font-size="10.5" fill="#5A6672">[String:MLXArray] → same</text>
+  <rect x="524" y="162" width="206" height="32" rx="9" fill="#EEF2F7" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="627" y="182" text-anchor="middle" font-size="10.5" fill="#3A4652">multi-in / out</text>
+
+  <!-- row 4 -->
+  <rect x="24" y="208" width="204" height="32" rx="9" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.75"/>
+  <text x="126" y="229" text-anchor="middle" font-size="11" font-weight="700" fill="#1F2933">NFKMLXSpeechBackend</text>
+  <rect x="246" y="208" width="260" height="32" rx="9" fill="#FFFFFF" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="376" y="228" text-anchor="middle" font-size="10.5" fill="#5A6672">(String) → MLXArray</text>
+  <rect x="524" y="208" width="206" height="32" rx="9" fill="#EEF2F7" stroke="#94A3B8" stroke-width="1.5"/>
+  <text x="627" y="228" text-anchor="middle" font-size="10.5" fill="#3A4652">text → waveform</text>
+
+  <!-- row 5 -->
+  <rect x="24" y="254" width="204" height="32" rx="9" fill="#EAF1FD" stroke="#2D6CDF" stroke-width="1.75"/>
+  <text x="126" y="275" text-anchor="middle" font-size="11" font-weight="700" fill="#1F2933">NFKMLXDiffusionBackend</text>
+  <rect x="246" y="254" width="260" height="32" rx="9" fill="#FFFFFF" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="376" y="274" text-anchor="middle" font-size="10.5" fill="#5A6672">encode · denoise · decode</text>
+  <rect x="524" y="254" width="206" height="32" rx="9" fill="#EAF1FD" stroke="#2D6CDF" stroke-width="1.5"/>
+  <text x="627" y="274" text-anchor="middle" font-size="10.5" fill="#3A4652">iterative sampler</text>
+  </g>
+
+  <!-- arrows on the first row as a legend of the flow -->
+  <line x1="230" y1="86" x2="244" y2="86" stroke="#94A3B8" stroke-width="1.75" marker-end="url(#bfa)"/>
+  <line x1="508" y1="86" x2="522" y2="86" stroke="#94A3B8" stroke-width="1.75" marker-end="url(#bfa)"/>
+</svg>

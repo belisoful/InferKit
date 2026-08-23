@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Tool calling: the model asks to run a tool, your handler returns a value, and the model finishes the answer.">
+  <defs>
+    <marker id="fma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#94A3B8"/>
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="758" height="298" rx="16" fill="#F6F8FB" stroke="#DCE2EA" stroke-width="1.5"/>
+  <text x="40" y="46" font-size="19" font-weight="700" fill="#1F2933">Tool calling — the model runs your code mid-answer</text>
+
+  <!-- prompt -->
+  <rect x="40" y="104" width="150" height="64" rx="11" fill="#FFFFFF" stroke="#2D6CDF" stroke-width="2"/>
+  <text x="115" y="132" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1F2933">prompt</text>
+  <text x="115" y="151" text-anchor="middle" font-size="11" fill="#5A6672">or messages</text>
+
+  <!-- model -->
+  <rect x="250" y="104" width="200" height="64" rx="11" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="2"/>
+  <text x="350" y="130" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1F2933">LanguageModelSession</text>
+  <text x="350" y="150" text-anchor="middle" font-size="11" fill="#5A6672">via NFKFoundationModelsBackend</text>
+
+  <!-- result -->
+  <rect x="580" y="104" width="150" height="64" rx="11" fill="#FFFFFF" stroke="#1F9D6B" stroke-width="2"/>
+  <text x="655" y="132" text-anchor="middle" font-size="13.5" font-weight="700" fill="#1F2933">the answer</text>
+  <text x="655" y="151" text-anchor="middle" font-size="11" fill="#5A6672">result.text</text>
+
+  <!-- tool -->
+  <rect x="250" y="216" width="200" height="60" rx="11" fill="#FFF6EC" stroke="#E8873A" stroke-width="2"/>
+  <text x="350" y="242" text-anchor="middle" font-size="13" font-weight="700" fill="#1F2933">NFKFoundationTool</text>
+  <text x="350" y="261" text-anchor="middle" font-size="11" fill="#B4791F">your handler runs</text>
+
+  <!-- arrows -->
+  <line x1="192" y1="136" x2="246" y2="136" stroke="#94A3B8" stroke-width="2" marker-end="url(#fma)"/>
+  <line x1="452" y1="136" x2="576" y2="136" stroke="#94A3B8" stroke-width="2" marker-end="url(#fma)"/>
+  <!-- model -> tool (calls) and tool -> model (returns) -->
+  <path d="M330 170 L330 213" fill="none" stroke="#E8873A" stroke-width="2" marker-end="url(#fma)"/>
+  <text x="322" y="196" text-anchor="end" font-size="11" fill="#B4791F">calls</text>
+  <path d="M372 213 L372 170" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#fma)"/>
+  <text x="380" y="196" font-size="11" fill="#64748B">returns a value</text>
+
+  <text x="40" y="290" font-size="11.5" fill="#5A6672">Structured output works the same way: set responseSchema and read the parsed fields from result.structured.</text>
+</svg>

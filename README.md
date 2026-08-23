@@ -1,0 +1,126 @@
+# InferKit
+
+A small, cross-platform (macOS / iOS / tvOS) inference toolkit for Objective-C, usable from Swift.
+
+One protocol — `NFKInferenceBackend` — covers every engine, so the same request and result types drive
+a Core ML model, an OpenAI-compatible endpoint, Apple's on-device Foundation Models, or an MLX model.
+There is no FxPlug or host-framework dependency, so any Metal or Apple app can use it.
+
+```objc
+id<NFKInferenceBackend> backend = [NFKRemoteBackend backendWithEndpointURL:endpoint];
+NFKInferenceRequest *request =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Explain diffraction in one sentence." }];
+NSString *answer = [backend runInferenceForRequest:request error:&error].text;
+```
+
+Swapping engines means swapping the first line. Inference is synchronous and multi-second, so run it
+off the main thread — or submit it as a job for progress and cancellation:
+
+```objc
+NFKInferenceJob *job = NFKInferenceSubmit(backend, request, NULL);
+job.completionHandler = ^(NFKInferenceJob *done) { NSLog(@"%@", done.result.text); };
+```
+
+## Install
+
+```swift
+.package(url: "https://github.com/belisoful/InferKit.git", from: "0.1.0")
+```
+
+or `pod 'InferKit'`. The optional MLX and Foundation Models companions are separate packages in this
+repository — see **[Installation](Docs/installation.md)** for those and for the CocoaPods details.
+
+## What's in it
+
+- **`NFKInferenceBackend`** — the swappable-engine protocol; `NFKInferenceRequest` and
+  `NFKInferenceResult` carry named inputs, parameters, and outputs; `NFKInferenceJob` runs one
+  asynchronously with progress and cancellation.
+- **Backends**, on Apple frameworks alone: a passthrough mock, in-process Core ML for images and
+  tensors, an on-device Core ML language-model runner, OpenAI-compatible chat and transcription
+  clients, and a submit-poll-fetch base for generation services.
+- **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, a tokenizer
+  (BPE / WordPiece / Unigram), and a Hugging Face download and cache layer.
+- **Runtime discovery** — `NFKDynamicBackend` activates an optional engine only when it is linked,
+  resolving it by name, so the core never references it.
+
+A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
+companion packages already do: **InferKitMLX** (30-plus models across image, video, and audio —
+including Stable Diffusion 1.5, 2.1, and SDXL-Turbo text-to-image — each validated numerically against
+its reference implementation) and **InferKitFoundationModels** (Apple's on-device model, with tool
+calling and structured output).
+
+## Documentation
+
+| | |
+| --- | --- |
+| **[Inference guide](Docs/inference-guide.md)** | Choosing a backend, running a model locally, using Apple's Foundation Models. Start here. |
+| **[Examples](Docs/examples.md)** | Complete examples across every modality, backend, and subsystem — compiled by CI in both Swift and Objective-C. |
+| **[Installation](Docs/installation.md)** | Swift Package Manager, CocoaPods, and adding a companion package. |
+| **[Core ML language models](Docs/coreml-llm.md)** | Converting a Hugging Face checkpoint and running it on device. |
+| **[Companion packages](Docs/companions.md)** | InferKitMLX and InferKitFoundationModels: what each ships, and the full model gallery. |
+| **[Changelog](CHANGELOG.md)** | What each release contains. |
+| **[Validation](Tools/validation-assets/manifest.json)** | Every model's reference-parity evidence, rebuildable with `Tools/validation-assets/fetch.py`. |
+
+API reference is DocC:
+
+```bash
+Tools/docc/build.sh          # the core        (--preview to serve it, --all for the companions)
+```
+
+**Do not use Xcode's Product ▸ Build Documentation for the core.** Neither `xcodebuild docbuild` nor
+the swift-docc-plugin extracts a symbol graph from a pure Objective-C SwiftPM target, so that path
+produces an archive with no symbols in it and reports every ``NFKFoo`` link as
+`'NFKFoo' doesn't exist` — 94 symbol pages become 0. `Tools/docc/build.sh` exists for exactly this
+reason: it runs `clang -extract-api` over the public headers and hands the result to `docc`. The two
+Swift companions have no such problem and build either way.
+
+## Build & test
+
+```bash
+Tools/build-all.sh --test                       # all three packages
+swift build && swift test                       # just the core
+pod lib lint InferKit.podspec --quick           # the CocoaPods spec
+```
+
+Building a package produces object files and a module for SwiftPM to link, not a standalone binary.
+For a binary to drop into a third-party app, build an XCFramework:
+
+```bash
+Tools/xcframework/build.sh                      # -> .xcframework-build/InferKit.xcframework
+```
+
+That yields a universal static XCFramework with three slices — macOS (arm64 + x86_64), iOS device,
+and iOS simulator — carrying the 25 public headers.
+
+The MLX companion packages too, through its own script:
+
+```bash
+Tools/xcframework/build-mlx.sh --verify
+```
+
+That emits `InferKitMLX.xcframework` (static) and `InferKitMLXDynamic.xcframework` (dynamic, with the
+Metal library inside), arm64, three slices each. Each static slice carries the Metal library a consumer
+of that slice ships.
+`--verify` links a consumer against each and runs a model on the GPU, because a binary that links can
+still fail to find its Metal library. `--variant`, `--slices`, and `--no-swift-interfaces` trim the
+build and the output. A consumer's binary grows by about 14 MB plus a 3.6 MB Metal library, of which
+MLX is roughly 97% — every model InferKitMLX ships is 193 KB of it.
+
+[Docs/installation.md](Docs/installation.md) carries a linking recipe for each case — Xcode app,
+framework, plug-in bundle, SwiftPM `binaryTarget`, your own static library — and the release-asset
+matrix. The artifacts are not committed; they compress to about 48 MB across four release assets.
+
+The MLX companion's tests need the Metal library only Xcode's build system bundles, so run those with
+`xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`.
+`InferKit.xcworkspace` opens all three packages in one window, each still built as its own package.
+Its ten schemes cover every target; the core's suite splits across `InferKitTests` (128),
+`InferKitExamples` (11), and `InferKitSwiftExamples` (11) — the same 150 `swift test` runs.
+
+## Consumers
+
+Built for [MetalForge](https://github.com/belisoful/MetalForge), an FCPX/Motion effects suite, but the
+toolkit has no host dependency.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

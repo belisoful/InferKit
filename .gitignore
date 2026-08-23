@@ -1,0 +1,45 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+*.hmap
+*.xcworkspace
+# ...except the umbrella workspace, which is the only way to open the core and both companions in one
+# window. It holds no user state (that lives in xcuserdata/, ignored above).
+!InferKit.xcworkspace
+!InferKit.xcworkspace/**
+
+# Swift Package Manager
+.build/
+Packages/
+# .swiftpm holds local Xcode state, EXCEPT the shared schemes, which have to be committed to be
+# shared. A package with several test targets needs one scheme per testable: Xcode's generated scheme
+# collapses them to the first, so `xcodebuild test -scheme InferKitMLX` silently ran only
+# InferKitMLXTests and neither examples target. Re-including a path needs its parents un-ignored one
+# level at a time, which is what the alternating lines below do.
+**/.swiftpm/*
+!**/.swiftpm/xcode
+**/.swiftpm/xcode/*
+!**/.swiftpm/xcode/xcshareddata
+**/.swiftpm/xcode/xcshareddata/*
+!**/.swiftpm/xcode/xcshareddata/xcschemes
+Package.pins
+
+# CocoaPods
+#
+# We recommend against adding the Pods directory to your .gitignore. However
+# you should judge for yourself, the pros and cons are mentioned at:
+# https://guides.cocoapods.org/using/using-cocoapods.html#should-i-check-the-pods-directory-into-source-control
+#
+# Pods/
+
+# Local and temporary files, excluded from the repo
+Local/
+
+# DocC build output
+.docc-build/
+.xcframework-build/
