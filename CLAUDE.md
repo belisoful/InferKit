@@ -42,6 +42,12 @@ pod lib lint InferKit.podspec --quick
 
 Code is commit-ready only when every check below passes.
 
+`.github/workflows/ci.yml` runs the hosted-runner subset on every push and pull request: the core's
+build (zero warnings) + tests, the iOS and tvOS compile legs, the analyzer at a fresh derived-data
+path, the podspec lint, and compile checks for both companions. The MLX test schemes stay a LOCAL
+step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints from
+`~/.inferkit-validation`, which a runner does not have — there they would skip, proving nothing.
+
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green.
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos26.5 -arch arm64`.

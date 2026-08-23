@@ -1,0 +1,90 @@
+# CI mirrors the Full Check in CLAUDE.md, scoped to what a hosted runner can do.
+#
+# What runs here: the core's build + 177 tests with a zero-warning gate, the iOS and tvOS compile
+# legs, the static analyzer at a fresh derived-data path, the podspec lint, and compile checks for
+# both companion packages.
+#
+# What deliberately does NOT run here: the MLX test schemes (563/35/22). They evaluate real MLX
+# arrays, which needs the Metal toolchain's default.metallib and a GPU the runner may not expose,
+# and the parity suites read multi-gigabyte checkpoints from ~/.inferkit-validation that only exist
+# on the validation machine — on a runner they would skip, proving nothing. The three-scheme run
+# stays the documented local pre-release step.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  core:
+    name: Core (build, test, iOS, tvOS, analyzer, podspec)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Build (zero warnings)
+        run: |
+          swift build 2>&1 | tee build.log
+          ! grep -E "warning:" build.log
+
+      - name: Test
+        run: swift test
+
+      - name: iOS compile
+        run: xcodebuild build -scheme InferKit -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd-ios"
+
+      # A tvOS DESTINATION does not resolve on a machine without tvOS platform support, but a
+      # compile only needs the SDK — so the SDK is named directly, discovered rather than pinned,
+      # and the invocation goes through the workspace because a bare package rejects -sdk.
+      - name: tvOS compile
+        run: |
+          TVOS_SDK=$(xcodebuild -showsdks | awk '/appletvos/ {print $NF}' | tail -1)
+          echo "using $TVOS_SDK"
+          xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk "$TVOS_SDK" -arch arm64 -derivedDataPath "$RUNNER_TEMP/dd-tvos"
+
+      # The analyzer is cached; a fresh derived-data path is what makes it actually report.
+      - name: Analyze (zero issues)
+        run: |
+          xcodebuild analyze -scheme InferKit -derivedDataPath "$RUNNER_TEMP/dd-analyze" 2>&1 | tee analyze.log
+          ! grep -E ": warning:" analyze.log
+
+      - name: Podspec lint
+        run: pod lib lint InferKit.podspec --quick
+
+  mlx:
+    name: InferKitMLX (compile)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (macOS)
+        run: swift build --package-path InferKitMLX
+      - name: Build (iOS)
+        run: xcodebuild build -scheme InferKitMLX -destination 'generic/platform=iOS' -skipPackagePluginValidation -derivedDataPath "$RUNNER_TEMP/dd-mlx-ios"
+        working-directory: InferKitMLX
+
+  foundation-models:
+    name: InferKitFoundationModels (build + test, when the SDK allows)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The package's floor is the macOS 26 SDK; a runner still on an older image cannot compile it
+      # at all, so the job reports what it skipped rather than failing on toolchain availability.
+      - name: Build and test, or state why not
+        run: |
+          SDK=$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)
+          if [ "$SDK" -lt 26 ]; then
+            echo "macOS SDK $SDK < 26 — InferKitFoundationModels needs the macOS 26 SDK; skipped."
+            exit 0
+          fi
+          swift build --package-path InferKitFoundationModels
+          swift test --package-path InferKitFoundationModels
