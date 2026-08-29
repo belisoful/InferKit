@@ -41,6 +41,9 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     public var normalizesQueryAndKey: Bool
     /// Whether the attention projections carry biases (Qwen2 does; Qwen3 does not).
     public var attentionBias: Bool
+    /// The rotary scaling the release declares, or `nil` for none. Read from the checkpoint's own
+    /// `rope_scaling`; see ``NFKMLXRoPEScaling``.
+    public var ropeScaling: NFKMLXRoPEScaling?
 
     public init(hiddenSize: Int = 1024, layerCount: Int = 28, headCount: Int = 16,
                 keyValueHeadCount: Int = 8, headDimensions: Int = 128, intermediateSize: Int = 3072,
@@ -90,30 +93,146 @@ public struct NFKMLXLanguageConfiguration: Sendable {
 ///
 /// Generation is quadratic without this and linear with it: the cache is what makes a token cost one
 /// step's work rather than the whole sequence's.
+///
+/// @discussion The rows live in a buffer that grows in blocks, with a cursor at each end, so a step
+/// writes into space that is already there. Concatenating instead would copy the whole cache on every
+/// token, which turns decoding back into quadratic work in a place that exists to avoid exactly that.
+///
+/// **A window bounds it.** `NFKMLXKeyValueCache(layerCount:window:)` keeps at most `window` positions:
+/// the oldest are dropped as new ones arrive, so memory stops growing with the conversation. That is a
+/// real change to what the model reads, and it is only free when the model's own attention is
+/// windowed at the same width. For a model with full attention it is a deliberate approximation —
+/// the model stops seeing the beginning of its context — so it is off unless asked for.
 public final class NFKMLXKeyValueCache {
-    var keys: [MLXArray?]
-    var values: [MLXArray?]
-    /// How many positions the cache holds, which is the rotary offset the next step needs.
+
+    /// The most positions the cache retains, or `nil` for an unbounded one.
+    public let window: Int?
+
+    /// TOTAL positions ever appended, which is NOT the retained count once a window starts dropping
+    /// them. This is the rotary offset a step needs: a token's angle depends on where it actually is
+    /// in the sequence, not on where it sits in the buffer.
     public private(set) var offset = 0
 
-    public init(layerCount: Int) {
+    private var keys: [MLXArray?]
+    private var values: [MLXArray?]
+    /// The retained span of each layer's buffer, as `[start, end)`.
+    private var starts: [Int]
+    private var ends: [Int]
+
+    /// Rows are added in blocks so that a steady decode compacts rarely rather than every step.
+    private static let growthBlock = 256
+
+    public init(layerCount: Int, window: Int? = nil) {
+        precondition(window.map { $0 > 1 } ?? true, "a window keeps more than one position")
+        self.window = window
         keys = Array(repeating: nil, count: layerCount)
         values = Array(repeating: nil, count: layerCount)
+        starts = Array(repeating: 0, count: layerCount)
+        ends = Array(repeating: 0, count: layerCount)
+    }
+
+    /// Rows a layer currently holds.
+    public func retainedLength(layer: Int = 0) -> Int { ends[layer] - starts[layer] }
+
+    /// How many cached positions a forward pass of more than one token will attend to, which is what
+    /// its mask has to be built against.
+    ///
+    /// @discussion With a window this is the retained length AFTER the trim the next update performs,
+    /// so it is smaller than ``offset``. A mask built against the absolute offset would be wider than
+    /// the keys it is applied to.
+    public var maskCacheLength: Int {
+        let retained = ends.isEmpty ? 0 : retainedLength(layer: 0)
+        guard let window else { return retained }
+        return Swift.min(retained, window - 1)
+    }
+
+    /// Drops the oldest rows so at most `window - 1` precede the incoming ones.
+    ///
+    /// @discussion Trimming to one short of the window means a single-token step reads exactly
+    /// `window` positions and needs no sliding mask: everything retained is something it may attend
+    /// to. The trim moves a cursor and copies nothing.
+    private func trimForAppend(layer: Int) {
+        guard let window else { return }
+        let excess = retainedLength(layer: layer) - (window - 1)
+        if excess > 0 { starts[layer] += excess }
+    }
+
+    /// Makes room for `extra` more rows, compacting the retained span to the front when the buffer
+    /// has run out at the end.
+    private func ensureCapacity(layer: Int, extra: Int, like sample: MLXArray) -> Bool {
+        let capacity = keys[layer]?.dim(2) ?? 0
+        if ends[layer] + extra <= capacity { return false }
+
+        let retained = retainedLength(layer: layer)
+        let needed = retained + extra
+        let blocks = (needed + Self.growthBlock - 1) / Self.growthBlock
+        let target = blocks * Self.growthBlock
+
+        let shape = [sample.dim(0), sample.dim(1), target, sample.dim(3)]
+        let grownKeys = MLXArray.zeros(shape, dtype: sample.dtype)
+        let grownValues = MLXArray.zeros(shape, dtype: sample.dtype)
+        if let existingKeys = keys[layer], let existingValues = values[layer], retained > 0 {
+            grownKeys[0..., 0..., 0 ..< retained, 0...] =
+                existingKeys[0..., 0..., starts[layer] ..< ends[layer], 0...]
+            grownValues[0..., 0..., 0 ..< retained, 0...] =
+                existingValues[0..., 0..., starts[layer] ..< ends[layer], 0...]
+        }
+        keys[layer] = grownKeys
+        values[layer] = grownValues
+        starts[layer] = 0
+        ends[layer] = retained
+        return true
     }
 
     func update(layer: Int, keys newKeys: MLXArray, values newValues: MLXArray) -> (MLXArray, MLXArray) {
-        if let existing = keys[layer], let existingValues = values[layer] {
-            keys[layer] = concatenated([existing, newKeys], axis: 2)
-            values[layer] = concatenated([existingValues, newValues], axis: 2)
-        } else {
-            keys[layer] = newKeys
-            values[layer] = newValues
-        }
-        return (keys[layer]!, values[layer]!)
+        trimForAppend(layer: layer)
+        let length = newKeys.dim(2)
+        _ = ensureCapacity(layer: layer, extra: length, like: newKeys)
+
+        let start = ends[layer]
+        keys[layer]![0..., 0..., start ..< (start + length), 0...] = newKeys
+        values[layer]![0..., 0..., start ..< (start + length), 0...] = newValues
+        ends[layer] += length
+
+        return (keys[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...],
+                values[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...])
     }
 
     /// Advances the position count once every layer has been updated for this step.
     func advance(by count: Int) { offset += count }
+}
+
+/// The rotary embedding, with a release's declared scaling folded in.
+///
+/// A model that declares no scaling rotates at `base` and this is `MLXFast.RoPE` unchanged. A model
+/// that declares one supplies its own per-pair periods instead, and multiplies by the attention
+/// factor — which is legitimate to do to the input because the rotation is linear, so scaling the
+/// input and scaling the sines are the same operation.
+struct NFKLMRotary {
+    let dimensions: Int
+    let base: Float
+    let periods: MLXArray?
+    let attentionFactor: Float
+
+    init(dimensions: Int, base: Float, scaling: NFKMLXRoPEScaling?) {
+        self.dimensions = dimensions
+        self.base = base
+        if let scaling {
+            periods = MLXArray(scaling.rotaryPeriods(dimensions: dimensions, base: base))
+            attentionFactor = scaling.attentionFactor
+        } else {
+            periods = nil
+            attentionFactor = 1
+        }
+    }
+
+    func callAsFunction(_ x: MLXArray, offset: Int) -> MLXArray {
+        let scaled = attentionFactor == 1 ? x : x * attentionFactor
+        return MLXFast.RoPE(scaled, dimensions: dimensions, traditional: false,
+                            // The periods replace the base entirely; passing both would be ambiguous.
+                            base: periods == nil ? base : nil,
+                            scale: 1, offset: offset, freqs: periods)
+    }
 }
 
 /// Grouped-query attention with rotary embeddings.
@@ -129,14 +248,15 @@ final class NFKLMAttention: Module {
     let keyValueHeads: Int
     let headDimensions: Int
     let scale: Float
-    let rope: RoPE
+    let rope: NFKLMRotary
 
     init(_ c: NFKMLXLanguageConfiguration) {
         heads = c.headCount
         keyValueHeads = c.keyValueHeadCount
         headDimensions = c.headDimensions
         scale = 1 / sqrt(Float(c.headDimensions))
-        rope = RoPE(dimensions: c.headDimensions, traditional: false, base: c.ropeTheta)
+        rope = NFKLMRotary(dimensions: c.headDimensions, base: c.ropeTheta,
+                           scaling: c.ropeScaling)
 
         _queryProjection.wrappedValue = Linear(c.hiddenSize, c.headCount * c.headDimensions,
                                                bias: c.attentionBias)
@@ -259,16 +379,34 @@ public final class NFKMLXLanguageNet: Module {
 
     /// Runs the stack over `tokens` `[batch, length]` and returns logits `[batch, length, vocabulary]`.
     func callAsFunction(_ tokens: MLXArray, cache: NFKMLXKeyValueCache? = nil) -> MLXArray {
-        var hidden = model.embedTokens(tokens)
-        let length = tokens.shape[1]
-        // A single token attends to everything cached, so it needs no mask; a prefill does.
-        let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: cache?.offset ?? 0)
-                                         : nil
+        logits(fromHidden: hiddenStates(fromEmbeddings: model.embedTokens(tokens), cache: cache))
+    }
+
+    /// The token embedding on its own. The music AR loop feeds the model SUMMED code embeddings
+    /// rather than token ids, which is why both ends of the ordinary forward are also exposed.
+    func embed(_ tokens: MLXArray) -> MLXArray { model.embedTokens(tokens) }
+
+    /// Runs the stack over already-embedded inputs and returns the post-norm hidden states
+    /// `[batch, length, hidden]` — what conditions synthesis in a hidden-state-driven pipeline.
+    func hiddenStates(fromEmbeddings embeddings: MLXArray,
+                      cache: NFKMLXKeyValueCache? = nil) -> MLXArray {
+        var hidden = embeddings
+        let length = embeddings.shape[1]
+        // A single token attends to everything cached, so it needs no mask; a prefill does. The mask
+        // is built against the number of cached positions the pass will SEE, which a window makes
+        // smaller than the absolute offset — a mask sized to the offset would be wider than the keys.
+        let mask: MLXArray? = length > 1
+            ? NFKMLXLanguageNet.causalMask(length, offset: cache?.maskCacheLength ?? 0)
+            : nil
         for (index, layer) in model.layers.enumerated() {
             hidden = layer(hidden, mask: mask, cache: cache, layer: index)
         }
         cache?.advance(by: length)
-        hidden = model.norm(hidden)
+        return model.norm(hidden)
+    }
+
+    /// The output projection on its own: post-norm hidden states → logits.
+    func logits(fromHidden hidden: MLXArray) -> MLXArray {
         if let lmHead { return lmHead(hidden) }
         return model.embedTokens.asLinear(hidden)
     }

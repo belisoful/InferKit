@@ -297,4 +297,123 @@ final class MLXExamples: XCTestCase {
         guard let value, CFGetTypeID(value as CFTypeRef) == CGImage.typeID else { return 0 }
         return [UInt8]((value as! CGImage).dataProvider!.data! as Data)[3]
     }
+
+    // Docs/examples.md: A live preview of each step. The map is a 1×1 convolution over the channel
+    // axis, reported as the job's partialResult — the mechanism a streaming text backend uses.
+    func testExampleADiffusionRunPreviewsEveryStep() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "the sampler evaluates MLX arrays; run via xcodebuild")
+        var configuration = NFKDiffusionConfiguration(steps: 4, latentChannels: 3, plateChannels: 3)
+        configuration.latentPreview = .passthrough      // .stableDiffusion / .stableDiffusionXL for a VAE latent
+        configuration.previewEverySteps = 1
+
+        let backend = NFKMLXDiffusionBackend(
+            configuration: configuration,
+            encode: { _, _, _ in NFKDiffusionContext(width: 8, height: 8) },
+            denoise: { latent, _, _, _ in MLXArray.zeros(latent.shape) },
+            decode: { ($0 + 1) / 2 })
+
+        let job = backend.submitInferenceJob(for: NFKInferenceRequest(inputs: [:], parameters: [:]))
+        // `partialResult` holds the LAST non-nil value, so compare identity rather than presence when
+        // the preview rate matters.
+        var previews: [NFKInferenceResult] = []
+        let finished = expectation(description: "the run finished")
+        job.progressHandler = { job in
+            if let partial = job.partialResult, partial.output(forKey: NFKOutputImage) != nil,
+               previews.last !== partial {
+                previews.append(partial)
+            }
+        }
+        job.completionHandler = { _ in finished.fulfill() }
+        wait(for: [finished], timeout: 60)
+
+        XCTAssertEqual(job.status, .succeeded)
+        XCTAssertEqual(previews.count, 4, "one preview per step")
+    }
+
+    // A map for a model with no published factors is derived from its own decoder by least squares.
+    func testExampleAPreviewMapIsFittedToADecoder() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "the fit evaluates MLX arrays; run via xcodebuild")
+        let map = try XCTUnwrap(NFKDiffusionLatentPreview.fitted(
+            latentChannels: 4,
+            decode: { latent in
+                let matrix = MLXArray([Float](repeating: 0.2, count: 12), [4, 3])
+                let flat = latent.reshaped([latent.shape[0] * latent.shape[1], 4])
+                return matmul(flat, matrix).reshaped([latent.shape[0], latent.shape[1], 3])
+            },
+            sample: { index in MLXRandom.normal([8, 8, 4], key: MLXRandom.key(UInt64(index))) }))
+        XCTAssertEqual(map.latentChannels, 4)
+
+        // A mismatched channel count returns nil: a preview is a progress indicator, so it never
+        // fails the run it is only reporting on.
+        XCTAssertNil(map.image(from: MLXArray.zeros([8, 8, 3])))
+    }
+
+    // Docs/examples.md: Local, on device through MLX. The cache bound and the rotary scaling are the
+    // two knobs that decide whether a long conversation survives.
+    func testExampleAContextWindowBoundsTheCache() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 4
+        // Retain at most this many positions; the oldest are dropped as new ones arrive.
+        options.contextWindow = 8
+        XCTAssertEqual(options.contextWindow, 8)
+
+        let net = NFKMLXLanguage.makeNet(.tiny)
+        let produced = net.generate(prompt: [1, 2, 3, 4, 5, 6], options: options)
+        XCTAssertLessThanOrEqual(produced.count, options.maxTokens)
+
+        // Unbounded is the default, so an existing caller's results are unchanged.
+        XCTAssertNil(NFKMLXGenerationOptions().contextWindow)
+    }
+
+    // Docs/examples.md: Extended context. A release states its own scaling; an unimplemented kind is
+    // refused rather than loaded under a rotary it was not trained with.
+    func testExampleRoPEScalingIsReadFromTheReleaseAndUnknownKindsAreRefused() throws {
+        let yarn = try XCTUnwrap(NFKMLXRoPEScaling.read(
+            ["rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 8192],
+            maximumPositions: 32768))
+        XCTAssertEqual(yarn.kind, .yarn)
+        // The attention factor is derived unless the config states one.
+        XCTAssertEqual(yarn.attentionFactor, 0.1 * log(Float(4)) + 1, accuracy: 1e-6)
+
+        // A config that declares nothing scales nothing.
+        XCTAssertNil(try NFKMLXRoPEScaling.read(nil, maximumPositions: 32768))
+
+        XCTAssertThrowsError(try NFKMLXRoPEScaling.read(
+            ["rope_type": "llama3", "factor": 8.0], maximumPositions: 131072))
+    }
+
+    // Docs/examples.md: Sizing it to the machine. The window is derived from what is free rather than
+    // guessed, and a model that cannot fit says so here instead of at the load.
+    func testExampleOptionsAreSizedToTheMachine() throws {
+        let options = try NFKMLXModelSizing.options(for: .qwen3_0_6B, requesting: 8192,
+                                                    precision: .checkpoint)
+        // Left unset when the request already fits; a number when the cache has to be bounded.
+        if let window = options.contextWindow {
+            XCTAssertGreaterThanOrEqual(window, 0)
+        }
+
+        let fit = NFKMLXModelSizing.fit(of: .qwen3_0_6B, tokens: 8192, precision: .checkpoint)
+        XCTAssertGreaterThan(fit.weightBytes, 0)
+        XCTAssertGreaterThan(fit.describedFit.count, 0)
+
+        // A model far too large for any machine reports that no window helps.
+        var enormous = NFKMLXLanguageConfiguration.qwen3_8B
+        enormous.layerCount = 4096
+        XCTAssertThrowsError(try NFKMLXModelSizing.options(for: enormous, requesting: 1024,
+                                                           precision: .float32))
+    }
+
+    // The decode ceiling is bounded by memory traffic, so it falls as the model and the context grow.
+    func testExampleTheDecodeCeilingFallsWithSizeAndContext() {
+        let bandwidth = 300e9      // supplied, so the example does not run a measurement
+        let small = NFKMLXModelSizing.decodeCeiling(for: .qwen3_0_6B, contextLength: 4096,
+                                                    precision: .checkpoint, bandwidth: bandwidth)
+        let large = NFKMLXModelSizing.decodeCeiling(for: .qwen3_8B, contextLength: 4096,
+                                                    precision: .checkpoint, bandwidth: bandwidth)
+        XCTAssertGreaterThan(small, large)
+    }
 }

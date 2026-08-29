@@ -89,7 +89,7 @@ public final class NFKMLXBackend: NSObject, NFKInferenceBackend {
         // model's own job carries the per-step progress and takes the cancellation, so this one
         // forwards both rather than standing in front of them.
         let job = NFKInferenceJob()
-        Task.detached { [self] in
+        Task.detached(priority: .userInitiated) { [self] in
             do {
                 let model = try self.loaded()
                 // Every backend this builds implements the job form; the protocol makes it optional.

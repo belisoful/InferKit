@@ -353,7 +353,7 @@ public final class NFKMLXCLIPBackend: NSObject, NFKInferenceBackend {
         let job = NFKInferenceJob()
         let holder = self.holder
         let tokenizer = self.tokenizer
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let embedding = try NFKMLXCLIPBackend.embed(request, net: holder.net, tokenizer: tokenizer)
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputEmbedding: embedding]))

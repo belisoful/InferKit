@@ -98,6 +98,10 @@ final class NFKMLXRVMTests: XCTestCase {
 
     func testTheRecurrentStateChangesTheNextFramesResult() throws {
         try requireMLXRuntime()
+        // Seed so the random weights do not depend on suite order: an unseeded net can land on
+        // weights whose clamped alpha is uniformly zero for both frames, which is a degenerate matte
+        // rather than a recurrence failure and reads as one only mid-suite.
+        NFKMLXRandom.seed(20_260_814)
         let net = tinyNet()
         let frame1 = Self.frame(height: 32, width: 32, seed: 1).reshaped([1, 32, 32, 3])
         let frame2 = Self.frame(height: 32, width: 32, seed: 2).reshaped([1, 32, 32, 3])

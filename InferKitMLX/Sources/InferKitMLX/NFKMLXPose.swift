@@ -181,7 +181,7 @@ public final class NFKMLXPoseBackend: NSObject, NFKInferenceBackend {
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
         let holder = self.holder
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 guard let value = request.input(forKey: NFKInputImage) else {
                     throw NFKMLXError.unsupportedInput

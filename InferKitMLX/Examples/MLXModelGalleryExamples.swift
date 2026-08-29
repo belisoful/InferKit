@@ -267,6 +267,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         let tts = NFKMLXTTS(phonemizer: NFKMLXNeuralG2P(), symbols: (0 ..< 40).map { "p\($0)" })
         let speech = tts.makeSpeechBackend()                     // reads NFKInputPrompt, writes a WAV NFKAudioAsset
         XCTAssertEqual(speech.backendIdentifier, "tts")
+
+        // MiniMax Music 3: a music description under NFKInputPrompt and lyrics under NFKInputLyrics
+        // become a stereo 44.1 kHz clip. The stack is 27 GB of separately licensed weights, so the
+        // factory takes the downloaded release DIRECTORY and there is no random-weights form;
+        // isReady reports whether the weights are present rather than failing the build.
+        let music = try NFKMLXMusic3.backend(directoryURL:
+            FileManager.default.temporaryDirectory.appendingPathComponent("minimax-music3"))
+        XCTAssertEqual(music.backendIdentifier, "minimax-music3")
+        XCTAssertFalse(music.isReady, "no weights at that path yet — download the release first")
     }
 
     // MARK: Dynamic discovery (Stable Diffusion / transcription activate when linked)

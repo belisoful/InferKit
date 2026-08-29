@@ -194,4 +194,32 @@ final class InferKitSwiftExamples: XCTestCase {
                                                modelName: "claude-sonnet-4-5")
         XCTAssertEqual(claude.backendIdentifier, "anthropic-messages")
     }
+
+    // MARK: Where Core ML runs (Docs/examples.md: Where Core ML actually runs)
+
+    // `MLComputeUnitsCPUOnly` is zero, so an unset property would move every model off the
+    // accelerators. The backend initializes it explicitly.
+    func testExampleTheCoreMLBackendDefaultsToAllComputeUnits() {
+        let backend = NFKCoreMLBackend(modelURL: nil)
+        XCTAssertEqual(backend.computeUnits, .all)
+
+        backend.computeUnits = .cpuAndNeuralEngine
+        XCTAssertEqual(backend.computeUnits, .cpuAndNeuralEngine)
+    }
+
+    // The plan reads a compiled model's placement without running it. This pins the shape the ObjC
+    // importer gives the factory, and the availability answer, without needing a model.
+    func testExampleTheComputePlanReportsWhetherItCanAnswer() throws {
+        if #available(macOS 14.4, iOS 17.4, tvOS 17.4, *) {
+            XCTAssertTrue(NFKComputePlan.isAvailable)
+        } else {
+            XCTAssertFalse(NFKComputePlan.isAvailable)
+        }
+
+        // A model that is not there fails rather than reporting an empty plan, because "nothing is on
+        // the Neural Engine" and "cannot tell" are different answers.
+        let absent = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("inferkit-example-absent.mlmodelc")
+        XCTAssertThrowsError(try NFKComputePlan(forCompiledModelAt: absent, computeUnits: .all))
+    }
 }

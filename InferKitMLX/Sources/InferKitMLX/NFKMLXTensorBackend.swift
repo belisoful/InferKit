@@ -101,7 +101,7 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
         let job = NFKInferenceJob()
         let forward = self.forward
         let configuration = self.configuration
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let outputs = try NFKMLXTensorBackend.run(request, configuration: configuration, forward: forward)
                 job.finish(with: NFKInferenceResult(outputs: outputs))

@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'InferKit'
-  s.version          = '0.1.0'
+  s.version          = '0.2.0'
   s.summary          = 'A small, cross-platform inference toolkit for Objective-C.'
   s.description      = <<-DESC
     InferKit is an Objective-C inference toolkit: a swappable backend protocol, request/result

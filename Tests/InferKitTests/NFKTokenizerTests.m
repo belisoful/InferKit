@@ -103,4 +103,50 @@
 	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
 }
 
+// A merge cannot cross a pretoken boundary, so the pattern shows through the ids: Qwen2 lets a
+// letter run absorb one leading punctuation character ("-b" is one pretoken, so the "- b" merge
+// applies) and splits digits singly (so the "1 2" merge cannot apply). GPT-2 does the opposite on
+// both. A Qwen vocabulary encoded under the wrong pattern produces different, valid-looking ids.
+- (void)testTheQwen2PretokenizationChangesTheMerges
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{
+		@"a": @0, @"-": @1, @"b": @2, @"-b": @3,
+		@"1": @4, @"2": @5, @"12": @6,
+	};
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"qwen-vocab.json"] atomically:YES];
+	NSString *merges = @"#version: 0.2\n- b\n1 2\n";
+	[merges writeToURL:[_directory URLByAppendingPathComponent:@"qwen-merges.txt"]
+			atomically:YES
+			  encoding:NSUTF8StringEncoding
+				 error:NULL];
+
+	NSError *error = nil;
+	NFKTokenizer *qwen = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"qwen-vocab.json", @"merges": @"qwen-merges.txt",
+		@"pretokenizer": @"qwen2",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(qwen, @"%@", error);
+	NFKTokenizer *gpt2 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"qwen-vocab.json", @"merges": @"qwen-merges.txt",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(gpt2, @"%@", error);
+
+	NSArray *expectedQwen = @[@0, @3, @4, @5];
+	NSArray *expectedGPT2 = @[@0, @1, @2, @6];
+	XCTAssertEqualObjects([qwen encode:@"a-b12"], expectedQwen);
+	XCTAssertEqualObjects([gpt2 encode:@"a-b12"], expectedGPT2);
+}
+
+- (void)testAnUnknownPretokenizationIsRejected
+{
+	NSError *error = nil;
+	NFKTokenizer *tokenizer = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"vocab.json", @"merges": @"merges.txt",
+		@"pretokenizer": @"llama3",
+	} } directory:_directory error:&error];
+	XCTAssertNil(tokenizer);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
 @end

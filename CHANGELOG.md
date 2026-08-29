@@ -7,7 +7,35 @@ All notable changes to InferKit are documented here. The format follows
 While the version is below 1.0.0, a minor bump may change public API. SwiftPM treats a 0.x minor as
 breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each minor deliberately.
 
-## [0.1.0] — unreleased
+## [0.2.0] — unreleased
+
+> This section covers work attributed with confidence; complete it from `git diff v0.1.0` before
+> tagging, since other in-flight companion work may also belong here.
+
+### Core (`InferKit`)
+
+- `NFKInferKit.version` — a class property returning the core's semantic-version string.
+
+### InferKitMLX (companion)
+
+- MiniMax Music 3: `NFKMLXMusic3` and `NFKMLXMusicBackend` generate stereo 44.1 kHz music from a
+  description (`NFKInputPrompt`) and lyrics (`NFKInputLyrics`), the five networks each at measured
+  reference parity against diffusers' own implementation.
+- Runtime MLX quantization: `NFKMLXQuantization` packs a module's `Linear` (and, with
+  `includeEmbeddings`, `Embedding`) layers into affine 4-/8-bit form, recorded in the checkpoint so a
+  loader reconstructs the matching structure. `NFKMLXMusic3.quantizeRelease` writes a quantized copy
+  of the release (4-bit language model including its untied input embedding, 8-bit DiT), which brings
+  the stack from 27 GB to 7.7 GiB and lets it stay resident between runs.
+- The Qwen text path (`NFKMLXLanguage.backend(directoryURL:)`) tokenizes with the `qwen2`
+  pre-tokenization pattern rather than the byte-level BPE GPT-2 default, which encodes the same prompt
+  to different, valid-looking token ids. A consumer that cached Qwen-encoded text from an earlier
+  build re-encodes it.
+
+### Documentation
+
+- DocC pages for `NFKMLXMusic3` and `NFKMLXMusicBackend`, and a "Text → music" topic group.
+
+## [0.1.0] — 2026-08-22
 
 First public release.
 

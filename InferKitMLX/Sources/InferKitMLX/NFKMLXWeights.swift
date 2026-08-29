@@ -29,6 +29,56 @@ public enum NFKMLXWeightPrecision: Int, Sendable {
     case checkpoint
 }
 
+/// Runtime MLX quantization: packs a module's `Linear` layers into affine 4- or 8-bit groups.
+///
+/// Only `Linear` layers whose input width divides the group size quantize; everything else —
+/// convolutions, norms, embeddings, the Snake alphas — computes as built. Quantizing an EMBEDDING is
+/// deliberately not offered: `QuantizedLinear` subclasses `Linear`, which every module here stores
+/// behind `@ModuleInfo`, so the replacement is assignable; and the same subclassing is why a filter
+/// must exclude layers that are already quantized.
+enum NFKMLXQuantization {
+
+    /// Replaces the module's eligible `Linear` layers with `QuantizedLinear` at the given geometry,
+    /// and its `Embedding` layers with `QuantizedEmbedding` when `includeEmbeddings` is set. On a
+    /// loaded module this quantizes the VALUES; on a freshly built one it shapes the structure a
+    /// quantized checkpoint then loads into.
+    ///
+    /// `includeEmbeddings` is off by default because a TIED model reuses its input embedding as the
+    /// output projection, so quantizing it quantizes the logit head too — a cost that has to be
+    /// measured per model rather than assumed free. It is safe to enable for an untied model, whose
+    /// embedding is a lookup table separate from `lm_head`.
+    static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
+                         includeEmbeddings: Bool = false) {
+        MLXNN.quantize(model: module, groupSize: groupSize, bits: bits) { _, layer in
+            if let linear = layer as? Linear, !(linear is QuantizedLinear) {
+                return linear.weight.shape[1] % groupSize == 0
+            }
+            if includeEmbeddings, let embedding = layer as? Embedding,
+               !(embedding is QuantizedEmbedding) {
+                return embedding.weight.shape[1] % groupSize == 0
+            }
+            return false
+        }
+    }
+
+    /// Applies a checkpoint's recorded quantization to a freshly built module, so the packed arrays
+    /// land on matching structure. A nil quantization leaves the module as built.
+    ///
+    /// The metadata records one bits/groupSize, not which layer KINDS were quantized, so whether the
+    /// embedding was packed is read from the checkpoint itself: a quantized embedding weight is stored
+    /// as `uint32` where an unquantized one is a float. This keeps a checkpoint self-describing, so a
+    /// file saved before embeddings were quantizable still loads.
+    static func matchStructure(of checkpoint: NFKMLXWeights.Checkpoint, on module: Module) {
+        guard let quantization = checkpoint.quantization else { return }
+        let embeddingsPacked = module.leafModules().flattened().contains { path, layer in
+            guard layer is Embedding, !(layer is QuantizedEmbedding) else { return false }
+            return checkpoint.arrays[path + ".weight"]?.dtype == .uint32
+        }
+        quantize(module: module, bits: quantization.bits, groupSize: quantization.groupSize,
+                 includeEmbeddings: embeddingsPacked)
+    }
+}
+
 enum NFKMLXWeights {
 
     /// Applies `precision` to already-remapped pairs, leaving integer tensors alone — an index cast to
@@ -44,6 +94,15 @@ enum NFKMLXWeights {
     /// Metadata written by ``save(_:to:)`` to mark a checkpoint as already being in the module's layout.
     private static let layoutKey = "inferkit.layout"
     private static let mlxLayout = "mlx"
+    /// Metadata naming the MLX affine quantization a checkpoint's packed weights were stored under,
+    /// as "bits:groupSize". Written automatically when the saved module holds quantized layers.
+    private static let quantizationKey = "inferkit.quantization"
+
+    /// The MLX affine quantization a checkpoint was stored under.
+    struct Quantization: Sendable, Equatable {
+        let bits: Int
+        let groupSize: Int
+    }
 
     /// A checkpoint's arrays together with the layout its convolution weights are stored in.
     struct Checkpoint {
@@ -58,6 +117,12 @@ enum NFKMLXWeights {
         /// common one: SAM's `up1`/`up2` use `transposed(1, 2, 3, 0)` and Whisper handles 3-D Conv1d,
         /// and a generic inverse would corrupt both.
         let needsConvTranspose: Bool
+
+        /// Non-nil for a checkpoint whose weights are MLX-quantized. A loader quantizes the module's
+        /// structure to match BEFORE applying: a packed uint32 weight loaded into a plain `Linear`
+        /// adopts the wrong shape and dtype silently, which is exactly the hazard the metadata
+        /// exists to close.
+        let quantization: Quantization?
     }
 
     /// Reads a checkpoint and reports which layout its convolution weights are in.
@@ -66,7 +131,18 @@ enum NFKMLXWeights {
     /// PyTorch checkpoint and one written by ``save(_:to:)`` load correctly through the same path.
     static func loadCheckpoint(url: URL) throws -> Checkpoint {
         let (arrays, metadata) = try loadArraysAndMetadata(url: url)
-        return Checkpoint(arrays: arrays, needsConvTranspose: metadata[layoutKey] != mlxLayout)
+        var quantization: Quantization?
+        if let recorded = metadata[quantizationKey] {
+            let parts = recorded.split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2 else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(url.lastPathComponent) records quantization \"\(recorded)\", which is not "
+                    + "the bits:groupSize form this loader reads")
+            }
+            quantization = Quantization(bits: parts[0], groupSize: parts[1])
+        }
+        return Checkpoint(arrays: arrays, needsConvTranspose: metadata[layoutKey] != mlxLayout,
+                          quantization: quantization)
     }
 
     /// Writes every parameter of `module` to a safetensors file in the module's own layout.
@@ -91,7 +167,15 @@ enum NFKMLXWeights {
         // one, which is exactly the suspension this checkpoint exists to survive.
         let scratch = url.deletingLastPathComponent()
             .appendingPathComponent(".\(UUID().uuidString).safetensors")
-        try MLX.save(arrays: arrays, metadata: [layoutKey: mlxLayout], url: scratch)
+        // A module holding quantized layers records their geometry, so the file cannot be read back
+        // into an unquantized structure by mistake. Quantization here is uniform (one bits/groupSize
+        // per module), which is what the single metadata entry can say.
+        var metadata = [layoutKey: mlxLayout]
+        if let quantized = module.leafModules().flattened()
+            .compactMap({ $0.1 as? Quantized }).first {
+            metadata[quantizationKey] = "\(quantized.bits):\(quantized.groupSize)"
+        }
+        try MLX.save(arrays: arrays, metadata: metadata, url: scratch)
         do {
             if FileManager.default.fileExists(atPath: url.path) {
                 _ = try FileManager.default.replaceItemAt(url, withItemAt: scratch)

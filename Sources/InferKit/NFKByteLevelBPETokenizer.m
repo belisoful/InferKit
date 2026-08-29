@@ -12,12 +12,19 @@
 static NSString * const kNFKBPEPattern =
 	@"'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)|\\s+";
 
+// Qwen2 pre-tokenization, from the released tokenizer.json: case-insensitive contractions, a letter
+// run optionally led by ONE non-letter/digit character, single digits, a punctuation run absorbing
+// trailing newlines, and whitespace runs ending in a newline held together.
+static NSString * const kNFKQwen2BPEPattern =
+	@"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
 @implementation NFKByteLevelBPETokenizer
 {
 	NSDictionary<NSString *, NSNumber *> *_encoder;			// token string -> id
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
+	NSString *_pretokenization;								// "gpt2" (nil) or "qwen2"
 	NSRegularExpression *_pattern;
 	unichar _byteToUnicode[256];
 	NSDictionary<NSNumber *, NSNumber *> *_unicodeToByte;	// unichar value -> byte
@@ -30,10 +37,34 @@ static NSString * const kNFKBPEPattern =
 									  bos:(NSInteger)bosTokenId
 									error:(NSError * _Nullable *)outError
 {
+	return [self initWithVocabURL:vocabURL
+						mergesURL:mergesURL
+					specialTokens:specialTokens
+				  pretokenization:nil
+							  eos:eosTokenId
+							  bos:bosTokenId
+							error:outError];
+}
+
+- (nullable instancetype)initWithVocabURL:(NSURL *)vocabURL
+								mergesURL:(NSURL *)mergesURL
+							specialTokens:(nullable NSDictionary<NSString *, NSNumber *> *)specialTokens
+						  pretokenization:(nullable NSString *)pretokenization
+									  eos:(NSInteger)eosTokenId
+									  bos:(NSInteger)bosTokenId
+									error:(NSError * _Nullable *)outError
+{
 	self = [super initWithEOS:eosTokenId bos:bosTokenId];
 	if (self == nil) {
 		return nil;
 	}
+	if (pretokenization != nil
+		&& ![pretokenization isEqualToString:@"gpt2"] && ![pretokenization isEqualToString:@"qwen2"]) {
+		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
+						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
+		return nil;
+	}
+	_pretokenization = [pretokenization copy];
 
 	if (![self loadEncoderFromURL:vocabURL error:outError]) {
 		return nil;
@@ -134,6 +165,9 @@ static NSString * const kNFKBPEPattern =
 
 - (NSString *)pretokenizationPattern
 {
+	if ([_pretokenization isEqualToString:@"qwen2"]) {
+		return kNFKQwen2BPEPattern;
+	}
 	return kNFKBPEPattern;
 }
 

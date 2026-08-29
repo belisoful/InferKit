@@ -68,7 +68,9 @@ public enum NFKMLXTrainer {
     ///     capturing it, because `valueAndGrad` calls it with the parameters under differentiation.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. Fine-tuning runs on
     ///     small datasets, where one unrepresentative batch can produce an update large enough to
-    ///     destroy the pretrained weights.
+    ///     destroy the pretrained weights. Non-finite entries are zeroed and the norm is computed
+    ///     against the largest magnitude present, so a batch whose gradients are large but finite
+    ///     cannot overflow the norm and silently scale the whole update to zero.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress. The
     ///     optimizer's own state is not written, because mlx-swift keeps it private: a resumed `SGD`
     ///     run continues exactly, while a resumed `Adam` run rebuilds its moment estimates and shows
@@ -155,7 +157,7 @@ public enum NFKMLXTrainer {
 
         for step in 0 ..< steps {
             let (values, gradients) = lossAndGradient(model, arrays(step))
-            let update = clipGradientNorm.map { clipGradNorm(gradients: gradients, maxNorm: $0).0 } ?? gradients
+            let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
             optimizer.update(model: model, gradients: update)
             // MLX builds the step lazily; this is where it runs.
             eval(model, optimizer)
@@ -180,5 +182,37 @@ public enum NFKMLXTrainer {
             }
         }
         return history
+    }
+
+    /// Sanitizes the gradients, then scales them so their global norm is at most `maxNorm`.
+    ///
+    /// @discussion Two things happen here, and the order is the point.
+    ///
+    /// A gradient array can be entirely finite while the SUM of its squares is not: a value of 1e20
+    /// is a perfectly good `Float`, and its square is past the type's maximum. A norm computed the
+    /// direct way then comes back infinite, `maxNorm / infinity` is zero, and every gradient is
+    /// scaled to nothing — after which the optimizer's moment estimates are built from zeros and the
+    /// following steps can produce non-finite PARAMETERS. The loss stays finite the whole time, so
+    /// the divergence guard never sees it and the run reports a plausible loss curve while the model
+    /// is being destroyed. The norm here is therefore computed against the largest magnitude present,
+    /// which keeps the squares in range whatever the scale of the gradients.
+    ///
+    /// Individually non-finite entries are replaced with zero first, because one such entry poisons
+    /// the norm and with it every other parameter's update.
+    static func bounded(_ gradients: ModuleParameters, maxNorm: Float) -> ModuleParameters {
+        let sanitized = gradients.flattened().map { ($0.0, nanToNum($0.1)) }
+        guard !sanitized.isEmpty else { return gradients }
+
+        let magnitudes = sanitized.map { abs($0.1).max() }
+        let largest = magnitudes.dropFirst().reduce(magnitudes[0]) { maximum($0, $1) }
+        // Everything is measured relative to the largest magnitude, so the squares cannot overflow.
+        // A floor keeps the division defined when every gradient is zero.
+        let reference = maximum(largest, MLXArray(Float.leastNormalMagnitude))
+        let squares = sanitized.map { ($0.1 / reference).square().sum() }
+        let sumOfSquares = squares.dropFirst().reduce(squares[0]) { $0 + $1 }
+        let norm = sqrt(sumOfSquares) * reference
+        let factor = minimum(MLXArray(maxNorm) / maximum(norm, MLXArray(Float.leastNormalMagnitude)),
+                             MLXArray(Float(1)))
+        return ModuleParameters.unflattened(sanitized.map { ($0.0, $0.1 * factor) })
     }
 }

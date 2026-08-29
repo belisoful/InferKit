@@ -132,6 +132,85 @@ NSString *reply = [backend runInferenceForRequest:request error:&error].text;
 // "One color is blue."
 ```
 
+### Local, on device through MLX (`NFKMLXLanguageBackend`, Swift)
+
+The dense decoder — Qwen3 and Llama are the same structure at different settings — reading a released
+Hugging Face directory. The module's keys are the checkpoint's, so nothing is remapped.
+
+```swift
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory)
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Explain diffraction in one sentence."])
+let text = try backend.runInference(for: request).text
+```
+
+**Bounding the cache.** A key-value cache that keeps every position grows with the conversation, and
+past a certain length that growth is what ends the run. `contextWindow` drops the oldest positions
+instead:
+
+```swift
+var options = NFKMLXGenerationOptions()
+options.maxTokens = 512
+// Retain at most 4096 positions. Size it from what the machine can hold.
+options.contextWindow = 4096
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
+```
+
+It is off by default, and turning it on is a decision rather than a tuning. While the conversation is
+shorter than the window nothing has been dropped and the result is bit-identical; past the window the
+model stops seeing its beginning. For a model whose attention is not natively windowed that is an
+approximation, and it is the caller's to make.
+
+`NFKMLXGPU.recommendedWorkingSetSize` is the budget to divide when choosing the number — Metal's own
+recommendation, which sits well below the machine's physical memory.
+
+**Sizing it to the machine.** The window above is a number someone has to choose, and choosing it by
+hand is a guess about a machine the author was not using. `NFKMLXModelSizing` derives it:
+
+```swift
+// Throws if the weights alone do not fit — no window helps then, and failing here beats failing
+// at the load, where it is a process kill rather than an error.
+let options = try NFKMLXModelSizing.options(for: configuration, requesting: 32_768,
+                                            precision: .checkpoint)
+// contextWindow is left unset when the requested length already fits.
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
+```
+
+The verdict on its own, for a report or a model picker:
+
+```swift
+let fit = NFKMLXModelSizing.fit(of: .qwen3_4B, tokens: 32_768, precision: .checkpoint)
+print(fit.describedFit)
+// "7.49 GB weights + 4.50 GB cache at 32768 tokens, against 13.41 GB — fits"
+```
+
+And what it could possibly decode at, which is bounded by memory traffic rather than by arithmetic:
+
+```swift
+let ceiling = NFKMLXModelSizing.decodeCeiling(for: .qwen3_4B, contextLength: 4096,
+                                              precision: .checkpoint)   // ~35 tok/s on an M1 Max
+// Inverted, it becomes a diagnostic: a rate above the ceiling means the model is not reading every
+// parameter, which is what a sparse model doing its job looks like.
+let reached = NFKMLXModelSizing.achievedFraction(tokensPerSecond: measured, for: .qwen3_4B)
+```
+
+The bandwidth is **measured**, not tabulated — no sysctl reports it, and a per-chip table would be
+numbers copied from somewhere rather than a property of the machine running the code. The probe reads
+a large array and times it; it is sized from the working-set budget because a small array measures
+launch overhead instead (on an M1 Max: 40 GB/s at 16 MB, 158 at 256 MB, settling near 330 from 1 GB).
+
+**Extended context.** A release that was trained short and extended long says so in its config's
+`rope_scaling`, and `NFKMLXLanguage.configuration(fromHuggingFace:)` reads it — there is nothing to
+switch on. `linear` and `yarn` are implemented and measured against `transformers`' own
+initializers. A kind that is not implemented throws rather than loading:
+
+```swift
+// Throws NFKMLXError.unsupportedConfiguration for `dynamic`, `llama3`, or `longrope`.
+let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: configURL)
+```
+
+Refusing is the point. Those kinds compute different frequencies, and a model loaded under a rotary it
+was not trained with runs perfectly well and produces fluent nonsense — there is no error to notice.
+
 ### Remote, OpenAI-compatible (`NFKRemoteBackend`)
 
 A localhost server (Ollama, `mlx_lm`) or a hosted API.
@@ -354,6 +433,75 @@ NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ @"image
 id<MTLTexture> styled = [[backend runInferenceForRequest:request error:&error] outputForKey:@"stylized"];
 ```
 
+### Where Core ML actually runs (`NFKComputePlan`, Objective-C)
+
+`MLComputeUnits` is a request. Core ML places an operation the Neural Engine cannot run somewhere else
+and reports nothing about having done so, so a model asked for the Neural Engine can run entirely on
+the CPU and behave exactly as if it had not. `NFKComputePlan` reads the placement per operation from a
+compiled model, without running it.
+
+```objc
+NFKCoreMLBackend *backend = [NFKCoreMLBackend backendWithModelURL:modelURL];
+backend.computeUnits = MLComputeUnitsAll;     // the default; CPUOnly is zero, so it is set explicitly
+
+// The plan takes an .mlmodelc and the compute units the backend will load with.
+NSError *error = nil;
+NFKComputePlan *plan = [NFKComputePlan planForCompiledModelAtURL:compiledURL
+                                                    computeUnits:backend.computeUnits
+                                                           error:&error];
+if (plan != nil) {
+    NSLog(@"%@", plan.describedPlacement);     // "142 operations: 138 Neural Engine, 4 GPU, 0 CPU, …"
+    if (!plan.runsEntirelyOnNeuralEngine) {
+        // The operators to work on when tuning a conversion, most frequent first.
+        NSLog(@"off the ANE: %@", [plan.operatorNamesOffNeuralEngine componentsJoinedByString:@", "]);
+    }
+}
+```
+
+`neuralEngineFraction` is the single number to watch; one unsupported operator in the middle of a
+network splits it and costs more than its own share of the time, because the intermediate results
+cross devices.
+
+This needs macOS 14.4 / iOS 17.4 / tvOS 17.4, which is where Core ML began publishing the information.
+Check `NFKComputePlan.isAvailable` first: an older system fails with `kNFKError_InferenceUnsupported`
+rather than reporting an empty plan, because zero operations on the Neural Engine and "cannot tell" are
+different answers. Where the API is unavailable, `powermetrics --samplers ane_power` is the runtime
+cross-check, and it needs elevated privileges.
+
+The same in Swift:
+
+```swift
+// The ObjC factory imports as a throwing initializer, so a Swift caller writes it as a constructor.
+let plan = try NFKComputePlan(forCompiledModelAt: compiledURL, computeUnits: .all)
+print(plan.describedPlacement, plan.neuralEngineFraction)
+```
+
+### Will this model fit? (`NFKHardwareProfile`, Objective-C)
+
+Loading a model that does not fit is not a polite failure: the process is killed, or the system pages
+until the run is useless. Both are decidable first.
+
+```objc
+NFKHardwareProfile *machine = NFKHardwareProfile.currentProfile;
+NSLog(@"%@", machine.describedMachine);
+// "Apple M1 Max (MacBookPro18,2), 8P+2E, 32.0 GB physical, 25.0 GB recommended working set"
+
+// Three different ceilings, and they are not interchangeable:
+machine.physicalMemory;             // what is installed
+machine.recommendedWorkingSetSize;  // what Metal expects to stay resident — size against THIS
+machine.maximumBufferLength;        // the largest single allocation, whatever else is free
+
+// Live, and the one that decides whether a load succeeds right now.
+NSInteger free = [NFKHardwareProfile availableMemory];
+```
+
+On macOS `availableMemory` counts the free, inactive and purgeable pages the kernel reports, all of
+which are reclaimable under pressure. On iOS and tvOS it is the process's own remaining allowance
+before the system terminates it, which is the ceiling that actually applies there.
+
+Every reading degrades rather than throwing: an unknown chip reports an empty name and zero counts, so
+a profile is still usable on a machine this was never run on.
+
 ## Image → image + mask
 
 `NFKMLXMattingBackend` runs a bring-your-own MLX matting model (a keyer, a background remover). The
@@ -561,6 +709,47 @@ NFKInferenceResult *result = [depth runInferenceForRequest:[NFKInferenceRequest 
 CGImageRef map = (__bridge CGImageRef)[result outputForKey:NFKOutputImage];
 ```
 
+### A live preview of each step (`NFKDiffusionLatentPreview`, Swift)
+
+A sampler takes tens of seconds and a step count says nothing about what is being made. Decoding the
+latent through the autoencoder every step costs more than the sampling does, so the preview is a 1×1
+convolution over the channel axis — twelve weights and three biases for a four-channel latent. It
+arrives as the job's `partialResult`, the same mechanism a streaming text backend uses.
+
+```swift
+var configuration = NFKDiffusionConfiguration(steps: 30, latentChannels: 4)
+configuration.latentPreview = .stableDiffusion   // or .stableDiffusionXL, or .passthrough
+configuration.previewEverySteps = 2              // thin it; 1 previews every step
+
+let job = backend.submitInferenceJob(for: request)
+job.progressHandler = { job in
+    // The preview is a CGImage under the configuration's own output key.
+    if let preview = job.partialResult?.output(forKey: NFKOutputImage) {
+        display(preview)
+    }
+}
+```
+
+`partialResult` holds the **last** non-nil value, so a step that reports no preview still reads as
+having one. Compare identity, not presence, if you need the preview rate.
+
+The shipped coefficients approximate the decode and make no parity claim: against the released SD 1.5
+autoencoder, on a latent encoded from a real photograph, they reproduce the decode's structure at a
+mean-removed correlation of 0.93. Note the map is applied to the **sampler's** latent, which is the
+scaled one — handing it a latent at the autoencoder's own scale washes the preview toward flat grey.
+
+For a model with no published factors, derive one from its own decoder:
+
+```swift
+let map = NFKDiffusionLatentPreview.fitted(
+    latentChannels: 4,
+    decode: { latent in myAutoencoder.decode(latent) },
+    sample: { index in MLXRandom.normal([32, 32, 4], key: MLXRandom.key(UInt64(index))) })
+```
+
+A preview is a progress indicator, so a map whose channel count does not match the latent returns nil
+rather than failing the run it is only reporting on.
+
 ### Stable Diffusion inpainting (`NFKMLXStableDiffusionInpaint`)
 
 `NFKMLXStableDiffusionInpaint` is a latent-diffusion inpainter on top of `NFKMLXDiffusionBackend`: a
@@ -701,7 +890,7 @@ Two categories share the registry:
 
 | Category | Names | What they are |
 | --- | --- | --- |
-| Real models | `real-esrgan-x4` / `-x4-anime` / `-x2`, `depth-anything-v2-small` / `-base` / `-large`, `u2net`, `u2netp`, `nafnet`, `sam`, `rife`, `raft`, `whisper-tiny`, `demucs`, `htdemucs`, `lama-inpaint`, `sd-inpaint`, `marigold-depth`, `sd-x4-upscaler` | Real architectures that load a real safetensors checkpoint (upscale, depth, background removal, restoration, segmentation, interpolation, optical flow, transcription, stem separation, inpaint). |
+| Real models | `real-esrgan-x4` / `-x4-anime` / `-x2`, `depth-anything-v2-small` / `-base` / `-large`, `u2net`, `u2netp`, `nafnet`, `sam`, `rife`, `raft`, `whisper-tiny`, `demucs`, `htdemucs`, `lama-inpaint`, `sd-inpaint`, `marigold-depth`, `sd-x4-upscaler`, `minimax-music3` | Real architectures that load a real safetensors checkpoint (upscale, depth, background removal, restoration, segmentation, interpolation, optical flow, transcription, stem separation, inpaint, music generation — `minimax-music3` takes the release DIRECTORY as its weights URL). |
 | Reference stand-ins | `green-screen-keyer`, `tone-speech`, `diffusion-upscaler`, `diffusion-depth`, `diffusion-inpaint` | Working pipelines with a synthetic (non-trained) forward. They prove the I/O shape and the loop; the `diffusion-*` ones are oracle-driven stand-ins for the diffusion backend, not trained models. |
 
 So `diffusion-depth` (a diffusion-loop stand-in) and `depth-anything-v2-small` (a real depth network)
@@ -782,6 +971,16 @@ CPU where a graphics device is contended.
 [NFKMLXGPU setCacheLimit:48 * 1024 * 1024];   // bound the buffer cache (bytes)
 NSInteger active = NFKMLXGPU.activeMemory;    // live bytes; also cacheMemory / peakMemory
 [NFKMLXGPU clearCache];                        // return the cache to the system
+
+// What the machine has, for sizing a model before loading it. The recommended working set is
+// Metal's own budget and is well below the physical total, which is the number to size against.
+NSInteger budget = NFKMLXGPU.recommendedWorkingSetSize;
+NSInteger reclaimable = NFKMLXGPU.reclaimableMemory;   // the cache; clearCache returns exactly this
+double pressure = NFKMLXGPU.memoryPressure;            // active memory as a share of the budget
+
+// One call at startup instead of remembering clearCache at every model boundary: a standing cache
+// cap plus a soft memory limit derived from that budget.
+[NFKMLXGPU applyStandingLimits];
 
 [NFKMLXDevice performOnDeviceType:NFKMLXDeviceTypeCPU block:^{
     result = [backend runInferenceForRequest:request error:&error];
@@ -947,6 +1146,20 @@ let speakers    = try NFKMLXConvTasNet.backend(weightsURL: nil)               //
 let clean       = try NFKMLXDenoiser.backend(weightsURL: nil)                  // audio → NFKOutputAudio
 let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       // result.segments : [NFKAudioSegment]
 let tagger      = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)  // result.classifications : [NFKClassification]
+
+// Music generation (MiniMax Music 3): a description under NFKInputPrompt and lyrics under
+// NFKInputLyrics become a stereo 44.1 kHz NFKAudioAsset. The factory takes the downloaded release
+// DIRECTORY (the MiniMaxAI/MiniMax-Music3 tree, ~27 GB) — there is no random-weights form, and
+// isReady reports whether the weights are present. The weights carry the MiniMax-Music3 Community
+// License (UI attribution in commercial products); see Docs/companions.md.
+let music = try NFKMLXMusic3.backend(directoryURL: releaseDirectory)           // "minimax-music3"
+// NFKParameterDurationSeconds bounds the clip (the model may stop earlier, cap six minutes);
+// NFKParameterSeed makes a take repeatable; NFKParameterSteps and NFKParameterGuidanceScale drive
+// the flow-matching stage.
+// A one-time quantize (4-bit language model, 8-bit DiT — the measured split) shrinks the release
+// to ~9 GiB; the same factory takes the result, and a stack that small stays loaded between runs:
+try NFKMLXMusic3.quantizeRelease(at: releaseDirectory, to: quantizedDirectory)
+let residentMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory)
 ```
 
 Video models expose a clip-level Swift API, while the module/matting backend does one frame at a time.

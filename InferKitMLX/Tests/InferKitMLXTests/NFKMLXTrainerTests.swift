@@ -217,4 +217,74 @@ final class NFKMLXTrainerTests: XCTestCase {
 
         XCTAssertFalse(model.training)
     }
+
+    // MARK: Bounding the update
+
+    // A gradient can be entirely finite while the SUM of its squares is not. The direct norm then
+    // comes back infinite, `maxNorm / infinity` is zero, and the whole update is scaled to nothing —
+    // silently, because the loss never stops being finite.
+    func testAGradientWhoseSquaresOverflowIsStillScaledToTheNorm() throws {
+        try requireMLXRuntime()
+        let huge = Float(3e20)      // finite in Float; its square is not
+        let gradients = ModuleParameters.unflattened([
+            ("a", MLXArray([huge, -huge])),
+            ("b", MLXArray([huge]))
+        ])
+        XCTAssertFalse((huge * huge).isFinite, "the premise: squaring this overflows")
+
+        let bounded = NFKMLXTrainer.bounded(gradients, maxNorm: 1)
+        let values = bounded.flattened().map { $0.1 }
+        eval(values)
+
+        // The norm is computed in Swift over the bounded values, which are ordinary magnitudes. Doing
+        // it in MLX against the ORIGINAL scale would square numbers around 1e-21, and Metal flushes
+        // subnormals to zero — the norm would read 0 whatever the gradients held.
+        let flat = values.flatMap { $0.asArray(Float.self) }
+        let norm = Float(sqrt(flat.reduce(Double(0)) { $0 + Double($1) * Double($1) }))
+
+        XCTAssertTrue(flat.allSatisfy(\.isFinite), "the bounded gradients are finite")
+        XCTAssertGreaterThan(norm, 0, "and are NOT scaled to zero, which is the failure being guarded")
+        XCTAssertLessThanOrEqual(norm, 1.001, "the global norm is bounded by maxNorm")
+    }
+
+    // One non-finite entry would poison the norm and with it every other parameter's update.
+    func testNonFiniteGradientEntriesAreZeroedRatherThanPoisoningTheRest() throws {
+        try requireMLXRuntime()
+        let gradients = ModuleParameters.unflattened([
+            ("good", MLXArray([Float(3), 4])),
+            ("bad", MLXArray([Float.nan, .infinity, -.infinity]))
+        ])
+        let bounded = NFKMLXTrainer.bounded(gradients, maxNorm: 100)
+        let byName = Dictionary(uniqueKeysWithValues: bounded.flattened())
+        eval(Array(byName.values))
+
+        XCTAssertEqual(byName["bad"]!.asArray(Float.self), [0, 0, 0],
+                       "the non-finite entries became zero")
+        // maxNorm is above the good gradient's own norm of 5, so it passes through unscaled.
+        let good = byName["good"]!.asArray(Float.self)
+        XCTAssertEqual(good[0], 3, accuracy: 1e-4, "the finite gradient survived intact")
+        XCTAssertEqual(good[1], 4, accuracy: 1e-4)
+    }
+
+    // Below the bound, the gradients must not be touched at all.
+    func testGradientsInsideTheBoundPassThroughUnscaled() throws {
+        try requireMLXRuntime()
+        let gradients = ModuleParameters.unflattened([("g", MLXArray([Float(0.3), 0.4]))])
+        let bounded = NFKMLXTrainer.bounded(gradients, maxNorm: 10)
+        let values = bounded.flattened()[0].1
+        eval(values)
+        let array = values.asArray(Float.self)
+        XCTAssertEqual(array[0], 0.3, accuracy: 1e-5)
+        XCTAssertEqual(array[1], 0.4, accuracy: 1e-5)
+    }
+
+    // An all-zero gradient set divides by the norm floor rather than by zero.
+    func testAnAllZeroGradientSetIsHandledWithoutProducingNaN() throws {
+        try requireMLXRuntime()
+        let gradients = ModuleParameters.unflattened([("g", MLXArray([Float(0), 0, 0]))])
+        let bounded = NFKMLXTrainer.bounded(gradients, maxNorm: 1)
+        let values = bounded.flattened()[0].1
+        eval(values)
+        XCTAssertTrue(values.asArray(Float.self).allSatisfy { $0 == 0 })
+    }
 }

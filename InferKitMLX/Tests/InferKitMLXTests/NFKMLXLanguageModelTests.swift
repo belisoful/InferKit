@@ -281,4 +281,112 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         ]])
         XCTAssertEqual(NFKMLXLanguageBackend.prompt(from: request), "be brief\nhello")
     }
+
+    // MARK: A bounded cache
+
+    // The window is the whole point: memory stops growing with the conversation.
+    func testAWindowedCacheStopsGrowing() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 8)
+        for token in 0 ..< 40 {
+            _ = net(MLXArray([Int32(token % 100)]).reshaped([1, 1]), cache: cache)
+        }
+        XCTAssertEqual(cache.offset, 40, "the position count is absolute and keeps counting")
+        XCTAssertLessThanOrEqual(cache.retainedLength(), 8, "but the rows retained are bounded")
+        XCTAssertGreaterThan(cache.retainedLength(), 1)
+    }
+
+    // An unbounded cache retains everything, which is what makes the bound a deliberate choice.
+    func testAnUnboundedCacheRetainsEveryPosition() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        for token in 0 ..< 12 {
+            _ = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+        }
+        XCTAssertEqual(cache.offset, 12)
+        XCTAssertEqual(cache.retainedLength(), 12)
+    }
+
+    // The exactness condition. While the sequence fits inside the window, a bounded cache has dropped
+    // nothing, so it must agree with an unbounded one to the last bit. Past the window it diverges,
+    // and that divergence is the approximation being bought — not a defect.
+    func testABoundedCacheIsExactUntilItStartsDropping() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let prompt: [Int32] = [3, 17, 42, 8, 91, 12, 55, 7]
+        let window = 6
+
+        let unbounded = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let bounded = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: window)
+
+        for (index, token) in prompt.enumerated() {
+            let a = net(MLXArray([token]).reshaped([1, 1]), cache: unbounded)
+            let b = net(MLXArray([token]).reshaped([1, 1]), cache: bounded)
+            eval(a, b)
+            let worst = zip(a[0, -1].asArray(Float.self), b[0, -1].asArray(Float.self))
+                .map { abs($0 - $1) }.max() ?? 0
+            if index < window {
+                XCTAssertLessThan(worst, 1e-5,
+                                  "step \(index) is inside the window, so nothing has been dropped")
+            }
+        }
+        XCTAssertEqual(unbounded.retainedLength(), prompt.count)
+        XCTAssertLessThanOrEqual(bounded.retainedLength(), window)
+    }
+
+    // A prefill longer than one token must still agree, which is where the mask width matters: it is
+    // built against the rows the pass will actually see, not against the absolute position count.
+    func testAPrefillIntoABoundedCacheAgreesWithSteppingIntoIt() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let prompt: [Int32] = [5, 9, 11, 2]
+
+        let stepped = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 16)
+        var last = MLXArray.zeros([1])
+        for token in prompt {
+            last = net(MLXArray([token]).reshaped([1, 1]), cache: stepped)[0, -1]
+        }
+        let prefilled = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 16)
+        let whole = net(MLXArray(prompt).reshaped([1, prompt.count]), cache: prefilled)[0, -1]
+        eval(last, whole)
+
+        XCTAssertEqual(stepped.offset, prefilled.offset)
+        let worst = zip(last.asArray(Float.self), whole.asArray(Float.self))
+            .map { abs($0 - $1) }.max() ?? 0
+        XCTAssertLessThan(worst, 2e-3, "a prefill and a walk reach the same state")
+    }
+
+    // A prefill that follows a trim is the case the mask width was wrong for before: the cache holds
+    // fewer rows than the offset says, and a mask sized to the offset would not match the keys.
+    func testAPrefillAfterTheWindowHasTrimmedStillRuns() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 4)
+        for token in 0 ..< 10 {
+            _ = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+        }
+        XCTAssertGreaterThan(cache.offset, cache.retainedLength(),
+                             "the premise: more seen than retained")
+
+        let logits = net(MLXArray([Int32(1), 2, 3]).reshaped([1, 3]), cache: cache)
+        eval(logits)
+        XCTAssertEqual(logits.shape, [1, 3, net.configuration.vocabularySize])
+        XCTAssertEqual(cache.offset, 13)
+    }
+
+    // The rotary offset is the ABSOLUTE position, so a token's angle does not change when older rows
+    // are dropped. Reusing the retained count here would silently rewind every remaining position.
+    func testTheRotaryOffsetIgnoresWhatTheWindowDropped() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 4)
+        for token in 0 ..< 9 {
+            _ = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+        }
+        XCTAssertEqual(cache.offset, 9)
+        XCTAssertLessThanOrEqual(cache.retainedLength(), 4)
+        XCTAssertEqual(cache.maskCacheLength, 3, "one short of the window, which is what a step reads")
+    }
 }

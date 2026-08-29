@@ -45,6 +45,10 @@ extern NSString * const NFKInputAudio;
 /*! The chat messages, an OpenAI-style array of {role, content} dictionaries (NSArray). A text
 	backend uses this when present, otherwise it wraps NFKInputPrompt as one user message. */
 extern NSString * const NFKInputMessages;
+/*! The lyrics a music-generation backend sings (NSString). Structure tags such as [verse] or
+	[chorus] each go on their own line. Distinct from NFKInputPrompt, which describes the music.
+	Introduced in InferKit 0.2.0. */
+extern NSString * const NFKInputLyrics;
 
 #pragma mark Parameter keys (scalar controls)
 

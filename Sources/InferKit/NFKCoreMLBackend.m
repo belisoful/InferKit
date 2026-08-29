@@ -31,12 +31,24 @@ static MTLPixelFormat NFKMTLPixelFormatForIOSurface(IOSurfaceRef surface)
 }
 
 @synthesize modelURL = _modelURL;
+@synthesize computeUnits = _computeUnits;
 
 + (instancetype)backendWithModelURL:(nullable NSURL *)modelURL
 {
 	NFKCoreMLBackend *backend = [[self alloc] init];
 	backend.modelURL = modelURL;
 	return NARC_AUTORELEASE(backend);
+}
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		// MLComputeUnitsCPUOnly is zero, so leaving this unset would quietly move every model to the
+		// CPU. Core ML's own default is All.
+		_computeUnits = MLComputeUnitsAll;
+	}
+	return self;
 }
 
 - (void)dealloc
@@ -146,6 +158,7 @@ static MTLPixelFormat NFKMTLPixelFormatForIOSurface(IOSurfaceRef surface)
 	}
 
 	MLModelConfiguration *configuration = [[MLModelConfiguration alloc] init];
+	configuration.computeUnits = self.computeUnits;
 	MLModel *model = [MLModel modelWithContentsOfURL:compiledURL configuration:configuration error:&error];
 	NARC_RELEASE(configuration);
 	if (model == nil) {

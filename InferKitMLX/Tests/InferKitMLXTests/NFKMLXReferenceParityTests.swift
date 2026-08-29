@@ -20,6 +20,7 @@ import XCTest
 import CoreGraphics
 import InferKit
 import MLX
+import MLXNN
 @testable import InferKitMLX
 
 final class NFKMLXReferenceParityTests: XCTestCase {
@@ -831,6 +832,215 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.9999, "the vocoder matches the reference implementation")
     }
 
+    // MARK: MiniMax Music 3 vocoder
+
+    // Stage 1 of the music port: the Flow-VAE decoder against diffusers' own MiniMaxMusic3Vocoder on
+    // the released checkpoint. A vocoder is a pure function of its latent, so it is the one stage
+    // that reaches measured parity before any other stage exists; the input is the record's own
+    // deterministic standard-normal latent. The reference computes its weight norm as a
+    // parametrization at run time, which is the fusion the Swift loader bakes in at load.
+    func testMusic3VocoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MUSIC3_VOCODER"] else {
+            throw XCTSkip("set IK_PARITY_MUSIC3_VOCODER (run_reference.py music_vocoder)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latents = try XCTUnwrap(arrays["latents"])              // [128, T], the reference's NCL
+        let reference = try XCTUnwrap(arrays["output"])             // [2, samples]
+
+        let net = NFKMLXMusic3.makeVocoder()
+        try NFKMLXMusic3.loadVocoderWeights(into: net, from: weights("IK_VAL_MUSIC3_VOCODER"))
+
+        let wave = net.waveform(latents.transposed(1, 0).expandedDimensions(axis: 0))
+        eval(wave)
+        XCTAssertEqual(wave.shape, [1, latents.shape[1] * 512, 2], "hop 512, stereo")
+
+        let ours = wave[0].transposed(1, 0).reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        XCTAssertEqual(ours.count, theirs.count)
+        let similarity = cosine(ours, theirs)
+        let worst = zip(ours, theirs).map { abs($0 - $1) }.max() ?? 1
+        print("VALIDATION PARITY music3-vocoder: cosine \(similarity), worst |difference| \(worst)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the vocoder matches the reference implementation")
+    }
+
+    // Stage 2a: the RVQ depth decoder against diffusers' own MiniMaxMusic3RVQDepthDecoder. The
+    // record covers every parameter family — the causal transformer forward, all seven codebook
+    // heads, the shared projection, and the offset-packed residual embedding table — because the
+    // pipeline reads them through different paths and a forward alone touches only the first.
+    func testMusic3DepthDecoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MUSIC3_DEPTH"] else {
+            throw XCTSkip("set IK_PARITY_MUSIC3_DEPTH (run_reference.py music_depth)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXMusic3.makeDepthDecoder()
+        try NFKMLXMusic3.loadDepthWeights(into: net, from: weights("IK_VAL_MUSIC3_DEPTH"))
+
+        func check(_ name: String, _ mine: MLXArray, _ referenceKey: String, floor: Double = 0.9999) throws {
+            let reference = try XCTUnwrap(arrays[referenceKey])
+            XCTAssertEqual(mine.shape, reference.shape, "\(name) shape")
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY music3-depth \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, floor, "\(name) matches the reference")
+        }
+
+        let hidden = net.hiddenStates(try XCTUnwrap(arrays["inputs_embeds"]))
+        try check("hidden", hidden, "output")
+        let lastStep = hidden[0..., hidden.shape[1] - 1]
+        let heads = stacked(net.audioHeads.map { $0(lastStep) })
+        try check("heads", heads, "head_logits")
+        try check("projection", net.projection(try XCTUnwrap(arrays["projection_input"])), "projected")
+        let ids = try XCTUnwrap(arrays["embedding_ids"])
+        try check("embedding", net.audioEmbeddings(ids), "embedded")
+    }
+
+    // Stage 2b: the condition encoder against diffusers' own MiniMaxMusic3ConditionEncoder — the
+    // learned softmax blend of the 8 per-codebook hidden states, the scalar gain, the 3-wide
+    // projection, and the exact nearest-neighbor resample onto the latent timeline (13 frames → 44).
+    func testMusic3ConditionEncoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MUSIC3_CONDITION"] else {
+            throw XCTSkip("set IK_PARITY_MUSIC3_CONDITION (run_reference.py music_condition)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden_states"])         // [frames, 8·4096]
+        let reference = try XCTUnwrap(arrays["output"])             // [latents, 2048]
+
+        let net = NFKMLXMusic3.makeConditionEncoder()
+        try NFKMLXMusic3.loadConditionWeights(into: net, from: weights("IK_VAL_MUSIC3_CONDITION"))
+
+        let condition = net.condition(hidden.expandedDimensions(axis: 0))
+        eval(condition)
+        XCTAssertEqual(condition.shape, [1, reference.shape[0], reference.shape[1]],
+                       "the resample lands on the reference's latent count")
+        let similarity = cosine(condition.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY music3-condition: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the condition encoder matches the reference")
+    }
+
+    // Stage 3: the flow-matching DiT against diffusers' own MiniMaxMusic3Transformer1DModel on the
+    // released transformer (float32, sharded). Velocities at three timesteps pin the Fourier
+    // timestep token, and the zero-condition branch pins the CFG path's unconditional forward.
+    func testMusic3DiTMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MUSIC3_DIT"] else {
+            throw XCTSkip("set IK_PARITY_MUSIC3_DIT (run_reference.py music_dit)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latents = try XCTUnwrap(arrays["latents"]).transposed(1, 0).expandedDimensions(axis: 0)
+        let condition = try XCTUnwrap(arrays["condition"]).expandedDimensions(axis: 0)
+
+        let net = NFKMLXMusic3.makeDiT()
+        try NFKMLXMusic3.loadDiTWeights(into: net, from: weights("IK_VAL_MUSIC3_DIT"))
+
+        let cases: [(String, Float, MLXArray)] = [
+            ("t0", 0, condition), ("tmid", 0.5, condition), ("tlate", 1 - 1.0 / 30, condition),
+            ("unconditional", 0.5, MLXArray.zeros(condition.shape)),
+        ]
+        for (name, timestep, conditioning) in cases {
+            let reference = try XCTUnwrap(arrays["velocity_\(name)"])       // [128, L]
+            let velocity = net.velocity(latents: latents, timestep: MLXArray([timestep]),
+                                        condition: conditioning)
+            eval(velocity)
+            let similarity = cosine(
+                velocity[0].transposed(1, 0).reshaped([-1]).asArray(Float.self).map(Double.init),
+                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY music3-dit \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "the \(name) velocity matches the reference")
+        }
+    }
+
+    // Stage 4: the autoregressive stage — the released Qwen3-8B and the depth decoder together,
+    // teacher-forced with the reference's own sampled codes so the comparison measures the networks
+    // rather than two random streams. Both sides run bf16: the model does not fit this machine at
+    // float32. Covered seams: the prompt prefill's last hidden, the first step's raw logits (the
+    // head) and guided band (the CFG + top-k-gate arithmetic), and the fused per-frame hidden
+    // states that condition synthesis — the cache and the depth interleave live in that last one.
+    func testMusic3AutoregressiveStageMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MUSIC3_AR"] else {
+            throw XCTSkip("set IK_PARITY_MUSIC3_AR (run_reference.py music_ar)")
+        }
+        let languageDirectory = try weights("IK_VAL_MUSIC3_LM")
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let textIDs = try XCTUnwrap(arrays["text_ids"])
+        let forcedFrames = try XCTUnwrap(arrays["codes"]).asArray(Int32.self)
+        let codebooks = 8
+        let frames = (0 ..< forcedFrames.count / codebooks).map { frame in
+            (0 ..< codebooks).map { Int(forcedFrames[frame * codebooks + $0]) }
+        }
+
+        let configuration = try NFKMLXLanguage.configuration(
+            fromHuggingFace: languageDirectory.appendingPathComponent("config.json"))
+        let languageModel = NFKMLXLanguage.makeNet(configuration)
+        try NFKMLXLanguage.loadWeights(into: languageModel, fromDirectory: languageDirectory,
+                                       precision: .checkpoint)
+        let depthDecoder = NFKMLXMusic3.makeDepthDecoder()
+        try NFKMLXMusic3.loadDepthWeights(into: depthDecoder, from: weights("IK_VAL_MUSIC3_DEPTH"),
+                                          precision: .checkpoint)
+        let stage = NFKMusic3AutoregressiveStage(languageModel: languageModel,
+                                                 depthDecoder: depthDecoder)
+
+        func similarity(_ mine: MLXArray, _ theirs: MLXArray) -> Double {
+            cosine(mine.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init),
+                   theirs.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        // The prefill and first-step seams, computed the way `generate` computes them.
+        let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount)
+        var lastHidden = languageModel.hiddenStates(
+            fromEmbeddings: languageModel.embed(textIDs), cache: cache)
+        lastHidden = lastHidden[0..., lastHidden.shape[1] - 1]
+        eval(lastHidden)
+        let prefillSimilarity = similarity(lastHidden, try XCTUnwrap(arrays["prefill_hidden"]))
+        print("VALIDATION PARITY music3-ar prefill: cosine \(prefillSimilarity)")
+        XCTAssertGreaterThan(prefillSimilarity, 0.999, "the prompt prefill matches")
+
+        let rawLogits = languageModel.logits(fromHidden: lastHidden).asType(.float32)
+        eval(rawLogits)
+        let referenceLogits = try XCTUnwrap(arrays["first_logits"])
+        let logitsSimilarity = similarity(rawLogits, referenceLogits)
+        print("VALIDATION PARITY music3-ar first logits: cosine \(logitsSimilarity)")
+        XCTAssertGreaterThan(logitsSimilarity, 0.999)
+
+        let offset = NFKMusic3Contract.audioCodeOffset
+        let band = offset ..< offset + NFKMusic3Contract.semanticVocabulary
+        let guided = stage.guidedSemanticLogits(lastHidden: lastHidden)
+        eval(guided)
+        let guidedBand = guided[band].asArray(Float.self)
+        let referenceBand = try XCTUnwrap(arrays["first_guided"])[band].asArray(Float.self)
+        let mineArgmax = guidedBand.indices.max { guidedBand[$0] < guidedBand[$1] }
+        let theirsArgmax = referenceBand.indices.max { referenceBand[$0] < referenceBand[$1] }
+        XCTAssertEqual(mineArgmax, theirsArgmax, "the guided distribution peaks at the same code")
+        // At bf16 the top-50 gate's boundary admits a slightly different tail on each side, so the
+        // sets are compared as sets and the values over their intersection — a masked -1e9 against
+        // a kept value would otherwise swamp the cosine with a disagreement about one candidate.
+        let mineKept = Set(guidedBand.indices.filter { guidedBand[$0] > -1e8 })
+        let theirsKept = Set(referenceBand.indices.filter { referenceBand[$0] > -1e8 })
+        let shared = mineKept.intersection(theirsKept)
+        print("VALIDATION PARITY music3-ar top-k sets: \(shared.count) shared of "
+              + "\(mineKept.count)/\(theirsKept.count)")
+        XCTAssertGreaterThanOrEqual(shared.count, 40, "the top-50 candidate sets agree")
+        let guidedSimilarity = cosine(shared.map { Double(guidedBand[$0]) },
+                                      shared.map { Double(referenceBand[$0]) })
+        print("VALIDATION PARITY music3-ar guided top-k band: cosine \(guidedSimilarity)")
+        XCTAssertGreaterThan(guidedSimilarity, 0.999, "the CFG and top-k gate arithmetic matches")
+
+        // The teacher-forced run: same codes, so the fused hidden states measure prefill, cache,
+        // feedback embedding, and the depth interleave end to end.
+        let generation = try stage.generate(textIDs: textIDs, maxFrames: 3, forcedFrames: frames)
+        let referenceHiddens = try XCTUnwrap(arrays["frame_hiddens"])
+        XCTAssertEqual(generation.frameHiddens.shape,
+                       [1, referenceHiddens.shape[0], referenceHiddens.shape[1]])
+        let hiddensSimilarity = similarity(generation.frameHiddens, referenceHiddens)
+        print("VALIDATION PARITY music3-ar frame hiddens: cosine \(hiddensSimilarity)")
+        XCTAssertGreaterThan(hiddensSimilarity, 0.99, "the fused per-frame hidden states match")
+    }
+
     // MARK: FastSpeech2 acoustic model
 
     // The trained acoustic half of the TTS chain: espnet's LJSpeech-trained conformer FastSpeech2,
@@ -910,7 +1120,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         // The definitive check: energy cannot tell speech from loud noise, but the package's own
         // Whisper — real weights, at parity — can. TTS says the words; ASR must hear them.
         guard let whisperWeights = config["IK_VAL_WHISPER"] else { return }
-        var configuration = NFKMLXWhisperConfiguration()
+        let configuration = NFKMLXWhisperConfiguration()
         let whisper = NFKMLXWhisper.makeNet(configuration)
         try NFKMLXWhisper.loadWeights(into: whisper, from: URL(fileURLWithPath: whisperWeights))
 
@@ -2181,6 +2391,74 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let ourBest = (0 ..< vocabulary).max { ours[base + $0] < ours[base + $1] }
             let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
             XCTAssertEqual(ourBest, theirBest, "position \(position) predicts the same token")
+        }
+    }
+
+    // Follow-on to the music embedding win: the SMALLER Qwen3 releases are TIED, so their input
+    // embedding IS the logit head — `logits(fromHidden:)` routes through `embedTokens.asLinear`, which
+    // becomes a QuantizedEmbedding.asLinear once the embedding is packed. So quantizing the embedding
+    // here quantizes the output projection too, the cost the untied music LM avoided. This measures
+    // that hit against the Qwen3 logit records, at 4-bit and 8-bit, before any tied model packs its
+    // embedding by default. Opt-in: it loads each release several times.
+    func testTheTiedEmbeddingQuantizationCostAgainstTheRecord() throws {
+        try requireMLXRuntime()
+        try XCTSkipUnless(config["IK_QWEN_EMB_PROBE"] == "1",
+                          "set IK_QWEN_EMB_PROBE=1 to probe quantizing a tied model's embedding")
+        let models = [("qwen3-0.6B", "IK_PARITY_QWEN3", "IK_VAL_QWEN3"),
+                      ("qwen3-1.7B", "IK_PARITY_QWEN3_1_7B", "IK_VAL_QWEN3_1_7B")]
+        for (label, recordKey, dirKey) in models {
+            guard let path = config[recordKey], let directory = config[dirKey] else {
+                print("EMB PROBE \(label): skipped (records absent)"); continue
+            }
+            let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+            let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+            let reference = try XCTUnwrap(arrays["output"]).reshaped([-1])
+                .asArray(Float.self).map(Double.init)
+            let release = URL(fileURLWithPath: directory)
+            let configuration = try NFKMLXLanguage.configuration(
+                fromHuggingFace: release.appendingPathComponent("config.json"))
+            XCTAssertTrue(configuration.tiesWordEmbeddings, "\(label) is expected to be tied")
+
+            func measure(_ prepare: (NFKMLXLanguageNet) -> Void) throws -> Double {
+                let net = NFKMLXLanguage.makeNet(configuration)
+                try NFKMLXLanguage.loadWeights(into: net, fromDirectory: release)
+                prepare(net)
+                let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+                eval(logits)
+                let ours = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+                NFKMLXGPU.clearCache()
+                return cosine(ours, reference)
+            }
+
+            func packEmbedding(_ net: NFKMLXLanguageNet, bits: Int) {
+                MLXNN.quantize(model: net, groupSize: 64, bits: bits) { _, layer in
+                    guard let embedding = layer as? Embedding,
+                          !(embedding is QuantizedEmbedding) else { return false }
+                    return embedding.weight.shape[1] % 64 == 0
+                }
+            }
+            let baseline = try measure { _ in }
+            let linear4 = try measure { NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64) }
+            let linear4embedding4 = try measure {
+                NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64, includeEmbeddings: true)
+            }
+            let linear8 = try measure { NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64) }
+            let linear8embedding8 = try measure {
+                NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64, includeEmbeddings: true)
+            }
+            let linear4embedding8 = try measure { net in
+                NFKMLXQuantization.quantize(module: net, bits: 4, groupSize: 64)
+                packEmbedding(net, bits: 8)
+            }
+            print("EMB PROBE \(label): float \(baseline)")
+            print("EMB PROBE \(label): 4-bit Linear \(linear4), +4-bit emb \(linear4embedding4), "
+                  + "+8-bit emb \(linear4embedding8)")
+            print("EMB PROBE \(label): 8-bit Linear \(linear8), +8-bit emb \(linear8embedding8)")
+            XCTAssertGreaterThan(baseline, 0.9999, "\(label) baseline reproduces the record")
+            // The tied embedding at the SAME width as the Linear layers costs almost nothing beyond
+            // the Linear quantization itself, which is the dominant term for these small models.
+            XCTAssertGreaterThan(linear8embedding8, linear8 - 0.01,
+                                 "\(label): packing the tied embedding at 8-bit is nearly free")
         }
     }
 

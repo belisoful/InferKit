@@ -346,7 +346,7 @@ public final class NFKMLXVADBackend: NSObject, NFKInferenceBackend {
     @objc(submitInferenceJobForRequest:)
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 job.finish(with: try self.runInference(for: request))
             } catch {

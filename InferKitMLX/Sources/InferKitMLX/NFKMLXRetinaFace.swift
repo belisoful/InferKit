@@ -202,7 +202,7 @@ final class NFKMLXRetinaFaceNet: Module {
         let c3 = feature
 
         // The FPN fuses top-down with NEAREST resampling, as `F.interpolate` defaults to.
-        var p3 = output3(c3)
+        let p3 = output3(c3)
         var p2 = output2(c2)
         var p1 = output1(c1)
         // The coarsest level is used as produced; only the finer two are fused.
@@ -468,7 +468,7 @@ public final class NFKMLXRetinaFace: NSObject {
 
 /// Detection through RetinaFace, which is what the CodeFormer reference pipeline uses.
 ///
-/// Build one with ``NFKMLXRetinaFace/detector(weightsURL:)`` and hand it to
+/// Build one with ``NFKMLXRetinaFace/detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` and hand it to
 /// `NFKMLXCodeFormer.photoBackend`. It costs a 1.7 MB checkpoint and makes the aligned crop the
 /// reference's own.
 public struct NFKMLXRetinaFaceDetector: NFKMLXFaceDetecting {
@@ -509,7 +509,8 @@ extension NFKMLXRetinaFace {
     ///
     /// Reads `NFKInputImage` and returns `NSArray<NFKDetection *>` under `NFKOutputDetections`, with
     /// boxes normalized 0…1 and the origin top-left, the same convention `NFKMLXYOLO` uses. The five
-    /// landmarks are not carried by `NFKDetection`; use ``detector(weightsURL:)`` when you need them.
+    /// landmarks are not carried by `NFKDetection`; use
+    /// ``detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` when you need them.
     /// A nil `weightsURL` builds random weights. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {

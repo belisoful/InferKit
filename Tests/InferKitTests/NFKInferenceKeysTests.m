@@ -23,6 +23,7 @@
 	XCTAssertEqualObjects(NFKOutputImage, @"image");
 	XCTAssertEqualObjects(NFKOutputVideo, @"video");
 	XCTAssertEqualObjects(NFKInputAudio, @"audio");
+	XCTAssertEqualObjects(NFKInputLyrics, @"lyrics");
 	XCTAssertEqualObjects(NFKOutputAudio, @"audio");
 	XCTAssertEqualObjects(NFKParameterSampleRate, @"sampleRate");
 	XCTAssertEqualObjects(NFKParameterChannelCount, @"channelCount");

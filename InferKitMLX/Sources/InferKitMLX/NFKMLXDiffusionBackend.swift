@@ -33,6 +33,14 @@ public struct NFKDiffusionConfiguration: @unchecked Sendable {
     public var device: MTLDevice?
     /// The result key the decoded image is stored under. Defaults to `NFKOutputImage`.
     public var outputKey: String
+    /// A cheap latent-to-RGB map that turns each step's latent into a thumbnail, reported as the
+    /// job's partial result. `nil` reports progress without a picture.
+    ///
+    /// A full decode per step costs more than the sampling; this is a 1×1 convolution over the
+    /// channel axis, so a preview is effectively free. See ``NFKDiffusionLatentPreview``.
+    public var latentPreview: NFKDiffusionLatentPreview?
+    /// How many steps pass between previews. `1` previews every step.
+    public var previewEverySteps: Int
 
     public init(steps: Int = 20,
                 guidanceScale: Float = 1,
@@ -43,7 +51,9 @@ public struct NFKDiffusionConfiguration: @unchecked Sendable {
                 imageOptions: NFKMLXImageOptions = NFKMLXImageOptions(),
                 outputsTexture: Bool = false,
                 device: MTLDevice? = nil,
-                outputKey: String = NFKOutputImage) {
+                outputKey: String = NFKOutputImage,
+                latentPreview: NFKDiffusionLatentPreview? = nil,
+                previewEverySteps: Int = 1) {
         self.steps = steps
         self.guidanceScale = guidanceScale
         self.strength = strength
@@ -54,6 +64,8 @@ public struct NFKDiffusionConfiguration: @unchecked Sendable {
         self.outputsTexture = outputsTexture
         self.device = device
         self.outputKey = outputKey
+        self.latentPreview = latentPreview
+        self.previewEverySteps = max(previewEverySteps, 1)
     }
 }
 
@@ -174,7 +186,7 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         let encode = self.encode
         let denoise = self.denoise
         let decode = self.decode
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let outputs = try NFKMLXDiffusionBackend.run(request, job: job, configuration: configuration,
                                                              scheduler: scheduler, encode: encode,
@@ -233,12 +245,36 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
                 latent = mask * latent + (1 - mask) * known
             }
             eval(latent)
-            job.reportProgress(Double(i - startIndex + 1) / Double(schedule.count - startIndex))
+            let progress = Double(i - startIndex + 1) / Double(schedule.count - startIndex)
+            job.reportProgress(progress, partialResult: preview(of: latent, step: i - startIndex,
+                                                                configuration: configuration))
         }
 
         let decoded = decode(latent)
         eval(decoded)
         return [configuration.outputKey: try makeOutput(from: decoded, configuration: configuration)]
+    }
+
+    /// A thumbnail of the latent for the job's partial result, or nil when previews are off, this
+    /// step is not a preview step, or the map does not fit the latent.
+    ///
+    /// A preview is a progress indicator, so a failure to build one is not a failure of the run: it
+    /// returns nil rather than throwing, and the loop continues reporting plain progress.
+    private static func preview(of latent: MLXArray, step: Int,
+                                configuration: NFKDiffusionConfiguration) -> NFKInferenceResult? {
+        guard let map = configuration.latentPreview,
+              step % configuration.previewEverySteps == 0,
+              let rgb = map.image(from: latent) else {
+            return nil
+        }
+        eval(rgb)
+        // The preview is always a CGImage: a texture would hand the caller a resource to manage for
+        // a frame that is replaced on the next step.
+        guard let image = try? NFKMLXImageBridge.cgImage(from: rgb,
+                                                         options: configuration.imageOptions) else {
+            return nil
+        }
+        return NFKInferenceResult(outputs: [configuration.outputKey: image])
     }
 
     private static func makeOutput(from array: MLXArray, configuration: NFKDiffusionConfiguration) throws -> Any {

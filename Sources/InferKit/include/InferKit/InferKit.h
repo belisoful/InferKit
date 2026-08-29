@@ -10,6 +10,7 @@
 #ifndef InferKit_h
 #define InferKit_h
 
+#import <InferKit/NFKInferKit.h>
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKModality.h>
 #import <InferKit/NFKInferenceKeys.h>
@@ -27,6 +28,8 @@
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>
 #import <InferKit/NFKCoreMLLanguageBackend.h>
+#import <InferKit/NFKComputePlan.h>
+#import <InferKit/NFKHardwareProfile.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKRemoteProvider.h>

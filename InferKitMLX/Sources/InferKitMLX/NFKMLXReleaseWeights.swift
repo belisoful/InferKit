@@ -43,19 +43,21 @@ enum NFKMLXReleaseWeights {
         return merged
     }
 
-    /// The weight files a release directory holds, single or sharded.
+    /// The weight files a release directory holds, single or sharded. Transformers releases name
+    /// them `model.safetensors`; diffusers components name them `diffusion_pytorch_model.safetensors`.
     static func files(inDirectory directory: URL) throws -> [URL] {
-        let single = directory.appendingPathComponent("model.safetensors")
-        if FileManager.default.fileExists(atPath: single.path) { return [single] }
+        for base in ["model", "diffusion_pytorch_model"] {
+            let single = directory.appendingPathComponent("\(base).safetensors")
+            if FileManager.default.fileExists(atPath: single.path) { return [single] }
 
-        let indexURL = directory.appendingPathComponent("model.safetensors.index.json")
-        guard let data = try? Data(contentsOf: indexURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let weightMap = json["weight_map"] as? [String: String]
-        else {
-            throw NFKMLXError.unsupportedConfiguration(
-                "\(directory.lastPathComponent) holds neither model.safetensors nor a shard index")
+            let indexURL = directory.appendingPathComponent("\(base).safetensors.index.json")
+            if let data = try? Data(contentsOf: indexURL),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let weightMap = json["weight_map"] as? [String: String] {
+                return Set(weightMap.values).sorted().map { directory.appendingPathComponent($0) }
+            }
         }
-        return Set(weightMap.values).sorted().map { directory.appendingPathComponent($0) }
+        throw NFKMLXError.unsupportedConfiguration(
+            "\(directory.lastPathComponent) holds neither model.safetensors nor a shard index")
     }
 }

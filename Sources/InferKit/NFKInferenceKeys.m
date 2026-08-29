@@ -13,6 +13,7 @@ NSString * const NFKInputControl			= @"control";
 NSString * const NFKInputVideo				= @"video";
 NSString * const NFKInputAudio				= @"audio";
 NSString * const NFKInputMessages			= @"messages";
+NSString * const NFKInputLyrics				= @"lyrics";
 
 NSString * const NFKParameterSeed			= @"seed";
 NSString * const NFKParameterSteps			= @"steps";

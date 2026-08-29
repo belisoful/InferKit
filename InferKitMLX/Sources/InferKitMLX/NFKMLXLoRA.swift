@@ -76,16 +76,33 @@ public enum NFKMLXLoRA {
     /// - Throws: `NFKMLXError.loRANotApplicable` when a selected layer cannot be replaced because
     ///   its declaring model stores it in a plain property. MLX can only substitute a child module
     ///   through a `@ModuleInfo` wrapper, and the non-throwing path aborts the process rather than
-    ///   reporting it.
+    ///   reporting it. Also when a selected layer is quantized — see the note below.
+    ///
+    /// **A quantized layer cannot be adapted here.** `QuantizedLinear` is a subclass of `Linear`, so
+    /// it satisfies the predicate's type without announcing itself, and its `weight` is packed
+    /// integers rather than the values the layer computes with. Wrapping one would build a detour
+    /// around a weight that is not a weight. Load the model at float precision to fine-tune it.
     @discardableResult
     public static func apply(to model: Module, rank: Int = 8, alpha: Float = 16,
                              where predicate: (String, Linear) -> Bool = { _, _ in true }) throws -> Int {
+        var quantized: [String] = []
         let replacements = model.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
             guard let linear = layer as? Linear, !(linear is NFKMLXLoRALinear),
                   predicate(path, linear) else {
                 return nil
             }
+            if linear is QuantizedLinear {
+                quantized.append(path)
+                return nil
+            }
             return (path, NFKMLXLoRALinear(base: linear, rank: rank, alpha: alpha))
+        }
+        guard quantized.isEmpty else {
+            throw NFKMLXError.loRANotApplicable(
+                "\(quantized.count) selected layer(s) are quantized (\(quantized.prefix(3).joined(separator: ", "))"
+                + "\(quantized.count > 3 ? ", …" : "")). A quantized layer stores packed integers "
+                + "where a Linear stores its weights, so an adapter built around one adapts nothing. "
+                + "Load the model at float precision, or exclude these layers in the predicate.")
         }
         do {
             try model.update(modules: ModuleChildren.unflattened(replacements), verify: .none)
@@ -110,14 +127,32 @@ public enum NFKMLXLoRA {
     /// - Returns: how many adapters were merged.
     ///
     /// - Throws: `NFKMLXError.loRANotApplicable` if a replacement cannot be written back, which
-    ///   cannot happen for adapters this type applied.
+    ///   cannot happen for adapters this type applied, or if the model has been quantized since the
+    ///   adapters were applied — see the note below.
+    ///
+    /// **Never merge into a quantized base.** A merged weight is `W + (A·B)ᵀ·scale`, and a rank-r
+    /// detour's contribution to any one weight is small by construction. Requantizing that sum snaps
+    /// every contribution below half a quantization step back to the value it started from, so the
+    /// training is discarded silently: the file is the right size, loads without complaint, and holds
+    /// the original model. Merge into full-precision weights and quantize afterward, in that order.
     @discardableResult
     public static func merge(into model: Module) throws -> Int {
+        var quantized: [String] = []
         let replacements = model.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
+            if layer is QuantizedLinear {
+                quantized.append(path)
+                return nil
+            }
             guard let adapted = layer as? NFKMLXLoRALinear else {
                 return nil
             }
             return (path, adapted.merged())
+        }
+        guard quantized.isEmpty else {
+            throw NFKMLXError.loRANotApplicable(
+                "the model holds \(quantized.count) quantized layer(s); merging a low-rank delta into "
+                + "a quantized weight and requantizing rounds the delta away, discarding the training "
+                + "without reporting anything. Merge at float precision, then quantize.")
         }
         do {
             try model.update(modules: ModuleChildren.unflattened(replacements), verify: .none)

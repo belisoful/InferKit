@@ -18,10 +18,10 @@
 //  (square-root-softplus scoring, hash routing on the first layers, bias-shifted top-k after them, the
 //  clamped SwiGLU, the shared expert).
 //
-//  NOT implemented, and named so they are known rather than overlooked: the per-layer key-value
-//  compressor and the learned sparse indexer that selects which compressed positions to attend to,
-//  YaRN rope scaling, the DSpark speculative blocks, the hash-clustering head, and the multi-token
-//  prediction layers. Attention here is dense over the sliding window, which is what the uncompressed
+//  NOT implemented, and named so they are known rather than overlooked: the DSpark speculative blocks
+//  and the multi-token prediction layers. YaRN rope scaling IS implemented now — V4 Pro extends its
+//  window with it, and because it carries no parameters the structural check cannot see whether it is
+//  there, so a Pro run without it would have been silently wrong past the trained length. Attention here is dense over the sliding window, which is what the uncompressed
 //  layers do; a compressed layer needs the indexer to be correct.
 //
 
@@ -75,6 +75,9 @@ public struct NFKMLXDeepSeekConfiguration: Sendable {
 
     /// Per-layer key-value compression ratio; 0 means a layer attends over the window alone.
     public var compressRatios: [Int]
+
+    /// The rotary scaling the release declares. V4 Pro extends its window with YaRN; Flash does not.
+    public var ropeScaling: NFKMLXRoPEScaling?
 
     public init(hiddenSize: Int = 4096, layerCount: Int = 43, vocabularySize: Int = 129_280,
                 rmsEpsilon: Float = 1e-6, headCount: Int = 64, headDimensions: Int = 512,
@@ -144,10 +147,18 @@ final class NFKDeepSeekRotary {
     private let sines: MLXArray
     let width: Int
 
-    init(width: Int, theta: Float, maximumPositions: Int = 4096) {
+    /// The factor the rotated queries and keys carry when the release declares YaRN scaling.
+    let attentionFactor: Float
+
+    init(width: Int, theta: Float, maximumPositions: Int = 4096,
+         scaling: NFKMLXRoPEScaling? = nil) {
         self.width = width
         let pairs = width / 2
-        let frequencies = (0 ..< pairs).map { 1 / powf(theta, Float(2 * $0) / Float(width)) }
+        // A release that extended its window supplies the frequencies; otherwise they come from the
+        // base alone. The blend is `NFKMLXRoPEScaling`'s, measured against transformers.
+        let frequencies = scaling.map { $0.inverseFrequencies(dimensions: width, base: theta) }
+            ?? (0 ..< pairs).map { 1 / powf(theta, Float(2 * $0) / Float(width)) }
+        attentionFactor = scaling?.attentionFactor ?? 1
         let positions = MLXArray((0 ..< maximumPositions).map(Float.init)).reshaped([maximumPositions, 1])
         let angles = positions * MLXArray(frequencies).reshaped([1, pairs])
         cosines = cos(angles)
@@ -164,7 +175,8 @@ final class NFKDeepSeekRotary {
         let c = take(cosines, rows, axis: 0).reshaped([1, 1, length, pairs])
         let s = take(inverse ? -sines : sines, rows, axis: 0).reshaped([1, 1, length, pairs])
 
-        let paired = x.reshaped(x.shape.dropLast() + [pairs, 2])
+        let scaled = attentionFactor == 1 ? x : x * attentionFactor
+        let paired = scaled.reshaped(x.shape.dropLast() + [pairs, 2])
         let even = paired[.ellipsis, 0]
         let odd = paired[.ellipsis, 1]
         let rotated = stacked([even * c - odd * s, even * s + odd * c], axis: -1)
@@ -262,7 +274,8 @@ final class NFKDeepSeekAttention: Module {
 
     init(_ c: NFKMLXDeepSeekConfiguration, compressRatio: Int = 0) {
         configuration = c
-        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.ropeTheta)
+        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.ropeTheta,
+                                 scaling: c.ropeScaling)
         _queryDown.wrappedValue = Linear(c.hiddenSize, c.queryLoRARank, bias: false)
         _queryUp.wrappedValue = Linear(c.queryLoRARank, c.headCount * c.headDimensions, bias: false)
         _latentKeyValue.wrappedValue = Linear(c.hiddenSize, c.headDimensions, bias: false)
@@ -363,8 +376,9 @@ final class NFKDeepSeekMoE: Module {
         let (weights, indices) = gate(flat, tokens: tokens)
         eval(indices)
 
-        // Every token passes through the shared expert; the routed ones add to it.
-        var result = shared(flat)
+        // Every token passes through the shared expert; the routed ones add to it. The subscript
+        // writes below go through MLXArray's own storage, so the binding itself never changes.
+        let result = shared(flat)
         let chosen = indices.asArray(Int32.self)
         let scale = weights.asArray(Float.self)
         let slots = c.activatedExpertCount
@@ -495,7 +509,7 @@ public final class NFKMLXDeepSeek: NSObject {
         func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
         func real(_ key: String, _ fallback: Float) -> Float { (json[key] as? NSNumber)?.floatValue ?? fallback }
 
-        return NFKMLXDeepSeekConfiguration(
+        var resolved = NFKMLXDeepSeekConfiguration(
             hiddenSize: integer("hidden_size", 4096),
             layerCount: integer("num_hidden_layers", 43),
             vocabularySize: integer("vocab_size", 129_280),
@@ -523,6 +537,12 @@ public final class NFKMLXDeepSeek: NSObject {
             swigluLimit: real("swiglu_limit", 10),
             hashLayerCount: integer("num_hash_layers", 3),
             compressRatios: json["compress_ratios"] as? [Int])
+        // V4 Pro extends its window with YaRN, which carries no parameters and so is invisible to the
+        // structural check — a run of Pro without it would be silently wrong past the trained length.
+        resolved.ropeScaling = try NFKMLXRoPEScaling.read(
+            json["rope_scaling"],
+            maximumPositions: integer("max_position_embeddings", 4096))
+        return resolved
     }
 
     /// The module key a release tensor name maps to.
@@ -558,6 +578,11 @@ public final class NFKMLXDeepSeek: NSObject {
     ///   - shapes: the float shape each parameter takes, which is what separates 4-bit from fp8.
     ///     `expectedParameters(for:)` produces it.
     ///
+    /// Each entry is evaluated as it is decoded, so the returned arrays are already materialized and
+    /// only one decode is ever in flight. Returning lazy graphs instead would hold every entry's
+    /// sources and intermediates until the caller evaluated them, which is where the peak memory of a
+    /// shard would otherwise land.
+    ///
     /// Introduced in InferKit 0.1.0.
     public static func dequantized(_ arrays: [String: MLXArray],
                                    shapes: [String: [Int]]) -> [String: MLXArray] {
@@ -569,9 +594,16 @@ public final class NFKMLXDeepSeek: NSObject {
             }
             let packedFourBit = shapes[name].map { $0.count == 2 && value.shape.last == $0[1] / 2 }
                 ?? false
-            result[name] = packedFourBit
+            let decoded = packedFourBit
                 ? NFKMLXDeepSeekQuantization.dequantizeFP4(packedBytes: value, scaleBytes: scale)
                 : NFKMLXDeepSeekQuantization.dequantizeFP8(bytes: value, scaleBytes: scale)
+            // A decode is a lazy graph, and an unevaluated graph pins its sources and its
+            // intermediates. Deferring every entry to one evaluation at the end therefore holds the
+            // whole checkpoint's decode live at once — and the expanded scale array alone is the
+            // weight's full size, so the intermediates dominate. Evaluating here keeps exactly one
+            // decode in flight.
+            eval(decoded)
+            result[name] = decoded
         }
         return result
     }
@@ -739,7 +771,8 @@ final class NFKDeepSeekCompressor: Module {
         _scoreProjection.wrappedValue = Linear(c.hiddenSize, width, bias: false)
         _norm.wrappedValue = RMSNorm(dimensions: headDimensions, eps: c.rmsEpsilon)
         _positionBias.wrappedValue = MLXArray.zeros([ratio, width])
-        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.compressRopeTheta)
+        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.compressRopeTheta,
+                                 scaling: c.ropeScaling)
         super.init()
     }
 
@@ -819,7 +852,8 @@ final class NFKDeepSeekIndexer: Module {
         ropeHeadDimensions = c.ropeHeadDimensions
         topK = c.indexTopK
         self.ratio = ratio
-        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.ropeTheta)
+        rope = NFKDeepSeekRotary(width: c.ropeHeadDimensions, theta: c.ropeTheta,
+                                 scaling: c.ropeScaling)
         _queryUp.wrappedValue = Linear(c.queryLoRARank, c.indexHeadCount * c.indexHeadDimensions,
                                        bias: false)
         _headWeights.wrappedValue = Linear(c.hiddenSize, c.indexHeadCount, bias: false)

@@ -225,4 +225,62 @@ final class NFKMLXLoRATests: XCTestCase {
                        block.parameters().flattened().count,
                        "a merged model is an ordinary model again")
     }
+
+    // MARK: Quantized bases
+
+    // `QuantizedLinear` is a subclass of `Linear`, so it satisfies the predicate's type without
+    // announcing itself, and its `weight` holds packed integers rather than the values the layer
+    // computes with. Adapting one would build a detour around something that is not a weight.
+    func testAdaptingAQuantizedLayerIsRefusedRatherThanSilentlyWrong() throws {
+        try requireMLXRuntime()
+        final class Quantized: Module {
+            @ModuleInfo(key: "q") var q: QuantizedLinear
+            override init() {
+                _q.wrappedValue = QuantizedLinear(Linear(64, 32, bias: false), groupSize: 32, bits: 4)
+            }
+        }
+        let model = Quantized()
+        XCTAssertThrowsError(try NFKMLXLoRA.apply(to: model)) { error in
+            guard case NFKMLXError.loRANotApplicable(let message) = error else {
+                return XCTFail("expected loRANotApplicable, got \(error)")
+            }
+            XCTAssertTrue(message.contains("quantized"), "the message names the reason: \(message)")
+        }
+    }
+
+    // Merging a low-rank delta into a quantized weight and requantizing rounds the delta away, so a
+    // merge that finds a quantized layer refuses rather than writing a checkpoint that silently holds
+    // the original model.
+    func testMergingIntoAQuantizedModelIsRefused() throws {
+        try requireMLXRuntime()
+        final class Mixed: Module {
+            @ModuleInfo(key: "plain") var plain: Linear
+            @ModuleInfo(key: "q") var q: QuantizedLinear
+            override init() {
+                _plain.wrappedValue = Linear(8, 8, bias: false)
+                _q.wrappedValue = QuantizedLinear(Linear(64, 32, bias: false), groupSize: 32, bits: 4)
+            }
+        }
+        let model = Mixed()
+        // Adapt the plain layer only, which is what a caller quantizing afterward would have done.
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model, where: { path, _ in path.contains("plain") }), 1)
+        XCTAssertThrowsError(try NFKMLXLoRA.merge(into: model))
+    }
+
+    // A predicate that excludes the quantized layers still works, so a partly quantized model is not
+    // shut out entirely.
+    func testExcludingTheQuantizedLayersAllowsTheRestToBeAdapted() throws {
+        try requireMLXRuntime()
+        final class Mixed: Module {
+            @ModuleInfo(key: "plain") var plain: Linear
+            @ModuleInfo(key: "q") var q: QuantizedLinear
+            override init() {
+                _plain.wrappedValue = Linear(8, 8, bias: false)
+                _q.wrappedValue = QuantizedLinear(Linear(64, 32, bias: false), groupSize: 32, bits: 4)
+            }
+        }
+        let model = Mixed()
+        let adapted = try NFKMLXLoRA.apply(to: model, where: { path, _ in !path.contains("q") })
+        XCTAssertEqual(adapted, 1)
+    }
 }

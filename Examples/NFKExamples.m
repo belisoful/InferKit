@@ -261,4 +261,61 @@
 	XCTAssertEqualObjects(result.text, @"done");
 }
 
+// Docs/examples.md: Where Core ML actually runs. MLComputeUnits is a request; the plan reports where
+// Core ML would place each operation, without running the model.
+- (void)testExampleWhereCoreMLRuns
+{
+	NFKCoreMLBackend *backend = [NFKCoreMLBackend backendWithModelURL:nil];
+	// MLComputeUnitsCPUOnly is zero, so an unset property would move every model to the CPU.
+	XCTAssertEqual(backend.computeUnits, MLComputeUnitsAll);
+	backend.computeUnits = MLComputeUnitsCPUAndNeuralEngine;
+	XCTAssertEqual(backend.computeUnits, MLComputeUnitsCPUAndNeuralEngine);
+
+	// Whether this OS can answer at all. An older one fails rather than reporting an empty plan,
+	// because "nothing is on the Neural Engine" and "cannot tell" are different answers.
+	if (@available(macOS 14.4, iOS 17.4, tvOS 17.4, *)) {
+		XCTAssertTrue(NFKComputePlan.isAvailable);
+	} else {
+		XCTAssertFalse(NFKComputePlan.isAvailable);
+	}
+
+	NSURL *absent = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+					 URLByAppendingPathComponent:@"inferkit-example-absent.mlmodelc"];
+	NSError *error = nil;
+	NFKComputePlan *plan = [NFKComputePlan planForCompiledModelAtURL:absent
+														computeUnits:backend.computeUnits
+															   error:&error];
+	XCTAssertNil(plan);
+	XCTAssertNotNil(error);
+
+	// With a real .mlmodelc the plan reads:
+	//   plan.describedPlacement            "142 operations: 138 Neural Engine, 4 GPU, 0 CPU, …"
+	//   plan.neuralEngineFraction          the share to watch while tuning a conversion
+	//   plan.operatorNamesOffNeuralEngine  the operators to work on, most frequent first
+}
+
+// Docs/examples.md: Will this model fit? Three ceilings that are not interchangeable, plus a live
+// reading of what is free.
+- (void)testExampleWillThisModelFit
+{
+	NFKHardwareProfile *machine = NFKHardwareProfile.currentProfile;
+	XCTAssertGreaterThan(machine.physicalMemory, 0);
+	XCTAssertGreaterThan(machine.describedMachine.length, 0);
+
+	// Size against Metal's recommendation, not the physical total: it is what the system expects to
+	// stay resident, and it sits below what is installed.
+	if (machine.recommendedWorkingSetSize > 0) {
+		XCTAssertLessThan(machine.recommendedWorkingSetSize, machine.physicalMemory);
+	}
+	// A separate ceiling: one tensor cannot exceed this however much of the budget is unspent.
+	XCTAssertGreaterThanOrEqual(machine.maximumBufferLength, 0);
+
+	// Live — this is the number that decides whether a load succeeds right now.
+	XCTAssertGreaterThan([NFKHardwareProfile availableMemory], 0);
+
+	// Readings degrade rather than throwing, so a machine this was never run on still reports.
+	XCTAssertNotNil(machine.chipName);
+	XCTAssertNotNil(machine.graphicsArchitecture);
+}
+
 @end

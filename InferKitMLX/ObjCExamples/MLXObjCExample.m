@@ -257,6 +257,19 @@
 	XCTAssertEqualObjects(speech.backendIdentifier, @"tone-speech");
 }
 
+- (void)testObjectiveCBuildsTheMusicBackendFromAReleaseDirectory
+{
+	// MiniMax Music 3: NFKInputPrompt (description) + NFKInputLyrics -> a stereo NFKAudioAsset. The
+	// factory takes the downloaded release DIRECTORY — the stack is 27 GB of separately licensed
+	// weights, so there is no random-weights form; isReady reports whether they are present.
+	NSURL *absent = [NSURL fileURLWithPath:@"/nonexistent/minimax-music3"];
+	NSError *error = nil;
+	id<NFKInferenceBackend> music = [NFKMLXMusic3 backendWithDirectoryURL:absent error:&error];
+	XCTAssertNotNil(music, @"%@", error);
+	XCTAssertEqualObjects(music.backendIdentifier, @"minimax-music3");
+	XCTAssertFalse(music.isReady);
+}
+
 - (void)testObjectiveCBuildsShippedModelsViaDirectFactories
 {
 	// The primary path for shipped models: build directly, no register-then-lookup. Building a net
@@ -358,6 +371,33 @@
 	// [NFKMLXDevice performOnDeviceType:NFKMLXDeviceTypeCPU block:^{
 	//     result = [backend runInferenceForRequest:request error:&error];   // needs MLX runtime
 	// }];
+}
+
+// Docs/examples.md: MLX runtime knobs from Objective-C. What the machine has, and the standing caps
+// an app sets once at startup instead of remembering clearCache at every model boundary.
+- (void)testExampleGPUMemoryReportingAndStandingLimits
+{
+	// The recommended working set is Metal's own budget and is well below the physical total, so it
+	// is what a model should be sized against.
+	XCTAssertGreaterThan(NFKMLXGPU.physicalMemory, 0);
+	XCTAssertGreaterThan(NFKMLXGPU.recommendedWorkingSetSize, 0);
+	XCTAssertLessThanOrEqual(NFKMLXGPU.recommendedWorkingSetSize, NFKMLXGPU.physicalMemory);
+	XCTAssertGreaterThan(NFKMLXGPU.deviceArchitecture.length, 0);
+
+	// Cache is reclaimable and active memory is not, which is the distinction a caller deciding
+	// whether to unload a model depends on.
+	XCTAssertEqual(NFKMLXGPU.reclaimableMemory, NFKMLXGPU.cacheMemory);
+	XCTAssertGreaterThanOrEqual(NFKMLXGPU.memoryPressure, 0.0);
+
+	NSInteger previousCache = NFKMLXGPU.cacheLimit;
+	NSInteger previousMemory = NFKMLXGPU.memoryLimit;
+
+	[NFKMLXGPU applyStandingLimits];
+	XCTAssertEqual(NFKMLXGPU.cacheLimit, NFKMLXGPU.defaultCacheCap);
+	XCTAssertGreaterThan(NFKMLXGPU.memoryLimit, 0);
+
+	[NFKMLXGPU setCacheLimit:previousCache];
+	[NFKMLXGPU setMemoryLimit:previousMemory];
 }
 
 @end

@@ -77,7 +77,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
         let job = NFKInferenceJob()
         let synthesize = self.synthesize
         let configuration = self.configuration
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let result = try NFKMLXSpeechBackend.run(request, configuration: configuration, synthesize: synthesize)
                 job.finish(with: result)

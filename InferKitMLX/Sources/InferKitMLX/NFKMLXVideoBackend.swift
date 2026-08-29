@@ -64,8 +64,12 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
 
     /// Builds a video backend around a sequence transform.
     ///
-    /// - Parameter transform: takes every decoded frame as `[H, W, 3]` in `0...1` and returns the
-    ///   frames to write, which need not be the same count.
+    /// - Parameters:
+    ///   - identifier: the backend's `backendIdentifier`.
+    ///   - isReady: whether the backend reports itself ready to run.
+    ///   - configuration: the read/write settings (frame limit, rate change, output size rules).
+    ///   - transform: takes every decoded frame as `[H, W, 3]` in `0...1` and returns the frames to
+    ///     write, which need not be the same count.
     public init(identifier: String, isReady: Bool = true,
                 configuration: NFKMLXVideoConfiguration = NFKMLXVideoConfiguration(),
                 transform: @escaping ([MLXArray]) -> [MLXArray]) {

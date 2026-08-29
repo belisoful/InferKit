@@ -126,6 +126,17 @@ models.
   along the clip; single frame through the module backend, or a sequence via `upscaleSequence`.
 - **`NFKMLXSpeechBackend`** — a bring-your-own MLX text-to-speech backend: a `(String) -> MLXArray`
   waveform closure, written to a WAV file and returned as an `NFKAudioAsset` (text → audio).
+- **`NFKMLXMusicBackend`** — real music generation (MiniMax Music 3): a music description under
+  `NFKInputPrompt` and lyrics under `NFKInputLyrics` become a stereo 44.1 kHz `NFKAudioAsset`. A
+  Qwen3-8B autoregressive stage samples RVQ codes frame by frame, a flow-matching transformer
+  denoises audio latents conditioned on its hidden states over overlapping windows, and a Snake
+  vocoder decodes them — every network measured against the official diffusers implementation on
+  the released weights. Build with `NFKMLXMusic3.backend(directoryURL:)` from the downloaded
+  release tree (~27 GB); the weights are separately licensed — see "Model weight licenses" below.
+  `NFKMLXMusic3.quantizeRelease(at:to:)` writes a quantized copy (4-bit language model, 8-bit DiT —
+  the split is measured: the flow field is the quantization-sensitive stage) that the same factory
+  takes unchanged at **8.9 GiB**, small enough that the backend keeps every stage loaded between
+  runs instead of staging them from disk per request.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
   the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
   the backend runs the denoise loop with per-step progress and cancellation. No source latent runs
@@ -158,3 +169,25 @@ Without the companion, the capability is simply unavailable. Model **weights are
 (not bundled at build time) and cached under Application Support (`NFKHFHub.defaultCacheDirectoryURL`, or
 a host-supplied security-scoped folder); the download blocks, so run it off the main thread or use the
 async `downloadRepo:…completionHandler:` (`try await`).
+
+### Model weight licenses
+
+InferKit's code is MIT and the checkpoints the shipped models load are, with one exception, released
+under MIT or Apache-2.0 terms. Weights are a separately licensed asset your app downloads at runtime;
+the license travels with the checkpoint, not with InferKit.
+
+The exception is **MiniMax Music 3** (`NFKMLXMusicBackend`). Its weights
+(`MiniMaxAI/MiniMax-Music3` on Hugging Face) are under the **MiniMax-Music3 Community License**, which
+is not a permissive license:
+
+- A commercial product or service using the weights must prominently display "MiniMax-Music3" in its
+  user interface (License §3.1).
+- Aggregate yearly revenue above USD 20 million from such products requires separate prior written
+  authorization from MiniMax (License §3.2, `api@minimax.io`).
+- A product or hosted service that lets third parties generate outputs must implement and maintain
+  safeguards against infringing uses and outputs (License §4).
+
+The model's inference code carries no such terms (the architecture derives from Qwen3-8B, Apache-2.0;
+Stable Audio tools, MIT; and the Descript Audio Codec, MIT). The obligations attach to the checkpoint.
+An app that ships the MiniMax music backend accepts these terms on behalf of its own product; review
+the LICENSE file in the weight repository before enabling it commercially.

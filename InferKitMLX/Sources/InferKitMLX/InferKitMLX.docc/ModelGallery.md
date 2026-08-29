@@ -97,7 +97,10 @@ The recurrent models (`NFKMLXRVM`, `NFKMLXVideoSR`) thread a hidden state across
 `NFKMLXDemucs`, `NFKMLXHTDemucs`, `NFKMLXConvTasNet`, and `NFKMLXDenoiser` read `NFKInputAudio` and return one or more
 `NFKAudioAsset`s; `NFKMLXWhisper` returns text; `NFKMLXVAD` returns `[NFKAudioSegment]` under
 `NFKOutputSegments`; `NFKMLXAudioTagger` returns `[NFKClassification]` under `NFKOutputClassifications`;
-`NFKMLXTTS` turns text into a WAV `NFKAudioAsset`.
+`NFKMLXTTS` turns text into a WAV `NFKAudioAsset`. ``NFKMLXMusicBackend`` generates music: a
+description under `NFKInputPrompt` and lyrics under `NFKInputLyrics` become a stereo 44.1 kHz
+`NFKAudioAsset`, built with ``NFKMLXMusic3`` from the downloaded MiniMax Music 3 release directory
+(the weights are separately licensed; the download is ~27 GB).
 
 | Model | Name | Task |
 | --- | --- | --- |
@@ -109,6 +112,7 @@ The recurrent models (`NFKMLXRVM`, `NFKMLXVideoSR`) thread a hidden state across
 | ``NFKMLXVAD`` | `vad-marblenet` | voice-activity detection |
 | ``NFKMLXAudioTagger`` | `audio-tagger-panns` | audio tagging |
 | ``NFKMLXTTS`` | — | text → speech |
+| ``NFKMLXMusicBackend`` | `minimax-music3` | text + lyrics → music |
 
 ## Topics
 

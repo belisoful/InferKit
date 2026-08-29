@@ -446,19 +446,19 @@
       ],
       [
         "refsrc/sam2/__init__.py",
-        ""
+        null
       ],
       [
         "refsrc/sam2/modeling/__init__.py",
-        ""
+        null
       ],
       [
         "refsrc/sam2/modeling/backbones/__init__.py",
-        ""
+        null
       ],
       [
         "refsrc/sam2/utils/__init__.py",
-        ""
+        null
       ],
       [
         "refsrc/hifigan/models.py",
@@ -586,9 +586,9 @@
         "merges.txt",
         "tokenizer_config.json"
       ],
-      "config": [
-        "IK_VAL_QWEN3"
-      ],
+      "config": {
+        "IK_VAL_QWEN3": ""
+      },
       "note": "The smallest Qwen3 dense decoder, 1.4 GB. Its checkpoint ships lm_head.weight even though tie_word_embeddings is true; the two tensors are byte-identical, so the loader drops the duplicate rather than building a projection the tied model does not have."
     },
     {
@@ -601,9 +601,9 @@
         "tokenizer_config.json",
         "model.safetensors"
       ],
-      "config": [
-        "IK_VAL_GEMMA4_E4B"
-      ],
+      "config": {
+        "IK_VAL_GEMMA4_E4B": ""
+      },
       "note": "The next dense Gemma 4 size: 42 layers, hidden 2560, 2 KV heads, kv-shared 18. 16 GB of bf16, which doubles past this machine's RAM at float32 - so its oracle runs under IK_GEMMA_DTYPE=bfloat16 and the Swift side loads at .checkpoint precision."
     },
     {
@@ -614,10 +614,10 @@
         "config.json",
         "model.safetensors.index.json"
       ],
-      "config": [
-        "IK_CONFIG_DEEPSEEK_V4_PRO",
-        "IK_INDEX_DEEPSEEK_V4_PRO"
-      ],
+      "config": {
+        "IK_CONFIG_DEEPSEEK_V4_PRO": "config.json",
+        "IK_INDEX_DEEPSEEK_V4_PRO": "model.safetensors.index.json"
+      },
       "note": "Structural only, like the Flash entry: shapes.json is built from the headers of the shards covering layers 0/3/60 plus the globals, fetched by HTTP range request (~1 MB against 400+ GB). The weights are never downloaded."
     },
     {
@@ -629,10 +629,51 @@
         "pytorch_model.bin",
         "vocab.json"
       ],
-      "config": [
-        "IK_VOCAB_FASTSPEECH2"
-      ],
+      "config": {
+        "IK_VOCAB_FASTSPEECH2": "vocab.json"
+      },
       "note": "The LJSpeech-trained conformer FastSpeech2 and its 78-symbol ARPAbet vocabulary - the matching phoneme table the TTS chain needs. IK_VAL_FASTSPEECH2 is the .bin converted to safetensors (a passthrough that drops num_batches_tracked); the transformers implementation is the oracle."
+    },
+    {
+      "key": "MUSIC3",
+      "repo": "MiniMaxAI/MiniMax-Music3",
+      "directory": "minimax-music3",
+      "files": [
+        "LICENSE",
+        "vocoder/config.json",
+        "vocoder/diffusion_pytorch_model.safetensors",
+        "condition_encoder/config.json",
+        "condition_encoder/diffusion_pytorch_model.safetensors",
+        "rvq_depth_decoder/config.json",
+        "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+        "language_model/config.json",
+        "language_model/model.safetensors.index.json",
+        "language_model/model-00001-of-00004.safetensors",
+        "language_model/model-00002-of-00004.safetensors",
+        "language_model/model-00003-of-00004.safetensors",
+        "language_model/model-00004-of-00004.safetensors",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "qwen_7B/qwen3-8B-tokenizer-music/vocab.json",
+        "qwen_7B/qwen3-8B-tokenizer-music/merges.txt",
+        "qwen_7B/qwen3-8B-tokenizer-music/added_tokens.json"
+      ],
+      "config": {
+        "IK_VAL_MUSIC3_DIR": "",
+        "IK_VAL_MUSIC3_VOCODER": "vocoder/diffusion_pytorch_model.safetensors",
+        "IK_VAL_MUSIC3_CONDITION": "condition_encoder/diffusion_pytorch_model.safetensors",
+        "IK_VAL_MUSIC3_DEPTH": "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
+        "IK_VAL_MUSIC3_DIT": "transformer",
+        "IK_VAL_MUSIC3_LM": "language_model",
+        "IK_VAL_MUSIC3_TOKENIZER": "tokenizer",
+        "IK_VAL_MUSIC3_BPE": "qwen_7B/qwen3-8B-tokenizer-music"
+      },
+      "note": "MiniMax Music 3, the Diffusers-format release, fetched component by component as the port lands each stage (vocoder so far; condition_encoder, rvq_depth_decoder, transformer, language_model follow). The official checkpoint is already safetensors, so it is used in place: the Swift loader fuses the weight-norm pairs and transposes the conv layouts itself, and the diffusers implementation (>= 0.40.0, MiniMaxMusic3Vocoder et al.) is the oracle. THE WEIGHTS ARE NOT PERMISSIVELY LICENSED - the MiniMax-Music3 Community License requires UI attribution in commercial products and separate authorization above USD 20M yearly revenue; see Docs/companions.md and the LICENSE fetched beside the weights."
     },
     {
       "key": "WHISPER_TOKENIZER",
@@ -642,9 +683,9 @@
         "vocab.json",
         "merges.txt"
       ],
-      "config": [
-        "IK_TOKENIZER_WHISPER"
-      ],
+      "config": {
+        "IK_TOKENIZER_WHISPER": ""
+      },
       "note": "The multilingual byte-level BPE vocabulary, which the voice loop-closure test uses to read Whisper's transcription of the synthesized speech."
     }
   ],
@@ -668,6 +709,19 @@
       "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors",
       "modes": [
         "qwen3"
+      ]
+    },
+    "music": {
+      "interpreter": "~/.inferkit-validation/musicvenv/bin/python3",
+      "why": "MiniMax Music 3's official implementation is in diffusers >= 0.40.0 (MiniMaxMusic3Vocoder, MiniMaxMusic3RVQDepthDecoder, MiniMaxMusic3ConditionEncoder, the flow-matching DiT), which cannot share the pinned diffusers 0.31.0 the SD records were measured against, so the music_* modes run under their own interpreter.",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/musicvenv && ~/.inferkit-validation/musicvenv/bin/python3 -m pip install 'diffusers==0.40.0' 'transformers>=5' torch safetensors accelerate",
+      "modes": [
+        "music_vocoder",
+        "music_depth",
+        "music_condition",
+        "music_dit",
+        "music_ar",
+        "music_tokenizer"
       ]
     },
     "gemma": {

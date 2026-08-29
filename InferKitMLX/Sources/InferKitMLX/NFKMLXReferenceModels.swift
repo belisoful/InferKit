@@ -61,6 +61,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXBiSeNet.register()
         NFKMLXBiSeNetV2.register()
         NFKMLXVideoSR.register()
+        NFKMLXMusic3.register()
     }
 
     /// Registers a simple text-to-speech synthesizer under `"tone-speech"`. The synth turns each

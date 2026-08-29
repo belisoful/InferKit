@@ -81,4 +81,72 @@ final class NFKMLXRuntimeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(NFKMLXGPU.peakMemory, 0)
         XCTAssertGreaterThanOrEqual(NFKMLXGPU.memoryLimit, 0)
     }
+
+    // MARK: What the machine has
+
+    func testTheMachineReportsItsMemoryAndArchitecture() throws {
+        try requireMLXRuntime()
+        XCTAssertGreaterThan(NFKMLXGPU.physicalMemory, 0, "the host reports its RAM")
+        XCTAssertGreaterThan(NFKMLXGPU.recommendedWorkingSetSize, 0, "Metal recommends a working set")
+        XCTAssertLessThanOrEqual(NFKMLXGPU.recommendedWorkingSetSize, NFKMLXGPU.physicalMemory,
+                                 "the recommendation cannot exceed the machine")
+        XCTAssertFalse(NFKMLXGPU.deviceArchitecture.isEmpty)
+    }
+
+    // Cache is reclaimable and active memory is not, which is the distinction a caller deciding
+    // whether to unload a model depends on.
+    func testReclaimableMemoryTracksTheCacheAndIsFreedByClearing() throws {
+        try requireMLXRuntime()
+        let previous = NFKMLXGPU.cacheLimit
+        defer { NFKMLXGPU.setCacheLimit(previous) }
+        NFKMLXGPU.setCacheLimit(64 * 1024 * 1024)
+
+        // Allocate and drop, which leaves buffers in the cache rather than returning them.
+        for _ in 0 ..< 4 {
+            let scratch = MLXArray.zeros([256, 256])
+            eval(scratch)
+        }
+        XCTAssertEqual(NFKMLXGPU.reclaimableMemory, NFKMLXGPU.cacheMemory)
+        NFKMLXGPU.clearCache()
+        XCTAssertEqual(NFKMLXGPU.reclaimableMemory, 0, "clearing returns the cache to the system")
+    }
+
+    func testMemoryPressureIsAFractionOfTheRecommendedWorkingSet() throws {
+        try requireMLXRuntime()
+        let pressure = NFKMLXGPU.memoryPressure
+        XCTAssertGreaterThanOrEqual(pressure, 0)
+        XCTAssertLessThan(pressure, 1.5, "a plausible share of the budget")
+    }
+
+    func testStandingLimitsApplyBothCapsAndCanBeRestored() throws {
+        try requireMLXRuntime()
+        let previousCache = NFKMLXGPU.cacheLimit
+        let previousMemory = NFKMLXGPU.memoryLimit
+        defer {
+            NFKMLXGPU.setCacheLimit(previousCache)
+            NFKMLXGPU.setMemoryLimit(previousMemory)
+        }
+
+        NFKMLXGPU.applyStandingLimits()
+        XCTAssertEqual(NFKMLXGPU.cacheLimit, NFKMLXGPU.defaultCacheCap)
+        XCTAssertGreaterThan(NFKMLXGPU.memoryLimit, 0)
+        XCTAssertLessThanOrEqual(NFKMLXGPU.memoryLimit, NFKMLXGPU.recommendedWorkingSetSize)
+    }
+
+    // Passing zero leaves the memory limit alone, so a caller can cap the cache without also
+    // committing to a memory ceiling.
+    func testStandingLimitsLeaveTheMemoryLimitAloneWhenTheFractionIsZero() throws {
+        try requireMLXRuntime()
+        let previousCache = NFKMLXGPU.cacheLimit
+        let previousMemory = NFKMLXGPU.memoryLimit
+        defer {
+            NFKMLXGPU.setCacheLimit(previousCache)
+            NFKMLXGPU.setMemoryLimit(previousMemory)
+        }
+
+        NFKMLXGPU.applyStandingLimits(cacheBytes: 32 * 1024 * 1024,
+                                      fractionOfRecommendedWorkingSet: 0)
+        XCTAssertEqual(NFKMLXGPU.cacheLimit, 32 * 1024 * 1024)
+        XCTAssertEqual(NFKMLXGPU.memoryLimit, previousMemory)
+    }
 }

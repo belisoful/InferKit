@@ -76,4 +76,37 @@ final class NFKMLXCheckpointRoundTripTests: XCTestCase {
             try NFKMLXDemucs.loadWeights(into: net as! NFKMLXDemucsNet, from: url)
         }
     }
+
+    // A saved music vocoder is already fused and in the module's layout, so the loader must skip both
+    // the weight-norm fusion and every transpose — the alpha reshape included, which is this model's
+    // own variant of the double-transpose hazard.
+    func testMusic3VocoderRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXMusic3.makeVocoder(.tiny), into: NFKMLXMusic3.makeVocoder(.tiny)) { net, url in
+            try NFKMLXMusic3.loadVocoderWeights(into: net as! NFKMusic3VocoderNet, from: url)
+        }
+    }
+
+    func testMusic3DepthDecoderRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXMusic3.makeDepthDecoder(.tiny),
+                             into: NFKMLXMusic3.makeDepthDecoder(.tiny)) { net, url in
+            try NFKMLXMusic3.loadDepthWeights(into: net as! NFKMusic3DepthDecoderNet, from: url)
+        }
+    }
+
+    func testMusic3DiTRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXMusic3.makeDiT(.tiny), into: NFKMLXMusic3.makeDiT(.tiny)) { net, url in
+            try NFKMLXMusic3.loadDiTWeights(into: net as! NFKMusic3DiTNet, from: url)
+        }
+    }
+
+    func testMusic3ConditionEncoderRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXMusic3.makeConditionEncoder(.tiny),
+                             into: NFKMLXMusic3.makeConditionEncoder(.tiny)) { net, url in
+            try NFKMLXMusic3.loadConditionWeights(into: net as! NFKMusic3ConditionEncoderNet, from: url)
+        }
+    }
 }

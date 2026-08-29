@@ -2341,6 +2341,253 @@ def run_hifigan(image, checkpoint):
     return wave.float().contiguous()
 
 
+def run_music_vocoder(image, checkpoint):
+    """The MiniMax Music 3 Flow-VAE decoder (diffusers' own MiniMaxMusic3Vocoder) on the released
+    vocoder component.
+
+    `--checkpoint` is the release's `vocoder/` DIRECTORY (config.json + the weight-normed float32
+    safetensors); diffusers applies the weight norm itself, which is the arithmetic the Swift loader
+    fuses at load. The input is a deterministic standard-normal latent `[1, 128, T]` — the vocoder is
+    a pure function of it, so nothing about music is assumed — recorded beside the stereo waveform it
+    produces. Runs under the `music` oracle environment (diffusers >= 0.40.0)."""
+    from diffusers import MiniMaxMusic3Vocoder
+
+    vocoder = MiniMaxMusic3Vocoder.from_pretrained(checkpoint).eval()
+    generator = np.random.default_rng(11)
+    latents = torch.from_numpy(generator.standard_normal((1, 128, 64)).astype(np.float32))
+    with torch.no_grad():
+        wave = vocoder(latents)[0]
+
+    globals()["_extra"] = {"latents": latents[0].contiguous()}
+    return wave.float().contiguous()
+
+
+def run_music_depth(image, checkpoint):
+    """The MiniMax Music 3 RVQ depth decoder (diffusers' own MiniMaxMusic3RVQDepthDecoder) on the
+    released component.
+
+    `--checkpoint` is the release's `rvq_depth_decoder/` DIRECTORY. The record covers every parameter
+    family: the transformer forward on a deterministic depth sequence (position embedding, the four
+    causal blocks, the final norm), all seven codebook heads on the last step, the shared projection,
+    and the offset-packed residual embedding table. The release ships bf16; both sides run float32.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0)."""
+    from diffusers import MiniMaxMusic3RVQDepthDecoder
+
+    decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    generator = np.random.default_rng(13)
+    inputs = torch.from_numpy(generator.standard_normal((2, 8, 4096)).astype(np.float32))
+    projection_input = torch.from_numpy(generator.standard_normal((2, 4096)).astype(np.float32))
+    ids = torch.from_numpy(generator.integers(0, 1024 * 7, size=(2, 7)))
+    with torch.no_grad():
+        hidden = decoder(inputs)
+        head_logits = torch.stack([head(hidden[:, -1]) for head in decoder.audio_heads])
+        projected = decoder.projection(projection_input)
+        embedded = decoder.audio_embeddings(ids)
+
+    globals()["_extra"] = {
+        "inputs_embeds": inputs.contiguous(),
+        "head_logits": head_logits.float().contiguous(),
+        "projection_input": projection_input.contiguous(),
+        "projected": projected.float().contiguous(),
+        "embedding_ids": ids.to(torch.int32).contiguous(),
+        "embedded": embedded.float().contiguous(),
+    }
+    return hidden.float().contiguous()
+
+
+def run_music_condition(image, checkpoint):
+    """The MiniMax Music 3 condition encoder (diffusers' own MiniMaxMusic3ConditionEncoder) on the
+    released component.
+
+    `--checkpoint` is the release's `condition_encoder/` DIRECTORY. The input is a deterministic
+    stand-in for the fused per-frame hidden states `[1, frames, 8 * 4096]`; the output is the
+    latent-aligned conditioning, which pins the learned softmax blend, the projection, and the exact
+    nearest-neighbor resample from 13 frames to int(13 * 44100/24000 * 960/512) = 44 latents.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0)."""
+    from diffusers import MiniMaxMusic3ConditionEncoder
+
+    encoder = MiniMaxMusic3ConditionEncoder.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    generator = np.random.default_rng(17)
+    hidden = torch.from_numpy(generator.standard_normal((1, 13, 8 * 4096)).astype(np.float32))
+    with torch.no_grad():
+        condition = encoder(hidden)
+
+    globals()["_extra"] = {"hidden_states": hidden[0].contiguous()}
+    return condition[0].float().contiguous()
+
+
+def run_music_dit(image, checkpoint):
+    """The MiniMax Music 3 flow-matching DiT (diffusers' own MiniMaxMusic3Transformer1DModel) on the
+    released component, plus the sigma schedule from diffusers' own FlowMatchEulerDiscreteScheduler.
+
+    `--checkpoint` is the RELEASE ROOT (the transformer loads from its `transformer/` subfolder and
+    the scheduler config from `scheduler/`). Velocities are recorded at three timesteps and for the
+    zero-condition unconditional branch, because the CFG path runs both; the sigma record pins the
+    `invert_sigmas` schedule the pipeline drives the sampler with. The component ships float32.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0)."""
+    import os
+    from diffusers import FlowMatchEulerDiscreteScheduler, MiniMaxMusic3Transformer1DModel
+
+    model = MiniMaxMusic3Transformer1DModel.from_pretrained(
+        os.path.join(checkpoint, "transformer"), torch_dtype=torch.float32).eval()
+    generator = np.random.default_rng(19)
+    length = 24
+    latents = torch.from_numpy(generator.standard_normal((1, 128, length)).astype(np.float32))
+    condition = torch.from_numpy((generator.standard_normal((1, length, 2048)) * 0.5).astype(np.float32))
+
+    extra = {"latents": latents[0].contiguous(), "condition": condition[0].contiguous()}
+    with torch.no_grad():
+        for name, t in (("t0", 0.0), ("tmid", 0.5), ("tlate", 1.0 - 1.0 / 30.0)):
+            velocity = model(latents, torch.tensor([t]), condition, return_dict=False)[0]
+            extra[f"velocity_{name}"] = velocity[0].float().contiguous()
+        unconditional = model(latents, torch.tensor([0.5]), torch.zeros_like(condition), return_dict=False)[0]
+        extra["velocity_unconditional"] = unconditional[0].float().contiguous()
+
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(os.path.join(checkpoint, "scheduler"))
+    steps = 30
+    scheduler.set_timesteps(sigmas=np.linspace(1.0, 1.0 / steps, steps))
+    extra["sigmas"] = scheduler.sigmas.float().contiguous()
+    extra["timesteps"] = scheduler.timesteps.float().contiguous()
+
+    globals()["_extra"] = extra
+    # `output` must not alias an extra: safetensors refuses tensors that share memory.
+    return extra["velocity_tmid"].clone()
+
+
+def run_music_ar(image, checkpoint):
+    """The MiniMax Music 3 autoregressive stage: the released Qwen3-8B language model and the depth
+    decoder driven by the Diffusers pipeline's OWN helper functions (`_sample_top_k`,
+    `_generate_depth_codes`, `_embed_audio_frame`, the prompt cleaners), teacher-forceably.
+
+    `--checkpoint` is the RELEASE ROOT. The record carries the assembled prompt pair, every sampled
+    code per loop iteration (so the Swift side replays the same choices and the comparison measures
+    the networks rather than two random streams), the prompt prefill's last hidden state, the first
+    step's raw and guided logits, and the fused per-frame hidden states that condition synthesis.
+    Both sides run bf16 — the model does not fit this machine at float32.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0, transformers >= 5)."""
+    import os
+
+    from diffusers import MiniMaxMusic3RVQDepthDecoder
+    from diffusers.modular_pipelines.minimax_music3 import encoders as ref
+    from transformers import Qwen2Tokenizer, Qwen3ForCausalLM
+
+    lm = Qwen3ForCausalLM.from_pretrained(
+        os.path.join(checkpoint, "language_model"), torch_dtype=torch.bfloat16).eval()
+    depth = MiniMaxMusic3RVQDepthDecoder.from_pretrained(
+        os.path.join(checkpoint, "rvq_depth_decoder"), torch_dtype=torch.bfloat16).eval()
+    tokenizer = Qwen2Tokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))
+
+    text = (
+        f"{ref._IM_START}{ref._CAPTION_START}{ref._clean_caption('Dreamy synth-pop, female vocals')}"
+        f"{ref._CAPTION_END}{ref._LYRICS_START}{ref._normalize_lyrics('[verse]\\nHello world')}"
+        f"{ref._LYRICS_END}{ref._IM_END}{ref._AUDIO_START}"
+    )
+    input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
+    unconditional = input_ids.clone()
+    unconditional[:, 1:-2] = ref._AUDIO_CFG_TOKEN_ID
+    text_ids = torch.cat((input_ids, unconditional), dim=0)
+
+    generator = torch.Generator().manual_seed(11)
+    max_frames = 3
+
+    with torch.no_grad():
+        text_embeds = lm.model.embed_tokens(text_ids)
+        output = lm.model(inputs_embeds=text_embeds, use_cache=True)
+        past = output.past_key_values
+        last_hidden = output.last_hidden_state[:, -1]
+        prefill_hidden = last_hidden.float().clone()
+
+        vocab_mask = torch.ones(lm.config.vocab_size, dtype=torch.bool)
+        vocab_mask[ref._AUDIO_CODE_OFFSET : ref._AUDIO_CODE_OFFSET + ref._SEMANTIC_VOCAB_SIZE] = False
+        vocab_mask[ref._AUDIO_END_TOKEN_ID] = False
+
+        first_logits = None
+        first_guided = None
+        frame_hiddens = []
+        frame_codes_list = []
+        for frame_index in range(max_frames + 1):
+            raw = lm.lm_head(last_hidden).float()
+            logits = raw.masked_fill(vocab_mask, -float("inf"))
+            conditional, uncond_row = logits[0:1], logits[1:2]
+            guided = uncond_row + (conditional - uncond_row) * ref._AR_CFG_SCALE
+            threshold = torch.topk(conditional, ref._AR_CFG_TOP_K, dim=-1).values[..., -1, None]
+            guided = guided.masked_fill(conditional < threshold, -float("inf"))
+            guided = guided.masked_fill(vocab_mask.unsqueeze(0), -float("inf"))
+            if first_logits is None:
+                first_logits = raw.clone()
+                first_guided = guided.clone()
+            sampled = ref._sample_top_k(guided, generator)
+            if int(sampled.item()) == ref._AUDIO_END_TOKEN_ID:
+                break
+            semantic_code = sampled - ref._AUDIO_CODE_OFFSET
+            frame_codes, depth_hidden = ref._generate_depth_codes(
+                lm, depth, last_hidden, semantic_code.repeat(2), generator)
+            frame_codes_list.append(frame_codes[0].tolist())
+            if frame_index > 0:
+                frame_hiddens.append(torch.cat((last_hidden[:1], depth_hidden), dim=-1).float())
+                if len(frame_hiddens) >= max_frames:
+                    break
+            feedback = ref._embed_audio_frame(lm, depth, frame_codes)
+            output = lm.model(inputs_embeds=feedback, past_key_values=past, use_cache=True)
+            past = output.past_key_values
+            last_hidden = output.last_hidden_state[:, -1]
+
+    stacked = torch.stack(frame_hiddens, dim=1)[0]
+    globals()["_extra"] = {
+        "text_ids": text_ids.to(torch.int32).contiguous(),
+        "codes": torch.tensor(frame_codes_list, dtype=torch.int32),
+        "prefill_hidden": prefill_hidden.contiguous(),
+        "first_logits": first_logits.contiguous(),
+        "first_guided": torch.nan_to_num(first_guided, neginf=-1e9)[0].contiguous(),
+        "frame_hiddens": stacked.contiguous(),
+    }
+    return stacked.clone()
+
+
+# The music prompt cases, mirrored verbatim by NFKMLXMusic3Tests: markdown stripping, the
+# <|tag value|> rewrite, structure-tag normalization (text on a tag line is dropped, inline tags
+# split onto their own lines, uppercase tags lowercase), multi-byte text, and whitespace forms.
+MUSIC_PROMPTS = [
+    ("Dreamy synth-pop, female vocals", "[verse]\nHello world"),
+    ("# Epic Rock\n- **loud** guitars\n* driving *rhythm*\n---\n• four    spaces",
+     "[Verse] ignored text\nFirst line [Chorus] second"),
+    ("<|bpm 128|> J-ポップ \U0001f3b5 vocals", "[intro]\nこんにちは ^ 世界"),
+    ("  jazz,  with\n\n\nswing!  ", "[verse]\nline one  \n[bridge]\nend"),
+]
+
+
+def run_music_tokenizer(image, checkpoint):
+    """The MiniMax Music 3 prompt contract: the Diffusers pipeline's OWN cleaners
+    (`_clean_caption`, `_normalize_lyrics`), the special-token template, the release tokenizer, and
+    the CFG-row substitution, over MUSIC_PROMPTS.
+
+    `--checkpoint` is the RELEASE ROOT (the tokenizer loads from `tokenizer/`). Each case records
+    the `[2, L]` conditional/unconditional id pair; the Swift side rebuilds the same prompts through
+    the core byte-level BPE and must match token for token — even whitespace-level changes to the
+    assembled prompt change the generated audio.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0, transformers >= 5)."""
+    import os
+
+    from diffusers.modular_pipelines.minimax_music3 import encoders as ref
+    from transformers import Qwen2Tokenizer
+
+    tokenizer = Qwen2Tokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))
+    extra = {}
+    for index, (caption, lyrics) in enumerate(MUSIC_PROMPTS):
+        text = (
+            f"{ref._IM_START}{ref._CAPTION_START}{ref._clean_caption(caption)}{ref._CAPTION_END}"
+            f"{ref._LYRICS_START}{ref._normalize_lyrics(lyrics)}{ref._LYRICS_END}"
+            f"{ref._IM_END}{ref._AUDIO_START}"
+        )
+        input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
+        unconditional = input_ids.clone()
+        unconditional[:, 1:-2] = ref._AUDIO_CFG_TOKEN_ID
+        extra[f"case{index}_ids"] = torch.cat((input_ids, unconditional), dim=0).to(torch.int32)
+    extra["case_count"] = torch.tensor([len(MUSIC_PROMPTS)], dtype=torch.int32)
+    globals()["_extra"] = extra
+    return extra["case0_ids"][0].clone()
+
+
 def run_deepseek_v4(image, checkpoint):
     """The DeepSeek V4 decoder's arithmetic, from transformers' own implementation, at a tiny
     configuration with every layer sliding attention.
@@ -2517,16 +2764,86 @@ def run_deepseek_quant(image, checkpoint):
     return fp8_expected
 
 
+
+def run_rope_scaling(image):
+    """RoPE frequency scaling: the inverse frequencies and attention factor transformers computes.
+
+    Weight-free and architecture-free — scaling is a function of the rotary geometry and the config's
+    `rope_scaling` block alone, so this isolates it completely. `ROPE_INIT_FUNCTIONS` is the same
+    dispatch every transformers decoder uses, so matching it here matches every model that declares
+    one of these.
+
+    Each case writes the parameters it used alongside its result, so the Swift side reads the
+    configuration from the record rather than repeating literals that could drift apart from it.
+    """
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    class Config:
+        def __init__(self, dim, base, max_positions, scaling):
+            self.rope_theta = base
+            self.head_dim = dim
+            self.hidden_size = dim
+            self.num_attention_heads = 1
+            self.max_position_embeddings = max_positions
+            self.rope_scaling = scaling
+            self.partial_rotary_factor = 1.0
+
+    # dim, base, max_positions, scaling
+    cases = [
+        # DeepSeek V4 Pro's shape: a long extension over a short original window.
+        (64, 10000.0, 4096, {"rope_type": "yarn", "factor": 40.0,
+                             "original_max_position_embeddings": 4096}),
+        # A modest extension, and the beta defaults left implicit.
+        (128, 10000.0, 32768, {"rope_type": "yarn", "factor": 4.0,
+                               "original_max_position_embeddings": 8192}),
+        # Non-default ramp boundaries, which move `low`/`high` and so the whole blend.
+        (128, 500000.0, 131072, {"rope_type": "yarn", "factor": 8.0,
+                                 "original_max_position_embeddings": 16384,
+                                 "beta_fast": 16, "beta_slow": 2}),
+        # An explicit attention factor overrides the derived one.
+        (64, 10000.0, 8192, {"rope_type": "yarn", "factor": 16.0,
+                             "original_max_position_embeddings": 2048,
+                             "attention_factor": 1.25}),
+        # Linear, which is position scaling rather than a frequency blend.
+        (64, 10000.0, 8192, {"rope_type": "linear", "factor": 4.0}),
+    ]
+
+    kinds = {"yarn": 1.0, "linear": 0.0}
+    _extra = globals().setdefault("_extra", {})
+    _extra.clear()
+    outputs = []
+    for index, (dim, base, max_positions, scaling) in enumerate(cases):
+        config = Config(dim, base, max_positions, scaling)
+        initializer = ROPE_INIT_FUNCTIONS[scaling["rope_type"]]
+        inv_freq, attention_factor = initializer(config, torch.device("cpu"))
+        _extra[f"case{index}_inv_freq"] = inv_freq.float().contiguous()
+        _extra[f"case{index}_attention_factor"] = torch.tensor([float(attention_factor)])
+        _extra[f"case{index}_params"] = torch.tensor([
+            float(dim), float(base), float(max_positions),
+            float(scaling["factor"]),
+            float(scaling.get("original_max_position_embeddings", max_positions)),
+            float(scaling.get("beta_fast", 32)),
+            float(scaling.get("beta_slow", 1)),
+            kinds[scaling["rope_type"]],
+            # -1 marks "the config declares none", so the Swift side exercises the derivation.
+            float(scaling.get("attention_factor", -1.0)),
+        ])
+        outputs.append(inv_freq.float())
+    _extra["case_count"] = torch.tensor([len(cases)], dtype=torch.int32)
+    return torch.cat(outputs)
+
+
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "segformer_loss": run_segformer_loss,
-          "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer}
+          "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
+          "rope_scaling": run_rope_scaling}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,
                      "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder,
-                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "gemma4": run_gemma4, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2,
+                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "gemma4": run_gemma4, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer}
 

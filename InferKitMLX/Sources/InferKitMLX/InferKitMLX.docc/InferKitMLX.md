@@ -115,6 +115,11 @@ registration:
 
 - ``NFKMLXTTS``
 
+### Text → music
+
+- ``NFKMLXMusic3``
+- ``NFKMLXMusicBackend``
+
 ### Text → image
 
 - ``NFKMLXBackend``

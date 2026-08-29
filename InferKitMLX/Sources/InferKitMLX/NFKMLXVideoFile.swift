@@ -141,7 +141,7 @@ public enum NFKMLXVideoFile {
     private static func blocking<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) throws -> T {
         let box = NFKMLXVideoLoadBox<T>()
         let finished = DispatchSemaphore(value: 0)
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do { box.value = .success(try await work()) } catch { box.value = .failure(error) }
             finished.signal()
         }

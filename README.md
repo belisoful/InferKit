@@ -24,7 +24,7 @@ job.completionHandler = ^(NFKInferenceJob *done) { NSLog(@"%@", done.result.text
 ## Install
 
 ```swift
-.package(url: "https://github.com/belisoful/InferKit.git", from: "0.1.0")
+.package(url: "https://github.com/belisoful/InferKit.git", from: "0.2.0")
 ```
 
 or `pod 'InferKit'`. The optional MLX and Foundation Models companions are separate packages in this
@@ -44,10 +44,10 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   resolving it by name, so the core never references it.
 
 A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
-companion packages already do: **InferKitMLX** (30-plus models across image, video, and audio —
-including Stable Diffusion 1.5, 2.1, and SDXL-Turbo text-to-image — each validated numerically against
-its reference implementation) and **InferKitFoundationModels** (Apple's on-device model, with tool
-calling and structured output).
+companion packages already do: **InferKitMLX** (35-plus models across image, video, and audio —
+including Stable Diffusion text-to-image and MiniMax Music 3 text-to-music — each validated
+numerically against its reference implementation) and **InferKitFoundationModels** (Apple's on-device
+model, with tool calling and structured output).
 
 ## Documentation
 
@@ -58,6 +58,7 @@ calling and structured output).
 | **[Installation](Docs/installation.md)** | Swift Package Manager, CocoaPods, and adding a companion package. |
 | **[Core ML language models](Docs/coreml-llm.md)** | Converting a Hugging Face checkpoint and running it on device. |
 | **[Companion packages](Docs/companions.md)** | InferKitMLX and InferKitFoundationModels: what each ships, and the full model gallery. |
+| **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
 | **[Changelog](CHANGELOG.md)** | What each release contains. |
 | **[Validation](Tools/validation-assets/manifest.json)** | Every model's reference-parity evidence, rebuildable with `Tools/validation-assets/fetch.py`. |
 
@@ -90,7 +91,7 @@ Tools/xcframework/build.sh                      # -> .xcframework-build/InferKit
 ```
 
 That yields a universal static XCFramework with three slices — macOS (arm64 + x86_64), iOS device,
-and iOS simulator — carrying the 25 public headers.
+and iOS simulator — carrying the 30 public headers.
 
 The MLX companion packages too, through its own script:
 
@@ -108,13 +109,13 @@ MLX is roughly 97% — every model InferKitMLX ships is 193 KB of it.
 
 [Docs/installation.md](Docs/installation.md) carries a linking recipe for each case — Xcode app,
 framework, plug-in bundle, SwiftPM `binaryTarget`, your own static library — and the release-asset
-matrix. The artifacts are not committed; they compress to about 48 MB across four release assets.
+matrix. The artifacts are not committed; they compress to about 49 MB across three release assets.
 
 The MLX companion's tests need the Metal library only Xcode's build system bundles, so run those with
 `xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`.
 `InferKit.xcworkspace` opens all three packages in one window, each still built as its own package.
-Its ten schemes cover every target; the core's suite splits across `InferKitTests` (128),
-`InferKitExamples` (11), and `InferKitSwiftExamples` (11) — the same 150 `swift test` runs.
+Its ten schemes cover every target; the core's suite splits across `InferKitTests` (174),
+`InferKitExamples` (15), and `InferKitSwiftExamples` (15) — the same 204 `swift test` runs.
 
 ## Consumers
 

@@ -7,6 +7,7 @@
 #define NFKCoreMLBackend_h
 
 #import <Foundation/Foundation.h>
+#import <CoreML/CoreML.h>
 #import "NFKInferenceBackend.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -31,6 +32,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The model to load: an .mlmodelc, .mlpackage, or .mlmodel URL. */
 @property (nonatomic, copy, nullable) NSURL *modelURL;
+
+/*!
+	@property   computeUnits
+	@abstract   The Core ML compute units the model loads with. Defaults to MLComputeUnitsAll.
+	@discussion Set it before loadModelFromURL:error:. MLComputeUnitsAll lets Core ML place each
+				operation, which is usually what a caller wants. The value is a request, not a
+				guarantee: Core ML places an operation the Neural Engine cannot run elsewhere, and
+				says nothing about having done so. NFKComputePlan reports where the operations
+				actually land.
+*/
+@property (nonatomic, assign) MLComputeUnits computeUnits;
 
 + (instancetype)backendWithModelURL:(nullable NSURL *)modelURL;
 

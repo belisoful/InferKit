@@ -71,7 +71,7 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
         let forward = self.forward
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let cgImage = try NFKMLXModuleBackend.run(request, forward: forward)
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputImage: cgImage]))

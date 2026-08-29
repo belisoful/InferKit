@@ -99,7 +99,9 @@ def main():
 
     succeeded, failed = [], []
     for asset in assets:
-        converted = os.path.join(converted_directory, asset["file"])
+        # An input asset lands in inputs/ as-is; everything else lands in converted/.
+        home = inputs_directory if asset.get("kind") == "input" else converted_directory
+        converted = os.path.join(home, asset["file"])
         if args.check:
             state = "present" if os.path.exists(converted) else "MISSING"
             print(f"{asset['key']:<12} {state:<8} {converted}")

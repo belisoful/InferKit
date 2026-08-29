@@ -23,6 +23,17 @@ public struct NFKMLXGenerationOptions: Sendable {
     public var seed: UInt64?
     /// Generation stops when one of these is produced.
     public var stopTokens: Set<Int> = []
+    /// The most cached positions to retain, or `nil` to retain every one.
+    ///
+    /// @discussion A cache that keeps everything grows with the conversation, and past a certain
+    /// length that is what ends the run. A window bounds it by dropping the oldest positions.
+    ///
+    /// This changes what the model reads, so it is off by default. It costs nothing while the
+    /// conversation is shorter than the window, and past that the model stops seeing its beginning —
+    /// which for a model whose attention is not natively windowed is an approximation, not a
+    /// configuration. Size it from what the machine can hold; ``NFKMLXGPU/recommendedWorkingSetSize``
+    /// is the budget to divide.
+    public var contextWindow: Int?
 
     public init() {}
 }
@@ -49,7 +60,8 @@ public extension NFKMLXLanguageNet {
         guard !prompt.isEmpty else { return [] }
         if let seed = options.seed { MLXRandom.seed(seed) }
 
-        let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount)
+        let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount,
+                                        window: options.contextWindow)
         var logits = self(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: cache)
         var produced = [Int]()
 
@@ -181,7 +193,10 @@ public final class NFKMLXLanguage: NSObject {
                 "\(name) is not a dense causal language model; this network implements the dense "
                 + "decoder only")
         }
-        if json["num_experts"] != nil || json["layer_types"] != nil {
+        // Newer transformers writes `layer_types` even for a homogeneous dense stack (the MiniMax
+        // Music 3 language model lists 36 × "full_attention"), so only a MIXED stack is rejected.
+        let layerTypes = (json["layer_types"] as? [String]) ?? []
+        if json["num_experts"] != nil || layerTypes.contains(where: { $0 != "full_attention" }) {
             throw NFKMLXError.unsupportedConfiguration(
                 "the config describes a mixture-of-experts or hybrid-attention model, which this "
                 + "network does not implement")
@@ -200,7 +215,9 @@ public final class NFKMLXLanguage: NSObject {
             headDimensions: integer("head_dim", hidden / max(heads, 1)),
             intermediateSize: integer("intermediate_size", 3072),
             vocabularySize: integer("vocab_size", 151_936),
-            ropeTheta: real("rope_theta", 1_000_000),
+            // Transformers 5.x nests the rotary base under `rope_parameters`.
+            ropeTheta: ((json["rope_parameters"] as? [String: Any])?["rope_theta"] as? NSNumber)?
+                .floatValue ?? real("rope_theta", 1_000_000),
             rmsEpsilon: real("rms_norm_eps", 1e-6),
             tiesWordEmbeddings: (json["tie_word_embeddings"] as? NSNumber)?.boolValue ?? false,
             attentionBias: (json["attention_bias"] as? NSNumber)?.boolValue ?? false)
@@ -208,6 +225,11 @@ public final class NFKMLXLanguage: NSObject {
         // says so — the config carries no flag for it.
         let modelType = (json["model_type"] as? String) ?? ""
         configuration.normalizesQueryAndKey = modelType.hasPrefix("qwen3")
+        // A release that extended its window says so here. An unimplemented kind throws rather than
+        // loading under the wrong rotary, which would run and be wrong.
+        configuration.ropeScaling = try NFKMLXRoPEScaling.read(
+            json["rope_scaling"],
+            maximumPositions: integer("max_position_embeddings", 32_768))
         return configuration
     }
 
@@ -218,13 +240,19 @@ public final class NFKMLXLanguage: NSObject {
     static func loadWeights(into net: NFKMLXLanguageNet, from url: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        // A quantized checkpoint reshapes the module to match and loads at its stored dtypes: the
+        // packed weights are uint32 whatever the request, and the scales keep the precision the
+        // quantization was computed at.
+        NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+        let keepStored = precision == .checkpoint || checkpoint.quantization != nil
         let tied = net.lmHead == nil
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             // A tied release still ships `lm_head.weight`: in Qwen3-0.6B it is byte-identical to
             // `model.embed_tokens.weight`, so the module keeps one copy and the file's duplicate is
             // dropped rather than loaded into a projection the tied model does not have.
             if tied && key.hasPrefix("lm_head.") { return nil }
-            return (key, precision == .checkpoint ? value : value.asType(.float32))
+            let keeps = keepStored || (value.dtype != .float16 && value.dtype != .bfloat16)
+            return (key, keeps ? value : value.asType(.float32))
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }
@@ -254,6 +282,14 @@ public final class NFKMLXLanguage: NSObject {
     /// and nothing else.
     static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
+        // A single-file release routes through the checkpoint reader, which is where a quantized
+        // save's metadata lives; only a sharded release takes the merge path (a quantized module
+        // saves as one file, so a quantized sharded release does not arise).
+        let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
+        if files.count == 1 {
+            try loadWeights(into: net, from: files[0], precision: precision)
+            return
+        }
         // A tied release still ships `lm_head.weight`, byte-identical to the embedding, and a tied
         // module has no projection to put it in.
         let tied = net.lmHead == nil
@@ -270,9 +306,11 @@ public final class NFKMLXLanguage: NSObject {
         throws -> any NFKInferenceBackend {
         let configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
-        let weights = directoryURL.appendingPathComponent("model.safetensors")
-        // Qwen ships a byte-level BPE vocabulary, which is the core tokenizer's own default type.
-        let tokenizer = try? NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]],
+        // Qwen ships a byte-level BPE vocabulary trained on its OWN pre-tokenization splits — a
+        // letter run absorbing one leading punctuation character, digits split singly — so the
+        // pattern is named: the GPT-2 default encodes the same text to different, valid-looking ids.
+        let tokenizer = try? NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel",
+                                                                      "pretokenizer": "qwen2"]],
                                           directory: directoryURL)
         let net = makeNet(configuration)
         try loadWeights(into: net, fromDirectory: directoryURL)

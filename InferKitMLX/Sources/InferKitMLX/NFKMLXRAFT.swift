@@ -21,7 +21,9 @@ import MLXNN
 // `remap` (validation-sweep task).
 
 private let kCorrLevels = 4
-private let kCorrRadius = 4
+// Internal rather than private so a test can express the plane layout in terms of it instead
+// of repeating the number.
+let kCorrRadius = 4
 private var kCorrPlanes: Int { kCorrLevels * (2 * kCorrRadius + 1) * (2 * kCorrRadius + 1) }
 
 /// The normalization an encoder is built with. Reference RAFT takes a `norm_fn` per encoder: the
@@ -122,9 +124,106 @@ enum NFKRAFTCorrelation {
         return levels
     }
 
+    /// One fused neighborhood lookup, in place of the several thousand gathers the elementwise path
+    /// issues.
+    ///
+    /// @discussion The elementwise path walks `(2r+1)²` planes per level and does four gathers for
+    /// each, so a single lookup is over thirteen hundred dispatches — and the update runs it once per
+    /// GRU iteration. One thread per (pixel, plane) does the same arithmetic in one dispatch.
+    ///
+    /// Metal source as a string, compiled and cached by MLX on first use: no `.metal` file, and
+    /// nothing for a consumer's build to link. `ensureRowContiguous` is left on, so the inputs arrive
+    /// laid out as the indices below assume.
+    private static let neighborhoodKernel = MLXFast.metalKernel(
+        name: "nfk_raft_correlation_lookup",
+        inputNames: ["volume", "coordsX", "coordsY", "extent", "scale"],
+        outputNames: ["out"],
+        source: """
+            uint tid = thread_position_in_grid.x;
+            const int mapHeight = extent[0];
+            const int mapWidth = extent[1];
+            const int radius = extent[2];
+            const int planes = extent[3];
+            const int pixels = extent[4];
+            if (tid >= uint(pixels * planes)) { return; }
+
+            const int pixel = int(tid) / planes;
+            const int plane = int(tid) % planes;
+            const int side = 2 * radius + 1;
+            // The outer index shifts x and the inner shifts y, which is the order the trained 1x1
+            // `convc1` reads. Swapping them loads cleanly and is wrong.
+            const int dx = plane / side - radius;
+            const int dy = plane % side - radius;
+
+            const float sx = coordsX[pixel] / scale[0] + float(dx);
+            const float sy = coordsY[pixel] / scale[0] + float(dy);
+            const float fx = floor(sx);
+            const float fy = floor(sy);
+            const float wx = sx - fx;
+            const float wy = sy - fy;
+
+            const int base = pixel * mapHeight * mapWidth;
+            float accumulated = 0.0f;
+            for (int cornerY = 0; cornerY < 2; ++cornerY) {
+                for (int cornerX = 0; cornerX < 2; ++cornerX) {
+                    const float y = fy + float(cornerY);
+                    const float x = fx + float(cornerX);
+                    // `grid_sample(padding_mode: "zeros")`: a corner outside the map contributes
+                    // nothing rather than repeating the edge.
+                    if (y < 0.0f || y > float(mapHeight - 1) || x < 0.0f || x > float(mapWidth - 1)) {
+                        continue;
+                    }
+                    const float weight = (cornerX == 0 ? (1.0f - wx) : wx)
+                                       * (cornerY == 0 ? (1.0f - wy) : wy);
+                    accumulated += volume[base + int(y) * mapWidth + int(x)] * weight;
+                }
+            }
+            out[tid] = accumulated;
+        """)
+
     /// Looks up a `(2r+1)²` neighborhood at each pyramid level around `coords` `[1, H, W, 2]`, returning
     /// correlation features `[1, H, W, kCorrPlanes]`.
+    ///
+    /// @discussion Runs the fused kernel on the GPU and the elementwise gathers on the CPU, because a
+    /// Metal kernel cannot dispatch on the CPU stream and the package lets a caller select it.
+    /// `NFKMLXRAFTTests.testTheFusedLookupMatchesTheGatherPath` holds the two to each other.
     static func lookup(_ levels: [MLXArray], coords: MLXArray, height h: Int, width w: Int) -> MLXArray {
+        NFKMLXDevice.currentType == .gpu
+            ? fusedLookup(levels, coords: coords, height: h, width: w)
+            : gatherLookup(levels, coords: coords, height: h, width: w)
+    }
+
+    /// The fused path: one dispatch per pyramid level.
+    static func fusedLookup(_ levels: [MLXArray], coords: MLXArray,
+                            height h: Int, width w: Int) -> MLXArray {
+        let pixels = h * w
+        let side = 2 * kCorrRadius + 1
+        let planes = side * side
+        let coordsX = coords[0, 0..., 0..., 0].reshaped([pixels])
+        let coordsY = coords[0, 0..., 0..., 1].reshaped([pixels])
+
+        var perLevel = [MLXArray]()
+        for (levelIndex, level) in levels.enumerated() {
+            let (lh, lw) = (level.shape[1], level.shape[2])
+            let extent = MLXArray([Int32(lh), Int32(lw), Int32(kCorrRadius),
+                                   Int32(planes), Int32(pixels)])
+            let scale = MLXArray([Float(1 << levelIndex)])
+            let threads = pixels * planes
+            let group = Swift.min(256, threads)
+            let result = neighborhoodKernel(
+                [level.reshaped([pixels * lh * lw]), coordsX, coordsY, extent, scale],
+                grid: (threads, 1, 1),
+                threadGroup: (Swift.max(group, 1), 1, 1),
+                outputShapes: [[pixels, planes]],
+                outputDTypes: [.float32])
+            perLevel.append(result[0])
+        }
+        return concatenated(perLevel, axis: 1).reshaped([1, h, w, perLevel.count * planes])
+    }
+
+    /// The elementwise path, kept for the CPU stream and as the reference the fused one is held to.
+    static func gatherLookup(_ levels: [MLXArray], coords: MLXArray,
+                             height h: Int, width w: Int) -> MLXArray {
         let pixels = h * w
         let pIndex = MLXArray((0 ..< pixels).map { Int32($0) })
         let coordsX = coords[0, 0..., 0..., 0].reshaped([pixels])

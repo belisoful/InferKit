@@ -45,9 +45,11 @@
 	if ([type isEqualToString:@"bpe-bytelevel"] || [type isEqualToString:@"bytelevel-bpe"] || [type isEqualToString:@"bpe"]) {
 		NSString *vocabName = [spec[@"vocab"] isKindOfClass:NSString.class] ? spec[@"vocab"] : @"vocab.json";
 		NSString *mergesName = [spec[@"merges"] isKindOfClass:NSString.class] ? spec[@"merges"] : @"merges.txt";
+		NSString *pretokenization = [spec[@"pretokenizer"] isKindOfClass:NSString.class] ? spec[@"pretokenizer"] : nil;
 		return [[NFKByteLevelBPETokenizer alloc] initWithVocabURL:[directory URLByAppendingPathComponent:vocabName]
 													   mergesURL:[directory URLByAppendingPathComponent:mergesName]
 												   specialTokens:specialTokens
+												 pretokenization:pretokenization
 															 eos:eos
 															 bos:bos
 														   error:outError];

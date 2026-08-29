@@ -121,7 +121,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         let job = NFKInferenceJob()
         let forward = self.forward
         let configuration = self.configuration
-        Task.detached {
+        Task.detached(priority: .userInitiated) {
             do {
                 let outputs = try NFKMLXMattingBackend.run(request, configuration: configuration, forward: forward)
                 job.finish(with: NFKInferenceResult(outputs: outputs))
