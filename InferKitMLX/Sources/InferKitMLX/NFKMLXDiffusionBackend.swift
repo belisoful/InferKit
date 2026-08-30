@@ -345,4 +345,108 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         }
         return values.withUnsafeBufferPointer { MLXArray($0, [height, width, channels]) }
     }
+
+    // MARK: Windowed continuation (long-form output)
+
+    /// Where each window starts along the tiled axis. Windows stride by `hop` and the last one is
+    /// pulled back to end exactly at `totalWidth`, so every window is full-width and the pieces cover
+    /// the output without a short tail.
+    static func windowStarts(totalWidth: Int, windowWidth: Int, hop: Int) -> [Int] {
+        guard totalWidth > windowWidth else { return [0] }
+        var starts = [Int]()
+        var start = 0
+        while start + windowWidth < totalWidth {
+            starts.append(start)
+            start += hop
+        }
+        starts.append(totalWidth - windowWidth)          // final window ends at totalWidth
+        return starts
+    }
+
+    /// Denoises a latent LONGER than the model's native window by tiling one axis into overlapping
+    /// windows and keeping continuity INSIDE the sampler: each window's overlap with the previous one
+    /// is held to the previous window's finished (clean) latent — re-noised to the current step's
+    /// level — before every step, and locked to it afterward. This is the mechanism `NFKMLXMusic3`
+    /// uses to generate audio longer than the DiT's window, lifted out for any diffusion model whose
+    /// conditioning is shared across windows (text-to-long-image, an extendable texture, a long clip).
+    ///
+    /// Holding the overlap through `scheduler.addNoise` is the same primitive the inpaint path uses to
+    /// hold a kept region, so continuity does not depend on the scheduler being flow-matching — it
+    /// works for any ``NFKDiffusionScheduler``. A per-window model whose conditioning varies by window
+    /// (a `condition` encoder like the music path's) keeps its own specialized loop; this covers the
+    /// shared-conditioning case.
+    ///
+    /// - Parameters:
+    ///   - totalWidth: the assembled length along the tiled axis.
+    ///   - height: the fixed extent of the other spatial axis (1 for a 1-D latent).
+    ///   - channels: latent channels.
+    ///   - windowWidth: the model's native window along the tiled axis (`>= hop`).
+    ///   - hop: the stride between windows; the overlap is `windowWidth - hop`.
+    ///   - scheduler: the sampler.
+    ///   - steps: inference steps.
+    ///   - seed: base seed; window `i` draws its noise from `seed &+ i`.
+    ///   - denoiseWindow: the model forward for one window — `(latent [height, windowWidth, channels],
+    ///     timestep, windowIndex) -> prediction`, per the scheduler's prediction type.
+    ///   - progress: called once per solver step with `(step, totalSteps)`; returning false cancels
+    ///     and returns nil.
+    /// - Returns: the assembled latent `[height, totalWidth, channels]`, or nil if cancelled.
+    ///
+    /// Introduced in InferKit 0.3.0.
+    public static func windowedContinuation(
+        totalWidth: Int, height: Int, channels: Int,
+        windowWidth: Int, hop: Int,
+        scheduler: any NFKDiffusionScheduler, steps: Int, seed: UInt64?,
+        denoiseWindow: (MLXArray, NFKDiffusionTimestep, Int) -> MLXArray,
+        progress: ((Int, Int) -> Bool)? = nil
+    ) -> MLXArray? {
+        guard windowWidth > 0, hop > 0, hop <= windowWidth, totalWidth > 0 else { return nil }
+        let schedule = scheduler.steps(steps)
+        guard !schedule.isEmpty else { return nil }
+        let starts = windowStarts(totalWidth: totalWidth, windowWidth: windowWidth, hop: hop)
+        let base = seed ?? 0x9E37_79B9_7F4A_7C15
+
+        var carry: MLXArray?                              // previous window's clean overlap columns
+        var pieces = [MLXArray]()
+        var stepIndex = 0
+        let totalSteps = starts.count * schedule.count
+
+        for (windowIndex, start) in starts.enumerated() {
+            // Columns this window shares with the previous one, from the actual start delta so the
+            // pulled-back final window (a larger overlap) stays exact.
+            let overlap = windowIndex > 0 ? windowWidth - (start - starts[windowIndex - 1]) : 0
+            let windowNoise = gaussianNoise(height: height, width: windowWidth, channels: channels,
+                                            seed: base &+ UInt64(windowIndex))
+            var latent = scheduler.initialLatent(noise: windowNoise, first: schedule[0])
+
+            for i in 0 ..< schedule.count {
+                if overlap > 0, let carry {
+                    let held = scheduler.addNoise(clean: carry,
+                                                  noise: windowNoise[0..., 0 ..< overlap, 0...],
+                                                  timestep: schedule[i])
+                    latent = concatenated([held, latent[0..., overlap..., 0...]], axis: 1)
+                }
+                let prediction = denoiseWindow(latent, schedule[i], windowIndex)
+                latent = scheduler.step(prediction: prediction, timestep: schedule[i], latent: latent)
+                eval(latent)
+                stepIndex += 1
+                if let progress, !progress(stepIndex, totalSteps) { return nil }
+            }
+
+            if overlap > 0, let carry {
+                latent = concatenated([carry, latent[0..., overlap..., 0...]], axis: 1)
+            }
+            // This window contributes its leading columns up to the next window's start (its full
+            // width if it is the last); the trailing remainder is the next window's overlap.
+            let contribution = windowIndex < starts.count - 1
+                ? starts[windowIndex + 1] - start
+                : windowWidth
+            pieces.append(latent[0..., 0 ..< contribution, 0...])
+            if windowIndex < starts.count - 1 {
+                let nextOverlap = windowWidth - (starts[windowIndex + 1] - start)
+                carry = nextOverlap > 0 ? latent[0..., (windowWidth - nextOverlap)..., 0...] : nil
+            }
+        }
+
+        return concatenated(pieces, axis: 1)
+    }
 }

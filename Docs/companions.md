@@ -133,10 +133,14 @@ models.
   vocoder decodes them — every network measured against the official diffusers implementation on
   the released weights. Build with `NFKMLXMusic3.backend(directoryURL:)` from the downloaded
   release tree (~27 GB); the weights are separately licensed — see "Model weight licenses" below.
-  `NFKMLXMusic3.quantizeRelease(at:to:)` writes a quantized copy (4-bit language model, 8-bit DiT —
-  the split is measured: the flow field is the quantization-sensitive stage) that the same factory
-  takes unchanged at **8.9 GiB**, small enough that the backend keeps every stage loaded between
-  runs instead of staging them from disk per request.
+  `NFKMLXMusic3.quantizeRelease(at:to:)` writes a quantized copy (4-bit language model including its
+  untied input embedding, 8-bit DiT — the split is measured: the flow field is the
+  quantization-sensitive stage) that the same factory takes unchanged at **7.7 GiB**, small enough
+  that the backend keeps every stage loaded between runs instead of staging them from disk per
+  request. Fallback precision, if a smaller stack matters more than the last of the quality:
+  `transformerBits: 6` trades the DiT down to a measured velocity cosine of 0.99844 (0.99990 at
+  8-bit) for roughly 0.6 GB more — do a listening A/B first, because the DiT's error compounds over
+  the sampling loop.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
   the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
   the backend runs the denoise loop with per-step progress and cancellation. No source latent runs

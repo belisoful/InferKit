@@ -645,6 +645,16 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   and a scheduler; the backend owns the loop, per-step progress/cancellation, and the image bridge.
   No source latent runs text-to-image; a source latent runs image-to-image (`NFKParameterStrength`);
   a source latent + mask runs inpainting (kept region held to the source each step).
+  **`windowedContinuation(...)` produces output LONGER than the model's window**, the `NFKMLXMusic3`
+  mechanism lifted out for reuse: it tiles one axis into overlapping windows and keeps continuity
+  INSIDE the sampler — each window's overlap is held to the previous window's finished latent,
+  re-noised to the current step's level through `scheduler.addNoise` (the same primitive the inpaint
+  path uses, so it is scheduler-agnostic rather than flow-specific), locked to it after the loop, and
+  the windows stitched at the hop stride. It is a static helper over the shared-conditioning case
+  (text-to-long-image, an extendable texture); a per-window `condition` encoder like the music path's
+  keeps its own specialized loop. `windowStarts` pulls the final window back to end exactly at the
+  total. Tested by single-window equivalence to the plain loop and that the overlap hold changes the
+  result (`NFKMLXDiffusionWindowedTests`).
   **`NFKDiffusionLatentPreview` gives the progress callback something to show.** A full decode per
   step costs more than the sampling, so the preview is a 1×1 convolution over the channel axis —
   twelve weights and three biases for a four-channel latent — reported as the job's `partialResult`,

@@ -200,6 +200,19 @@ extension NFKMLXMusic3 {
     /// 0.978 — the flow field is the quantization-sensitive stage — so the DiT defaults to 8-bit,
     /// where the stack still fits the working set with room to stay resident.
     ///
+    /// **Fallback precision — measured, for when stack size is the binding constraint.**
+    /// `transformerBits: 6` is the DiT middle ground: velocity cosine 0.99844 against the record
+    /// (against 0.99990 at 8-bit and 0.97751 at 4-bit — `testTheDiTQuantizationBitWidthSweep` is the
+    /// record), reclaiming about 0.6 GB more. Because the DiT's error compounds over the sampling
+    /// loop, cosine alone does not settle it — do a listening A/B before shipping a 6-bit DiT. The
+    /// `bits`/`transformerBits` split is itself the mixed-precision recipe (4-bit language model,
+    /// 8-bit DiT); there is no finer per-DiT-layer mixing, because whole-DiT 6-bit is the only point
+    /// on the curve measured to be usable. The tied-model counterpart is the `includeEmbeddings`
+    /// argument of `NFKMLXQuantization.quantize(module:bits:groupSize:includeEmbeddings:)`: safe to
+    /// enable at 8-bit on a TIED language model (the tied-head cost is ~1e-5 there), a small ~0.006
+    /// hit at 4-bit, and off by default because the wrong-width case is where packing the head costs
+    /// most.
+    ///
     /// One-time and blocking (the bf16 language model loads whole before packing); run it off the
     /// main thread.
     ///
