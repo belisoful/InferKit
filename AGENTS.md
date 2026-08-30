@@ -1288,6 +1288,50 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   and Gemma's copy had NO sharded path — a capability gap consolidation removed as a side effect.
   The per-family differences stay in the loaders where they belong: the tied-`lm_head` drop, the
   hybrid's `model.language_model.` remap and depthwise-conv transpose, Gemma's tower skip.
+- `NFKMLXTorchCheckpoint` / `NFKMLXTorchFormat` — the native PyTorch checkpoint reader: a consumer's
+  raw `.pth`/`.pt`/`.ckpt`/`.th`/HF `.bin` loads with NO Python toolchain. `NFKMLXWeights.loadCheckpoint`
+  sniffs a file's leading bytes (never the extension — an HF torch `.bin` and a safetensors `.bin` are
+  told apart by content), so every `weightsURL:` factory accepts a raw checkpoint wherever it accepts a
+  converted safetensors, reported as `needsConvTranspose: true`. Three layers, all pure Foundation
+  below the MLX materialization, so the parsing tests run under `swift test`:
+  `NFKMLXZipArchive` (central-directory ZIP with zip64 and deflate; a stored entry's contents are a
+  zero-copy slice of the memory-mapped file), `NFKMLXPickle` (a restricted pickle machine, protocols
+  2–5: no global ever executes — `collections.OrderedDict` is the only one the machine itself
+  interprets, and every other construction becomes an inert opaque node that flattening drops), and
+  `NFKMLXTorchFormat` (both containers: the modern zip and the pre-1.6 five-pickle stream, whose
+  storages arrive after the pickles and whose persistent tuples carry a trailing view entry).
+  Training wrappers unwrap in the converters' own precedence (`state_dict`, `model_state_dict`,
+  `params_ema`, `params`, `model`, `generator`, `state`) BEFORE the root is flattened — a Lightning
+  checkpoint keeps optimizer tensors beside its state_dict, so root-first sweeps those in.
+  **Whisper's releases store their Linear weights as transposed fp16 VIEWS**, found by the first real
+  parity run after the plan assumed state dicts are contiguous: `bytes(for:)` gathers a strided
+  tensor to row-major, held to torch's own materialization by comparing the raw `whisper_tiny.pt`
+  against its converted safetensors tensor for tensor. The byte oracle throughout is the offline
+  converters' own output (raw in `~/.inferkit-validation/raw/`, `IK_RAW_<KEY>` written by fetch.py).
+  `NFKMLXTorchCheckpoint` is the public `@objc` face: inspect `tensorNames`/`infoForTensor:`, read a
+  tensor's bytes, or convert on device with `writeSafetensorsToURL:` (a hand-rolled pure-Swift
+  safetensors writer — no Metal needed — whose output carries no `inferkit.layout` metadata, which IS
+  the PyTorch-layout marker; float64 narrows to float32 as the converters do). Refused with errors
+  naming the offline converter: TorchScript archives (CLIP), an opaque module tree (YOLO), `.nemo`
+  tars (VAD), big-endian saves, sparse/quantized storages.
+  **Every converter's rename/transform is ported into its model's Swift loader**, so all non-excluded
+  models load a raw checkpoint end to end, each verified by an `NFKMLXTorchParityTests` equivalence
+  test: the raw file and the converted file must land IDENTICAL parameters through the model's own
+  `loadWeights` (u2net's legacy `rebnconvN` index rename, colorizer's Sequential table + ConvT
+  permute, hifigan's weight-norm fusion — held to 1e-6, the one tolerance, because two float32
+  evaluations of `g·v/‖v‖` differ in the last ulp — nafnet/raft/rife's renames, lama's `generator.`
+  and fastspeech2's `model.` strips, and pose, whose raw and converted files carry IDENTICAL key
+  names differing only in deconv axis order, which is why `Checkpoint.isNativeTorch` exists).
+  Conv-TasNet and the denoiser needed NO change — their shape-keyed 3-D branches already read the
+  raw layout — and that is verified, not assumed. **RAFT found the package's newest MLX hazard**:
+  its reference reuses each block's `norm3` inside `downsample`, the rename collides the two names
+  deliberately, and duplicate keys crash `ModuleParameters.unflattened` with a stack overflow —
+  dedupe through a dictionary first (see the gotchas below and `Docs/mlx-runtime-hazards.md`). The
+  nafnet/rife/lama/modnet raw checkpoints are in the validation manifest, which grew two acquisition
+  routes to serve them: `gdrive` (a Google Drive id, MODNet) and `extract` (a member path inside a
+  zip at `url`, LaMa's Lightning `best.ckpt`); the rest download from `url` as before. Their
+  equivalence tests read the `IK_RAW_*` keys `fetch.py` stamps and skip when absent, like every other
+  parity test.
 - `NFKMLXRetinaFace` (`@objc`) — real face detection with five-point landmarks, and the detector the
   CodeFormer reference pipeline runs through facexlib. The released **mobile0.25** model: a MobileNetV1
   backbone at quarter width (a plain stem then depthwise-separable blocks), a three-level FPN fusing
@@ -1806,6 +1850,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   suite of 10 reported 6 and still said "0 failures"). Mutate through
   `update(parameters: ModuleParameters.unflattened([...]))` instead. Same family as the numeric-key
   trap below.
+- **Never hand `ModuleParameters.unflattened` two entries with the same key.** It recurses to a
+  stack overflow — a SIGSEGV process kill, not an error. A Python dict deduplicates the same
+  collision silently, so a remap ported from a converter carries the hazard invisibly; a rename that
+  deliberately collides two aliases of one shared tensor (RAFT's `norm3`/`downsample.1`) must build
+  into a `[String: MLXArray]` first.
 - **Never give a `@ModuleInfo` a numeric key** (`@ModuleInfo(key: "0")` to mirror a reference
   `nn.Sequential` position). MLX's `update(parameters:)` parses a numeric key as an **array index**, so
   the unflattened checkpoint arrives as a list where the module tree has a child module, and the update

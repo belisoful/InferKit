@@ -11,7 +11,7 @@
 // `s.version` in InferKit.podspec and the `vX.Y.Z` git tag.
 + (NSString *)version
 {
-	return @"0.2.0";
+	return @"0.3.0";
 }
 
 @end

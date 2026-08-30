@@ -26,6 +26,8 @@ enum NFKMLXError: Error {
     /// A model was asked for a geometry it has no architecture for, such as a super-resolution scale
     /// the reference upsampler does not build.
     case unsupportedConfiguration(String)
+    /// A checkpoint's bytes do not parse as the format its header claims. See `NFKMLXTorchFormat`.
+    case malformedCheckpoint(String)
 }
 
 extension NFKMLXError: LocalizedError {
@@ -40,6 +42,7 @@ extension NFKMLXError: LocalizedError {
         case .trainingDataMismatch(let detail): return detail
         case .loRANotApplicable(let detail): return detail
         case .unsupportedConfiguration(let detail): return detail
+        case .malformedCheckpoint(let detail): return detail
         }
     }
 }

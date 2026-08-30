@@ -373,7 +373,13 @@ public final class NFKMLXLaMa: NSObject {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
-            let name = remap?(key) ?? remapReferenceKey(key, configuration: net.configuration)
+            // The raw Lightning checkpoint prefixes the generator's keys; the offline converter
+            // strips the prefix, so a converted file never carries it.
+            var reference = key
+            if reference.hasPrefix("generator.") {
+                reference = String(reference.dropFirst("generator.".count))
+            }
+            let name = remap?(key) ?? remapReferenceKey(reference, configuration: net.configuration)
             // A transposed convolution stores `[in, out, kH, kW]`, so it takes a different axis order
             // from the forward convolutions' `[out, in, kH, kW]`.
             if checkpoint.needsConvTranspose, value.ndim == 4 {

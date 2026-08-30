@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a RetinaFace .pth release to safetensors for NFKMLXRetinaFace.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 Names pass through unchanged: the positional `nn.Sequential` remap lives in Swift
 (`NFKMLXRetinaFace.remapReferenceKey`), where the module's own layout is known.
 

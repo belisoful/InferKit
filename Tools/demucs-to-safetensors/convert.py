@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Demucs checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.th`/`.pt`. This tool extracts the model state and writes
 safetensors; the Swift loader transposes the Conv1d / transposed-conv weights and translates the
 reference key names in `remapReferenceKey`, so no renaming happens here.

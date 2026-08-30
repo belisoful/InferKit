@@ -549,10 +549,52 @@ public final class NFKMLXRAFT: NSObject {
     static func loadWeights(into net: NFKMLXRAFTNet, from url: URL, remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
-            (remap(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        // Deduplicated through a dictionary: the reference reuses each block's norm3 inside its
+        // downsample Sequential, so a raw checkpoint lists the same tensor under both names and the
+        // rename collides them (deliberately). Duplicate keys must not reach
+        // `ModuleParameters.unflattened`, which they crash.
+        var mapped = [String: MLXArray]()
+        for (key, value) in raw {
+            let name = remap(remapReferenceKey(key))
+            if mapped[name] == nil {
+                mapped[name] = checkpoint.needsConvTranspose && value.ndim == 4
+                    ? value.transposed(0, 2, 3, 1) : value
+            }
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        try NFKMLXWeights.apply(mapped.map { ($0.key, $0.value) }, to: net)
+    }
+
+    /// Translates a reference key (the training wrapper's `module.` prefix, `update_block` →
+    /// `update`, the encoders' projection-shortcut and head Sequentials) — the renames
+    /// `Tools/raft-to-safetensors` applies offline — so a raw release loads directly. A converted
+    /// file's keys pass through unchanged.
+    static func remapReferenceKey(_ key: String) -> String {
+        var parts = key.split(separator: ".").map(String.init)
+        if parts.first == "module" {
+            parts.removeFirst()
+        }
+        var index = 0
+        while index < parts.count {
+            switch parts[index] {
+            case "update_block":
+                parts[index] = "update"
+            case "downsample" where index + 1 < parts.count && parts[index + 1] == "0":
+                parts.remove(at: index + 1)
+            case "downsample" where index + 1 < parts.count && parts[index + 1] == "1":
+                parts[index] = "norm3"
+                parts.remove(at: index + 1)
+            case "flow_head" where index + 1 < parts.count && parts[index + 1] == "conv1":
+                parts[index + 1] = "0"
+            case "flow_head" where index + 1 < parts.count && parts[index + 1] == "conv2":
+                parts[index + 1] = "1"
+            case "mask" where index + 1 < parts.count && parts[index + 1] == "2":
+                parts[index + 1] = "1"
+            default:
+                break
+            }
+            index += 1
+        }
+        return parts.joined(separator: ".")
     }
 }
 

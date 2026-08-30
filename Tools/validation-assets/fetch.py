@@ -19,8 +19,10 @@ Requires: curl, torch, safetensors (the converters' own requirements).
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.dirname(HERE)
@@ -53,6 +55,61 @@ def download(url, destination, expected):
     if expected and size != expected:
         return False, f"size {size}, expected {expected}"
     return True, "downloaded"
+
+
+def download_gdrive(file_id, destination, expected):
+    """Fetch a Google Drive file by id, for a checkpoint served nowhere a plain URL reaches."""
+    if os.path.exists(destination) and (not expected or os.path.getsize(destination) == expected):
+        return True, "cached"
+    result = subprocess.run([sys.executable, "-m", "gdown", "-q", file_id, "-O", destination])
+    if result.returncode != 0:
+        return False, f"gdown exited {result.returncode} (pip install gdown)"
+    size = os.path.getsize(destination) if os.path.exists(destination) else 0
+    if expected and size != expected:
+        return False, f"size {size}, expected {expected}"
+    return True, "downloaded (gdown)"
+
+
+def download_zip_member(url, member, destination, raw_directory):
+    """Download a zip archive and extract one member as the raw checkpoint, for a release
+    distributed as an archive rather than a bare file."""
+    archive = os.path.join(raw_directory, os.path.basename(url))
+    ok, detail = download(url, archive, 0)                  # the archive's own size is not pinned
+    if not ok:
+        return False, detail
+    try:
+        with zipfile.ZipFile(archive) as zf, zf.open(member) as source, open(destination, "wb") as sink:
+            shutil.copyfileobj(source, sink)
+    except (KeyError, zipfile.BadZipFile) as error:
+        return False, f"extract {member}: {error}"
+    return True, f"extracted {member}"
+
+
+def acquire_raw(asset, raw, raw_directory):
+    """Fetch the asset's raw checkpoint to `raw`, by whichever route the manifest names: a Google
+    Drive id (`gdrive`), a member of a downloaded zip (`extract`, the path inside the archive at
+    `url`), or a plain `url`."""
+    expected = asset.get("bytes", 0)
+    if os.path.exists(raw) and (not expected or os.path.getsize(raw) == expected):
+        return True, "cached"
+    if asset.get("gdrive"):
+        return download_gdrive(asset["gdrive"], raw, expected)
+    if asset.get("extract"):
+        return download_zip_member(asset["url"], asset["extract"], raw, raw_directory)
+    return download(asset["url"], raw, expected)
+
+
+def record_raw_path(asset, raw_directory, config):
+    """Points IK_RAW_<KEY> at the kept raw checkpoint. The raw file is the Swift torch-checkpoint
+    reader's test input and the converted file is its oracle, so the key exists for every asset
+    whose raw download is still on disk. Derived rather than listed in the manifest, so a new asset
+    gains one automatically."""
+    raw_name = asset.get("raw")
+    if not raw_name:
+        return
+    raw_path = os.path.join(raw_directory, raw_name)
+    if os.path.exists(raw_path):
+        config[f"IK_RAW_{asset['key']}"] = raw_path
 
 
 def convert(asset, raw, converted):
@@ -110,6 +167,7 @@ def main():
             print(f"{asset['key']:<12} present")
             for key in asset["config"]:
                 config[key] = converted
+            record_raw_path(asset, raw_directory, config)
             succeeded.append(asset["key"])
             continue
 
@@ -128,7 +186,7 @@ def main():
             continue
 
         raw = os.path.join(raw_directory, asset["raw"])
-        ok, detail = download(asset["url"], raw, asset.get("bytes", 0))
+        ok, detail = acquire_raw(asset, raw, raw_directory)
         if not ok:
             print(f"{asset['key']:<12} FETCH FAILED  {detail}")
             failed.append((asset["key"], detail))
@@ -141,6 +199,7 @@ def main():
         print(f"{asset['key']:<12} ready")
         for key in asset["config"]:
             config[key] = converted
+        record_raw_path(asset, raw_directory, config)
         succeeded.append(asset["key"])
 
     if args.check:

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Depth Anything V2 checkpoint to safetensors for InferKitMLX (NFKMLXDepthAnything).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.pth`. This tool rewrites the release into safetensors,
 preserving the reference parameter names (encoder under `pretrained.*`, DPT head under `depth_head.*`)
 and PyTorch convolution layout `[out, in, kH, kW]`; the Swift loader transposes convolution weights to

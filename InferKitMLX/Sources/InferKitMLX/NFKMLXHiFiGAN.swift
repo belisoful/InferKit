@@ -109,7 +109,7 @@ public final class NFKMLXHiFiGAN: NSObject {
 
     static func loadWeights(into net: NFKMLXHiFiGANNet, from url: URL, remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
-        let raw = checkpoint.arrays
+        let raw = referenceRenamed(NFKMLXMusic3.fusedWeightNorm(checkpoint.arrays))
         let mapped = raw.map { key, value -> (String, MLXArray) in
             // The upsampling stages are transposed convolutions, whose PyTorch layout is
             // [in, out, kernel] — not the forward convolutions' [out, in, kernel] — wrapped in a
@@ -123,5 +123,27 @@ public final class NFKMLXHiFiGAN: NSObject {
             return (remap(key), value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// The renames `Tools/hifigan-to-safetensors` applies offline, so a raw release loads directly
+    /// (its weight norm is fused before this): the espnet-paired release's `vocoder.` prefix and
+    /// `upsampler.` naming, and the upsampling stages' `ups.N.weight` → `ups.N.conv.weight`. A
+    /// converted file's keys pass through unchanged.
+    static func referenceRenamed(_ arrays: [String: MLXArray]) -> [String: MLXArray] {
+        var renamed = [String: MLXArray]()
+        renamed.reserveCapacity(arrays.count)
+        for (key, value) in arrays {
+            var name = key
+            if name.hasPrefix("vocoder.") {
+                name = String(name.dropFirst("vocoder.".count))
+                    .replacingOccurrences(of: "upsampler.", with: "ups.")
+            }
+            let parts = name.split(separator: ".").map(String.init)
+            if parts.count == 3, parts[0] == "ups" {
+                name = ([parts[0], parts[1], "conv"] + parts[2...]).joined(separator: ".")
+            }
+            renamed[name] = value
+        }
+        return renamed
     }
 }

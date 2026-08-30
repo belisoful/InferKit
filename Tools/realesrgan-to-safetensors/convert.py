@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Real-ESRGAN RRDBNet .pth checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 InferKitMLX's `NFKMLXRealESRGAN` loads a safetensors checkpoint; MLX's `loadArrays` reads
 safetensors/npz, not PyTorch `.pth`. This tool rewrites the official release into safetensors,
 preserving the reference RRDBNet parameter names (`conv_first.*`, `body.N.rdbM.convK.*`, `conv_last.*`)

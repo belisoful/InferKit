@@ -408,10 +408,13 @@ public final class NFKMLXFastSpeech2: NSObject {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             if key.hasSuffix("num_batches_tracked") { return nil }
+            // The raw transformers release prefixes every key with `model.`; the offline converter
+            // strips it, so a converted file never carries it.
+            let name = key.hasPrefix("model.") ? String(key.dropFirst("model.".count)) : key
             if checkpoint.needsConvTranspose, value.ndim == 3 {
-                return (key, value.transposed(0, 2, 1))
+                return (name, value.transposed(0, 2, 1))
             }
-            return (key, value)
+            return (name, value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }

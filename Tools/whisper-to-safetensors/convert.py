@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert an OpenAI Whisper checkpoint to safetensors for InferKitMLX (NFKMLXWhisper).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not the `.pt` OpenAI Whisper ships. This tool extracts `model_state_dict`
 and writes safetensors. The module names follow OpenAI Whisper exactly (`encoder`/`decoder`,
 `blocks.N.attn.query/key/value/out`, `attn_ln`, `cross_attn`, `mlp.0`/`mlp.2`, `token_embedding`,

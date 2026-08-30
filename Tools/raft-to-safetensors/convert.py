@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a RAFT checkpoint to safetensors for InferKitMLX (NFKMLXRAFT).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.pth`. This tool rewrites the weights into safetensors (the
 Swift loader transposes 4-D convolution weights) and renames the reference's names to the module keys:
 

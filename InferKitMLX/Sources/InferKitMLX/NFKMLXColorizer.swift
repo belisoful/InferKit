@@ -308,10 +308,43 @@ public final class NFKMLXColorizer: NSObject {
     static func loadWeights(into net: NFKMLXColorizerNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
-            (key, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        let mapped = raw.compactMap { key, value -> (String, MLXArray)? in
+            guard !key.hasSuffix("num_batches_tracked") else { return nil }
+            let name = remapReferenceKey(key)
+            guard checkpoint.needsConvTranspose, value.ndim == 4 else { return (name, value) }
+            // The reference stores its one transposed convolution as `[in, out, kH, kW]`; a
+            // converted file already carries it permuted to the forward layout, so only a raw
+            // checkpoint takes the transposed-convolution order.
+            let isRawTransposedConv = name == "deconv8_1.weight" && checkpoint.isNativeTorch
+            return (name, isRawTransposedConv ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1))
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// The reference `nn.Sequential` slots per block, in the order the reference lists them.
+    private static let referenceBlocks: [String: [Int: String]] = [
+        "model1": [0: "conv1_1", 2: "conv1_2", 4: "norm1"],
+        "model2": [0: "conv2_1", 2: "conv2_2", 4: "norm2"],
+        "model3": [0: "conv3_1", 2: "conv3_2", 4: "conv3_3", 6: "norm3"],
+        "model4": [0: "conv4_1", 2: "conv4_2", 4: "conv4_3", 6: "norm4"],
+        "model5": [0: "conv5_1", 2: "conv5_2", 4: "conv5_3", 6: "norm5"],
+        "model6": [0: "conv6_1", 2: "conv6_2", 4: "conv6_3", 6: "norm6"],
+        "model7": [0: "conv7_1", 2: "conv7_2", 4: "conv7_3", 6: "norm7"],
+        "model8": [0: "deconv8_1", 2: "conv8_2", 4: "conv8_3", 6: "conv8_313"],
+    ]
+
+    /// Translates a reference key (`model1.0.weight` → `conv1_1.weight`, `model_out.weight` →
+    /// `out_ab.weight`) — the rename `Tools/colorizer-to-safetensors` applies offline — so the raw
+    /// eccv16 release loads directly. Any other key, a converted file's included, passes through
+    /// unchanged.
+    static func remapReferenceKey(_ key: String) -> String {
+        if key == "model_out.weight" {
+            return "out_ab.weight"
+        }
+        let parts = key.split(separator: ".").map(String.init)
+        guard parts.count >= 3, let block = referenceBlocks[parts[0]],
+              let slot = Int(parts[1]), let name = block[slot] else { return key }
+        return ([name] + parts[2...]).joined(separator: ".")
     }
 }
 

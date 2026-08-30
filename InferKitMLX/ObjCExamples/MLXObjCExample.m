@@ -400,4 +400,32 @@
 	[NFKMLXGPU setMemoryLimit:previousMemory];
 }
 
+// Docs/examples.md: Loading a PyTorch checkpoint directly
+- (void)testExampleObjectiveCReadsAPyTorchCheckpointWithNoPython
+{
+	// A real .pth comes from a release; this embedded one keeps the example runnable offline.
+	NSString *base64 = @"gAKKCmz8nEb5IGqoUBkugAJN6QMugAJ9cQAoWBAAAABwcm90b2NvbF92ZXJzaW9ucQFN6QNYDQAAAGxpdHRsZV9lbmRpYW5xAohYCgAAAHR5cGVfc2l6ZXNxA31xBChYBQAAAHNob3J0cQVLAlgDAAAAaW50cQZLBFgEAAAAbG9uZ3EHSwR1dS6AAmNjb2xsZWN0aW9ucwpPcmRlcmVkRGljdApxAClScQEoWAsAAABjb252LndlaWdodHECY3RvcmNoLl91dGlscwpfcmVidWlsZF90ZW5zb3JfdjIKcQMoKFgHAAAAc3RvcmFnZXEEY3RvcmNoCkZsb2F0U3RvcmFnZQpxBVgLAAAAMzkzODAxNzMyODBxBlgDAAAAY3B1cQdLBE50cQhRSwBLAksChnEJSwJLAYZxColoAClScQt0cQxScQ1YCQAAAGNvbnYuYmlhc3EOaAMoKGgEaAVYCwAAADM5MzgwMTczMDg4cQ9oB0sCTnRxEFFLAEsChXERSwGFcRKJaAApUnETdHEUUnEVdS6AAl1xAChYCwAAADM5MzgwMTczMDg4cQFYCwAAADM5MzgwMTczMjgwcQJlLgIAAAAAAAAAAAAAPwAAAL8EAAAAAAAAAAAAgD8AAABAAABAQAAAgEA=";
+	NSData *fixture = [[NSData alloc] initWithBase64EncodedString:base64 options:0];
+	NSURL *url = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+	    URLByAppendingPathComponent:[NSString stringWithFormat:@"example-%@.pth", NSUUID.UUID.UUIDString]];
+	XCTAssertTrue([fixture writeToURL:url atomically:YES]);
+
+	// Inspect the state dict before deciding to load it.
+	NSError *error = nil;
+	NFKMLXTorchCheckpoint *checkpoint = [NFKMLXTorchCheckpoint checkpointWithContentsOfURL:url error:&error];
+	XCTAssertNotNil(checkpoint, @"%@", error);
+	XCTAssertEqualObjects(checkpoint.tensorNames, (@[ @"conv.bias", @"conv.weight" ]));
+	NFKMLXTorchTensorInfo *info = [checkpoint infoForTensor:@"conv.weight"];
+	XCTAssertEqualObjects(info.shape, (@[ @2, @2 ]));
+	XCTAssertEqual(info.scalarType, NFKMLXTorchScalarTypeFloat32);
+
+	// Convert on device: the output is what the model's Tools converter produces, and every
+	// weightsURL: factory reads it. Or skip this step — the model loaders sniff a .pth's bytes and
+	// read it directly through the same reader.
+	NSURL *converted = [[url URLByDeletingPathExtension] URLByAppendingPathExtension:@"safetensors"];
+	XCTAssertTrue([checkpoint writeSafetensorsToURL:converted error:&error], @"%@", error);
+	[NSFileManager.defaultManager removeItemAtURL:url error:nil];
+	[NSFileManager.defaultManager removeItemAtURL:converted error:nil];
+}
+
 @end

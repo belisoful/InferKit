@@ -57,6 +57,19 @@ transposing convolution weights from PyTorch layout to MLX layout:
 The module structure and parameter names mirror the reference PyTorch model, so a converted checkpoint
 loads without a per-key remap where the names already match.
 
+### Reading a PyTorch checkpoint natively
+
+A raw PyTorch checkpoint (`.pth`, `.pt`, `.ckpt`, `.th`, HF `.bin`) loads with no Python toolchain.
+The checkpoint loader sniffs a file's leading bytes, so every `weightsURL:` factory accepts a raw
+file wherever it accepts a converted safetensors: both the modern ZIP container and the pre-1.6
+stream parse, the file stays memory-mapped, and no pickle code ever executes — globals resolve
+against a fixed dense-tensor table and everything else becomes inert data. Training wrappers
+(`state_dict`, `params_ema`, …) unwrap, non-tensor sidecars drop, and tensors stored as strided
+views gather to row-major. ``NFKMLXTorchCheckpoint`` is the consumer API over the same reader:
+inspect a state dict's names and shapes, read a tensor's bytes, or convert to safetensors on device
+with `writeSafetensors(to:)`. A TorchScript archive, a checkpoint whose pickle wraps its weights in
+a framework class, and a `.nemo` tar are refused with an error naming the offline converter to use.
+
 ### The offline converters
 
 Each model has an offline converter under `Tools/<model>-to-safetensors/` that turns a released `.pth` /
@@ -76,3 +89,9 @@ mismatches.
 
 - ``NFKMLXModelRegistry``
 - ``NFKMLXReferenceModels``
+
+### PyTorch checkpoints
+
+- ``NFKMLXTorchCheckpoint``
+- ``NFKMLXTorchTensorInfo``
+- ``NFKMLXTorchScalarType``

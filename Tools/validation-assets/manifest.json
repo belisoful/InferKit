@@ -1,5 +1,5 @@
 {
-  "comment": "Every real checkpoint the parity and triage suites load, with the source that serves it and the converter that puts it in the module's layout. `fetch.py` reads this. Sizes are the bytes the source reported when the entry was added; a mismatch means the source changed under us, which is worth knowing before a parity number moves.",
+  "comment": "Every real checkpoint the parity and triage suites load, with the source that serves it and the converter that puts it in the module's layout. `fetch.py` reads this. Sizes are the bytes the source reported when the entry was added; a mismatch means the source changed under us, which is worth knowing before a parity number moves. Most assets download from `url`; `gdrive` names a Google Drive file id and `extract` a member path inside a zip at `url`, for the two releases served no other way.",
   "assets": [
     {
       "key": "REALESRGAN",
@@ -315,6 +315,55 @@
         "IK_VAL_FASTSPEECH2"
       ],
       "note": "The LJSpeech conformer FastSpeech2. Names pass through; the converter drops the batch-norm step counters and unwraps the paired release's model. prefix when given that file instead."
+    },
+    {
+      "key": "NAFNET",
+      "file": "nafnet.safetensors",
+      "raw": "nafnet_sidd_width32.pth",
+      "bytes": 116861841,
+      "url": "https://huggingface.co/nyanko7/nafnet-models/resolve/main/NAFNet-SIDD-width32.pth",
+      "converter": "nafnet-to-safetensors",
+      "config": [
+        "IK_VAL_NAFNET"
+      ],
+      "note": "The SIDD width-32 denoiser. The GoPro and REDS variants (IK_VAL_NAFNET_GOPRO / _REDS) are separate .pth files at the same repo, fetched by hand; only the SIDD one the native-reader parity test uses is tracked here."
+    },
+    {
+      "key": "RIFE",
+      "file": "rife_hdv3.safetensors",
+      "raw": "rife_flownet.pkl",
+      "bytes": 12186817,
+      "url": "https://huggingface.co/yow46228/RIFE/resolve/main/flownet.pkl",
+      "converter": "rife-to-safetensors",
+      "config": [
+        "IK_VAL_RIFE"
+      ],
+      "note": "The released HDv3 IFNet. The .pkl is a modern torch zip; the converter renames the block/head Sequentials and drops the teacher subtrees."
+    },
+    {
+      "key": "LAMA",
+      "file": "lama.safetensors",
+      "raw": "big_lama.ckpt",
+      "bytes": 410046389,
+      "url": "https://huggingface.co/smartywu/big-lama/resolve/main/big-lama.zip",
+      "extract": "big-lama/models/best.ckpt",
+      "converter": "lama-to-safetensors",
+      "config": [
+        "IK_VAL_LAMA"
+      ],
+      "note": "big-lama, distributed as a zip. `extract` names the checkpoint inside it (the Lightning best.ckpt); fetch.py downloads the archive and pulls that member out as the raw file."
+    },
+    {
+      "key": "MODNET",
+      "file": "modnet.safetensors",
+      "raw": "modnet_photographic.ckpt",
+      "bytes": 26255603,
+      "gdrive": "1mcr7ALciuAsHCpLnrtG_eop5-EYhbCmz",
+      "converter": "modnet-to-safetensors",
+      "config": [
+        "IK_VAL_MODNET"
+      ],
+      "note": "The photographic MODNet, served only from Google Drive. `gdrive` is the file id; fetch.py fetches it with gdown (pip install gdown). The HF ONNX exports remain unreadable by this loader."
     }
   ],
   "unresolved": [

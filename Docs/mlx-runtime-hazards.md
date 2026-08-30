@@ -106,6 +106,22 @@ measured.*
 
 ---
 
+### Duplicate keys crash `ModuleParameters.unflattened` with a stack overflow
+
+`update(parameters: ModuleParameters.unflattened(pairs))` takes a LIST of key–value pairs, and two
+entries with the same key crash the process — `NestedItem.unflattenedRecurse` recurses until the
+stack guard page (SIGSEGV, `KERN_PROTECTION_FAILURE`), not a thrown error. A Python `dict`
+deduplicates the same collision silently, which is why a remap ported from a converter can carry the
+hazard invisibly: RAFT's reference reuses each block's `norm3` inside its `downsample` Sequential,
+so a raw checkpoint lists one tensor under two names and a rename that collides them (deliberately —
+they are the same tensor) hands `unflattened` a duplicate.
+
+**Rule:** build remapped parameters into a `[String: MLXArray]` before applying, so a colliding
+rename resolves to one entry (`NFKMLXRAFT.loadWeights`, `NFKMLXMODNet.loadWeights`).
+
+*Found by loading the raw `raft_things.pth` through the native checkpoint reader; no executable
+probe, because the failure is a process kill that would truncate the suite it ran in.*
+
 ## Confirmed previously, and still true
 
 These were found while building this package and are recorded in `CLAUDE.md`. They are repeated here

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """Convert a HiFi-GAN generator checkpoint (jik876 layout) to safetensors for InferKitMLX
+
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
 (NFKMLXHiFiGANNet).
 
 The released `g_*` file wraps the state dict under a `generator` key and stores every convolution

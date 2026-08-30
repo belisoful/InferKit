@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert the ECCV-16 colorization checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 InferKitMLX's `NFKMLXColorizer` loads a safetensors checkpoint; MLX's `loadArrays` reads
 safetensors/npz, not PyTorch `.pth`. The reference checkpoint (richzhang/colorization, `eccv16`)
 stores `nn.Sequential` indices (`model1.0.weight` ... `model8.6.weight`, plus `model_out.weight`);

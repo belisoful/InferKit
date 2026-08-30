@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a SAM 2 checkpoint to safetensors for InferKitMLX (NFKMLXSAM2).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 The released `.pt` wraps the state dict under a `model` key. Names pass through — the module keys
 follow the reference, and the Swift loader handles the convolution transposes — so this only unwraps
 and rewrites.

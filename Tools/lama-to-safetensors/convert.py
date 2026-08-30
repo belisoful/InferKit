@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a LaMa checkpoint to safetensors for InferKitMLX (NFKMLXLaMa).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 The big-lama release is a training checkpoint whose generator weights sit under `generator.*` in a
 flat `nn.Sequential` (`generator.model.N.*`). This tool extracts the generator tensors and writes
 safetensors, preserving names and PyTorch convolution layout `[out, in, kH, kW]`. The Swift loader

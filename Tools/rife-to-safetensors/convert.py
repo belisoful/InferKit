@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a RIFE (HDv3) flownet checkpoint to safetensors for InferKitMLX (NFKMLXRIFE).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.pkl`/`.pth`. This tool rewrites the IFNet weights into
 safetensors (the Swift loader transposes 4-D convolution weights) and renames the reference's nested
 `Sequential` names to the module's keys:

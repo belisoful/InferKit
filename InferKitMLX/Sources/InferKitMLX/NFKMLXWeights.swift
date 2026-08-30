@@ -123,13 +123,37 @@ enum NFKMLXWeights {
         /// adopts the wrong shape and dtype silently, which is exactly the hazard the metadata
         /// exists to close.
         let quantization: Quantization?
+
+        /// True when the file was a raw PyTorch checkpoint read by ``NFKMLXTorchFormat``. A model
+        /// whose offline converter pre-permutes a tensor (a transposed-convolution axis swap) reads
+        /// this to apply that permutation itself: the raw and converted files can carry identical
+        /// key names, so the distinction cannot be recovered from the arrays.
+        let isNativeTorch: Bool
+
+        init(arrays: [String: MLXArray], needsConvTranspose: Bool, quantization: Quantization?,
+             isNativeTorch: Bool = false) {
+            self.arrays = arrays
+            self.needsConvTranspose = needsConvTranspose
+            self.quantization = quantization
+            self.isNativeTorch = isNativeTorch
+        }
     }
 
     /// Reads a checkpoint and reports which layout its convolution weights are in.
     ///
     /// A model's `loadWeights` calls this in place of `loadArrays(url:)` so that both a converted
     /// PyTorch checkpoint and one written by ``save(_:to:)`` load correctly through the same path.
+    ///
+    /// The format is sniffed from the file's leading bytes rather than its extension: a raw PyTorch
+    /// checkpoint (`.pth`, `.pt`, `.ckpt`, `.th`, or an HF `.bin`, which shares its extension with
+    /// nothing that identifies it) routes through ``NFKMLXTorchFormat`` and reports PyTorch layout,
+    /// so every model accepts one wherever it accepts a converted safetensors.
     static func loadCheckpoint(url: URL) throws -> Checkpoint {
+        if NFKMLXTorchFormat.isTorchCheckpoint(leadingBytes(of: url)) {
+            let contents = try NFKMLXTorchFormat.read(url: url)
+            return Checkpoint(arrays: try NFKMLXTorchFormat.arrays(from: contents),
+                              needsConvTranspose: true, quantization: nil, isNativeTorch: true)
+        }
         let (arrays, metadata) = try loadArraysAndMetadata(url: url)
         var quantization: Quantization?
         if let recorded = metadata[quantizationKey] {
@@ -143,6 +167,14 @@ enum NFKMLXWeights {
         }
         return Checkpoint(arrays: arrays, needsConvTranspose: metadata[layoutKey] != mlxLayout,
                           quantization: quantization)
+    }
+
+    /// The file's first bytes, for format sniffing. An unreadable file returns empty, so the
+    /// safetensors path raises its own error for a missing file as it always has.
+    private static func leadingBytes(of url: URL) -> Data {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 4)) ?? Data()
     }
 
     /// Writes every parameter of `module` to a safetensors file in the module's own layout.

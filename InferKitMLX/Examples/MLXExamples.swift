@@ -416,4 +416,38 @@ final class MLXExamples: XCTestCase {
                                                     precision: .checkpoint, bandwidth: bandwidth)
         XCTAssertGreaterThan(small, large)
     }
+
+    // Docs/examples.md: Loading a PyTorch checkpoint directly
+    func testExampleAPyTorchCheckpointReadsAndConvertsWithNoPython() throws {
+        // A real .pth comes from a release; this embedded one keeps the example runnable offline.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("example-\(UUID().uuidString).pth")
+        try Data(base64Encoded: MLXExamples.tinyTorchCheckpoint)!.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Inspect the state dict before deciding to load it.
+        let checkpoint = try NFKMLXTorchCheckpoint.checkpoint(contentsOf: url)
+        XCTAssertEqual(checkpoint.tensorNames, ["conv.bias", "conv.weight"])
+        XCTAssertEqual(checkpoint.info(forTensor: "conv.weight")?.shape, [2, 2])
+        XCTAssertEqual(checkpoint.info(forTensor: "conv.weight")?.scalarType, .float32)
+
+        // Convert on device: the output is what the model's Tools converter produces, and every
+        // weightsURL: factory reads it. Or skip this step — the loaders sniff a .pth's bytes and
+        // read it directly through the same reader.
+        let converted = url.deletingPathExtension().appendingPathExtension("safetensors")
+        defer { try? FileManager.default.removeItem(at: converted) }
+        try checkpoint.writeSafetensors(to: converted)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: converted.path))
+    }
+
+    /// `torch.save` of a two-tensor state dict, legacy (pre-1.6) serialization: 488 bytes.
+    private static let tinyTorchCheckpoint = """
+        gAKKCmz8nEb5IGqoUBkugAJN6QMugAJ9cQAoWBAAAABwcm90b2NvbF92ZXJzaW9ucQFN6QNYDQAAAGxpdHRsZV9lbmRpYW5xAoh\
+        YCgAAAHR5cGVfc2l6ZXNxA31xBChYBQAAAHNob3J0cQVLAlgDAAAAaW50cQZLBFgEAAAAbG9uZ3EHSwR1dS6AAmNjb2xsZWN0aW\
+        9ucwpPcmRlcmVkRGljdApxAClScQEoWAsAAABjb252LndlaWdodHECY3RvcmNoLl91dGlscwpfcmVidWlsZF90ZW5zb3JfdjIKc\
+        QMoKFgHAAAAc3RvcmFnZXEEY3RvcmNoCkZsb2F0U3RvcmFnZQpxBVgLAAAAMzkzODAxNzMyODBxBlgDAAAAY3B1cQdLBE50cQhR\
+        SwBLAksChnEJSwJLAYZxColoAClScQt0cQxScQ1YCQAAAGNvbnYuYmlhc3EOaAMoKGgEaAVYCwAAADM5MzgwMTczMDg4cQ9oB0s\
+        CTnRxEFFLAEsChXERSwGFcRKJaAApUnETdHEUUnEVdS6AAl1xAChYCwAAADM5MzgwMTczMDg4cQFYCwAAADM5MzgwMTczMjgwcQ\
+        JlLgIAAAAAAAAAAAAAPwAAAL8EAAAAAAAAAAAAgD8AAABAAABAQAAAgEA=
+        """
 }

@@ -252,9 +252,33 @@ public final class NFKMLXNAFNet: NSObject {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
-            (remap(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+            (remap(remapReferenceKey(key)),
+             checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// Translates a reference key (`middle_blks.` → `middle.`, the upsamplers' and channel
+    /// attentions' extra `Sequential` slot dropped) — the renames `Tools/nafnet-to-safetensors`
+    /// applies offline — so a raw release loads directly. A converted file's keys pass through
+    /// unchanged.
+    static func remapReferenceKey(_ key: String) -> String {
+        var parts = key.split(separator: ".").map(String.init)
+        var index = 0
+        while index < parts.count {
+            if parts[index] == "middle_blks" {
+                parts[index] = "middle"
+            }
+            if parts[index] == "ups", index + 2 < parts.count,
+               Int(parts[index + 1]) != nil, parts[index + 2] == "0" {
+                parts.remove(at: index + 2)
+            }
+            if parts[index] == "sca", index + 1 < parts.count, parts[index + 1] == "1" {
+                parts.remove(at: index + 1)
+            }
+            index += 1
+        }
+        return parts.joined(separator: ".")
     }
 }
 

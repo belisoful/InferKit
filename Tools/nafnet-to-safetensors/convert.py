@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a NAFNet checkpoint to safetensors for InferKitMLX (NFKMLXNAFNet).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.pth`. This tool rewrites the release into safetensors (the
 Swift loader transposes 4-D convolution weights) and renames the few attributes whose nesting differs
 from the module: `middle_blks.` → `middle.`, `ups.N.0.` → `ups.N.` (the conv inside the up Sequential),

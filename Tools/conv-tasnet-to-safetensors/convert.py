@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Conv-TasNet checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 InferKitMLX's `NFKMLXConvTasNet` loads a safetensors checkpoint; MLX's `loadArrays` reads
 safetensors/npz, not PyTorch `.pth`. This tool rewrites a checkpoint into safetensors, preserving
 PyTorch 1-D convolution layout `[out, in, k]` (the Swift loader transposes to MLX's `[out, k, in]` at

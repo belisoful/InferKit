@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Zero-DCE (DCE-Net) .pth checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 InferKitMLX's `NFKMLXZeroDCE` loads a safetensors checkpoint; MLX's `loadArrays` reads safetensors/npz,
 not PyTorch `.pth`. This tool rewrites the release into safetensors, preserving the reference DCE-Net
 parameter names (`e_conv1.*` … `e_conv7.*`) and PyTorch convolution layout `[out, in, kH, kW]`. The

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Demucs-denoiser (speech enhancement) checkpoint to safetensors for InferKitMLX.
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 InferKitMLX's `NFKMLXDenoiser` reuses the Demucs U-Net (`NFKMLXDemucsNet`) with a single output
 channel, and loads through the same weight path (`NFKMLXDemucs.loadWeights`): Conv1d weights are
 transposed `[out, in, k]` -> MLX `[out, k, in]`, and the transposed-conv decoder weights are given a

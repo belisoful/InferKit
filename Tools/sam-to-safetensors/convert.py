@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Convert a Segment Anything (SAM) checkpoint to safetensors for InferKitMLX (NFKMLXSAM).
 
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
+
 MLX loads safetensors/npz, not PyTorch `.pth`. This tool extracts the state dict and writes safetensors;
 the Swift loader transposes 4-D convolution weights.
 

@@ -286,8 +286,14 @@ public final class NFKMLXPose: NSObject {
     static func loadWeights(into net: NFKMLXPoseNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
-            (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        let mapped = raw.map { key, value -> (String, MLXArray) in
+            let name = remapReferenceKey(key)
+            guard checkpoint.needsConvTranspose, value.ndim == 4 else { return (name, value) }
+            // The deconvolution head's ConvTranspose weights are stored `[in, out, kH, kW]`; the
+            // offline converter pre-permutes them, so only a raw checkpoint takes the
+            // transposed-convolution order here (the raw and converted key names are identical).
+            let isRawTransposedConv = checkpoint.isNativeTorch && key.contains("deconv")
+            return (name, isRawTransposedConv ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1))
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }

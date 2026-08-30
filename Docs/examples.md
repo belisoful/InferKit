@@ -26,6 +26,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Structured output and tools](#structured-output-and-tools) — Apple
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
+- [Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly) — no Python toolchain
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
 - [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, conversion tool
 - [Testing without weights](#testing-without-weights)
@@ -369,7 +370,7 @@ NSError *error = nil;
 id<NFKInferenceBackend> upscaler =
     [NFKMLXHub backendNamed:@"real-esrgan-x4"
                        repo:@"org/real-esrgan"
-                weightsPath:@"RealESRGAN_x4plus.safetensors"   // safetensors, not .pth
+                weightsPath:@"RealESRGAN_x4plus.pth"           // .pth or safetensors — both load
                    revision:nil
           cacheDirectoryURL:nil
                       error:&error];
@@ -377,8 +378,9 @@ id<NFKInferenceBackend> upscaler =
 
 The loader matches the reference RRDBNet parameter names (`conv_first.*`, `body.N.rdbM.convK.*`,
 `conv_last.*`) and transposes 4-D convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's
-`[out, kH, kW, in]`. Convert a PyTorch `.pth` release to safetensors first with
-`Tools/realesrgan-to-safetensors/convert.py`. `register` adds `real-esrgan-x4` (23 blocks),
+`[out, kH, kW, in]`. A PyTorch `.pth` release loads directly (see
+[Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly));
+`Tools/realesrgan-to-safetensors/convert.py` remains the offline path. `register` adds `real-esrgan-x4` (23 blocks),
 `real-esrgan-x4-anime` (6 blocks), and `real-esrgan-x2` (pixel-unshuffle front-end for ×2).
 
 ### Depth Anything V2 (`NFKMLXDepthAnything`, a shipped MLX model)
@@ -1525,6 +1527,39 @@ NFKAudioAsset *vocals = [[htdemucs runInferenceForRequest:request error:&error] 
 
 A clip shorter than the release's 7.8-second training segment is zero-padded up to it and the result
 trimmed back, which is what the reference does at inference.
+
+## Loading a PyTorch checkpoint directly
+
+A consumer's own `.pth` (or `.pt`, `.ckpt`, `.th`, HF `.bin`) loads with no Python toolchain.
+`NFKMLXWeights` sniffs a checkpoint's leading bytes, so every `weightsURL:` factory and registry
+build accepts a raw PyTorch file wherever it accepts a converted safetensors — both the modern ZIP
+container and the pre-1.6 stream, memory-mapped, with no pickle code ever executing.
+`NFKMLXTorchCheckpoint` is the inspection and conversion API over the same reader:
+
+```swift
+let checkpoint = try NFKMLXTorchCheckpoint.checkpoint(contentsOf: pthURL)
+print(checkpoint.tensorNames)                                // the flattened state dict
+let info = checkpoint.info(forTensor: "conv_first.weight")   // shape + stored element type
+try checkpoint.writeSafetensors(to: convertedURL)            // what the Tools converter produces
+let arrays = try checkpoint.arrays()                         // Swift-only: [String: MLXArray]
+```
+
+```objc
+NSError *error = nil;
+NFKMLXTorchCheckpoint *checkpoint = [NFKMLXTorchCheckpoint checkpointWithContentsOfURL:pthURL error:&error];
+NFKMLXTorchTensorInfo *info = [checkpoint infoForTensor:@"conv_first.weight"];
+[checkpoint writeSafetensorsToURL:convertedURL error:&error];
+```
+
+Training wrappers unwrap as the offline converters do (`state_dict`, `params_ema`, `model`, …),
+non-tensor sidecars drop, tensors stored as strided views (Whisper's transposed Linear weights)
+gather to row-major, and float64 narrows to float32 on conversion. Every model's loader carries its
+converter's renames and transforms itself (U²-Net's index rename, HiFi-GAN's weight-norm fusion,
+the colorizer's Sequential table), so a raw release loads end to end wherever a converted one does.
+Refused with an actionable error:
+TorchScript archives (CLIP), checkpoints whose pickle wraps the weights in a framework class
+(YOLO's `ultralytics` module tree), `.nemo` tars, and big-endian saves — their `Tools` converters
+remain the path.
 
 ## Choosing a backend at runtime
 

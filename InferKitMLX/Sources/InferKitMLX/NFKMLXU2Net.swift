@@ -231,15 +231,43 @@ public final class NFKMLXU2Net: NSObject {
         }
     }
 
-    /// Loads a safetensors checkpoint, transposing 4-D convolution weights to MLX's layout. `remap`
-    /// maps the reference RSU `rebnconvN` names to the module's `enc`/`dec` array keys (sweep task).
+    /// Loads a checkpoint (safetensors, or a raw `.pth` through the native reader), transposing 4-D
+    /// convolution weights to MLX's layout. The reference RSU `rebnconvN` names translate through
+    /// ``remapReferenceKey(_:)`` so a raw release loads directly; a converted file's keys pass
+    /// through it unchanged.
     static func loadWeights(into net: NFKMLXU2NetNet, from url: URL, remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
-            (remap(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+            (remap(remapReferenceKey(key)),
+             checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// The RSU height per stage, which is what turns a reference convolution index into the module's
+    /// array position.
+    private static let stageHeights = [
+        "stage1": 7, "stage2": 6, "stage3": 5, "stage4": 4, "stage5": 4, "stage6": 4,
+        "stage5d": 4, "stage4d": 4, "stage3d": 5, "stage2d": 6, "stage1d": 7,
+    ]
+
+    /// Translates a reference key (`stageX.rebnconvN` → `stageX.enc.(N-1)`, `stageX.rebnconvNd` →
+    /// `stageX.dec.(H-1-N)`) — the rename `Tools/u2net-to-safetensors` applies offline. Any other
+    /// key, a converted file's included, passes through unchanged.
+    static func remapReferenceKey(_ key: String) -> String {
+        let parts = key.split(separator: ".").map(String.init)
+        guard parts.count >= 2, let height = stageHeights[parts[0]] else { return key }
+        let inner = parts[1]
+        guard inner != "rebnconvin", inner.hasPrefix("rebnconv") else { return key }
+        var digits = inner.dropFirst("rebnconv".count)
+        let isDecoder = digits.hasSuffix("d")
+        if isDecoder {
+            digits = digits.dropLast()
+        }
+        guard let index = Int(digits) else { return key }
+        let renamed = isDecoder ? "dec.\(height - 1 - index)" : "enc.\(index - 1)"
+        return ([parts[0], renamed] + parts[2...]).joined(separator: ".")
     }
 }
 
