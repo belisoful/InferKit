@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Convert a MarbleNet VAD checkpoint to safetensors for InferKitMLX.
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
 
 InferKitMLX's `NFKMLXVAD` loads a safetensors checkpoint; MLX's `loadArrays` reads safetensors/npz.
 This tool rewrites a checkpoint into safetensors, preserving PyTorch Conv1d layout `[out, in, k]` (the

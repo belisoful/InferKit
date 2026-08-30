@@ -65,10 +65,12 @@ file wherever it accepts a converted safetensors: both the modern ZIP container 
 stream parse, the file stays memory-mapped, and no pickle code ever executes — globals resolve
 against a fixed dense-tensor table and everything else becomes inert data. Training wrappers
 (`state_dict`, `params_ema`, …) unwrap, non-tensor sidecars drop, and tensors stored as strided
-views gather to row-major. ``NFKMLXTorchCheckpoint`` is the consumer API over the same reader:
-inspect a state dict's names and shapes, read a tensor's bytes, or convert to safetensors on device
-with `writeSafetensors(to:)`. A TorchScript archive, a checkpoint whose pickle wraps its weights in
-a framework class, and a `.nemo` tar are refused with an error naming the offline converter to use.
+views gather to row-major. A checkpoint that pickled a live `nn.Module`
+tree (YOLO's ultralytics DetectionModel), a TorchScript archive (CLIP, whose scripted module stores
+its weights under attribute-keyed state), and a `.nemo` tar all load — no class is constructed and no
+serialized code is interpreted, only the pickle's tensor records and module attributes are read.
+``NFKMLXTorchCheckpoint`` is the consumer API over the same reader: inspect a state dict's names and
+shapes, read a tensor's bytes, or convert to safetensors on device with `writeSafetensors(to:)`.
 
 ### The offline converters
 

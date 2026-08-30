@@ -1556,10 +1556,10 @@ non-tensor sidecars drop, tensors stored as strided views (Whisper's transposed 
 gather to row-major, and float64 narrows to float32 on conversion. Every model's loader carries its
 converter's renames and transforms itself (U²-Net's index rename, HiFi-GAN's weight-norm fusion,
 the colorizer's Sequential table), so a raw release loads end to end wherever a converted one does.
-Refused with an actionable error:
-TorchScript archives (CLIP), checkpoints whose pickle wraps the weights in a framework class
-(YOLO's `ultralytics` module tree), `.nemo` tars, and big-endian saves — their `Tools` converters
-remain the path.
+Every checkpoint shape the shipped models use loads: a plain state dict, a pickled live
+`nn.Module` tree (YOLO's ultralytics DetectionModel), a TorchScript archive (CLIP, walked through
+its attribute-keyed scripted-module state), and a `.nemo` tar (unwrapped to the checkpoint inside).
+No class is constructed and no serialized code is interpreted.
 
 ## Choosing a backend at runtime
 

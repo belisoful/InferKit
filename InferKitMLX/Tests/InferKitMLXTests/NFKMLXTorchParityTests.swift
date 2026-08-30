@@ -263,6 +263,39 @@ final class NFKMLXTorchParityTests: XCTestCase {
         assertIdenticalParameters(rawNet, convertedNet)
     }
 
+    func testTheYOLOLiveModuleTreeLoadsEquivalently() throws {
+        // The module-tree walk end to end: the raw yolov8n.pt (a pickled DetectionModel) must land
+        // the same parameters the converted safetensors does, through the model's own loader.
+        try requireMLXRuntime()
+        let rawNet = NFKMLXYOLONet(.base)
+        try NFKMLXYOLO.loadWeights(into: rawNet, from: try filePath("IK_RAW_YOLO"))
+        let convertedNet = NFKMLXYOLONet(.base)
+        try NFKMLXYOLO.loadWeights(into: convertedNet, from: try filePath("IK_VAL_YOLO"))
+        assertIdenticalParameters(rawNet, convertedNet)
+    }
+
+    func testTheCLIPTorchScriptModelLoadsEquivalently() throws {
+        // The TorchScript walk end to end: the raw clip_vit_b32.pt (a scripted module) must land the
+        // same parameters the converted safetensors does, through CLIP's own loader.
+        try requireMLXRuntime()
+        let rawNet = NFKMLXCLIPNet(.base)
+        try NFKMLXCLIP.loadWeights(into: rawNet, from: try filePath("IK_RAW_CLIP"))
+        let convertedNet = NFKMLXCLIPNet(.base)
+        try NFKMLXCLIP.loadWeights(into: convertedNet, from: try filePath("IK_VAL_CLIP"))
+        assertIdenticalParameters(rawNet, convertedNet)
+    }
+
+    func testTheVADNemoLoadsEquivalently() throws {
+        // The tar unwrap end to end: the raw .nemo must land the same parameters as the converted
+        // safetensors the offline converter extracted from it.
+        try requireMLXRuntime()
+        let rawNet = NFKMLXVAD.makeNet()
+        try NFKMLXVAD.loadWeights(into: rawNet, from: try filePath("IK_RAW_VAD"))
+        let convertedNet = NFKMLXVAD.makeNet()
+        try NFKMLXVAD.loadWeights(into: convertedNet, from: try filePath("IK_VAL_VAD"))
+        assertIdenticalParameters(rawNet, convertedNet)
+    }
+
     func testTheObjCCheckpointConvertsOnDevice() throws {
         // The consumer path: inspect a raw checkpoint, convert it to safetensors with no Python, and
         // load the result through the ordinary checkpoint reader.

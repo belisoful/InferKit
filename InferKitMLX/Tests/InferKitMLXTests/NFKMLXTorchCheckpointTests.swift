@@ -86,6 +86,149 @@ final class NFKMLXTorchCheckpointTests: XCTestCase {
         XCTAssertEqual(Array(contents.tensors.keys), ["block.inner"])
     }
 
+    func testAPickledModuleTreeIsWalkedIntoItsStateDict() throws {
+        // The shape YOLO's DetectionModel is stored in: an outer module whose "model" submodule is a
+        // Sequential of blocks. A None parameter and a non-persistent buffer are skipped, and a
+        // plain tensor attribute (not under _parameters/_buffers) is not emitted — exactly what
+        // nn.Module.state_dict() does.
+        let conv = TorchOps.module(("torch.nn.modules.conv", "Conv2d"),
+            params: [
+                ("weight", TorchOps.tensor(key: "0", numel: 4, offset: 0, shape: [2, 2], stride: [2, 1])),
+                ("bias", .raw([0x4e])),                             // None → skipped
+            ],
+            buffers: [
+                ("running_mean", TorchOps.tensor(key: "1", numel: 2, offset: 0, shape: [2], stride: [1])),
+                ("scratch", TorchOps.tensor(key: "2", numel: 1, offset: 0, shape: [1], stride: [1])),
+            ],
+            nonPersistent: ["scratch"])                            // scratch → skipped
+        let sequential = TorchOps.module(("torch.nn.modules.container", "Sequential"),
+                                         modules: [("0", conv)])
+        let detection: [UInt8] = TorchOps.module(("ultralytics.nn.tasks", "DetectionModel"),
+                                                 modules: [("model", sequential)])
+        // A plain tensor attribute beside _modules (a Detect head's `stride`) must be ignored.
+        let root = TorchOps.dict([
+            ("model", .raw(detection)),
+            ("epoch", .raw(TorchOps.int(7))),
+        ])
+        let archive = zipCheckpoint(root: root, storages: [
+            ("0", floatBytes([1, 2, 3, 4])), ("1", floatBytes([5, 6])), ("2", floatBytes([7])),
+        ])
+
+        let contents = try NFKMLXTorchFormat.read(data: archive)
+        XCTAssertEqual(Set(contents.tensors.keys), ["model.0.weight", "model.0.running_mean"])
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["model.0.weight"]!), floatBytes([1, 2, 3, 4]))
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["model.0.running_mean"]!), floatBytes([5, 6]))
+    }
+
+    func testATorchScriptModuleTreeIsWalked() throws {
+        // CLIP's layout: a scripted module whose attributes nest submodules and tensors. The
+        // `constants.pkl` entry marks the archive as TorchScript, routing the flat-attribute walk.
+        let layerNorm = TorchOps.scriptedModule(("__torch__.mm", "LayerNorm"), attributes: [
+            ("weight", TorchOps.tensor(key: "0", numel: 2, offset: 0, shape: [2], stride: [1])),
+            ("bias", TorchOps.tensor(key: "1", numel: 2, offset: 0, shape: [2], stride: [1])),
+        ])
+        let block = TorchOps.scriptedModule(("__torch__.mm", "ResidualAttentionBlock"),
+                                            attributes: [("ln_1", .raw(layerNorm))])
+        let sequential = TorchOps.scriptedModule(("__torch__.container", "Sequential"),
+                                                 attributes: [("0", .raw(block))])
+        let transformer = TorchOps.scriptedModule(("__torch__.mm", "Transformer"),
+                                                  attributes: [("resblocks", .raw(sequential))])
+        let root = TorchOps.scriptedModule(("__torch__.mm", "Multimodal"), attributes: [
+            ("transformer", .raw(transformer)),
+            ("logit_scale", TorchOps.tensor(key: "2", numel: 1, offset: 0, shape: [], stride: [])),
+        ])
+        let archive = zipCheckpoint(root: root, storages: [
+            ("0", floatBytes([1, 2])), ("1", floatBytes([3, 4])), ("2", floatBytes([5])),
+        ], extraEntries: ["constants.pkl"])
+
+        let contents = try NFKMLXTorchFormat.read(data: archive)
+        XCTAssertEqual(Set(contents.tensors.keys),
+                       ["transformer.resblocks.0.ln_1.weight",
+                        "transformer.resblocks.0.ln_1.bias", "logit_scale"])
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["transformer.resblocks.0.ln_1.weight"]!),
+                       floatBytes([1, 2]))
+    }
+
+    func testTheCLIPTorchScriptArchiveReproducesTheConverterStateDict() throws {
+        // The real proof: walking clip_vit_b32.pt's scripted module yields the converter's
+        // jit.load().state_dict(), save for the int config attributes its float filter drops.
+        let contents = try NFKMLXTorchFormat.read(url: try rawPath("IK_RAW_CLIP", "clip_vit_b32.pt"))
+        let convertedPath = try XCTUnwrap(config["IK_VAL_CLIP"], "set IK_VAL_CLIP in ~/.inferkit-validation.json")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: convertedPath),
+                          "IK_VAL_CLIP points at a missing file")
+        let converted = try SafetensorsFile(Data(contentsOf: URL(fileURLWithPath: convertedPath)))
+        let rawKeys = Set(contents.tensors.keys)
+        XCTAssertTrue(Set(converted.tensors.keys).isSubset(of: rawKeys),
+                      "the converter's keys are not all present in the walked state dict")
+        for (name, entry) in converted.tensors {
+            XCTAssertEqual(contents.tensors[name]?.shape, entry.shape, name)
+        }
+    }
+
+    func testATarWrappedCheckpointUnwraps() throws {
+        // A .nemo is a tar of a YAML config beside the torch checkpoint; the first member whose bytes
+        // are a checkpoint is read, the config skipped.
+        let inner = zipCheckpoint(root: TorchOps.dict([
+            ("w", TorchOps.tensor(key: "0", numel: 2, offset: 0, shape: [2], stride: [1])),
+        ]), storages: [("0", floatBytes([3, 4]))])
+        var tar = TarBuilder()
+        tar.add(name: "./model_config.yaml", contents: Data("name: marblenet\n".utf8))
+        tar.add(name: "./model_weights.ckpt", contents: inner)
+        let contents = try NFKMLXTorchFormat.read(data: tar.finished())
+        XCTAssertEqual(Array(contents.tensors.keys), ["w"])
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["w"]!), floatBytes([3, 4]))
+    }
+
+    func testATarWithNoCheckpointMemberIsRefused() throws {
+        var tar = TarBuilder()
+        tar.add(name: "./config.yaml", contents: Data("name: x\n".utf8))
+        XCTAssertThrowsError(try NFKMLXTorchFormat.read(data: tar.finished())) { error in
+            guard case NFKMLXError.unsupportedConfiguration = error else {
+                return XCTFail("expected unsupportedConfiguration, got \(error)")
+            }
+        }
+    }
+
+    func testAStatelessOpaqueRootIsStillRefused() throws {
+        // A constructed object with no module state cannot be walked, so it is refused by class name
+        // (the TorchScript / unknown-wrapper path).
+        let model: [UInt8] = TorchOps.global("some.pkg", "Mystery") + [0x29, 0x52]
+        let root = TorchOps.dict([("model", .raw(model))])
+        let archive = zipCheckpoint(root: root, storages: [])
+        XCTAssertThrowsError(try NFKMLXTorchFormat.read(data: archive)) { error in
+            let description = (error as? NFKMLXError)?.errorDescription ?? ""
+            XCTAssertTrue(description.contains("some.pkg.Mystery"),
+                          "expected the refusal to name the class: \(description)")
+        }
+    }
+
+    func testTheYOLOModuleTreeReproducesTheConverterStateDict() throws {
+        // The real proof: walking yolov8n.pt's live DetectionModel yields exactly the converter's
+        // state_dict, save for the int64 num_batches_tracked counters its float filter drops.
+        let contents = try NFKMLXTorchFormat.read(url: try rawPath("IK_RAW_YOLO", "yolov8n.pt"))
+        let convertedPath = try XCTUnwrap(config["IK_VAL_YOLO"],
+                                          "set IK_VAL_YOLO in ~/.inferkit-validation.json")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: convertedPath),
+                          "IK_VAL_YOLO points at a missing file")
+        let converted = try SafetensorsFile(Data(contentsOf: URL(fileURLWithPath: convertedPath)))
+        let rawKeys = Set(contents.tensors.keys)
+        XCTAssertTrue(Set(converted.tensors.keys).isSubset(of: rawKeys),
+                      "the converter's keys are not all present in the walked state dict")
+        let onlyRaw = rawKeys.subtracting(converted.tensors.keys)
+        XCTAssertTrue(onlyRaw.allSatisfy { $0.hasSuffix("num_batches_tracked") },
+                      "unexpected extra keys beyond the dropped counters: \(onlyRaw.prefix(5))")
+        for (name, entry) in converted.tensors {
+            XCTAssertEqual(contents.tensors[name]?.shape, entry.shape, name)
+        }
+    }
+
+    func testTheVADNemoUnwrapsAndParses() throws {
+        let contents = try NFKMLXTorchFormat.read(url: try rawPath("IK_RAW_VAD", "marblenet_vad.nemo"))
+        XCTAssertGreaterThan(contents.tensors.count, 0)
+        XCTAssertNotNil(contents.tensors["preprocessor.featurizer.window"],
+                        "the MarbleNet front-end window the loader reads is missing")
+    }
+
     func testAnOpaqueModelWrapperIsRefusedNamingItsClass() throws {
         let model: [UInt8] = TorchOps.global("ultralytics.nn.tasks", "DetectionModel") + [0x29, 0x52]
         let root = TorchOps.dict([("model", .raw(model))])
@@ -97,7 +240,9 @@ final class NFKMLXTorchCheckpointTests: XCTestCase {
         }
     }
 
-    func testATorchScriptArchiveIsRefused() throws {
+    func testAnUnwalkableTorchScriptArchiveIsRefused() throws {
+        // A TorchScript archive whose data.pkl root is not a module (here an empty dict) has no
+        // module tree to walk, so it is refused rather than yielding an empty checkpoint.
         let root = TorchOps.dict([])
         let archive = zipCheckpoint(root: root, storages: [], extraEntries: ["constants.pkl"])
         XCTAssertThrowsError(try NFKMLXTorchFormat.read(data: archive)) { error in
@@ -386,6 +531,41 @@ private enum TorchOps {
         }
         ops.append(0x75)
         return ops
+    }
+
+    /// A pickled `set` of strings (EMPTY_SET, MARK, items, ADDITEMS).
+    static func set(_ items: [String]) -> [UInt8] {
+        var ops: [UInt8] = [0x8f]
+        guard !items.isEmpty else { return ops }
+        ops.append(0x28)
+        for item in items {
+            ops += unicode(item)
+        }
+        ops.append(0x90)
+        return ops
+    }
+
+    /// A pickled `nn.Module`: a `NEWOBJ` construction over the class, then `BUILD` with the module's
+    /// `__dict__` state (the `_parameters` / `_buffers` / `_non_persistent_buffers_set` / `_modules`
+    /// a real module carries). This is exactly how YOLO's DetectionModel tree is serialized.
+    static func module(_ module: (String, String), params: [(String, Value)] = [],
+                       buffers: [(String, Value)] = [], nonPersistent: [String] = [],
+                       modules: [(String, [UInt8])] = []) -> [UInt8] {
+        let state = dict([
+            ("_parameters", .raw(dict(params))),
+            ("_buffers", .raw(dict(buffers))),
+            ("_non_persistent_buffers_set", .raw(set(nonPersistent))),
+            ("_modules", .raw(dict(modules.map { ($0.0, Value.raw($0.1)) }))),
+        ])
+        return global(module.0, module.1) + [0x29, 0x81] + state + [0x62]  // EMPTY_TUPLE, NEWOBJ, state, BUILD
+    }
+
+    /// A pickled TorchScript module: like `module`, but its `BUILD` state is a flat attribute-keyed
+    /// dict (a tensor leaf, a nested scripted submodule, or a `training` bool) rather than the eager
+    /// `_parameters`/`_buffers`/`_modules` structure — the layout CLIP's `.pt` uses.
+    static func scriptedModule(_ module: (String, String), attributes: [(String, Value)]) -> [UInt8] {
+        let state = dict(attributes + [("training", .raw([0x88]))])   // a scalar attribute, skipped
+        return global(module.0, module.1) + [0x29, 0x81] + state + [0x62]
     }
 
     /// One `_rebuild_tensor_v2` over a ZIP-container persistent identifier.

@@ -364,6 +364,18 @@
         "IK_VAL_MODNET"
       ],
       "note": "The photographic MODNet, served only from Google Drive. `gdrive` is the file id; fetch.py fetches it with gdown (pip install gdown). The HF ONNX exports remain unreadable by this loader."
+    },
+    {
+      "key": "YOLO",
+      "file": "yolo.safetensors",
+      "raw": "yolov8n.pt",
+      "bytes": 6549796,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
+      "converter": "yolo-to-safetensors",
+      "config": [
+        "IK_VAL_YOLO"
+      ],
+      "note": "YOLOv8 nano. The .pt pickles a live ultralytics DetectionModel tree; the native reader walks its nn.Module state (no ultralytics classes constructed) rather than needing the package the converter imports. The larger variants (yolo-l/x, IK_VAL_YOLO_LARGE/_XLARGE) are separate .pt files, fetched by hand."
     }
   ],
   "unresolved": [

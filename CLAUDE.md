@@ -1529,7 +1529,22 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   safetensors writer — no Metal needed — whose output carries no `inferkit.layout` metadata, which IS
   the PyTorch-layout marker; float64 narrows to float32 as the converters do). Refused with errors
   naming the offline converter: TorchScript archives (CLIP), an opaque module tree (YOLO), `.nemo`
-  tars (VAD), big-endian saves, sparse/quantized storages.
+  big-endian saves, sparse/quantized storages. **There are NO deferred models — YOLO, VAD, and CLIP
+  all load.** Three walks/unwraps, all non-executing (no class constructed, no serialized `code/`
+  interpreted): (1) a checkpoint that pickled a live `nn.Module` tree (YOLO's ultralytics
+  DetectionModel) is walked through the standard `_parameters`/`_buffers`/`_modules` state — `walkModule`,
+  reproducing `nn.Module.state_dict()` exactly (parameters + persistent buffers, recurse `_modules`,
+  skip a None param / non-persistent buffer / plain-attribute tensor), matched against the real
+  yolov8n's 498-key state dict; (2) a **TorchScript archive** (CLIP) is walked through its
+  attribute-keyed scripted-module state — `walkScriptedModule`, where each object's `BUILD` state is
+  a flat dict of `name → tensor | submodule | scalar` rather than the eager layout, and the leaf
+  tensors are the same `_rebuild_tensor_v2` records. **The earlier "TorchScript needs its `code/` IR"
+  claim was WRONG**: the probe showed `data.pkl` carries every attribute name (`visual.conv1.weight`,
+  `transformer.resblocks.0.attn.in_proj_weight`), matched against the real ViT-B/32's 302-key
+  state dict; (3) a `.nemo` PAX/ustar tar is unwrapped to the checkpoint inside it (`readTar`). The
+  scripted walk is scoped to archives carrying `constants.pkl` (the TorchScript marker), so the eager
+  path is untouched; its int config attributes (`input_resolution`) are surfaced and ignored by the
+  loaders' coverage the way `num_batches_tracked` is.
   **Every converter's rename/transform is ported into its model's Swift loader**, so all non-excluded
   models load a raw checkpoint end to end, each verified by an `NFKMLXTorchParityTests` equivalence
   test: the raw file and the converted file must land IDENTICAL parameters through the model's own

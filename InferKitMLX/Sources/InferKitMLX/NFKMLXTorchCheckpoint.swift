@@ -46,10 +46,13 @@ public final class NFKMLXTorchTensorInfo: NSObject {
 /// removed.
 ///
 /// `writeSafetensors(to:)` converts on device: the output is what the model's `Tools` converter
-/// produces for a passthrough model, and every `weightsURL:` factory reads it. A TorchScript
-/// archive, a `.nemo` tar, and a checkpoint whose pickle wraps its weights in a framework class
-/// (YOLO's `ultralytics` module tree) are refused with an error naming the offline converter to use
-/// instead.
+/// produces for a passthrough model, and every `weightsURL:` factory reads it. Every checkpoint
+/// shape a released model here ships in loads: a plain state dict, a checkpoint that pickled a live
+/// `nn.Module` tree (YOLO's `ultralytics` DetectionModel, walked through its
+/// `_parameters`/`_buffers`/`_modules` state), a TorchScript archive (CLIP, walked through its
+/// attribute-keyed scripted-module state), and a `.nemo` tar (unwrapped to the checkpoint inside).
+/// No class is ever constructed and no serialized `code/` is interpreted; only the pickle's own
+/// tensor records and the module attributes it stores are read.
 ///
 /// Introduced in InferKit 0.3.0.
 @objc(NFKMLXTorchCheckpoint)

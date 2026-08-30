@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Convert a YOLO checkpoint to safetensors for InferKitMLX.
+InferKitMLX also reads the raw checkpoint directly (its native reader, InferKit 0.3.0), so
+this converter is optional: it remains the offline path for producing a portable
+safetensors file.
 
 InferKitMLX's `NFKMLXYOLO` loads a safetensors checkpoint; MLX's `loadArrays` reads safetensors/npz,
 not PyTorch `.pt`. This tool rewrites a checkpoint into safetensors, preserving PyTorch convolution

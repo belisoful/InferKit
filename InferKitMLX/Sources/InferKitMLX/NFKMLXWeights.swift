@@ -169,12 +169,13 @@ enum NFKMLXWeights {
                           quantization: quantization)
     }
 
-    /// The file's first bytes, for format sniffing. An unreadable file returns empty, so the
-    /// safetensors path raises its own error for a missing file as it always has.
+    /// The file's first block, for format sniffing. One tar header (512 bytes) is read because a
+    /// `.nemo`'s ustar magic sits at offset 257, past a 4-byte peek. An unreadable file returns
+    /// empty, so the safetensors path raises its own error for a missing file as it always has.
     private static func leadingBytes(of url: URL) -> Data {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
         defer { try? handle.close() }
-        return (try? handle.read(upToCount: 4)) ?? Data()
+        return (try? handle.read(upToCount: 512)) ?? Data()
     }
 
     /// Writes every parameter of `module` to a safetensors file in the module's own layout.

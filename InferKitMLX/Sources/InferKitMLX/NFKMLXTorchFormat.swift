@@ -168,12 +168,23 @@ enum NFKMLXTorchFormat {
     /// pickle stream. Safetensors starts with its little-endian header length, which collides with
     /// neither.
     static func isTorchCheckpoint(_ header: Data) -> Bool {
-        let bytes = [UInt8](header.prefix(4))
+        let bytes = [UInt8](header.prefix(512))
         guard bytes.count >= 2 else { return false }
         if bytes.count >= 4, bytes[0] == 0x50, bytes[1] == 0x4b, bytes[2] == 0x03, bytes[3] == 0x04 {
             return true
         }
-        return bytes[0] == 0x80 && (0x02 ... 0x05).contains(bytes[1])
+        if bytes[0] == 0x80, (0x02 ... 0x05).contains(bytes[1]) {
+            return true
+        }
+        return isTar(bytes)
+    }
+
+    /// A POSIX/ustar tar carries its magic at offset 257, so the sniff needs the first block, not
+    /// the first four bytes. A `.nemo` release is a tar wrapping an ordinary torch checkpoint.
+    private static func isTar(_ bytes: [UInt8]) -> Bool {
+        guard bytes.count >= 262 else { return false }
+        return bytes[257] == 0x75 && bytes[258] == 0x73 && bytes[259] == 0x74
+            && bytes[260] == 0x61 && bytes[261] == 0x72   // "ustar"
     }
 
     static func read(url: URL) throws -> Contents {
@@ -186,6 +197,9 @@ enum NFKMLXTorchFormat {
     }
 
     static func read(data: Data) throws -> Contents {
+        if isTar([UInt8](data.prefix(512))) {
+            return try readTar(data)
+        }
         guard isTorchCheckpoint(data) else {
             throw NFKMLXError.malformedCheckpoint(
                 "the data starts with neither a ZIP archive nor a pickle stream, so it is not a PyTorch checkpoint")
@@ -194,6 +208,59 @@ enum NFKMLXTorchFormat {
             return try readZip(data)
         }
         return try readLegacy(data)
+    }
+
+    // MARK: - The tar wrapper (.nemo)
+
+    /// A `.nemo` (and any tar wrapping a checkpoint) holds a config beside the weights. The first
+    /// member whose bytes are themselves a torch checkpoint is read; the rest (a YAML config) are
+    /// skipped. PAX/GNU metadata entries carry their payload in a data block that is stepped over.
+    private static func readTar(_ data: Data) throws -> Contents {
+        let reader = NFKMLXByteReader(data)
+        var offset = 0
+        while offset + 512 <= reader.count {
+            // A zero block marks the end of the archive.
+            let nameFirst = try reader.u8(offset)
+            if nameFirst == 0 {
+                break
+            }
+            let size = try tarOctal(reader, at: offset + 124, count: 12)
+            let typeFlag = try reader.u8(offset + 156)
+            let bodyStart = offset + 512
+            let paddedSize = (size + 511) / 512 * 512
+            // '0' and '\0' are regular files; a member of any other type (PAX 'x'/'g', GNU 'L'/'K',
+            // directories) carries no checkpoint, so its body is stepped over.
+            if typeFlag == 0x30 || typeFlag == 0x00 {
+                let head = try reader.bytes(bodyStart, count: min(512, size))
+                if isTorchCheckpoint(head) || isTar([UInt8](head.prefix(512))) {
+                    let base = data.startIndex
+                    return try read(data: data[base + bodyStart ..< base + bodyStart + size])
+                }
+            }
+            offset = bodyStart + paddedSize
+        }
+        throw NFKMLXError.unsupportedConfiguration(
+            "the tar archive holds no checkpoint member (a .nemo should carry model_weights.ckpt)")
+    }
+
+    /// Parses a tar header's octal size field. GNU marks a size too large for octal by setting the
+    /// high bit of the first byte and storing base-256, which a real checkpoint member can reach.
+    private static func tarOctal(_ reader: NFKMLXByteReader, at offset: Int, count: Int) throws -> Int {
+        let first = try reader.u8(offset)
+        if first & 0x80 != 0 {
+            var value = first & 0x7f
+            for index in 1 ..< count {
+                value = value << 8 | (try reader.u8(offset + index))
+            }
+            return value
+        }
+        var value = 0
+        for index in 0 ..< count {
+            let byte = try reader.u8(offset + index)
+            guard byte >= 0x30, byte <= 0x37 else { break }   // an octal digit; stop at NUL or space
+            value = value * 8 + (byte - 0x30)
+        }
+        return value
     }
 
     // MARK: - The modern ZIP container
@@ -206,17 +273,13 @@ enum NFKMLXTorchFormat {
         }
 
         guard let pickleEntry = entries.first(where: { $0.name == "data.pkl" || $0.name.hasSuffix("/data.pkl") }) else {
-            if entries.contains(where: { $0.name.hasSuffix("constants.pkl") }) {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "the archive is a TorchScript module, not a state dict; export the state dict from Python or use the model's Tools converter")
-            }
             throw NFKMLXError.malformedCheckpoint("the ZIP archive holds no data.pkl")
         }
         let prefix = String(pickleEntry.name.dropLast("data.pkl".count))
-        if entriesByName["\(prefix)constants.pkl"] != nil {
-            throw NFKMLXError.unsupportedConfiguration(
-                "the archive is a TorchScript module, not a state dict; export the state dict from Python or use the model's Tools converter")
-        }
+        // A TorchScript archive carries `constants.pkl` and `code/` beside `data.pkl`, and its
+        // `data.pkl` stores the module as attribute-keyed state rather than the eager
+        // `_parameters`/`_buffers`/`_modules` layout — walked differently, but from the same tensors.
+        let isTorchScript = entriesByName["\(prefix)constants.pkl"] != nil
         if let byteorderEntry = entriesByName["\(prefix)byteorder"] {
             let order = String(decoding: try NFKMLXZipArchive.contents(of: byteorderEntry, in: data), as: UTF8.self)
             guard order.trimmingCharacters(in: .whitespacesAndNewlines) != "big" else {
@@ -246,7 +309,7 @@ enum NFKMLXTorchFormat {
             storages[reference.key] = storage
             return .external(storage)
         }
-        return Contents(tensors: try stateDict(from: root), backing: data)
+        return Contents(tensors: try stateDict(from: root, torchScript: isTorchScript), backing: data)
     }
 
     // MARK: - The legacy multi-pickle stream
@@ -391,8 +454,34 @@ enum NFKMLXTorchFormat {
         "state_dict", "model_state_dict", "params_ema", "params", "model", "generator", "state",
     ]
 
-    private static func stateDict(from root: NFKMLXPickleValue) throws -> [String: Tensor] {
+    private static func stateDict(from root: NFKMLXPickleValue,
+                                  torchScript: Bool = false) throws -> [String: Tensor] {
+        // A TorchScript archive stores its module as attribute-keyed state (`visual`, `conv1`,
+        // `weight`, …) rather than `_parameters`/`_buffers`/`_modules`. The tensors are the same
+        // `_rebuild_tensor_v2` records, and walking the attributes reproduces the names
+        // `module.state_dict()` composes — no serialized `code/` is interpreted.
+        if torchScript {
+            if case .opaque(let node) = root {
+                var result: [String: Tensor] = [:]
+                walkScriptedModule(node, prefix: "", into: &result)
+                if !result.isEmpty {
+                    return result
+                }
+            }
+            throw NFKMLXError.unsupportedConfiguration(
+                "the TorchScript archive's root is not a walkable module; use the model's Tools converter")
+        }
+        // A checkpoint that pickled a live `nn.Module` (YOLO's DetectionModel) is walked into its
+        // state dict, the same names `module.state_dict()` composes. No class is constructed; only
+        // the standard `_parameters`/`_buffers`/`_modules` state the module carries is read.
         if case .opaque(let node) = root {
+            if isModuleNode(node) {
+                var result: [String: Tensor] = [:]
+                walkModule(node, prefix: "", into: &result)
+                if !result.isEmpty {
+                    return result
+                }
+            }
             throw NFKMLXError.unsupportedConfiguration(
                 "the checkpoint's root is a \(node.qualifiedName) object, which requires its Python class to interpret; use the model's Tools converter")
         }
@@ -409,6 +498,17 @@ enum NFKMLXTorchFormat {
                 return flattened
             }
         }
+        // A pickled module under a wrapper key: ultralytics saves `checkpoint["model"]` as a live
+        // DetectionModel, which its converter reads with `.state_dict()`. Walking it here reproduces
+        // that with no ultralytics classes present.
+        for wrapper in wrapperKeys {
+            guard case .opaque(let node)? = rootDict[wrapper], isModuleNode(node) else { continue }
+            var result: [String: Tensor] = [:]
+            walkModule(node, prefix: "", into: &result)
+            if !result.isEmpty {
+                return result
+            }
+        }
         flatten(rootDict, prefix: "", into: &flattened)
         if !flattened.isEmpty {
             return flattened
@@ -421,6 +521,72 @@ enum NFKMLXTorchFormat {
         }
         throw NFKMLXError.malformedCheckpoint(
             "no tensors were found under the checkpoint's root; its keys are \(rootDict.entries.compactMap { key, _ in describe(key) }.joined(separator: ", "))")
+    }
+
+    /// Whether a constructed object carries the state an `nn.Module` pickles: the `_parameters` /
+    /// `_buffers` / `_modules` OrderedDicts. Any class whose instance holds those is walkable,
+    /// whatever its type name, so ultralytics's own module classes need no definitions here.
+    private static func isModuleNode(_ node: NFKMLXPickleOpaque) -> Bool {
+        guard case .dict(let state)? = node.state else { return false }
+        return state["_modules"] != nil || state["_parameters"] != nil
+    }
+
+    /// Emits a module's state dict, exactly as `nn.Module.state_dict()` composes it: its parameters
+    /// and its persistent buffers under `prefix`, then each submodule under `prefix<name>.`. A None
+    /// parameter and a non-persistent buffer are skipped, and a plain tensor attribute (a Detect
+    /// head's `stride`/`anchors`) is not emitted, because it lives outside `_parameters`/`_buffers`.
+    private static func walkModule(_ node: NFKMLXPickleOpaque, prefix: String,
+                                   into result: inout [String: Tensor]) {
+        guard case .dict(let state)? = node.state else { return }
+        if case .dict(let parameters)? = state["_parameters"] {
+            for (keyValue, value) in parameters.entries {
+                guard let name = describe(keyValue), let tensor = tensor(from: value) else { continue }
+                result[prefix + name] = tensor
+            }
+        }
+        if case .dict(let buffers)? = state["_buffers"] {
+            let nonPersistent = stringSet(state["_non_persistent_buffers_set"])
+            for (keyValue, value) in buffers.entries {
+                guard let name = describe(keyValue), !nonPersistent.contains(name),
+                      let tensor = tensor(from: value) else { continue }
+                result[prefix + name] = tensor
+            }
+        }
+        if case .dict(let modules)? = state["_modules"] {
+            for (keyValue, value) in modules.entries {
+                guard let name = describe(keyValue), case .opaque(let submodule) = value else { continue }
+                walkModule(submodule, prefix: prefix + name + ".", into: &result)
+            }
+        }
+    }
+
+    /// Emits a scripted module's state dict. A TorchScript module's state is a flat dict keyed by
+    /// attribute name: a tensor entry is a leaf (`weight`, `in_proj_weight`), an object entry is a
+    /// submodule to recurse (`visual`, `resblocks`, whose keys are `0`/`1`/…), and `training` and
+    /// other scalars are skipped. This composes the same names `nn.Module.state_dict()` does.
+    private static func walkScriptedModule(_ node: NFKMLXPickleOpaque, prefix: String,
+                                           into result: inout [String: Tensor]) {
+        guard case .dict(let state)? = node.state else { return }
+        for (keyValue, value) in state.entries {
+            guard let name = describe(keyValue) else { continue }
+            if let tensor = tensor(from: value) {
+                result[prefix + name] = tensor
+            } else if case .opaque(let submodule) = value, case .dict? = submodule.state {
+                walkScriptedModule(submodule, prefix: prefix + name + ".", into: &result)
+            }
+        }
+    }
+
+    /// The string members of a pickled `set` (the value model holds a set as a list).
+    private static func stringSet(_ value: NFKMLXPickleValue?) -> Set<String> {
+        guard case .list(let list)? = value else { return [] }
+        var names = Set<String>()
+        for item in list.items {
+            if case .string(let name) = item {
+                names.insert(name)
+            }
+        }
+        return names
     }
 
     private static func flatten(_ dict: NFKMLXPickleDict, prefix: String,

@@ -7,6 +7,37 @@
 
 import Foundation
 
+/// Writes a minimal ustar tar, for the `.nemo` unwrap fixture: one 512-byte header per member
+/// (name, octal size, typeflag '0', ustar magic at offset 257), the body padded to 512, and two
+/// trailing zero blocks. No checksum — the reader does not verify it.
+struct TarBuilder {
+    private var body = Data()
+
+    mutating func add(name: String, contents: Data) {
+        var header = [UInt8](repeating: 0, count: 512)
+        for (index, byte) in Array(name.utf8).prefix(100).enumerated() {
+            header[index] = byte
+        }
+        let size = String(format: "%011o", contents.count)          // 11 octal digits + NUL
+        for (index, byte) in Array(size.utf8).enumerated() {
+            header[124 + index] = byte
+        }
+        header[156] = 0x30                                          // typeflag '0' (regular file)
+        for (index, byte) in Array("ustar\u{0}".utf8).enumerated() {
+            header[257 + index] = byte
+        }
+        header[263] = 0x30; header[264] = 0x30                      // version "00"
+        body.append(contentsOf: header)
+        body.append(contents)
+        let padding = (512 - contents.count % 512) % 512
+        body.append(Data(repeating: 0, count: padding))
+    }
+
+    func finished() -> Data {
+        body + Data(repeating: 0, count: 1024)                     // two zero blocks end the archive
+    }
+}
+
 /// Writes a ZIP archive byte by byte. `storedBytes` is what lands in the file (the compressed form
 /// for a deflated entry); `contents` is the uncompressed truth the directory reports. `localExtra`
 /// pads the local header the way PyTorch aligns its storages, so the local and central extra
