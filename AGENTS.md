@@ -67,12 +67,12 @@ step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints 
    ```
    xcodebuild test -scheme InferKitMLXTests        …    # the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  48 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #  28 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #  30 — the Objective-C ones
    ```
 
    **`-scheme InferKitMLX` is the LIBRARY scheme and runs only the first testable**, which is the
    collapse the core's workspace note above describes: it executed the `InferKitMLXTests` methods
-   and silently ran neither examples target, so the 76 example tests went unclaimed while the command
+   and silently ran neither examples target, so the 78 example tests went unclaimed while the command
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is FORCED onto xcodebuild — `swift test` runs every test target a

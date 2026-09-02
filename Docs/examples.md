@@ -981,6 +981,25 @@ NFKInferenceRequest *pick = [[NFKInferenceRequest alloc]
 [(NFKMLXLanguageBackend *)llm resetPromptCache];
 ```
 
+The two checks a Swift caller reaches through `NFKMLXReleaseWeights` and `contextWindow` are on the
+same request path from Objective-C. A release larger than the machine is refused by the directory
+factory before any weight is read, with an error naming the shortfall, and the window is a request key:
+
+```objc
+NSError *error = nil;
+id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:hugeRelease error:&error];
+// llm == nil; error: "… needs about 54.0 GiB resident, but the machine's working set is 25.0 GiB;
+//                     load at .checkpoint precision, quantize, or use a smaller size"
+
+NFKInferenceRequest *bounded = [[NFKInferenceRequest alloc]
+	initWithInputs:@{ NFKInputPrompt: prompt }
+	parameters:@{ NFKMLXGenerationParameterKey.contextWindow: @4096,     // retain at most this many positions
+				  NFKMLXGenerationParameterKey.prefillChunkSize: @512 }];  // prefill a long prompt in slices
+```
+
+The compiled Objective-C example writes a tiny release on the fly (config, vocabulary, random weights
+in a hand-written safetensors) and runs both through the public factory with no download.
+
 Every model with released sizes exposes a variant enum to *all* its factories — local, download, and
 async — so an ObjC caller reaches every size, and a face detector hands back the five landmarks, not
 only a box:

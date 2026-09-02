@@ -206,7 +206,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `Docs/inference-guide.md`, deleted in an earlier commit, is restored and rewritten for the current
   backends, with a roadmap. `Docs/examples.md` gains prompt-cache, speculative-decoding,
   mixture-of-experts, and constrained-decoding sections in Swift and Objective-C, each mirrored by a
-  compiled example; `Docs/companions.md` lists the language backend.
+  compiled example, and Objective-C examples for the fit-before-load refusal and the context window,
+  both run through the directory factory against a release written on the fly;
+  `Docs/companions.md` lists the language backend.
 - `AGENTS.md` is again a byte-identical copy of `CLAUDE.md`. The two had drifted since v0.2.0, with
   `AGENTS.md` taking abbreviated versions of the same edits; `CLAUDE.md` is the one to edit.
 

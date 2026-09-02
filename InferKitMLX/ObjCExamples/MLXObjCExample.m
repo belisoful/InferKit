@@ -454,6 +454,153 @@
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 }
 
+// Docs/examples.md: A release larger than the machine is refused BEFORE any weight is read. The
+// directory factory compares the release's stored bytes against Metal's working set; a sparse file
+// whose logical size is four times that budget stands in for the release, costs nothing on disk,
+// and is never opened.
+- (void)testObjectiveCAReleaseLargerThanMemoryIsRefusedBeforeLoading
+{
+	NSURL *release = [self makeTemporaryDirectory];
+	[[self tinyConfigJSON] writeToURL:[release URLByAppendingPathComponent:@"config.json"] atomically:YES];
+	NSURL *weights = [release URLByAppendingPathComponent:@"model.safetensors"];
+	[NSData.data writeToURL:weights atomically:YES];
+	NSFileHandle *handle = [NSFileHandle fileHandleForWritingToURL:weights error:NULL];
+	unsigned long long oversized = (unsigned long long)NFKMLXGPU.recommendedWorkingSetSize * 4;
+	XCTAssertTrue([handle truncateAtOffset:oversized error:NULL]);
+	[handle closeFile];
+
+	NSError *error = nil;
+	NSDate *start = NSDate.date;
+	id<NFKInferenceBackend> backend = [NFKMLXLanguage backendWithDirectoryURL:release error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+	XCTAssertTrue([error.localizedDescription containsString:@"working set"], @"%@", error);
+	// The refusal is a comparison of file sizes, so it returns at once.
+	XCTAssertLessThan(-start.timeIntervalSinceNow, 5.0);
+	[NSFileManager.defaultManager removeItemAtURL:release error:NULL];
+}
+
+// Docs/examples.md: Bounding the cache from Objective-C. A tiny release is written on the fly — a
+// config, a byte-level vocabulary, and random weights in a hand-written safetensors — so the whole
+// path runs with no download: the directory factory builds it, and the request's contextWindow key
+// caps how many positions the key-value cache retains while the run proceeds exactly as before.
+- (void)testObjectiveCAContextWindowBoundsTheCache
+{
+	NSURL *release = [self makeTemporaryDirectory];
+	[self writeTinyReleaseTo:release];
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:release error:&error];
+	XCTAssertNotNil(llm, @"%@", error);
+
+	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"hello hello hello" }
+		parameters:@{
+			NFKParameterMaxTokens: @12,
+			NFKParameterTemperature: @0,
+			NFKMLXGenerationParameterKey.contextWindow: @8,     // retain at most 8 positions
+			NFKMLXGenerationParameterKey.prefillChunkSize: @4,  // and prefill the prompt in slices
+		}];
+	NFKInferenceResult *result = [llm runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	// Random weights say nothing sensible; that a windowed run and an unbounded one both complete is
+	// what the example shows. Within the window the two are token-identical.
+	NFKInferenceRequest *unbounded = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"hello hello hello" }
+		parameters:@{ NFKParameterMaxTokens: @2, NFKParameterTemperature: @0 }];
+	NFKInferenceRequest *windowed = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"hello hello hello" }
+		parameters:@{ NFKParameterMaxTokens: @2, NFKParameterTemperature: @0,
+					  NFKMLXGenerationParameterKey.contextWindow: @64 }];
+	XCTAssertEqualObjects([llm runInferenceForRequest:unbounded error:&error].text,
+						  [llm runInferenceForRequest:windowed error:&error].text);
+	[NSFileManager.defaultManager removeItemAtURL:release error:NULL];
+}
+
+#pragma mark - A tiny release written on the fly
+
+- (NSURL *)makeTemporaryDirectory
+{
+	NSURL *directory = [[NSURL fileURLWithPath:NSTemporaryDirectory()]
+						URLByAppendingPathComponent:NSUUID.UUID.UUIDString];
+	[NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES
+											attributes:nil error:NULL];
+	return directory;
+}
+
+/// The tiny dense geometry the Swift examples use (`NFKMLXLanguageConfiguration.tiny`), tied.
+- (NSData *)tinyConfigJSON
+{
+	NSDictionary *config = @{
+		@"architectures": @[ @"Qwen3ForCausalLM" ], @"model_type": @"qwen3",
+		@"hidden_size": @64, @"num_hidden_layers": @2, @"num_attention_heads": @4,
+		@"num_key_value_heads": @2, @"head_dim": @16, @"intermediate_size": @128,
+		@"vocab_size": @512, @"rope_theta": @10000.0, @"rms_norm_eps": @1e-6,
+		@"tie_word_embeddings": @YES,
+	};
+	return [NSJSONSerialization dataWithJSONObject:config options:0 error:NULL];
+}
+
+/// Writes config.json, a byte-level BPE vocabulary, and random weights in the release layout. The
+/// loader checks every shape against the config, so a wrong entry here fails at load, not later.
+- (void)writeTinyReleaseTo:(NSURL *)release
+{
+	[[self tinyConfigJSON] writeToURL:[release URLByAppendingPathComponent:@"config.json"] atomically:YES];
+	NSDictionary *vocab = @{ @"h": @0, @"e": @1, @"l": @2, @"o": @3, @"he": @4, @"ll": @5, @"hello": @6, @"\u0120": @7 };
+	[[NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL]
+		writeToURL:[release URLByAppendingPathComponent:@"vocab.json"] atomically:YES];
+	[@"#version: 0.2\nh e\nl l\nhe ll\nhell o\n" writeToURL:[release URLByAppendingPathComponent:@"merges.txt"]
+												  atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+
+	NSMutableArray<NSArray *> *tensors = [NSMutableArray array];   // (name, shape)
+	[tensors addObject:@[ @"model.embed_tokens.weight", @[ @512, @64 ] ]];
+	for (NSInteger layer = 0; layer < 2; layer++) {
+		NSString *prefix = [NSString stringWithFormat:@"model.layers.%ld.", (long)layer];
+		NSDictionary<NSString *, NSArray *> *shapes = @{
+			@"self_attn.q_proj.weight": @[ @64, @64 ], @"self_attn.k_proj.weight": @[ @32, @64 ],
+			@"self_attn.v_proj.weight": @[ @32, @64 ], @"self_attn.o_proj.weight": @[ @64, @64 ],
+			@"self_attn.q_norm.weight": @[ @16 ], @"self_attn.k_norm.weight": @[ @16 ],
+			@"mlp.gate_proj.weight": @[ @128, @64 ], @"mlp.up_proj.weight": @[ @128, @64 ],
+			@"mlp.down_proj.weight": @[ @64, @128 ],
+			@"input_layernorm.weight": @[ @64 ], @"post_attention_layernorm.weight": @[ @64 ],
+		};
+		for (NSString *name in shapes) {
+			[tensors addObject:@[ [prefix stringByAppendingString:name], shapes[name] ]];
+		}
+	}
+	[tensors addObject:@[ @"model.norm.weight", @[ @64 ] ]];
+	[self writeSafetensors:tensors toURL:[release URLByAppendingPathComponent:@"model.safetensors"]];
+}
+
+/// A safetensors file is an 8-byte little-endian header length, a JSON header naming each tensor's
+/// dtype, shape, and byte range, and the raw data. Norm weights are ones; everything else is small
+/// random noise, so the forward stays finite.
+- (void)writeSafetensors:(NSArray<NSArray *> *)tensors toURL:(NSURL *)url
+{
+	NSMutableDictionary *header = [NSMutableDictionary dictionary];
+	NSMutableData *body = [NSMutableData data];
+	srand48(7);
+	for (NSArray *entry in tensors) {
+		NSString *name = entry[0];
+		NSArray<NSNumber *> *shape = entry[1];
+		NSUInteger count = 1;
+		for (NSNumber *dim in shape) { count *= dim.unsignedIntegerValue; }
+		BOOL isNorm = [name hasSuffix:@"norm.weight"];
+		NSUInteger start = body.length;
+		for (NSUInteger i = 0; i < count; i++) {
+			float value = isNorm ? 1.0f : (float)(drand48() - 0.5) * 0.1f;
+			[body appendBytes:&value length:sizeof(value)];
+		}
+		header[name] = @{ @"dtype": @"F32", @"shape": shape, @"data_offsets": @[ @(start), @(body.length) ] };
+	}
+	NSData *headerJSON = [NSJSONSerialization dataWithJSONObject:header options:0 error:NULL];
+	uint64_t headerLength = headerJSON.length;
+	NSMutableData *file = [NSMutableData dataWithBytes:&headerLength length:sizeof(headerLength)];
+	[file appendData:headerJSON];
+	[file appendData:body];
+	[file writeToURL:url atomically:YES];
+}
+
 // Docs/examples.md: The generation runtime reaches Objective-C through request keys — a draft model
 // for speculative decoding, a prompt cache kept between turns, and a JSON or fixed-choice constraint
 // on the output — and the backend built with a draft through its own factory.
