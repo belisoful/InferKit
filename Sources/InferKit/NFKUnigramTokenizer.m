@@ -260,6 +260,21 @@ static const double kNFKUnigramFallbackScore = -1.0e4;
 	return text;
 }
 
+- (nullable NSData *)bytesForTokenId:(NSInteger)tokenId
+{
+	NSString *piece = [self pieceForId:@(tokenId)];
+	if (piece == nil) {
+		return nil;
+	}
+	NSInteger byteValue = [self byteValueForPiece:piece];
+	if (byteValue >= 0) {
+		unsigned char byte = (unsigned char)byteValue;
+		return [NSData dataWithBytes:&byte length:1];
+	}
+	return [[piece stringByReplacingOccurrencesOfString:kNFKUnigramSpace withString:@" "]
+			dataUsingEncoding:NSUTF8StringEncoding];
+}
+
 - (nullable NSString *)pieceForId:(NSNumber *)tokenId
 {
 	NSInteger identifier = tokenId.integerValue;

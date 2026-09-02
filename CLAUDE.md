@@ -66,13 +66,13 @@ step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints 
 
    ```
    xcodebuild test -scheme InferKitMLXTests        …    # the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  41 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #  24 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXExamples     …    #  48 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #  28 — the Objective-C ones
    ```
 
    **`-scheme InferKitMLX` is the LIBRARY scheme and runs only the first testable**, which is the
    collapse the core's workspace note above describes: it executed the `InferKitMLXTests` methods
-   and silently ran neither examples target, so the 65 example tests went unclaimed while the command
+   and silently ran neither examples target, so the 76 example tests went unclaimed while the command
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is FORCED onto xcodebuild — `swift test` runs every test target a
@@ -265,10 +265,13 @@ constant does not fail CI — bumping it is a release step. SwiftPM takes its ve
 ├── Tools/xcframework/verify-mlx.sh  # Links a consumer against each artifact and RUNS a model, because
 │                                    #   a binary that links can still fail to find its metallib.
 ├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into a durable ~/.inferkit-validation
+│                                    #   shapes.py: a release's config + every tensor's shape by HTTP range request (no weights), for the structural checks
 ├── Tools/reference-parity/          # Offline: runs a model's (or a training objective's) reference implementation, records input + result for numeric comparison
 ├── Package.swift                    # SwiftPM manifest
 ├── InferKit.podspec                 # CocoaPods source spec
-├── AGENTS.md / CLAUDE.md
+├── AGENTS.md / CLAUDE.md            # One document, two names: edit CLAUDE.md and copy it to AGENTS.md.
+│                                    #   They drifted apart between v0.2.0 and 0.3.0 (AGENTS.md took
+│                                    #   abbreviated edits) and were reconciled on 2026-09-01.
 ├── LICENSE                          # MIT
 └── README.md
 ```
@@ -435,6 +438,11 @@ factory is the public entry, so a new type needs no header change.
   "2024" is four tokens); a word's last character carries `</w>`, which the vocabulary distinguishes;
   and decoding turns `</w>` back into a space.
 - `unigram` / `sentencepiece` → `NFKUnigramTokenizer`; `wordpiece` → `NFKWordPieceTokenizer`.
+
+`bytesForTokenId:` (0.3.0) returns the bytes ONE id contributes to decoded text — a fragment of a
+multi-byte character comes back as that fragment, a word-piece word start carries its space, a
+special token its literal — which is what a byte-level grammar reasons over; `NFKMLXVocabulary`
+reads the whole table once per tokenizer.
 
 `encode:` returns the ids for the text alone. A model input's start and end markers and its padding
 are the model's geometry, not the tokenizer's, so they are added where the context length is known —
@@ -1314,6 +1322,62 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `model.safetensors` covers the smallest model and nothing else. 4B is the largest size this machine
   holds at float32 — about 16 GB of weights on each side, measured, with the oracle and the test run as
   separate processes.
+  **Prompt cache, speculative decoding, mixture of experts, constrained decoding** (all 0.3.0,
+  each measured). `NFKMLXKeyValueCache.rollback(by:)` moves the end cursors back and copies nothing;
+  it returns false where a window has dropped what it would reach. `NFKMLXPromptCache` keeps the
+  cache and its token ids between generations, `align(to:)` rolls back to the shared prefix (capped
+  one short of the prompt so a token runs and produces logits), and `save(to:)`/`load(from:)` persist
+  it — float or packed rows alike. `reusesPromptCache` makes the backend keep one; the backend
+  serializes generation through a lock because two runs through one cache interleave their rows.
+  **Speculative decoding** (`generate(prompt:options:draft:promptCache:report:onToken:)`,
+  `backend(directoryURL:draftDirectoryURL:)`, ObjC `backendWithDirectoryURL:draftDirectoryURL:error:`,
+  request key `draftTokens`) verifies `[next] + proposals` in one cached pass, keeps the leading
+  agreeing run, rolls both caches back by the rejected count — through the prompt cache when one is
+  present, or the KV cache is rolled back TWICE — and is greedy-exact by construction; above
+  temperature 0 it is the standard rejection scheme. **Measured on Qwen3-1.7B←0.6B at float32:
+  token-identical, 73.5% acceptance, 1.01× wall clock** — a 28-layer step here is launch-bound, so
+  the draft costs nearly a target step; the gain needs a bandwidth-bound target and a shallower draft.
+  **The routed feed-forward** (`NFKLMMixtureFeedForward`: a router `gate`, experts stacked as ONE
+  `[E, out, in]` tensor per projection in `NFKLMSwitchLinear`, dispatched through `gatherMM` /
+  `gatherQuantizedMM`; `NFKLMQuantizedSwitchLinear` conforms to `Quantized` so `save` records it and
+  `matchStructure` rebuilds it) reads `qwen3_moe` (`num_experts`, `moe_intermediate_size`,
+  `norm_topk_prob`; dense-interleaved layers refused) and `mixtral` (`num_local_experts`,
+  `intermediate_size`, always renormalized; a sliding window refused). Softmax over all experts then
+  renormalizing the selected IS Mixtral's softmax over the selected, so one implementation serves
+  both. `moduleKey(forRelease:)` maps `block_sparse_moe.experts.N.w1/w3/w2` onto
+  `mlp.experts.N.gate_proj/up_proj/down_proj`, and `stackingExperts` stacks the per-expert tensors in
+  index order. **Reference parity against transformers' own Qwen3MoeForCausalLM and
+  MixtralForCausalLM at tiny random configurations** (`run_reference.py qwen3_moe` / `mixtral`,
+  `IK_PARITY_QWEN3_MOE_TINY` / `IK_PARITY_MIXTRAL_TINY`): every hidden state exact layer by layer,
+  logit cosine 0.99999999999999 / 0.9999999999999903, on the first numeric run. **The released
+  Qwen3-30B-A3B is accounted for by shape**: `Tools/validation-assets/shapes.py` reads every shard's
+  safetensors header by HTTP range request (config + 18,867 shapes, no weights), and
+  `testEveryParameterMatchesTheReleasedQwen3MoeCheckpoint` consumes all 18,867 with 0 missing, 0
+  mismatched, 0 unaccounted. The released sizes need quantized experts to fit 32 GB; gpt-oss
+  (sliding layers, its own activation, sinks, MXFP4) and Qwen2-MoE (shared expert) are refused by name.
+  **Constrained decoding** (`NFKMLXConstrainedDecoding.swift`): `NFKMLXVocabulary` holds every id's
+  bytes, read through the core's new `NFKTokenizer.bytesForTokenId:`; `NFKMLXByteConstraint<State>`
+  walks a grammar byte by byte and caches the admissible mask PER STATE (the uncached cost is the
+  vocabulary times a few bytes; a run revisits a handful of states); `NFKMLXJSONConstraint` is JSON
+  syntax with `root` (`.container`/`.object`/`.array`/`.any`), `NFKMLXChoiceConstraint` a fixed set.
+  The mask is added to the logits BEFORE temperature and nucleus, the end token is admitted only at
+  a complete document, and a constraint runs the plain loop (speculation is skipped). Request keys:
+  `outputFormat` (`"json"`/`"json-object"`/`"json-array"`) and `choices`. Two traps, both measured
+  on Qwen3-0.6B: **JSON admits unbounded whitespace**, and with its preamble forbidden the greedy
+  model emitted 96 tokens of blank lines — `maximumWhitespaceRun` (8 bytes) caps the detour; and
+  **a thinking model wants its `<think>` block**, which the grammar forbids, and the leftover mass
+  gave `{}` — the prompt closes the block (`<think>\n\n</think>\n\n` after the assistant marker),
+  as the release's own no-think template does. **Two latent defects fixed on the way:** the release
+  path passed NO special tokens to the tokenizer (they live in `tokenizer_config.json`'s
+  `added_tokens_decoder`, not `vocab.json`), so a ChatML marker encoded as plain text — now
+  `specialTokens(inDirectory:)` supplies them and the `eos_token`; and no end-of-sequence stop was
+  ever set, so generation ran to `maxTokens` — the release's eos is now the default stop when a
+  request names none (a behavior change, recorded in the changelog). `NFKMLXLanguageBackend` is now
+  `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
+  **`Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9**: the LLM oracle
+  environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
+  the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode
+  ran, fixed by hoisting the literal.
 - `NFKMLXHybridLanguage` — the hybrid decoder Qwen3.5, Qwen3.6, and **Qwen3.8** are built from
   (`Qwen3_5ForConditionalGeneration`), at **reference parity** on the released Qwen3.5-4B (logit
   cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). 4B is the smallest

@@ -82,10 +82,38 @@ public struct NFKMLXLanguageConfiguration: Sendable {
         hiddenSize: 4096, layerCount: 36, headCount: 32, keyValueHeadCount: 8,
         headDimensions: 128, intermediateSize: 12288, tiesWordEmbeddings: false)
 
+    /// How many experts each feed-forward holds, or 0 for the dense feed-forward.
+    ///
+    /// @discussion A mixture of experts replaces one wide feed-forward with many narrow ones and a
+    /// router that sends each token to ``activeExpertCount`` of them, so a token's cost is the
+    /// active experts' width while the model's capacity is all of them. Qwen3-MoE and Mixtral are
+    /// this decoder with an expert feed-forward; nothing else about the block changes.
+    public var expertCount: Int = 0
+    /// How many experts the router selects per token.
+    public var activeExpertCount: Int = 0
+    /// Each expert's intermediate width, which is the `intermediate_size` of a Mixtral release and
+    /// the `moe_intermediate_size` of a Qwen3-MoE release.
+    public var expertIntermediateSize: Int = 0
+    /// Whether the selected experts' routing weights are renormalized to sum to one
+    /// (`norm_topk_prob`). Mixtral always does; Qwen3-MoE says so in its config.
+    public var normalizesExpertWeights: Bool = true
+
+    /// Whether the feed-forward is a mixture of experts.
+    public var isMixtureOfExperts: Bool { expertCount > 0 }
+
     /// A small configuration that runs with random weights, for tests.
     public static let tiny = NFKMLXLanguageConfiguration(
         hiddenSize: 64, layerCount: 2, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
         intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000)
+
+    /// The tiny configuration with a mixture-of-experts feed-forward, for tests.
+    public static let tinyMixture: NFKMLXLanguageConfiguration = {
+        var configuration = tiny
+        configuration.expertCount = 8
+        configuration.activeExpertCount = 2
+        configuration.expertIntermediateSize = 32
+        return configuration
+    }()
 }
 
 /// The keys and values a layer has already computed, so a step attends to the whole prefix without
@@ -303,6 +331,64 @@ public final class NFKMLXKeyValueCache {
 
     /// Advances the position count once every layer has been updated for this step.
     func advance(by count: Int) { offset += count }
+
+    /// Discards the newest `count` positions, so the next update writes over them.
+    ///
+    /// @discussion This is what lets a cache be REUSED rather than rebuilt: speculative decoding
+    /// rolls back the draft tokens the model rejected, and a prompt cache rolls back to the point
+    /// where a new prompt diverges from the last one. The rollback moves the end cursor and the
+    /// position count and copies nothing, so it is exact — the retained rows are the rows the
+    /// original forward wrote. Returns false, and changes nothing, when a window has already dropped
+    /// what the rollback would need to reach; the caller rebuilds from scratch then.
+    @discardableResult
+    public func rollback(by count: Int) -> Bool {
+        precondition(count >= 0, "a rollback discards a non-negative number of positions")
+        guard count > 0 else { return true }
+        guard ends.indices.allSatisfy({ count <= retainedLength(layer: $0) }) else { return false }
+        for layer in ends.indices {
+            ends[layer] -= count
+        }
+        offset -= count
+        return true
+    }
+
+    /// The element type the model computes in, for a persisted cache to restore.
+    var storedDTypeForExport: DType { storedDType }
+
+    /// The retained rows of every layer's buffers, keyed for a safetensors file. Used by
+    /// ``NFKMLXPromptCache`` to persist a prefilled prompt.
+    func exportedArrays() -> [String: MLXArray] {
+        var arrays = [String: MLXArray]()
+        for layer in keys.indices where retainedLength(layer: layer) > 0 {
+            let span = starts[layer] ..< ends[layer]
+            arrays["layer.\(layer).keys"] = keys[layer]![0..., 0..., span, 0...]
+            arrays["layer.\(layer).values"] = values[layer]![0..., 0..., span, 0...]
+            if let scales = keyScales[layer] { arrays["layer.\(layer).key_scales"] = scales[0..., 0..., span, 0...] }
+            if let biases = keyBiases[layer] { arrays["layer.\(layer).key_biases"] = biases[0..., 0..., span, 0...] }
+            if let scales = valueScales[layer] { arrays["layer.\(layer).value_scales"] = scales[0..., 0..., span, 0...] }
+            if let biases = valueBiases[layer] { arrays["layer.\(layer).value_biases"] = biases[0..., 0..., span, 0...] }
+        }
+        return arrays
+    }
+
+    /// Restores what ``exportedArrays()`` wrote, at position count `offset`. The rows land at the
+    /// front of fresh buffers, so a restored cache appends exactly as the original did.
+    func restore(arrays: [String: MLXArray], offset: Int, storedDType: DType) {
+        self.storedDType = storedDType
+        for layer in keys.indices {
+            guard let restoredKeys = arrays["layer.\(layer).keys"],
+                  let restoredValues = arrays["layer.\(layer).values"] else { continue }
+            keys[layer] = restoredKeys
+            values[layer] = restoredValues
+            keyScales[layer] = arrays["layer.\(layer).key_scales"]
+            keyBiases[layer] = arrays["layer.\(layer).key_biases"]
+            valueScales[layer] = arrays["layer.\(layer).value_scales"]
+            valueBiases[layer] = arrays["layer.\(layer).value_biases"]
+            starts[layer] = 0
+            ends[layer] = restoredKeys.dim(2)
+        }
+        self.offset = offset
+    }
 }
 
 /// The rotary embedding, with a release's declared scaling folded in.
@@ -411,8 +497,18 @@ final class NFKLMAttention: Module {
     }
 }
 
+/// The feed-forward a block holds, dense or routed.
+class NFKLMMLP: Module {
+    /// Builds the form the configuration asks for.
+    static func make(_ c: NFKMLXLanguageConfiguration) -> NFKLMMLP {
+        c.isMixtureOfExperts ? NFKLMMixtureFeedForward(c) : NFKLMFeedForward(c)
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fatalError("a feed-forward subclass implements this") }
+}
+
 /// The SwiGLU feed-forward: a gate and an up projection multiplied, then projected back down.
-final class NFKLMFeedForward: Module {
+final class NFKLMFeedForward: NFKLMMLP {
     @ModuleInfo(key: "gate_proj") var gate: Linear
     @ModuleInfo(key: "up_proj") var up: Linear
     @ModuleInfo(key: "down_proj") var down: Linear
@@ -424,19 +520,142 @@ final class NFKLMFeedForward: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { down(silu(gate(x)) * up(x)) }
+    override func callAsFunction(_ x: MLXArray) -> MLXArray { down(silu(gate(x)) * up(x)) }
+}
+
+/// One weight per expert, applied to each token by the experts its router chose.
+///
+/// @discussion The experts are stacked into a single `[experts, out, in]` tensor rather than held
+/// as separate layers, so a step runs ONE gathered matrix multiplication over the chosen experts
+/// instead of one multiplication per expert per token. The released checkpoints store each expert
+/// separately; the loader stacks them.
+class NFKLMSwitchLinear: Module {
+    @ParameterInfo(key: "weight") var weight: MLXArray
+
+    init(experts: Int, inputSize: Int, outputSize: Int) {
+        let scale = sqrt(1 / Float(inputSize))
+        _weight.wrappedValue = MLXRandom.uniform(low: -scale, high: scale, [experts, outputSize, inputSize])
+        super.init()
+    }
+
+    init(weight: MLXArray) {
+        _weight.wrappedValue = weight
+        super.init()
+    }
+
+    var expertCount: Int { weight.dim(0) }
+    var outputSize: Int { weight.dim(1) }
+    /// The input width, which a quantized subclass derives from its packing.
+    var inputSize: Int { weight.dim(2) }
+
+    /// Applies expert `experts[..., j]` to `x[..., j, :]`: `x` is `[..., 1, in]` broadcast against
+    /// `experts` `[..., k]`, giving `[..., k, out]`.
+    func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+        gatherMM(x, weight.swappedAxes(-1, -2), rhsIndices: experts)
+    }
+
+    /// The same layer with its weights affine-packed.
+    func quantized(groupSize: Int, bits: Int) -> NFKLMQuantizedSwitchLinear {
+        NFKLMQuantizedSwitchLinear(weight: weight, groupSize: groupSize, bits: bits)
+    }
+}
+
+/// A switch linear whose expert weights are MLX affine-quantized, applied through the gathered
+/// quantized matrix multiplication.
+final class NFKLMQuantizedSwitchLinear: NFKLMSwitchLinear, Quantized {
+    @ParameterInfo(key: "scales") var scales: MLXArray
+    @ParameterInfo(key: "biases") var biases: MLXArray?
+    let groupSize: Int
+    let bits: Int
+    var mode: QuantizationMode { .affine }
+
+    init(weight: MLXArray, groupSize: Int, bits: Int) {
+        self.groupSize = groupSize
+        self.bits = bits
+        let (packed, scales, biases) = MLX.quantized(weight, groupSize: groupSize, bits: bits)
+        _scales.wrappedValue = scales
+        _biases.wrappedValue = biases
+        super.init(weight: packed)
+        freeze()
+    }
+
+    override var inputSize: Int { weight.dim(2) * 32 / bits }
+
+    override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+        gatherQuantizedMM(x, weight, scales: scales, biases: biases, rhsIndices: experts,
+                          transpose: true, groupSize: groupSize, bits: bits)
+    }
+}
+
+/// The experts' SwiGLU, run for each token through the experts chosen for it.
+final class NFKLMSwitchGLU: Module {
+    @ModuleInfo(key: "gate_proj") var gate: NFKLMSwitchLinear
+    @ModuleInfo(key: "up_proj") var up: NFKLMSwitchLinear
+    @ModuleInfo(key: "down_proj") var down: NFKLMSwitchLinear
+
+    init(_ c: NFKMLXLanguageConfiguration) {
+        _gate.wrappedValue = NFKLMSwitchLinear(experts: c.expertCount, inputSize: c.hiddenSize,
+                                               outputSize: c.expertIntermediateSize)
+        _up.wrappedValue = NFKLMSwitchLinear(experts: c.expertCount, inputSize: c.hiddenSize,
+                                             outputSize: c.expertIntermediateSize)
+        _down.wrappedValue = NFKLMSwitchLinear(experts: c.expertCount, inputSize: c.expertIntermediateSize,
+                                               outputSize: c.hiddenSize)
+        super.init()
+    }
+
+    /// `x` `[batch, length, hidden]` with `experts` `[batch, length, k]` → `[batch, length, k, hidden]`.
+    func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+        let expanded = x.expandedDimensions(axes: [-2, -3])
+        let hidden = silu(gate(expanded, experts: experts)) * up(expanded, experts: experts)
+        return down(hidden, experts: experts).squeezed(axis: -2)
+    }
+}
+
+/// The mixture-of-experts feed-forward: a router scores every expert, the top `k` run, and their
+/// outputs combine by routing weight.
+///
+/// @discussion The router's softmax is taken over ALL experts and the selected weights are then
+/// renormalized when the configuration says so — which is the same as Mixtral's softmax over the
+/// selected logits alone, so one implementation serves both families.
+final class NFKLMMixtureFeedForward: NFKLMMLP {
+    @ModuleInfo(key: "gate") var router: Linear
+    @ModuleInfo(key: "experts") var experts: NFKLMSwitchGLU
+
+    let activeExpertCount: Int
+    let normalizesWeights: Bool
+
+    init(_ c: NFKMLXLanguageConfiguration) {
+        precondition(c.activeExpertCount > 0 && c.activeExpertCount <= c.expertCount,
+                     "a mixture routes each token to between one and every expert")
+        activeExpertCount = c.activeExpertCount
+        normalizesWeights = c.normalizesExpertWeights
+        _router.wrappedValue = Linear(c.hiddenSize, c.expertCount, bias: false)
+        _experts.wrappedValue = NFKLMSwitchGLU(c)
+        super.init()
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let scores = softmax(router(x), axis: -1, precise: true)
+        let chosen = argPartition(-scores, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
+        var weights = takeAlong(scores, chosen, axis: -1)
+        if normalizesWeights {
+            weights = weights / weights.sum(axis: -1, keepDims: true)
+        }
+        let outputs = experts(x, experts: chosen)
+        return (outputs * weights.expandedDimensions(axis: -1).asType(outputs.dtype)).sum(axis: -2)
+    }
 }
 
 /// One transformer block: pre-normalized attention and feed-forward, each added back.
 final class NFKLMBlock: Module {
     @ModuleInfo(key: "self_attn") var attention: NFKLMAttention
-    @ModuleInfo(key: "mlp") var feedForward: NFKLMFeedForward
+    @ModuleInfo(key: "mlp") var feedForward: NFKLMMLP
     @ModuleInfo(key: "input_layernorm") var attentionNorm: RMSNorm
     @ModuleInfo(key: "post_attention_layernorm") var feedForwardNorm: RMSNorm
 
     init(_ c: NFKMLXLanguageConfiguration) {
         _attention.wrappedValue = NFKLMAttention(c)
-        _feedForward.wrappedValue = NFKLMFeedForward(c)
+        _feedForward.wrappedValue = NFKLMMLP.make(c)
         _attentionNorm.wrappedValue = RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _feedForwardNorm.wrappedValue = RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         super.init()
@@ -506,6 +725,21 @@ public final class NFKMLXLanguageNet: Module {
         }
         cache?.advance(by: length)
         return model.norm(hidden)
+    }
+
+    /// The state entering the stack and the state each layer produces, with the final norm applied
+    /// to the last — the reference's `output_hidden_states` convention, so a divergence is located
+    /// to a layer rather than guessed at from the logits.
+    func layerStates(_ tokens: MLXArray) -> [MLXArray] {
+        var hidden = model.embedTokens(tokens)
+        var states = [hidden]
+        let mask = NFKMLXLanguageNet.causalMask(tokens.shape[1], offset: 0)
+        for (index, layer) in model.layers.enumerated() {
+            hidden = layer(hidden, mask: mask, cache: nil, layer: index)
+            states.append(hidden)
+        }
+        states[states.count - 1] = model.norm(hidden)
+        return states
     }
 
     /// The output projection on its own: post-norm hidden states → logits.

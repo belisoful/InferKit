@@ -65,19 +65,19 @@ step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints 
    three (`-destination 'platform=macOS' -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 563 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  35 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #  22 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  48 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #  28 — the Objective-C ones
    ```
 
    **`-scheme InferKitMLX` is the LIBRARY scheme and runs only the first testable**, which is the
    collapse the core's workspace note above describes: it executed the `InferKitMLXTests` methods
-   and silently ran neither examples target, so 57 tests went unclaimed while the command reported
-   success. The examples targets are what keeps a documented snippet from rotting, which is exactly
-   what a silent skip defeats. The per-target schemes exist to make that impossible; keep one testable
-   in each. Only MLX is FORCED onto xcodebuild — `swift test` runs every test target a package
-   declares, so the core (177) and `InferKitFoundationModels` (24) are covered by step 1 and step 4
-   whatever Xcode does with their schemes.
+   and silently ran neither examples target, so the 76 example tests went unclaimed while the command
+   reported success. The examples targets are what keeps a documented snippet from rotting, which is
+   exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
+   testable in each. Only MLX is FORCED onto xcodebuild — `swift test` runs every test target a
+   package declares, so the core (204) and `InferKitFoundationModels` (24) are covered by step 1 and
+   step 4 whatever Xcode does with their schemes.
 4. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
    covers all 24 tests across its three test targets. Through Xcode it collapses the same way MLX does
    — the generated `InferKitFoundationModels` scheme runs 15 and skips the 9 in the two examples
@@ -136,15 +136,25 @@ Keep the two in sync: a new source file is picked up by the SwiftPM glob automat
 globs the same paths, so no per-file edit is needed there either. New public headers go in
 `Sources/InferKit/include/InferKit/` and the umbrella `InferKit.h`.
 
-**`Tools/` ships in NO distribution — developer and validation tooling, not the library.** The SwiftPM
-targets name `Sources/InferKit` / `InferKitMLX/Sources`, the podspec globs only
-`Sources/InferKit/**/*.{h,m}`, and the release XCFrameworks are built binaries; none carry anything
-under `Tools/`. A SwiftPM consumer clones the whole repo (so `Tools/` lands on disk) but builds none of
-it. The `~30 Tools/*-to-safetensors/convert.py` scripts are **not required to consume the library** —
-`NFKMLXTorchFormat` reads a raw checkpoint natively, so no Python is needed at runtime. They stay as
-the **byte oracle** for `NFKMLXTorchParityTests` and the **offline** portable-safetensors path; the
-Python reference-parity tooling (`Tools/reference-parity`, `Tools/validation-assets`) is the
-irreducibly-Python ground truth every port is measured against. `Tools/README.md` records this.
+**`Tools/` ships in NO distribution — it is developer and validation tooling, not the library.** The
+SwiftPM targets name `Sources/InferKit` / `InferKitMLX/Sources` as their paths, the podspec globs only
+`Sources/InferKit/**/*.{h,m}`, and the XCFramework release assets are built binaries; none of them
+compile or carry anything under `Tools/`. A consumer resolving the SwiftPM package clones the whole
+repository (so `Tools/` lands on disk), but nothing there is built into the products or the release.
+The `~30 Tools/*-to-safetensors/convert.py` scripts are therefore **not required to consume the
+library**: `NFKMLXTorchFormat` reads a raw `.pth`/`.pt`/`.ckpt`/`.th`/HF `.bin` natively (see the
+native-checkpoint-reader entry), so a consumer needs no Python. The converters stay for two reasons
+that are not consumer-facing — they are the **byte oracle** `NFKMLXTorchParityTests` holds the native
+reader to, and the **offline path** to a portable, pickle-free safetensors — and the Python
+reference-parity tooling (`Tools/reference-parity`, `Tools/validation-assets`) is the ground truth
+every Swift port is measured against, which is irreducibly Python (torch / transformers / diffusers).
+`Tools/README.md` records this boundary.
+
+**The version lives in three places that must move together on release**: `s.version` in
+`InferKit.podspec`, the string `NFKInferKit.version` returns (`Sources/InferKit/NFKInferKit.m`), and
+the `vX.Y.Z` git tag. A test asserts the shape of `NFKInferKit.version`, not its value, so a stale
+constant does not fail CI — bumping it is a release step. SwiftPM takes its version from the tag, so
+`Package.swift` carries none.
 
 ## Project Structure
 
@@ -153,6 +163,7 @@ irreducibly-Python ground truth every port is measured against. `Tools/README.md
 ├── Sources/InferKit/
 │   ├── include/InferKit/            # Public headers (the API surface)
 │   │   ├── InferKit.h               # Umbrella (imports every public header)
+│   │   ├── NFKInferKit.h            # Library info (NFKInferKit.version)
 │   │   ├── NFKInferenceBackend.h    # Swappable-engine protocol + NFKInferenceSubmit
 │   │   ├── NFKInferenceRequest.h    # Immutable request (inputs + parameters + outputModality)
 │   │   ├── NFKInferenceResult.h     # Immutable result (outputs)
@@ -164,6 +175,8 @@ irreducibly-Python ground truth every port is measured against. `Tools/README.md
 │   │   ├── NFKRemoteBackend.h       # OpenAI-compatible chat client
 │   │   ├── NFKRemoteTranscriptionBackend.h  # OpenAI-compatible audio→text (Whisper) client
 │   │   ├── NFKAsyncGenerationBackend.h  # Submit-poll-fetch base for generation services
+│   │   ├── NFKComputePlan.h         # Where Core ML plans to run each operation (ANE / GPU / CPU)
+│   │   ├── NFKHardwareProfile.h     # What the machine is and how much of it is left
 │   │   ├── NFKTensorConversion.h    # RGBA-interleaved ↔ planar CHW/HWC float tensors
 │   │   ├── NFKMLMultiArray.h        # Interleaved ↔ MLMultiArray bridge
 │   │   ├── NFKHFHub.h               # Hugging Face resolve/download/checksum/cache
@@ -207,6 +220,7 @@ irreducibly-Python ground truth every port is measured against. `Tools/README.md
 ├── InferKitMLX/                     # Optional MLX companion package (own Package.swift + tests)
 ├── InferKitFoundationModels/        # Optional Foundation Models companion (own Package.swift + tests)
 ├── Tools/inferkit-convert/          # Offline Python converter: HF causal-LM -> Core ML model dir
+├── Tools/ane-placement/            # Paired Core ML models, to MEASURE what lands on the ANE
 ├── Tools/realesrgan-to-safetensors/ # Offline: Real-ESRGAN .pth -> safetensors for NFKMLXRealESRGAN
 ├── Tools/depth-anything-to-safetensors/ # Offline: Depth Anything V2 .pth -> safetensors (self-validating)
 ├── Tools/lama-to-safetensors/       # Offline: LaMa .ckpt generator -> safetensors for NFKMLXLaMa
@@ -251,10 +265,13 @@ irreducibly-Python ground truth every port is measured against. `Tools/README.md
 ├── Tools/xcframework/verify-mlx.sh  # Links a consumer against each artifact and RUNS a model, because
 │                                    #   a binary that links can still fail to find its metallib.
 ├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into a durable ~/.inferkit-validation
+│                                    #   shapes.py: a release's config + every tensor's shape by HTTP range request (no weights), for the structural checks
 ├── Tools/reference-parity/          # Offline: runs a model's (or a training objective's) reference implementation, records input + result for numeric comparison
 ├── Package.swift                    # SwiftPM manifest
 ├── InferKit.podspec                 # CocoaPods source spec
-├── AGENTS.md / CLAUDE.md
+├── AGENTS.md / CLAUDE.md            # One document, two names: edit CLAUDE.md and copy it to AGENTS.md.
+│                                    #   They drifted apart between v0.2.0 and 0.3.0 (AGENTS.md took
+│                                    #   abbreviated edits) and were reconciled on 2026-09-01.
 ├── LICENSE                          # MIT
 └── README.md
 ```
@@ -291,6 +308,99 @@ agent, not a separate endpoint; it is the `openai` preset.
 carries one live test gated on `INFERKIT_LIVE_LOCAL_MODEL` that runs against a local server when one is
 listening.
 
+## Measuring where Core ML runs
+
+`MLComputeUnits` is a request. Core ML places an operation the Neural Engine cannot run somewhere
+else and reports nothing about having done so, so a model asked for the Neural Engine can run
+entirely on the CPU and behave exactly as if it had not. `NFKComputePlan` answers that: it reads a
+compiled model's plan per operation, without running it, and reports the counts per device plus
+`operatorNamesOffNeuralEngine` — which is the list to work from when a conversion is being tuned,
+since one unsupported operator in the middle of a network splits it and costs more than its own
+share of the time.
+
+It needs macOS 14.4 / iOS 17.4 / tvOS 17.4, which is where Core ML began publishing the information.
+`isAvailable` reports whether the OS can answer, and an older system fails with
+`kNFKError_InferenceUnsupported` rather than returning an empty plan, because zero operations on the
+Neural Engine and "cannot tell" are different answers. `powermetrics --samplers ane_power` is the
+runtime cross-check where the API is unavailable; it needs elevated privileges, which is why it is
+documentation rather than code here.
+
+**What it says about this repository's own Core ML language model is bad news, and it is measured.**
+A GPT-2 converted by `Tools/inferkit-convert` places **0 of 448 operations on the Neural Engine** —
+all of them on the GPU, under `MLComputeUnits.ALL` — and the conversion emits `ANECCompile() FAILED`
+into the middle of its ordinary output, which is the only warning there is. The Neural Engine is
+reachable on the same machine: a plain attention block at sequence 64 places 100% of its operations
+there. **The transformer layout guidance did NOT help.** The ordinary `(B, S, C)` + `nn.Linear` form
+was already fully placed, and rewriting it into the 4-D `(B, C, 1, S)` 1×1-convolution form left
+placement unchanged while taking the operation count from 40 to 313 — so the converter's ANE-friendly
+rewrite is work with no measured benefit, and it is deliberately NOT done. What actually moves a
+language model off the Neural Engine is still unidentified, and the single-token comparison in
+`Tools/ane-placement/` does NOT settle it: both of those models landed on the CPU with four and eight
+placed operations, which is Core ML declining to dispatch a trivial graph rather than evidence about
+Neural Engine eligibility. That experiment is inconclusive, not negative.
+**The cause is now isolated, by adding one property at a time to a model that IS fully placed**
+(`Tools/ane-placement/add_one_property.py`). Two facts, over the same twelve-layer 768-wide model:
+**a single-token forward is not placed on the Neural Engine** — sequence 64 scores 100% and sequence 1
+scores 0%, with the stateful cache innocent and the embedding gather costing four CPU operations — and
+**a multifunction package takes ONE placement decision**, so the seq-64 prefill function that scores
+100% alone drops to 0% when packaged with the seq-1 decode function. That is exactly what the
+converter emits, and exactly why the whole thing runs on the GPU.
+`ANECCompile() FAILED` was a red herring: it appeared once during conversion and does not reproduce.
+
+**Whether to act on it is a smaller question than it looks.** Timed on the same models, prefill takes
+3.77 ms on the Neural Engine against 4.98 ms on the GPU, and decode is unchanged — so splitting the
+package into two models buys about 1.3× on time-to-first-token and nothing per token. Note also that a
+compute plan reports the PREFERRED device, not an execution trace: the seq-1 model is planned entirely
+onto the GPU and still runs fastest under `ALL`. Placement is where Core ML intends to run something;
+timing is what decides.
+
+`coremltools` cannot be used for this. Its own `MLComputePlan` binding returns `None` for every
+operation in 9.0 on macOS 26, including for models the Objective-C API reports on in the same session,
+so a Python-side check reads as "nothing is on the Neural Engine" whatever the truth is.
+
+`NFKCoreMLBackend` gained `computeUnits` to go with it (`NFKCoreMLLanguageBackend` already had one).
+**`MLComputeUnitsCPUOnly` is zero**, so the property is initialized explicitly — an unset one would
+quietly move every model to the CPU.
+
+## Sizing a model against the machine
+
+`NFKHardwareProfile` (core, sysctl + Metal) reports what the machine is and what is free. **Three
+ceilings, and they are not interchangeable**: `physicalMemory` is what is installed,
+`recommendedWorkingSetSize` is what Metal expects to stay resident and is what a model should be sized
+against, and `maximumBufferLength` bounds a single allocation however much of the budget is unspent.
+On an M1 Max those read 32 GB, 25 GB, and 18.7 GB. `availableMemory` is LIVE — free, inactive and
+purgeable pages on macOS; `os_proc_available_memory` on iOS and tvOS, where the process's own
+allowance is the ceiling that actually applies. Every reading degrades to zero or an empty string
+rather than throwing, so an unrecognized machine still reports.
+
+`NFKMLXModelSizing` (companion) turns that into a decision. `parameterCount(of:)` counts a dense
+decoder from its geometry alone — counted rather than built, because the point is to answer before
+allocating anything and a 27B model cannot be instantiated to be measured — and
+`testTheParameterCountMatchesABuiltModule` checks the arithmetic against a module that IS built,
+across five geometries, which is what keeps the count from being a plausible guess. The cache is
+counted at the KEY-VALUE head count, not the query count; grouped-query attention is what makes it
+affordable and the wrong reading overstates it twofold on Qwen3.
+
+`fit(of:tokens:precision:budget:)` returns `fits` / `fitsWithinWindow(n)` / `tooLarge(shortfall:)`, and
+`options(for:requesting:...)` hands back `NFKMLXGenerationOptions` with `contextWindow` **derived**
+rather than guessed — a hand-picked window is a guess about a machine the author was not using. A model
+whose weights alone do not fit throws there, because failing at the load is a process kill rather than
+an error.
+
+**The bandwidth is measured, not tabulated.** No sysctl reports memory bandwidth, and a per-chip table
+would be numbers copied from somewhere rather than a property of the machine running the code. The
+probe reads a large array and times it, which is what a decode step does to the weights. **It has to
+be big enough**: swept on an M1 Max (400 GB/s specified) it reads 40 GB/s at 16 MB, 126 at 64 MB, 158
+at 256 MB, 274 at 512 MB, and settles near 330 from 1 GB — below half a gigabyte the launch overhead
+and the caches are most of what is timed. The size therefore comes from the working-set budget rather
+than a constant. `decodeCeiling` divides bandwidth by the bytes a token reads;
+`achievedFraction` inverts it, and a rate ABOVE the ceiling means the model is not reading every
+parameter, which is what a sparse model doing its job looks like.
+
+The cache is process-wide, which makes test order matter: a suite that measures a small probe first
+would have every later reading report that. `resetMeasuredBandwidth()` is why the reporting test
+starts by clearing it.
+
 ## Value-type convenience accessors
 
 `NFKInferenceResult` and `NFKInferenceRequest` expose typed convenience accessors over their
@@ -311,7 +421,15 @@ that type-checks and returns nil on a mismatch (no crashing cast). Image / mask 
 `tokenizer.type` and returns the subclass named there. The concrete subclasses are private; the
 factory is the public entry, so a new type needs no header change.
 
-- `bpe-bytelevel` → `NFKByteLevelBPETokenizer`, the GPT-2 / Qwen scheme.
+- `bpe-bytelevel` → `NFKByteLevelBPETokenizer`, the GPT-2 / Qwen scheme. **The pre-tokenization
+  pattern is selectable** (`"pretokenizer": "gpt2"` (default) or `"qwen2"` in the manifest spec), and
+  the choice is load-bearing: a merge cannot cross a pretoken boundary, so a Qwen vocabulary encoded
+  under the GPT-2 pattern produces different, valid-looking ids for the same text ("-pop" is ONE
+  Qwen2 pretoken because a letter run may absorb one leading punctuation character; digits split
+  singly; a punctuation run absorbs trailing newlines; whitespace runs ending in a newline hold
+  together). Found by the MiniMax Music 3 prompt parity record, which mis-tokenized under the
+  default; the Qwen3 text path (`NFKMLXLanguage.backend(directoryURL:)`) now names `qwen2` too. An
+  unknown pretokenization name is refused rather than silently defaulted.
 - `clip` → `NFKCLIPTokenizer`, which the CLIP image-text model and every Stable Diffusion text encoder
   take. It **subclasses** the byte-level tokenizer through four hooks — `normalizedText:`,
   `pretokenizationPattern`, `symbolsForWord:`, `finalizedText:` — because CLIP shares byte-level BPE
@@ -320,6 +438,11 @@ factory is the public entry, so a new type needs no header change.
   "2024" is four tokens); a word's last character carries `</w>`, which the vocabulary distinguishes;
   and decoding turns `</w>` back into a space.
 - `unigram` / `sentencepiece` → `NFKUnigramTokenizer`; `wordpiece` → `NFKWordPieceTokenizer`.
+
+`bytesForTokenId:` (0.3.0) returns the bytes ONE id contributes to decoded text — a fragment of a
+multi-byte character comes back as that fragment, a word-piece word start carries its space, a
+special token its literal — which is what a byte-level grammar reasons over; `NFKMLXVocabulary`
+reads the whole table once per tokenizer.
 
 `encode:` returns the ids for the text alone. A model input's start and end markers and its padding
 are the model's geometry, not the tokenizer's, so they are added where the context length is known —
@@ -463,7 +586,11 @@ is by name.
   no license entanglement (pure Apple frameworks).
 - Inference by contract is synchronous and multi-second; a caller runs it off the main/render thread
   and prefers `submitInferenceJobForRequest:` (or the `NFKInferenceSubmit` wrapper) for progress and
-  cancellation.
+  cancellation. **The asynchronous path runs at user-initiated quality of service**: the core's
+  queues use `QOS_CLASS_USER_INITIATED`, and every `Task.detached` in InferKitMLX passes
+  `priority: .userInitiated`. An unprioritized `Task.detached` inherits the default, which Apple
+  Silicon schedules on the efficiency cores — a decode loop there is several times slower for no
+  stated reason.
 
 ## Code Comments
 
@@ -539,7 +666,34 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `denoise` (latent + timestep + context + guidance → prediction), `decode` (latent → image tensor),
   and a scheduler; the backend owns the loop, per-step progress/cancellation, and the image bridge.
   No source latent runs text-to-image; a source latent runs image-to-image (`NFKParameterStrength`);
-  a source latent + mask runs inpainting (kept region held to the source each step). `NFKDiffusionScheduler`
+  a source latent + mask runs inpainting (kept region held to the source each step).
+  **`windowedContinuation(...)` produces output LONGER than the model's window**, the `NFKMLXMusic3`
+  mechanism lifted out for reuse: it tiles one axis into overlapping windows and keeps continuity
+  INSIDE the sampler — each window's overlap is held to the previous window's finished latent,
+  re-noised to the current step's level through `scheduler.addNoise` (the same primitive the inpaint
+  path uses, so it is scheduler-agnostic rather than flow-specific), locked to it after the loop, and
+  the windows stitched at the hop stride. It is a static helper over the shared-conditioning case
+  (text-to-long-image, an extendable texture); a per-window `condition` encoder like the music path's
+  keeps its own specialized loop. `windowStarts` pulls the final window back to end exactly at the
+  total. Tested by single-window equivalence to the plain loop and that the overlap hold changes the
+  result (`NFKMLXDiffusionWindowedTests`).
+  **`NFKDiffusionLatentPreview` gives the progress callback something to show.** A full decode per
+  step costs more than the sampling, so the preview is a 1×1 convolution over the channel axis —
+  twelve weights and three biases for a four-channel latent — reported as the job's `partialResult`,
+  the same mechanism a streaming text backend uses. `previewEverySteps` thins it. `.passthrough` suits
+  a latent already in image space; `.stableDiffusion` and `.stableDiffusionXL` are the published
+  latent-RGB factors, and what is MEASURED about them is how closely they track a real decode: against
+  the released SD 1.5 autoencoder, on a latent encoded from a real photograph, the shipped map
+  reproduces the decode's structure at a mean-removed correlation of **0.93**.
+  **Raw cosine is the wrong measure here** and the first version of that test used it — two nearly
+  constant grey images score 0.98, so cosine cannot tell a preview showing the picture from a flat
+  rectangle of the right brightness. It also fed the map a latent at the AUTOENCODER's scale rather
+  than the SAMPLER's; the pipeline divides by `scaleFactor` before the autoencoder, so the two differ
+  by 5.5× and the earlier numbers were artifacts of that. `fitted(latentChannels:decode:sample:)`
+  derives a map from any decoder by least squares, which is the route for a model with no published
+  factors — though a map fitted on NOISE scores 0.917 where the shipped coefficients score 0.931, so
+  fit on latents encoded from real images. A preview is a progress indicator, so a mismatched map
+  returns nil rather than failing the run it is only reporting on. `NFKDiffusionScheduler`
   is the sampler seam. **`NFKDDIMScheduler` is at reference parity against diffusers' own
   `DDIMScheduler`** (worst per-step latent cosine 0.9999999999999941, add-noise 0.9999999999999983,
   and the schedule it visits matches exactly). Reaching it corrected two things the sampler had wrong:
@@ -666,7 +820,19 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   renames `update_block`/`downsample`/`flow_head`/`mask`. **Reference parity** against princeton-vl's
   own RAFT on raft-things (eighth-resolution flow cosine 0.9999999999989, full-resolution 0.9999999999998);
   both sides run the same iteration count. Flow + round-trip tested under xcodebuild (the correlation
-  lookup is many gather ops, so it is slow).
+  lookup now runs as ONE fused Metal kernel per pyramid level).
+  **`NFKRAFTCorrelation` carries the package's first custom Metal kernel**, written as a source string
+  through `MLXFast.metalKernel` — no `.metal` file, nothing for a consumer's build to link, compiled
+  and cached by MLX on first use. The elementwise path walks 81 planes per level doing four gathers
+  each, so one lookup was over thirteen hundred dispatches, and the update runs it once per GRU
+  iteration; the kernel does the same arithmetic with one thread per (pixel, plane). Measured at
+  RAFT's own eighth-resolution geometry: **2753 ms against 3.98 ms at 60×80, about 730×**.
+  `gatherLookup` stays as the CPU-stream path, since a Metal kernel cannot dispatch there and the
+  package lets a caller select the CPU — and as the reference the kernel is held to, bit for bit,
+  including the zero-padding at the edges where most of the neighborhood lies. A silent fallback to
+  the gathers would fail nothing and make the model unusable, so
+  `testTheDispatchChoosesTheFusedPathOnTheGPU` compares the dispatched result to the fused one
+  exactly rather than timing anything.
 - `NFKMLXSAM` (`@objc`) — real promptable segmentation (Segment Anything): a ViT image encoder, a prompt
   encoder (point → sparse tokens via a random-Fourier positional encoding), and a two-way-transformer
   mask decoder with a hypernetwork mask head, in `MLXNN`. Run through `NFKMLXMattingBackend` (plate +
@@ -1067,6 +1233,21 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   measurement: `testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` trains the tiny configuration —
   which carries every block form — and asserts the loss falls AND the squeeze-excitation parameters
   move, because a decreasing loss alone could ride on the decoder while the backbone stays frozen.
+- `NFKMLXRoPEScaling` — the rotary frequency scaling a release declares (`rope_scaling`), shared by the
+  dense decoder and DeepSeek. **At reference parity against `transformers`' own `ROPE_INIT_FUNCTIONS`**
+  for `linear` and `yarn` across five configurations (worst relative frequency difference < 1e-5),
+  driven by `run_reference.py rope_scaling` — which needs no weights, since the scaling is a function
+  of the rotary geometry and the config alone. A kind this does not implement (`dynamic`, `llama3`,
+  `longrope`) is REFUSED rather than approximated: all three appear in released configs, all compute
+  different frequencies, and loading one under the wrong rotary runs and is wrong.
+  **YaRN's blend runs the opposite way to the intuitive guess**, and the first draft here had it
+  backwards: the FAST channels are left unscaled and the SLOW ones are interpolated. A fast channel
+  completes many turns inside the trained window, so it encodes local offset and a longer sequence does
+  not change its meaning; a slow channel does not complete a turn even at the trained length, so past
+  that length it reaches angles the model never saw. The parity record caught the error — in the prose
+  and the assertions, not in the arithmetic, because the formula was ported rather than reasoned out.
+  The attention factor is `0.1·ln(factor) + 1` unless the config states one, and it multiplies the
+  queries and the keys alike, so a score carries its square.
 - `NFKMLXLanguage` / `NFKMLXLanguageBackend` — on-device **text generation** through MLX, which the
   package had no path for: the core runs a Core ML language model and the Foundation Models companion
   wraps Apple's, and nothing here ran a Qwen or Llama. `NFKMLXLanguageNet` is the modern dense decoder
@@ -1077,18 +1258,49 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`model.layers.N.self_attn.q_proj`), so a release loads with no remapping at all, and every weight is
   at most 2-D so none of the convolution transposes apply. `NFKMLXKeyValueCache` is what makes a token
   cost one step's work instead of the whole sequence's; `testACachedStepMatchesRecomputingThePrefix`
-  is the assertion the generation path rests on. **The cache also quantizes**
-  (`NFKMLXGenerationOptions.cacheQuantization`): keys and values store affine-packed beside per-group
-  scales in the block buffers, dequantized per step; storage changes, not positions, so the float path
-  is byte-identical and 8-bit tracks full precision (cosine > 0.99), off by default. **Prefill chunks**
-  (`prefillChunkSize`) run a long prompt through the cache in slices — EXACT, only the peak differs.
-  **A ChatML template** (`chatTemplate: .chatML`) renders instruct turns with the release's special
-  tokens, off by default. **`NFKMLXReleaseWeights.verifyFits`** refuses a release larger than the
-  memory budget before materializing it (wired into the dense loader). **`NFKMLXWeights.apply`
-  `verifyShapes`** (opt-in, dense loader only) turns a checkpoint whose shape disagrees with the config
-  into a load-time error; it stays scoped because shape adoption is load-bearing in several builders
-  (Conv-TasNet `.base`, Gemma E4B's FFN doubling both rely on it, and both false-positived a global
-  check). **All reach ObjC** via the `@objc` `NFKMLXLanguage.backendWithDirectoryURL:error:` factory and the `NFKMLXGenerationParameterKey` request-parameter constants (contextWindow, cacheQuantizationBits/GroupSize, prefillChunkSize, chatTemplate) — parity with the Swift options struct; the struct/config factories and the MLXArray-taking cache stay Swift-only, the config knob is what bridges. Sampling is greedy at temperature 0, otherwise
+  is the assertion the generation path rests on. It holds its rows in a buffer that grows in blocks
+  with a cursor at each end, rather than concatenating — concatenating copies the whole cache on every
+  token, which turns decoding back into quadratic work in the one place that exists to avoid it.
+  **A `window` bounds it** (`NFKMLXGenerationOptions.contextWindow`): the oldest positions are dropped,
+  so memory stops growing with the conversation. The trim goes to `window - 1` BEFORE the append, which
+  is what lets a single-token step read exactly `window` positions and need no sliding mask at all.
+  `offset` stays the ABSOLUTE position count — a rotary angle depends on where a token is in the
+  sequence, not where it sits in the buffer — while `maskCacheLength` is what a multi-token pass
+  actually sees, and the mask is built against that: a mask sized to the offset would be wider than the
+  keys it is applied to. The bound is OFF by default, because for a model whose attention is not
+  natively windowed it is an approximation rather than a configuration — exact while the conversation
+  fits inside the window, and dropping the beginning past that.
+  **The cache also quantizes** (`NFKMLXGenerationOptions.cacheQuantization`, `NFKMLXKeyValueCache.Quantization`):
+  keys and values are stored affine-packed (`quantized`/`dequantized`) beside per-group scales in the
+  same block-growing buffers, and a step dequantizes the retained span for attention. It changes
+  storage, not positions, so the offset/window/mask accounting is untouched — the float path is byte
+  for byte the same, gated behind `guard let quantization`. It is lossy, so off by default; measured,
+  8-bit decoding tracks the full-precision logits (cosine > 0.99) while shrinking the resident cache,
+  which is what lets a long conversation reach further before the cache is the ceiling. `groupSize`
+  must divide the head dimension. **Prefill chunks** (`prefillChunkSize`): a long prompt runs through
+  the cache in slices, so the attention peak is bounded by the chunk rather than the prompt. It is
+  EXACT — each chunk attends through the cache to exactly the keys a single pass would — pinned by
+  `testChunkedPrefillMatchesASinglePass`. **The backend applies a chat template** on request
+  (`chatTemplate: .chatML`): an instruct release is trained on `<|im_start|>role … <|im_end|>` turns,
+  and the old message-flattening prompted it outside that format; `.chatML` renders the turns with the
+  release's own special tokens (which the byte-level tokenizer resolves), off by default because a base
+  model wants the plain text. **A fit-before-load predicate** (`NFKMLXReleaseWeights.verifyFits`)
+  refuses a release whose weights exceed the memory budget BEFORE materializing any, so a load that
+  would kill the process becomes an error naming the shortfall; it is wired into the dense loader,
+  where weights are ~all the file (Gemma and the hybrid load a subtree, so the file size over-counts,
+  and they are left to a model-aware check).
+  **`NFKMLXWeights.apply` gained an opt-in `verifyShapes`** (default OFF): a parameter supplied at a
+  shape the module does not expect is normally adopted wholesale by `update(parameters:)` — the
+  checkpoint loads clean and computes wrong numbers. Checking shapes turns that into a load-time error,
+  but ONLY where every built shape already equals the checkpoint's, which is the dense decoder alone.
+  Shape adoption is load-bearing in several builders — Conv-TasNet's placeholder `.base` widths and
+  Gemma E4B's feed-forward-doubling heuristic both load right only because adoption reshapes the module
+  to the checkpoint — so a global shape check false-positives (both were caught turning it on), and it
+  stays scoped to the Qwen3 dense loader where config.json widths are exact. Per-layer weight streaming
+  (making a 27B that does not fit RUN, rather than fail cleanly) needs lazy module weights and is a
+  larger separate change; the fit predicate delivers the clean-error half. **All of these reach Objective-C**: an ObjC consumer builds the LLM through the `@objc` `NFKMLXLanguage.backendWithDirectoryURL:error:` (reads config.json + tokenizer + shards) and sets every generation option per request through the `NFKMLXGenerationParameterKey` string constants (`contextWindow`, `cacheQuantizationBits`/`GroupSize`, `prefillChunkSize`, `chatTemplate`), the same mechanism the core `NFKParameter*` keys use — parity with the Swift `NFKMLXGenerationOptions` struct. The struct-taking factories stay Swift-only because `NFKMLXLanguageConfiguration` is Swift-only (the directory factory reads config.json instead), and the cache class stays Swift-only because it takes `MLXArray`; the config knob is what bridges, per the package's expose-what-bridges rule.
+  **Gemma 4, the hybrid, and DeepSeek do not use this cache**: they take no cache argument at all and
+  run prefill-only, so the window reaches the dense decoder alone. Sampling is greedy at temperature 0, otherwise
   temperature with optional nucleus (`topP`) and a seed for repeatability. The backend reads
   `NFKInputPrompt` / `NFKInputMessages` → `NFKOutputText` and honors the core's temperature, top-p,
   max-tokens, and seed parameters. **Reference parity** against transformers' own `Qwen3ForCausalLM` on
@@ -1110,6 +1322,62 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `model.safetensors` covers the smallest model and nothing else. 4B is the largest size this machine
   holds at float32 — about 16 GB of weights on each side, measured, with the oracle and the test run as
   separate processes.
+  **Prompt cache, speculative decoding, mixture of experts, constrained decoding** (all 0.3.0,
+  each measured). `NFKMLXKeyValueCache.rollback(by:)` moves the end cursors back and copies nothing;
+  it returns false where a window has dropped what it would reach. `NFKMLXPromptCache` keeps the
+  cache and its token ids between generations, `align(to:)` rolls back to the shared prefix (capped
+  one short of the prompt so a token runs and produces logits), and `save(to:)`/`load(from:)` persist
+  it — float or packed rows alike. `reusesPromptCache` makes the backend keep one; the backend
+  serializes generation through a lock because two runs through one cache interleave their rows.
+  **Speculative decoding** (`generate(prompt:options:draft:promptCache:report:onToken:)`,
+  `backend(directoryURL:draftDirectoryURL:)`, ObjC `backendWithDirectoryURL:draftDirectoryURL:error:`,
+  request key `draftTokens`) verifies `[next] + proposals` in one cached pass, keeps the leading
+  agreeing run, rolls both caches back by the rejected count — through the prompt cache when one is
+  present, or the KV cache is rolled back TWICE — and is greedy-exact by construction; above
+  temperature 0 it is the standard rejection scheme. **Measured on Qwen3-1.7B←0.6B at float32:
+  token-identical, 73.5% acceptance, 1.01× wall clock** — a 28-layer step here is launch-bound, so
+  the draft costs nearly a target step; the gain needs a bandwidth-bound target and a shallower draft.
+  **The routed feed-forward** (`NFKLMMixtureFeedForward`: a router `gate`, experts stacked as ONE
+  `[E, out, in]` tensor per projection in `NFKLMSwitchLinear`, dispatched through `gatherMM` /
+  `gatherQuantizedMM`; `NFKLMQuantizedSwitchLinear` conforms to `Quantized` so `save` records it and
+  `matchStructure` rebuilds it) reads `qwen3_moe` (`num_experts`, `moe_intermediate_size`,
+  `norm_topk_prob`; dense-interleaved layers refused) and `mixtral` (`num_local_experts`,
+  `intermediate_size`, always renormalized; a sliding window refused). Softmax over all experts then
+  renormalizing the selected IS Mixtral's softmax over the selected, so one implementation serves
+  both. `moduleKey(forRelease:)` maps `block_sparse_moe.experts.N.w1/w3/w2` onto
+  `mlp.experts.N.gate_proj/up_proj/down_proj`, and `stackingExperts` stacks the per-expert tensors in
+  index order. **Reference parity against transformers' own Qwen3MoeForCausalLM and
+  MixtralForCausalLM at tiny random configurations** (`run_reference.py qwen3_moe` / `mixtral`,
+  `IK_PARITY_QWEN3_MOE_TINY` / `IK_PARITY_MIXTRAL_TINY`): every hidden state exact layer by layer,
+  logit cosine 0.99999999999999 / 0.9999999999999903, on the first numeric run. **The released
+  Qwen3-30B-A3B is accounted for by shape**: `Tools/validation-assets/shapes.py` reads every shard's
+  safetensors header by HTTP range request (config + 18,867 shapes, no weights), and
+  `testEveryParameterMatchesTheReleasedQwen3MoeCheckpoint` consumes all 18,867 with 0 missing, 0
+  mismatched, 0 unaccounted. The released sizes need quantized experts to fit 32 GB; gpt-oss
+  (sliding layers, its own activation, sinks, MXFP4) and Qwen2-MoE (shared expert) are refused by name.
+  **Constrained decoding** (`NFKMLXConstrainedDecoding.swift`): `NFKMLXVocabulary` holds every id's
+  bytes, read through the core's new `NFKTokenizer.bytesForTokenId:`; `NFKMLXByteConstraint<State>`
+  walks a grammar byte by byte and caches the admissible mask PER STATE (the uncached cost is the
+  vocabulary times a few bytes; a run revisits a handful of states); `NFKMLXJSONConstraint` is JSON
+  syntax with `root` (`.container`/`.object`/`.array`/`.any`), `NFKMLXChoiceConstraint` a fixed set.
+  The mask is added to the logits BEFORE temperature and nucleus, the end token is admitted only at
+  a complete document, and a constraint runs the plain loop (speculation is skipped). Request keys:
+  `outputFormat` (`"json"`/`"json-object"`/`"json-array"`) and `choices`. Two traps, both measured
+  on Qwen3-0.6B: **JSON admits unbounded whitespace**, and with its preamble forbidden the greedy
+  model emitted 96 tokens of blank lines — `maximumWhitespaceRun` (8 bytes) caps the detour; and
+  **a thinking model wants its `<think>` block**, which the grammar forbids, and the leftover mass
+  gave `{}` — the prompt closes the block (`<think>\n\n</think>\n\n` after the assistant marker),
+  as the release's own no-think template does. **Two latent defects fixed on the way:** the release
+  path passed NO special tokens to the tokenizer (they live in `tokenizer_config.json`'s
+  `added_tokens_decoder`, not `vocab.json`), so a ChatML marker encoded as plain text — now
+  `specialTokens(inDirectory:)` supplies them and the `eos_token`; and no end-of-sequence stop was
+  ever set, so generation ran to `maxTokens` — the release's eos is now the default stop when a
+  request names none (a behavior change, recorded in the changelog). `NFKMLXLanguageBackend` is now
+  `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
+  **`Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9**: the LLM oracle
+  environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
+  the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode
+  ran, fixed by hoisting the literal.
 - `NFKMLXHybridLanguage` — the hybrid decoder Qwen3.5, Qwen3.6, and **Qwen3.8** are built from
   (`Qwen3_5ForConditionalGeneration`), at **reference parity** on the released Qwen3.5-4B (logit
   cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). 4B is the smallest
@@ -1254,7 +1522,9 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   parameters compared across three captured layers with zero mismatches, and its 149782-tensor index
   accounted for exactly (71983 declared, 70790 block scales each decoding a declared weight, 7009
   MTP/DSpark, 0 unaccounted). Pro adds a YaRN `rope_scaling`, which carries no parameters and so is
-  invisible to a structural check; the port does not implement it, and a run of Pro would need it. Sources:
+  invisible to a structural check — the reason a run of Pro without it would be silently wrong rather
+  than a load failure. It is implemented now, through the shared `NFKMLXRoPEScaling`, and the config
+  parser reads it. Sources:
   DeepSeek ships `inference/model.py` in the release, which is what this was written from.
 - `NFKMLXGemmaLanguage` — the Gemma 4 text decoder (`gemma4_text`), a fourth architecture family, at
   **reference parity** against transformers' own implementation on the released E2B weights (logit
@@ -1303,6 +1573,38 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   mask now takes the queries' dtype — invisible at float32, which is why no float32 run ever raised
   it. The dense and hybrid decoders had the identical latent crash on any `.checkpoint` load and are
   fixed the same way, each pinned by a bf16-forward test.
+- `NFKMLXQuantization` — runtime MLX quantization, the package's first path for RUNNING a model in
+  MLX-quantized form (`NFKMLXDeepSeekQuantization` only decodes a stored format). `quantize(module:
+  bits:groupSize:includeEmbeddings:)` packs `Linear` layers whose input width divides the group size
+  into affine 4- or 8-bit `QuantizedLinear` (everything else computes as built; already-quantized
+  layers are excluded, which matters because `QuantizedLinear` subclasses `Linear` and satisfies a
+  type test silently). `includeEmbeddings` (default OFF) also packs `Embedding` layers into
+  `QuantizedEmbedding`; it is off by default because a TIED model reuses its input embedding as the
+  logit head, so quantizing it quantizes the head too — a per-model cost. **That cost is measured and
+  small** (`testTheTiedEmbeddingQuantizationCostAgainstTheRecord`, opt-in `IK_QWEN_EMB_PROBE=1`): on
+  the tied Qwen3 0.6B and 1.7B, packing the embedding at the SAME width as the Linear layers moves the
+  logit cosine by ~1e-5 at 8-bit and ~0.006 at 4-bit — the Linear bit width dominates, not the tied
+  head (8-bit Linear scores 0.9962 / 0.9994, 4-bit only 0.9222 / 0.9488, so these small models want
+  8-bit regardless). So `includeEmbeddings: true` is safe for a tied model quantized at 8-bit; the
+  default stays off because the wrong-width case (4-bit) is where packing the head costs most, and a
+  caller should choose it deliberately. **The music LM opts in**
+  (`quantizeRelease` passes `includeEmbeddings: true`): that LM is untied, its `lm_head` is a separate
+  packed `Linear`, and the input embedding is its largest tensor (200000×4096, 1.6 GiB) — quantizing
+  it at 4-bit measured logits cosine 0.99933 against 0.99952 for the bf16 embedding and reclaims
+  1.10 GiB. **The checkpoint contract closes the packed-uint32 hazard**: `NFKMLXWeights.save` detects
+  quantized leaves and records `inferkit.quantization` = "bits:groupSize" in the metadata;
+  `loadCheckpoint` reads it back, and a loader calls `NFKMLXQuantization.matchStructure(of:on:)`
+  BEFORE applying, so the packed arrays land on matching structure — without that, a packed weight
+  loaded into a plain `Linear` adopts the wrong shape and dtype with no error. The metadata records
+  one bits/groupSize, not which layer KINDS were packed, so `matchStructure` reads whether the
+  embedding was quantized from the checkpoint itself — a packed embedding weight is `uint32` where an
+  unquantized one is a float — which keeps a file saved before embeddings were quantizable loadable. A
+  quantized checkpoint loads at its STORED dtypes whatever precision the caller requests (the packing
+  is uint32 regardless, and the scales keep the precision the quantization was computed at). Wired
+  through the language-model loaders (single-file releases route through `loadCheckpoint`; a
+  quantized module saves as one file, so quantized-sharded does not arise) and the music loaders;
+  round-tripped exactly by `testAQuantizedCheckpointRoundTripsThroughTheLoaders`, embedding-packed
+  case included.
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read ONCE), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,
@@ -1368,6 +1670,127 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   zip at `url`, LaMa's Lightning `best.ckpt`); the rest download from `url` as before. Their
   equivalence tests read the `IK_RAW_*` keys `fetch.py` stamps and skip when absent, like every other
   parity test.
+- `NFKMLXMusic3` — MiniMax Music 3, the text+lyrics→music model, ported STAGE BY STAGE with a
+  measured parity record gating each stage. The full model is a hybrid: a Qwen3-8B autoregressive
+  stage over 8 RVQ codebooks (one semantic of 16384 living inside the LM's own vocabulary, seven
+  acoustic of 1024 filled per frame by a 4-layer depth decoder — there is NO MusicGen delay pattern;
+  the depth decoder is what replaces it), a condition encoder blending the 8 per-codebook hidden
+  states (synthesis conditions on the HIDDEN STATES, the codes only close the AR feedback loop), a
+  36-layer flow-matching DiT over 8-second latent windows, and a DAC-style Snake vocoder. The oracle
+  is diffusers' own implementation (>= 0.40.0 ships `MiniMaxMusic3Vocoder`,
+  `MiniMaxMusic3RVQDepthDecoder`, `MiniMaxMusic3ConditionEncoder`, the DiT, and the modular
+  pipeline), under its own `musicvenv` interpreter (`oracle_environments.music`) — a genuinely
+  third-party reference, where the community MLX ports of this model have none. The `music_ar` and
+  `music_tokenizer` oracles import the pipeline's OWN helper functions (`_sample_top_k`,
+  `_generate_depth_codes`, `_embed_audio_frame`, `_clean_caption`, `_normalize_lyrics`), so the
+  arithmetic compared against is the reference's, not a copy. **All five networks are at measured
+  parity, the prompt contract is token-exact, and the chained pipeline generates audio end to end.**
+  - **Prompt contract** (`NFKMusic3Prompt`): the caption/lyrics cleaners, the special-token
+    template, the release byte-level BPE through the core `NFKTokenizer` (slow-format vocab/merges
+    from `qwen_7B/qwen3-8B-tokenizer-music/`, special tokens from `added_tokens.json`), and the
+    CFG-row substitution (interior tokens → `<|audio_cfg|>` 151654) — an EXACT token match against
+    the reference tokenizer over the shared `MUSIC_PROMPTS` cases (markdown, `<|tag value|>`
+    rewrites, structure tags, multi-byte text, whitespace forms), both rows. **Reaching it required
+    the core tokenizer's `qwen2` pretokenization** (see the Tokenizers section): under the GPT-2
+    default the same prompt encodes to different, valid-looking ids, which no output would ever
+    reveal. The cleaners are additionally pinned against the reference's own intermediate strings,
+    so a cleaning bug reads as a string diff before it reads as a token mismatch.
+  - **`NFKMLXMusicBackend`** (`NFKMLXMusic3.backend(directoryURL:)`, registry `minimax-music3`,
+    in `registerAll`): `NFKInputPrompt` + `NFKInputLyrics` (a NEW core key) →
+    stereo 44.1 kHz `NFKAudioAsset` under `NFKOutputAudio`; honors `NFKParameterDurationSeconds` /
+    `Seed` / `Steps` / `GuidanceScale`. The stages load from the release directory PER RUN and each
+    is freed when its part is done (`clearCache` between): the bf16 LM (16 GiB) and the float32 DiT
+    (9.7 GB) together exceed a 32 GB machine's working set and the pipeline is strictly sequential.
+    There is no random-weights form — the factory takes the release directory, and `isReady`
+    reports presence. Cancellation is honored between stages and per flow step; progress reports
+    through the job.
+  - **End to end, measured on the real weights**
+    (`testTheMusicBackendGeneratesAClipEndToEnd`): a 2-second request produces 1.997 s of stereo
+    audio at RMS 0.051 in 77 s wall clock, the whole 27 GB stack staged through. A sampled song
+    cannot be compared to the reference bitwise (the random streams differ by construction) — the
+    per-stage records are the numeric ground; the e2e asserts duration, rate, channels, and that
+    the clip is signal rather than silence or clipping. `IK_MUSIC3_KEEP_CLIP` keeps the WAV for
+    listening.
+  - **Quantized releases and residency**
+    (`NFKMLXMusic3.quantizeRelease(at:to:bits:transformerBits:groupSize:)`): writes a quantized
+    copy of the release in the release's own layout, so `backend(directoryURL:)` takes it
+    unchanged — 27 GB falls to **7.7 GiB**. The split default is measured, not assumed: at 4-bit
+    the language model holds (first-step logits cosine **0.99933** with its input embedding packed
+    too, **0.99952** with the embedding left bf16; prefill 0.9905 against the SAME full-precision
+    parity records) while the DiT's velocity falls to **0.9775** — the flow field is the
+    quantization-sensitive stage — so the DiT defaults to **8-bit**, where it measures **0.99990**
+    (6-bit measures 0.99844, an order of magnitude worse for ~0.6 GB, so it is not the default;
+    `testTheDiTQuantizationBitWidthSweep` is the record). The LM's `Linear` layers AND its input
+    embedding pack — the model is untied, so the embedding is separate from the packed `lm_head`, and
+    at 1.6 GiB it is the stack's largest tensor (`includeEmbeddings: true`, reclaiming 1.10 GiB). The
+    vocoder and condition encoder copy through unquantized; the LICENSE copies too — it travels with
+    the weights. **Whether the stages stay loaded between runs is decided from the weights**
+    (`keepsStagesResident`): stack bytes + a 4 GB reserve (activations + the CFG pair's KV cache)
+    against the RECOMMENDED working set — deliberately not live free memory, which a resident
+    backend's own weights would count against and evict themselves. The quantized stack goes
+    resident (measured: two consecutive 2-s generations at 34.5 s / 32.5 s with `resident true`);
+    the full-precision stack stages per run, with each stage now genuinely SCOPED so the language
+    model releases before the DiT loads (the original code's locals lived to function exit, so the
+    claimed staging never actually happened — found while making residency real).
+  - **Vocoder** (`NFKMusic3VocoderNet`, latents `[B, T, 128]` → stereo `[B, T·512, 2]`): waveform
+    cosine 0.9999999999990, worst |difference| 8.3e-7, all 121 tensors accounted both directions,
+    first numeric run. Stereo folds the latent's channel halves into the batch through ONE shared
+    decoder, pinned weight-free by `testSwappingTheLatentHalvesSwapsTheStereoChannels`. The released
+    file is ALREADY safetensors, so there is no offline converter: `loadVocoderWeights` fuses the
+    weight-norm pairs itself (`g·v/‖v‖`, norm over every axis but the first, which covers the
+    forward and transposed convolutions alike) and transposes layouts, all gated on
+    `needsConvTranspose` so a fine-tuned save round-trips. The Snake α is stored `[1, C, 1]` for the
+    reference's NCL and held `[1, 1, C]` for NLC; the loader transposes it under the same gate.
+  - **RVQ depth decoder** (`NFKMusic3DepthDecoderNet`, 4 causal layers, a learned 16-position
+    embedding rather than a rotary, 7 heads over 1024 codes each, an offset-packed
+    `audio_embeddings` table of 7 × 1024): forward 0.999999999997, heads 0.999999999996, projection
+    0.9999999999995, embedding 1.0 — the record covers all four parameter families because the
+    pipeline reads them through different paths and a forward alone touches only the first. 47/47
+    tensors accounted both directions; ships bf16, loads at float32 by default.
+  - **Condition encoder** (`NFKMusic3ConditionEncoderNet`): 0.9999999999997. A learned softmax
+    blend of the 8 per-codebook hidden states, a scalar gain, a 3-wide convolution, and PyTorch's
+    exact nearest-neighbor resample onto the latent rate — `floor(i · frames/latents)` with the
+    scale at Float precision; 13 frames land on `int(13 · 44100/24000 · 960/512)` = 44 latents.
+  - **Flow-matching DiT** (`NFKMusic3DiTNet`, 36 layers, partial rotary over the leading 32 of each
+    head's 64 channels, the trained Fourier timestep prepended as TOKEN 0 and stripped after the
+    blocks, `ff_in` splitting into `value · silu(gate)`, input `[latent, zeros, condition]` on
+    channels where the zeroed block is the reference's unfilled audio-prompt slot): velocities
+    0.999999999994–0.999999999999 at three timesteps AND the zero-condition unconditional branch.
+    The release is float32 and SHARDED under the diffusers spelling, which
+    `NFKMLXReleaseWeights.files` now also resolves (`diffusion_pytorch_model.safetensors[.index.json]`).
+    Its 9.7 GB cannot sit in a structural test, so `testTheDiTReleaseIsAccountedBothDirections`
+    enumerates: the tiny module's key template expanded to 36 layers equals the shard index's own
+    key set exactly. `NFKMusic3FlowSchedule` matches diffusers' `FlowMatchEulerDiscreteScheduler`
+    (`invert_sigmas`: σ = 1 − linspace(1, 1/N, N) with a terminal 1; the model consumes σ directly
+    as its timestep; a step is `x + (σ_next − σ)·v`), measured against the scheduler configured from
+    the release's own config. `NFKMusic3FlowMatcher` is the windowed loop — 200-frame windows at hop
+    100, the overlap re-blended toward the previous window's carry at EVERY Euler step
+    (`(1 − (1 − 1e-6)σ)·noise + σ·previous`) and locked after it, crops 86/258 latents at the
+    stitch — with the boundary lock pinned weight-free.
+  - **Autoregressive stage** (`NFKMusic3AutoregressiveStage` over `NFKMLXLanguageNet`, whose
+    embed / hiddenStates-from-embeddings / logits-from-hidden seams were opened for it): parity
+    bf16 BOTH SIDES, the Gemma E4B treatment, because the LM's geometry counts to 8,584,475,648
+    parameters (measured by `NFKMLXModelSizing` before any load: 16.0 GiB at 16-bit, 32.0 GiB at
+    float32, which does not fit this machine). Teacher-forced with the reference's own sampled
+    codes so the comparison measures the networks rather than two random streams: prompt prefill
+    0.99993, first-step logits 0.999995, guided band 0.99998 with 51/52 shared top-50 candidates
+    and the same argmax, fused frame hiddens 0.99994. The CFG pair is a batch of 2 through one
+    cache; a frame is ONE position (the 8 code embeddings sum, scaled by 8^-0.5); the depth
+    interleave replaces any MusicGen delay pattern; the warm-up decode step past `<|audio_start|>`
+    is not an emitted frame; and guidance is gated to the CONDITIONAL branch's top-50 before
+    sampling. `NFKMusic3Sampler` takes its top-k threshold by CPU sort — `MLX.top` is unsorted, and
+    reading its last slot as the threshold silently turns sampling into argmax.
+  **Diffusers ENFORCES the prompt and frame limits the community ports drop** (a > 5000-token
+  prompt raises; frames cap at 9000), and this port additionally enforces what neither does: prompt
+  + frames must fit the LM's 10240-position budget (`NFKMusic3Contract.positionBudget`), rejected
+  before any forward runs. The music LM's config is transformers-5.x-shaped, which
+  `NFKMLXLanguage.configuration(fromHuggingFace:)` now reads: `layer_types` listing only
+  `full_attention` is dense (only a MIXED stack is rejected), and `rope_theta` nests under
+  `rope_parameters`.
+  **The weights are NOT permissively licensed** (MiniMax-Music3 Community License: UI attribution in
+  commercial products, separate authorization above USD 20M revenue, safeguard obligations for
+  hosted generation) — recorded in `Docs/companions.md`, the manifest's MUSIC3 entry, and the LICENSE
+  fetched beside the weights.
 - `NFKMLXRetinaFace` (`@objc`) — real face detection with five-point landmarks, and the detector the
   CodeFormer reference pipeline runs through facexlib. The released **mobile0.25** model: a MobileNetV1
   backbone at quarter width (a plain stem then depthwise-separable blocks), a three-level FPN fusing
@@ -1714,6 +2137,14 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   - Writes are atomic (scratch file then replace), because a periodic checkpoint overwrites the only
     copy of a run's progress. A non-finite loss throws `NFKMLXError.trainingDiverged` **before** that
     step can reach a checkpoint, so divergence cannot replace good weights with ruined ones.
+  - **`clipGradientNorm` runs through `bounded(_:maxNorm:)`, which sanitizes before it clips.** A
+    gradient set can be entirely finite while the SUM of its squares is not — 3e20 is an ordinary
+    `Float` and its square is not — so a directly computed norm comes back infinite, `maxNorm/∞` is
+    zero, and the whole update is scaled to nothing; the optimizer then builds its moments from zeros
+    and later steps produce non-finite PARAMETERS while the LOSS stays finite throughout, so the
+    divergence guard never fires. Non-finite entries are zeroed first, then the norm is taken relative
+    to the largest magnitude present. Reported by RVC-MLX from a real run, pinned here by
+    `testAGradientWhoseSquaresOverflowIsStillScaledToTheNorm`.
   - Optimizer state is **not** checkpointed: mlx-swift keeps `stateStorage` internal and `innerState()`
     unkeyed. `SGD` resumes exactly; `Adam` rebuilds its moment estimates.
 - `NFKMLXTrainingData` / `NFKMLXBatchSampler` — the app-data side of training. `tensor` / `batch` /
@@ -1755,6 +2186,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   produced before training. `merge(into:)` folds each detour into its base weights (`Linear` computes
   `x·Wᵀ`, so the delta is `(A·B)ᵀ·scale`) and leaves plain layers: **the saved file carries no adapter
   keys**, so there is no adapter format and no second loading path.
+  **Neither `apply` nor `merge` will touch a quantized model.** `QuantizedLinear` subclasses `Linear`,
+  so it satisfies a type-based predicate silently while its `weight` holds packed integers — adapting
+  one builds a detour around something that is not a weight. And merging a low-rank delta into a
+  quantized base then requantizing rounds the delta away, so the training is discarded while the file
+  loads without complaint. Merge at float precision, then quantize, in that order.
 - `NFKMLXSegFormerTraining` — the head-only recipe. A consumer rarely wants ADE20K's 150 classes and
   usually wants their own few, which is a decode-head problem: `NFKMLXSegFormerTrainable.decodeHead`
   (the default) freezes the four encoder stages, so the run's memory falls to the head's share.
@@ -1832,7 +2268,17 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   the global RNG for reproducible weight init/sampling; `NFKMLXGPU` surfaces GPU memory management
   (`activeMemory`/`cacheMemory`/`peakMemory`/`cacheLimit`/`memoryLimit` getters,
   `setCacheLimit:`/`setMemoryLimit:`/`clearCache`/`resetPeakMemory`, all bytes). Use `MLX.Memory.*` (not
-  the deprecated `MLX.GPU.*` memory members) to stay warning-free.
+  the deprecated `MLX.GPU.*` memory members) to stay warning-free. It also reports what the MACHINE
+  has — `physicalMemory` (sysctl), `recommendedWorkingSetSize` (Metal's own budget, which is what a
+  model should be sized against rather than the physical total), `reclaimableMemory` (the cache, which
+  `clearCache` returns), `memoryPressure`, and `deviceArchitecture` — and
+  `applyStandingLimits(cacheBytes:fractionOfRecommendedWorkingSet:)` sets a standing cache cap plus a
+  soft memory limit derived from that budget. The standing cap is the version of `clearCache()` that
+  does not have to be remembered at every model boundary.
+  **There is deliberately no `setWiredLimit:`.** mlx-swift 0.31.6 admits a wired limit only through an
+  async, scoped ticket — its synchronous `withWiredLimit` is deprecated and a documented no-op — so a
+  persistent setter could only be a knob that silently did nothing. `NFKMLXGPU.withWiredLimit(_:_:)` is
+  the scoped async Swift form, and stays Swift-only for the same reason the closure backends do.
   `NFKMLXDevice` selects the compute device — `currentType` and
   `performOnDeviceType:block:`, over the **scoped** `withDefaultDevice(_:_:)` rather than the deprecated
   global `setDefault(device:)`. **The selection is task-local, so it does not cross a dispatch**:
@@ -1843,28 +2289,31 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   block on their own thread, which is where the contract puts a multi-second inference anyway. The `@objc`
   case names are given explicitly (`NFKMLXDeviceTypeCPU`/`…GPU`), since Swift would generate `…Cpu`/`…Gpu`.
   **Objective-C parity is REQUIRED for new and changed code, not optional.** Every public Swift API a
-  consumer would use must reach ObjC unless it *cannot* bridge; adding or changing a model, backend,
-  option, or subsystem includes checking its ObjC surface in the same change. Legitimately Swift-only is
-  a fixed list — a signature taking/returning `MLXArray`, a closure, generics, `Module`/`Linear`/`Optimizer`,
-  a scheduler, or a Swift-only `struct`/enum-with-associated-values (`*Configuration`, `NFKMLXModelFit`);
-  everything else bridges. Obligations when you touch one:
-  - **A shipped model** gets the FULL `@objc` factory set, EVERY factory honoring the variant: local
-    `+backendWith[Variant:]weightsURL:error:`, download `+backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:`,
-    its async `…completionHandler:` peer, and `register()`. A variant enum some factories ignore is a
-    bug (the download/async peers must take the same `@objc` variant the local one does).
-  - **A generation/inference option** with no core `NFKParameter*` key gets an `@objc` request-parameter
-    key (`NFKMLXGenerationParameterKey`) read in `runInference`; the Swift options struct stays, the key
-    is the bridge.
-  - **A config-free machine/runtime property** goes on an `@objc` `NSObject` (`NFKMLXGPU`/`Random`/`Device`),
-    not a caseless-enum namespace ObjC cannot reach.
-  - **A value type a backend returns or a consumer inspects** is an `@objc` class shaped like the core's
-    `NFKKeypoint`/`NFKDetection`, never a Swift `struct`.
-  - **A closure backend** stays Swift-only to construct but MUST have an ObjC use-path — at least one
-    instance registered through `NFKMLXReferenceModels.registerAll` so `NFKMLXModelRegistry.backendNamed:`
-    reaches its kind.
-  A whole-release model takes `backendWith[Model:]directoryURL:error:` (the directory reads its own
-  `config.json`) instead of the repo/weightsPath set, which bridges a model whose geometry is a
-  Swift-only configuration.
+  consumer would use must be reachable from Objective-C unless it *cannot* bridge; adding or changing a
+  model, backend, option, or subsystem includes checking its ObjC surface in the same change. What
+  legitimately stays Swift-only is a fixed list — anything whose signature takes or returns an
+  `MLXArray`, a Swift closure, generics, a `Module`/`Linear`/`Optimizer`, a scheduler, or a Swift-only
+  `struct`/enum-with-associated-values (the `*Configuration` structs, `NFKMLXModelFit`); everything else
+  bridges. Concretely, when you add or touch one of these, the parity obligations are:
+  - **A shipped model** gets the FULL `@objc` factory set, and every factory honors the variant: the
+    local `+backendWith[Variant:]weightsURL:error:`, the download `+backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:`,
+    its async `…completionHandler:` peer, and `register()`. A variant enum that some factories ignore
+    is a bug — the download and async peers must take the same `@objc` variant the local one does
+    (the audit found Whisper's enum unused and NAFNet/YOLO/SwinIR download factories dropping it).
+  - **A generation or inference option** that has no core `NFKParameter*` key gets an `@objc` request-
+    parameter key (see `NFKMLXGenerationParameterKey`) read in `runInference`, so ObjC configures it the
+    way it sets `NFKParameterTemperature`. The Swift options struct stays; the request key is the bridge.
+  - **A config-free machine or runtime property** (a `Double`/`Int`/`String` reading, no configuration
+    or `MLXArray`) goes on an `@objc` `NSObject` wrapper — `NFKMLXGPU`/`NFKMLXRandom`/`NFKMLXDevice` —
+    not on a caseless-enum namespace, which ObjC cannot reach.
+  - **A value type a backend hands back or a consumer inspects** (a detection, a landmark set) is an
+    `@objc` class of the shape the core's `NFKKeypoint`/`NFKDetection` use, never a Swift `struct`.
+  - **A closure backend** stays Swift-only to construct, but MUST have an ObjC use-path: at least one
+    instance registered by name through `NFKMLXReferenceModels.registerAll` so `NFKMLXModelRegistry.backendNamed:`
+    reaches its kind. A closure-backend type with no registered instance is an ObjC dead end.
+  A model that loads a whole release directory takes a `backendWith[Model:]directoryURL:error:` factory
+  instead of the repo/weightsPath set (the directory reads its own `config.json`), which is how an
+  ObjC caller reaches a model whose geometry lives in a Swift-only configuration.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls
@@ -1887,6 +2336,26 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`
   (the `-skip…` flag gets past the unrelated `CudaBuild` plugin's validation). The matting round-trip
   tests auto-detect this: they skip when the test bundle is under `.build` and run under xcodebuild.
+- **Runtime hazards are catalogued publicly in `Docs/mlx-runtime-hazards.md`**, with an executable
+  probe for each in `NFKMLXRuntimeHazardTests`. Four hazards reported elsewhere against mlx-swift
+  0.31.6 — the fused attention dropping the cached tail at query length 1, `MLXFast.RoPE` disagreeing
+  at `T == 1`, subscript-set through an optional property not persisting, and `eval` faulting on a
+  fresh thread — were reduced and probed here and **none reproduces**, in float32 or bfloat16, at any
+  cache length from 1 to 129. That is not proof the reports were wrong; it is proof this package's
+  usage pattern is unaffected, which is the question a port needs answered. Re-run the probes after an
+  mlx-swift bump.
+- **A quantized layer's `weight.dtype` is the packed storage type**, `uint32`, not what the layer
+  computes in. Aligning activations to it truncates them to integers, identically at every bit width,
+  with no error. Read `scales.dtype`. And **`QuantizedLinear` is a subclass of `Linear`**, so
+  `layer as? Linear` matches one without announcing it, which is a live hazard for any model surgery
+  selecting by type. `NFKMLXLoRA.apply(to:)` rejects a quantized layer explicitly for that reason.
+- **Metal flushes subnormal floats to zero; the CPU stream keeps them.** Measured:
+  `MLXArray([1e-21]).square()` is `0.0` on the GPU and `1e-42` on the CPU, same machine, same process.
+  Anything that squares small numbers — a norm, a variance, a cosine over tiny vectors — can read
+  exactly zero. Reduce toward a magnitude the type holds comfortably, never away from one.
+- **A lazy decode pins its sources and intermediates.** `NFKMLXDeepSeek.dequantized` evaluates each
+  entry as it is produced; returning lazy graphs would hold the whole shard's decode live at once, and
+  for a block-scaled format the expanded scale array alone is the weight's full size.
 - **Never pass `padding:` to an mlx-swift pooling layer.** `Pool.callAsFunction` (mlx-swift 0.31.6)
   builds its pad widths as `[0, 0] + padding + [0, 0]`, two entries too many: a four-axis input gets the
   first four, so a 2-D pool pads width and channels instead of height and width. It raises nothing —

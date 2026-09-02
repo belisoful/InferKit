@@ -2394,6 +2394,170 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
+    // MARK: Mixture of experts (tiny-configuration oracles)
+
+    // The released mixture sizes do not fit this machine, so the routed feed-forward is measured
+    // at a tiny random configuration against transformers' own implementation, layer by layer, in
+    // both released families: Qwen3-MoE (softmax over every expert, top-k, renormalized) and
+    // Mixtral (softmax over the selected — the same arithmetic — under different tensor names).
+    private func mixtureParity(recordKey: String, mode: String, label: String,
+                               geometry: NFKMLXLanguageConfiguration) throws {
+        try requireMLXRuntime()
+        guard let path = config[recordKey] else {
+            throw XCTSkip("set \(recordKey) (run_reference.py \(mode))")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXLanguage.makeNet(geometry)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (NFKMLXLanguage.moduleKey(forRelease: String(key.dropFirst(3))), value) : nil
+        }
+        try NFKMLXWeights.apply(NFKMLXLanguage.stackingExperts(weights), to: net, verifyShapes: true)
+
+        let input = MLXArray(tokens).reshaped([1, tokens.count])
+        let states = net.layerStates(input)
+        eval(states)
+        var report = [String]()
+        var firstBad: Int?
+        for (index, state) in states.enumerated() {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = state.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            guard mine.count == theirs.count else {
+                report.append("\(index): shape \(state.shape) vs \(reference.shape)")
+                firstBad = firstBad ?? index
+                break
+            }
+            let similarity = cosine(mine, theirs)
+            let name = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (name as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation \(label):\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(input)
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY \(label): logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the routed decoder's arithmetic matches the reference")
+        let vocabulary = referenceLogits.shape[1]
+        for position in 0 ..< referenceLogits.shape[0] {
+            let base = position * vocabulary
+            let ourBest = (0 ..< vocabulary).max { mine[base + $0] < mine[base + $1] }
+            let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
+            XCTAssertEqual(ourBest, theirBest, "position \(position) predicts the same token")
+        }
+    }
+
+    func testQwen3MoeTinyMatchesTheReferenceLayerByLayer() throws {
+        var geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 3, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 96, vocabularySize: 128, ropeTheta: 10_000, rmsEpsilon: 1e-6,
+            tiesWordEmbeddings: false)
+        geometry.normalizesQueryAndKey = true
+        geometry.expertCount = 8
+        geometry.activeExpertCount = 2
+        geometry.expertIntermediateSize = 32
+        geometry.normalizesExpertWeights = true
+        try mixtureParity(recordKey: "IK_PARITY_QWEN3_MOE_TINY", mode: "qwen3_moe",
+                          label: "qwen3-moe-tiny", geometry: geometry)
+    }
+
+    func testMixtralTinyMatchesTheReferenceLayerByLayer() throws {
+        var geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 3, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 32, vocabularySize: 128, ropeTheta: 10_000, rmsEpsilon: 1e-6,
+            tiesWordEmbeddings: false)
+        geometry.normalizesQueryAndKey = false
+        geometry.expertCount = 4
+        geometry.activeExpertCount = 2
+        geometry.expertIntermediateSize = 32
+        geometry.normalizesExpertWeights = true
+        try mixtureParity(recordKey: "IK_PARITY_MIXTRAL_TINY", mode: "mixtral",
+                          label: "mixtral-tiny", geometry: geometry)
+    }
+
+    // The release's special tokens and end token come from tokenizer_config.json, not vocab.json:
+    // a ChatML marker must encode to ONE id, and the end token must be the one the release names.
+    func testTheReleaseTokenizerResolvesItsSpecialTokens() throws {
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let (specials, endToken) = NFKMLXLanguage.specialTokens(inDirectory: URL(fileURLWithPath: directory))
+        XCTAssertEqual(specials["<|im_start|>"], 151644)
+        XCTAssertEqual(specials["<|im_end|>"], 151645)
+        XCTAssertEqual(endToken, 151645, "Qwen3's eos_token is <|im_end|>")
+
+        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "qwen2",
+                                                     "specialTokens": specials]]
+        manifest["eosTokenId"] = endToken
+        let tokenizer = try NFKTokenizer(forManifest: manifest, directory: URL(fileURLWithPath: directory))
+        XCTAssertEqual(tokenizer.eosTokenId, 151645)
+        let rendered = NFKMLXLanguageBackend.chatMLPrompt(from: [["role": "user", "content": "Hi"]])
+        let ids = tokenizer.encode(rendered).map(\.intValue)
+        XCTAssertEqual(ids.first, 151644, "the opening marker is one token: \(ids.prefix(4))")
+        XCTAssertTrue(ids.contains(151645))
+    }
+
+    // JSON-constrained generation on released weights: whatever the model says, it is a document.
+    func testConstrainedGenerationOnQwen3ProducesAJSONObject() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let backend = try NFKMLXLanguage.backend(directoryURL: URL(fileURLWithPath: directory))
+        // Qwen3 opens every answer with a <think> block. The grammar forbids it, and what the model
+        // does with the leftover probability mass is not an answer (measured: `{}`), so the prompt
+        // closes the block itself, the way the release's own template does for its no-think mode.
+        let prompt = NFKMLXLanguageBackend.chatMLPrompt(from: [
+            ["role": "user", "content": "Describe Paris as a JSON object with the keys city, country, and population."],
+        ]) + "<think>\n\n</think>\n\n"
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: prompt],
+            parameters: [NFKParameterMaxTokens: 96, NFKParameterTemperature: 0,
+                         NFKMLXGenerationParameterKey.outputFormat: "json-object"])
+        let text = try XCTUnwrap(backend.runInference(for: request).text)
+        print("VALIDATION constrained qwen3-0.6B: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                                   "the output is a JSON object")
+        XCTAssertFalse(object.isEmpty, "the object carries fields")
+    }
+
+    // Speculative decoding on released weights: a 0.6B draft proposing for the 1.7B target must
+    // reproduce the target's own greedy continuation token for token — that is the whole contract —
+    // and the acceptance rate and wall-clock ratio are what say whether it was worth it.
+    func testSpeculativeDecodingReproducesTheTargetsGreedyRunOnQwen3() throws {
+        try requireMLXRuntime()
+        guard let targetDirectory = config["IK_VAL_QWEN3_1_7B"], let draftDirectory = config["IK_VAL_QWEN3"] else {
+            throw XCTSkip("set IK_VAL_QWEN3_1_7B and IK_VAL_QWEN3")
+        }
+        let (target, tokenizer) = try NFKMLXLanguage.loadedRelease(at: URL(fileURLWithPath: targetDirectory))
+        let (draft, _) = try NFKMLXLanguage.loadedRelease(at: URL(fileURLWithPath: draftDirectory))
+        let prompt = try XCTUnwrap(tokenizer).encode("The capital of France is").map(\.intValue)
+
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 64
+        options.draftTokens = 4
+
+        var plainSeconds = Date()
+        let plain = target.generate(prompt: prompt, options: options)
+        let plainElapsed = Date().timeIntervalSince(plainSeconds)
+
+        var report = NFKMLXSpeculativeReport()
+        plainSeconds = Date()
+        let speculative = target.generate(prompt: prompt, options: options, draft: draft, report: &report)
+        let speculativeElapsed = Date().timeIntervalSince(plainSeconds)
+
+        print(String(format: "VALIDATION speculative qwen3-1.7B←0.6B: %d tokens, %d rounds, acceptance %.3f, "
+                     + "plain %.2f s, speculative %.2f s, ratio %.2fx",
+                     plain.count, report.rounds, report.acceptanceRate, plainElapsed, speculativeElapsed,
+                     plainElapsed / speculativeElapsed))
+        XCTAssertEqual(speculative, plain, "the speculative run is the target's own greedy run")
+        XCTAssertGreaterThan(report.acceptanceRate, 0.5, "a same-family draft agrees most of the time")
+    }
+
     // Follow-on to the music embedding win: the SMALLER Qwen3 releases are TIED, so their input
     // embedding IS the logit head — `logits(fromHidden:)` routes through `embedTokens.asLinear`, which
     // becomes a QuantizedEmbedding.asLinear once the embedding is packed. So quantizing the embedding

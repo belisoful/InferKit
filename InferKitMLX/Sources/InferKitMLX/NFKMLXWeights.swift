@@ -49,16 +49,26 @@ enum NFKMLXQuantization {
     /// embedding is a lookup table separate from `lm_head`.
     static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
                          includeEmbeddings: Bool = false) {
-        MLXNN.quantize(model: module, groupSize: groupSize, bits: bits) { _, layer in
+        MLXNN.quantize(model: module, groupSize: groupSize, bits: bits, mode: .affine, filter: { _, layer in
             if let linear = layer as? Linear, !(linear is QuantizedLinear) {
                 return linear.weight.shape[1] % groupSize == 0
+            }
+            if let experts = layer as? NFKLMSwitchLinear, !(experts is NFKLMQuantizedSwitchLinear) {
+                return experts.inputSize % groupSize == 0
             }
             if includeEmbeddings, let embedding = layer as? Embedding,
                !(embedding is QuantizedEmbedding) {
                 return embedding.weight.shape[1] % groupSize == 0
             }
             return false
-        }
+        }, apply: { layer, groupSize, bits, mode in
+            // A mixture's stacked expert weights are not a `Linear`, so MLX's own quantizer does not
+            // know them; everything else takes the standard path.
+            if let experts = layer as? NFKLMSwitchLinear {
+                return experts.quantized(groupSize: groupSize, bits: bits)
+            }
+            return quantizeSingle(layer: layer, groupSize: groupSize, bits: bits, mode: mode)
+        })
     }
 
     /// Applies a checkpoint's recorded quantization to a freshly built module, so the packed arrays

@@ -454,6 +454,38 @@
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 }
 
+// Docs/examples.md: The generation runtime reaches Objective-C through request keys — a draft model
+// for speculative decoding, a prompt cache kept between turns, and a JSON or fixed-choice constraint
+// on the output — and the backend built with a draft through its own factory.
+- (void)testObjectiveCConfiguresSpeculationCachingAndConstraints
+{
+	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputMessages: @[ @{ @"role": @"user", @"content": @"Describe Paris as JSON." } ] }
+		parameters:@{
+			NFKMLXGenerationParameterKey.chatTemplate: @"chatml",
+			NFKMLXGenerationParameterKey.draftTokens: @4,               // proposals per round; 0 disables
+			NFKMLXGenerationParameterKey.reusesPromptCache: @YES,       // prefill only what the turn adds
+			NFKMLXGenerationParameterKey.outputFormat: @"json-object",  // or "json" / "json-array"
+		}];
+	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.outputFormat], @"json-object");
+	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.draftTokens], @4);
+
+	// A classification: the answer is exactly one of the choices.
+	NFKInferenceRequest *pick = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"Is the sky blue? Answer yes or no." }
+		parameters:@{ NFKMLXGenerationParameterKey.choices: @[ @"yes", @"no" ] }];
+	XCTAssertEqual([request.parameters[NFKMLXGenerationParameterKey.choices] count], 0);
+	XCTAssertEqual([pick.parameters[NFKMLXGenerationParameterKey.choices] count], 2);
+
+	// Built with a draft release beside the main one:
+	//   id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:qwen4B draftDirectoryURL:qwen06B error:&error];
+	// and the retained cache is dropped through the backend when a conversation ends:
+	//   [(NFKMLXLanguageBackend *)llm resetPromptCache];
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(resetPromptCache)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(hasDraftModel)]);
+}
+
 // Docs/examples.md: The @objc gaps closed by the parity audit — variant factories, machine probes,
 // and face landmarks all reach Objective-C.
 - (void)testObjectiveCReachesTheParityAuditFactories

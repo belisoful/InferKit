@@ -769,7 +769,9 @@
       "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting.",
       "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors",
       "modes": [
-        "qwen3"
+        "qwen3",
+        "qwen3_moe",
+        "mixtral"
       ]
     },
     "music": {

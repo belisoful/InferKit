@@ -30,7 +30,9 @@ special: the native reader handles them too, so their converters are optional li
 The measurement discipline the whole package rests on. `reference-parity/run_reference.py` runs a
 model's (or a training objective's) real reference implementation — torch, `transformers`, `diffusers`
 — and records input + output for numeric comparison; `validation-assets/{manifest.json,fetch.py}`
-fetches every real checkpoint the parity suites load into `~/.inferkit-validation`. This ground truth
+fetches every real checkpoint the parity suites load into `~/.inferkit-validation`, and
+`validation-assets/shapes.py` fetches a release's config and every tensor's shape by HTTP range request
+over its safetensors headers, for the structural checks against releases too large to run. This ground truth
 is **irreducibly Python**: a Swift port cannot be validated against another Swift port.
 
 ### Build and packaging — `xcframework/`, `docc/`, `ane-placement/`, `espeak/`, `build-all.sh`

@@ -140,6 +140,11 @@
 	return @"";
 }
 
+- (nullable NSData *)bytesForTokenId:(NSInteger)tokenId
+{
+	return nil;
+}
+
 + (BOOL)setError:(NSError * _Nullable *)outError code:(NSInteger)code reason:(NSString *)reason
 {
 	if (outError != NULL) {

@@ -45,6 +45,18 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The text for a sequence of token ids. */
 - (NSString *)decode:(NSArray<NSNumber *> *)tokenIds;
 
+/*!
+	@method     bytesForTokenId:
+	@abstract   The bytes one token contributes to decoded text, or nil for an id the vocabulary
+				does not hold.
+	@discussion Decoding a sequence concatenates these bytes, so a token that is a fragment of a
+				multi-byte character returns that fragment rather than a replacement character. A
+				constrained decoder reads them to decide which tokens a grammar admits next. A
+				word-piece token that starts a new word carries its leading space. Introduced in
+				0.3.0.
+*/
+- (nullable NSData *)bytesForTokenId:(NSInteger)tokenId;
+
 /*! The end-of-sequence token id, or -1 when the model defines none. */
 @property (nonatomic, readonly) NSInteger eosTokenId;
 

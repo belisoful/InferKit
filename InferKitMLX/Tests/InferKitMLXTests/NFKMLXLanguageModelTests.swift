@@ -289,6 +289,15 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(options.cacheQuantization, .init(bits: 8, groupSize: 64))
         if case .chatML = options.chatTemplate {} else { XCTFail("the chatml parameter selects the template") }
 
+        let speculative = NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"], parameters: [
+            NFKMLXGenerationParameterKey.draftTokens: 6,
+            NFKMLXGenerationParameterKey.reusesPromptCache: true,
+        ])
+        var runtime = NFKMLXGenerationOptions()
+        NFKMLXLanguageBackend.applyMLXParameters(from: speculative, to: &runtime)
+        XCTAssertEqual(runtime.draftTokens, 6)
+        XCTAssertTrue(runtime.reusesPromptCache)
+
         // Absent parameters leave the defaults, so an existing caller is unchanged.
         var untouched = NFKMLXGenerationOptions()
         NFKMLXLanguageBackend.applyMLXParameters(
@@ -380,10 +389,71 @@ final class NFKMLXLanguageModelTests: XCTestCase {
             .write(to: hybrid, atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try NFKMLXLanguage.configuration(fromHuggingFace: hybrid))
 
+        // Qwen2-MoE carries a shared expert this network does not implement; it is refused by name
+        // rather than loaded as the family it resembles.
         let experts = directory.appendingPathComponent("moe.json")
-        try #"{"architectures":["Qwen3MoeForCausalLM"],"model_type":"qwen3_moe","num_experts":128}"#
+        try #"{"architectures":["Qwen2MoeForCausalLM"],"model_type":"qwen2_moe","num_experts":60,"num_experts_per_tok":4}"#
             .write(to: experts, atomically: true, encoding: .utf8)
         XCTAssertThrowsError(try NFKMLXLanguage.configuration(fromHuggingFace: experts))
+
+        // A Qwen3-MoE config that names experts but not the routing is incomplete, not dense.
+        let incomplete = directory.appendingPathComponent("incomplete.json")
+        try #"{"architectures":["Qwen3MoeForCausalLM"],"model_type":"qwen3_moe","num_experts":128}"#
+            .write(to: incomplete, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try NFKMLXLanguage.configuration(fromHuggingFace: incomplete))
+    }
+
+    func testAMixtureConfigurationIsReadForBothFamilies() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func configuration(_ json: String) throws -> NFKMLXLanguageConfiguration {
+            let url = directory.appendingPathComponent("\(UUID().uuidString).json")
+            try json.write(to: url, atomically: true, encoding: .utf8)
+            return try NFKMLXLanguage.configuration(fromHuggingFace: url)
+        }
+
+        // Qwen3-30B-A3B's geometry.
+        let qwen = try configuration(#"""
+        {"architectures":["Qwen3MoeForCausalLM"],"model_type":"qwen3_moe","hidden_size":2048,
+         "num_hidden_layers":48,"num_attention_heads":32,"num_key_value_heads":4,"head_dim":128,
+         "intermediate_size":6144,"moe_intermediate_size":768,"num_experts":128,"num_experts_per_tok":8,
+         "norm_topk_prob":true,"decoder_sparse_step":1,"mlp_only_layers":[],"vocab_size":151936}
+        """#)
+        XCTAssertTrue(qwen.isMixtureOfExperts)
+        XCTAssertEqual(qwen.expertCount, 128)
+        XCTAssertEqual(qwen.activeExpertCount, 8)
+        XCTAssertEqual(qwen.expertIntermediateSize, 768)
+        XCTAssertTrue(qwen.normalizesExpertWeights)
+        XCTAssertTrue(qwen.normalizesQueryAndKey, "Qwen3-MoE keeps Qwen3's per-head norms")
+
+        // Mixtral-8x7B's geometry: the expert width is the plain intermediate size, and the
+        // selected weights always renormalize.
+        let mixtral = try configuration(#"""
+        {"architectures":["MixtralForCausalLM"],"model_type":"mixtral","hidden_size":4096,
+         "num_hidden_layers":32,"num_attention_heads":32,"num_key_value_heads":8,
+         "intermediate_size":14336,"num_local_experts":8,"num_experts_per_tok":2,
+         "sliding_window":null,"rope_theta":1000000.0,"vocab_size":32000}
+        """#)
+        XCTAssertEqual(mixtral.expertCount, 8)
+        XCTAssertEqual(mixtral.activeExpertCount, 2)
+        XCTAssertEqual(mixtral.expertIntermediateSize, 14336)
+        XCTAssertTrue(mixtral.normalizesExpertWeights)
+        XCTAssertFalse(mixtral.normalizesQueryAndKey)
+        XCTAssertEqual(mixtral.headDimensions, 128)
+
+        // What is refused: a sliding window, and dense layers among the expert ones.
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["MixtralForCausalLM"],"model_type":"mixtral","num_local_experts":8,
+         "num_experts_per_tok":2,"intermediate_size":14336,"sliding_window":4096}
+        """#))
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["Qwen3MoeForCausalLM"],"model_type":"qwen3_moe","num_experts":128,
+         "num_experts_per_tok":8,"moe_intermediate_size":768,"mlp_only_layers":[1,3]}
+        """#))
+        XCTAssertFalse(try configuration(#"{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3"}"#)
+                           .isMixtureOfExperts)
     }
 
     func testADenseConfigurationIsRead() throws {
@@ -532,5 +602,393 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(cache.offset, 9)
         XCTAssertLessThanOrEqual(cache.retainedLength(), 4)
         XCTAssertEqual(cache.maskCacheLength, 3, "one short of the window, which is what a step reads")
+    }
+
+    // MARK: Rollback
+
+    private func lastLogits(_ net: NFKMLXLanguageNet, _ tokens: [Int], cache: NFKMLXKeyValueCache) -> [Float] {
+        let logits = net(MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count]), cache: cache)
+        eval(logits)
+        return logits[0, -1].asArray(Float.self)
+    }
+
+    private func worstDifference(_ a: [Float], _ b: [Float]) -> Float {
+        zip(a, b).map { abs($0 - $1) }.max() ?? .infinity
+    }
+
+    // Rolling back must leave the cache exactly as it was before the discarded positions were
+    // written: a step after the rollback matches a step on a cache that never saw them.
+    func testARollbackRestoresTheEarlierState() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let prompt = [3, 17, 42, 8]
+        let rolled = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        _ = lastLogits(net, prompt, cache: rolled)
+        _ = lastLogits(net, [91, 5], cache: rolled)
+        XCTAssertTrue(rolled.rollback(by: 2))
+        XCTAssertEqual(rolled.offset, prompt.count)
+        XCTAssertEqual(rolled.retainedLength(), prompt.count)
+        let afterRollback = lastLogits(net, [60], cache: rolled)
+
+        let fresh = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        _ = lastLogits(net, prompt, cache: fresh)
+        let expected = lastLogits(net, [60], cache: fresh)
+        XCTAssertLessThan(worstDifference(afterRollback, expected), 2e-3)
+    }
+
+    /// The tiny geometry's 16-wide heads admit no MLX quantization group, so the quantized tests
+    /// widen the head to 64.
+    private func wideHeadNet() -> NFKMLXLanguageNet {
+        NFKMLXLanguage.makeNet(NFKMLXLanguageConfiguration(
+            hiddenSize: 128, layerCount: 2, headCount: 2, keyValueHeadCount: 1, headDimensions: 64,
+            intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000))
+    }
+
+    func testAQuantizedCacheRollsBackToo() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        let quantization = NFKMLXKeyValueCache.Quantization(bits: 8, groupSize: 64)
+        let rolled = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, quantization: quantization)
+        _ = lastLogits(net, [3, 17, 42], cache: rolled)
+        _ = lastLogits(net, [8, 91, 5], cache: rolled)
+        XCTAssertTrue(rolled.rollback(by: 3))
+        let afterRollback = lastLogits(net, [60], cache: rolled)
+
+        let fresh = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, quantization: quantization)
+        _ = lastLogits(net, [3, 17, 42], cache: fresh)
+        let expected = lastLogits(net, [60], cache: fresh)
+        XCTAssertLessThan(worstDifference(afterRollback, expected), 2e-3)
+    }
+
+    // A window drops positions for good, so a rollback that would need them is refused and changes
+    // nothing, which is what tells a prompt cache to rebuild instead.
+    func testARollbackPastTheWindowIsRefused() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, window: 4)
+        for token in 0 ..< 8 {
+            _ = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+        }
+        XCTAssertTrue(cache.rollback(by: 2))
+        XCTAssertEqual(cache.offset, 6)
+        XCTAssertFalse(cache.rollback(by: 5), "the dropped positions cannot be recovered")
+        XCTAssertEqual(cache.offset, 6, "a refused rollback leaves the cache untouched")
+        XCTAssertTrue(cache.rollback(by: 0))
+    }
+
+    // MARK: Prompt cache
+
+    private func greedy(_ maxTokens: Int) -> NFKMLXGenerationOptions {
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = maxTokens
+        return options
+    }
+
+    // A follow-up prompt that extends the last one produces what a fresh run produces, and the
+    // cache records exactly the tokens it holds rows for.
+    func testAPromptCacheContinuesAConversationExactly() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let promptCache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
+        let first = [3, 17, 42, 8]
+        let reply = net.generate(prompt: first, options: greedy(6), promptCache: promptCache)
+        XCTAssertEqual(reply.count, 6)
+        XCTAssertEqual(promptCache.tokens, first + reply, "every fed token is recorded")
+
+        let second = first + reply + [91, 5, 60]
+        let continued = net.generate(prompt: second, options: greedy(6), promptCache: promptCache)
+        let fresh = net.generate(prompt: second, options: greedy(6))
+        XCTAssertEqual(continued, fresh)
+        XCTAssertEqual(promptCache.tokens, second + continued)
+    }
+
+    func testAPromptCacheRollsBackToWhereANewPromptDiverges() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let promptCache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
+        _ = net.generate(prompt: [1, 2, 3, 4], options: greedy(3), promptCache: promptCache)
+        XCTAssertEqual(promptCache.align(to: [1, 2, 9, 9]), 2)
+        XCTAssertEqual(promptCache.tokens, [1, 2])
+        XCTAssertEqual(promptCache.cache.offset, 2)
+        // A prompt the cache holds in full still leaves its last token to run, so logits exist.
+        _ = net.generate(prompt: [1, 2, 9, 9], options: greedy(2), promptCache: promptCache)
+        XCTAssertEqual(promptCache.align(to: [1, 2, 9, 9]), 3)
+        // Nothing shared: the cache empties.
+        XCTAssertEqual(promptCache.align(to: [7, 7]), 0)
+        XCTAssertTrue(promptCache.tokens.isEmpty)
+    }
+
+    // Past a window the shared prefix may lie in dropped positions; the cache rebuilds rather than
+    // producing rows it cannot recover, and the output is still the fresh run's.
+    func testAWindowedPromptCacheRebuildsWhenItCannotRollBack() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let promptCache = NFKMLXPromptCache(layerCount: net.configuration.layerCount, window: 4)
+        _ = net.generate(prompt: [3, 17, 42, 8, 91], options: greedy(4), promptCache: promptCache)
+        let diverging = [3, 9, 9, 9, 9]
+        let continued = net.generate(prompt: diverging, options: greedy(3), promptCache: promptCache)
+        var windowed = greedy(3)
+        windowed.contextWindow = 4
+        XCTAssertEqual(continued, net.generate(prompt: diverging, options: windowed))
+        XCTAssertEqual(promptCache.tokens, diverging + continued)
+    }
+
+    func testAPromptCacheRoundTripsThroughDisk() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        for quantization in [nil, NFKMLXKeyValueCache.Quantization(bits: 8, groupSize: 64)] {
+            let saved = NFKMLXPromptCache(layerCount: net.configuration.layerCount, quantization: quantization)
+            let system = [3, 17, 42, 8, 91, 5]
+            _ = net.generate(prompt: system, options: greedy(2), promptCache: saved)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("prompt-cache-\(UUID().uuidString).safetensors")
+            defer { try? FileManager.default.removeItem(at: url) }
+            try saved.save(to: url)
+
+            let loaded = try NFKMLXPromptCache.load(from: url)
+            XCTAssertEqual(loaded.tokens, saved.tokens)
+            XCTAssertEqual(loaded.quantization, quantization)
+            let followUp = system + [60, 22]
+            let continued = net.generate(prompt: followUp, options: greedy(5), promptCache: loaded)
+            var options = greedy(5)
+            options.cacheQuantization = quantization
+            XCTAssertEqual(continued, net.generate(prompt: followUp, options: options))
+        }
+    }
+
+    // MARK: Speculative decoding
+
+    // The whole point: the output is the plain run's output. A draft that IS the target accepts
+    // every proposal; an unrelated draft rejects most of them; the tokens are identical either way.
+    func testGreedySpeculativeDecodingMatchesPlainDecoding() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let prompt = [3, 17, 42, 8]
+        let plain = net.generate(prompt: prompt, options: greedy(24))
+
+        var report = NFKMLXSpeculativeReport()
+        let selfDrafted = net.generate(prompt: prompt, options: greedy(24), draft: net, report: &report)
+        XCTAssertEqual(selfDrafted, plain)
+        XCTAssertEqual(report.accepted, report.proposed, "a draft identical to the target is always right")
+        XCTAssertGreaterThan(report.rounds, 0)
+
+        var stranger = NFKMLXSpeculativeReport()
+        let otherDrafted = net.generate(prompt: prompt, options: greedy(24), draft: tinyNet(), report: &stranger)
+        XCTAssertEqual(otherDrafted, plain, "a wrong draft costs time, never correctness")
+        XCTAssertGreaterThan(stranger.rounds, 0)
+    }
+
+    func testSpeculativeDecodingHonorsStopsAndTheHandler() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let draft = tinyNet()
+        let plain = net.generate(prompt: [7], options: greedy(12))
+        var stopping = greedy(12)
+        stopping.stopTokens = [plain[0]]
+        XCTAssertTrue(net.generate(prompt: [7], options: stopping, draft: draft).isEmpty)
+        // A stop token that first appears mid-run ends the run exactly there.
+        if let later = plain.indices.dropFirst().first(where: { !plain[..<$0].contains(plain[$0]) }) {
+            stopping.stopTokens = [plain[later]]
+            XCTAssertEqual(net.generate(prompt: [7], options: stopping, draft: draft),
+                           Array(plain.prefix(later)))
+        }
+
+        var seen = 0
+        let cut = net.generate(prompt: [7], options: greedy(12), draft: draft) { _ in
+            seen += 1
+            return seen < 3
+        }
+        XCTAssertEqual(cut, Array(plain.prefix(3)))
+        XCTAssertEqual(net.generate(prompt: [7], options: greedy(5), draft: draft), Array(plain.prefix(5)))
+    }
+
+    // Sampling: an identical draft passes the acceptance test with probability one at every
+    // position, and a foreign one still produces in-vocabulary tokens to the requested length.
+    func testSampledSpeculativeDecodingAcceptsAnIdenticalDraft() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0.8
+        options.topP = 0.9
+        options.maxTokens = 16
+        options.seed = 3
+        var report = NFKMLXSpeculativeReport()
+        let produced = net.generate(prompt: [3, 17], options: options, draft: net, report: &report)
+        XCTAssertEqual(produced.count, 16)
+        XCTAssertEqual(report.acceptanceRate, 1, accuracy: 1e-9)
+
+        var foreign = NFKMLXSpeculativeReport()
+        let other = net.generate(prompt: [3, 17], options: options, draft: tinyNet(), report: &foreign)
+        XCTAssertEqual(other.count, 16)
+        XCTAssertTrue(other.allSatisfy { $0 >= 0 && $0 < net.configuration.vocabularySize })
+    }
+
+    func testSpeculativeDecodingReusesAPromptCache() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let draft = tinyNet()
+        let promptCache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
+        let first = [3, 17, 42, 8]
+        let reply = net.generate(prompt: first, options: greedy(6), draft: draft, promptCache: promptCache)
+        XCTAssertEqual(reply, net.generate(prompt: first, options: greedy(6)))
+        // What the cache holds past the prompt is what was FED: the accepted proposals, which are
+        // the target's own greedy choices, so they are a prefix of a longer plain run even when a
+        // round accepted more than the token budget let it emit.
+        XCTAssertTrue(promptCache.tokens.starts(with: first))
+        let fed = Array(promptCache.tokens.dropFirst(first.count))
+        XCTAssertTrue(net.generate(prompt: first, options: greedy(40)).starts(with: fed))
+
+        let second = first + reply + [91, 5]
+        let continued = net.generate(prompt: second, options: greedy(6), draft: draft, promptCache: promptCache)
+        XCTAssertEqual(continued, net.generate(prompt: second, options: greedy(6)))
+    }
+
+    // MARK: Mixture of experts
+
+    private func tinyMixtureNet() -> NFKMLXLanguageNet { NFKMLXLanguage.makeNet(.tinyMixture) }
+
+    func testTheMixtureFeedForwardProducesLogitsForEveryPosition() throws {
+        try requireMLXRuntime()
+        let net = tinyMixtureNet()
+        let logits = net(MLXArray([3, 17, 42, 8].map { Int32($0) }).reshaped([1, 4]))
+        eval(logits)
+        XCTAssertEqual(logits.shape, [1, 4, NFKMLXLanguageConfiguration.tinyMixture.vocabularySize])
+        XCTAssertTrue(logits.asArray(Float.self).allSatisfy(\.isFinite))
+        XCTAssertTrue(net.model.layers[0].feedForward is NFKLMMixtureFeedForward)
+        XCTAssertTrue(tinyNet().model.layers[0].feedForward is NFKLMFeedForward)
+    }
+
+    // A release stores each expert as its own tensor, in Qwen3-MoE's spelling or Mixtral's; the
+    // loader stacks them into the module's one tensor per projection, in expert order.
+    func testPerExpertTensorsStackIntoTheModuleLayout() throws {
+        try requireMLXRuntime()
+        let source = tinyMixtureNet()
+        let tokens = MLXArray([3, 17, 42, 8, 91].map { Int32($0) }).reshaped([1, 5])
+        let expected = source(tokens)
+        eval(expected)
+
+        // Unstack into the two released spellings, one per layer, with the experts shuffled so the
+        // order the loader restores is the index's and not the file's.
+        var released = [(String, MLXArray)]()
+        for (name, value) in source.parameters().flattened() {
+            guard name.contains(".mlp.experts.") else {
+                released.append((name, value))
+                continue
+            }
+            let parts = name.components(separatedBy: ".")        // model.layers.L.mlp.experts.proj.weight
+            let layer = parts[2], projection = parts[5]
+            for expert in (0 ..< value.dim(0)).reversed() {
+                let key = layer == "0"
+                    ? "model.layers.0.mlp.experts.\(expert).\(projection).weight"
+                    : "model.layers.\(layer).block_sparse_moe.experts.\(expert)."
+                        + ["gate_proj": "w1", "up_proj": "w3", "down_proj": "w2"][projection]! + ".weight"
+                released.append((key, value[expert]))
+            }
+        }
+        let mapped = NFKMLXLanguage.stackingExperts(released.map { (NFKMLXLanguage.moduleKey(forRelease: $0.0), $0.1) })
+        XCTAssertEqual(Set(mapped.map(\.0)), Set(source.parameters().flattened().map(\.0)))
+
+        let loaded = tinyMixtureNet()
+        try NFKMLXWeights.apply(mapped, to: loaded, verifyShapes: true)
+        let actual = loaded(tokens)
+        eval(actual)
+        XCTAssertEqual(actual.asArray(Float.self), expected.asArray(Float.self))
+    }
+
+    // Quantizing packs the stacked experts too, the checkpoint records it, and the loader rebuilds
+    // the packed structure before applying — the same contract the dense layers have.
+    func testAQuantizedMixtureRoundTripsThroughTheCheckpoint() throws {
+        try requireMLXRuntime()
+        let net = tinyMixtureNet()
+        NFKMLXQuantization.quantize(module: net, bits: 8, groupSize: 32)
+        XCTAssertTrue(net.model.layers[0].feedForward is NFKLMMixtureFeedForward)
+        let experts = (net.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts
+        XCTAssertTrue(experts.gate is NFKLMQuantizedSwitchLinear)
+        XCTAssertTrue(experts.down is NFKLMQuantizedSwitchLinear)
+        let tokens = MLXArray([3, 17, 42, 8].map { Int32($0) }).reshaped([1, 4])
+        let expected = net(tokens)
+        eval(expected)
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mixture-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWeights.save(net, to: url)
+
+        let loaded = tinyMixtureNet()
+        try NFKMLXLanguage.loadWeights(into: loaded, from: url)
+        let reloaded = (loaded.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts
+        XCTAssertTrue(reloaded.up is NFKLMQuantizedSwitchLinear)
+        let actual = loaded(tokens)
+        eval(actual)
+        XCTAssertEqual(actual.asArray(Float.self), expected.asArray(Float.self))
+    }
+
+    func testAMixtureGeneratesThroughTheCacheAndTheDraft() throws {
+        try requireMLXRuntime()
+        let net = tinyMixtureNet()
+        let prompt = [3, 17, 42, 8]
+        let plain = net.generate(prompt: prompt, options: greedy(10))
+        XCTAssertEqual(plain.count, 10)
+        let promptCache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
+        XCTAssertEqual(net.generate(prompt: prompt, options: greedy(10), promptCache: promptCache), plain)
+        XCTAssertEqual(net.generate(prompt: prompt, options: greedy(10), draft: tinyNet()), plain,
+                       "a dense draft of the same vocabulary can propose for a mixture")
+    }
+
+    // The released Qwen3-30B-A3B cannot run here, so its checkpoint is held to the module by
+    // shape: every parameter this module builds must exist in the release at the built shape —
+    // with a stacked expert tensor unstacked into the release's per-expert entries — and every
+    // tensor the release ships must be one this module consumes, so nothing is silently skipped.
+    // MLX arrays are lazy, so a 30B module costs nothing to build until it is evaluated.
+    func testEveryParameterMatchesTheReleasedQwen3MoeCheckpoint() throws {
+        var config = ProcessInfo.processInfo.environment
+        let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation.json")
+        if let data = try? Data(contentsOf: url),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            json.forEach { config[$0.key] = $0.value }
+        }
+        guard let shapesPath = config["IK_SHAPES_QWEN3_MOE"], let configPath = config["IK_CONFIG_QWEN3_MOE"],
+              let data = FileManager.default.contents(atPath: shapesPath),
+              let released = try JSONSerialization.jsonObject(with: data) as? [String: [Int]]
+        else { throw XCTSkip("set IK_SHAPES_QWEN3_MOE and IK_CONFIG_QWEN3_MOE (Tools/validation-assets/shapes.py)") }
+
+        let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: URL(fileURLWithPath: configPath))
+        XCTAssertEqual(geometry.expertCount, 128)
+        XCTAssertEqual(geometry.activeExpertCount, 8)
+        XCTAssertEqual(geometry.layerCount, 48)
+        let net = NFKMLXLanguage.makeNet(geometry)
+
+        var consumed = Set<String>()
+        var missing = [String]()
+        var mismatched = [String]()
+        for (name, value) in net.parameters().flattened() {
+            // A stacked expert tensor [E, out, in] is E released tensors [out, in].
+            if let range = name.range(of: ".mlp.experts."), name.hasSuffix(".weight") {
+                let projection = name[range.upperBound...].dropLast(".weight".count)
+                for expert in 0 ..< value.dim(0) {
+                    let key = "\(name[..<range.lowerBound]).mlp.experts.\(expert).\(projection).weight"
+                    guard let shape = released[key] else { missing.append(key); continue }
+                    consumed.insert(key)
+                    if shape != [value.dim(1), value.dim(2)] {
+                        mismatched.append("\(key): built \([value.dim(1), value.dim(2)]), released \(shape)")
+                    }
+                }
+                continue
+            }
+            guard let shape = released[name] else { missing.append(name); continue }
+            consumed.insert(name)
+            if shape != value.shape {
+                mismatched.append("\(name): built \(value.shape), released \(shape)")
+            }
+        }
+        let unaccounted = released.keys.filter { !consumed.contains($0) }.sorted()
+        print("VALIDATION structure qwen3-30B-A3B: \(consumed.count) released tensors consumed, "
+              + "\(missing.count) missing, \(mismatched.count) mismatched, \(unaccounted.count) unaccounted")
+        XCTAssertTrue(mismatched.isEmpty, "shape mismatches:\n" + mismatched.prefix(8).joined(separator: "\n"))
+        XCTAssertTrue(missing.isEmpty, "absent from the release:\n" + missing.prefix(8).joined(separator: "\n"))
+        XCTAssertTrue(unaccounted.isEmpty, "released tensors nothing here reads:\n"
+                      + unaccounted.prefix(8).joined(separator: "\n"))
+        XCTAssertEqual(consumed.count, released.count)
     }
 }

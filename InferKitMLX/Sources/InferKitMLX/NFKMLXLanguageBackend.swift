@@ -31,6 +31,22 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// The chat template, as an `NSString`: `"chatml"` applies the ChatML template, anything else
     /// flattens the messages. See ``NFKMLXGenerationOptions/chatTemplate``.
     @objc public static let chatTemplate = "NFKMLXParameterChatTemplate"
+    /// How many tokens a draft model proposes per verification round, as an `NSNumber`; 0 turns
+    /// speculative decoding off for the request even when the backend holds a draft. See
+    /// ``NFKMLXGenerationOptions/draftTokens``.
+    @objc public static let draftTokens = "NFKMLXParameterDraftTokens"
+    /// Whether the backend keeps its key-value cache between requests and prefills only what a new
+    /// prompt adds to the last one, as an `NSNumber` boolean. See
+    /// ``NFKMLXGenerationOptions/reusesPromptCache``.
+    @objc public static let reusesPromptCache = "NFKMLXParameterReusesPromptCache"
+    /// The output's required shape, as an `NSString`: `"json"` constrains sampling to well-formed
+    /// JSON with an object or array root, `"json-object"` to an object, `"json-array"` to an array.
+    /// Anything else leaves the output free. See ``NFKMLXGenerationOptions/jsonOutput`` and
+    /// ``NFKMLXJSONConstraint``.
+    @objc public static let outputFormat = "NFKMLXParameterOutputFormat"
+    /// The strings the output must be one of, as an `NSArray<NSString *>`. See
+    /// ``NFKMLXGenerationOptions/choices`` and ``NFKMLXChoiceConstraint``.
+    @objc public static let choices = "NFKMLXParameterChoices"
 }
 
 /// The template that turns a message list into prompt text.
@@ -98,6 +114,38 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// chunking.
     public var prefillChunkSize: Int?
 
+    /// How many tokens a draft model proposes per round when the backend was built with one.
+    ///
+    /// @discussion Speculative decoding scores a run of draft proposals in one pass of the large
+    /// model and keeps the leading ones that agree, so the output is the plain run's output at a
+    /// fraction of the passes. More proposals per round buy more when the draft agrees often and
+    /// waste verification work when it does not; four is a reasonable default for a draft from the
+    /// same family. 0 turns speculation off for a request even when a draft is present.
+    public var draftTokens: Int = 4
+
+    /// Whether the backend keeps its key-value cache between requests, so a prompt that extends the
+    /// previous one prefills only its tail. Off by default; see ``NFKMLXPromptCache``.
+    public var reusesPromptCache: Bool = false
+
+    /// Constrains what the model may emit; nil leaves sampling free. See ``NFKMLXTokenConstraint``.
+    ///
+    /// @discussion The mask is applied to the logits before temperature and nucleus filtering, so
+    /// sampling and greedy decoding alike stay inside the grammar. A constraint runs the plain
+    /// loop: speculative decoding is skipped for the run, since a proposal's admissibility depends
+    /// on the proposals before it. The backend builds the JSON and choice constraints from
+    /// ``jsonOutput`` and ``choices``; this field takes a custom one.
+    public var constraint: (any NFKMLXTokenConstraint)?
+
+    /// Whether the backend constrains the output to well-formed JSON. See ``NFKMLXJSONConstraint``.
+    public var jsonOutput: Bool = false
+
+    /// What the JSON root may be when ``jsonOutput`` is set. A model asked for "a JSON object" and
+    /// left free to open an array has been measured to answer `[]`; naming the root closes that.
+    public var jsonRoot: NFKMLXJSONConstraint.Root = .container
+
+    /// Strings the output must be one of, or nil. See ``NFKMLXChoiceConstraint``.
+    public var choices: [String]?
+
     public init() {}
 }
 
@@ -105,9 +153,11 @@ public struct NFKMLXGenerationOptions: Sendable {
 private final class NFKLMHolder: @unchecked Sendable {
     let net: NFKMLXLanguageNet
     let tokenizer: NFKTokenizer?
-    init(_ net: NFKMLXLanguageNet, _ tokenizer: NFKTokenizer?) {
+    let draft: NFKMLXLanguageNet?
+    init(_ net: NFKMLXLanguageNet, _ tokenizer: NFKTokenizer?, draft: NFKMLXLanguageNet? = nil) {
         self.net = net
         self.tokenizer = tokenizer
+        self.draft = draft
     }
 }
 
@@ -119,24 +169,45 @@ public extension NFKMLXLanguageNet {
     /// a single token. Returning false from `onToken` stops the run, which is how a job's cancellation
     /// reaches generation.
     func generate(prompt: [Int], options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
+                  promptCache: NFKMLXPromptCache? = nil,
                   onToken: ((Int) -> Bool)? = nil) -> [Int] {
         guard !prompt.isEmpty else { return [] }
         if let seed = options.seed { MLXRandom.seed(seed) }
 
-        let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount,
-                                        window: options.contextWindow,
-                                        quantization: options.cacheQuantization)
-        var logits = prefill(prompt, cache: cache, chunkSize: options.prefillChunkSize)
+        let (cache, tail) = startingCache(for: prompt, options: options, promptCache: promptCache)
+        var logits = prefill(tail, cache: cache, chunkSize: options.prefillChunkSize)
+        promptCache?.record(tail)
         var produced = [Int]()
+        let cursor = options.constraint?.makeCursor()
 
         for _ in 0 ..< options.maxTokens {
-            let next = NFKMLXLanguageNet.sample(logits[0, -1], options: options)
-            if options.stopTokens.contains(next) { break }
+            var row = logits[0, -1]
+            if let cursor {
+                row = row + cursor.allowedTokenMask().asType(row.dtype)
+            }
+            let next = NFKMLXLanguageNet.sample(row, options: options)
+            if options.stopTokens.contains(next) || (cursor != nil && next == cursor?.endToken) { break }
             produced.append(next)
+            cursor?.accept(next)
             if let onToken, !onToken(next) { break }
             logits = self(MLXArray([Int32(next)]).reshaped([1, 1]), cache: cache)
+            promptCache?.record([next])
         }
         return produced
+    }
+
+    /// The cache a run starts from and the part of `prompt` still to prefill into it: a fresh cache
+    /// and the whole prompt, or a prompt cache rolled back to what it shares with `prompt` and the
+    /// prompt's remainder.
+    func startingCache(for prompt: [Int], options: NFKMLXGenerationOptions,
+                       promptCache: NFKMLXPromptCache?) -> (NFKMLXKeyValueCache, [Int]) {
+        guard let promptCache else {
+            return (NFKMLXKeyValueCache(layerCount: configuration.layerCount,
+                                        window: options.contextWindow,
+                                        quantization: options.cacheQuantization), prompt)
+        }
+        let shared = promptCache.align(to: prompt)
+        return (promptCache.cache, Array(prompt[shared...]))
     }
 
     /// Fills the cache with the prompt and returns the logits after its last token: one forward pass,
@@ -163,27 +234,31 @@ public extension NFKMLXLanguageNet {
         guard options.temperature > 0 else {
             return logits.argMax().item(Int.self)
         }
-        var probabilities = softmax(logits / options.temperature, axis: -1)
-        if options.topP < 1 {
-            probabilities = nucleus(probabilities, topP: options.topP)
-        }
         // `categorical` samples from logits, so the filtered distribution goes back through a log.
-        return MLXRandom.categorical(log(probabilities)).item(Int.self)
+        return MLXRandom.categorical(log(probabilities(of: logits, options: options))).item(Int.self)
+    }
+
+    /// The distribution sampling draws from: the logits at the options' temperature, with the
+    /// nucleus filter applied when one is set. Works on one `[vocabulary]` row or on
+    /// `[rows, vocabulary]` at once, which speculative verification scores together.
+    static func probabilities(of logits: MLXArray, options: NFKMLXGenerationOptions) -> MLXArray {
+        let temperature = Swift.max(options.temperature, Float.leastNormalMagnitude)
+        let distribution = softmax(logits / temperature, axis: -1)
+        return options.topP < 1 ? nucleus(distribution, topP: options.topP) : distribution
     }
 
     /// Zeroes every token outside the smallest set whose probability passes `topP`, then renormalizes.
     private static func nucleus(_ probabilities: MLXArray, topP: Float) -> MLXArray {
         let order = argSort(probabilities, axis: -1)
-        let sorted = take(probabilities, order, axis: -1)
+        let sorted = takeAlong(probabilities, order, axis: -1)
         let cumulative = cumsum(sorted, axis: -1)
         // Keeping where the cumulative sum from the LOW end is under (1 - topP) discards the tail,
         // which is the same set the reference keeps from the high end.
         let keep = cumulative .> (1 - topP)
         let filtered = MLX.where(keep, sorted, MLXArray(Float(0)))
         // Undo the sort so the probabilities line up with their token ids again.
-        let restored = zeros(like: probabilities)
-        let scattered = take(filtered, argSort(order, axis: -1), axis: -1)
-        return (restored + scattered) / scattered.sum()
+        let restored = takeAlong(filtered, argSort(order, axis: -1), axis: -1)
+        return restored / restored.sum(axis: -1, keepDims: true)
     }
 }
 
@@ -193,15 +268,21 @@ public extension NFKMLXLanguageNet {
 /// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults.
 /// Generation is many forward passes; run it off the render thread, or submit a job, which reports
 /// each token through `partialResult`.
+@objc(NFKMLXLanguageBackend)
 public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     private let holder: NFKLMHolder
     private let identifier: String
     private let defaults: NFKMLXGenerationOptions
+    /// The cache kept between requests when a request asks for reuse. Generation is serialized
+    /// through `generationLock`: two runs through one cache would interleave their rows.
+    private var promptCache: NFKMLXPromptCache?
+    private let generationLock = NSLock()
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
-         options: NFKMLXGenerationOptions = NFKMLXGenerationOptions()) {
-        self.holder = NFKLMHolder(net, tokenizer)
+         options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
+         draft: NFKMLXLanguageNet? = nil) {
+        self.holder = NFKLMHolder(net, tokenizer, draft: draft)
         self.identifier = identifier
         self.defaults = options
         super.init()
@@ -209,6 +290,21 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
+
+    /// Whether the backend holds a draft model, so requests can decode speculatively.
+    @objc public var hasDraftModel: Bool { holder.draft != nil }
+
+    /// How many positions the retained prompt cache holds, or 0 when none is kept.
+    @objc public var promptCacheLength: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return promptCache?.count ?? 0
+    }
+
+    /// Drops the retained prompt cache, so the next request prefills from the start.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        promptCache = nil
+    }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let tokenizer = holder.tokenizer else {
@@ -234,10 +330,62 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
-        let produced = holder.net.generate(prompt: tokens, options: options)
+        let produced = generate(tokens, options: options)
         return NFKInferenceResult(outputs: [NFKOutputText: tokenizer.decode(produced.map {
             NSNumber(value: $0)
         })])
+    }
+
+    /// The vocabulary's bytes, read from the tokenizer once and kept for every constrained request.
+    private var vocabulary: NFKMLXVocabulary?
+
+    /// The constraint a request asks for, if any: a custom one wins, then JSON, then the choices.
+    private func constraint(for options: NFKMLXGenerationOptions,
+                            tokenizer: NFKTokenizer) -> (any NFKMLXTokenConstraint)? {
+        if let custom = options.constraint { return custom }
+        guard options.jsonOutput || options.choices != nil else { return nil }
+        let vocabulary: NFKMLXVocabulary
+        if let kept = self.vocabulary {
+            vocabulary = kept
+        } else {
+            vocabulary = NFKMLXVocabulary(tokenizer: tokenizer, size: holder.net.configuration.vocabularySize)
+            self.vocabulary = vocabulary
+        }
+        if options.jsonOutput { return NFKMLXJSONConstraint(vocabulary: vocabulary, root: options.jsonRoot) }
+        return NFKMLXChoiceConstraint(choices: options.choices ?? [], vocabulary: vocabulary)
+    }
+
+    /// Runs the tokens through the plain or the speculative loop, against the retained prompt cache
+    /// when the options ask for one.
+    private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions) -> [Int] {
+        generationLock.lock(); defer { generationLock.unlock() }
+        let net = holder.net
+        var options = requested
+        if let tokenizer = holder.tokenizer {
+            options.constraint = constraint(for: requested, tokenizer: tokenizer)
+            // A release names its end-of-sequence token; stopping there is what every caller expects
+            // of a language model, so it is the default stop when the request names none.
+            if options.stopTokens.isEmpty, tokenizer.eosTokenId >= 0 {
+                options.stopTokens = [tokenizer.eosTokenId]
+            }
+        }
+        var cache: NFKMLXPromptCache?
+        if options.reusesPromptCache {
+            if let kept = promptCache, kept.matches(layerCount: net.configuration.layerCount, options: options) {
+                cache = kept
+            } else {
+                cache = NFKMLXPromptCache(layerCount: net.configuration.layerCount,
+                                          window: options.contextWindow,
+                                          quantization: options.cacheQuantization)
+            }
+            promptCache = cache
+        } else {
+            promptCache = nil
+        }
+        if let draft = holder.draft, options.draftTokens > 0, options.constraint == nil {
+            return net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
+        }
+        return net.generate(prompt: tokens, options: options, promptCache: cache)
     }
 
     /// Overrides `options` with the MLX generation parameters a request carries, so an Objective-C
@@ -255,6 +403,23 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) as? String {
             options.chatTemplate = value.lowercased() == "chatml" ? .chatML : .none
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
+            options.draftTokens = value.intValue
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber {
+            options.reusesPromptCache = value.boolValue
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.outputFormat) as? String {
+            switch value.lowercased() {
+            case "json": options.jsonOutput = true; options.jsonRoot = .container
+            case "json-object": options.jsonOutput = true; options.jsonRoot = .object
+            case "json-array": options.jsonOutput = true; options.jsonRoot = .array
+            default: options.jsonOutput = false
+            }
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.choices) as? [String], !value.isEmpty {
+            options.choices = value
         }
     }
 
@@ -299,10 +464,11 @@ public final class NFKMLXLanguage: NSObject {
 
     /// Reads a released `config.json` into a configuration.
     ///
-    /// @discussion Only the dense decoder is read. A config naming a hybrid or mixture-of-experts
-    /// architecture is rejected rather than approximated: `Qwen3_5ForConditionalGeneration` interleaves
-    /// linear-attention layers with full attention, which this network does not implement, and loading
-    /// its weights into a dense stack would produce fluent-looking nonsense.
+    /// @discussion The dense decoder and its two mixture-of-experts families (`qwen3_moe`, `mixtral`)
+    /// are read. A config naming a hybrid architecture, or an expert family this network does not
+    /// implement, is rejected rather than approximated: `Qwen3_5ForConditionalGeneration` interleaves
+    /// linear-attention layers with full attention, and loading its weights into a dense stack would
+    /// produce fluent-looking nonsense.
     public static func configuration(fromHuggingFace url: URL) throws -> NFKMLXLanguageConfiguration {
         let data = try Data(contentsOf: url)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -318,14 +484,15 @@ public final class NFKMLXLanguage: NSObject {
         // Newer transformers writes `layer_types` even for a homogeneous dense stack (the MiniMax
         // Music 3 language model lists 36 × "full_attention"), so only a MIXED stack is rejected.
         let layerTypes = (json["layer_types"] as? [String]) ?? []
-        if json["num_experts"] != nil || layerTypes.contains(where: { $0 != "full_attention" }) {
+        if layerTypes.contains(where: { $0 != "full_attention" }) {
             throw NFKMLXError.unsupportedConfiguration(
-                "the config describes a mixture-of-experts or hybrid-attention model, which this "
-                + "network does not implement")
+                "the config describes a hybrid-attention model, which this network does not implement")
         }
 
         func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
         func real(_ key: String, _ fallback: Float) -> Float { (json[key] as? NSNumber)?.floatValue ?? fallback }
+        let modelType = (json["model_type"] as? String) ?? ""
+        let experts = try expertConfiguration(json, modelType: modelType)
 
         let hidden = integer("hidden_size", 1024)
         let heads = integer("num_attention_heads", 16)
@@ -345,8 +512,18 @@ public final class NFKMLXLanguage: NSObject {
             attentionBias: (json["attention_bias"] as? NSNumber)?.boolValue ?? false)
         // Qwen3 normalizes queries and keys per head; Qwen2 and Llama do not. The model type is what
         // says so — the config carries no flag for it.
-        let modelType = (json["model_type"] as? String) ?? ""
         configuration.normalizesQueryAndKey = modelType.hasPrefix("qwen3")
+        if let experts {
+            guard experts.count > 0, (1 ... experts.count).contains(experts.active), experts.width > 0 else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config names a mixture of experts but not how many, how many run per token, "
+                    + "or how wide they are")
+            }
+            configuration.expertCount = experts.count
+            configuration.activeExpertCount = experts.active
+            configuration.expertIntermediateSize = experts.width
+            configuration.normalizesExpertWeights = experts.normalizes
+        }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.
         configuration.ropeScaling = try NFKMLXRoPEScaling.read(
@@ -355,7 +532,84 @@ public final class NFKMLXLanguage: NSObject {
         return configuration
     }
 
-    /// Loads a released checkpoint. The module's keys are the checkpoint's, so nothing is remapped.
+    /// The expert geometry a config describes, or nil for a dense feed-forward.
+    ///
+    /// @discussion Two families are read. `qwen3_moe` names its experts under `num_experts` and
+    /// their width under `moe_intermediate_size`, and renormalizes the selected routing weights when
+    /// `norm_topk_prob` says so; a release that interleaves dense layers (`mlp_only_layers`, a
+    /// `decoder_sparse_step` above one) is refused, since this stack routes every layer. `mixtral`
+    /// names them `num_local_experts` at `intermediate_size` and always renormalizes; a release with
+    /// a sliding window is refused, since the attention here is full. Any other config that names
+    /// experts (`qwen2_moe` with its shared expert, DeepSeek, gpt-oss) is refused by name.
+    static func expertConfiguration(_ json: [String: Any], modelType: String) throws
+        -> (count: Int, active: Int, width: Int, normalizes: Bool)? {
+        func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
+        switch modelType {
+        case "qwen3_moe":
+            let denseLayers = (json["mlp_only_layers"] as? [Any]) ?? []
+            guard denseLayers.isEmpty, integer("decoder_sparse_step", 1) == 1 else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config interleaves dense layers among the expert layers, which this network "
+                    + "does not implement")
+            }
+            return (integer("num_experts", 0), integer("num_experts_per_tok", 0),
+                    integer("moe_intermediate_size", 0),
+                    (json["norm_topk_prob"] as? NSNumber)?.boolValue ?? true)
+        case "mixtral":
+            if let window = json["sliding_window"] as? NSNumber, window.intValue > 0 {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config asks for sliding-window attention, which this network does not implement")
+            }
+            return (integer("num_local_experts", 0), integer("num_experts_per_tok", 0),
+                    integer("intermediate_size", 0), true)
+        default:
+            if json["num_experts"] != nil || json["num_local_experts"] != nil || json["n_routed_experts"] != nil {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config describes a mixture-of-experts family (\(modelType)) this network does "
+                    + "not implement; qwen3_moe and mixtral are the families it reads")
+            }
+            return nil
+        }
+    }
+
+    /// The module key a release's tensor name maps to: Mixtral's `block_sparse_moe` spelling becomes
+    /// the `mlp` layout Qwen3-MoE and this module share, and every other name passes through.
+    static func moduleKey(forRelease key: String) -> String {
+        guard key.contains(".block_sparse_moe.") else { return key }
+        return key.replacingOccurrences(of: ".block_sparse_moe.gate.", with: ".mlp.gate.")
+            .replacingOccurrences(of: ".block_sparse_moe.experts.", with: ".mlp.experts.")
+            .replacingOccurrences(of: ".w1.weight", with: ".gate_proj.weight")
+            .replacingOccurrences(of: ".w3.weight", with: ".up_proj.weight")
+            .replacingOccurrences(of: ".w2.weight", with: ".down_proj.weight")
+    }
+
+    private static let expertPattern = try! NSRegularExpression(
+        pattern: #"^(.*\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"#)
+
+    /// Stacks a release's per-expert tensors (`…experts.N.gate_proj.weight`) into the module's one
+    /// `[experts, out, in]` tensor per projection, leaving every other pair as it is.
+    static func stackingExperts(_ mapped: [(String, MLXArray)]) -> [(String, MLXArray)] {
+        var groups = [String: [(index: Int, value: MLXArray)]]()
+        var rest = [(String, MLXArray)]()
+        for (name, value) in mapped {
+            let range = NSRange(name.startIndex..., in: name)
+            guard let match = expertPattern.firstMatch(in: name, range: range),
+                  let prefix = Range(match.range(at: 1), in: name),
+                  let index = Range(match.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
+                  let projection = Range(match.range(at: 3), in: name) else {
+                rest.append((name, value))
+                continue
+            }
+            groups["\(name[prefix]).\(name[projection]).weight", default: []].append((index, value))
+        }
+        for (key, entries) in groups {
+            rest.append((key, stacked(entries.sorted { $0.index < $1.index }.map(\.value))))
+        }
+        return rest
+    }
+
+    /// Loads a released checkpoint. The module's keys are the checkpoint's, so nothing is remapped
+    /// beyond stacking a mixture's per-expert tensors.
     ///
     /// Every weight here is at most two-dimensional, so none of the convolution transposes the vision
     /// models apply have any part in this path.
@@ -374,9 +628,9 @@ public final class NFKMLXLanguage: NSObject {
             // dropped rather than loaded into a projection the tied model does not have.
             if tied && key.hasPrefix("lm_head.") { return nil }
             let keeps = keepStored || (value.dtype != .float16 && value.dtype != .bfloat16)
-            return (key, keeps ? value : value.asType(.float32))
+            return (moduleKey(forRelease: key), keeps ? value : value.asType(.float32))
         }
-        try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
+        try NFKMLXWeights.apply(stackingExperts(mapped), to: net, verifyShapes: true)
     }
 
     /// Builds a text-generation backend from local weights and a tokenizer.
@@ -419,9 +673,9 @@ public final class NFKMLXLanguage: NSObject {
         // module has no projection to put it in.
         let tied = net.lmHead == nil
         let merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
-            tied && $0.hasPrefix("lm_head.") ? nil : $0
+            tied && $0.hasPrefix("lm_head.") ? nil : moduleKey(forRelease: $0)
         }
-        try NFKMLXWeights.apply(merged, to: net, verifyShapes: true)
+        try NFKMLXWeights.apply(stackingExperts(merged), to: net, verifyShapes: true)
     }
 
     /// Builds from a downloaded release directory holding the weights, `config.json`, and the
@@ -429,18 +683,72 @@ public final class NFKMLXLanguage: NSObject {
     public static func backend(directoryURL: URL,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
+        let (net, tokenizer) = try loadedRelease(at: directoryURL)
+        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
+                                     options: options)
+    }
+
+    /// Builds from a release directory together with a smaller release of the same family as the
+    /// draft for speculative decoding.
+    ///
+    /// @discussion The draft proposes ``NFKMLXGenerationOptions/draftTokens`` tokens per round and
+    /// the main model verifies them in one pass, producing the sequence it would have produced
+    /// alone. The two must share a vocabulary, which is checked here; a Qwen3 0.6B drafting for a
+    /// Qwen3 4B is the intended pairing. The draft loads at the same precision as the main model.
+    public static func backend(directoryURL: URL, draftDirectoryURL: URL,
+                               options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
+        throws -> any NFKInferenceBackend {
+        let (net, tokenizer) = try loadedRelease(at: directoryURL)
+        let (draft, _) = try loadedRelease(at: draftDirectoryURL)
+        guard draft.configuration.vocabularySize == net.configuration.vocabularySize else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the draft's vocabulary has \(draft.configuration.vocabularySize) entries where the "
+                + "model's has \(net.configuration.vocabularySize); a draft must share the model's "
+                + "tokenizer")
+        }
+        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
+                                     options: options, draft: draft)
+    }
+
+    /// The network and tokenizer a release directory describes.
+    static func loadedRelease(at directoryURL: URL) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         let configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         // Qwen ships a byte-level BPE vocabulary trained on its OWN pre-tokenization splits — a
         // letter run absorbing one leading punctuation character, digits split singly — so the
         // pattern is named: the GPT-2 default encodes the same text to different, valid-looking ids.
-        let tokenizer = try? NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel",
-                                                                      "pretokenizer": "qwen2"]],
-                                          directory: directoryURL)
+        // The special tokens live in tokenizer_config.json rather than vocab.json; without them a
+        // chat template's markers would encode as ordinary text.
+        let (specials, endToken) = specialTokens(inDirectory: directoryURL)
+        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "qwen2",
+                                                     "specialTokens": specials]]
+        if let endToken { manifest["eosTokenId"] = endToken }
+        let tokenizer = try? NFKTokenizer(forManifest: manifest, directory: directoryURL)
         let net = makeNet(configuration)
         try loadWeights(into: net, fromDirectory: directoryURL)
-        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options)
+        return (net, tokenizer)
+    }
+
+    /// The special-token literals a release declares (`added_tokens_decoder` in
+    /// `tokenizer_config.json`, or `added_tokens.json`) and the id of its `eos_token`.
+    static func specialTokens(inDirectory directory: URL) -> ([String: Int], Int?) {
+        var literals = [String: Int]()
+        var endToken: Int?
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json")),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            for (id, entry) in (json["added_tokens_decoder"] as? [String: [String: Any]]) ?? [:] {
+                if let content = entry["content"] as? String, let number = Int(id) {
+                    literals[content] = number
+                }
+            }
+            let end = (json["eos_token"] as? String) ?? ((json["eos_token"] as? [String: Any])?["content"] as? String)
+            endToken = end.flatMap { literals[$0] }
+        }
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("added_tokens.json")),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: NSNumber] {
+            for (content, id) in json { literals[content] = id.intValue }
+        }
+        return (literals, endToken)
     }
 
     /// The Objective-C entry: builds from a release directory, reading its `config.json`, tokenizer,
@@ -450,5 +758,14 @@ public final class NFKMLXLanguage: NSObject {
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, options: NFKMLXGenerationOptions())
+    }
+
+    /// The Objective-C entry for speculative decoding: a release directory and a smaller release
+    /// of the same family as the draft. `NFKMLXGenerationParameterKey.draftTokens` sets the
+    /// proposals per round on a request.
+    @objc(backendWithDirectoryURL:draftDirectoryURL:error:)
+    public static func backend(directoryURL: URL, draftDirectoryURL: URL) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL,
+                    options: NFKMLXGenerationOptions())
     }
 }

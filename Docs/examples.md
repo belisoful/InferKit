@@ -238,6 +238,78 @@ let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: configURL)
 Refusing is the point. Those kinds compute different frequencies, and a model loaded under a rotary it
 was not trained with runs perfectly well and produces fluent nonsense — there is no error to notice.
 
+**Continuing a conversation without re-reading it.** A chat turn's prompt is the previous prompt plus
+the reply plus the new message, and prefilling that prefix again is the largest cost in a
+conversation. A prompt cache keeps the key-value rows between generations and rolls back to the
+point where a new prompt diverges, so only the new tokens run through the model. The result is exact:
+
+```swift
+var options = NFKMLXGenerationOptions()
+options.reusesPromptCache = true                       // the backend keeps a cache between requests
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
+
+// Or hold one yourself, and persist a long system prompt's prefill for the next launch:
+let cache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
+let reply = net.generate(prompt: turn, options: options, promptCache: cache)
+let next = net.generate(prompt: turn + reply + newMessage, options: options, promptCache: cache)
+try cache.save(to: url)                                // NFKMLXPromptCache.load(from:) restores it
+```
+
+**Speculative decoding.** A smaller release of the same family proposes a few tokens, the model
+verifies them in one cached pass, and the rejected tail is rolled back. The output is the model's own
+greedy run, token for token; above temperature 0 the standard rejection test keeps the distribution
+the model's. Measured on Qwen3-1.7B drafted by 0.6B, both float32: 73% of proposals accepted and no
+wall-clock gain, because a 28-layer step on this machine is bound by kernel launches rather than by
+memory traffic, so the draft's step costs nearly what the target's does. The lever is real where a
+decode step is bandwidth-bound: a large or quantized target and a draft with far fewer layers.
+
+```swift
+let backend = try NFKMLXLanguage.backend(directoryURL: qwen4B, draftDirectoryURL: qwen06B)
+var options = NFKMLXGenerationOptions()
+options.draftTokens = 4                                // proposals per round; 0 turns it off
+
+// At the network level, with a report of what the draft achieved:
+var report = NFKMLXSpeculativeReport()
+let tokens = target.generate(prompt: prompt, options: options, draft: draft, report: &report)
+print(report.acceptanceRate)
+```
+
+**A mixture of experts.** Qwen3-MoE and Mixtral are this decoder with a routed feed-forward, and the
+same factory reads them: the config names the family, the loader stacks the released per-expert
+tensors into one `[experts, out, in]` tensor per projection, and a step runs one gathered matrix
+multiplication over the experts each token chose. Both families match `transformers`' arithmetic
+layer by layer at a tiny configuration, and every one of Qwen3-30B-A3B's 18,867 released tensors is
+accounted for by shape. Quantizing packs the stacked experts too. The released sizes need quantized
+weights to fit a 32 GB machine.
+
+```swift
+let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: configURL)   // Qwen3MoeForCausalLM
+configuration.isMixtureOfExperts        // true; expertCount 128, activeExpertCount 8
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory)
+```
+
+**Constraining the output.** A grammar mask over the logits admits only the tokens that keep the
+output inside the grammar, so structured output needs no model change and no retry. JSON syntax and
+a fixed set of choices ship; a custom constraint adopts `NFKMLXTokenConstraint`. The mask is applied
+before temperature and nucleus filtering, so sampling stays inside the grammar too.
+
+```swift
+var options = NFKMLXGenerationOptions()
+options.jsonOutput = true                              // well-formed JSON, ended when it closes
+options.jsonRoot = .object                             // an object rather than an array
+// options.choices = ["yes", "no", "unsure"]           // exactly one of these
+
+// Or build one against the release's own token bytes:
+let vocabulary = NFKMLXVocabulary(tokenizer: tokenizer, size: configuration.vocabularySize)
+options.constraint = NFKMLXJSONConstraint(vocabulary: vocabulary, root: .object)
+```
+
+Two things the grammar cannot do for the model. JSON admits unbounded whitespace, and a model whose
+preferred next token is forbidden takes the whitespace it is offered indefinitely, so the grammar
+caps a whitespace run (eight bytes by default). And a thinking model opens with a `<think>` block the
+grammar forbids; the prompt closes that block itself (`<think>\n\n</think>\n\n` after the assistant
+marker, as Qwen3's own template does for its no-think mode) so the answer starts at the document.
+
 ### Remote, OpenAI-compatible (`NFKRemoteBackend`)
 
 A localhost server (Ollama, `mlx_lm`) or a hosted API.
@@ -882,6 +954,31 @@ NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
 		NFKMLXGenerationParameterKey.chatTemplate: @"chatml",       // instruct format
 	}];
 NSString *text = [llm runInferenceForRequest:request error:&error].text;
+```
+
+The generation runtime's later additions take the same route — a draft model for speculative
+decoding, a cache kept between the turns of a conversation, and a JSON or fixed-choice constraint on
+the output:
+
+```objc
+// Built with a smaller release of the same family as the draft:
+id<NFKInferenceBackend> llm =
+	[NFKMLXLanguage backendWithDirectoryURL:qwen4B draftDirectoryURL:qwen06B error:&error];
+
+NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+	initWithInputs:@{ NFKInputMessages: messages }
+	parameters:@{
+		NFKMLXGenerationParameterKey.chatTemplate: @"chatml",
+		NFKMLXGenerationParameterKey.draftTokens: @4,               // proposals per round; 0 disables
+		NFKMLXGenerationParameterKey.reusesPromptCache: @YES,       // prefill only what this turn adds
+		NFKMLXGenerationParameterKey.outputFormat: @"json-object",  // "json", "json-object", "json-array"
+	}];
+// A classification: the answer is exactly one of the choices.
+NFKInferenceRequest *pick = [[NFKInferenceRequest alloc]
+	initWithInputs:@{ NFKInputPrompt: @"Is the sky blue? Answer yes or no." }
+	parameters:@{ NFKMLXGenerationParameterKey.choices: @[ @"yes", @"no" ] }];
+// When a conversation ends, drop the retained cache:
+[(NFKMLXLanguageBackend *)llm resetPromptCache];
 ```
 
 Every model with released sizes exposes a variant enum to *all* its factories — local, download, and

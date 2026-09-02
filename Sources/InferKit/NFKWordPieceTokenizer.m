@@ -189,6 +189,18 @@
 	return out;
 }
 
+- (nullable NSData *)bytesForTokenId:(NSInteger)tokenId
+{
+	NSString *token = [self tokenForId:@(tokenId)];
+	if (token == nil) {
+		return nil;
+	}
+	if ([token hasPrefix:_continuingPrefix]) {
+		return [[token substringFromIndex:_continuingPrefix.length] dataUsingEncoding:NSUTF8StringEncoding];
+	}
+	return [[@" " stringByAppendingString:token] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
 - (nullable NSString *)tokenForId:(NSNumber *)tokenId
 {
 	NSInteger identifier = tokenId.integerValue;

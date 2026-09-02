@@ -1436,6 +1436,76 @@ def run_qwen3(image, checkpoint):
 
 
 
+def _tiny_decoder_record(model, tokens, release_name=lambda key: key):
+    """Logits, every hidden state, and the weights in release naming, for a tiny random model."""
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        extra[f"w::{release_name(key)}"] = (value.float() if value.is_floating_point()
+                                            else value).contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def _randomized(model, seed=11, scale=0.05):
+    torch.manual_seed(seed)
+    state = model.state_dict()
+    for key in sorted(state):
+        if state[key].is_floating_point():
+            state[key] = torch.randn(state[key].shape) * scale
+    model.load_state_dict(state)
+    return model.eval().float()
+
+
+def run_qwen3_moe(image, checkpoint):
+    """The Qwen3-MoE decoder's arithmetic, from transformers' own Qwen3MoeForCausalLM, at a tiny
+    random configuration.
+
+    The released sizes (30B-A3B and up) do not fit this machine at any precision the oracle can run,
+    so the mixture-of-experts feed-forward — router softmax over every expert, top-k selection with
+    the selected weights renormalized (`norm_topk_prob`), the experts' SwiGLU, the weighted sum — is
+    measured at a size that does, with the dense attention around it. Every hidden state is recorded
+    so a divergence is located to a layer. The weights are saved under the release's own names
+    (`mlp.experts.N.gate_proj.weight`), which the Swift loader stacks. `checkpoint` is unused.
+    """
+    from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    config = Qwen3MoeConfig(
+        hidden_size=64, num_hidden_layers=3, vocab_size=128, num_attention_heads=4,
+        num_key_value_heads=2, head_dim=16, intermediate_size=96, moe_intermediate_size=32,
+        num_experts=8, num_experts_per_tok=2, norm_topk_prob=True, decoder_sparse_step=1,
+        mlp_only_layers=[], rms_norm_eps=1e-6, rope_theta=10000.0, tie_word_embeddings=False,
+        max_position_embeddings=64, attention_bias=False)
+    model = _randomized(Qwen3MoeForCausalLM(config))
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_mixtral(image, checkpoint):
+    """The Mixtral decoder's arithmetic, from transformers' own MixtralForCausalLM, at a tiny random
+    configuration.
+
+    Mixtral's block takes the softmax over the SELECTED experts' logits, which equals Qwen3-MoE's
+    softmax-over-all followed by renormalization; this record is what holds the Swift module, which
+    computes the latter form for both, to Mixtral's own arithmetic. Its tensor names differ
+    (`block_sparse_moe.experts.N.w1/w3/w2`), so the record also measures the loader's rename. No
+    sliding window, as the released 8x7B has none. `checkpoint` is unused.
+    """
+    from transformers import MixtralConfig, MixtralForCausalLM
+
+    config = MixtralConfig(
+        hidden_size=64, num_hidden_layers=3, vocab_size=128, num_attention_heads=4,
+        num_key_value_heads=2, head_dim=16, intermediate_size=32, num_local_experts=4,
+        num_experts_per_tok=2, rms_norm_eps=1e-6, rope_theta=10000.0, sliding_window=None,
+        max_position_embeddings=64, tie_word_embeddings=False)
+    model = _randomized(MixtralForCausalLM(config), seed=13)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
 def run_gemma4(image, checkpoint):
     """Gemma 4 text-decoder logits, from transformers' own Gemma4 implementation.
 
@@ -2477,9 +2547,12 @@ def run_music_ar(image, checkpoint):
         os.path.join(checkpoint, "rvq_depth_decoder"), torch_dtype=torch.bfloat16).eval()
     tokenizer = Qwen2Tokenizer.from_pretrained(os.path.join(checkpoint, "tokenizer"))
 
+    # Hoisted out of the f-string: a backslash inside an f-string expression parses only from
+    # Python 3.12, and the LLM oracle environment is 3.9, so this file has to stay parseable there.
+    lyrics = "[verse]\\nHello world"
     text = (
         f"{ref._IM_START}{ref._CAPTION_START}{ref._clean_caption('Dreamy synth-pop, female vocals')}"
-        f"{ref._CAPTION_END}{ref._LYRICS_START}{ref._normalize_lyrics('[verse]\\nHello world')}"
+        f"{ref._CAPTION_END}{ref._LYRICS_START}{ref._normalize_lyrics(lyrics)}"
         f"{ref._LYRICS_END}{ref._IM_END}{ref._AUDIO_START}"
     )
     input_ids = tokenizer(text, return_tensors="pt")["input_ids"]
@@ -2843,7 +2916,7 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder,
-                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "gemma4": run_gemma4, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer}
 

@@ -369,6 +369,93 @@ final class MLXExamples: XCTestCase {
         XCTAssertNil(NFKMLXGenerationOptions().contextWindow)
     }
 
+    // Docs/examples.md: Speculative decoding — a small draft proposes, the model verifies in one pass,
+    // and the output is the model's own greedy run. Tiny random nets here; a Qwen3-0.6B drafting for
+    // a Qwen3-1.7B is the released pairing.
+    func testExampleSpeculativeDecodingReproducesThePlainRun() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        let model = NFKMLXLanguage.makeNet(.tiny)
+        let draft = NFKMLXLanguage.makeNet(.tiny)         // any model sharing the vocabulary
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 12
+        options.draftTokens = 4                            // proposals per verification round
+        var report = NFKMLXSpeculativeReport()
+        let produced = model.generate(prompt: [3, 17, 42], options: options, draft: draft, report: &report)
+        XCTAssertEqual(produced, model.generate(prompt: [3, 17, 42], options: options))
+        XCTAssertGreaterThan(report.rounds, 0)             // report.acceptanceRate says how much it helped
+    }
+
+    // Docs/examples.md: A prompt cache — the next turn of a conversation prefills only what is new.
+    func testExampleAPromptCacheContinuesAConversation() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        let model = NFKMLXLanguage.makeNet(.tiny)
+        let cache = NFKMLXPromptCache(layerCount: model.configuration.layerCount)
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 4
+        let turn = [3, 17, 42, 8]
+        let reply = model.generate(prompt: turn, options: options, promptCache: cache)
+        // The follow-up extends the first turn; only the new tokens run through the model.
+        let followUp = turn + reply + [91, 5]
+        let continued = model.generate(prompt: followUp, options: options, promptCache: cache)
+        XCTAssertEqual(continued, model.generate(prompt: followUp, options: options))
+        XCTAssertEqual(cache.count, followUp.count + continued.count)
+        // Persist a long system prompt's cache and reload it later.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("system-prompt.safetensors")
+        try cache.save(to: url)
+        XCTAssertEqual(try NFKMLXPromptCache.load(from: url).tokens, cache.tokens)
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    // Docs/examples.md: A mixture-of-experts release reads through the same factory; the config
+    // says it is one, and the loader stacks the released per-expert tensors.
+    func testExampleAMixtureOfExpertsConfiguration() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("config.json")
+        try #"""
+        {"architectures":["Qwen3MoeForCausalLM"],"model_type":"qwen3_moe","hidden_size":2048,
+         "num_hidden_layers":48,"num_attention_heads":32,"num_key_value_heads":4,"head_dim":128,
+         "moe_intermediate_size":768,"num_experts":128,"num_experts_per_tok":8,"norm_topk_prob":true}
+        """#.write(to: url, atomically: true, encoding: .utf8)
+        let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: url)   // Qwen3-30B-A3B
+        XCTAssertTrue(configuration.isMixtureOfExperts)
+        XCTAssertEqual(configuration.activeExpertCount, 8)
+        // A tiny mixture runs with random weights, like the dense tiny configuration.
+        let produced = NFKMLXLanguage.makeNet(.tinyMixture).generate(prompt: [3, 17], options: .init())
+        XCTAssertFalse(produced.isEmpty)
+    }
+
+    // Docs/examples.md: Constrained decoding — a grammar mask keeps the output well-formed JSON, or
+    // one of a fixed set of answers. The vocabulary's bytes come from the release's tokenizer; a
+    // hand-built one stands in here.
+    func testExampleConstrainedDecoding() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        let size = NFKMLXLanguageConfiguration.tiny.vocabularySize
+        var tokens = (0 ..< 256).map { [UInt8($0)] } + ["{\"", "\":", "yes", "no", "}", "42"].map { Array($0.utf8) }
+        while tokens.count < size - 1 { tokens.append(Array("t\(tokens.count)".utf8)) }
+        tokens.append([])                                              // the end token has no bytes
+        let vocabulary = NFKMLXVocabulary(tokens: tokens, endToken: size - 1)
+        // With a release: NFKMLXVocabulary(tokenizer: tokenizer, size: configuration.vocabularySize)
+
+        let model = NFKMLXLanguage.makeNet(.tiny)
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 40
+        options.constraint = NFKMLXJSONConstraint(vocabulary: vocabulary, root: .object)
+        let json = model.generate(prompt: [3, 17], options: options)
+        let text = String(decoding: json.flatMap { vocabulary.tokens[$0] }, as: UTF8.self)
+        XCTAssertTrue(text.hasPrefix("{") || text.trimmingCharacters(in: .whitespaces).hasPrefix("{"))
+
+        options.constraint = NFKMLXChoiceConstraint(choices: ["yes", "no"], vocabulary: vocabulary)
+        let answer = model.generate(prompt: [3, 17], options: options)
+        XCTAssertTrue(["yes", "no"].contains(String(decoding: answer.flatMap { vocabulary.tokens[$0] }, as: UTF8.self)))
+    }
+
     // Docs/examples.md: Local generation — quantize the cache for a longer conversation, chunk a long
     // prompt to bound the prefill peak, and apply a chat template so an instruct release is prompted
     // in its trained format. All three are off by default.

@@ -299,6 +299,26 @@ static NSString * const kNFKQwen2BPEPattern =
 	return text != nil ? [self finalizedText:text] : @"";
 }
 
+- (nullable NSData *)bytesForTokenId:(NSInteger)tokenId
+{
+	NSString *token = _decoder[@(tokenId)] ?: [self specialTokenForId:@(tokenId)];
+	if (token == nil) {
+		return nil;
+	}
+	if (_decoder[@(tokenId)] == nil) {
+		return [token dataUsingEncoding:NSUTF8StringEncoding];
+	}
+	NSMutableData *bytes = [NSMutableData dataWithCapacity:token.length];
+	for (NSUInteger i = 0; i < token.length; i++) {
+		NSNumber *byte = _unicodeToByte[@([token characterAtIndex:i])];
+		if (byte != nil) {
+			unsigned char value = (unsigned char)byte.integerValue;
+			[bytes appendBytes:&value length:1];
+		}
+	}
+	return bytes;
+}
+
 - (nullable NSString *)specialTokenForId:(NSNumber *)tokenId
 {
 	for (NSString *literal in _specialTokens) {

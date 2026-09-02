@@ -89,6 +89,23 @@
 	XCTAssertEqualObjects([_tokenizer encode:@"hello<eos>"], (@[@7, @8]));
 }
 
+// Decoding concatenates each token's bytes, so the bytes of a sequence's tokens joined equal the
+// decoded text, and a special token contributes its literal.
+- (void)testTokenBytesConcatenateToTheDecodedText
+{
+	NSArray<NSNumber *> *ids = [_tokenizer encode:@"hello <eos>"];
+	NSMutableData *joined = [NSMutableData data];
+	for (NSNumber *tokenId in ids) {
+		NSData *bytes = [_tokenizer bytesForTokenId:tokenId.integerValue];
+		XCTAssertNotNil(bytes, @"token %@ has bytes", tokenId);
+		[joined appendData:bytes];
+	}
+	XCTAssertEqualObjects([[NSString alloc] initWithData:joined encoding:NSUTF8StringEncoding],
+						  [_tokenizer decode:ids]);
+	XCTAssertEqualObjects([_tokenizer bytesForTokenId:8], [@"<eos>" dataUsingEncoding:NSUTF8StringEncoding]);
+	XCTAssertNil([_tokenizer bytesForTokenId:100000], @"an id outside the vocabulary has no bytes");
+}
+
 - (void)testEmptyTextEncodesToNothing
 {
 	XCTAssertEqualObjects([_tokenizer encode:@""], (@[]));

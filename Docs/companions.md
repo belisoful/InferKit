@@ -46,6 +46,13 @@ reference implementation on the released weights:
 - **`NFKMLXTensorBackend`** — a general bring-your-own MLX backend over named image tensors: several
   inputs in, several outputs out (a compositing model reading a foreground and a background, a model
   returning both an image and a mask). Each port binds an InferKit key to a tensor name.
+- **`NFKMLXLanguageBackend`** — on-device text generation from a released Hugging Face directory.
+  The dense decoder Qwen3 and Llama share, with the Qwen3-MoE and Mixtral mixtures of experts through
+  a routed feed-forward; Gemma 4 and the Qwen3.5 hybrid have their own classes. A key-value cache
+  that bounds, quantizes, rolls back, and persists between turns; speculative decoding from a draft
+  release; ChatML rendering; and grammar-constrained output (JSON, or a fixed set of choices). Each
+  family is measured against `transformers`' own implementation, and every option reaches
+  Objective-C as a request parameter.
 Every shipped real model has a direct Objective-C factory — `[Model backendWith[Variant:]weightsURL:error:]`
 for local weights and `[Model backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:]`
 to download from Hugging Face and build — so a consumer (e.g. MetalForge) constructs them without the
