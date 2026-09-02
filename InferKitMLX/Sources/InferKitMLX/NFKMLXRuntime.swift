@@ -105,6 +105,32 @@ public final class NFKMLXGPU: NSObject {
     /// The GPU architecture name Metal reports, for a log line or a bug report.
     @objc public static var deviceArchitecture: String { MLX.GPU.deviceInfo().architecture }
 
+    /// The machine's measured memory bandwidth in bytes per second, timed by reading a large array —
+    /// what a decode step does to the weights — so it is a property of this machine rather than a
+    /// tabulated per-chip number. The reading is process-cached; ``resetMeasuredBandwidth()`` clears it.
+    ///
+    /// @discussion No sysctl reports this, so it is probed. The probe must read enough to be past
+    /// launch overhead and the caches, which is why the size derives from the working-set budget when
+    /// not given. This is the config-free machine reading `NFKMLXModelSizing.decodeCeiling` divides by
+    /// the bytes a token reads; it lives here so Objective-C reaches it beside the other machine
+    /// properties.
+    @objc(measuredMemoryBandwidthWithMegabytes:repetitions:)
+    public static func measuredMemoryBandwidth(megabytes: Int, repetitions: Int) -> Double {
+        NFKMLXModelSizing.measuredMemoryBandwidth(megabytes: megabytes > 0 ? megabytes : nil,
+                                                  repetitions: repetitions)
+    }
+
+    /// The measured memory bandwidth at the probe's own defaults (`[NFKMLXGPU measuredMemoryBandwidth]`).
+    @objc public static var measuredMemoryBandwidth: Double {
+        NFKMLXModelSizing.measuredMemoryBandwidth()
+    }
+
+    /// Clears the process-cached bandwidth reading, so the next probe measures again. Test order
+    /// matters here: a small probe measured first would otherwise be reported for every later reading.
+    @objc public static func resetMeasuredBandwidth() {
+        NFKMLXModelSizing.resetMeasuredBandwidth()
+    }
+
     // MARK: Standing limits
 
     /// The default standing cache cap: 256 MB.

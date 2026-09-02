@@ -241,6 +241,26 @@ public final class NFKMLXNAFNet: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// The download factory at a chosen geometry, so goPro and reds are reachable over the network,
+    /// not only from a local file. Blocking; run off the render thread.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXNAFNetVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of the variant download factory.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXNAFNetVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
     /// Registers NAFNet (`nafnet`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }

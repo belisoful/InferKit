@@ -702,7 +702,26 @@ public final class NFKMLXWhisper: NSObject {
     @objc(backendWithWeightsURL:tokenizer:timestamps:error:)
     public static func backend(weightsURL: URL?, tokenizer: NFKTokenizer?,
                                timestamps: Bool) throws -> any NFKInferenceBackend {
-        var configuration = NFKMLXWhisperConfiguration()
+        try backend(variant: .tiny, weightsURL: weightsURL, tokenizer: tokenizer, timestamps: timestamps)
+    }
+
+    /// The geometry each released size is built as. A checkpoint fits only the size it was trained as;
+    /// large-v3 also carries an extra language token and 128 mel bands, which its configuration sets.
+    static func configuration(for variant: NFKMLXWhisperVariant) -> NFKMLXWhisperConfiguration {
+        switch variant {
+        case .tiny: return .tiny
+        case .small: return .small
+        case .medium: return .medium
+        case .largeV3: return .largeV3
+        }
+    }
+
+    /// Builds Whisper at one of the released sizes — the enum's whole point. Every size is at parity in
+    /// the tests, and this is the only factory that reaches small, medium, and large-v3.
+    @objc(backendWithVariant:weightsURL:tokenizer:timestamps:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?,
+                               tokenizer: NFKTokenizer?, timestamps: Bool) throws -> any NFKInferenceBackend {
+        var configuration = self.configuration(for: variant)
         if let tokenizer {
             configuration.suppressTokens = NFKMLXWhisperSuppression.nonSpeechTokens(using: tokenizer)
         }
@@ -714,6 +733,12 @@ public final class NFKMLXWhisper: NSObject {
         let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: modelName)
         backend.emitsTimestamps = timestamps
         return backend
+    }
+
+    /// Builds a size from local weights, ids-only (no tokenizer, no timestamps).
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
@@ -732,6 +757,27 @@ public final class NFKMLXWhisper: NSObject {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
                                build: { try backend(weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
+    /// The download factory at a chosen size, so small/medium/large-v3 are reachable over the network.
+    /// Ids-only; wrap the result with the model's tokenizer through the local variant factory for text.
+    /// Blocking; run off the render thread.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of the variant download factory.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXWhisperVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
 

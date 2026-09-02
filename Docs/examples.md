@@ -164,6 +164,32 @@ approximation, and it is the caller's to make.
 `NFKMLXGPU.recommendedWorkingSetSize` is the budget to divide when choosing the number — Metal's own
 recommendation, which sits well below the machine's physical memory.
 
+**Quantizing the cache, chunking the prefill, applying a chat template.** Three more options, each off
+by default so an existing caller is unchanged:
+
+```swift
+var options = NFKMLXGenerationOptions()
+// Store the key-value cache 8-bit instead of a float per element, so a long conversation reaches
+// further before the cache is the memory ceiling. Lossy but close; the group size divides the head
+// dimension (64 or 128 divide by the default 64).
+options.cacheQuantization = .init(bits: 8, groupSize: 64)
+// Run a long prompt through the cache in slices, bounding the prefill's attention peak. Exact — each
+// chunk attends to the same prefix a single pass would — so only the memory differs.
+options.prefillChunkSize = 512
+// Render a message list in the ChatML format an instruct release is trained on, with its own special
+// tokens. A raw NFKInputPrompt is always used verbatim; a base model wants the default plain text.
+options.chatTemplate = .chatML
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
+```
+
+**Refusing a release that will not fit.** The dense loader checks a release's weight bytes against the
+memory budget before materializing any, so a load that would kill the process is an error instead:
+
+```swift
+// Throws "needs about N GiB resident, but the machine's working set is M GiB" rather than OOM-killing.
+try NFKMLXReleaseWeights.verifyFits(inDirectory: releaseDirectory, precision: .checkpoint)
+```
+
 **Sizing it to the machine.** The window above is a number someone has to choose, and choosing it by
 hand is a guess about a machine the author was not using. `NFKMLXModelSizing` derives it:
 
@@ -835,6 +861,47 @@ id<NFKInferenceBackend> fromDisk =
 	[NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelSdxlTurbo
 						   directoryURL:releaseDirectory
 								  error:&error];
+
+// The language model builds from a downloaded release directory (config.json + tokenizer + shards):
+id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory error:&error];
+```
+
+Generation options that have no core parameter key — the cache bound and quantization, prefill
+chunking, the chat template — are set on the request through `NFKMLXGenerationParameterKey`, the same
+way `NFKParameterTemperature` is, so Objective-C reaches every option the Swift `NFKMLXGenerationOptions`
+struct carries:
+
+```objc
+NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+	initWithInputs:@{ NFKInputMessages: messages }        // or NFKInputPrompt for raw text
+	parameters:@{
+		NFKParameterTemperature: @0.7,
+		NFKMLXGenerationParameterKey.contextWindow: @4096,          // bound the cache
+		NFKMLXGenerationParameterKey.cacheQuantizationBits: @8,     // store it 8-bit
+		NFKMLXGenerationParameterKey.prefillChunkSize: @512,        // chunk a long prompt
+		NFKMLXGenerationParameterKey.chatTemplate: @"chatml",       // instruct format
+	}];
+NSString *text = [llm runInferenceForRequest:request error:&error].text;
+```
+
+Every model with released sizes exposes a variant enum to *all* its factories — local, download, and
+async — so an ObjC caller reaches every size, and a face detector hands back the five landmarks, not
+only a box:
+
+```objc
+// Whisper at any released size (small/medium/large-v3), not only tiny:
+id<NFKInferenceBackend> whisper =
+	[NFKMLXWhisper backendWithVariant:NFKMLXWhisperVariantSmall weightsURL:localURL error:&error];
+
+// A reusable face detector; each NFKFaceObservation carries its box, confidence, and five landmarks:
+NFKMLXRetinaFaceDetector *detector =
+	[NFKMLXRetinaFace detectorWithWeightsURL:localURL confidenceThreshold:0.8 suppressionThreshold:0.4 error:&error];
+for (NFKFaceObservation *face in [detector facesInImage:image error:&error]) {
+	CGPoint leftEye = face.leftEye, nose = face.nose;   // image pixels, top-left origin
+}
+
+// The machine's measured memory bandwidth, beside the other NFKMLXGPU machine properties:
+double bytesPerSecond = [NFKMLXGPU measuredMemoryBandwidthWithMegabytes:0 repetitions:4];
 ```
 
 Variant models expose an `@objc` enum: `NFKMLXRealESRGANVariant` (x4 / anime / x2), `NFKMLXDepthVariant`

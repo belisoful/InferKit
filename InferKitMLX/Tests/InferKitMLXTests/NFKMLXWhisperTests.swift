@@ -13,6 +13,17 @@ import MLX
 
 final class NFKMLXWhisperTests: XCTestCase {
 
+    // The variant enum maps to each released geometry, which is the whole point of the @objc factory
+    // that consumes it — before it, only tiny was buildable in either language.
+    func testTheVariantMapperSelectsEachReleasedGeometry() {
+        XCTAssertEqual(NFKMLXWhisper.configuration(for: .tiny).nAudioState, 384)
+        XCTAssertEqual(NFKMLXWhisper.configuration(for: .small).nAudioState, 768)
+        XCTAssertEqual(NFKMLXWhisper.configuration(for: .medium).nAudioState, 1024)
+        XCTAssertEqual(NFKMLXWhisper.configuration(for: .largeV3).nAudioState, 1280)
+        XCTAssertEqual(NFKMLXWhisper.configuration(for: .largeV3).nAudioLayer, 32)
+    }
+
+
     private func requireMLXRuntime() throws {
         try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
                       "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")

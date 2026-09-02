@@ -235,16 +235,27 @@ enum NFKMLXWeights {
     ///
     /// Keys the checkpoint carries that the module does not use are harmless (optimizer state, a teacher
     /// branch, `num_batches_tracked`), so they do not fail the load.
-    static func apply(_ mapped: [(String, MLXArray)], to module: Module, strict: Bool = true) throws {
+    /// - Parameter verifyShapes: when true, a parameter the checkpoint supplies at a shape the module
+    ///   does not expect throws rather than being adopted silently. This is correct ONLY where every
+    ///   built shape already equals the checkpoint's — the dense decoder, whose widths come straight
+    ///   from `config.json`. It is WRONG wherever a module builder uses a shape the checkpoint then
+    ///   corrects through MLX's adoption: Conv-TasNet's placeholder `.base` widths, and Gemma E4B's
+    ///   feed-forward-doubling heuristic, both load right only because adoption reshapes them. Those
+    ///   leave it off (the default), and shape adoption being load-bearing in several builders is why
+    ///   this cannot be turned on globally. Default off.
+    static func apply(_ mapped: [(String, MLXArray)], to module: Module,
+                      strict: Bool = true, verifyShapes: Bool = false) throws {
         if strict {
-            try verifyCoverage(of: mapped, for: module)
+            try verifyCoverage(of: mapped, for: module, verifyShapes: verifyShapes)
         }
         module.update(parameters: ModuleParameters.unflattened(mapped))
         eval(module)
     }
 
-    private static func verifyCoverage(of mapped: [(String, MLXArray)], for module: Module) throws {
-        let expected = module.parameters().flattened().map(\.0)
+    private static func verifyCoverage(of mapped: [(String, MLXArray)], for module: Module,
+                                       verifyShapes: Bool) throws {
+        let expectedParameters = module.parameters().flattened()
+        let expected = expectedParameters.map(\.0)
         let provided = Set(mapped.map(\.0))
         diagnosticsHandler?(expected, mapped.map(\.0))
         let missing = expected.filter { !provided.contains($0) }
@@ -252,6 +263,32 @@ enum NFKMLXWeights {
             throw NFKMLXError.weightsMismatch(describe(missing: missing, expected: expected.count,
                                                        provided: provided.count))
         }
+        guard verifyShapes else { return }
+        // A parameter the module expects at one shape, supplied at another, is adopted wholesale by
+        // `update(parameters:)` — the checkpoint loads cleanly and the model computes wrong numbers.
+        // Where the module's shapes come from the release's declared config, that is a config that
+        // disagrees with the weights, which this turns into a load-time error.
+        let expectedShapes = Dictionary(expectedParameters.map { ($0.0, $0.1.shape) },
+                                        uniquingKeysWith: { first, _ in first })
+        let mismatched = mapped.compactMap { name, value -> (name: String, expected: [Int], provided: [Int])? in
+            guard let shape = expectedShapes[name], shape != value.shape else { return nil }
+            return (name, shape, value.shape)
+        }
+        guard mismatched.isEmpty else {
+            throw NFKMLXError.weightsMismatch(describe(mismatched: mismatched))
+        }
+    }
+
+    private static func describe(mismatched: [(name: String, expected: [Int], provided: [Int])]) -> String {
+        let sample = mismatched.prefix(3)
+            .map { "\($0.name) expects \($0.expected) but the checkpoint has \($0.provided)" }
+            .joined(separator: "; ")
+        let more = mismatched.count > 3 ? " (and \(mismatched.count - 3) more)" : ""
+        return """
+            the checkpoint's shape does not match the model's for \(mismatched.count) parameter(s), \
+            which would load cleanly and compute wrong numbers: \(sample)\(more). \
+            The configuration this model was built with likely does not match this checkpoint.
+            """
     }
 
     private static func describe(missing: [String], expected: Int, provided: Int) -> String {

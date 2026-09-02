@@ -369,6 +369,50 @@ final class MLXExamples: XCTestCase {
         XCTAssertNil(NFKMLXGenerationOptions().contextWindow)
     }
 
+    // Docs/examples.md: Local generation — quantize the cache for a longer conversation, chunk a long
+    // prompt to bound the prefill peak, and apply a chat template so an instruct release is prompted
+    // in its trained format. All three are off by default.
+    func testExampleGenerationOptionsForMemoryAndInstructModels() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 4
+        options.cacheQuantization = .init(bits: 8, groupSize: 64)   // 8-bit KV; groupSize divides the head dim
+        options.prefillChunkSize = 4                                // run a long prompt through the cache in slices
+        options.chatTemplate = .chatML                             // render instruct turns (a message list only)
+
+        // A head dimension the cache group size divides.
+        let config = NFKMLXLanguageConfiguration(hiddenSize: 128, layerCount: 2, headCount: 2,
+                                                 keyValueHeadCount: 1, headDimensions: 64,
+                                                 intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000)
+        let produced = NFKMLXLanguage.makeNet(config).generate(prompt: [3, 17, 42, 8, 91, 5], options: options)
+        XCTAssertLessThanOrEqual(produced.count, options.maxTokens)
+
+        // The chat template renders roles and a trailing assistant turn for a message list.
+        let rendered = NFKMLXLanguageBackend.chatMLPrompt(from: [["role": "user", "content": "Hi"]])
+        XCTAssertTrue(rendered.contains("<|im_start|>user\nHi<|im_end|>"))
+
+        // Every one is off by default, so an existing caller is unchanged.
+        let defaults = NFKMLXGenerationOptions()
+        XCTAssertNil(defaults.cacheQuantization)
+        XCTAssertNil(defaults.prefillChunkSize)
+        if case .none = defaults.chatTemplate {} else { XCTFail("the default template flattens contents") }
+    }
+
+    // Docs/examples.md: A release too large for the machine is refused before it is materialized.
+    func testExampleAReleaseLargerThanMemoryIsRefusedBeforeLoading() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data(count: 2_000_000).write(to: directory.appendingPathComponent("model.safetensors"))
+
+        // A tiny budget stands in for a machine the release does not fit; the error names the shortfall.
+        XCTAssertThrowsError(try NFKMLXReleaseWeights.verifyFits(inDirectory: directory,
+                                                                 precision: .checkpoint, budget: 1_000_000))
+        XCTAssertNoThrow(try NFKMLXReleaseWeights.verifyFits(inDirectory: directory,
+                                                             precision: .checkpoint, budget: 4_000_000))
+    }
+
     // Docs/examples.md: Extended context. A release states its own scaling; an unimplemented kind is
     // refused rather than loaded under a rotary it was not trained with.
     func testExampleRoPEScalingIsReadFromTheReleaseAndUnknownKindsAreRefused() throws {

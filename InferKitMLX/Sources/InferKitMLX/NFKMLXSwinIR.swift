@@ -462,6 +462,26 @@ public final class NFKMLXSwinIR: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// The download factory at a chosen scale, so x2/x3/x8 and the lightweight release are reachable
+    /// over the network, not only from a local file. Blocking; run off the render thread.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXSwinIRVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of the variant download factory.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXSwinIRVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
     /// Registers SwinIR (`swinir-x4`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { weightsURL in

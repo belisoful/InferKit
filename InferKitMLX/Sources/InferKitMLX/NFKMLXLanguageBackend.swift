@@ -10,7 +10,40 @@ import InferKit
 import MLX
 import MLXNN
 
-/// How a generation run samples.
+/// The request-parameter keys for the MLX generation options that have no core key, so an
+/// Objective-C caller configures them per request the same way it sets `NFKParameterTemperature`.
+///
+/// @discussion The core keys (`NFKParameterTemperature` / `TopP` / `MaxTokens` / `Seed`) cover
+/// sampling; these cover the MLX backend's own generation options — the cache bound and quantization,
+/// prefill chunking, and the chat template. Each overrides the backend's build-time default for that
+/// one request, in Swift and Objective-C alike.
+@objc(NFKMLXGenerationParameterKey)
+public final class NFKMLXGenerationParameterKey: NSObject {
+    /// The most cache positions to retain, as an `NSNumber` integer. See ``NFKMLXGenerationOptions/contextWindow``.
+    @objc public static let contextWindow = "NFKMLXParameterContextWindow"
+    /// The bit width to store the key-value cache at (`NSNumber`, 4 or 8). Setting it enables cache
+    /// quantization; see ``NFKMLXGenerationOptions/cacheQuantization``.
+    @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"
+    /// The cache quantization group size (`NSNumber`, default 64), which must divide the head dimension.
+    @objc public static let cacheQuantizationGroupSize = "NFKMLXParameterCacheQuantizationGroupSize"
+    /// The most prompt tokens to run per prefill pass, as an `NSNumber`. See ``NFKMLXGenerationOptions/prefillChunkSize``.
+    @objc public static let prefillChunkSize = "NFKMLXParameterPrefillChunkSize"
+    /// The chat template, as an `NSString`: `"chatml"` applies the ChatML template, anything else
+    /// flattens the messages. See ``NFKMLXGenerationOptions/chatTemplate``.
+    @objc public static let chatTemplate = "NFKMLXParameterChatTemplate"
+}
+
+/// The template that turns a message list into prompt text.
+public enum NFKMLXChatTemplate: Sendable {
+    /// Flatten each message to its content, joined by newlines — what a base model reads.
+    case none
+    /// The `<|im_start|>role\n…<|im_end|>\n` template the Qwen and Llama instruct families use, with a
+    /// trailing `<|im_start|>assistant\n` so the model continues as the assistant. The markers are the
+    /// release's own special tokens, which the tokenizer resolves to single ids.
+    case chatML
+}
+
+/// How a generation run samples and how its prompt is prepared.
 public struct NFKMLXGenerationOptions: Sendable {
     /// The most tokens to produce, not counting the prompt.
     public var maxTokens: Int = 256
@@ -34,6 +67,36 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// configuration. Size it from what the machine can hold; ``NFKMLXGPU/recommendedWorkingSetSize``
     /// is the budget to divide.
     public var contextWindow: Int?
+
+    /// How a message list is turned into prompt text.
+    ///
+    /// @discussion A base model reads plain text, so the default flattens a message list to its
+    /// contents. An INSTRUCT release is trained on a chat template and is prompted outside its format
+    /// without one — the roles and turn markers it learned are absent, and it answers a different
+    /// question than it was asked. `.chatML` applies the `<|im_start|>role … <|im_end|>` template the
+    /// Qwen and Llama instruct families use, with the release's own special tokens; it is off by
+    /// default because a base model wants the plain text, and a raw ``NFKInputPrompt`` is always used
+    /// verbatim whatever this says.
+    public var chatTemplate: NFKMLXChatTemplate = .none
+
+    /// Stores the key-value cache quantized, or `nil` to keep it in full precision.
+    ///
+    /// @discussion A quantized cache holds each retained position in `bits` per element instead of a
+    /// float, so a long conversation reaches much further before the cache, rather than the weights,
+    /// becomes the memory ceiling. It is lossy — a step reads the dequantized span — so it is off by
+    /// default; 8-bit tracks full precision closely while halving or better the cache's footprint. The
+    /// group size must divide the model's head dimension (64 or 128 divide by the default 64).
+    public var cacheQuantization: NFKMLXKeyValueCache.Quantization?
+
+    /// Runs the prompt through the cache in slices of at most this many tokens, or `nil` for one pass.
+    ///
+    /// @discussion A long prompt run as a single forward builds an attention over its whole length at
+    /// once, whose peak is what a large context runs out of. Feeding the prompt in chunks makes each
+    /// pass attend to its slice plus the cached prefix, so the peak is bounded by the chunk rather than
+    /// the prompt. It is EXACT, not an approximation: the cache makes a chunk attend to exactly the
+    /// keys a single forward would, so the logits match. Off by default, since a short prompt needs no
+    /// chunking.
+    public var prefillChunkSize: Int?
 
     public init() {}
 }
@@ -61,8 +124,9 @@ public extension NFKMLXLanguageNet {
         if let seed = options.seed { MLXRandom.seed(seed) }
 
         let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount,
-                                        window: options.contextWindow)
-        var logits = self(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: cache)
+                                        window: options.contextWindow,
+                                        quantization: options.cacheQuantization)
+        var logits = prefill(prompt, cache: cache, chunkSize: options.prefillChunkSize)
         var produced = [Int]()
 
         for _ in 0 ..< options.maxTokens {
@@ -73,6 +137,25 @@ public extension NFKMLXLanguageNet {
             logits = self(MLXArray([Int32(next)]).reshaped([1, 1]), cache: cache)
         }
         return produced
+    }
+
+    /// Fills the cache with the prompt and returns the logits after its last token: one forward pass,
+    /// or several bounded ones when a chunk size is set. Chunking is exact — each chunk attends
+    /// through the cache to the same prefix a single pass would — so only the peak differs.
+    func prefill(_ prompt: [Int], cache: NFKMLXKeyValueCache, chunkSize: Int?) -> MLXArray {
+        guard let chunkSize, chunkSize > 0, prompt.count > chunkSize else {
+            return self(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: cache)
+        }
+        var logits = MLXArray(0)
+        var start = 0
+        while start < prompt.count {
+            let end = Swift.min(start + chunkSize, prompt.count)
+            let slice = prompt[start ..< end].map { Int32($0) }
+            logits = self(MLXArray(slice).reshaped([1, slice.count]), cache: cache)
+            eval(logits)                                        // free a chunk's activations before the next
+            start = end
+        }
+        return logits
     }
 
     /// Picks the next token from a `[vocabulary]` row of logits.
@@ -132,8 +215,6 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedConfiguration(
                 "text generation needs a tokenizer; build the backend with one")
         }
-        guard let text = Self.prompt(from: request) else { throw NFKMLXError.unsupportedInput }
-
         var options = defaults
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
@@ -147,7 +228,11 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKParameterSeed) as? NSNumber {
             options.seed = value.uint64Value
         }
+        Self.applyMLXParameters(from: request, to: &options)
 
+        guard let text = Self.prompt(from: request, template: options.chatTemplate) else {
+            throw NFKMLXError.unsupportedInput
+        }
         let tokens = tokenizer.encode(text).map(\.intValue)
         let produced = holder.net.generate(prompt: tokens, options: options)
         return NFKInferenceResult(outputs: [NFKOutputText: tokenizer.decode(produced.map {
@@ -155,12 +240,49 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         })])
     }
 
-    /// The prompt text, from either input key. A message list is flattened in order, which is the
-    /// plain-text form a base model expects; a chat-tuned model wants its own template applied first.
-    static func prompt(from request: NFKInferenceRequest) -> String? {
+    /// Overrides `options` with the MLX generation parameters a request carries, so an Objective-C
+    /// caller reaches every option the Swift `NFKMLXGenerationOptions` struct exposes.
+    static func applyMLXParameters(from request: NFKInferenceRequest, to options: inout NFKMLXGenerationOptions) {
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.contextWindow) as? NSNumber {
+            options.contextWindow = value.intValue
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.prefillChunkSize) as? NSNumber {
+            options.prefillChunkSize = value.intValue
+        }
+        if let bits = request.parameter(forKey: NFKMLXGenerationParameterKey.cacheQuantizationBits) as? NSNumber {
+            let groupSize = (request.parameter(forKey: NFKMLXGenerationParameterKey.cacheQuantizationGroupSize) as? NSNumber)?.intValue ?? 64
+            options.cacheQuantization = .init(bits: bits.intValue, groupSize: groupSize)
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) as? String {
+            options.chatTemplate = value.lowercased() == "chatml" ? .chatML : .none
+        }
+    }
+
+    /// The prompt text, from either input key. A raw ``NFKInputPrompt`` is used verbatim; a message
+    /// list is flattened plainly, or rendered through the chat template when one is asked for.
+    static func prompt(from request: NFKInferenceRequest,
+                       template: NFKMLXChatTemplate = .none) -> String? {
         if let prompt = request.prompt { return prompt }
         guard let messages = request.messages else { return nil }
-        return messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
+        switch template {
+        case .none:
+            return messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
+        case .chatML:
+            return chatMLPrompt(from: messages)
+        }
+    }
+
+    /// Renders a message list in the ChatML format, with a trailing assistant turn opened so the model
+    /// continues as the assistant. A message missing a role is treated as the user's.
+    static func chatMLPrompt(from messages: [[AnyHashable: Any]]) -> String {
+        var rendered = ""
+        for message in messages {
+            let role = message["role"] as? String ?? "user"
+            let content = message["content"] as? String ?? ""
+            rendered += "<|im_start|>\(role)\n\(content)<|im_end|>\n"
+        }
+        rendered += "<|im_start|>assistant\n"
+        return rendered
     }
 }
 
@@ -254,7 +376,7 @@ public final class NFKMLXLanguage: NSObject {
             let keeps = keepStored || (value.dtype != .float16 && value.dtype != .bfloat16)
             return (key, keeps ? value : value.asType(.float32))
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }
 
     /// Builds a text-generation backend from local weights and a tokenizer.
@@ -282,6 +404,9 @@ public final class NFKMLXLanguage: NSObject {
     /// and nothing else.
     static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
+        // Refuse a release whose weights alone exceed the memory budget, before materializing any,
+        // so "the process died" becomes an error naming the shortfall.
+        try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
         // A single-file release routes through the checkpoint reader, which is where a quantized
         // save's metadata lives; only a sharded release takes the merge path (a quantized module
         // saves as one file, so a quantized sharded release does not arise).
@@ -296,7 +421,7 @@ public final class NFKMLXLanguage: NSObject {
         let merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
             tied && $0.hasPrefix("lm_head.") ? nil : $0
         }
-        try NFKMLXWeights.apply(merged, to: net)
+        try NFKMLXWeights.apply(merged, to: net, verifyShapes: true)
     }
 
     /// Builds from a downloaded release directory holding the weights, `config.json`, and the
@@ -316,5 +441,14 @@ public final class NFKMLXLanguage: NSObject {
         try loadWeights(into: net, fromDirectory: directoryURL)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: options)
+    }
+
+    /// The Objective-C entry: builds from a release directory, reading its `config.json`, tokenizer,
+    /// and shards. Generation options are set per request through ``NFKMLXGenerationParameterKey``,
+    /// which is how an Objective-C caller reaches what the Swift `options:` parameter carries. Run
+    /// inference off the render thread.
+    @objc(backendWithDirectoryURL:error:)
+    public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, options: NFKMLXGenerationOptions())
     }
 }

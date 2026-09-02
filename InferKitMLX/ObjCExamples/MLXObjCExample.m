@@ -428,4 +428,70 @@
 	[NSFileManager.defaultManager removeItemAtURL:converted error:nil];
 }
 
+// Docs/examples.md: An Objective-C caller configures every MLX generation option through request
+// parameters — parity with the Swift NFKMLXGenerationOptions struct.
+- (void)testObjectiveCConfiguresGenerationThroughRequestParameters
+{
+	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"Explain diffraction in one sentence." }
+		parameters:@{
+			NFKParameterTemperature: @0.7,
+			NFKMLXGenerationParameterKey.contextWindow: @4096,
+			NFKMLXGenerationParameterKey.cacheQuantizationBits: @8,
+			NFKMLXGenerationParameterKey.cacheQuantizationGroupSize: @64,
+			NFKMLXGenerationParameterKey.prefillChunkSize: @512,
+			NFKMLXGenerationParameterKey.chatTemplate: @"chatml",
+		}];
+	// The keys are ordinary NSString constants the request carries; with a downloaded release,
+	// runInferenceForRequest: reads them the same way it reads NFKParameterTemperature.
+	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.cacheQuantizationBits], @8);
+	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.chatTemplate], @"chatml");
+	XCTAssertGreaterThan(NFKMLXGenerationParameterKey.contextWindow.length, 0);
+
+	// The backend itself is built from a downloaded release directory through the @objc factory:
+	//   NFKInferenceBackend *llm = [NFKMLXLanguage backendWithDirectoryURL:dir error:&error];
+	// which reads config.json, the tokenizer, and the shards. Verify the selector is reachable.
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+}
+
+// Docs/examples.md: The @objc gaps closed by the parity audit — variant factories, machine probes,
+// and face landmarks all reach Objective-C.
+- (void)testObjectiveCReachesTheParityAuditFactories
+{
+	NSError *error = nil;
+
+	// Whisper builds every released size from ObjC, not only tiny.
+	id<NFKInferenceBackend> whisperSmall =
+		[NFKMLXWhisper backendWithVariant:NFKMLXWhisperVariantSmall weightsURL:nil error:&error];
+	XCTAssertNotNil(whisperSmall, @"%@", error);
+	XCTAssertTrue([NFKMLXWhisper respondsToSelector:
+		@selector(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)]);
+
+	// The variant download factories reach every size, not just the default geometry.
+	XCTAssertTrue([NFKMLXNAFNet respondsToSelector:
+		@selector(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXYOLO respondsToSelector:
+		@selector(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)]);
+	XCTAssertTrue([NFKMLXSwinIR respondsToSelector:
+		@selector(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)]);
+
+	// RetinaFace now has the async download peer every other model ships.
+	XCTAssertTrue([NFKMLXRetinaFace respondsToSelector:
+		@selector(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)]);
+
+	// The measured-bandwidth machine probe is on NFKMLXGPU beside the other machine properties.
+	XCTAssertGreaterThanOrEqual([NFKMLXGPU measuredMemoryBandwidthWithMegabytes:8 repetitions:2], 0.0);
+	[NFKMLXGPU resetMeasuredBandwidth];
+
+	// A face detector is @objc-constructible and its faces carry the five landmarks, not only a box.
+	NFKMLXRetinaFaceDetector *detector =
+		[NFKMLXRetinaFace detectorWithWeightsURL:nil confidenceThreshold:0.8 suppressionThreshold:0.4 error:&error];
+	XCTAssertNotNil(detector, @"%@", error);
+	XCTAssertTrue([detector respondsToSelector:@selector(facesInImage:error:)]);
+	// A returned face exposes its box, confidence, and the five named landmarks to ObjC.
+	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(boundingBox)]);
+	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(leftEye)]);
+	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(rightMouthCorner)]);
+}
+
 @end

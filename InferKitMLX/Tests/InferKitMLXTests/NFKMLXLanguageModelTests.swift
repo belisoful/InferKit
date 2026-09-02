@@ -153,6 +153,150 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertLessThan(worst, 2e-3, "cached decoding agrees with a full forward pass")
     }
 
+    // The quantized cache stores the same positions in less memory; its dequantized read tracks the
+    // full-precision logits closely rather than exactly, which is the one place a tolerance — not the
+    // float path's near-equality — is the right claim. The head dimension (64) is divisible by the
+    // group size, which the packing requires.
+    func testAQuantizedCacheTracksTheFullPrecisionLogits() throws {
+        try requireMLXRuntime()
+        let config = NFKMLXLanguageConfiguration(hiddenSize: 128, layerCount: 2, headCount: 2,
+                                                 keyValueHeadCount: 1, headDimensions: 64,
+                                                 intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000)
+        let net = NFKMLXLanguage.makeNet(config)
+        let prompt = [3, 17, 42, 8, 91]
+
+        let full = net(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]))
+        eval(full)
+        let expected = full[0, -1].asArray(Float.self)
+
+        let cache = NFKMLXKeyValueCache(layerCount: config.layerCount,
+                                        quantization: .init(bits: 8, groupSize: 64))
+        var stepped: [Float] = []
+        for token in prompt {
+            let logits = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+            eval(logits)
+            stepped = logits[0, -1].asArray(Float.self)
+        }
+
+        XCTAssertEqual(cache.offset, prompt.count, "the quantized cache counts positions the same way")
+        XCTAssertEqual(stepped.count, expected.count)
+        let dot = zip(stepped, expected).map(*).reduce(0, +)
+        let steppedNorm = sqrt(stepped.map { $0 * $0 }.reduce(0, +))
+        let expectedNorm = sqrt(expected.map { $0 * $0 }.reduce(0, +))
+        XCTAssertGreaterThan(dot / (steppedNorm * expectedNorm), 0.99,
+                             "8-bit KV cache decoding tracks the full-precision logits")
+    }
+
+    // A bounded quantized cache drops the oldest positions exactly as the float one does.
+    func testAQuantizedWindowedCacheAgreesWithTheFloatWindow() throws {
+        try requireMLXRuntime()
+        let config = NFKMLXLanguageConfiguration(hiddenSize: 128, layerCount: 2, headCount: 2,
+                                                 keyValueHeadCount: 1, headDimensions: 64,
+                                                 intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000)
+        let net = NFKMLXLanguage.makeNet(config)
+        let prompt = (0 ..< 20).map { Int32(($0 * 7 + 3) % 512) }
+
+        func decode(_ cache: NFKMLXKeyValueCache) -> [Float] {
+            var last: [Float] = []
+            for token in prompt {
+                let logits = net(MLXArray([token]).reshaped([1, 1]), cache: cache)
+                eval(logits)
+                last = logits[0, -1].asArray(Float.self)
+            }
+            return last
+        }
+        let float = decode(NFKMLXKeyValueCache(layerCount: config.layerCount, window: 8))
+        let quantized = decode(NFKMLXKeyValueCache(layerCount: config.layerCount, window: 8,
+                                                   quantization: .init(bits: 8, groupSize: 64)))
+        let dot = zip(quantized, float).map(*).reduce(0, +)
+        let qn = sqrt(quantized.map { $0 * $0 }.reduce(0, +))
+        let fn = sqrt(float.map { $0 * $0 }.reduce(0, +))
+        XCTAssertGreaterThan(dot / (qn * fn), 0.99, "the quantized window tracks the float window")
+    }
+
+    // The ChatML template renders roles and turn markers and opens an assistant turn, which is the
+    // format an instruct release is trained on. The default flattens contents, unchanged.
+    func testChatMLTemplateRendersRolesAndTurnMarkers() {
+        let messages: [[AnyHashable: Any]] = [
+            ["role": "system", "content": "You are terse."],
+            ["role": "user", "content": "Hi"],
+        ]
+        XCTAssertEqual(NFKMLXLanguageBackend.chatMLPrompt(from: messages),
+                       "<|im_start|>system\nYou are terse.<|im_end|>\n"
+                       + "<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n")
+        XCTAssertEqual(NFKMLXLanguageBackend.prompt(from:
+            NFKInferenceRequest(inputs: [NFKInputMessages: messages]), template: .none),
+                       "You are terse.\nHi")
+    }
+
+    // Chunked prefill is exact: feeding the prompt in slices through the cache lands the same logits
+    // as one pass, because each chunk attends to the same prefix. Only the peak memory differs.
+    func testChunkedPrefillMatchesASinglePass() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let prompt = [3, 17, 42, 8, 91, 5, 60, 22]
+
+        let whole = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let single = net.prefill(prompt, cache: whole, chunkSize: nil)
+        eval(single)
+        let expected = single[0, -1].asArray(Float.self)
+
+        let chunked = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let stepped = net.prefill(prompt, cache: chunked, chunkSize: 3)
+        eval(stepped)
+        let actual = stepped[0, -1].asArray(Float.self)
+
+        XCTAssertEqual(chunked.offset, prompt.count, "chunked prefill fills the whole cache")
+        let worst = zip(actual, expected).map { abs($0 - $1) }.max() ?? 0
+        XCTAssertLessThan(worst, 2e-3, "chunked prefill agrees with a single pass")
+    }
+
+    // The declared-facts check: a checkpoint whose shape disagrees with a config-built module is
+    // rejected when verifyShapes is on, and adopted silently when it is off (the default, which a
+    // placeholder-width model relies on).
+    func testVerifyShapesRejectsAShapeTheConfigDoesNotExpect() throws {
+        try requireMLXRuntime()
+        var mapped = tinyNet().parameters().flattened().map { ($0.0, $0.1) }
+        mapped[0] = (mapped[0].0, MLXArray.zeros(mapped[0].1.shape + [2]))   // one wrong shape
+
+        // Off (the default): MLX adopts the shape, no error — what a placeholder-width model needs.
+        XCTAssertNoThrow(try NFKMLXWeights.apply(mapped, to: tinyNet(), verifyShapes: false))
+
+        // On: refused, naming the parameter and both shapes.
+        XCTAssertThrowsError(try NFKMLXWeights.apply(mapped, to: tinyNet(), verifyShapes: true)) { error in
+            guard case NFKMLXError.weightsMismatch(let detail) = error else {
+                return XCTFail("expected weightsMismatch, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("shape") && detail.contains(mapped[0].0),
+                          "expected the mismatch to name the parameter: \(detail)")
+        }
+    }
+
+    // Every MLX generation option is reachable as a request parameter, which is how an Objective-C
+    // caller sets them — parity with the Swift options struct.
+    func testMLXGenerationParametersOverrideTheOptions() {
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"], parameters: [
+            NFKMLXGenerationParameterKey.contextWindow: 128,
+            NFKMLXGenerationParameterKey.prefillChunkSize: 64,
+            NFKMLXGenerationParameterKey.cacheQuantizationBits: 8,
+            NFKMLXGenerationParameterKey.cacheQuantizationGroupSize: 64,
+            NFKMLXGenerationParameterKey.chatTemplate: "chatml",
+        ])
+        var options = NFKMLXGenerationOptions()
+        NFKMLXLanguageBackend.applyMLXParameters(from: request, to: &options)
+        XCTAssertEqual(options.contextWindow, 128)
+        XCTAssertEqual(options.prefillChunkSize, 64)
+        XCTAssertEqual(options.cacheQuantization, .init(bits: 8, groupSize: 64))
+        if case .chatML = options.chatTemplate {} else { XCTFail("the chatml parameter selects the template") }
+
+        // Absent parameters leave the defaults, so an existing caller is unchanged.
+        var untouched = NFKMLXGenerationOptions()
+        NFKMLXLanguageBackend.applyMLXParameters(
+            from: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"]), to: &untouched)
+        XCTAssertNil(untouched.contextWindow)
+        XCTAssertNil(untouched.cacheQuantization)
+    }
+
     // Prefill then step: the shape generation actually uses.
     func testAPrefillFollowedByAStepAdvancesTheCache() throws {
         try requireMLXRuntime()

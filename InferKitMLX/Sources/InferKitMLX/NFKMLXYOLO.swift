@@ -556,6 +556,26 @@ public final class NFKMLXYOLO: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// The download factory at a chosen size, so small/medium/large/extraLarge are reachable over the
+    /// network, not only from a local file. Blocking; run off the render thread.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)
+    public static func backend(variant: NFKMLXYOLOVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url, labels: labels)
+    }
+
+    /// The asynchronous form of the variant download factory.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:completionHandler:)
+    public static func backend(variant: NFKMLXYOLOVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?, labels: [String]?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0, labels: labels) },
+                               completionHandler: completionHandler)
+    }
+
     /// Registers YOLO (`yolo`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:labels:)`.
     /// The registered backend has no class labels; a caller that wants names builds through the factory.
     @objc public static func register() {

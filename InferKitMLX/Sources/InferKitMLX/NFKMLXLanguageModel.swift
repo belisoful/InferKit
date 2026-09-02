@@ -105,8 +105,28 @@ public struct NFKMLXLanguageConfiguration: Sendable {
 /// the model stops seeing the beginning of its context — so it is off unless asked for.
 public final class NFKMLXKeyValueCache {
 
+    /// The affine quantization a cache stores its keys and values under.
+    ///
+    /// @discussion Quantizing the cache shrinks what stays resident — a token's key and value fall
+    /// from a float per element to `bits` — which is what lets the context grow further before the
+    /// cache, rather than the weights, becomes the ceiling. It changes storage, not positions, so the
+    /// offset, window, and mask accounting are identical to an unquantized cache; a step dequantizes
+    /// the retained span back to the model's precision on read. `groupSize` must divide the head
+    /// dimension (64 or 128 divide by the default 64).
+    public struct Quantization: Sendable, Equatable {
+        public let bits: Int
+        public let groupSize: Int
+        public init(bits: Int = 8, groupSize: Int = 64) {
+            self.bits = bits
+            self.groupSize = groupSize
+        }
+    }
+
     /// The most positions the cache retains, or `nil` for an unbounded one.
     public let window: Int?
+
+    /// The quantization the cache stores under, or `nil` to keep keys and values in full precision.
+    public let quantization: Quantization?
 
     /// TOTAL positions ever appended, which is NOT the retained count once a window starts dropping
     /// them. This is the rotary offset a step needs: a token's angle depends on where it actually is
@@ -115,6 +135,15 @@ public final class NFKMLXKeyValueCache {
 
     private var keys: [MLXArray?]
     private var values: [MLXArray?]
+    /// The scale/bias buffers a quantized cache keeps beside the packed keys and values. Nil for an
+    /// unquantized cache, and the bias buffers stay nil when the quantization mode carries none.
+    private var keyScales: [MLXArray?]
+    private var keyBiases: [MLXArray?]
+    private var valueScales: [MLXArray?]
+    private var valueBiases: [MLXArray?]
+    /// The precision the model computes in, captured on the first append so the dequantized span is
+    /// handed back at the type the fused attention expects.
+    private var storedDType: DType = .float32
     /// The retained span of each layer's buffer, as `[start, end)`.
     private var starts: [Int]
     private var ends: [Int]
@@ -122,11 +151,16 @@ public final class NFKMLXKeyValueCache {
     /// Rows are added in blocks so that a steady decode compacts rarely rather than every step.
     private static let growthBlock = 256
 
-    public init(layerCount: Int, window: Int? = nil) {
+    public init(layerCount: Int, window: Int? = nil, quantization: Quantization? = nil) {
         precondition(window.map { $0 > 1 } ?? true, "a window keeps more than one position")
         self.window = window
+        self.quantization = quantization
         keys = Array(repeating: nil, count: layerCount)
         values = Array(repeating: nil, count: layerCount)
+        keyScales = Array(repeating: nil, count: layerCount)
+        keyBiases = Array(repeating: nil, count: layerCount)
+        valueScales = Array(repeating: nil, count: layerCount)
+        valueBiases = Array(repeating: nil, count: layerCount)
         starts = Array(repeating: 0, count: layerCount)
         ends = Array(repeating: 0, count: layerCount)
     }
@@ -186,16 +220,85 @@ public final class NFKMLXKeyValueCache {
 
     func update(layer: Int, keys newKeys: MLXArray, values newValues: MLXArray) -> (MLXArray, MLXArray) {
         trimForAppend(layer: layer)
-        let length = newKeys.dim(2)
-        _ = ensureCapacity(layer: layer, extra: length, like: newKeys)
+        guard let quantization else {
+            let length = newKeys.dim(2)
+            _ = ensureCapacity(layer: layer, extra: length, like: newKeys)
 
-        let start = ends[layer]
-        keys[layer]![0..., 0..., start ..< (start + length), 0...] = newKeys
-        values[layer]![0..., 0..., start ..< (start + length), 0...] = newValues
+            let start = ends[layer]
+            keys[layer]![0..., 0..., start ..< (start + length), 0...] = newKeys
+            values[layer]![0..., 0..., start ..< (start + length), 0...] = newValues
+            ends[layer] += length
+
+            return (keys[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...],
+                    values[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...])
+        }
+        return updateQuantized(layer: layer, quantization, keys: newKeys, values: newValues)
+    }
+
+    /// The quantized append: the incoming rows are packed once, stored in the block-growing buffers
+    /// beside their scales and biases, and the retained span dequantized back for attention. The
+    /// packing is per-row along the head dimension, so a row slots in exactly as a float row does.
+    private func updateQuantized(layer: Int, _ quantization: Quantization,
+                                 keys newKeys: MLXArray, values newValues: MLXArray) -> (MLXArray, MLXArray) {
+        storedDType = newKeys.dtype
+        let (bits, groupSize) = (quantization.bits, quantization.groupSize)
+        let (packedKeys, scaledKeys, biasedKeys) = quantized(newKeys, groupSize: groupSize, bits: bits)
+        let (packedValues, scaledValues, biasedValues) = quantized(newValues, groupSize: groupSize, bits: bits)
+        let length = newKeys.dim(2)
+        let batch = packedKeys.dim(0), heads = packedKeys.dim(1)
+
+        if ends[layer] + length > (keys[layer]?.dim(2) ?? 0) {
+            let retained = retainedLength(layer: layer)
+            let blocks = (retained + length + Self.growthBlock - 1) / Self.growthBlock
+            let target = blocks * Self.growthBlock
+            keys[layer] = grown(keys[layer], layer: layer, target: target, batch: batch, heads: heads,
+                                lastDim: packedKeys.dim(3), dtype: .uint32)
+            keyScales[layer] = grown(keyScales[layer], layer: layer, target: target, batch: batch, heads: heads,
+                                     lastDim: scaledKeys.dim(3), dtype: scaledKeys.dtype)
+            keyBiases[layer] = biasedKeys.map { grown(keyBiases[layer], layer: layer, target: target, batch: batch,
+                                                      heads: heads, lastDim: $0.dim(3), dtype: $0.dtype) }
+            values[layer] = grown(values[layer], layer: layer, target: target, batch: batch, heads: heads,
+                                  lastDim: packedValues.dim(3), dtype: .uint32)
+            valueScales[layer] = grown(valueScales[layer], layer: layer, target: target, batch: batch, heads: heads,
+                                       lastDim: scaledValues.dim(3), dtype: scaledValues.dtype)
+            valueBiases[layer] = biasedValues.map { grown(valueBiases[layer], layer: layer, target: target, batch: batch,
+                                                          heads: heads, lastDim: $0.dim(3), dtype: $0.dtype) }
+            starts[layer] = 0
+            ends[layer] = retained
+        }
+
+        let rows = ends[layer] ..< (ends[layer] + length)
+        keys[layer]![0..., 0..., rows, 0...] = packedKeys
+        keyScales[layer]![0..., 0..., rows, 0...] = scaledKeys
+        if let biasedKeys { keyBiases[layer]![0..., 0..., rows, 0...] = biasedKeys }
+        values[layer]![0..., 0..., rows, 0...] = packedValues
+        valueScales[layer]![0..., 0..., rows, 0...] = scaledValues
+        if let biasedValues { valueBiases[layer]![0..., 0..., rows, 0...] = biasedValues }
         ends[layer] += length
 
-        return (keys[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...],
-                values[layer]![0..., 0..., starts[layer] ..< ends[layer], 0...])
+        let span = starts[layer] ..< ends[layer]
+        let outKeys = dequantized(keys[layer]![0..., 0..., span, 0...],
+                                  scales: keyScales[layer]![0..., 0..., span, 0...],
+                                  biases: keyBiases[layer].map { $0[0..., 0..., span, 0...] },
+                                  groupSize: groupSize, bits: bits, dtype: storedDType)
+        let outValues = dequantized(values[layer]![0..., 0..., span, 0...],
+                                    scales: valueScales[layer]![0..., 0..., span, 0...],
+                                    biases: valueBiases[layer].map { $0[0..., 0..., span, 0...] },
+                                    groupSize: groupSize, bits: bits, dtype: storedDType)
+        return (outKeys, outValues)
+    }
+
+    /// Allocates a block-sized buffer and copies the layer's retained span to its front, reading the
+    /// current `[start, end)` before the caller resets them. One target row-count grows every buffer
+    /// of a quantized layer together; only the trailing width and dtype differ.
+    private func grown(_ existing: MLXArray?, layer: Int, target: Int, batch: Int, heads: Int,
+                       lastDim: Int, dtype: DType) -> MLXArray {
+        let fresh = MLXArray.zeros([batch, heads, target, lastDim], dtype: dtype)
+        let retained = retainedLength(layer: layer)
+        if let existing, retained > 0 {
+            fresh[0..., 0..., 0 ..< retained, 0...] = existing[0..., 0..., starts[layer] ..< ends[layer], 0...]
+        }
+        return fresh
     }
 
     /// Advances the position count once every layer has been updated for this step.

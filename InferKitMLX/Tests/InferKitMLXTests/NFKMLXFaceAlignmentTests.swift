@@ -15,6 +15,23 @@ import InferKit
 
 final class NFKMLXFaceAlignmentTests: XCTestCase {
 
+    // NFKFaceObservation is an @objc class; its five landmarks read out by name (the array is
+    // Swift-only), which is how Objective-C reaches the alignment points the detection box omits.
+    func testFaceObservationExposesNamedLandmarks() {
+        let observation = NFKFaceObservation(
+            boundingBox: CGRect(x: 1, y: 2, width: 3, height: 4),
+            landmarks: [CGPoint(x: 10, y: 11), CGPoint(x: 20, y: 21), CGPoint(x: 30, y: 31),
+                        CGPoint(x: 40, y: 41), CGPoint(x: 50, y: 51)],
+            confidence: 0.9)
+        XCTAssertEqual(observation.leftEye, CGPoint(x: 10, y: 11))
+        XCTAssertEqual(observation.rightEye, CGPoint(x: 20, y: 21))
+        XCTAssertEqual(observation.nose, CGPoint(x: 30, y: 31))
+        XCTAssertEqual(observation.leftMouthCorner, CGPoint(x: 40, y: 41))
+        XCTAssertEqual(observation.rightMouthCorner, CGPoint(x: 50, y: 51))
+        XCTAssertEqual(observation.confidence, 0.9, accuracy: 1e-6)
+    }
+
+
     // MARK: The similarity solve
 
     // A similarity applied to known points must be recovered exactly from those points.

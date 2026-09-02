@@ -1248,6 +1248,35 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   keys it is applied to. The bound is OFF by default, because for a model whose attention is not
   natively windowed it is an approximation rather than a configuration — exact while the conversation
   fits inside the window, and dropping the beginning past that.
+  **The cache also quantizes** (`NFKMLXGenerationOptions.cacheQuantization`, `NFKMLXKeyValueCache.Quantization`):
+  keys and values are stored affine-packed (`quantized`/`dequantized`) beside per-group scales in the
+  same block-growing buffers, and a step dequantizes the retained span for attention. It changes
+  storage, not positions, so the offset/window/mask accounting is untouched — the float path is byte
+  for byte the same, gated behind `guard let quantization`. It is lossy, so off by default; measured,
+  8-bit decoding tracks the full-precision logits (cosine > 0.99) while shrinking the resident cache,
+  which is what lets a long conversation reach further before the cache is the ceiling. `groupSize`
+  must divide the head dimension. **Prefill chunks** (`prefillChunkSize`): a long prompt runs through
+  the cache in slices, so the attention peak is bounded by the chunk rather than the prompt. It is
+  EXACT — each chunk attends through the cache to exactly the keys a single pass would — pinned by
+  `testChunkedPrefillMatchesASinglePass`. **The backend applies a chat template** on request
+  (`chatTemplate: .chatML`): an instruct release is trained on `<|im_start|>role … <|im_end|>` turns,
+  and the old message-flattening prompted it outside that format; `.chatML` renders the turns with the
+  release's own special tokens (which the byte-level tokenizer resolves), off by default because a base
+  model wants the plain text. **A fit-before-load predicate** (`NFKMLXReleaseWeights.verifyFits`)
+  refuses a release whose weights exceed the memory budget BEFORE materializing any, so a load that
+  would kill the process becomes an error naming the shortfall; it is wired into the dense loader,
+  where weights are ~all the file (Gemma and the hybrid load a subtree, so the file size over-counts,
+  and they are left to a model-aware check).
+  **`NFKMLXWeights.apply` gained an opt-in `verifyShapes`** (default OFF): a parameter supplied at a
+  shape the module does not expect is normally adopted wholesale by `update(parameters:)` — the
+  checkpoint loads clean and computes wrong numbers. Checking shapes turns that into a load-time error,
+  but ONLY where every built shape already equals the checkpoint's, which is the dense decoder alone.
+  Shape adoption is load-bearing in several builders — Conv-TasNet's placeholder `.base` widths and
+  Gemma E4B's feed-forward-doubling heuristic both load right only because adoption reshapes the module
+  to the checkpoint — so a global shape check false-positives (both were caught turning it on), and it
+  stays scoped to the Qwen3 dense loader where config.json widths are exact. Per-layer weight streaming
+  (making a 27B that does not fit RUN, rather than fail cleanly) needs lazy module weights and is a
+  larger separate change; the fit predicate delivers the clean-error half. **All of these reach Objective-C**: an ObjC consumer builds the LLM through the `@objc` `NFKMLXLanguage.backendWithDirectoryURL:error:` (reads config.json + tokenizer + shards) and sets every generation option per request through the `NFKMLXGenerationParameterKey` string constants (`contextWindow`, `cacheQuantizationBits`/`GroupSize`, `prefillChunkSize`, `chatTemplate`), the same mechanism the core `NFKParameter*` keys use — parity with the Swift `NFKMLXGenerationOptions` struct. The struct-taking factories stay Swift-only because `NFKMLXLanguageConfiguration` is Swift-only (the directory factory reads config.json instead), and the cache class stays Swift-only because it takes `MLXArray`; the config knob is what bridges, per the package's expose-what-bridges rule.
   **Gemma 4, the hybrid, and DeepSeek do not use this cache**: they take no cache argument at all and
   run prefill-only, so the window reaches the dense decoder alone. Sampling is greedy at temperature 0, otherwise
   temperature with optional nucleus (`topP`) and a seed for repeatability. The backend reads
@@ -2181,10 +2210,32 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   the global device; a caller wanting a whole inference on the CPU runs the synchronous call inside the
   block on their own thread, which is where the contract puts a multi-second inference anyway. The `@objc`
   case names are given explicitly (`NFKMLXDeviceTypeCPU`/`…GPU`), since Swift would generate `…Cpu`/`…Gpu`.
-  **Principle**: expose Swift-only API to ObjC where opportunistic and reasonable — a global utility or a
-  simple-typed method gets an `@objc` wrapper. What stays Swift-only is what *cannot* bridge: the
-  bring-your-own-closure backends (their init takes an `MLXArray` closure), `MLXArray` itself, the schedulers,
-  and the `*Configuration` structs (the `@objc` variant enums are the ObjC configuration knob by design).
+  **Objective-C parity is REQUIRED for new and changed code, not optional.** Every public Swift API a
+  consumer would use must be reachable from Objective-C unless it *cannot* bridge; adding or changing a
+  model, backend, option, or subsystem includes checking its ObjC surface in the same change. What
+  legitimately stays Swift-only is a fixed list — anything whose signature takes or returns an
+  `MLXArray`, a Swift closure, generics, a `Module`/`Linear`/`Optimizer`, a scheduler, or a Swift-only
+  `struct`/enum-with-associated-values (the `*Configuration` structs, `NFKMLXModelFit`); everything else
+  bridges. Concretely, when you add or touch one of these, the parity obligations are:
+  - **A shipped model** gets the FULL `@objc` factory set, and every factory honors the variant: the
+    local `+backendWith[Variant:]weightsURL:error:`, the download `+backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:`,
+    its async `…completionHandler:` peer, and `register()`. A variant enum that some factories ignore
+    is a bug — the download and async peers must take the same `@objc` variant the local one does
+    (the audit found Whisper's enum unused and NAFNet/YOLO/SwinIR download factories dropping it).
+  - **A generation or inference option** that has no core `NFKParameter*` key gets an `@objc` request-
+    parameter key (see `NFKMLXGenerationParameterKey`) read in `runInference`, so ObjC configures it the
+    way it sets `NFKParameterTemperature`. The Swift options struct stays; the request key is the bridge.
+  - **A config-free machine or runtime property** (a `Double`/`Int`/`String` reading, no configuration
+    or `MLXArray`) goes on an `@objc` `NSObject` wrapper — `NFKMLXGPU`/`NFKMLXRandom`/`NFKMLXDevice` —
+    not on a caseless-enum namespace, which ObjC cannot reach.
+  - **A value type a backend hands back or a consumer inspects** (a detection, a landmark set) is an
+    `@objc` class of the shape the core's `NFKKeypoint`/`NFKDetection` use, never a Swift `struct`.
+  - **A closure backend** stays Swift-only to construct, but MUST have an ObjC use-path: at least one
+    instance registered by name through `NFKMLXReferenceModels.registerAll` so `NFKMLXModelRegistry.backendNamed:`
+    reaches its kind. A closure-backend type with no registered instance is an ObjC dead end.
+  A model that loads a whole release directory takes a `backendWith[Model:]directoryURL:error:` factory
+  instead of the repo/weightsPath set (the directory reads its own `config.json`), which is how an
+  ObjC caller reaches a model whose geometry lives in a Swift-only configuration.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls

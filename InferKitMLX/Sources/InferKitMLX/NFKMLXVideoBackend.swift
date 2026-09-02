@@ -53,8 +53,10 @@ private final class NFKMLXVideoTransformBox: @unchecked Sendable {
 /// `NFKOutputVideo`. The toolkit owns the decode, the bridge, and the encode; the caller owns the
 /// model, mirroring `NFKMLXModuleBackend`.
 ///
-/// Inference over a clip is long. The contract's `submitInferenceJobForRequest:` reports progress per
-/// frame and takes cancellation.
+/// Inference over a clip is long, so run it off the render thread — through `runInference(for:)`
+/// directly, or by wrapping the backend in `NFKInferenceSubmit(...)` for a job with cancellation.
+/// The clip is processed as one unit (a temporal model reads the whole sequence), so the job reports
+/// completion rather than per-frame progress.
 public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
 
     private let identifier: String

@@ -471,7 +471,8 @@ public final class NFKMLXRetinaFace: NSObject {
 /// Build one with ``NFKMLXRetinaFace/detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` and hand it to
 /// `NFKMLXCodeFormer.photoBackend`. It costs a 1.7 MB checkpoint and makes the aligned crop the
 /// reference's own.
-public struct NFKMLXRetinaFaceDetector: NFKMLXFaceDetecting {
+@objc(NFKMLXRetinaFaceDetector)
+public final class NFKMLXRetinaFaceDetector: NSObject, NFKMLXFaceDetecting, @unchecked Sendable {
     private let holder: NFKRetinaHolder
     private let confidenceThreshold: Float
     private let suppressionThreshold: Float
@@ -480,6 +481,7 @@ public struct NFKMLXRetinaFaceDetector: NFKMLXFaceDetecting {
         self.holder = NFKRetinaHolder(net)
         self.confidenceThreshold = confidenceThreshold
         self.suppressionThreshold = suppressionThreshold
+        super.init()
     }
 
     public func faces(in image: CGImage) throws -> [NFKFaceObservation] {
@@ -487,11 +489,20 @@ public struct NFKMLXRetinaFaceDetector: NFKMLXFaceDetecting {
                                 confidenceThreshold: confidenceThreshold,
                                 suppressionThreshold: suppressionThreshold)
     }
+
+    /// The Objective-C entry: the faces in `image`, each with its box, confidence, and five landmarks.
+    @objc(facesInImage:error:)
+    public func faces(inImage image: CGImage) throws -> [NFKFaceObservation] {
+        try faces(in: image)
+    }
 }
 
 extension NFKMLXRetinaFace {
 
-    /// Builds a detector from a converted checkpoint. Thresholds default to the reference's own.
+    /// Builds a detector from a converted checkpoint. Thresholds default to the reference's own. The
+    /// returned detector is `@objc`, so an Objective-C caller reuses it across images and reads each
+    /// face's five landmarks — the alignment data the detection backend's boxes omit.
+    @objc(detectorWithWeightsURL:confidenceThreshold:suppressionThreshold:error:)
     public static func detector(weightsURL: URL?, confidenceThreshold: Float = 0.8,
                                 suppressionThreshold: Float = 0.4) throws -> NFKMLXRetinaFaceDetector {
         let net = makeNet()
@@ -539,6 +550,17 @@ extension NFKMLXRetinaFace {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
                                                 revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         return try backend(weightsURL: url)
+    }
+
+    /// The asynchronous form of the download factory: downloads on a background queue, then builds and
+    /// delivers the backend (or an error) to `completionHandler`.
+    @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(weightsURL: $0) },
+                               completionHandler: completionHandler)
     }
 
     /// Registers RetinaFace with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.

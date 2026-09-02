@@ -22,14 +22,32 @@ import Vision
 /// A face found in an image, with the five points an alignment is computed from.
 ///
 /// Coordinates are in image pixels with a top-left origin, which is the convention the InferKit value
-/// types use. Vision reports a bottom-left origin, and the conversion happens at detection.
-public struct NFKFaceObservation: Sendable {
+/// types use. Vision reports a bottom-left origin, and the conversion happens at detection. An `@objc`
+/// class (immutable, like the core's `NFKKeypoint`/`NFKDetection`), so Objective-C reads the landmarks
+/// a face detector returns, not only its box.
+@objc(NFKFaceObservation)
+public final class NFKFaceObservation: NSObject, @unchecked Sendable {
     /// The face's bounds in image pixels.
-    public let boundingBox: CGRect
+    @objc public let boundingBox: CGRect
     /// Left eye, right eye, nose, left mouth corner, right mouth corner — the reference's order.
     public let landmarks: [CGPoint]
     /// Vision's confidence in the detection.
-    public let confidence: Float
+    @objc public let confidence: Float
+
+    public init(boundingBox: CGRect, landmarks: [CGPoint], confidence: Float) {
+        self.boundingBox = boundingBox
+        self.landmarks = landmarks
+        self.confidence = confidence
+        super.init()
+    }
+
+    private func landmark(_ index: Int) -> CGPoint { landmarks.indices.contains(index) ? landmarks[index] : .zero }
+    /// The five landmarks by name, for Objective-C (the array is Swift-only). Image pixels, top-left origin.
+    @objc public var leftEye: CGPoint { landmark(0) }
+    @objc public var rightEye: CGPoint { landmark(1) }
+    @objc public var nose: CGPoint { landmark(2) }
+    @objc public var leftMouthCorner: CGPoint { landmark(3) }
+    @objc public var rightMouthCorner: CGPoint { landmark(4) }
 }
 
 /// Something that finds faces in an image.
