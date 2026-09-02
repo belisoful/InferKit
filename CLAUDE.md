@@ -136,6 +136,20 @@ Keep the two in sync: a new source file is picked up by the SwiftPM glob automat
 globs the same paths, so no per-file edit is needed there either. New public headers go in
 `Sources/InferKit/include/InferKit/` and the umbrella `InferKit.h`.
 
+**`Tools/` ships in NO distribution — it is developer and validation tooling, not the library.** The
+SwiftPM targets name `Sources/InferKit` / `InferKitMLX/Sources` as their paths, the podspec globs only
+`Sources/InferKit/**/*.{h,m}`, and the XCFramework release assets are built binaries; none of them
+compile or carry anything under `Tools/`. A consumer resolving the SwiftPM package clones the whole
+repository (so `Tools/` lands on disk), but nothing there is built into the products or the release.
+The `~30 Tools/*-to-safetensors/convert.py` scripts are therefore **not required to consume the
+library**: `NFKMLXTorchFormat` reads a raw `.pth`/`.pt`/`.ckpt`/`.th`/HF `.bin` natively (see the
+native-checkpoint-reader entry), so a consumer needs no Python. The converters stay for two reasons
+that are not consumer-facing — they are the **byte oracle** `NFKMLXTorchParityTests` holds the native
+reader to, and the **offline path** to a portable, pickle-free safetensors — and the Python
+reference-parity tooling (`Tools/reference-parity`, `Tools/validation-assets`) is the ground truth
+every Swift port is measured against, which is irreducibly Python (torch / transformers / diffusers).
+`Tools/README.md` records this boundary.
+
 **The version lives in three places that must move together on release**: `s.version` in
 `InferKit.podspec`, the string `NFKInferKit.version` returns (`Sources/InferKit/NFKInferKit.m`), and
 the `vX.Y.Z` git tag. A test asserts the shape of `NFKInferKit.version`, not its value, so a stale

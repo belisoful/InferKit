@@ -136,6 +136,16 @@ Keep the two in sync: a new source file is picked up by the SwiftPM glob automat
 globs the same paths, so no per-file edit is needed there either. New public headers go in
 `Sources/InferKit/include/InferKit/` and the umbrella `InferKit.h`.
 
+**`Tools/` ships in NO distribution — developer and validation tooling, not the library.** The SwiftPM
+targets name `Sources/InferKit` / `InferKitMLX/Sources`, the podspec globs only
+`Sources/InferKit/**/*.{h,m}`, and the release XCFrameworks are built binaries; none carry anything
+under `Tools/`. A SwiftPM consumer clones the whole repo (so `Tools/` lands on disk) but builds none of
+it. The `~30 Tools/*-to-safetensors/convert.py` scripts are **not required to consume the library** —
+`NFKMLXTorchFormat` reads a raw checkpoint natively, so no Python is needed at runtime. They stay as
+the **byte oracle** for `NFKMLXTorchParityTests` and the **offline** portable-safetensors path; the
+Python reference-parity tooling (`Tools/reference-parity`, `Tools/validation-assets`) is the
+irreducibly-Python ground truth every port is measured against. `Tools/README.md` records this.
+
 ## Project Structure
 
 ```
