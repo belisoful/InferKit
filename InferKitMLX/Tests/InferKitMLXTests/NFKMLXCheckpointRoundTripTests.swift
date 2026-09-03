@@ -118,6 +118,15 @@ final class NFKMLXCheckpointRoundTripTests: XCTestCase {
         }
     }
 
+    // TAESD's convolutions are its only transposed weights; a fine-tuned save is in the module's layout,
+    // so the loader must skip the 4-D transpose. The [Module]-array Sequential keys match either way.
+    func testTAESDRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXTAESD.makeNet(), into: NFKMLXTAESD.makeNet()) { net, url in
+            try NFKMLXTAESD.loadWeights(into: net as! NFKMLXTAESDNet, from: url)
+        }
+    }
+
     // A saved music vocoder is already fused and in the module's layout, so the loader must skip both
     // the weight-norm fusion and every transpose — the alpha reshape included, which is this model's
     // own variant of the double-transpose hazard.

@@ -61,6 +61,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXDAC.register()
         NFKMLXSNAC.register()
         NFKMLXSigLIP2.register()
+        NFKMLXTAESD.register()
         NFKMLXAudioTagger.register()
         NFKMLXBiSeNet.register()
         NFKMLXBiSeNetV2.register()

@@ -275,6 +275,32 @@
    ]
   },
   {
+   "key": "TAESD",
+   "file": "taesd.safetensors",
+   "raw": "taesd_encoder.pth",
+   "bytes": 4912826,
+   "url": "https://github.com/madebyollin/taesd/raw/main/taesd_encoder.pth",
+   "converter": "taesd-to-safetensors",
+   "note": "Tiny AutoEncoder for SD, the fast preview decoder. TWO release files (taesd_encoder.pth + taesd_decoder.pth, GitHub, ~5 MB each); the converter combines them into encoder.*/decoder.* keys and the [Module]-array loader matches the numeric Sequential keys directly. Parity via `run_reference.py taesd` (madebyollin's own taesd.py, vendored in sources/).",
+   "config": [
+    "IK_VAL_TAESD",
+    "IK_TRIAGE_TAESD"
+   ]
+  },
+  {
+   "key": "LTX_VAE",
+   "file": "ltx-vae.safetensors",
+   "raw": "ltx_vae.safetensors",
+   "bytes": 1676798532,
+   "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/vae/diffusion_pytorch_model.safetensors",
+   "converter": "ltx-vae-to-safetensors",
+   "note": "The LTX-Video causal 3D VAE, the first stage of the video-generation path. The release is already a PyTorch-layout safetensors the loader reads directly (transposing 5-D Conv3d weights, causal-conv wrapper keeps the .conv key). Parity via `run_reference.py ltx_vae` under the ltx oracle env (diffusers >= 0.32); it loads the VAE from IK_LTX_VAE_DIR.",
+   "config": [
+    "IK_VAL_LTX_VAE",
+    "IK_TRIAGE_LTX_VAE"
+   ]
+  },
+  {
    "key": "FACE",
    "kind": "input",
    "file": "face960.jpg",
@@ -584,6 +610,10 @@
    [
     "refsrc/hifigan/env.py",
     "https://raw.githubusercontent.com/jik876/hifi-gan/master/env.py"
+   ],
+   [
+    "taesd.py",
+    "https://raw.githubusercontent.com/madebyollin/taesd/main/taesd.py"
    ]
   ],
   "env": {
@@ -904,6 +934,38 @@
     "IK_TOKENIZER_WHISPER": ""
    },
    "note": "The multilingual byte-level BPE vocabulary, which the voice loop-closure test uses to read Whisper's transcription of the synthesized speech."
+  },
+  {
+   "key": "LTX_TF",
+   "repo": "Lightricks/LTX-Video",
+   "directory": "raw/ltx-transformer",
+   "files": [
+    "transformer/config.json",
+    "transformer/diffusion_pytorch_model.safetensors.index.json",
+    "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+    "transformer/diffusion_pytorch_model-00002-of-00002.safetensors"
+   ],
+   "config": {
+    "IK_VAL_LTX_TF": ""
+   },
+   "note": "The LTX-Video DiT (2B), the denoising transformer. ~7.7 GB sharded. Loads directly (module keys mirror LTXVideoTransformer3DModel). Parity via run_reference.py ltx_transformer under the ltx oracle env, feeding recorded text embeddings (no T5)."
+  },
+  {
+   "key": "LTX_T5",
+   "repo": "Lightricks/LTX-Video",
+   "directory": "raw/ltx-t5",
+   "files": [
+    "text_encoder/config.json",
+    "text_encoder/model.safetensors.index.json",
+    "text_encoder/model-00001-of-00004.safetensors",
+    "text_encoder/model-00002-of-00004.safetensors",
+    "text_encoder/model-00003-of-00004.safetensors",
+    "text_encoder/model-00004-of-00004.safetensors"
+   ],
+   "config": {
+    "IK_VAL_LTX_T5": ""
+   },
+   "note": "T5-XXL v1.1 text encoder for LTX-Video (also the text encoder family for Wan/PixArt/SD3/Flux). ~19 GB fp32 sharded. Loads directly (keys mirror T5EncoderModel). Parity via run_reference.py ltx_t5 under the ltx oracle env."
   }
  ],
  "oracle_environments": {
@@ -938,7 +1000,8 @@
     "silero_vad",
     "dac",
     "snac",
-    "siglip2"
+    "siglip2",
+    "taesd"
    ]
   },
   "music": {
@@ -972,6 +1035,16 @@
     "gemma4_audio_real",
     "gemma4_conditional_real"
    ]
+  },
+  "ltx": {
+   "path": "ltxvenv",
+   "create": "python3 -m venv ~/.inferkit-validation/ltxvenv && ~/.inferkit-validation/ltxvenv/bin/pip install 'diffusers>=0.32' 'transformers>=4.44' torch safetensors accelerate",
+   "modes": [
+    "ltx_vae",
+    "ltx_transformer",
+    "ltx_t5"
+   ],
+   "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles."
   }
  }
 }

@@ -504,6 +504,165 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertLessThan(logitError, 1e-2, "the sigmoid logits match the reference")
     }
 
+    // MARK: TAESD
+
+    // The tiny autoencoder: the encoder must land the same latent as the reference, and the decoder must
+    // reconstruct the same image from a given latent. Decoding the REFERENCE latent isolates the decoder.
+    func testTAESDMatchesTheReferenceEncodeAndDecode() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_TAESD"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_TAESD to a taesd record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let plate = try XCTUnwrap(arrays["input_image"])                  // [H, W, 3]
+        let referenceLatent = try XCTUnwrap(arrays["latent"])             // [h, w, 4]
+        let referenceImage = try XCTUnwrap(arrays["output"])              // [H, W, 3]
+
+        let net = NFKMLXTAESD.makeNet()
+        try NFKMLXTAESD.loadWeights(into: net, from: weights("IK_VAL_TAESD"))
+
+        let latent = net.encode(plate.reshaped([1, plate.shape[0], plate.shape[1], 3])); eval(latent)
+        let latentCosine = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                  referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        let decoded = net.decode(referenceLatent.reshaped([1, referenceLatent.shape[0], referenceLatent.shape[1], 4]))
+        eval(decoded)
+        let mine = decoded.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceImage.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let imageCosine = cosine(mine, theirs)
+        let meanAbsolute = zip(mine, theirs).map { abs($0 - $1) }.reduce(0, +) / Double(mine.count)
+        print("VALIDATION PARITY taesd: latent cosine \(latentCosine), decode cosine \(imageCosine), mean |diff| \(meanAbsolute)")
+        XCTAssertGreaterThan(latentCosine, 0.9999, "the encoder lands the reference latent")
+        XCTAssertGreaterThan(imageCosine, 0.9999, "the decoder reconstructs the reference image")
+        XCTAssertLessThan(meanAbsolute, 1e-3, "and matches pointwise")
+    }
+
+    // MARK: LTX-Video VAE
+
+    // The causal 3D video autoencoder end to end: the encoder must land the same latent and the decoder
+    // must reconstruct the same video from a given latent. The recorded encoder seams (conv_in, the first
+    // down block, the mid block) localize any mismatch in the 3D convolutions / patchify.
+    func testLTXVideoVAEMatchesTheReferenceEncodeAndDecode() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_LTX_VAE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_LTX_VAE to an ltx-vae record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let video = try XCTUnwrap(arrays["input_video"])                 // [T, H, W, 3]
+        let referenceLatent = try XCTUnwrap(arrays["latent"])            // [t, h, w, 128]
+        let referenceOutput = try XCTUnwrap(arrays["output"])            // [T, H, W, 3]
+
+        let net = NFKMLXLTXVideoVAE.makeNet(.base)
+        try NFKMLXLTXVideoVAE.loadWeights(into: net, from: weights("IK_VAL_LTX_VAE"))
+        let input = video.reshaped([1, video.shape[0], video.shape[1], video.shape[2], 3])
+
+        func seam(_ key: String, _ produce: () -> MLXArray) {
+            guard let reference = arrays[key] else { return }
+            let mine = produce(); eval(mine)
+            print("SEAM ltx \(key): cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init))), shape \(mine.shape) vs \(reference.shape)")
+        }
+        seam("enc_conv_in") { net.encoder.convIn(net.encoder.patchify(input)) }
+        seam("enc_down0") {
+            var h = net.encoder.convIn(net.encoder.patchify(input)); h = net.encoder.downBlocks[0](h); return h
+        }
+        seam("enc_mid") {
+            var h = net.encoder.convIn(net.encoder.patchify(input))
+            for block in net.encoder.downBlocks { h = block(h) }
+            return net.encoder.midBlock(h)
+        }
+
+        let latent = net.encode(input); eval(latent)
+        let latentCosine = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                  referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        let decoded = net.decode(referenceLatent.reshaped([1, referenceLatent.shape[0], referenceLatent.shape[1], referenceLatent.shape[2], 128]))
+        eval(decoded)
+        let decodeCosine = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                  referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ltx-vae: latent cosine \(latentCosine), decode cosine \(decodeCosine)")
+        XCTAssertGreaterThan(latentCosine, 0.9999, "the encoder lands the reference latent")
+        XCTAssertGreaterThan(decodeCosine, 0.9999, "the decoder reconstructs the reference video")
+    }
+
+    // MARK: LTX-Video DiT
+
+    // The LTX denoising transformer, verified in isolation with recorded text embeddings: the 3D rotary,
+    // the adaLN self-attention, the cross-attention to text, and the velocity prediction must match the
+    // reference. Seams (rope, proj_in, first block) localize any mismatch.
+    func testLTXTransformerMatchesTheReferenceVelocity() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_LTX_TF"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_LTX_TF to an ltx-transformer record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"]).reshaped([1, 8, 128])
+        let text = try XCTUnwrap(arrays["text"]).reshaped([1, 4, 4096])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXLTXTransformer.makeNet(.base)
+        try NFKMLXLTXTransformer.loadWeights(into: net, from: URL(fileURLWithPath: config["IK_VAL_LTX_TF"]!))
+        let grid = (2, 2, 2), scale: (Float, Float, Float) = (1, 1, 1)
+
+        func seam(_ key: String, _ produce: () -> MLXArray) {
+            guard let reference = arrays[key] else { return }
+            let mine = produce(); eval(mine)
+            print("SEAM ltx-tf \(key): cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+        let rope = net.rotary.embedding(frames: 2, height: 2, width: 2, scale: scale)
+        seam("rope_cos") { rope.0 }
+        seam("rope_sin") { rope.1 }
+        seam("proj_in") { net.projIn(latent) }
+        seam("block0") {
+            let hidden = net.projIn(latent)
+            let temb = net.timeEmbed(timestep).temb.reshaped([1, 1, -1])
+            let context = net.captionProjection(text)
+            return net.blocks[0](hidden, context: context, temb: temb, rotary: rope)
+        }
+
+        let output = net(latent, text: text, timestep: timestep, grid: grid, ropeScale: scale)
+        eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ltx-transformer: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference DiT")
+    }
+
+    // MARK: LTX T5 text encoder
+
+    // The T5-XXL text encoder — the last LTX stage — verified against transformers. Seams (the embedding
+    // and the first block) localize any mismatch in the relative-position bias / T5LayerNorm / gated FFN.
+    func testLTXT5EncoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_LTX_T5"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_LTX_T5 to an ltx-t5 record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asType(.int32)
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXT5Encoder.makeNet(.xxl)
+        try NFKMLXT5Encoder.loadWeights(into: net, from: URL(fileURLWithPath: config["IK_VAL_LTX_T5"]!))
+
+        func seam(_ key: String, _ produce: () -> MLXArray) {
+            guard let reference = arrays[key] else { return }
+            let mine = produce(); eval(mine)
+            print("SEAM ltx-t5 \(key): cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+        seam("embed") { net.shared(tokens) }
+        seam("block0") {
+            let hidden = net.shared(tokens)
+            let bias = net.encoder.block[0].selfAttention.attention.computeBias(tokens.shape[1])
+            return net.encoder.block[0](hidden, bias: bias)
+        }
+
+        let output = net(tokens); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ltx-t5: text embedding cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the text embedding matches the reference T5 encoder")
+    }
+
     // MARK: The models validated by eye
 
     // These four ran end to end on real weights and looked right, which is exactly the evidence that

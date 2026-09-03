@@ -535,7 +535,10 @@ alternatives.
     the DiT, autoencoder, and scheduler already ported.
   - `SANA` (0.6B) — the only new text-to-image model small enough for a phone.
   - `IP-Adapter` — image conditioning, a cheap gap to close.
-  - `TAESD` — a tiny autoencoder for an instant latent preview.
+  - `TAESD` — **SHIPPED** (`NFKMLXTAESD`): the tiny SD autoencoder for an instant latent preview, at
+    reference parity against madebyollin's own taesd (latent and decode cosine 0.9999999999, mean
+    |difference| 1.9e-7). Encoder + decoder modeled as `[Module]` arrays so the numeric Sequential keys
+    load with no remap.
   - `SigLIP 2` — **SHIPPED** (`NFKMLXSigLIP2`, base-patch16-224): the CLIP upgrade that doubles as a VLM
     vision tower. Vision ViT (reusing the SigLIP encoder) + attention-pooling head + a 256k-vocab text
     tower + sigmoid logit scale/bias, at reference parity against transformers (image and text embedding
@@ -547,7 +550,20 @@ alternatives.
   - `RT-DETR` / `RF-DETR` — a detector that avoids YOLO's AGPL.
 - **Video generation**, a new capability the toolkit lacks (it only interpolates and upscales today).
   - `LTX-Video` / `LTX-2` — the first video generator here, with MLX ports available as parity
-    references.
+    references. **The VAE stage is SHIPPED** (`NFKMLXLTXVideoVAE`): the causal 3D autoencoder
+    (`AutoencoderKLLTXVideo`) — causal Conv3d, RMSNorm resnets, stride-2 downsamples, a 3D pixel-shuffle
+    upsampler, patchify/unpatchify — at reference parity against diffusers on the first numeric run
+    (latent cosine 0.99999999999, decode cosine 0.99999999996; every encoder seam exact). **The DiT stage
+    is SHIPPED too** (`NFKMLXLTXTransformer`): the 2B denoising transformer — 28 adaLN blocks with 3D
+    rotary self-attention, cross-attention to text, RMS qk-norm, gelu-approx feed-forward — at reference
+    parity against diffusers (velocity cosine 0.99999999999, every seam exact), verified in isolation with
+    recorded text embeddings. **The full text-to-video pipeline is now COMPLETE**: the T5-XXL text encoder
+    (`NFKMLXT5Encoder`, text-embedding cosine 0.99999999998 against transformers), the rectified-flow
+    sampler (`NFKMLXFlowMatchScheduler`, `FlowMatchEulerDiscreteScheduler` with dynamic shifting, schedule
+    exact to the reference), and the pipeline glue (`NFKMLXLTXPipeline`: T5 → DiT+flow loop with
+    classifier-free guidance → VAE decode) all ship, so LTX-Video runs end to end. The T5 encoder and the
+    flow sampler are reusable across the other flow-matching models (Wan 2.2 shares the T5 family; Z-Image
+    / SANA / Flux share the flow sampler).
   - `Wan 2.2` — for quality.
 
 Licensing gates what ships as a default: permissive weights ship, research-only and vendor-licensed

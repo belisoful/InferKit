@@ -3015,6 +3015,132 @@ def run_siglip2(image):
     return image_embeds[0].contiguous()                                    # [embed], L2-normalized
 
 
+def run_taesd(image):
+    """TAESD (tiny SD autoencoder) round trip: the encoder's latent and the decoder's reconstruction.
+    Feed a plate whose side is a multiple of 8 (`--size 256`), so the latent is `side/8` square. The
+    reference is madebyollin's own `taesd.py` (vendored under the source root) loaded with the released
+    `.pth` weights. Requires: huggingface_hub, and `taesd.py` in the source root.
+    """
+    import os
+    import sys
+    import tempfile
+    import urllib.request
+
+    sys.path.insert(0, os.environ.get("IK_REF_SRC", os.path.expanduser("~/.inferkit-validation/sources")))
+    from taesd import TAESD
+
+    def weights(name):
+        # The .pth live in the GitHub repo, not the HF repo (which carries the diffusers safetensors).
+        path = os.path.join(tempfile.gettempdir(), name)
+        if not os.path.exists(path):
+            urllib.request.urlretrieve(f"https://github.com/madebyollin/taesd/raw/main/{name}", path)
+        return path
+
+    model = TAESD(weights("taesd_encoder.pth"), weights("taesd_decoder.pth")).eval()
+    with torch.no_grad():
+        latent = model.encoder(torch.from_numpy(image.transpose(2, 0, 1))[None].float())
+        reconstruction = model.decoder(latent)
+    globals()["_extra"] = {"latent": latent[0].permute(1, 2, 0).contiguous()}       # [h, w, 4] NHWC
+    return reconstruction[0].permute(1, 2, 0).contiguous()                          # [H, W, 3]
+
+
+def run_ltx_vae(image):
+    """LTX-Video VAE round trip: the deterministic latent (posterior mean) and the decoded video, plus
+    the encoder seams (conv_in, first down block, mid block). Uses a fixed random video, so the plate is
+    ignored. The VAE is loaded from `IK_LTX_VAE_DIR` (default `~/.inferkit-validation/raw/ltx-vae`).
+
+    Runs under the `ltx` oracle env (diffusers >= 0.32). Tensors are returned in NDHWC to match the port.
+    """
+    import os
+    from diffusers import AutoencoderKLLTXVideo
+
+    directory = os.environ.get("IK_LTX_VAE_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-vae"))
+    vae = AutoencoderKLLTXVideo.from_pretrained(directory, torch_dtype=torch.float32).eval()
+    generator = np.random.default_rng(11)
+    video = (generator.random((1, 3, 9, 64, 64), dtype=np.float32) * 2 - 1)
+
+    seams = {}
+    vae.encoder.conv_in.register_forward_hook(lambda m, i, o: seams.__setitem__("enc_conv_in", o.detach()))
+    vae.encoder.down_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("enc_down0", o.detach()))
+    vae.encoder.mid_block.register_forward_hook(lambda m, i, o: seams.__setitem__("enc_mid", o.detach()))
+    with torch.no_grad():
+        mean = vae.encode(torch.from_numpy(video)).latent_dist.mean
+        decoded = vae.decode(mean).sample
+
+    def ndhwc(t):
+        return t[0].permute(1, 2, 3, 0).contiguous()
+
+    globals()["_extra"] = {"input_video": ndhwc(torch.from_numpy(video)), "latent": ndhwc(mean),
+                           "enc_conv_in": ndhwc(seams["enc_conv_in"]), "enc_down0": ndhwc(seams["enc_down0"]),
+                           "enc_mid": ndhwc(seams["enc_mid"])}
+    return ndhwc(decoded)                                                   # [T, H, W, 3]
+
+
+def run_ltx_transformer(image):
+    """LTX-Video DiT velocity prediction from random latent tokens, a random text embedding, and a
+    timestep, plus the rope / proj_in / first-block seams. The text embedding is fed directly, so the DiT
+    is verified in isolation (no T5). The model loads from `IK_LTX_TF_DIR`
+    (default `~/.inferkit-validation/raw/ltx-transformer`). Runs under the `ltx` oracle env.
+    """
+    import os
+    from diffusers import LTXVideoTransformer3DModel
+
+    directory = os.environ.get("IK_LTX_TF_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-transformer"))
+    model = LTXVideoTransformer3DModel.from_pretrained(directory, torch_dtype=torch.float32).eval()
+    generator = torch.Generator().manual_seed(7)
+    frames, height, width = 2, 2, 2
+    latent = torch.randn(1, frames * height * width, 128, generator=generator)
+    text = torch.randn(1, 4, 4096, generator=generator)
+    timestep = torch.tensor([500.0])
+    scale = (1.0, 1.0, 1.0)
+
+    seams = {}
+    model.proj_in.register_forward_hook(lambda m, i, o: seams.__setitem__("proj_in", o.detach()))
+    model.transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o.detach()))
+    original_rope = model.rope.forward
+
+    def rope_hook(*a, **k):
+        out = original_rope(*a, **k)
+        seams["rope_cos"], seams["rope_sin"] = out[0].detach(), out[1].detach()
+        return out
+
+    model.rope.forward = rope_hook
+    with torch.no_grad():
+        output = model(hidden_states=latent, encoder_hidden_states=text, timestep=timestep,
+                       encoder_attention_mask=torch.ones(1, 4), num_frames=frames, height=height, width=width,
+                       rope_interpolation_scale=scale, return_dict=False)[0]
+
+    globals()["_extra"] = {"latent": latent[0].contiguous(), "text": text[0].contiguous(),
+                           "timestep": timestep.contiguous(), "proj_in": seams["proj_in"][0].contiguous(),
+                           "block0": seams["block0"][0].contiguous(), "rope_cos": seams["rope_cos"][0].contiguous(),
+                           "rope_sin": seams["rope_sin"][0].contiguous(),
+                           "grid": torch.tensor([frames, height, width], dtype=torch.int32)}
+    return output[0].contiguous()                                          # [S, 128]
+
+
+def run_ltx_t5(image):
+    """LTX-Video T5-XXL text encoder output for a fixed padded token sequence, plus the embedding and
+    first-block seams. Loads from `IK_LTX_T5_DIR` (default `~/.inferkit-validation/raw/ltx-t5`). Runs
+    under the `ltx` oracle env (transformers with T5EncoderModel).
+    """
+    import os
+    from transformers import T5EncoderModel
+
+    directory = os.environ.get("IK_LTX_T5_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-t5"))
+    model = T5EncoderModel.from_pretrained(directory, torch_dtype=torch.float32).eval()
+    ids = torch.tensor([[3, 19, 2523, 40, 8, 1946, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0]])
+
+    seams = {}
+    model.shared.register_forward_hook(lambda m, i, o: seams.__setitem__("embed", o.detach()))
+    model.encoder.block[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o[0].detach()))
+    with torch.no_grad():
+        output = model(input_ids=ids).last_hidden_state
+
+    globals()["_extra"] = {"tokens": ids.to(torch.int32).contiguous(), "embed": seams["embed"][0].contiguous(),
+                           "block0": seams["block0"][0].contiguous()}
+    return output[0].contiguous()                                          # [S, 4096]
+
+
 def run_sam_encoder(image, checkpoint):
     """The official SAM image encoder's neck output — the seam between the ViT and the mask decoder.
 
@@ -3750,7 +3876,7 @@ MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_s
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,

@@ -1232,6 +1232,95 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   1e-5. The architecture is SigLIP v1 (`model_type` "siglip"); the "2" is the training. Most of the
   1.5 GB checkpoint is the 256k text embedding table. Converter `Tools/siglip2-to-safetensors` is a
   passthrough normalizer.
+- `NFKMLXTAESD` (`@objc`) — TAESD (Tiny AutoEncoder for Stable Diffusion), the fast preview decoder a
+  latent-diffusion pipeline uses: a small distilled autoencoder mapping an image to a four-channel latent
+  and back (8× down/up). The encoder and decoder are flat `nn.Sequential` stacks of 3×3 convolutions and
+  residual blocks; **modeling them as `[Module]` arrays makes the numeric Sequential keys (`0.weight`,
+  `1.conv.0.weight`, …) match with NO remap** — the case the MLX-runtime note calls out as the legitimate
+  use of numeric keys. `NFKTAESDBlock` is three convs (ReLU between) added back to the input then a fusing
+  ReLU (skip identity, all 64→64); the downsample convs are stride-2 bias-free; the decoder clamps its
+  input `tanh(x/3)·3`, upsamples nearest ×2, and ends in a `conv→3`. Parameter-free ops (ReLU, the clamp,
+  the upsample) are empty marker `Module`s occupying their Sequential index; the net's forward dispatches
+  by type. `NFKMLXTAESDBackend` reads `NFKInputImage` → the reconstruction under `NFKOutputImage`;
+  `encode`/`decode` are the object accessors (the preview-decode use). `+register` under `taesd`. The
+  release is TWO `.pth` files (encoder + decoder, GitHub, ~5 MB each); `Tools/taesd-to-safetensors`
+  combines them into `encoder.*`/`decoder.*` keys and the loader transposes the 4-D convs. **Reference
+  parity** against madebyollin's own `taesd.py` on the first numeric run: latent cosine 0.9999999999996,
+  decode cosine 0.9999999999998, mean |difference| 1.9e-7.
+- `NFKMLXLTXVideoVAE` (`@objc`) — the LTX-Video VAE (`AutoencoderKLLTXVideo`), the toolkit's FIRST piece of
+  video generation (the DiT and a T5 text encoder are the remaining stages) and its first 3D model. A
+  **causal 3D autoencoder**: a video compresses to a spatiotemporal latent and back. The encoder is CAUSAL
+  in time — each temporal convolution left-pads by REPEATING the first frame `kernel-1` times, so a frame
+  depends only on the past (`NFKLTXCausalConv3d`, a wrapper over MLX's `Conv3d` keeping the reference's
+  `.conv` key); the decoder is non-causal (symmetric pad). Downsampling is a stride-2 causal conv;
+  **upsampling is a conv that widens the channels ×8 then a 3D pixel shuffle** (`NFKLTXUpsampler`:
+  interleave the extra channels into the frame/height/width axes, drop the first frame). Resnet blocks
+  normalize with a parameter-free channel RMS norm (so norm1/norm2/norm_out carry NO weights; only the
+  shortcut's `norm3` LayerNorm does). Encoder: **patchify** (fold each `patchT×patch×patch` block into the
+  channel axis, the reference's `channel, temporal, width, height` order) → conv_in → down blocks → mid →
+  RMSNorm+SiLU → conv_out (latent+1 channels; the extra channel is the posterior's shared log-variance,
+  dropped for the deterministic latent). Decoder mirrors it and unpatchifies. **The whole thing works in
+  NDHWC** (`[B, T, H, W, C]`) where the reference is NCTHW, so every patchify/pixel-shuffle reshape is the
+  reference's permute re-derived for channels-last; the 5-D Conv3d weights transpose `[out,in,kT,kH,kW]` →
+  `[out,kT,kH,kW,in]` at load, and the causal-conv `.conv` naming makes the keys match with no remap.
+  `NFKMLXLTXVideoVAE.encode`/`decode` (Swift, over `MLXArray`) and `vae(configuration:weightsURL:)` are the
+  surface; the released diffusers safetensors loads directly (converter `Tools/ltx-vae-to-safetensors` is a
+  passthrough). **Reference parity** against diffusers' `AutoencoderKLLTXVideo` on the first numeric run
+  (`run_reference.py ltx_vae`, the `ltx` oracle env — diffusers ≥ 0.32, its own venv): every encoder seam
+  exact (conv_in / first down block / mid ≥ 0.99999999999), latent cosine 0.99999999999, decode cosine
+  0.99999999996. A weight-free test also asserts the encoder's temporal CAUSALITY (two clips sharing their
+  first frames but not the last produce the same first latent frame).
+- `NFKMLXLTXTransformer` (`@objc`) — the LTX-Video DiT (`LTXVideoTransformer3DModel`), the denoising
+  transformer of the video-generation pipeline (the stage AFTER the VAE). A 2B sequence transformer over
+  the VAE's flattened latent tokens: `proj_in` (128→2048), 28 `NFKLTXBlock`s, `norm_out`+adaLN, `proj_out`
+  (2048→128). Each block is **adaptive-layer-norm self-attention with 3D rotary + cross-attention to the
+  text embedding + a gelu-approximate feed-forward**, the six modulation parameters coming from the
+  timestep through the block's own `scale_shift_table` (PixArt-α style). Attention (`NFKLTXAttention`)
+  applies an ACROSS-HEADS RMS norm to the query and key (over the full 2048 width, before the head split),
+  the 3D rotary to both (self-attention only), then SDPA; cross-attention reads the projected text and does
+  not rotate. The **3D rotary** (`NFKLTXRotary`) is computed over the (frame, height, width) latent grid: a
+  per-axis log-spaced frequency ramp times the scaled coordinate, cos/sin repeat-interleaved by 2, the
+  leading `dim % 6` channels left unrotated. Timestep conditioning is `AdaLayerNormSingle` (a 256-wide
+  sinusoidal embedding through an MLP, then SiLU + linear to `6·inner`); the text is a PixArt caption
+  projection (4096→2048). The feed-forward's `net` is a `[Module]` array (`net.0.proj`, an activation
+  marker, `net.2`) so the diffusers Sequential keys match. **The module keys mirror the reference exactly**
+  (all 715 tensors), so the sharded release loads through `NFKMLXReleaseWeights.arrays` with a pass-through
+  remap and no transpose (every weight ≤ 2-D). **For parity the text embedding is supplied DIRECTLY** (the
+  caption projection is inside the DiT), so the transformer is validated in isolation like the SD UNet — no
+  T5 needed. **Reference parity** against diffusers on the first numeric run (`run_reference.py
+  ltx_transformer`, the `ltx` oracle env, recorded random latent/text/timestep): every seam exact (rope
+  cos/sin ≥ 0.9999999, proj_in and first block ≥ 0.99999999999) and the full 28-layer velocity cosine
+  0.99999999999. The 2B weights are ~7.7 GB sharded.
+- `NFKMLXT5Encoder` (`@objc`) — the T5 v1.1 text encoder (`T5EncoderModel`), the text conditioning for the
+  LTX pipeline and a REUSABLE building block (the same family conditions Wan / PixArt / SD3 / Flux). A
+  stack of pre-normalized blocks with two T5-isms: the attention is UNSCALED and adds a bucketed
+  **relative-position bias** (`NFKT5Attention.computeBias`, the Mesh-TensorFlow bidirectional bucketing,
+  computed once from block 0's table and shared across all layers, passed as the SDPA additive mask), and
+  the norm is **T5LayerNorm** — an RMS norm with a weight and NO mean subtraction. The feed-forward is
+  gated (`wo(gelu(wi_0(x)) · wi_1(x))`, tanh-approx GELU). Module keys mirror the reference
+  (`shared`, `encoder.block.N.layer.0.SelfAttention.{q,k,v,o}`, `.layer.0.layer_norm`,
+  `.layer.1.DenseReluDense.{wi_0,wi_1,wo}`, `.layer.1.layer_norm`, `encoder.final_layer_norm`), so the
+  sharded release loads through `NFKMLXReleaseWeights.arrays` with no remap and no transpose (all 2-D).
+  `NFKMLXT5Configuration.xxl` is T5-XXL (d_model 4096, 24 layers, 64 heads, d_ff 10240). **Reference
+  parity** against transformers on the first numeric run (`run_reference.py ltx_t5`, the `ltx` oracle env):
+  embedding seam exact, first block 0.9999999999996, full text embedding cosine 0.99999999998. ~19 GB fp32
+  sharded — the memory crux of the LTX pipeline, which stages the encoders sequentially.
+- `NFKMLXFlowMatchScheduler` — the rectified-flow sampler (`FlowMatchEulerDiscreteScheduler`), the sampler
+  LTX / Flux / SD3 / Wan / Z-Image use, a value type with no parameters. The schedule is a sigma ramp from
+  1 to 0 with **dynamic resolution-dependent shifting** (a per-sequence-length `mu = base_shift + slope·
+  (seq − base_seq)` warps the ramp: `σ ← exp(mu)/(exp(mu) + 1/σ − 1)`) and a **terminal stretch** so the
+  last non-zero sigma lands on `shiftTerminal` (0.1). A step is one Euler update `x + (σ_next − σ)·v`.
+  **Verified against diffusers** (schedule exact: sigmas to 1e-4, terminal sigma 0.1) under `swift test`
+  (pure Float math, no MLX eval).
+- `NFKMLXLTXPipeline` — the LTX-Video text-to-video pipeline glue, chaining the three parity-verified
+  stages: T5 encode → the DiT denoised over the flow schedule with classifier-free guidance → the VAE
+  decode. With the DiT's patch size of 1 the latent packing to/from the token sequence is a single reshape
+  of the VAE's NDHWC latent. The stages are held together for a run but a caller manages residency (the
+  19 GB T5, the 7.7 GB DiT, and the VAE do not all fit resident on 32 GB, so they load and free in turn,
+  the Music 3 pattern). Validated by a weight-free glue test on matching tiny configurations (the packing,
+  the guided loop, unpacking, and decode produce a correct-shaped clip) plus the four stages' own parity —
+  a sampled clip cannot be compared bitwise, as with Music 3. The VAE + DiT + T5 + flow are the complete
+  LTX text-to-video path.
 - `NFKMLXRVM` (`@objc`) — real video matting (Robust Video Matting): the reference `MattingNetwork` —
   a torchvision **MobileNetV3-Large** encoder (inverted residuals with squeeze-and-excitation,
   hardswish, **BatchNorm epsilon 1e-3**, the last stage dilated), the reference LR-ASPP, and a
@@ -2726,7 +2815,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (CorridorKey's GreenFormer) registers the same way. `InferKitMLXObjCExamples` proves the ObjC path.
   `NFKMLXReferenceModels.registerAll` registers every shipped model at once — the real models
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
-  `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
+  `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
   `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle

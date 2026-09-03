@@ -116,6 +116,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)
         let siglip2Result = try siglip2.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(224)]))
         XCTAssertNotNil(siglip2Result.output(forKey: NFKOutputEmbedding), "a SigLIP 2 image embedding")
+
+        // TAESD: the tiny autoencoder — image → latent → image reconstruction.
+        let taesd = try NFKMLXTAESD.backend(weightsURL: nil)
+        let taesdResult = try taesd.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(taesdResult.output(forKey: NFKOutputImage), "a TAESD reconstruction")
     }
 
     func testTextEmbeddings() throws {

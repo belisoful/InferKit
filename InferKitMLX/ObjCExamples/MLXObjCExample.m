@@ -304,6 +304,9 @@
 
 	id<NFKInferenceBackend> siglip2 = [NFKMLXSigLIP2 backendWithWeightsURL:nil error:&error];
 	XCTAssertEqualObjects(siglip2.backendIdentifier, @"siglip2-base-patch16-224", @"%@", error);
+
+	id<NFKInferenceBackend> taesd = [NFKMLXTAESD backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(taesd.backendIdentifier, @"taesd", @"%@", error);
 }
 
 - (void)testObjectiveCDownloadFactoryFailsCleanlyForAnInvalidRepo
