@@ -182,6 +182,23 @@ options.chatTemplate = .chatML
 let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
 ```
 
+**Rendering the release's own chat template.** `.chatML` approximates; the faithful path renders the
+Jinja `chat_template` the release ships (from its `tokenizer_config.json`), so the model reads exactly
+what it was trained on. `NFKMLXChatTemplateRenderer` is a compact Jinja interpreter held to
+transformers' `apply_chat_template`, and it is pure Foundation — no runtime, no MLX:
+
+```swift
+// The template text comes from the release's tokenizer_config.json ("chat_template").
+options.chatTemplate = .jinja(template: releaseTemplate, bosToken: "<|begin_of_text|>")
+
+// Or render it directly, without a backend:
+let prompt = try NFKMLXChatTemplateRenderer.render(
+    releaseTemplate,
+    messages: [["role": "system", "content": "You are terse."],
+               ["role": "user", "content": "What is 2+2?"]],
+    addGenerationPrompt: true)
+```
+
 **Refusing a release that will not fit.** The dense loader checks a release's weight bytes against the
 memory budget before materializing any, so a load that would kill the process is an error instead:
 
@@ -288,6 +305,17 @@ configuration.isMixtureOfExperts        // true; expertCount 128, activeExpertCo
 let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory)
 ```
 
+**Gemma 4's mixture.** The Gemma 4 26B-A4B release (`enable_moe_block`) is a different shape of
+mixture: each layer keeps its dense feed-forward and adds a routed-expert branch beside it, and the two
+are summed. `NFKMLXGemmaLanguage.configuration(fromHuggingFace:)` reads the flag from the release
+directory and turns the branch on; the decoder matches `transformers`' own `Gemma4ForCausalLM` layer by
+layer at a tiny configuration (logit cosine 0.9999999999996).
+
+```swift
+let gemma = try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL)   // gemma4 + enable_moe_block
+gemma.isMixtureOfExperts                 // true for the 26B-A4B, false for the dense E-series
+```
+
 **Constraining the output.** A grammar mask over the logits admits only the tokens that keep the
 output inside the grammar, so structured output needs no model change and no retry. JSON syntax and
 a fixed set of choices ship; a custom constraint adopts `NFKMLXTokenConstraint`. The mask is applied
@@ -309,6 +337,97 @@ preferred next token is forbidden takes the whitespace it is offered indefinitel
 caps a whitespace run (eight bytes by default). And a thinking model opens with a `<think>` block the
 grammar forbids; the prompt closes that block itself (`<think>\n\n</think>\n\n` after the assistant
 marker, as Qwen3's own template does for its no-think mode) so the answer starts at the document.
+
+### Text embeddings (`NFKMLXQwen3Embedding`)
+
+The decoder read one layer earlier is a text embedder: the post-final-norm hidden states are pooled to
+one vector per text and L2-normalized, so a dot product between two embeddings is their cosine
+similarity. Qwen3-Embedding-0.6B is the Qwen3-0.6B backbone this package already runs, pooled at the
+last token over an appended `<|endoftext|>`. A query carries a one-sentence task instruction and a
+document carries none; the two are asymmetric on purpose.
+
+```objc
+id<NFKInferenceBackend> embedder =
+    [NFKMLXQwen3Embedding backendWithDirectoryURL:releaseDirectory error:&error];
+
+NSString *query = [NFKMLXQwen3Embedding instructWithTask:@"Retrieve passages that answer the query"
+                                                   query:@"What is the capital of France?"];
+NFKInferenceResult *result =
+    [embedder runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: query }]
+                               error:&error];
+NSArray<NSNumber *> *embedding = result.embedding;                 // 1024 floats, unit length
+```
+
+`backendWithDirectoryURL:outputDimensions:error:` truncates each embedding to a smaller Matryoshka
+width before normalizing, trading accuracy for storage with no second model. A Swift caller that has
+token ids already reads them straight through `embedding(forTokens:)`; the request path needs the
+tokenizer the backend was built with.
+
+Reference parity against the model card's own transformers recipe on the released 0.6B weights: query
+embedding cosine 0.99999999999, document 0.99999999999, and the retrieval score reproduced to 1e-6 end
+to end.
+
+**A second embedder, a second architecture.** `NFKMLXEmbeddingGemma` is EmbeddingGemma-300M: the
+bidirectional Gemma 3 encoder (no causal mask, sandwich normalization, dual RoPE), mean-pooled over
+every token, run through a Dense bottleneck (768 → 3072 → 768), and L2-normalized. It reads Gemma's
+`tokenizer.json` directly, so the text path needs no conversion.
+
+```objc
+id<NFKInferenceBackend> embedder =
+    [NFKMLXEmbeddingGemma backendWithDirectoryURL:releaseDirectory error:&error];       // unsloth mirror
+NSString *query = [NFKMLXEmbeddingGemma query:@"What is the capital of France?"];       // task prompt
+NSArray<NSNumber *> *embedding =
+    [embedder runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: query }]
+                               error:&error].embedding;                                  // 768 floats
+```
+
+The backbone is Gemma 3 (`gemma3_text`), not the causal Gemma 4 the language model runs; the two
+differ in their normalization, rotary, and per-layer embeddings, so the encoder is its own
+implementation. Reference parity against the sentence-transformers pipeline on the released 300M
+weights: every one of the 24 layers exact, query and document embedding cosine 0.99999999999, and the
+Gemma byte-fallback BPE tokenizer reproduces the reference's ids token for token.
+
+### Reranking (`NFKMLXModernBERTReranker`)
+
+An embedder scores a query and a document independently; a **cross-encoder** reads the pair together —
+`[CLS] query [SEP] document [SEP]` — through one bidirectional pass and predicts a single relevance
+score, which is more accurate and is what reorders an embedder's shortlist. `NFKMLXModernBERTReranker`
+is the released `gte-reranker-modernbert-base`.
+
+```objc
+NFKMLXModernBERTReranker *reranker =
+    [NFKMLXModernBERTReranker rerankerWithDirectoryURL:releaseDirectory error:&error];
+NSArray<NSNumber *> *order =                                    // documents, most relevant first
+    [reranker rankedIndicesForQuery:@"What is the capital of France?"
+                          documents:@[ @"The Great Barrier Reef is off Australia.",
+                                       @"Paris is the capital of France." ]];   // → [1, 0]
+double score = [reranker scoreForQuery:@"What is the capital of France?"
+                              document:@"Paris is the capital of France."];      // a relevance logit
+```
+
+ModernBERT is a modernized BERT encoder: rotary position embeddings (a global base every third layer, a
+smaller local base with a 128-token sliding window elsewhere), a GeGLU feed-forward, LayerNorm without
+biases, and no absolute position embeddings. Reference parity against transformers' own
+`ModernBertForSequenceClassification` on the released weights: every one of the 22 layers exact, and both
+the relevant and irrelevant scores reproduced to within 5e-3. The tokenizer is GPT-2-family byte-level
+BPE, read from the release's `tokenizer.json`.
+
+### Vision-language (`NFKMLXSmolVLM`)
+
+SmolVLM2-500M answers a question about an image. A SigLIP vision encoder turns each tile into patch
+features, a pixel-shuffle connector projects them to the decoder width, and a Llama decoder reads the
+text with the projected vision tokens spliced in at the image-token positions.
+
+```objc
+NFKMLXSmolVLM *model = [NFKMLXSmolVLM smolVLMWithDirectoryURL:releaseDirectory error:&error];
+NSString *answer = [model answerForImage:cgImage question:@"What is in this image?"];   // a caption
+```
+
+The prompt expansion (`User:` + the tiled `<image>` structure + the question) is token-exact against the
+processor, and the network is at reference parity against transformers'
+`SmolVLMForConditionalGeneration`: the vision encoder, the connector, and the fused decoder logits are
+exact, and the greedy continuation matches token for token. The image processor is CoreGraphics-based, so
+a caption is not token-identical to the reference's PIL pipeline; it is coherent and accurate.
 
 ### Remote, OpenAI-compatible (`NFKRemoteBackend`)
 
@@ -1743,6 +1862,63 @@ Every checkpoint shape the shipped models use loads: a plain state dict, a pickl
 `nn.Module` tree (YOLO's ultralytics DetectionModel), a TorchScript archive (CLIP, walked through
 its attribute-keyed scripted-module state), and a `.nemo` tar (unwrapped to the checkpoint inside).
 No class is constructed and no serialized code is interpreted.
+
+### Reading a GGUF model (`NFKMLXGGUF`)
+
+GGUF is the format most quantized language models are distributed in. `NFKMLXGGUF` reads the container
+and dequantizes the block-quant formats a real model uses — the k-quants `Q4_K`/`Q6_K` a `Q4_K_M` model
+is built from, plus `Q8_0`, `Q5_0`, `Q4_0`, `F16`, `F32` — with no Python and no llama.cpp.
+
+```objc
+NFKMLXGGUF *gguf = [NFKMLXGGUF GGUFWithContentsOfURL:ggufURL error:&error];
+NSString *architecture = [gguf metadataStringForKey:@"general.architecture"];
+NFKMLXGGUFTensorInfo *info = [gguf infoForTensor:@"token_embd.weight"];   // .shape, .typeName (@"Q8_0")
+```
+
+```swift
+let weight = try gguf.array(forTensor: "blk.0.ffn_down.weight")    // Swift-only: a dequantized MLXArray
+let all = try gguf.arrays()                                        // every tensor, keyed by name
+```
+
+The dequantization is bit-exact against the `gguf` package on a real Q4_K_M model. A type the reader does
+not implement is refused per-tensor (the tensor is still listed, reading it throws), not per-file. GGUF
+stores the fastest-varying dimension first, so a tensor's row-major shape is the reverse of its stored
+dimensions.
+
+**Running a GGUF release end to end.** One `.gguf` file is the whole model — geometry, weights, and
+tokenizer — so a single call builds a text-generation backend from it. The reader maps the metadata to a
+configuration, remaps the llama.cpp tensor names onto the decoder's keys (un-permuting the rotary
+query/key projections, which llama.cpp stores interleaved), dequantizes the weights, and rebuilds the
+embedded byte-level BPE tokenizer:
+
+```objc
+// Objective-C — the dominant path for a quantized release.
+NFKInferenceBackend *llm = [NFKMLXLanguage backendWithGGUFURL:ggufURL error:&error];
+NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+    initWithInputs:@{ NFKInputPrompt: @"The capital of France is" } parameters:@{}];
+NFKInferenceResult *result = [llm runInferenceForRequest:request error:&error];   // off the render thread
+```
+
+```swift
+let llm = try NFKMLXLanguage.backend(ggufURL: ggufURL)   // Swift
+```
+
+Only the dense `llama`/`qwen2`/`qwen3` families are read; another architecture throws. Loaded against
+transformers reading the same GGUF, the decoder's logits match to cosine 0.9999999999.
+
+**Running a Gemma 4 decoder.** The Gemma decoders (E2B/E4B, the 26B-A4B mixture, the 12B unified) have
+their own backend, dispatched from the release's config model type. Gemma runs prefill-only (no
+key-value cache), and its byte-fallback BPE tokenizer is read from the release:
+
+```objc
+// Objective-C.
+NFKInferenceBackend *gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory error:&error];
+```
+
+```swift
+let gemma = try NFKMLXGemmaLanguage.backend(directoryURL: releaseDirectory)   // Swift
+// "The capital of France is" → " Paris." on the released E2B.
+```
 
 ## Choosing a backend at runtime
 

@@ -1435,6 +1435,291 @@ def run_qwen3(image, checkpoint):
     return logits.contiguous()
 
 
+# The query/document pair the Qwen3-Embedding record is measured on. The Swift side declares the same
+# strings, so the tokenizer-agreement check reproduces the reference's ids from the text.
+_EMBED_TASK = "Given a web search query, retrieve relevant passages that answer the query"
+_EMBED_QUERY = f"Instruct: {_EMBED_TASK}\nQuery:What is the capital of China?"
+_EMBED_DOCUMENT = "The capital of China is Beijing."
+
+
+def run_qwen3_embedding(image, checkpoint):
+    """Qwen3-Embedding embeddings, from the model card's own transformers recipe.
+
+    `--checkpoint` is the released `Qwen/Qwen3-Embedding-0.6B` directory. The embedder is the base
+    `Qwen3Model` (AutoModel, no lm_head) read at its last hidden state, pooled at the LAST token — the
+    tokenizer appends `<|endoftext|>`, whose position is what the pooling reads — and L2-normalized. It
+    needs transformers >= 4.51, the same interpreter the qwen3 mode uses.
+
+    The record carries the query embedding as `output` and the document embedding beside it, plus the
+    reference's own token ids for both: the network check feeds those ids and compares the embedding,
+    while a separate tokenizer-agreement check reproduces the ids from the shared text.
+    """
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModel, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint, padding_side="left")
+    model = AutoModel.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    def embed(text):
+        batch = tokenizer(text, return_tensors="pt")
+        with torch.no_grad():
+            hidden = model(**batch).last_hidden_state          # [1, tokens, hidden]
+        pooled = hidden[:, -1]                                  # last-token pooling, single sequence
+        embedding = F.normalize(pooled, p=2, dim=1)[0]
+        return embedding, batch["input_ids"][0]
+
+    query_embedding, query_ids = embed(_EMBED_QUERY)
+    document_embedding, document_ids = embed(_EMBED_DOCUMENT)
+
+    globals()["_extra"] = {
+        "query_tokens": query_ids.to(torch.int32).contiguous(),
+        "document_tokens": document_ids.to(torch.int32).contiguous(),
+        "document_embedding": document_embedding.contiguous(),
+        # The retrieval score the two embeddings produce, for an end-to-end check that survives a
+        # per-embedding drift the cosine would still call a match.
+        "score": torch.dot(query_embedding, document_embedding).reshape(1).contiguous(),
+    }
+    return query_embedding.contiguous()
+
+
+# The query/document pair the EmbeddingGemma record is measured on, each with the model's own task
+# prompt prepended. The Swift side declares the same strings.
+_EG_QUERY = "task: search result | query: What is the capital of China?"
+_EG_DOCUMENT = "title: none | text: The capital of China is Beijing."
+
+
+def run_embeddinggemma(image, checkpoint):
+    """EmbeddingGemma-300M embeddings, from the sentence-transformers pipeline over transformers' own
+    Gemma3TextModel.
+
+    `--checkpoint` is the released directory (the ungated `unsloth/embeddinggemma-300m` mirror). The
+    backbone is Gemma3TextModel with `use_bidirectional_attention` (no causal mask), read at its last
+    hidden state, mean-pooled over every token, run through the two Dense projections (768 -> 3072 ->
+    768, no bias, Identity activation) the sentence-transformers head carries, and L2-normalized. Needs
+    transformers >= 4.56 (bidirectional Gemma3); the `llm` oracle interpreter has it.
+
+    The record carries the query embedding as `output`, the document embedding beside it, both token
+    id sequences, the retrieval score, and the backbone's per-layer hidden states for the query so a
+    divergence is located to a layer rather than guessed from the embedding.
+    """
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModel, AutoTokenizer
+    from safetensors.torch import load_file
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = AutoModel.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    dense2 = load_file(os.path.join(checkpoint, "2_Dense", "model.safetensors"))["linear.weight"]
+    dense3 = load_file(os.path.join(checkpoint, "3_Dense", "model.safetensors"))["linear.weight"]
+
+    def embed(text, record_layers=False):
+        batch = tokenizer(text, return_tensors="pt")
+        with torch.no_grad():
+            out = model(**batch, output_hidden_states=record_layers)
+        pooled = out.last_hidden_state.mean(dim=1)          # mean pooling, single unpadded sequence
+        projected = (pooled @ dense2.T) @ dense3.T          # the Dense bottleneck, no bias
+        embedding = F.normalize(projected, p=2, dim=1)[0]
+        return embedding, batch["input_ids"][0], (out.hidden_states if record_layers else None)
+
+    query_embedding, query_ids, layers = embed(_EG_QUERY, record_layers=True)
+    document_embedding, document_ids, _ = embed(_EG_DOCUMENT)
+
+    extra = {
+        "query_tokens": query_ids.to(torch.int32).contiguous(),
+        "document_tokens": document_ids.to(torch.int32).contiguous(),
+        "document_embedding": document_embedding.contiguous(),
+        "score": torch.dot(query_embedding, document_embedding).reshape(1).contiguous(),
+    }
+    for index, hidden in enumerate(layers):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    globals()["_extra"] = extra
+    return query_embedding.contiguous()
+
+
+# The query and the two documents the reranker record is measured on: one relevant, one not, so the
+# test checks the scores match AND that the reranker orders them.
+_RERANK_QUERY = "What is the capital of France?"
+# Long enough that the pair exceeds the 128-token local attention window (64 either side), so the
+# sliding-window layers are exercised by the isolation harness rather than degenerating to global.
+_RERANK_RELEVANT = ("Paris is the capital and most populous city of France. Situated on the river Seine "
+                    "in the north of the country, it has been a major European centre of finance, "
+                    "diplomacy, commerce, fashion, and art for centuries. The city is home to landmarks "
+                    "such as the Eiffel Tower, the Louvre, and the cathedral of Notre-Dame, and its "
+                    "metropolitan area is among the largest in Europe.")
+_RERANK_IRRELEVANT = "The Great Barrier Reef is the world's largest coral reef system, off Australia."
+
+
+def run_modernbert_reranker(image, checkpoint):
+    """A ModernBERT cross-encoder reranker's relevance score, from transformers' own
+    ModernBertForSequenceClassification.
+
+    `--checkpoint` is the released `Alibaba-NLP/gte-reranker-modernbert-base` directory. The model reads
+    a `[CLS] query [SEP] document [SEP]` pair through the bidirectional encoder, mean-pools, runs a
+    prediction head (dense + gelu + LayerNorm), and a single-logit classifier gives the score.
+
+    The record carries the token ids of both pairs, the relevant pair's per-layer hidden states for the
+    isolation harness, and both scores, so the test checks the arithmetic and the ordering.
+    """
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = AutoModelForSequenceClassification.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    def score(document, record_layers=False):
+        inputs = tokenizer(_RERANK_QUERY, document, return_tensors="pt")
+        with torch.no_grad():
+            out = model(**inputs, output_hidden_states=record_layers)
+        return out.logits[0], inputs["input_ids"][0], (out.hidden_states if record_layers else None)
+
+    relevant, relevant_ids, layers = score(_RERANK_RELEVANT, record_layers=True)
+    irrelevant, irrelevant_ids, _ = score(_RERANK_IRRELEVANT)
+
+    extra = {
+        "relevant_tokens": relevant_ids.to(torch.int32).contiguous(),
+        "irrelevant_tokens": irrelevant_ids.to(torch.int32).contiguous(),
+        "irrelevant_score": irrelevant.contiguous(),
+    }
+    for index, hidden in enumerate(layers):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    globals()["_extra"] = extra
+    return relevant.contiguous()
+
+
+def run_smolvlm(image, checkpoint):
+    """A SmolVLM2 vision-language forward, from transformers' own SmolVLMForConditionalGeneration.
+
+    `--checkpoint` is the released `HuggingFaceTB/SmolVLM2-500M-Video-Instruct` directory. The image is
+    the shared plate, resized to the processor's own tiling; the SigLIP vision encoder embeds each tile,
+    the pixel-shuffle connector projects them to the decoder width, and the Llama decoder reads the text
+    with the projected vision tokens spliced in at the image-token positions.
+
+    The record carries the input ids, the processor's pixel values (so the Swift side skips the image
+    processor and measures the network), the vision encoder's per-tile last hidden state and the
+    connector's output for the isolation harness, the logits, and the greedy continuation.
+
+    Needs Pillow, torchvision, and num2words for the processor; the `llm` oracle interpreter has them.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    prompt = "User:<image>What is in this image?<end_of_utterance>\nAssistant:"
+    inputs = processor(text=prompt, images=[pil], return_tensors="pt")
+
+    pixel_values = inputs["pixel_values"]                       # [1, tiles, 3, 512, 512]
+    flat = pixel_values.view(-1, *pixel_values.shape[2:])       # [tiles, 3, 512, 512]
+    patch = model.config.vision_config.patch_size
+    grid = flat.shape[-1] // patch
+    patch_attention_mask = torch.ones(flat.shape[0], grid, grid, dtype=torch.bool)
+
+    vm = model.model.vision_model
+    with torch.no_grad():
+        embeddings = vm.embeddings(pixel_values=flat, patch_attention_mask=patch_attention_mask)
+        layer0 = vm.encoder.layers[0](embeddings, attention_mask=None)[0]
+        vision = vm(pixel_values=flat, patch_attention_mask=patch_attention_mask).last_hidden_state
+        features = model.model.connector(vision)               # [tiles, 64, decoder width]
+        logits = model(**inputs).logits[0]                     # [sequence, vocabulary]
+        generated = model.generate(**inputs, max_new_tokens=16, do_sample=False)
+    continuation = generated[0, inputs["input_ids"].shape[1]:]
+
+    globals()["_extra"] = {
+        "input_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "pixel_values": flat.contiguous(),
+        "vision_embeddings": embeddings.contiguous(),
+        "vision_layer0": layer0.contiguous(),
+        "vision_hidden": vision.contiguous(),
+        "image_features": features.contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        "image_token_id": torch.tensor([model.config.image_token_id], dtype=torch.int32),
+    }
+    return logits.contiguous()
+
+
+def run_qwen3vl(image, checkpoint):
+    """Qwen3-VL's vision tower, from transformers' own Qwen3VLForConditionalGeneration.
+
+    `--checkpoint` is the released `Qwen/Qwen3-VL-2B-Instruct` directory. The 2D-rotary ViT embeds each
+    patch, a merger folds 2×2 patches to the decoder width, and the deepstack heads (layers 5/11/17)
+    produce three feature maps. The record carries the processor's pixel values and grid, the vision
+    seams for the isolation harness (patch embedding, the added position embedding, the 2D rotary table),
+    and the merged output plus the three deepstack features, plus the input ids and logits.
+    """
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    prompt = ("<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>What is in this image?"
+              "<|im_end|>\n<|im_start|>assistant\n")
+    inputs = processor(text=[prompt], images=[pil], return_tensors="pt")
+    pixel_values = inputs["pixel_values"]
+    grid_thw = inputs["image_grid_thw"]
+
+    visual = model.model.visual
+    with torch.no_grad():
+        patch = visual.patch_embed(pixel_values)
+        positions = visual.fast_pos_embed_interpolate(grid_thw)
+        rotary = visual.rot_pos_emb(grid_thw)
+        embeds, deepstack = visual(pixel_values, grid_thw=grid_thw)
+        logits = model(**inputs).logits[0]
+        generated = model.generate(**inputs, max_new_tokens=16, do_sample=False)
+    continuation = generated[0, inputs["input_ids"].shape[1]:]
+
+    extra = {
+        "pixel_values": pixel_values.contiguous(),
+        "image_grid_thw": grid_thw.to(torch.int32).contiguous(),
+        "patch_embed": patch.contiguous(),
+        "pos_embeds": positions.contiguous(),
+        "rotary_pos_emb": rotary.contiguous(),
+        "vision_output": embeds.contiguous(),
+        "input_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    for index, feature in enumerate(deepstack):
+        extra[f"deepstack_{index}"] = feature.contiguous()
+    globals()["_extra"] = extra
+    return logits.contiguous()
+
+
+def run_gguf(image, checkpoint):
+    """Reference dequantization of a GGUF model's tensors, from the `gguf` package.
+
+    `--checkpoint` is a `.gguf` file. For the first tensor of each block-quant type the native reader
+    implements, this records the dequantized values (capped so the record stays small) under the type's
+    name. The Swift side reads the same GGUF, picks the first tensor of each type in file order — the
+    same one — dequantizes it, and compares. `gguf` is the ground truth, the way llama.cpp is for the
+    format.
+    """
+    import numpy as np
+    import torch
+    from gguf import GGUFReader
+    from gguf.quants import dequantize
+
+    reader = GGUFReader(checkpoint)
+    cap = 262_144
+    seen = set()
+    extra = {}
+    for tensor in reader.tensors:
+        name = tensor.tensor_type.name
+        if name in ("Q4_K", "Q6_K", "Q8_0", "Q5_0", "F32") and name not in seen:
+            seen.add(name)
+            values = dequantize(tensor.data, tensor.tensor_type).flatten()[:cap].astype(np.float32)
+            extra[name] = torch.from_numpy(np.ascontiguousarray(values))
+    globals()["_extra"] = extra
+    return torch.zeros(1)
+
 
 def _tiny_decoder_record(model, tokens, release_name=lambda key: key):
     """Logits, every hidden state, and the weights in release naming, for a tiny random model."""
@@ -1544,6 +1829,431 @@ def run_gemma4(image, checkpoint):
     globals()["_extra"] = extra
     return logits.float().contiguous()
 
+
+
+def run_gemma4_moe(image, checkpoint):
+    """The Gemma 4 mixture-of-experts block (the 26B-A4B family) at a tiny random configuration,
+    from transformers' own Gemma4ForCausalLM.
+
+    The released mixture does not fit this machine, so the routed branch — the scale-free router norm,
+    the learned per-channel and per-expert scales, the softmax and top-k, and the fused-projection
+    experts, all summed BESIDE the dense feed-forward — is measured at a size that does, over the full
+    Gemma 4 block (per-layer input embeddings, the sandwich norms, dual rotary). Every hidden state is
+    recorded so a divergence is located to a layer. The per-layer input vocabulary is shrunk to the
+    token vocabulary here (`vocab_size_per_layer_input`) so the record stays small; the released model
+    uses the 262144 default. `checkpoint` is unused.
+    """
+    from transformers import Gemma4TextConfig
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4ForCausalLM
+
+    config = Gemma4TextConfig(
+        hidden_size=64, num_hidden_layers=2, vocab_size=131, num_attention_heads=4,
+        num_key_value_heads=2, head_dim=16, intermediate_size=96,
+        hidden_size_per_layer_input=32, vocab_size_per_layer_input=131,
+        num_kv_shared_layers=0, sliding_window=64,
+        layer_types=["sliding_attention", "full_attention"], rms_norm_eps=1e-6,
+        max_position_embeddings=64, tie_word_embeddings=True,
+        enable_moe_block=True, num_experts=6, top_k_experts=2, moe_intermediate_size=48,
+        hidden_activation="gelu_pytorch_tanh", final_logit_softcapping=None)
+    model = _randomized(Gemma4ForCausalLM(config), seed=17)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    # `lm_head.weight` is tied to `embed_tokens.weight` (shared storage), which safetensors refuses to
+    # save twice; the Swift net ties, so the head is dropped and reconstructed from the embedding.
+    for key, value in model.state_dict().items():
+        if key == "lm_head.weight":
+            continue
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def run_gguf_lm(image, checkpoint):
+    """End-to-end GGUF language-model logits, from transformers loading the GGUF directly.
+
+    `--checkpoint` is the GGUF FILE. transformers dequantizes the GGUF and runs its own llama/qwen
+    decoder, which is the reference the MLX GGUF loader is held to end to end: the tokenizer's ids
+    (recorded so the Swift side feeds the identical sequence and its own tokenizer is checked
+    separately), the logits over the prompt, and the greedy continuation. The dequantization is the
+    canonical one, so a quantized model still has a single correct answer here.
+    """
+    import os
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    directory = os.path.dirname(checkpoint)
+    filename = os.path.basename(checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(directory, gguf_file=filename)
+    model = AutoModelForCausalLM.from_pretrained(directory, gguf_file=filename, dtype=torch.float32).eval()
+
+    ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
+    with torch.no_grad():
+        out = model(ids)
+        generated = model.generate(ids, max_new_tokens=10, do_sample=False,
+                                   pad_token_id=tokenizer.eos_token_id)
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": generated[0, ids.shape[1]:].to(torch.int32).contiguous(),
+    }
+    return out.logits[0].float().contiguous()
+
+
+def run_gemma4_unified(image, checkpoint):
+    """The Gemma 4 unified text decoder (the 12B `gemma4_unified_text`) at a tiny random configuration,
+    from transformers' own Gemma4UnifiedForCausalLM.
+
+    A DIFFERENT decoder from the E-series `gemma4_text`: no per-layer input embeddings and no mixture,
+    but a scale-free VALUE norm beside the query and key norms, per-layer head widths (a full layer runs
+    a 512-wide head where a sliding one runs its own), attention scaling of 1.0, and the sandwich norms
+    with a per-layer scalar. Every hidden state is recorded for the isolation harness; the weights are
+    saved in the release naming (`model.layers.N.self_attn.v_proj.weight`), and `lm_head` is dropped as
+    tied. `checkpoint` is unused.
+    """
+    import torch
+    from transformers import Gemma4UnifiedTextConfig
+    from transformers.models.gemma4_unified.modeling_gemma4_unified import Gemma4UnifiedForCausalLM
+
+    config = Gemma4UnifiedTextConfig(
+        hidden_size=64, num_hidden_layers=3, vocab_size=131, num_attention_heads=4,
+        num_key_value_heads=2, head_dim=16, intermediate_size=96, sliding_window=64,
+        layer_types=["sliding_attention", "sliding_attention", "full_attention"],
+        rms_norm_eps=1e-6, max_position_embeddings=64, tie_word_embeddings=True,
+        hidden_activation="gelu_pytorch_tanh", final_logit_softcapping=None)
+    model = _randomized(Gemma4UnifiedForCausalLM(config), seed=19)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        if key == "lm_head.weight":
+            continue
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def run_gemma4_vision(image, checkpoint):
+    """The Gemma 4 vision encoder at a tiny random configuration, from transformers' own
+    Gemma4VisionModel (patch embedder + bidirectional sandwich encoder, before the pooler).
+
+    The vision tower embeds flattened patches through one linear projection, adds a learned 2-D
+    position embedding (an x-table and a y-table summed per patch), and runs the same sandwich block
+    the text decoder does but bidirectional and with NO rotary — the positions are the learned
+    embeddings. `pixel_values` are the flattened patches `[batch, patches, 3·patch²]`, `pixel_position_ids`
+    their `(x, y)` grid. The record carries both inputs, the encoder's last hidden state, and the
+    weights in the release naming (the projections live under `.linear`, a `Gemma4ClippableLinear`).
+    `checkpoint` is unused.
+    """
+    import torch
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4VisionConfig
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4VisionModel
+
+    config = Gemma4VisionConfig(
+        hidden_size=32, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=4,
+        head_dim=8, intermediate_size=48, patch_size=4, position_embedding_size=16,
+        pooling_kernel_size=2, rms_norm_eps=1e-6, hidden_activation="gelu_pytorch_tanh",
+        use_clipped_linears=False, standardize=False)
+    model = _randomized(Gemma4VisionModel(config), seed=23)
+
+    torch.manual_seed(3)
+    side = 4
+    pixel_values = torch.randn(1, side * side, 3 * config.patch_size ** 2)
+    grid = [[x, y] for y in range(side) for x in range(side)]
+    position_ids = torch.tensor(grid, dtype=torch.long).unsqueeze(0)
+    padding = (position_ids == -1).all(dim=-1)
+    with torch.no_grad():
+        embeds = model.patch_embedder(pixel_values, position_ids, padding)
+        encoded = model.encoder(inputs_embeds=embeds, attention_mask=~padding,
+                                pixel_position_ids=position_ids)
+        # The full tower: encoder, then the position-based average pooler and the sqrt(hidden) scaling.
+        pooled = model(pixel_values, pixel_position_ids=position_ids).last_hidden_state
+    extra = {
+        "pixel_values": pixel_values[0].float().contiguous(),
+        "position_ids": position_ids[0].to(torch.int32).contiguous(),
+        "pooled": pooled.float().contiguous(),
+    }
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return encoded.last_hidden_state[0].float().contiguous()
+
+
+def run_gemma4_vision_real(image, checkpoint):
+    """The Gemma 4 vision path on the RELEASED weights: the vision tower and its multimodal embedder,
+    loaded selectively from the tri-modal `Gemma4ForConditionalGeneration` checkpoint (the E2B release
+    carries a vision tower, an audio tower, and the decoder together).
+
+    `--checkpoint` is the release directory. Random pixel values over a real patch grid are fed to both
+    sides, so the tower and embedder are compared on real weights without the resize entering. Records
+    the pixel values, the position grid, the pooled soft tokens, and the embedder's projection.
+    """
+    import json
+    import os
+    import torch
+    from safetensors import safe_open
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4VisionModel, Gemma4MultimodalEmbedder
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4VisionConfig, Gemma4TextConfig
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    vision_config = Gemma4VisionConfig(**config["vision_config"])
+    text_config = Gemma4TextConfig(**config["text_config"])
+    vision = Gemma4VisionModel(vision_config).eval()
+    embedder = Gemma4MultimodalEmbedder(vision_config, text_config).eval()
+
+    vision_state, embed_state = {}, {}
+    with safe_open(os.path.join(checkpoint, "model.safetensors"), framework="pt") as handle:
+        for key in handle.keys():
+            if key.startswith("model.vision_tower."):
+                vision_state[key[len("model.vision_tower."):]] = handle.get_tensor(key).float()
+            elif key.startswith("model.embed_vision."):
+                embed_state[key[len("model.embed_vision."):]] = handle.get_tensor(key).float()
+    vision.load_state_dict(vision_state, strict=True)
+    embedder.load_state_dict(embed_state, strict=True)
+
+    side = 6                                                     # 36 patches, 4 soft tokens at pooling 3
+    torch.manual_seed(3)
+    pixel_values = torch.randn(1, side * side, 3 * vision_config.patch_size ** 2)
+    grid = [[x, y] for y in range(side) for x in range(side)]
+    position_ids = torch.tensor(grid, dtype=torch.long).unsqueeze(0)
+    padding = (position_ids == -1).all(dim=-1)
+    seams = {}
+    vision.encoder.layers[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("layer0", (o[0] if isinstance(o, tuple) else o).detach()))
+    vision.encoder.layers[0].self_attn.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("attn0", (o[0] if isinstance(o, tuple) else o).detach()))
+    vision.encoder.layers[0].mlp.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("mlp0", o.detach()))
+    vision.encoder.layers[0].input_layernorm.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("inorm0", o.detach()))
+    with torch.no_grad():
+        embeds = vision.patch_embedder(pixel_values, position_ids, padding)
+        encoded = vision.encoder(inputs_embeds=embeds, attention_mask=~padding,
+                                 pixel_position_ids=position_ids).last_hidden_state
+        pooled = vision(pixel_values, pixel_position_ids=position_ids).last_hidden_state
+        projected = embedder(pooled)
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values[0].float().contiguous(),
+        "position_ids": position_ids[0].to(torch.int32).contiguous(),
+        "patch_embed": embeds[0].float().contiguous(),
+        "inorm0": seams["inorm0"][0].float().contiguous(),
+        "attn0": seams["attn0"][0].float().contiguous(),
+        "mlp0": seams["mlp0"][0].float().contiguous(),
+        "layer0": seams["layer0"][0].float().contiguous(),
+        "encoded": encoded[0].float().contiguous(),
+        "pooled": pooled.float().contiguous(),
+    }
+    return projected.float().contiguous()
+
+
+def run_gemma4_audio_real(image, checkpoint):
+    """The Gemma 4 audio path on the RELEASED weights: the audio Conformer and its multimodal embedder,
+    loaded selectively from the tri-modal checkpoint. Random mel features are fed to both sides, so the
+    tower and the projection into the decoder's space are compared on real weights. `--checkpoint` is
+    the release directory.
+    """
+    import json
+    import os
+    import torch
+    from safetensors import safe_open
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4AudioModel, Gemma4MultimodalEmbedder
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4AudioConfig, Gemma4TextConfig
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    audio_config = Gemma4AudioConfig(**config["audio_config"])
+    text_config = Gemma4TextConfig(**config["text_config"])
+    audio = Gemma4AudioModel(audio_config).eval()
+    embedder = Gemma4MultimodalEmbedder(audio_config, text_config).eval()
+
+    audio_state, embed_state = {}, {}
+    with safe_open(os.path.join(checkpoint, "model.safetensors"), framework="pt") as handle:
+        for key in handle.keys():
+            if key.startswith("model.audio_tower."):
+                audio_state[key[len("model.audio_tower."):]] = handle.get_tensor(key).float()
+            elif key.startswith("model.embed_audio."):
+                embed_state[key[len("model.embed_audio."):]] = handle.get_tensor(key).float()
+    audio.load_state_dict(audio_state, strict=True)
+    embedder.load_state_dict(embed_state, strict=True)
+
+    torch.manual_seed(4)
+    features = torch.randn(1, 64, 128)
+    mask = torch.ones(1, 64, dtype=torch.float32)
+    with torch.no_grad():
+        output = audio(features, mask, return_dict=True)
+        projected = embedder(output.last_hidden_state)
+
+    globals()["_extra"] = {
+        "features": features[0].float().contiguous(),
+        "encoded": output.last_hidden_state[0].float().contiguous(),
+    }
+    return projected[0].float().contiguous()
+
+
+def run_gemma4_conditional_real(image, checkpoint):
+    """The FULL Gemma4ForConditionalGeneration on the released E2B weights: an image and a
+    placeholder-carrying prompt through the vision tower, the embedder, the splice, and the decoder,
+    end to end. `--checkpoint` is the release directory.
+
+    Random pixel values over a 6x6 grid (36 patches -> 4 soft tokens at pooling 3) fill four image
+    placeholder tokens. Records the token ids, the pixel values, the position grid, and the decoder's
+    logits over the fused sequence.
+    """
+    import json
+    import os
+    import torch
+    from transformers import AutoModelForImageTextToText
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    image_token = config["image_token_id"]
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    torch.manual_seed(3)
+    side = 6
+    pixel_values = torch.randn(1, side * side, 3 * config["vision_config"]["patch_size"] ** 2)
+    grid = [[x, y] for y in range(side) for x in range(side)]
+    position_ids = torch.tensor(grid, dtype=torch.long).unsqueeze(0)
+    input_ids = torch.tensor([[2] + [image_token] * 4 + [1234, 5678, 91011]], dtype=torch.long)
+    with torch.no_grad():
+        logits = model(input_ids=input_ids, pixel_values=pixel_values,
+                       image_position_ids=position_ids).logits[0]
+
+    globals()["_extra"] = {
+        "tokens": input_ids[0].to(torch.int32).contiguous(),
+        "pixel_values": pixel_values[0].float().contiguous(),
+        "position_ids": position_ids[0].to(torch.int32).contiguous(),
+    }
+    return logits.float().contiguous()
+
+
+def run_gemma4_embedder(image, checkpoint):
+    """The Gemma 4 multimodal embedder — a scale-free RMS norm and a projection into the language
+    model's space — from transformers' own Gemma4MultimodalEmbedder at a tiny configuration.
+
+    This is the piece that turns a tower's soft tokens into embeddings the decoder splices in. Records
+    the input soft tokens, the projected output, and the weights in the release naming. `checkpoint`
+    is unused.
+    """
+    import torch
+    from transformers.models.gemma4 import modeling_gemma4 as G
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4VisionConfig, Gemma4TextConfig
+
+    vision = Gemma4VisionConfig(hidden_size=32, rms_norm_eps=1e-6)
+    text = Gemma4TextConfig(hidden_size=48)
+    embedder = _randomized(G.Gemma4MultimodalEmbedder(vision, text), seed=31)
+    soft = torch.randn(1, 5, 32)
+    with torch.no_grad():
+        out = embedder(soft)
+    extra = {"soft": soft[0].float().contiguous()}
+    for key, value in embedder.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return out[0].float().contiguous()
+
+
+def run_gemma4_mel(image, checkpoint):
+    """The Gemma 4 audio front end: raw audio to log-mel features, from transformers' own
+    Gemma4AudioFeatureExtractor. `checkpoint` is unused.
+
+    A deterministic waveform is recorded alongside its features so the Swift front end runs the exact
+    same samples. This is a pure preprocessing step (framing, Hann window, magnitude FFT, HTK mel bank,
+    log), so it matches to floating precision.
+    """
+    import numpy as np
+    from transformers.models.gemma4.feature_extraction_gemma4 import Gemma4AudioFeatureExtractor
+
+    extractor = Gemma4AudioFeatureExtractor()
+    rng = np.random.RandomState(7)
+    waveform = (0.3 * np.sin(np.linspace(0, 80, 4000)) + 0.05 * rng.randn(4000)).astype(np.float32)
+    mask = np.ones(waveform.shape[0], dtype=np.float32)
+    features, _ = extractor._extract_spectrogram(waveform[None, :], mask)
+
+    import torch
+    globals()["_extra"] = {"waveform": torch.tensor(waveform, dtype=torch.float32).contiguous()}
+    return torch.tensor(np.asarray(features), dtype=torch.float32).contiguous()
+
+
+def run_gemma4_audio(image, checkpoint):
+    """The Gemma 4 audio Conformer at a tiny random configuration, from transformers' own
+    Gemma4AudioModel.
+
+    The most involved Gemma 4 tower: a 2-D convolutional subsampler, then Conformer layers — a macaron
+    feed-forward, a blocked relative-position attention (Transformer-XL rel-shift, a per-dimension
+    softplus scale, a logit softcap), a light depthwise convolution, a second macaron feed-forward, and
+    sandwich norms — and an output projection. The record carries the mel input, the post-subsample
+    hidden state, the parameter-free relative position encoding, the blocked attention mask, and the
+    final output, so the subsampler and the Conformer are each isolated. The blocked mask is fed to the
+    Swift side rather than reconstructed there, which isolates the attention arithmetic from the mask
+    construction. `checkpoint` is unused.
+    """
+    import torch
+    from transformers.models.gemma4 import modeling_gemma4 as G
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4AudioConfig
+
+    config = Gemma4AudioConfig(
+        hidden_size=32, num_hidden_layers=2, num_attention_heads=4, conv_kernel_size=3,
+        attention_chunk_size=4, attention_context_left=3, attention_context_right=0, hidden_act="silu",
+        residual_weight=0.5, gradient_clipping=1e10, attention_logit_cap=50.0, rms_norm_eps=1e-6,
+        subsampling_conv_channels=[8, 16], output_proj_dims=48)
+    model = _randomized(G.Gemma4AudioModel(config), seed=29)
+    # `_randomized` also perturbs the clippable-linear clamp buffers; the released model ships them at
+    # ±inf (identity), so reset them, matching the port which does not model the clamps.
+    for name, buffer in model.named_buffers():
+        if name.endswith(("input_min", "output_min")):
+            buffer.fill_(-float("inf"))
+        elif name.endswith(("input_max", "output_max")):
+            buffer.fill_(float("inf"))
+
+    torch.manual_seed(5)
+    features = torch.randn(1, 32, config.subsampling_conv_channels[0])
+    # Capture the blocked attention mask the model builds by wrapping its own converter.
+    captured = {}
+    original = model._convert_4d_mask_to_blocked_5d
+    def wrapped(mask_4d):
+        result = original(mask_4d)
+        captured["mask"] = result
+        return result
+    model._convert_4d_mask_to_blocked_5d = wrapped
+    # Hooks to capture the first layer's sub-component outputs, for the isolation harness.
+    seams = {}
+    handles = []
+    handles.append(model.layers[0].feed_forward1.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("ff1", o.detach())))
+    handles.append(model.layers[0].self_attn.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("attn", o[0].detach())))
+    handles.append(model.layers[0].lconv1d.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("lconv", o.detach())))
+    handles.append(model.layers[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("layer0", o.detach())))
+    with torch.no_grad():
+        subsampled, _ = model.subsample_conv_projection(features, None)
+        position_embeddings = model.rel_pos_enc(subsampled)
+        out = model(features)
+    for h in handles:
+        h.remove()
+    mask_5d = captured.get("mask")
+
+    extra = {
+        "input_features": features[0].float().contiguous(),
+        "subsampled": subsampled[0].float().contiguous(),
+        "position_embeddings": position_embeddings.float().contiguous(),
+    }
+    if mask_5d is not None:
+        extra["attention_mask"] = mask_5d[0].to(torch.int32).contiguous()   # [1, num_blocks, chunk, context]
+    for name, value in seams.items():
+        extra[f"seam_{name}"] = value[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        # The clippable-linear clamp buffers are identity (±inf); skip them.
+        if key.endswith(("input_min", "input_max", "output_min", "output_max")):
+            continue
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].float().contiguous()
 
 
 def run_qwen3_5(image, checkpoint):
@@ -2916,7 +3626,7 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder,
-                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer}
 

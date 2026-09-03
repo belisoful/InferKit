@@ -113,6 +113,68 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(embedding.count, 512, "ViT-B/32 embedding width")
     }
 
+    func testTextEmbeddings() throws {
+        try requireMLXRuntime()
+        // The released embedders load from their directories: NFKMLXQwen3Embedding.backend(directoryURL:)
+        // (last-token pooled decoder) and NFKMLXEmbeddingGemma.backend(directoryURL:) (mean-pooled
+        // bidirectional encoder). Here tiny random backbones exercise the modality without a download;
+        // the caller tokenizes and reads the embedding through embedding(forTokens:).
+        let qwen3 = try XCTUnwrap(try NFKMLXQwen3Embedding.backend(weightsURL: nil, tokenizer: nil,
+                                  configuration: .tiny) as? NFKMLXTextEmbeddingBackend)
+        let gemma = try XCTUnwrap(try NFKMLXEmbeddingGemma.backend(weightsURL: nil, dense2URL: nil,
+                                  dense3URL: nil, tokenizer: nil, configuration: .tiny) as? NFKMLXTextEmbeddingBackend)
+        for embedder in [qwen3, gemma] {
+            let embedding = embedder.embedding(forTokens: [3, 17, 42, 5].map { NSNumber(value: $0) })
+            XCTAssertEqual(embedder.embeddingDimensions, embedding.count, "one vector per input")
+        }
+    }
+
+    func testVisionLanguage() throws {
+        try requireMLXRuntime()
+        // The released SmolVLM2 loads from its directory: NFKMLXSmolVLM.load(directoryURL:), then
+        // model.answer(image:question:). Here the vision encoder, connector, and image processor run on
+        // tiny random / synthetic inputs to exercise the pipeline without a download.
+        NFKMLXRandom.seed(3)
+        let vision = NFKMLXSigLIPNet(.tiny)
+        let connector = NFKMLXSmolVLMConnector(visionHidden: 32, decoderHidden: 48, scaleFactor: 4)
+        let features = connector(vision(MLXRandom.normal([1, 64, 64, 3])))
+        XCTAssertEqual(features.shape, [1, 1, 48], "16 patches shuffle to one token at the decoder width")
+
+        let (pixels, rows, cols) = NFKMLXSmolVLMImageProcessor.process(Self.solid(300))
+        XCTAssertEqual([rows, cols], [4, 4])
+        XCTAssertEqual(pixels.shape, [17, 3, 512, 512])
+    }
+
+    func testQwen3VLVisionTower() throws {
+        try requireMLXRuntime()
+        // The released Qwen3-VL vision tower loads from its directory:
+        // NFKMLXQwen3VL.visionNet(directoryURL:). Here a tiny random tower folds a 4×4 patch grid into
+        // 4 tokens and produces the deepstack features the decoder injects.
+        NFKMLXRandom.seed(1)
+        let config = NFKMLXQwen3VLVisionConfiguration(
+            hiddenSize: 32, depth: 4, headCount: 2, intermediateSize: 64, patchSize: 2, temporalPatchSize: 2,
+            spatialMergeSize: 2, outHiddenSize: 16, positionGridSide: 4, deepstackLayers: [1, 2])
+        let net = NFKMLXQwen3VLVisionNet(config)
+        let (output, deepstack) = net(MLXRandom.normal([16, 24]), grid: (t: 1, h: 4, w: 4))
+        eval(output)
+        XCTAssertEqual(output.shape, [4, 16])
+        XCTAssertEqual(deepstack.count, 2)
+    }
+
+    func testReranking() throws {
+        try requireMLXRuntime()
+        // The released reranker loads from its directory: NFKMLXModernBERTReranker.reranker(directoryURL:),
+        // then reranker.rankedIndices(query:documents:) / scores(query:documents:) score a query against
+        // each candidate and order them. Here a tiny random net stands in without a download.
+        NFKMLXRandom.seed(2)
+        let reranker = try NFKMLXModernBERTReranker.reranker(weightsURL: nil, tokenizer: nil,
+                                                             configuration: .tiny)
+        XCTAssertEqual(NFKMLXModernBERTReranker.modelName, "gte-reranker-modernbert-base")
+        // With no tokenizer the request path returns a neutral 0; a release directory supplies the
+        // byte-level BPE tokenizer that makes the score meaningful.
+        XCTAssertTrue(reranker.score(query: "a query", document: "a candidate document").isFinite)
+    }
+
     // MARK: Video (frame pair / recurrent, tensor & module backends)
 
     func testVideoModels() throws {

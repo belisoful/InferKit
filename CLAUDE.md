@@ -1378,6 +1378,156 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode
   ran, fixed by hoisting the literal.
+- `NFKMLXTextEmbedder` / `NFKMLXQwen3Embedding` / `NFKMLXTextEmbeddingBackend` — on-device **text
+  embeddings**, the capability the package lacked: it embedded images (CLIP) with no path for text, so
+  no semantic search, retrieval, clustering, or reranking over a consumer's corpus. A text embedder is
+  the decoder-only model with its output projection removed — the post-final-norm hidden states pooled
+  to one vector and L2-normalized — which is exactly the seam `NFKMLXLanguageNet.hiddenStates(fromEmbeddings:)`
+  already exposes, so **nothing about the transformer is re-implemented**. Qwen3-Embedding-0.6B is the
+  Qwen3-0.6B dense decoder this package already runs (`configuration(fromHuggingFace:)` reads its
+  `Qwen3ForCausalLM`/`qwen3` config unchanged; geometry equals `.qwen3_0_6B` but for `vocab_size` 151669
+  and the tie), pooled at the **LAST token** over an appended `<|endoftext|>` (id 151643, NOT the chat
+  `eos_token` 151645) and L2-normalized. `NFKMLXTextEmbedderConfiguration` carries the pooling
+  (`.lastToken`/`.mean`), the appended token, normalization, and the Matryoshka `dimensions` a leading
+  slice is a usable embedding at. **Reference parity** against the model card's own transformers recipe
+  (`AutoModel` last hidden state, last-token pool, `F.normalize`) on the released 0.6B weights: query
+  embedding cosine 0.99999999999, document 0.99999999999, retrieval score 0.76456 reproduced to 1e-6 end
+  to end (`run_reference.py qwen3_embedding`, the `llm` oracle interpreter). A separate
+  tokenizer-agreement test reproduces the reference's ids from the shared text — the **`qwen2`
+  pre-tokenization** is what makes them right, the same trap the music tokenizer hit.
+  **Two release facts are load-bearing.** The tokenizer appends `<|endoftext|>` and its hidden state is
+  what the pooling reads, so the append is the model's geometry rather than the tokenizer's; and the
+  released checkpoint is the **BASE model** (`AutoModel`/`Qwen3Model`), so its keys carry no `model.`
+  prefix and no `lm_head` — the decoder keeps the causal-LM layout, so `NFKMLXQwen3Embedding.loadWeights`
+  prepends `model.` and drops the absent projection (the shared `NFKMLXLanguage.loadedRelease` loader
+  expects the prefix and would reject it, which is exactly what the first parity run reported). ObjC
+  reaches it through `backendWithDirectoryURL:error:` and `backendWithDirectoryURL:outputDimensions:error:`
+  (0 = full width); the `*Configuration` structs stay Swift-only, per the parity rule, and a Swift
+  caller with token ids reads them through `embedding(forTokens:)`. `NFKMLXLanguage.releaseTokenizer(inDirectory:)`
+  was extracted from `loadedRelease` so the embedder and the tokenizer-agreement test build the release
+  tokenizer without loading the 1.2 GB of weights.
+- `NFKMLXEmbeddingGemma` / `NFKMLXGemma3EncoderNet` / `NFKMLXGemmaTokenizer` — a **second text embedder
+  over a second architecture**: EmbeddingGemma-300M, a BIDIRECTIONAL encoder where Qwen3-Embedding is a
+  causal decoder. The backbone is the Gemma 3 text model (`gemma3_text`, `use_bidirectional_attention`),
+  NOT the causal Gemma 4 (`gemma4_text`) `NFKMLXGemmaLanguage` implements, so it is its own
+  implementation `NFKMLXGemma3EncoderNet`: `(1 + w)` RMS normalization (Gemma 3; Gemma 4 uses `x · w`, the
+  difference that first broke a Gemma port here), the sandwich norm (a norm before AND after each of
+  attention and the feed-forward), dual RoPE (local base 10000 for the sliding layers, global 1000000 for
+  the full ones, the full head turned entirely — Gemma 3 carries no partial factor), per-head QK-norm
+  before the rotary, a GeGLU `gelu_pytorch_tanh` feed-forward, the query scaled by `queryPreAttnScalar ^
+  -0.5`, an embedding scaled by `√hidden`, NO value norm, NO per-layer embeddings, NO softcapping. Every
+  layer is bidirectional; a sliding layer sees a symmetric window (512), a full layer everything, and for
+  an input shorter than the window (the common case) the mask is inert and every layer is full attention.
+  The sentence-transformers head is **mean pooling over every token → Dense 768→3072 → Dense 3072→768
+  (both no-bias, Identity activation) → L2**, with Matryoshka truncation before the final normalize.
+  The Dense projections live in `2_Dense/`/`3_Dense/` subdirectories keyed `linear.weight`, which
+  `NFKMLXReleaseWeights.files` does not read, so the loader takes them separately; the backbone's keys are
+  the base-model checkpoint's (no `model.` prefix). **Reference parity on the FIRST numeric run** against
+  the sentence-transformers pipeline over transformers' own `Gemma3TextModel` (`run_reference.py
+  embeddinggemma`, the `llm` oracle): every one of the 24 layers exact by the per-layer isolation harness,
+  query and document embedding cosine 0.99999999999, retrieval score 0.60923 to 1e-7.
+  **The tokenizer is BPE, not unigram, and that was measured rather than assumed.** Gemma's
+  `tokenizer.model` scores are merge RANKS (score ≈ −(id − constant)), so `NFKUnigramTokenizer`'s unigram
+  Viterbi picks the wrong pieces (`ta`+`sk` over `task`) — caught by a tokenizer-agreement test before it
+  reached anything else. `NFKMLXGemmaTokenizer` reads Gemma's byte-fallback BPE `tokenizer.json` DIRECTLY
+  (no offline conversion): a metaspace normalizer (space → `▁`), the whole normalized string as one
+  pre-token (the space split is a no-op after normalization), each character or its UTF-8 byte-fallback
+  `<0xHH>` pieces, then the greedy merge-by-rank loop. It is neither the byte-level BPE the GPT-2/Qwen
+  path uses nor unigram, so it is its own reader; token-for-token agreement with the reference is tested.
+  The gated `google/embeddinggemma-300m` is mirrored ungated at `unsloth/embeddinggemma-300m` (the
+  project uses mirrors for gated repos, as SD 2.1 does). ObjC reaches it through
+  `backendWithDirectoryURL:error:` / `backendWithDirectoryURL:outputDimensions:error:` and the
+  `query:`/`document:` prompt helpers; `NFKMLXTextEmbeddingBackend` now serves both embedders through the
+  internal `NFKTextEmbedding` protocol and a tokenization closure (so a family with its own pooling,
+  projection, and tokenizer plugs into one backend). The `*Configuration` structs stay Swift-only.
+- `NFKMLXModernBERTReranker` / `NFKMLXModernBertRerankerNet` — a **cross-encoder reranker**, the third
+  piece of the retrieval story after the two embedders. An embedder scores a query and a document
+  independently and compares the vectors; a cross-encoder reads the pair TOGETHER —
+  `[CLS] query [SEP] document [SEP]` — through one bidirectional pass and predicts a single relevance
+  logit, which is more accurate and is what reorders an embedder's shortlist. It is the released
+  `gte-reranker-modernbert-base` (`ModernBertForSequenceClassification`). Because it takes a query and a
+  LIST of documents rather than one input, it is a scoring OBJECT, not an `NFKInferenceBackend`:
+  `scores(query:documents:)` / `rankedIndices(query:documents:)` (ObjC `scoresForQuery:documents:` /
+  `rankedIndicesForQuery:documents:` / `scoreForQuery:document:`), built by `rerankerWithDirectoryURL:error:`.
+  ModernBERT is a modernized BERT encoder: **RoPE** (a global base 160000 every third layer — `i %
+  globalAttentionEvery == 0` — and a local base 10000 with a **128-token bidirectional sliding window**
+  elsewhere), a **GeGLU** feed-forward (`Wi` → input,gate; `gelu(input) * gate`; exact erf GELU, not
+  tanh), **LayerNorm throughout with NO biases** (`norm_bias` false), bias-free attention and MLP, **no
+  absolute position embeddings**, and **layer 0's `attn_norm` is the identity** (the embeddings are
+  pre-normed, so the checkpoint carries no weight for it and the module's is nil). The reranker head is
+  **mean pooling over the pair → a prediction head (dense + gelu + LayerNorm) → a single-logit classifier
+  (WITH bias, though `classifier_bias` reads false — the checkpoint has `classifier.bias`, so trust the
+  checkpoint)**. Module keys are the checkpoint's under `model.`/`head`/`classifier`, so nothing is
+  remapped. **Reference parity** against transformers' own `ModernBertForSequenceClassification`
+  (`run_reference.py modernbert_reranker`, the `llm` oracle): every one of the 22 layers exact by the
+  per-layer isolation harness, and both the relevant and irrelevant scores to within 5e-3, plus the
+  reranking order. **Two things were measured, not assumed.** The parity pair is deliberately long (95
+  tokens) so it EXCEEDS the 64-either-side local window and actually exercises the sliding layers — a
+  short pair would leave a wrong window inert and pass silently. And **ModernBERT's `output_hidden_states`
+  does NOT apply the final norm to its last entry** (the final norm goes only into `last_hidden_state`),
+  unlike the Llama/Gemma convention, so `layerStates` returns the RAW last layer output and the score test
+  covers the final norm — the isolation reported a lone divergence at the last state until this was
+  matched, while the score already agreed to 2e-6. **The tokenizer is GPT-2-family byte-level BPE** (NOT
+  Gemma's char-BPE), which the core `NFKByteLevelBPETokenizer` reads; the release ships only
+  `tokenizer.json`, so `byteLevelTokenizer(inDirectory:)` extracts its vocabulary and merges into the
+  `vocab.json`/`merges.txt` the core reader takes (a temp directory), then wraps the pair in
+  `[CLS]`/`[SEP]`; token-for-token agreement with the reference is tested.
+- `NFKMLXSmolVLM` / `NFKMLXSigLIPNet` / `NFKMLXSmolVLMConnector` / `NFKMLXSmolVLMNet` — the package's
+  **first vision-language model**, SmolVLM2-500M: an image and a question in, an answer out, which is
+  the dominant 2026 on-device use (captioning, VQA, doc/screen understanding). Three parts: a **SigLIP
+  vision encoder** (`NFKMLXSigLIPNet`: patch-embedding convolution + learned position embedding + 12
+  bidirectional layers + post-norm; separate q/k/v/out projections WITH bias, gelu-tanh, LayerNorm eps
+  1e-6), a **pixel-shuffle connector** (`NFKMLXSmolVLMConnector`: the Idefics3 pixel shuffle folds a
+  4×4 patch neighborhood into one token at 16× the channels — 1024 patches per tile → 64 — then one
+  bias-free `proj` to the decoder width), and a **Llama decoder** the dense `NFKMLXLanguageNet` already
+  runs (`text_config` model_type llama, hidden 960, 32 layers, loaded from the checkpoint's
+  `model.text_model.` subtree remapped onto `model.`). The **fusion** embeds the text, then splices the
+  flattened projected vision tokens into the decoder's input embeddings at the `image_token_id` (49190)
+  positions with a `where` over a gathered feature index (no per-row scatter), and the causal decoder
+  reads the whole fused sequence. **Reference parity** against transformers' own
+  `SmolVLMForConditionalGeneration` (`run_reference.py smolvlm`, the `llm` oracle — needs Pillow,
+  torchvision, num2words), staged by the isolation harness: SigLIP embeddings 0.9999999999, layer 0
+  0.9999999999, the full encoder 0.99999999997, the connector 0.9999999999, and the fused decoder
+  logits predicting the reference's token at **every one of the 1140 positions** (last-position cosine
+  0.9999999999) with the greedy continuation **token for token**. **Two bugs the isolation harness
+  located, neither guessable:** SigLIP's position ids are NOT the row-major `0 … 1023` — the reference
+  buckets each patch's fractional coordinate against `1/side … (side-1)/side` with a `1 - 1e-6` factor,
+  so a full 32-patch row maps to `[0, 0, 1, …, 30]` (`positionIds` reproduces it, held as a Swift array
+  so the stored constant does NOT enter `parameters()` — a stored `MLXArray` would, and the loader would
+  then report it as an uncovered weight); and **SmolVLM's `lm_head` is NOT tied to the embedding**
+  (byte-diff 0.85 despite the tied geometry), so the decoder loads its own `lm_head.weight` from the top
+  level (`tiesWordEmbeddings: false`) rather than reusing the embedding — loading it tied scored logit
+  cosine 0.83 and drifted after the sixth continuation token. **The consumer path:**
+  `NFKMLXSmolVLMImageProcessor` tiles a `CGImage` the way SmolVLM does (longest edge scaled to 2048,
+  split into `⌈h/512⌉ × ⌈w/512⌉` 512×512 sub-tiles plus a global 512×512 thumbnail appended last, each
+  normalized to `-1 … 1`), and `NFKMLXSmolVLM.prompt(rows:cols:question:)` builds the expanded
+  `User:` + per-tile `<fake_token_around_image><row_r_col_c>` + 64 `<image>` + `<global-img>` tile +
+  question + `<end_of_utterance>\nAssistant:` string, which the byte-level BPE tokenizer (every added
+  token registered as a special so the string segments on them) turns into ids **token-exactly** against
+  the processor. The resize is CoreGraphics, NOT the reference's PIL LANCZOS, so a consumer caption is
+  not token-identical to the reference — a documented approximation; the network is at parity on the
+  reference's own pixel values, and end to end on the real Apollo-astronaut validation photo the model
+  answers "a man is standing in front of a backdrop that resembles the moon. He is dressed in a white
+  …". ObjC reaches it through `smolVLMWithDirectoryURL:error:` and `answerForImage:question:`.
+- `NFKMLXQwen3VLVisionNet` / `NFKMLXQwen3VL` — the vision tower of a **second VLM**, Qwen3-VL-2B, and a
+  second vision architecture beside SmolVLM's SigLIP. Qwen3-VL's encoder is a **2D-rotary ViT** whose
+  patches are laid out in **2×2 merge blocks** (not row-major): a patch embedding (the reference's
+  full-kernel `Conv3d` written as one `Linear` over the flattened `3·2·16·16` patch), a **bilinearly
+  interpolated position embedding** (the learned 48×48 grid resampled to the image's grid, then
+  reordered to merge-block order to line up with the patches), 24 blocks with 2D rotary and gelu-tanh
+  MLP, a **merger** that folds each 2×2 block to `out_hidden` (2048), and a three-layer **deepstack**
+  (feature maps from vision layers 5/11/17, each through its own merger with a POST-shuffle norm). The
+  2D rope pairs channel `i` with `i+32` over a `[row·freqs, col·freqs]` table; the merger groups four
+  CONSECUTIVE patches, which is why the merge-block patch order is load-bearing. **Reference parity on
+  the FIRST numeric run** against transformers' own Qwen3-VL vision model (`run_reference.py qwen3vl`,
+  the `llm` oracle — needs Pillow/torchvision): patch embedding 0.9999999999, position embedding
+  0.9999999999, merged output 0.9999999997, and every one of the three deepstack features
+  0.9999999999. The decoder is the Qwen3 dense stack `NFKMLXLanguageNet` already runs, loaded from the
+  checkpoint's `model.language_model.` subtree. **Qwen3-VL is much more than "reuses the Qwen3 decoder":
+  the decoder adds interleaved M-RoPE (3D positions, `mrope_section [24,20,20]`) and deepstack injection
+  at its first three layers**, and `get_rope_index` computes the 3D positions from the token layout —
+  that decoder integration is the remaining wiring on top of the shipped Qwen3 stack, and the vision
+  tower (the novel architecture) is what ships here at parity.
 - `NFKMLXHybridLanguage` — the hybrid decoder Qwen3.5, Qwen3.6, and **Qwen3.8** are built from
   (`Qwen3_5ForConditionalGeneration`), at **reference parity** on the released Qwen3.5-4B (logit
   cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). 4B is the smallest
@@ -1561,9 +1711,167 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   port.
   Scope: the text decoder. The release is tri-modal, carrying a vision tower (659 tensors) and an audio
   Conformer (752); a test names them so they are known rather than overlooked. The configuration guard
-  is EXACT (`gemma4_text`), not a prefix: `gemma4_unified_text` (the 12B) is a different architecture
-  and the 26B-A4B is a 128-expert mixture, and both satisfy a `gemma4` prefix — the dense sizes also
-  carry the expert fields NULLED, so the guard reads the number rather than testing for the key.
+  accepts `gemma4_text` and `gemma4` and rejects everything else: `gemma4_unified_text` (the 12B) is a
+  DIFFERENT decoder architecture (`Gemma4Unified*` classes), so it is refused rather than loaded into
+  this stack and made to produce fluent nonsense. **The 26B-A4B mixture (`enable_moe_block`) IS
+  implemented** — see the mixture entry below; the dense sizes carry the expert fields NULLED and set
+  the flag false, so the flag distinguishes them.
+  **The Gemma 4 mixture of experts** (`NFKGemmaRouter` / `NFKGemmaExperts`, the 26B-A4B family) runs a
+  routed branch BESIDE every layer's dense feed-forward and sums the two — not a dense-FFN swap. The
+  block computes `post_ff_norm(post_ff_norm_1(mlp) + post_ff_norm_2(experts(pre_ff_norm_2(residual))))`,
+  where the router reads the pre-feed-forward `residual` (NOT the normed copy) and the experts read a
+  separately-normed copy of it. The router is a scale-free RMS norm, a learned per-channel `scale`
+  times `hidden^-0.5`, a projection to the experts, a softmax, the top-k, a renormalization, and a
+  learned `per_expert_scale` on the kept weights; the experts are a fused `gate_up_proj` `[E, 2·inter,
+  hidden]` and a `down_proj` `[E, hidden, inter]` dispatched through `gatherMM`, and they apply the
+  routing weights THEMSELVES (the reference's index-add), so the block sums rather than re-weights.
+  **Reference parity** against transformers' own `Gemma4ForCausalLM` at a tiny two-layer configuration
+  (`run_reference.py gemma4_moe`, `IK_PARITY_GEMMA4_MOE`, the gemma oracle): every hidden state exact
+  layer by layer, logit cosine 0.9999999999996, on the first numeric run after the geometry was
+  corrected. **Two geometry facts were load-bearing, both invisible on the E-series:** the per-layer
+  input embedding is a FIXED 262144 rows (`vocab_size_per_layer_input`), not the token vocabulary — the
+  two coincide on the E-series because its token vocabulary IS 262144, so the net had been reading the
+  token vocabulary and it only mattered at a tiny test; and a FULL-attention layer runs a fixed 512-wide
+  head (its own `head_dim`) where the sliding layers run theirs, so setting the global head width to the
+  sliding one crashed the full layer's projection reshape. The mixture is read from `config.json`
+  through `NFKMLXGemmaLanguage.configuration(fromHuggingFace:)` (the same entry the dense sizes use),
+  which turns on the routed branch from `enable_moe_block`. **The Gemma 4 decoder does not yet expose a
+  public `NFKInferenceBackend` factory** — a pre-existing gap for the whole family, dense sizes
+  included: it is reached through `configuration(fromHuggingFace:)` plus the internal `makeNet` /
+  `loadWeights` the parity tests use.
+- `NFKMLXGemma4UnifiedNet` (`NFKMLXGemma4Unified.swift`) — the **12B `gemma4_unified_text` decoder**, a
+  DIFFERENT architecture from the E-series: no per-layer input embeddings and no mixture, only the
+  sandwich block with a per-layer scalar. Its attention is the same one the E-series runs — learned
+  query/key norms, a scale-free value norm, attention at scale 1, per-layer head widths (a full layer
+  runs 512), and the proportional rotary on the full layers — so `NFKGemmaAttention` and
+  `NFKGemmaFeedForward` are REUSED directly and only the block and model are new (this is why the port
+  matched on the first numeric run rather than after a hunt). `NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace:)`
+  reads a `gemma4_unified_text` config (rejecting the E-series and everything else); `makeUnifiedNet` /
+  `loadUnifiedWeights`. Embeddings scale by `√hidden`, logits are tied, no softcap. **Reference parity**
+  against transformers' own `Gemma4UnifiedForCausalLM` at a tiny sliding/sliding/full configuration
+  (`run_reference.py gemma4_unified`, `IK_PARITY_GEMMA4_UNIFIED`, the gemma oracle): every layer exact
+  (cosine 1.0000000000), logit cosine 0.9999999999995, on the first run.
+- `NFKMLXGemma4VisionNet` (`NFKMLXGemma4Vision.swift`) — the **Gemma 4 vision encoder**, the image
+  tower of the tri-modal release. It embeds flattened patches through one linear projection, adds a
+  learned 2-D position embedding (an x-table and a y-table summed per patch, padding zeroed), and runs
+  the sandwich block BIDIRECTIONALLY. The attention keeps the learned query/key norms, the scale-free
+  value norm, and scale 1, and applies a **2-D rope** BESIDE the learned position embedding — the head
+  is split per spatial axis (`headDim/2` channels each) and each half is rotated (rotate-half) by its
+  coordinate at rope base **100**. **The rope was MISSING at first and the tiny random-weight test could
+  not see it** — at `head_dim` 8 with small positions it moved the tiny encoder by 2e-8 (0.9999999850,
+  which read as ordinary imprecision), but on the RELEASED weights (`head_dim` 64, 16 layers) it
+  compounded to a cosine of 0.77; the real-weight test is what caught it. The projections are
+  `Gemma4ClippableLinear` (`NFKGemmaClippableLinear`) — a bias-free linear under a `.linear` key with
+  optional input/output clamps. **The release trains them with FINITE clamp bounds** (`use_clipped_linears`,
+  a quantization-aware-training artifact — ±12, ±2.4, …), which are load-bearing at inference; the tiny
+  oracle used `use_clipped_linears=False`, so this too only surfaced on real weights. **Both fixes are
+  MEASURED load-bearing on the released weights** (`testGemma4VisionRopeAndClampsAreLoadBearingOnTheReleasedWeights`):
+  running the real encoder with an identity rope (cos 1, sin 0) drops it to 0.768, and with no clamp
+  bounds to 0.837, against the 0.9999999999898 the pair reaches — each isolated by leaving the other in
+  place. `makeVisionNet` /
+  config `NFKMLXGemma4VisionConfiguration` (`ropeTheta`, `useClippedLinears`). **Reference parity** at a
+  tiny configuration (`run_reference.py gemma4_vision`, `IK_PARITY_GEMMA4_VISION`, encoder 0.9999999999)
+  AND **on the released E2B weights** (`gemma4_vision_real`, `IK_PARITY_GEMMA4_VISION_REAL`: encoder
+  0.9999999999898, pooled 0.9999999999975, projected 0.9999999999948 — the vision tower, pooler, and
+  embedder loaded selectively from the tri-modal checkpoint). **The pooler is implemented too**
+  (`softTokens(_:positionIds:)`): a position-based average pool that folds the patches falling into each
+  `k × k` grid cell (with `k` read from the input patch count over the output token count) and scales by
+  `√hidden`, producing the soft tokens a language model reads. Scope now: the patch embedder, encoder,
+  and pooler; the optional standardization and the image processor (a `CGImage` to flattened patches
+  and their positions) are the remaining input
+  adapter.
+- `NFKMLXGemma4AudioNet` (`NFKMLXGemma4Audio.swift`) — the **Gemma 4 audio Conformer**, the most complex
+  tower. A **2-D convolutional subsampler** (two stride-2 3×3 convolutions, a channel LayerNorm with NO
+  bias, a ReLU, then a linear projection of the flattened frequency-and-channel features — the frequency
+  dim is tied to `subsampling_conv_channels[0]`) feeds **Conformer layers**: a macaron feed-forward, a
+  **blocked relative-position attention**, a **light depthwise convolution**, a second macaron
+  feed-forward, and sandwich norms, then an output projection. Built in two isolated phases, each at
+  parity against transformers' own `Gemma4AudioModel` (`run_reference.py gemma4_audio`,
+  `IK_PARITY_GEMMA4_AUDIO`): the subsampler (`makeAudioSubSample`, cosine 0.9999999999999845) and the
+  Conformer fed the reference's post-subsample hidden, position encoding, and mask (`conformer(...)`,
+  cosine 0.9999999999999974, the blocked-attention seam alone 0.9999999999999688).
+  **The blocked attention is a Transformer-XL relative-position attention:** queries group into
+  non-overlapping blocks of `chunk_size`, each block attends over a `contextSize = chunk + (left-1) +
+  right` window extracted by a padded gather (MLX has no `unfold`), the content score adds a
+  relative-position score built from `relative_k_proj` and reshaped through the appendix-B `relativeShift`
+  (pad, reshape, drop, reshape), the logits are `tanh`-softcapped, the mask fills the invalid positions,
+  and the queries carry a per-dimension **softplus** scale beside `q_scale`/`k_scale`. The light conv is
+  a GLU, a **causal** depthwise convolution (left-padded so a frame sees no future), and a pointwise
+  projection. The convolution kernels load transposed from PyTorch's `[out,in,kH,kW]` / `[ch,1,k]` to
+  MLX's layouts. **The parity trap was in the ORACLE, not the port:** the shared `_randomized` helper
+  perturbs the clippable-linear clamp buffers (`input_min`/`max`), which the released model ships at
+  ±inf (identity) — leaving them randomized clamped the reference's activations aggressively and the
+  first feed-forward scored 0.35; resetting them to ±inf in the oracle (the port models no clamp)
+  restored parity. **The full tower runs end to end** (`callAsFunction(_ features:)`): it subsamples,
+  builds its OWN sliding-window blocked mask (`blockedMask`), and runs the Conformer — reference parity
+  against `Gemma4AudioModel` from the mel features (cosine 0.999999999999996). The mask construction was
+  the one off-by-one: the window function admits `dist ∈ [0, leftWindow)` (STRICT), so a valid past
+  distance is `< maxPast`, not `≤ maxPast` — the inclusive form scored 0.9987. **Reference parity on the
+  released E2B weights too** (`gemma4_audio_real`, `IK_PARITY_GEMMA4_AUDIO_REAL`: encoded
+  0.9999999999995, projected 0.9999999999994 — the audio tower and its embedder loaded from the tri-modal
+  checkpoint, with the FINITE `use_clipped_linears` clamps that the tiny oracle left at ±inf). The audio
+  configuration gained `useClippedLinears`, threaded to every projection, the same as the vision tower.
+- `NFKMLXGemmaBackend` (`NFKMLXGemmaBackend.swift`) — the **text-generation backend** for the Gemma 4
+  decoders, so a consumer runs them through the InferKit contract. `NFKMLXGemmaLanguage.backend(directoryURL:)`
+  / `@objc gemmaBackendWithDirectoryURL:error:` reads a release's `config.json` and dispatches on its
+  model type: the E-series and the 26B-A4B mixture through `configuration(fromHuggingFace:)` + `makeNet`,
+  the 12B through `unifiedConfiguration` + `makeUnifiedNet`. **Gemma runs PREFILL-ONLY** — the decoders
+  carry no key-value cache — so generation re-runs the growing sequence each step (quadratic, fine for
+  the short outputs an on-device assistant produces). The tokenizer is `NFKMLXGemmaTokenizer` (the core
+  reader cannot produce Gemma's byte-fallback BPE), which gained `decode` and `id(forToken:)`; a raw
+  prompt encodes after `<bos>`, and a message list builds Gemma's `<start_of_turn>role\n…<end_of_turn>`
+  turns from the special-token IDS rather than encoding the markers as text. Generation is greedy at
+  temperature 0, else temperature-sampled, stopping on `<eos>`/`<end_of_turn>`. **Measured end to end**
+  on the released E2B (`testGemmaBackendGeneratesText`): "The capital of France is" → " Paris." The net
+  itself is already at parity layer by layer, so the backend test exercises the tokenizer and the
+  generation loop it adds. The networks and tokenizer cross the async job boundary through an
+  `@unchecked Sendable` holder, as the core language backend does.
+- `NFKMLXGemma4ImageProcessor` (`NFKMLXGemma4ImageProcessor.swift`) — the vision **image processor**:
+  a `CGImage` to the flattened patches and `(x, y)` positions the tower reads. It resizes preserving
+  aspect ratio to fit a patch budget (both sides a multiple of `poolingKernelSize · patchSize`),
+  rescales to `0 … 1`, splits into patches flattened `(row, column, channel)`, and pads to the budget
+  with `(-1, -1)` positions. The resize is CoreGraphics, not the reference's torchvision BICUBIC, so the
+  patch pixels are a documented approximation (as SmolVLM's are); the resized dimensions, the patch
+  layout, and the position ids are the reference's exactly, checked by `testGemma4ImageProcessorLayout`.
+- `NFKMLXGemma4AudioFeatureExtractor` (`NFKMLXGemma4AudioFeatureExtractor.swift`) — the audio **mel front
+  end**: raw 16 kHz audio to the log-mel features `[frames, 128]` the subsampler reads. Semicausal
+  framing (prepend `frameLength / 2` zeros, unfold `frameLength + 1` and drop the last sample), a
+  periodic Hann window, the MAGNITUDE (not power) of a 512-point real FFT, a 128-band HTK triangular mel
+  filterbank (`log10`-mel, `norm=None`, distinct from the Slaney bank the Whisper front end uses), and
+  `log(mel + 1e-3)`. **Reference parity** against transformers' own `Gemma4AudioFeatureExtractor`
+  (`run_reference.py gemma4_mel`, cosine 0.9999999999928).
+- `NFKMLXGemma4MultimodalEmbedder` / `NFKMLXGemma4Fusion` (`NFKMLXGemma4Fusion.swift`) — the **multimodal
+  fusion**. The embedder projects a tower's soft tokens into the decoder's space (a scale-free RMS norm,
+  then a bias-free linear to the text hidden size) at **reference parity** against
+  `Gemma4MultimodalEmbedder` (`run_reference.py gemma4_embedder`, cosine 0.9999999999999927); `fuse`
+  replaces the text embeddings at the placeholder positions with the projected soft tokens in order, the
+  same `where`-over-a-gathered-index splice the SmolVLM fusion uses. **The whole chain end to end**
+  (image/audio to an answer) additionally needs the released TRI-MODAL weights — the towers, the
+  embedders, and the E-series decoder together — which the text-only E2B release does not carry, so the
+  components are each verified at parity rather than the full run.
+- `NFKMLXGemma4ConditionalGeneration` (`NFKMLXGemma4Fusion.swift`) — the **full tri-modal chain wired end
+  to end**: an image and/or a waveform and a placeholder-carrying token sequence in, a generated
+  continuation out. It runs the image through the processor and the vision tower to soft tokens (and the
+  waveform through the mel front end and the audio tower), projects each through its embedder, splices
+  them at the placeholder positions with `fusedEmbeddings`, and runs the E-series decoder prefill-only
+  over the fused embeddings. The decoder gained an `embed` / `logits(fromEmbeddings:tokens:)` seam so the
+  main stream is supplied pre-spliced while the per-layer input identity still reads the
+  placeholder-padded token ids (the reference's split — the context projection reads the spliced
+  embeddings, the identity reads the ids). A placeholder token embeds as the pad token and the soft
+  token then replaces it. **Reference parity on the RELEASED E2B weights, end to end**
+  (`testGemma4ConditionalGenerationOnTheReleasedWeights`, `run_reference.py gemma4_conditional_real`,
+  `IK_PARITY_GEMMA4_CONDITIONAL_REAL`): an image over a 6×6 patch grid fills four image placeholder
+  tokens, and the fused sequence's logits match transformers' own `Gemma4ForConditionalGeneration` at
+  logit cosine 0.999999999959, argmax 8/8 (every position predicts the same token). **The E2B release
+  IS the full tri-modal `Gemma4ForConditionalGeneration`** — its 10 GB checkpoint carries the vision
+  tower, the audio Conformer, both embedders, AND the decoder — so the numeric end-to-end run needed no
+  separate weights; an earlier note wrongly called it text-only. The oracle and the Swift side each load
+  the sub-towers selectively from that one checkpoint (`model.vision_tower.` / `model.embed_vision.` /
+  `model.language_model.`), so neither has to hold the whole tri-modal graph at float32 at once.
+- **Still remaining in the Gemma 4 family:** the optional vision standardization only. The four
+  architectures, both towers' full forwards, the input adapters, the fusion, and the conditional-generation
+  chain are all at reference parity ON THE RELEASED WEIGHTS; the text decoders generate through
+  `NFKMLXGemmaBackend`.
   **E4B is measured too**, at the precision it ships in: its 16 GB of bf16 weights double past this
   machine's RAM at float32, so both sides run bf16 (`IK_GEMMA_DTYPE=bfloat16` for the oracle,
   `.checkpoint` here) — logit cosine 0.9998 with the same argmax at every position, and the strict
@@ -1611,6 +1919,77 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   and Gemma's copy had NO sharded path — a capability gap consolidation removed as a side effect.
   The per-family differences stay in the loaders where they belong: the tied-`lm_head` drop, the
   hybrid's `model.language_model.` remap and depthwise-conv transpose, Gemma's tower skip.
+- `NFKMLXGGUF` / `NFKMLXGGUFFormat` — the **native GGUF reader**, the sequel to the native PyTorch
+  checkpoint reader, and the format most quantized language models are distributed in. Same contract:
+  pure Foundation below the MLX materialization (parsing and dequantization run under `swift test`;
+  `NFKMLXGGUFFormat` is the Foundation layer, `NFKMLXGGUF` the `@objc` MLX face), and a type it does not
+  implement is **refused per-tensor, not per-file** — an unknown GGML type leaves the tensor LISTED (so a
+  consumer sees the whole model) and only reading it throws. The container is a header of typed key/value
+  metadata (`readValue` covers the 13 GGUF value types, including nested arrays) and a tensor table
+  (name, dims, GGML type, offset), then the tensor data aligned to `general.alignment` (default 32).
+  **GGUF stores the fastest-varying dimension FIRST**, so a tensor's row-major (MLX) shape is the
+  REVERSE of its stored dims — a Linear weight stored `ne=[in, out]` is shape `[out, in]`. Dequantizers:
+  `F32`, `F16`, `Q4_0`, `Q5_0`, `Q8_0`, `Q4_K`, `Q6_K` — the k-quants (`Q4_K`: a 256-value super-block of
+  eight 32-value sub-blocks, a block `d`/`dmin` scaling per-sub-block 6-bit scales/mins unpacked from 12
+  packed bytes, each value `d·sc·q − dmin·min`; `Q6_K`: sixteen 16-value sub-blocks, a 6-bit quant from a
+  4-bit low and 2-bit high part centered at 32, scaled by `d` and a per-sub-block int8 scale) plus the
+  legacy 32-value blocks. The scalar per-block port matches the vectorized `gguf` reference exactly
+  (both compute the one canonical dequantization). **Bit-exact** against the `gguf` package on the
+  released SmolLM2-135M Q4_K_M (`run_reference.py gguf`, the `llm` oracle + the `gguf` package): the
+  first tensor of each of F32/Q8_0/Q5_0/Q4_K/Q6_K dequantizes to **worst |difference| 0.0** across 262144
+  values. A real `Q4_K_M` file mixes Q5_0 (the bulk here), Q4_K, Q6_K, Q8_0, and F32, so supporting Q5_0
+  is what makes the file readable rather than mostly-refused. A stored `MLXArray` constant is NOT held on
+  the format struct; the dequant returns `[Float]`, materialized to an `MLXArray` only in the face.
+  **Wired into the language-model loader** (`NFKMLXGGUFLanguage.swift`): a GGUF release generates text
+  end to end. `NFKMLXLanguage.configuration(fromGGUF:)` maps the metadata (`<arch>.block_count`,
+  `<arch>.embedding_length`, …) onto an `NFKMLXLanguageConfiguration`, reading two structural facts
+  from the TENSORS because the metadata carries no flag for them — a model is tied when it ships no
+  `output.weight`, and it normalizes queries and keys when it ships `blk.0.attn_q_norm.weight` (Qwen3
+  does, Qwen2/Llama do not). `loadWeights(into:fromGGUF:)` remaps the llama.cpp names
+  (`blk.N.attn_q.weight` → `model.layers.N.self_attn.q_proj.weight`, `token_embd`/`output_norm`/`output`)
+  and `ggufTokenizer` rebuilds the embedded byte-level BPE (the already-encoded tokens and merges written
+  to a temp `vocab.json`/`merges.txt` for the core reader, specials read from `token_type` 3/4). Only
+  the dense `llama`/`qwen2`/`qwen3` families are accepted; another architecture throws. Factory
+  `backend(ggufURL:)` / `@objc backendWithGGUFURL:error:`.
+  **THE Q/K PERMUTE IS LOAD-BEARING and was the whole difficulty:** llama.cpp PERMUTES the query and
+  key projections during conversion so its interleaved rotary reads adjacent channels, where this
+  decoder rotates split halves — loading the raw weights runs mostly-right and subtly wrong (logit
+  cosine 0.95, the model saying "Paris" but diverging after). `unpermuteRotary` undoes it per head
+  (reshape `[heads, headDim/2, 2, …]`, swap the split-half axes, reshape back — transformers'
+  `_reverse_permute_weights`), with the query using the head count and the key the KV-head count. With
+  it, **reference parity against transformers loading the SAME GGUF** (`run_reference.py gguf_lm`,
+  `IK_PARITY_GGUF_LM`, the llm oracle now carrying `accelerate`): logit cosine 0.9999999999971 with the
+  same argmax at EVERY prompt position, the first greedy token identical, and the rebuilt tokenizer
+  reproducing the reference's ids. A full greedy continuation is NOT asserted exact — two dequantization
+  implementations flip an occasional near-tie on quantized weights — so the check is teacher-forced
+  agreement (8/10, near-ties excepted) with the logit cosine as the tight bound. Measured on the
+  released SmolLM2-135M-Instruct Q4_K_M.
+- `NFKMLXChatTemplateRenderer` (`NFKMLXChatTemplate.swift` / `…Engine.swift` / `…Expr.swift`) — a
+  **native Jinja renderer for the release's `chat_template`**, so the language backend reproduces an
+  instruct model's trained input instead of the hand-coded ChatML approximation. Rendering the template
+  wrong silently changes the model's input, the same failure class as the `qwen2` pre-tokenization
+  defect, so the faithful path is to render the release's own template. A compact interpreter for the
+  subset chat templates use: text with `{{ }}` output and `{% %}` control (for / if / elif / else /
+  set), the whitespace model transformers compiles a template with (`trim_blocks` + `lstrip_blocks` +
+  the explicit `{%-`/`-%}` markers), and the expression language — attribute/index access, slicing
+  (`messages[::-1]`), `namespace`, the `loop` variable, `is` tests, string methods, and the
+  `tojson`/`trim` filters. **Pure Foundation below no runtime at all** (no MLX), so it and its tests run
+  under `swift test`. **Reference parity** against transformers' own `apply_chat_template` over six
+  cases (`Tools/reference-parity/generate_chat_templates.py`, config key `IK_CHAT_TEMPLATE_REF`): the
+  Qwen3 template (namespaces, reversed slicing, `is` tests, the tool-call and tool-role branches),
+  Llama-3 (`bos_token` + `| trim` precedence), and Gemma (`%`, `!=` on booleans, `set role`, the
+  `raise_exception` guards), each rendered byte-for-byte. **Two whitespace traps, both measured:**
+  `lstrip_blocks` strips a block tag's line indentation ONLY when the tag begins a source line (a
+  trailing whitespace run after content on the same line stays — the first draft stripped it
+  unconditionally, which dropped a real space); and `| trim` binds TIGHTER than `+`, so
+  `a + b | trim + c` trims only `b`. Wired into the backend as `NFKMLXChatTemplate.jinja(template:
+  bosToken:eosToken:)`; from ObjC a `chatTemplate` request parameter carrying Jinja delimiters
+  (`{%`/`{{`) is rendered the same way (the associated-value enum case is Swift-only, per the parity
+  rule, and the string parameter is the bridge). **One documented divergence:** `tojson` emits an
+  object's keys SORTED, where transformers emits insertion order — Foundation dictionaries do not
+  preserve it, so a faithful whole-object serialization needs an ordered-map pipeline; it affects a
+  tool schema's key order, not a plain or multi-turn chat. The `NFKJinja*` types (value, namespace,
+  parser, evaluator) are internal.
 - `NFKMLXTorchCheckpoint` / `NFKMLXTorchFormat` — the native PyTorch checkpoint reader: a consumer's
   raw `.pth`/`.pt`/`.ckpt`/`.th`/HF `.bin` loads with NO Python toolchain. `NFKMLXWeights.loadCheckpoint`
   sniffs a file's leading bytes (never the extension — an HF torch `.bin` and a safetensors `.bin` are

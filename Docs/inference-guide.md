@@ -400,17 +400,76 @@ constraint that gates it. Kept beside the code so a stale entry is a diff rather
 
 Each of these unlocks a category rather than a model.
 
-- **Text embeddings and reranking.** No text embedder means no retrieval or semantic search.
-  `Qwen3-Embedding-0.6B` reuses the dense decoder with last-token pooling, which makes it the cheapest
-  entry here; `EmbeddingGemma-300M` and a ModernBERT cross-encoder reranker follow.
-- **A vision-language model.** None ships. `SmolVLM2-500M` first (a SigLIP-family encoder over a
-  decoder already covered, with `mlx-vlm` as the oracle), then `Qwen3-VL-2B`, which reuses the Qwen3
-  decoder at parity.
-- **A native GGUF reader.** The sequel to the native `.pth` reader: the dominant quantized-LLM format
-  is currently unreadable. The work is the block-quant dequantizers (`Q4_K`, `Q6_K`, `Q8_0`) into MLX.
-- **A chat-template engine.** Instruct releases ship a Jinja `chat_template`, and a wrong render is a
-  wrong input of the same class as the Qwen2 pre-tokenization defect. Today only ChatML is rendered;
-  the fix is a minimal native renderer held to `apply_chat_template` output.
+- **Text embeddings and reranking — SHIPPED.** Two embedders and a reranker. `Qwen3-Embedding-0.6B`
+  (`NFKMLXQwen3Embedding`) is the dense decoder read one layer earlier, last-token pooled over an
+  appended `<|endoftext|>` and L2-normalized. `EmbeddingGemma-300M` (`NFKMLXEmbeddingGemma`) is the
+  bidirectional Gemma 3 encoder mean-pooled through a Dense bottleneck, with its own byte-fallback BPE
+  tokenizer. `NFKMLXModernBERTReranker` (`gte-reranker-modernbert-base`) is a cross-encoder that reads a
+  query and document together and predicts a relevance score, which reorders an embedder's shortlist. All
+  three are at reference parity against their own recipes.
+- **A vision-language model — SHIPPED.** `SmolVLM2-500M` (`NFKMLXSmolVLM`): a SigLIP vision encoder, a
+  pixel-shuffle connector, and a Llama decoder the dense stack already runs, with the projected vision
+  tokens spliced into the decoder's embeddings at the image-token positions. At reference parity against
+  transformers' own SmolVLMForConditionalGeneration (vision, connector, and fused logits exact, greedy
+  continuation token for token), with a CoreGraphics image processor and token-exact prompt expansion
+  for the consumer `answer(image:question:)` path. **`Qwen3-VL-2B`'s vision tower also ships**
+  (`NFKMLXQwen3VLVisionNet`): a 2D-rotary ViT whose patches are laid out in 2×2 merge blocks, a
+  bilinearly interpolated position embedding, a merger that folds each block to the decoder width, and
+  the three-layer "deepstack", all at reference parity. Qwen3-VL turned out far more than "reuses the
+  Qwen3 decoder": the decoder adds interleaved M-RoPE (3D positions) and deepstack injection at its first
+  layers, so the decoder integration is the remaining wiring on top of the shipped Qwen3 stack.
+- **A native GGUF reader — SHIPPED.** `NFKMLXGGUF` reads a GGUF model natively — the container's typed
+  metadata and tensor table — and dequantizes the block-quant formats a real model uses (`Q4_K`, `Q6_K`,
+  `Q8_0`, `Q5_0`, `Q4_0`, `F16`, `F32`) into `MLXArray`s, with no Python and no llama.cpp. Bit-exact
+  against the `gguf` package on a real Q4_K_M model (worst |difference| 0.0 across every dequantizer). A
+  type it does not implement is refused per-tensor rather than failing the file. **It is now wired into
+  the language-model loader**, so a GGUF release generates text end to end (`backend(ggufURL:)`): the
+  metadata becomes a configuration, the llama.cpp tensor names are remapped and the query/key
+  projections un-permuted for the decoder's rotary, and the embedded tokenizer is rebuilt. Reference
+  parity against transformers loading the same GGUF (logit cosine 0.9999999999). Only the dense
+  `llama`/`qwen2`/`qwen3` families are read.
+- **A chat-template engine — SHIPPED.** `NFKMLXChatTemplateRenderer` renders the Jinja `chat_template`
+  an instruct release ships, so the backend reproduces the model's trained input instead of the ChatML
+  approximation — a wrong render is a wrong input of the same class as the Qwen2 pre-tokenization defect.
+  A compact interpreter for the subset chat templates use (for / if / set, `namespace`, slicing, the
+  `loop` variable, `is` tests, string methods, `tojson`/`trim`, and the `trim_blocks`/`lstrip_blocks`
+  whitespace model), pure Foundation so it runs under `swift test`. Reference parity against
+  transformers' own `apply_chat_template` over six cases (Qwen3 with its tool-call/tool-role branches,
+  Llama-3, Gemma). Exposed as `NFKMLXChatTemplate.jinja(template:…)`, and from Objective-C a
+  `chatTemplate` request parameter carrying Jinja delimiters.
+- **Gemma 4 and its variants.** The Gemma 4 TEXT decoder (`gemma4_text`) ships at parity for E2B and
+  E4B (`NFKMLXGemmaLanguage`). Three more of the family now ship at parity, each against transformers'
+  own Gemma 4 at a tiny configuration under the gemma oracle interpreter:
+  - the **26B-A4B mixture** (`enable_moe_block`) — every layer's dense feed-forward gains a parallel
+    routed-expert branch (`NFKGemmaRouter`/`NFKGemmaExperts`), summed (`gemma4_moe`, logits
+    0.9999999999996). Two geometry facts were load-bearing: the per-layer input embedding is a fixed
+    262144 rows (`vocab_size_per_layer_input`), and a full-attention layer runs a 512-wide head.
+  - the **12B `gemma4_unified_text`** decoder (`NFKMLXGemma4UnifiedNet`) — a different architecture (no
+    per-layer input embeddings, no mixture), reusing the E-series attention directly (`gemma4_unified`,
+    every layer exact, logits 0.9999999999995).
+  - the **vision encoder** (`NFKMLXGemma4VisionNet`) — patch embedder plus bidirectional sandwich
+    encoder, no rotary (`gemma4_vision`, encoder cosine 0.9999999850).
+  - the **audio Conformer** (`NFKMLXGemma4AudioNet`) — a 2-D convolutional subsampler and Conformer
+    layers (blocked relative-position attention, a causal light conv, macaron feed-forwards), running
+    end to end from the mel features with its own sliding-window mask (`gemma4_audio`, subsampler
+    0.99999999999998, full tower 0.999999999999996).
+  **All four Gemma 4 architectures are at reference parity**, both towers run their full forward to soft
+  tokens (vision through its pooler, audio through its mask), the text decoders generate through
+  `NFKMLXGemmaBackend` ("The capital of France is" → " Paris." on E2B), and the tri-modal input adapters
+  and fusion are in: `NFKMLXGemma4ImageProcessor` (`CGImage` → patches, resize a documented
+  approximation), `NFKMLXGemma4AudioFeatureExtractor` (audio → log-mel, `gemma4_mel` cosine
+  0.9999999999928), `NFKMLXGemma4MultimodalEmbedder` (soft tokens → decoder space, `gemma4_embedder`
+  cosine 0.99999999999999), and `NFKMLXGemma4Fusion.fuse` (the placeholder splice).
+  `NFKMLXGemma4ConditionalGeneration` wires the whole chain end to end (image/audio + a
+  placeholder-carrying prompt → generated continuation). **The E2B release is the full tri-modal
+  `Gemma4ForConditionalGeneration`** (its checkpoint carries the vision tower, audio Conformer, both
+  embedders, and the decoder), so the whole family is now at reference parity **on the released
+  weights**: the vision path (`gemma4_vision_real`, ≥ 0.99999999999), the audio path
+  (`gemma4_audio_real`, ≥ 0.99999999999), and the full conditional chain end to end
+  (`gemma4_conditional_real`, an image → four soft tokens → fused logits at cosine 0.999999999959,
+  argmax 8/8). The real weights exposed two bugs the tiny tests could not: the vision attention's 2-D
+  rope, and the finite `use_clipped_linears` clamp bounds. The only thing left is the optional vision
+  standardization.
 
 ### Language-model runtime
 

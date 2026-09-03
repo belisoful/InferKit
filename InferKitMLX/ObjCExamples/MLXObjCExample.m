@@ -448,10 +448,31 @@
 	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.chatTemplate], @"chatml");
 	XCTAssertGreaterThan(NFKMLXGenerationParameterKey.contextWindow.length, 0);
 
+	// A chatTemplate string carrying Jinja delimiters is the release's own chat_template, rendered
+	// faithfully (the Swift NFKMLXChatTemplate.jinja case). This is the ObjC path to that renderer.
+	NSString *template = @"{%- for m in messages %}{{- '<|im_start|>' + m.role + '\n' + m.content + "
+	                     @"'<|im_end|>\n' }}{%- endfor %}{%- if add_generation_prompt %}"
+	                     @"{{- '<|im_start|>assistant\n' }}{%- endif %}";
+	NFKInferenceRequest *chat = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputMessages: @[ @{ @"role": @"user", @"content": @"Hi" } ] }
+		parameters:@{ NFKMLXGenerationParameterKey.chatTemplate: template }];
+	XCTAssertTrue([chat.parameters[NFKMLXGenerationParameterKey.chatTemplate] containsString:@"{%-"]);
+
 	// The backend itself is built from a downloaded release directory through the @objc factory:
 	//   NFKInferenceBackend *llm = [NFKMLXLanguage backendWithDirectoryURL:dir error:&error];
 	// which reads config.json, the tokenizer, and the shards. Verify the selector is reachable.
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+
+	// A GGUF release — the dominant quantized-model format — builds from one file through the native
+	// reader, which turns its metadata into a configuration, remaps and dequantizes its tensors, and
+	// rebuilds its embedded tokenizer:
+	//   NFKInferenceBackend *llm = [NFKMLXLanguage backendWithGGUFURL:ggufURL error:&error];
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithGGUFURL:error:)]);
+
+	// The Gemma 4 decoders (E2B/E4B, the 26B-A4B mixture, the 12B unified) generate text through their
+	// own backend, dispatched from the release's config model type:
+	//   NFKInferenceBackend *gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error];
+	XCTAssertTrue([NFKMLXGemmaLanguage respondsToSelector:@selector(gemmaBackendWithDirectoryURL:error:)]);
 }
 
 // Docs/examples.md: A release larger than the machine is refused BEFORE any weight is read. The
@@ -515,6 +536,110 @@
 	XCTAssertEqualObjects([llm runInferenceForRequest:unbounded error:&error].text,
 						  [llm runInferenceForRequest:windowed error:&error].text);
 	[NSFileManager.defaultManager removeItemAtURL:release error:NULL];
+}
+
+// Docs/examples.md: Text embeddings from Objective-C. The directory factory builds Qwen3-Embedding
+// from a release; a tiny release written on the fly runs the whole path with no download. The prompt
+// embeds to one L2-normalized vector under NFKOutputEmbedding, and outputDimensions truncates it.
+- (void)testObjectiveCEmbedsTextThroughTheDirectoryFactory
+{
+	NSURL *release = [self makeTemporaryDirectory];
+	[self writeTinyReleaseTo:release];
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> embedder = [NFKMLXQwen3Embedding backendWithDirectoryURL:release error:&error];
+	XCTAssertNotNil(embedder, @"%@", error);
+	XCTAssertEqualObjects(embedder.backendIdentifier, @"qwen3-embedding-0.6b");
+
+	NSString *query = [NFKMLXQwen3Embedding instructWithTask:@"Retrieve passages that answer the query"
+													  query:@"hello"];
+	XCTAssertTrue([query hasPrefix:@"Instruct: "]);
+	NFKInferenceResult *result = [embedder runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: query }]
+										 error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqual(result.embedding.count, 64u, @"the tiny backbone's hidden width");
+
+	// A Matryoshka width truncates each embedding before normalizing.
+	id<NFKInferenceBackend> narrow = [NFKMLXQwen3Embedding backendWithDirectoryURL:release
+																 outputDimensions:16 error:&error];
+	XCTAssertNotNil(narrow, @"%@", error);
+	NFKInferenceResult *shortResult = [narrow runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hello" }] error:&error];
+	XCTAssertEqual(shortResult.embedding.count, 16u, @"truncated to the requested width");
+
+	[NSFileManager.defaultManager removeItemAtURL:release error:NULL];
+}
+
+// Docs/examples.md: EmbeddingGemma from Objective-C. The directory factory reads the backbone, the two
+// Dense projections, and Gemma's tokenizer.json; a query carries a task prompt and a document another.
+// The full run needs the release (its Gemma 3 layout differs from the decoder's), so this pins the
+// Objective-C entry points and the prompt format the model is trained on.
+- (void)testObjectiveCEmbeddingGemmaEntryPoints
+{
+	XCTAssertTrue([NFKMLXEmbeddingGemma respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXEmbeddingGemma respondsToSelector:@selector(backendWithDirectoryURL:outputDimensions:error:)]);
+	XCTAssertEqualObjects([NFKMLXEmbeddingGemma query:@"What is the capital of France?"],
+						  @"task: search result | query: What is the capital of France?");
+	XCTAssertEqualObjects([NFKMLXEmbeddingGemma document:@"Paris is the capital of France."],
+						  @"title: none | text: Paris is the capital of France.");
+
+	// A missing release surfaces the entry point and its error rather than a vector.
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend =
+		[NFKMLXEmbeddingGemma backendWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/embeddinggemma"]
+											    error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: A ModernBERT reranker from Objective-C. reranker.scoresForQuery:documents: and
+// rankedIndicesForQuery:documents: score a query against candidates and order them. The full run needs
+// the release directory (weights + tokenizer.json), so this pins the entry points.
+- (void)testObjectiveCModernBERTRerankerEntryPoints
+{
+	XCTAssertTrue([NFKMLXModernBERTReranker respondsToSelector:@selector(rerankerWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXModernBERTReranker instancesRespondToSelector:@selector(scoreForQuery:document:)]);
+	XCTAssertTrue([NFKMLXModernBERTReranker instancesRespondToSelector:@selector(scoresForQuery:documents:)]);
+	XCTAssertTrue([NFKMLXModernBERTReranker instancesRespondToSelector:@selector(rankedIndicesForQuery:documents:)]);
+
+	NSError *error = nil;
+	NFKMLXModernBERTReranker *reranker =
+		[NFKMLXModernBERTReranker rerankerWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/reranker"]
+													 error:&error];
+	XCTAssertNil(reranker);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: SmolVLM2 from Objective-C. smolVLMWithDirectoryURL:error: loads the model, then
+// answerForImage:question: captions or answers about a CGImage. The full run needs the release, so this
+// pins the entry points.
+- (void)testObjectiveCSmolVLMEntryPoints
+{
+	XCTAssertTrue([NFKMLXSmolVLM respondsToSelector:@selector(smolVLMWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXSmolVLM instancesRespondToSelector:@selector(answerForImage:question:)]);
+	XCTAssertTrue([NFKMLXSmolVLM instancesRespondToSelector:@selector(answerForImage:question:maxTokens:)]);
+
+	NSError *error = nil;
+	NFKMLXSmolVLM *model =
+		[NFKMLXSmolVLM smolVLMWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/smolvlm"] error:&error];
+	XCTAssertNil(model);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: Reading a GGUF model from Objective-C. GGUFWithContentsOfURL: opens the file,
+// then metadataStringForKey: / infoForTensor: inspect it before reading a tensor.
+- (void)testObjectiveCGGUFReaderEntryPoints
+{
+	XCTAssertTrue([NFKMLXGGUF respondsToSelector:@selector(GGUFWithContentsOfURL:error:)]);
+	XCTAssertTrue([NFKMLXGGUF instancesRespondToSelector:@selector(infoForTensor:)]);
+	XCTAssertTrue([NFKMLXGGUF instancesRespondToSelector:@selector(metadataStringForKey:)]);
+
+	NSError *error = nil;
+	NFKMLXGGUF *gguf = [NFKMLXGGUF GGUFWithContentsOfURL:[NSURL fileURLWithPath:@"/nonexistent/model.gguf"]
+												  error:&error];
+	XCTAssertNil(gguf);
+	XCTAssertNotNil(error);
 }
 
 #pragma mark - A tiny release written on the fly

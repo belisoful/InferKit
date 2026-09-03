@@ -48,11 +48,75 @@ reference implementation on the released weights:
   returning both an image and a mask). Each port binds an InferKit key to a tensor name.
 - **`NFKMLXLanguageBackend`** — on-device text generation from a released Hugging Face directory.
   The dense decoder Qwen3 and Llama share, with the Qwen3-MoE and Mixtral mixtures of experts through
-  a routed feed-forward; Gemma 4 and the Qwen3.5 hybrid have their own classes. A key-value cache
+  a routed feed-forward; Gemma 4 (including its 26B-A4B mixture, a routed branch beside each layer's
+  dense feed-forward) and the Qwen3.5 hybrid have their own classes. A key-value cache
   that bounds, quantizes, rolls back, and persists between turns; speculative decoding from a draft
-  release; ChatML rendering; and grammar-constrained output (JSON, or a fixed set of choices). Each
+  release; ChatML rendering, or the release's own Jinja `chat_template` through
+  `NFKMLXChatTemplateRenderer`; and grammar-constrained output (JSON, or a fixed set of choices). Each
   family is measured against `transformers`' own implementation, and every option reaches
   Objective-C as a request parameter.
+- **`NFKMLXGemmaBackend`** — text generation for the Gemma 4 decoders (`NFKMLXGemmaLanguage.backend(directoryURL:)`
+  / `gemmaBackendWithDirectoryURL:error:`), dispatching on a release's config model type across the
+  E-series, the 26B-A4B mixture, and the 12B unified decoder. Gemma runs prefill-only, so generation
+  re-runs the growing sequence each step; the tokenizer is Gemma's byte-fallback BPE, and a message
+  list is rendered into Gemma's turn format. Measured end to end on the released E2B.
+- **`NFKMLXChatTemplateRenderer`** — renders the Jinja `chat_template` an instruct release ships, so the
+  language backend reproduces the model's trained input rather than the ChatML approximation. A compact
+  Jinja interpreter (for / if / set, `namespace`, slicing, the `loop` variable, `is` tests, string
+  methods, `tojson`/`trim`, and the `trim_blocks`/`lstrip_blocks` whitespace model), pure Foundation so
+  it needs no runtime. Reference parity against `transformers`' own `apply_chat_template` over the
+  Qwen3, Llama-3, and Gemma templates.
+- **`NFKMLXQwen3Embedding`** — on-device text embeddings: the Qwen3-0.6B dense decoder read one layer
+  earlier (its post-final-norm hidden states), pooled at the last token over an appended
+  `<|endoftext|>` and L2-normalized, so a dot product between two embeddings is their cosine
+  similarity. A query carries a one-sentence task instruction and a document carries none.
+  `NFKMLXTextEmbeddingBackend` returns the vector under `NFKOutputEmbedding` for semantic search,
+  retrieval, clustering, and reranking; `backendWithDirectoryURL:outputDimensions:error:` truncates to
+  a smaller Matryoshka width. Reference parity against the model card's own transformers recipe on the
+  released 0.6B weights (query and document embedding cosine 0.99999999999, retrieval score to 1e-6).
+- **`NFKMLXEmbeddingGemma`** — a second text embedder over a second architecture: the bidirectional
+  Gemma 3 encoder (no causal mask, sandwich normalization, dual RoPE, QK-norm, GeGLU), mean-pooled over
+  every token, through a Dense bottleneck (768 → 3072 → 768) and L2-normalized. The backbone is Gemma 3
+  (`gemma3_text`), not the causal Gemma 4 the language model runs, so it is its own implementation. It
+  reads Gemma's byte-fallback BPE `tokenizer.json` directly, so the text path needs no conversion.
+  Reference parity against the sentence-transformers pipeline on the released 300M weights (every one of
+  the 24 layers exact, query and document embedding cosine 0.99999999999), with the tokenizer reproducing
+  the reference's ids token for token. The gated `google/embeddinggemma-300m` is mirrored ungated at
+  `unsloth/embeddinggemma-300m`.
+- **`NFKMLXModernBERTReranker`** — a cross-encoder reranker (`gte-reranker-modernbert-base`): a
+  bidirectional ModernBERT encoder over a `[CLS] query [SEP] document [SEP]` pair, mean-pooled, through a
+  prediction head and a single-logit classifier that gives a relevance score. Where an embedder scores a
+  query and a document independently, a cross-encoder reads the pair together and is more accurate, which
+  is what reorders an embedder's shortlist. `scoresForQuery:documents:` and `rankedIndicesForQuery:documents:`
+  score and order candidates. ModernBERT is RoPE (a global base every third layer, a local base with a
+  sliding window elsewhere), GeGLU, and LayerNorm without biases. Reference parity against transformers'
+  own `ModernBertForSequenceClassification` (every one of the 22 layers exact, scores to within 5e-3);
+  the byte-level BPE tokenizer is read from the release's `tokenizer.json`.
+- **`NFKMLXSmolVLM`** — a vision-language model (SmolVLM2-500M): an image and a question in, an answer
+  out. A SigLIP vision encoder turns each image tile into patch features, a pixel-shuffle connector
+  projects them to the decoder width, and a Llama decoder (the dense stack the language model runs)
+  reads the text with the projected vision tokens spliced in at the image-token positions.
+  `answerForImage:question:` captions or answers about a `CGImage`. Reference parity against
+  transformers' own SmolVLMForConditionalGeneration (the vision encoder, the connector, and the fused
+  decoder logits exact, the greedy continuation token for token); the prompt expansion is token-exact
+  and the image processor is CoreGraphics-based (a slight approximation of the reference's PIL resize).
+- **`NFKMLXQwen3VLVisionNet`** — the vision tower of a second VLM, Qwen3-VL-2B: a 2D-rotary ViT (patches
+  in 2×2 merge blocks, a bilinearly interpolated position embedding), a merger that folds each block to
+  the decoder width, and a three-layer "deepstack" of feature maps. At reference parity against
+  transformers' own Qwen3-VL vision model (patch embedding, position embedding, merged output, and every
+  deepstack feature exact). The decoder is the Qwen3 dense stack; its Qwen3-VL-specific M-RoPE and
+  deepstack injection are the remaining integration.
+- **`NFKMLXGGUF`** — a native GGUF reader, the sequel to the native PyTorch checkpoint reader. GGUF is
+  the format most quantized language models are distributed in. This reads the container's metadata and
+  tensor table and dequantizes the block-quant formats a real model uses (`Q4_K`, `Q6_K`, `Q8_0`, `Q5_0`,
+  `Q4_0`, `F16`, `F32`) into `MLXArray`s, with no Python and no llama.cpp. Bit-exact against the `gguf`
+  package on a real Q4_K_M model (worst |difference| 0.0 across every dequantizer). A type it does not
+  implement is refused per-tensor rather than failing the file. It is wired into the language-model
+  loader, so a GGUF release generates text end to end through `NFKMLXLanguage.backend(ggufURL:)`
+  (`backendWithGGUFURL:error:`): the metadata becomes a configuration, the llama.cpp tensor names are
+  remapped and the query/key projections un-permuted for the decoder's rotary, and the embedded
+  tokenizer is rebuilt. Reference parity against transformers loading the same GGUF (logit cosine
+  0.9999999999).
 Every shipped real model has a direct Objective-C factory — `[Model backendWith[Variant:]weightsURL:error:]`
 for local weights and `[Model backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:]`
 to download from Hugging Face and build — so a consumer (e.g. MetalForge) constructs them without the

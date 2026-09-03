@@ -430,6 +430,73 @@ final class MLXExamples: XCTestCase {
         XCTAssertFalse(produced.isEmpty)
     }
 
+    // Docs/examples.md: Gemma 4's 26B-A4B mixture runs a routed-expert branch beside every layer's
+    // dense feed-forward. A released directory whose config.json sets `enable_moe_block` turns it on
+    // through the same @objc directory factory; a tiny random geometry exercises the path here.
+    func testExampleGemma4MixtureConfiguration() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the decoder; run via xcodebuild")
+        XCTAssertTrue(NFKMLXGemmaConfiguration.tinyMixture.isMixtureOfExperts)
+        XCTAssertFalse(NFKMLXGemmaConfiguration.e2b.isMixtureOfExperts)   // the dense E-series
+        let net = NFKMLXGemmaLanguage.makeNet(.tinyMixture)
+        let logits = net(MLXArray([3, 17, 42]).reshaped([1, 3]))
+        XCTAssertEqual(logits.shape, [1, 3, NFKMLXGemmaConfiguration.tinyMixture.vocabularySize])
+    }
+
+    // Docs/examples.md: A GGUF release generates text end to end. The native reader turns the file's
+    // metadata into a configuration, remaps its llama.cpp tensor names onto the module's keys
+    // (un-permuting the rotary query/key projections), and rebuilds the embedded tokenizer, so one file
+    // is the whole model. A real .gguf is needed to run it; the factory selectors are what this checks.
+    func testExampleLoadingAGGUFReleaseGeneratesText() throws {
+        // let backend = try NFKMLXLanguage.backend(ggufURL: url)                        // Swift
+        // NFKInferenceBackend *llm = [NFKMLXLanguage backendWithGGUFURL:url error:&e];  // Objective-C
+        // The config reader maps GGUF metadata (architecture, block_count, embedding_length, …) onto
+        // the same NFKMLXLanguageConfiguration a HF config.json produces.
+        XCTAssertTrue(NFKMLXLanguage.responds(to: Selector(("backendWithGGUFURL:error:"))))
+    }
+
+    // Docs/examples.md: The Gemma 4 decoders (E2B/E4B, the 26B-A4B mixture, the 12B unified) generate
+    // text through their own backend, which reads a release directory and dispatches on the config's
+    // model type. Gemma runs prefill-only (no key-value cache). A real release is needed to run it.
+    func testExampleGemmaTextBackend() throws {
+        // let backend = try NFKMLXGemmaLanguage.backend(directoryURL: releaseDirectory)         // Swift
+        // NFKInferenceBackend *llm = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&e]; // ObjC
+        XCTAssertTrue(NFKMLXGemmaLanguage.responds(to: Selector(("gemmaBackendWithDirectoryURL:error:"))))
+    }
+
+    // Docs/examples.md: Gemma 4's tri-modal preprocessing. The image processor turns a CGImage into the
+    // vision tower's flattened patches and positions; the audio feature extractor turns raw audio into
+    // the log-mel features the audio tower reads; the multimodal embedder projects a tower's soft tokens
+    // into the decoder's space, and the fusion splices them at the placeholder positions.
+    func testExampleGemma4TriModalPreprocessing() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "builds MLX arrays; run via xcodebuild")
+        // A tiny 48×48 image → 3×3 patches with a 1×1-pooling processor.
+        var bytes = [UInt8](repeating: 255, count: 48 * 48 * 4)
+        for i in stride(from: 0, to: bytes.count, by: 4) { bytes[i] = 120 }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        let image = CGImage(width: 48, height: 48, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 48 * 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let (pixels, positions) = NFKMLXGemma4ImageProcessor(patchSize: 16, poolingKernelSize: 1, maxSoftTokens: 9).process(image)
+        XCTAssertEqual(pixels.shape, [9, 768])
+        XCTAssertEqual(positions.shape, [9, 2])
+
+        // Raw audio → log-mel features [frames, 128].
+        let audio = (0 ..< 4000).map { sinf(Float($0) * 0.05) }
+        let features = NFKMLXGemma4AudioFeatureExtractor().features(audio)
+        XCTAssertEqual(features.shape[1], 128)
+
+        // A tower's soft tokens → decoder space, then spliced at placeholder positions.
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 8, textHidden: 16)
+        let projected = embedder(MLXArray((0 ..< 2 * 8).map { Float($0) }).reshaped([2, 8]))
+        XCTAssertEqual(projected.shape, [2, 16])
+        let fused = NFKMLXGemma4Fusion.fuse(textEmbeddings: MLXArray.zeros([1, 3, 16]),
+                                            softTokens: projected, isPlaceholder: [true, false, true])
+        XCTAssertEqual(fused.shape, [1, 3, 16])
+    }
+
     // Docs/examples.md: Constrained decoding — a grammar mask keeps the output well-formed JSON, or
     // one of a fixed set of answers. The vocabulary's bytes come from the release's tokenizer; a
     // hand-built one stands in here.
@@ -454,6 +521,36 @@ final class MLXExamples: XCTestCase {
         options.constraint = NFKMLXChoiceConstraint(choices: ["yes", "no"], vocabulary: vocabulary)
         let answer = model.generate(prompt: [3, 17], options: options)
         XCTAssertTrue(["yes", "no"].contains(String(decoding: answer.flatMap { vocabulary.tokens[$0] }, as: UTF8.self)))
+    }
+
+    // Docs/examples.md: Text embeddings — the decoder read one layer earlier, pooled and normalized to
+    // one vector per text, so a dot product is a cosine similarity. The released Qwen3-Embedding loads
+    // from its directory (NFKMLXQwen3Embedding.backend(directoryURL:)); a tiny random backbone here
+    // exercises the path. A query is embedded with a task instruction, a document without one.
+    func testExampleTextEmbeddingSimilarity() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "runs the embedder; run via xcodebuild")
+        let backend = try NFKMLXQwen3Embedding.backend(weightsURL: nil, tokenizer: nil,
+                                                       configuration: .tiny) as! NFKMLXTextEmbeddingBackend
+
+        // A real backend tokenizes text through runInference; with no tokenizer, embed token ids.
+        func embedding(_ tokens: [Int]) -> [Float] {
+            backend.embedding(forTokens: tokens.map { NSNumber(value: $0) }).map(\.floatValue)
+        }
+        func cosine(_ a: [Float], _ b: [Float]) -> Float { zip(a, b).map(*).reduce(0, +) }
+
+        let query = embedding([12, 45, 7, 88])          // "Instruct: …\nQuery:…" tokenized, in practice
+        let related = embedding([12, 45, 7, 90])
+        let unrelated = embedding([3, 3, 3, 3])
+        // Every embedding is unit length, so the dot product is bounded by 1.
+        XCTAssertEqual(cosine(query, query), 1, accuracy: 1e-4)
+        XCTAssertLessThanOrEqual(cosine(query, related), 1)
+        XCTAssertLessThanOrEqual(cosine(query, unrelated), 1)
+
+        // Format a retrieval query the way the model is trained to read it.
+        let prompt = NFKMLXQwen3Embedding.instruct(task: "Retrieve passages that answer the query",
+                                                   query: "What is the capital of France?")
+        XCTAssertTrue(prompt.hasPrefix("Instruct: "))
     }
 
     // Docs/examples.md: Local generation — quantize the cache for a longer conversation, chunk a long
@@ -484,6 +581,29 @@ final class MLXExamples: XCTestCase {
         XCTAssertNil(defaults.cacheQuantization)
         XCTAssertNil(defaults.prefillChunkSize)
         if case .none = defaults.chatTemplate {} else { XCTFail("the default template flattens contents") }
+    }
+
+    // Docs/examples.md: The release's own Jinja chat template renders a message list into the exact
+    // input the instruct model was trained on, rather than the ChatML approximation. Pass the template
+    // text (from the release's tokenizer_config.json) as a generation option. No runtime needed here —
+    // the renderer is pure Foundation.
+    func testExampleRenderingTheReleaseChatTemplate() throws {
+        let template = """
+        {%- for message in messages %}\
+        {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>\\n' }}\
+        {%- endfor %}\
+        {%- if add_generation_prompt %}{{- '<|im_start|>assistant\\n' }}{%- endif %}
+        """
+        let messages: [[String: Any]] = [["role": "user", "content": "What is 2+2?"]]
+        let prompt = try NFKMLXChatTemplateRenderer.render(template, messages: messages,
+                                                           addGenerationPrompt: true)
+        XCTAssertEqual(prompt, "<|im_start|>user\nWhat is 2+2?<|im_end|>\n<|im_start|>assistant\n")
+
+        // As a generation option, so the backend renders it before generating.
+        var options = NFKMLXGenerationOptions()
+        options.chatTemplate = .jinja(template: template)
+        XCTAssertEqual(NFKMLXLanguageBackend.prompt(from: NFKInferenceRequest(inputs: [NFKInputMessages: messages]),
+                                                    template: options.chatTemplate), prompt)
     }
 
     // Docs/examples.md: A release too large for the machine is refused before it is materialized.
@@ -569,6 +689,38 @@ final class MLXExamples: XCTestCase {
         defer { try? FileManager.default.removeItem(at: converted) }
         try checkpoint.writeSafetensors(to: converted)
         XCTAssertTrue(FileManager.default.fileExists(atPath: converted.path))
+    }
+
+    // Docs/examples.md: Reading a GGUF model. The reader opens the container, reads its metadata and
+    // tensor descriptors, and dequantizes a tensor to an MLXArray. A tiny F32 file stands in for a real
+    // quantized model here; the released Q4_K_M dequantizes bit-exactly against the gguf package.
+    func testExampleReadsAGGUFModelWithNoPython() throws {
+        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
+                      "reads an MLXArray; run via xcodebuild")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".gguf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(MLXExamples.minimalGGUF()).write(to: url)
+
+        let gguf = try NFKMLXGGUF.gguf(contentsOf: url)
+        XCTAssertEqual(gguf.metadataString(forKey: "general.architecture"), "example")
+        XCTAssertEqual(gguf.info(forTensor: "weight")?.typeName, "F32")
+        let weight = try XCTUnwrap(gguf.array(forTensor: "weight"))
+        XCTAssertEqual(weight.asArray(Float.self), [0.5, -0.5, 1.5])
+    }
+
+    /// A minimal GGUF file: one F32 tensor `weight` and a string metadata value.
+    private static func minimalGGUF() -> [UInt8] {
+        var bytes = [UInt8]()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { bytes.append(contentsOf: $0) } }
+        func u64(_ v: UInt64) { withUnsafeBytes(of: v.littleEndian) { bytes.append(contentsOf: $0) } }
+        func str(_ s: String) { let b = Array(s.utf8); u64(UInt64(b.count)); bytes.append(contentsOf: b) }
+        func f32(_ v: Float) { withUnsafeBytes(of: v.bitPattern.littleEndian) { bytes.append(contentsOf: $0) } }
+        u32(0x4655_4747); u32(3); u64(1); u64(1)
+        str("general.architecture"); u32(8); str("example")
+        str("weight"); u32(1); u64(3); u32(0); u64(0)
+        while bytes.count % 32 != 0 { bytes.append(0) }
+        f32(0.5); f32(-0.5); f32(1.5)
+        return bytes
     }
 
     /// `torch.save` of a two-tensor state dict, legacy (pre-1.6) serialization: 488 bytes.

@@ -28,7 +28,8 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     @objc public static let cacheQuantizationGroupSize = "NFKMLXParameterCacheQuantizationGroupSize"
     /// The most prompt tokens to run per prefill pass, as an `NSNumber`. See ``NFKMLXGenerationOptions/prefillChunkSize``.
     @objc public static let prefillChunkSize = "NFKMLXParameterPrefillChunkSize"
-    /// The chat template, as an `NSString`: `"chatml"` applies the ChatML template, anything else
+    /// The chat template, as an `NSString`: `"chatml"` applies the ChatML template, a string carrying
+    /// Jinja delimiters (`{%`/`{{`) is rendered as the release's own `chat_template`, and anything else
     /// flattens the messages. See ``NFKMLXGenerationOptions/chatTemplate``.
     @objc public static let chatTemplate = "NFKMLXParameterChatTemplate"
     /// How many tokens a draft model proposes per verification round, as an `NSNumber`; 0 turns
@@ -57,6 +58,11 @@ public enum NFKMLXChatTemplate: Sendable {
     /// trailing `<|im_start|>assistant\n` so the model continues as the assistant. The markers are the
     /// release's own special tokens, which the tokenizer resolves to single ids.
     case chatML
+    /// The release's own Jinja `chat_template`, rendered by ``NFKMLXChatTemplateRenderer``. This is the
+    /// faithful path: an instruct release ships the exact template it was trained on, so rendering it
+    /// reproduces the model's expected input rather than approximating it with `.chatML`. The
+    /// associated values are the release's markers, for templates that reference `bos_token`/`eos_token`.
+    case jinja(template: String, bosToken: String = "", eosToken: String = "")
 }
 
 /// How a generation run samples and how its prompt is prepared.
@@ -402,7 +408,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.cacheQuantization = .init(bits: bits.intValue, groupSize: groupSize)
         }
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) as? String {
-            options.chatTemplate = value.lowercased() == "chatml" ? .chatML : .none
+            // A string carrying Jinja delimiters is the release's own template; render it faithfully.
+            if value.contains("{%") || value.contains("{{") {
+                options.chatTemplate = .jinja(template: value)
+            } else {
+                options.chatTemplate = value.lowercased() == "chatml" ? .chatML : .none
+            }
         }
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
             options.draftTokens = value.intValue
@@ -434,6 +445,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             return messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
         case .chatML:
             return chatMLPrompt(from: messages)
+        case .jinja(let templateSource, let bosToken, let eosToken):
+            // A render failure must not abort generation; fall back to the ChatML approximation.
+            return (try? NFKMLXChatTemplateRenderer.render(templateSource, messages: messages,
+                                                           addGenerationPrompt: true,
+                                                           bosToken: bosToken, eosToken: eosToken))
+                ?? chatMLPrompt(from: messages)
         }
     }
 
@@ -719,14 +736,24 @@ public final class NFKMLXLanguage: NSObject {
         // pattern is named: the GPT-2 default encodes the same text to different, valid-looking ids.
         // The special tokens live in tokenizer_config.json rather than vocab.json; without them a
         // chat template's markers would encode as ordinary text.
-        let (specials, endToken) = specialTokens(inDirectory: directoryURL)
-        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "qwen2",
-                                                     "specialTokens": specials]]
-        if let endToken { manifest["eosTokenId"] = endToken }
-        let tokenizer = try? NFKTokenizer(forManifest: manifest, directory: directoryURL)
+        let tokenizer = releaseTokenizer(inDirectory: directoryURL)
         let net = makeNet(configuration)
         try loadWeights(into: net, fromDirectory: directoryURL)
         return (net, tokenizer)
+    }
+
+    /// The tokenizer a release directory describes, built without loading the weights.
+    ///
+    /// @discussion The vocabulary is Qwen's byte-level BPE over its own `qwen2` pre-tokenization
+    /// splits; the GPT-2 default would encode the same text to different, valid-looking ids. The
+    /// special tokens live in `tokenizer_config.json` rather than `vocab.json`, so a chat template's
+    /// or an embedder's markers resolve rather than encoding as ordinary text.
+    static func releaseTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
+        let (specials, endToken) = specialTokens(inDirectory: directory)
+        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "qwen2",
+                                                     "specialTokens": specials]]
+        if let endToken { manifest["eosTokenId"] = endToken }
+        return try? NFKTokenizer(forManifest: manifest, directory: directory)
     }
 
     /// The special-token literals a release declares (`added_tokens_decoder` in

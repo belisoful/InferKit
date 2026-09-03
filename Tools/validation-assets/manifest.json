@@ -1,801 +1,921 @@
 {
-  "comment": "Every real checkpoint the parity and triage suites load, with the source that serves it and the converter that puts it in the module's layout. `fetch.py` reads this. Sizes are the bytes the source reported when the entry was added; a mismatch means the source changed under us, which is worth knowing before a parity number moves. Most assets download from `url`; `gdrive` names a Google Drive file id and `extract` a member path inside a zip at `url`, for the two releases served no other way.",
-  "assets": [
-    {
-      "key": "REALESRGAN",
-      "file": "real-esrgan-x4.safetensors",
-      "raw": "realesrgan_x4.pth",
-      "bytes": 67040989,
-      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
-      "converter": "realesrgan-to-safetensors",
-      "config": [
-        "IK_VAL_REALESRGAN"
-      ]
-    },
-    {
-      "key": "DEPTH",
-      "file": "depth-anything-v2-small.safetensors",
-      "raw": "depth_v2_small.pth",
-      "bytes": 99218434,
-      "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth",
-      "converter": "depth-anything-to-safetensors",
-      "config": [
-        "IK_VAL_DEPTH"
-      ]
-    },
-    {
-      "key": "U2NET",
-      "file": "u2net.safetensors",
-      "raw": "u2net.pth",
-      "bytes": 176290937,
-      "url": "https://huggingface.co/Carve/u2net-universal/resolve/main/full_weights.pth",
-      "converter": "u2net-to-safetensors",
-      "config": [
-        "IK_VAL_U2NET"
-      ]
-    },
-    {
-      "key": "WHISPER",
-      "file": "whisper-tiny.safetensors",
-      "raw": "whisper_tiny.pt",
-      "bytes": 75572083,
-      "url": "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt",
-      "converter": "whisper-to-safetensors",
-      "config": [
-        "IK_VAL_WHISPER"
-      ]
-    },
-    {
-      "key": "CLIP",
-      "file": "clip.safetensors",
-      "raw": "clip_vit_b32.pt",
-      "bytes": 353976522,
-      "url": "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
-      "converter": "clip-to-safetensors",
-      "config": [
-        "IK_VAL_CLIP",
-        "IK_TRIAGE_CLIP"
-      ]
-    },
-    {
-      "key": "SAM",
-      "file": "sam.safetensors",
-      "raw": "sam_vit_b.pth",
-      "bytes": 375042383,
-      "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
-      "converter": "sam-to-safetensors",
-      "config": [
-        "IK_VAL_SAM",
-        "IK_TRIAGE_SAM"
-      ]
-    },
-    {
-      "key": "DEEPLAB",
-      "file": "deeplab.safetensors",
-      "raw": "deeplabv3_resnet50.pth",
-      "bytes": 168312152,
-      "url": "https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth",
-      "converter": "deeplab-to-safetensors",
-      "config": [
-        "IK_VAL_DEEPLAB",
-        "IK_TRIAGE_DEEPLAB"
-      ]
-    },
-    {
-      "key": "DENOISER",
-      "file": "denoiser.safetensors",
-      "raw": "dns48.th",
-      "bytes": 75478395,
-      "url": "https://dl.fbaipublicfiles.com/adiyoss/denoiser/dns48-11decc9d8e3f0998.th",
-      "converter": "denoiser-to-safetensors",
-      "config": [
-        "IK_VAL_DENOISER",
-        "IK_TRIAGE_DENOISER"
-      ]
-    },
-    {
-      "key": "DEMUCS",
-      "file": "demucs-v2.safetensors",
-      "raw": "demucs_v2.th",
-      "bytes": 1062738817,
-      "url": "https://dl.fbaipublicfiles.com/demucs/v3.0/demucs-e07c671f.th",
-      "converter": "demucs-to-safetensors",
-      "config": [
-        "IK_VAL_DEMUCS",
-        "IK_TRIAGE_DEMUCS"
-      ]
-    },
-    {
-      "key": "POSE",
-      "file": "pose.safetensors",
-      "raw": "pose_resnet50.pth",
-      "bytes": 143443289,
-      "url": "https://download.openmmlab.com/mmpose/v1/body_2d_keypoint/topdown_heatmap/coco/td-hm_res50_8xb64-210e_coco-256x192-04af38ce_20220923.pth",
-      "converter": "pose-to-safetensors",
-      "config": [
-        "IK_VAL_POSE"
-      ]
-    },
-    {
-      "key": "AUDIOTAGGER",
-      "file": "audiotagger.safetensors",
-      "raw": "panns_cnn14.pth",
-      "bytes": 327428481,
-      "url": "https://zenodo.org/records/3987831/files/Cnn14_mAP%3D0.431.pth?download=1",
-      "converter": "audio-tagger-to-safetensors",
-      "config": [
-        "IK_VAL_AUDIOTAGGER",
-        "IK_TRIAGE_AUDIOTAGGER"
-      ]
-    },
-    {
-      "key": "RAFT",
-      "file": "raft-things.safetensors",
-      "raw": "raft_things.pth",
-      "bytes": 21108000,
-      "url": "https://huggingface.co/sbalani/raft-things/resolve/main/raft-things.pth",
-      "converter": "raft-to-safetensors",
-      "config": [
-        "IK_VAL_RAFT"
-      ]
-    },
-    {
-      "key": "SEGFORMER",
-      "file": "segformer.safetensors",
-      "raw": "segformer_b0.bin",
-      "bytes": 15092257,
-      "url": "https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512/resolve/main/pytorch_model.bin",
-      "converter": "segformer-to-safetensors",
-      "config": [
-        "IK_VAL_SEGFORMER",
-        "IK_TRIAGE_SEGFORMER"
-      ]
-    },
-    {
-      "key": "CONVTASNET",
-      "file": "convtasnet.safetensors",
-      "raw": "convtasnet.bin",
-      "bytes": 20394640,
-      "url": "https://huggingface.co/JorisCos/ConvTasNet_Libri2Mix_sepclean_16k/resolve/main/pytorch_model.bin",
-      "converter": "conv-tasnet-to-safetensors",
-      "config": [
-        "IK_VAL_CONVTASNET",
-        "IK_TRIAGE_CONVTASNET"
-      ]
-    },
-    {
-      "key": "SWINIR",
-      "file": "swinir.safetensors",
-      "raw": "swinir_x4.pth",
-      "bytes": 59611499,
-      "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x4.pth",
-      "converter": "swinir-to-safetensors",
-      "config": [
-        "IK_VAL_SWINIR",
-        "IK_TRIAGE_SWINIR"
-      ]
-    },
-    {
-      "key": "SWINIR_X3",
-      "file": "swinir_x3.safetensors",
-      "raw": "swinir_x3.pth",
-      "bytes": 59758497,
-      "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x3.pth",
-      "converter": "swinir-to-safetensors",
-      "config": [
-        "IK_VAL_SWINIR_X3",
-        "IK_TRIAGE_SWINIR_X3"
-      ],
-      "note": "the x3 release: ONE \u00d73 pixel-shuffle stage where x4 runs two \u00d72 stages, so it fits only the x3 geometry"
-    },
-    {
-      "key": "COLORIZER",
-      "file": "colorizer-eccv16.safetensors",
-      "raw": "colorizer_eccv16.pth",
-      "bytes": 128976165,
-      "url": "https://colorizers.s3.us-east-2.amazonaws.com/colorization_release_v2-9b330a0b.pth",
-      "converter": "colorizer-to-safetensors",
-      "config": [
-        "IK_VAL_COLORIZER"
-      ]
-    },
-    {
-      "key": "ZERODCE",
-      "file": "zero-dce.safetensors",
-      "raw": "zero_dce.pth",
-      "bytes": 320017,
-      "url": "https://github.com/Li-Chongyi/Zero-DCE/raw/master/Zero-DCE_code/snapshots/Epoch99.pth",
-      "converter": "zero-dce-to-safetensors",
-      "config": [
-        "IK_VAL_ZERODCE"
-      ]
-    },
-    {
-      "key": "VAD",
-      "file": "vad.safetensors",
-      "raw": "marblenet_vad.nemo",
-      "bytes": 501760,
-      "url": "https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0/resolve/main/frame_vad_multilingual_marblenet_v2.0.nemo",
-      "converter": "vad-to-safetensors",
-      "config": [
-        "IK_VAL_VAD",
-        "IK_TRIAGE_VAD"
-      ]
-    },
-    {
-      "key": "FACE",
-      "kind": "input",
-      "file": "face960.jpg",
-      "bytes": 243764,
-      "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Neil_Armstrong_pose.jpg/960px-Neil_Armstrong_pose.jpg",
-      "config": [
-        "IK_VAL_FACE"
-      ],
-      "note": "A photograph with a human face, for NFKMLXFaceAlignment's detection and paste-back tests. NASA Apollo XI portrait (photo ID S69-31741), a work of the US government and therefore public domain \u2014 Wikimedia records it as not copyrighted. The general validation plate (IK_VAL_IMAGE) is an animal, so it cannot serve here."
-    },
-    {
-      "key": "RETINAFACE",
-      "file": "retinaface.safetensors",
-      "raw": "detection_mobilenet0.25_Final.pth",
-      "bytes": 1789735,
-      "url": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth",
-      "converter": "retinaface-to-safetensors",
-      "config": [
-        "IK_VAL_RETINAFACE",
-        "IK_TRIAGE_RETINAFACE"
-      ],
-      "note": "The face detector the CodeFormer reference pipeline runs through facexlib. mobile0.25 is 1.7 MB, so the parity-exact alignment path costs almost nothing beside CodeFormer's own checkpoint."
-    },
-    {
-      "key": "SAM2_TINY",
-      "file": "sam2-tiny.safetensors",
-      "raw": "sam2_hiera_tiny.pt",
-      "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt",
-      "converter": "sam2-to-safetensors",
-      "config": [
-        "IK_VAL_SAM2",
-        "IK_TRIAGE_SAM2",
-        "IK_VAL_SAM2MEMORY",
-        "IK_TRIAGE_SAM2DECODER",
-        "IK_TRIAGE_SAM2MEMORY"
-      ],
-      "note": "The .pt wraps the state dict under a `model` key; names pass through."
-    },
-    {
-      "key": "SAM2_BASE_PLUS",
-      "file": "sam2-base-plus.safetensors",
-      "raw": "sam2_hiera_base_plus.pt",
-      "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt",
-      "converter": "sam2-to-safetensors",
-      "config": [
-        "IK_VAL_SAM2_BASE_PLUS"
-      ],
-      "note": "The .pt wraps the state dict under a `model` key; names pass through."
-    },
-    {
-      "key": "SAM2_LARGE",
-      "file": "sam2-large.safetensors",
-      "raw": "sam2_hiera_large.pt",
-      "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt",
-      "converter": "sam2-to-safetensors",
-      "config": [
-        "IK_VAL_SAM2_LARGE"
-      ],
-      "note": "The .pt wraps the state dict under a `model` key; names pass through."
-    },
-    {
-      "key": "HIFIGAN_UNIVERSAL",
-      "file": "hifigan-universal.safetensors",
-      "raw": "hifigan_universal_v1_g_02500000.pt",
-      "url": "https://huggingface.co/csdc-atl/hifigan-universal_v1/resolve/main/g_02500000",
-      "converter": "hifigan-to-safetensors",
-      "config": [
-        "IK_VAL_HIFIGAN"
-      ],
-      "note": "The official jik876 UNIVERSAL_V1 generator (the repo mirrors the Google Drive release). Weight-normalized; the converter fuses g*v/||v||, which is remove_weight_norm. The config beside it must be saved as hifigan_universal_v1_config.json for the oracle."
-    },
-    {
-      "key": "HIFIGAN_LJSPEECH_ESPNET",
-      "file": "hifigan-ljspeech-espnet.safetensors",
-      "raw": "fs2c-with-hifigan.bin",
-      "url": "https://huggingface.co/espnet/fastspeech2_conformer_with_hifigan/resolve/main/pytorch_model.bin",
-      "converter": "hifigan-to-safetensors",
-      "config": [
-        "IK_VAL_HIFIGAN_LJSPEECH"
-      ],
-      "note": "The vocoder PAIRED with the espnet FastSpeech2 release - trained on its normalized mels, where the universal jik876 generator expects raw log-mels and produces loud garbage (Whisper hears '(indistinct)'). The converter strips the vocoder. prefix; weight norm is already fused."
-    },
-    {
-      "key": "FASTSPEECH2",
-      "file": "fastspeech2-conformer.safetensors",
-      "raw": "fs2c-model.bin",
-      "url": "https://huggingface.co/espnet/fastspeech2_conformer/resolve/main/pytorch_model.bin",
-      "converter": "fastspeech2-to-safetensors",
-      "config": [
-        "IK_VAL_FASTSPEECH2"
-      ],
-      "note": "The LJSpeech conformer FastSpeech2. Names pass through; the converter drops the batch-norm step counters and unwraps the paired release's model. prefix when given that file instead."
-    },
-    {
-      "key": "NAFNET",
-      "file": "nafnet.safetensors",
-      "raw": "nafnet_sidd_width32.pth",
-      "bytes": 116861841,
-      "url": "https://huggingface.co/nyanko7/nafnet-models/resolve/main/NAFNet-SIDD-width32.pth",
-      "converter": "nafnet-to-safetensors",
-      "config": [
-        "IK_VAL_NAFNET"
-      ],
-      "note": "The SIDD width-32 denoiser. The GoPro and REDS variants (IK_VAL_NAFNET_GOPRO / _REDS) are separate .pth files at the same repo, fetched by hand; only the SIDD one the native-reader parity test uses is tracked here."
-    },
-    {
-      "key": "RIFE",
-      "file": "rife_hdv3.safetensors",
-      "raw": "rife_flownet.pkl",
-      "bytes": 12186817,
-      "url": "https://huggingface.co/yow46228/RIFE/resolve/main/flownet.pkl",
-      "converter": "rife-to-safetensors",
-      "config": [
-        "IK_VAL_RIFE"
-      ],
-      "note": "The released HDv3 IFNet. The .pkl is a modern torch zip; the converter renames the block/head Sequentials and drops the teacher subtrees."
-    },
-    {
-      "key": "LAMA",
-      "file": "lama.safetensors",
-      "raw": "big_lama.ckpt",
-      "bytes": 410046389,
-      "url": "https://huggingface.co/smartywu/big-lama/resolve/main/big-lama.zip",
-      "extract": "big-lama/models/best.ckpt",
-      "converter": "lama-to-safetensors",
-      "config": [
-        "IK_VAL_LAMA"
-      ],
-      "note": "big-lama, distributed as a zip. `extract` names the checkpoint inside it (the Lightning best.ckpt); fetch.py downloads the archive and pulls that member out as the raw file."
-    },
-    {
-      "key": "MODNET",
-      "file": "modnet.safetensors",
-      "raw": "modnet_photographic.ckpt",
-      "bytes": 26255603,
-      "gdrive": "1mcr7ALciuAsHCpLnrtG_eop5-EYhbCmz",
-      "converter": "modnet-to-safetensors",
-      "config": [
-        "IK_VAL_MODNET"
-      ],
-      "note": "The photographic MODNet, served only from Google Drive. `gdrive` is the file id; fetch.py fetches it with gdown (pip install gdown). The HF ONNX exports remain unreadable by this loader."
-    },
-    {
-      "key": "YOLO",
-      "file": "yolo.safetensors",
-      "raw": "yolov8n.pt",
-      "bytes": 6549796,
-      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
-      "converter": "yolo-to-safetensors",
-      "config": [
-        "IK_VAL_YOLO"
-      ],
-      "note": "YOLOv8 nano. The .pt pickles a live ultralytics DetectionModel tree; the native reader walks its nn.Module state (no ultralytics classes constructed) rather than needing the package the converter imports. The larger variants (yolo-l/x, IK_VAL_YOLO_LARGE/_XLARGE) are separate .pt files, fetched by hand."
-    }
-  ],
-  "unresolved": [
-    {
-      "key": "STYLE",
-      "config": [
-        "IK_VAL_STYLE",
-        "IK_PARITY_STYLE"
-      ],
-      "status": "unresolved \u2014 the parity test skips",
-      "note": "fast-neural-style `mosaic.pth` is no longer served: download.pytorch.org/models/fast_neural_style/{mosaic.pth,saved_models.zip}, the S3 path, and the web.archive copy all 403/404 as of 2026-08-19, and the only HF hit is an ExecuTorch .pte this loader cannot read. A SEEDED checkpoint from the reference `transformer_net.py` was tried and REJECTED: the network is trained to emit 0...255, so with random weights its output is near-zero noise (range about +-1.5 before the divide by 255) and the cosine measures the port's noise floor rather than the model \u2014 it scored 0.68, which looks like a failure and means nothing. Same trap as matting on a synthetic plate. The recorded 0.9999926 was measured on the official checkpoint; re-running it needs that file to reappear or a mirror to be found."
-    }
-  ],
-  "sources": {
-    "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the three models whose reference is a whole small package get their own variable. Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py.",
-    "root_var": "IK_REF_SRC",
-    "files": [
-      [
-        "refsrc/rrdbnet_arch.py",
-        "https://raw.githubusercontent.com/XPixelGroup/BasicSR/master/basicsr/archs/rrdbnet_arch.py"
-      ],
-      [
-        "refsrc/u2net.py",
-        "https://raw.githubusercontent.com/xuebinqin/U-2-Net/master/model/u2net.py"
-      ],
-      [
-        "refsrc/zerodce.py",
-        "https://raw.githubusercontent.com/Li-Chongyi/Zero-DCE/master/Zero-DCE_code/model.py"
-      ],
-      [
-        "refsrc/pose_resnet.py",
-        "https://raw.githubusercontent.com/microsoft/human-pose-estimation.pytorch/master/lib/models/pose_resnet.py"
-      ],
-      [
-        "refsrc/panns_models.py",
-        "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/pytorch/models.py"
-      ],
-      [
-        "refsrc/pytorch_utils.py",
-        "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/pytorch/pytorch_utils.py"
-      ],
-      [
-        "refsrc/transformer_net.py",
-        "https://raw.githubusercontent.com/pytorch/examples/main/fast_neural_style/neural_style/transformer_net.py"
-      ],
-      [
-        "refsrc/eccv16.py",
-        "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/eccv16.py"
-      ],
-      [
-        "refsrc/base_color.py",
-        "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/base_color.py"
-      ],
-      [
-        "refsrc/siggraph17.py",
-        "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/siggraph17.py"
-      ],
-      [
-        "refsrc/raft/raft.py",
-        "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/raft.py"
-      ],
-      [
-        "refsrc/raft/corr.py",
-        "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/corr.py"
-      ],
-      [
-        "refsrc/raft/extractor.py",
-        "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/extractor.py"
-      ],
-      [
-        "refsrc/raft/update.py",
-        "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/update.py"
-      ],
-      [
-        "refsrc/raft/utils/utils.py",
-        "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/utils/utils.py"
-      ],
-      [
-        "refsrc/raft/utils/__init__.py",
-        null
-      ],
-      [
-        "swinir/network_swinir.py",
-        "https://raw.githubusercontent.com/JingyunLiang/SwinIR/main/models/network_swinir.py"
-      ],
-      [
-        "demucs_v2/model.py",
-        "https://raw.githubusercontent.com/facebookresearch/demucs/v2/demucs/model.py"
-      ],
-      [
-        "denoiser/demucs.py",
-        "https://raw.githubusercontent.com/facebookresearch/denoiser/main/denoiser/demucs.py"
-      ],
-      [
-        "denoiser/resample.py",
-        "https://raw.githubusercontent.com/facebookresearch/denoiser/main/denoiser/resample.py"
-      ],
-      [
-        "refsrc/sam2/modeling/backbones/hieradet.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/hieradet.py"
-      ],
-      [
-        "refsrc/sam2/modeling/backbones/image_encoder.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/image_encoder.py"
-      ],
-      [
-        "refsrc/sam2/modeling/backbones/utils.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/utils.py"
-      ],
-      [
-        "refsrc/sam2/modeling/position_encoding.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/position_encoding.py"
-      ],
-      [
-        "refsrc/sam2/modeling/sam2_utils.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/sam2_utils.py"
-      ],
-      [
-        "refsrc/sam2/modeling/memory_attention.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/memory_attention.py"
-      ],
-      [
-        "refsrc/sam2/modeling/memory_encoder.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/memory_encoder.py"
-      ],
-      [
-        "refsrc/sam2/utils/misc.py",
-        "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/utils/misc.py"
-      ],
-      [
-        "refsrc/sam2/__init__.py",
-        null
-      ],
-      [
-        "refsrc/sam2/modeling/__init__.py",
-        null
-      ],
-      [
-        "refsrc/sam2/modeling/backbones/__init__.py",
-        null
-      ],
-      [
-        "refsrc/sam2/utils/__init__.py",
-        null
-      ],
-      [
-        "refsrc/hifigan/models.py",
-        "https://raw.githubusercontent.com/jik876/hifi-gan/master/models.py"
-      ],
-      [
-        "refsrc/hifigan/utils.py",
-        "https://raw.githubusercontent.com/jik876/hifi-gan/master/utils.py"
-      ],
-      [
-        "refsrc/hifigan/env.py",
-        "https://raw.githubusercontent.com/jik876/hifi-gan/master/env.py"
-      ]
-    ],
-    "env": {
-      "IK_REF_SRC": "refsrc",
-      "IK_SWINIR_SRC": "swinir",
-      "IK_DEMUCS_SRC": "demucs_v2",
-      "IK_DENOISER_SRC": "denoiser"
-    }
+ "comment": "Every real checkpoint the parity and triage suites load, with the source that serves it and the converter that puts it in the module's layout. `fetch.py` reads this. Sizes are the bytes the source reported when the entry was added; a mismatch means the source changed under us, which is worth knowing before a parity number moves. Most assets download from `url`; `gdrive` names a Google Drive file id and `extract` a member path inside a zip at `url`, for the two releases served no other way.",
+ "assets": [
+  {
+   "key": "REALESRGAN",
+   "file": "real-esrgan-x4.safetensors",
+   "raw": "realesrgan_x4.pth",
+   "bytes": 67040989,
+   "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
+   "converter": "realesrgan-to-safetensors",
+   "config": [
+    "IK_VAL_REALESRGAN"
+   ]
   },
-  "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place \u2014 the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
-  "releases": [
-    {
-      "key": "SD15",
-      "directory": "sd15",
-      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
-      "files": [
-        "model_index.json",
-        "scheduler/scheduler_config.json",
-        "text_encoder/config.json",
-        "text_encoder/model.safetensors",
-        "unet/config.json",
-        "unet/diffusion_pytorch_model.safetensors",
-        "vae/config.json",
-        "vae/diffusion_pytorch_model.safetensors",
-        "tokenizer/vocab.json",
-        "tokenizer/merges.txt",
-        "tokenizer/tokenizer_config.json",
-        "tokenizer/special_tokens_map.json",
-        "feature_extractor/preprocessor_config.json"
-      ],
-      "config": {
-        "IK_VAL_SD15_DIR": "",
-        "IK_VAL_SD15_TEXT": "text_encoder/model.safetensors",
-        "IK_TRIAGE_SD15TEXT": "text_encoder/model.safetensors",
-        "IK_VAL_SD15_TOKENIZER": "tokenizer",
-        "IK_VAL_SD15_UNET": "unet/diffusion_pytorch_model.safetensors",
-        "IK_VAL_SD15_VAE": "vae/diffusion_pytorch_model.safetensors"
-      },
-      "note": "The reference text-to-image pipeline for the `sd_text_encoder`, `sd_tokenizer`, and `sd_text_to_image` oracles."
-    },
-    {
-      "key": "SD21",
-      "directory": "sd21",
-      "repo": "friedrichor/stable-diffusion-2-1-realistic",
-      "files": [
-        "model_index.json",
-        "scheduler/scheduler_config.json",
-        "text_encoder/config.json",
-        "text_encoder/model.safetensors",
-        "unet/config.json",
-        "unet/diffusion_pytorch_model.safetensors",
-        "vae/config.json",
-        "vae/diffusion_pytorch_model.safetensors",
-        "tokenizer/vocab.json",
-        "tokenizer/merges.txt",
-        "tokenizer/tokenizer_config.json",
-        "tokenizer/special_tokens_map.json"
-      ],
-      "config": {
-        "IK_VAL_SD21_DIR": "",
-        "IK_VAL_SD21_TEXT": "text_encoder/model.safetensors",
-        "IK_TRIAGE_SD21TEXT": "text_encoder/model.safetensors",
-        "IK_VAL_SD21_TOKENIZER": "tokenizer",
-        "IK_VAL_SD21UNET": "unet/diffusion_pytorch_model.safetensors",
-        "IK_TRIAGE_SD21UNET": "unet/diffusion_pytorch_model.safetensors"
-      },
-      "note": "stabilityai/stable-diffusion-2-1-base is GATED and returns 401 without a credential. This is an ungated release of the same lineage and geometry (cross-attention 1024, heads [5, 10, 20, 20], linear projection, OpenCLIP text tower), at the 768 v-prediction settings \u2014 which also exercises the sampler's velocity path. Its `model_index.json` names a safety checker whose `feature_extractor/` it does not ship, so those two entries are removed before the reference pipeline loads it. Its text encoder and autoencoder are published in bfloat16."
-    },
-    {
-      "key": "SDXL",
-      "directory": "sdxl",
-      "repo": "stabilityai/sdxl-turbo",
-      "files": [
-        "model_index.json",
-        "scheduler/scheduler_config.json",
-        "text_encoder/config.json",
-        "text_encoder/model.fp16.safetensors",
-        "text_encoder_2/config.json",
-        "text_encoder_2/model.fp16.safetensors",
-        "unet/config.json",
-        "unet/diffusion_pytorch_model.fp16.safetensors",
-        "vae/config.json",
-        "vae/diffusion_pytorch_model.fp16.safetensors",
-        "tokenizer/vocab.json",
-        "tokenizer/merges.txt",
-        "tokenizer/tokenizer_config.json",
-        "tokenizer/special_tokens_map.json",
-        "tokenizer_2/vocab.json",
-        "tokenizer_2/merges.txt",
-        "tokenizer_2/tokenizer_config.json",
-        "tokenizer_2/special_tokens_map.json"
-      ],
-      "config": {
-        "IK_VAL_SDXL_DIR": "",
-        "IK_VAL_SDXL_TEXT": "text_encoder/model.fp16.safetensors",
-        "IK_VAL_SDXL_TEXT2": "text_encoder_2/model.fp16.safetensors",
-        "IK_VAL_SDXLUNET": "unet/diffusion_pytorch_model.fp16.safetensors",
-        "IK_TRIAGE_SDXLUNET": "unet/diffusion_pytorch_model.fp16.safetensors",
-        "IK_TRIAGE_SDXLTEXT": "text_encoder/model.fp16.safetensors",
-        "IK_TRIAGE_SDXLTEXT2": "text_encoder_2/model.fp16.safetensors"
-      },
-      "note": "Published only in half precision; every parity run loads it at float32."
-    },
-    {
-      "key": "QWEN3_0_6B",
-      "repo": "Qwen/Qwen3-0.6B",
-      "directory": "qwen3-0.6B",
-      "files": [
-        "config.json",
-        "model.safetensors",
-        "tokenizer.json",
-        "vocab.json",
-        "merges.txt",
-        "tokenizer_config.json"
-      ],
-      "config": {
-        "IK_VAL_QWEN3": ""
-      },
-      "note": "The smallest Qwen3 dense decoder, 1.4 GB. Its checkpoint ships lm_head.weight even though tie_word_embeddings is true; the two tensors are byte-identical, so the loader drops the duplicate rather than building a projection the tied model does not have."
-    },
-    {
-      "key": "GEMMA4_E4B",
-      "repo": "google/gemma-4-E4B-it",
-      "directory": "gemma4-e4b",
-      "files": [
-        "config.json",
-        "generation_config.json",
-        "tokenizer_config.json",
-        "model.safetensors"
-      ],
-      "config": {
-        "IK_VAL_GEMMA4_E4B": ""
-      },
-      "note": "The next dense Gemma 4 size: 42 layers, hidden 2560, 2 KV heads, kv-shared 18. 16 GB of bf16, which doubles past this machine's RAM at float32 - so its oracle runs under IK_GEMMA_DTYPE=bfloat16 and the Swift side loads at .checkpoint precision."
-    },
-    {
-      "key": "DEEPSEEK_V4_PRO",
-      "repo": "deepseek-ai/DeepSeek-V4-Pro-0813",
-      "directory": "deepseek-v4-pro",
-      "files": [
-        "config.json",
-        "model.safetensors.index.json"
-      ],
-      "config": {
-        "IK_CONFIG_DEEPSEEK_V4_PRO": "config.json",
-        "IK_INDEX_DEEPSEEK_V4_PRO": "model.safetensors.index.json"
-      },
-      "note": "Structural only, like the Flash entry: shapes.json is built from the headers of the shards covering layers 0/3/60 plus the globals, fetched by HTTP range request (~1 MB against 400+ GB). The weights are never downloaded."
-    },
-    {
-      "key": "FASTSPEECH2_CONFORMER",
-      "repo": "espnet/fastspeech2_conformer",
-      "directory": "fastspeech2-conformer",
-      "files": [
-        "config.json",
-        "pytorch_model.bin",
-        "vocab.json"
-      ],
-      "config": {
-        "IK_VOCAB_FASTSPEECH2": "vocab.json"
-      },
-      "note": "The LJSpeech-trained conformer FastSpeech2 and its 78-symbol ARPAbet vocabulary - the matching phoneme table the TTS chain needs. IK_VAL_FASTSPEECH2 is the .bin converted to safetensors (a passthrough that drops num_batches_tracked); the transformers implementation is the oracle."
-    },
-    {
-      "key": "MUSIC3",
-      "repo": "MiniMaxAI/MiniMax-Music3",
-      "directory": "minimax-music3",
-      "files": [
-        "LICENSE",
-        "vocoder/config.json",
-        "vocoder/diffusion_pytorch_model.safetensors",
-        "condition_encoder/config.json",
-        "condition_encoder/diffusion_pytorch_model.safetensors",
-        "rvq_depth_decoder/config.json",
-        "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
-        "scheduler/scheduler_config.json",
-        "transformer/config.json",
-        "transformer/diffusion_pytorch_model.safetensors.index.json",
-        "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
-        "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
-        "language_model/config.json",
-        "language_model/model.safetensors.index.json",
-        "language_model/model-00001-of-00004.safetensors",
-        "language_model/model-00002-of-00004.safetensors",
-        "language_model/model-00003-of-00004.safetensors",
-        "language_model/model-00004-of-00004.safetensors",
-        "tokenizer/tokenizer.json",
-        "tokenizer/tokenizer_config.json",
-        "qwen_7B/qwen3-8B-tokenizer-music/vocab.json",
-        "qwen_7B/qwen3-8B-tokenizer-music/merges.txt",
-        "qwen_7B/qwen3-8B-tokenizer-music/added_tokens.json"
-      ],
-      "config": {
-        "IK_VAL_MUSIC3_DIR": "",
-        "IK_VAL_MUSIC3_VOCODER": "vocoder/diffusion_pytorch_model.safetensors",
-        "IK_VAL_MUSIC3_CONDITION": "condition_encoder/diffusion_pytorch_model.safetensors",
-        "IK_VAL_MUSIC3_DEPTH": "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
-        "IK_VAL_MUSIC3_DIT": "transformer",
-        "IK_VAL_MUSIC3_LM": "language_model",
-        "IK_VAL_MUSIC3_TOKENIZER": "tokenizer",
-        "IK_VAL_MUSIC3_BPE": "qwen_7B/qwen3-8B-tokenizer-music"
-      },
-      "note": "MiniMax Music 3, the Diffusers-format release, fetched component by component as the port lands each stage (vocoder so far; condition_encoder, rvq_depth_decoder, transformer, language_model follow). The official checkpoint is already safetensors, so it is used in place: the Swift loader fuses the weight-norm pairs and transposes the conv layouts itself, and the diffusers implementation (>= 0.40.0, MiniMaxMusic3Vocoder et al.) is the oracle. THE WEIGHTS ARE NOT PERMISSIVELY LICENSED - the MiniMax-Music3 Community License requires UI attribution in commercial products and separate authorization above USD 20M yearly revenue; see Docs/companions.md and the LICENSE fetched beside the weights."
-    },
-    {
-      "key": "WHISPER_TOKENIZER",
-      "repo": "openai/whisper-tiny",
-      "directory": "whisper-tokenizer",
-      "files": [
-        "vocab.json",
-        "merges.txt"
-      ],
-      "config": {
-        "IK_TOKENIZER_WHISPER": ""
-      },
-      "note": "The multilingual byte-level BPE vocabulary, which the voice loop-closure test uses to read Whisper's transcription of the synthesized speech."
-    }
-  ],
-  "oracle_environments": {
-    "comment": "diffusers cannot be installed beside the other oracles \u2014 it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against \u2014 so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
-    "diffusers": {
-      "path": "sdvenv",
-      "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate",
-      "modes": [
-        "sd_unet",
-        "sd_vae",
-        "sd_scheduler",
-        "sd_text_encoder",
-        "sd_tokenizer",
-        "sd_text_to_image"
-      ]
-    },
-    "llm": {
-      "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
-      "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting.",
-      "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors",
-      "modes": [
-        "qwen3",
-        "qwen3_moe",
-        "mixtral"
-      ]
-    },
-    "music": {
-      "interpreter": "~/.inferkit-validation/musicvenv/bin/python3",
-      "why": "MiniMax Music 3's official implementation is in diffusers >= 0.40.0 (MiniMaxMusic3Vocoder, MiniMaxMusic3RVQDepthDecoder, MiniMaxMusic3ConditionEncoder, the flow-matching DiT), which cannot share the pinned diffusers 0.31.0 the SD records were measured against, so the music_* modes run under their own interpreter.",
-      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/musicvenv && ~/.inferkit-validation/musicvenv/bin/python3 -m pip install 'diffusers==0.40.0' 'transformers>=5' torch safetensors accelerate",
-      "modes": [
-        "music_vocoder",
-        "music_depth",
-        "music_condition",
-        "music_dit",
-        "music_ar",
-        "music_tokenizer"
-      ]
-    },
-    "gemma": {
-      "interpreter": "~/.inferkit-validation/gemmavenv/bin/python3",
-      "why": "Gemma 4 is in no released transformers, and the version that has it requires Python 3.10; this machine's system Python is 3.9.6, so Homebrew's python@3.12 was installed alongside it and this environment built on that. It also carries the deepseek_quant oracle: torch 2.13 is the first here with float8_e4m3fn and float8_e8m0fnu on the CPU, and ml_dtypes supplies float4_e2m1fn, which torch has no CPU kernel for.",
-      "rebuild": "brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/gemmavenv && ~/.inferkit-validation/gemmavenv/bin/python3 -m pip install 'git+https://github.com/huggingface/transformers.git@main' torch safetensors ml_dtypes",
-      "modes": [
-        "deepseek_quant",
-        "gemma4",
-        "qwen3_5"
-      ]
-    }
+  {
+   "key": "DEPTH",
+   "file": "depth-anything-v2-small.safetensors",
+   "raw": "depth_v2_small.pth",
+   "bytes": 99218434,
+   "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth",
+   "converter": "depth-anything-to-safetensors",
+   "config": [
+    "IK_VAL_DEPTH"
+   ]
+  },
+  {
+   "key": "U2NET",
+   "file": "u2net.safetensors",
+   "raw": "u2net.pth",
+   "bytes": 176290937,
+   "url": "https://huggingface.co/Carve/u2net-universal/resolve/main/full_weights.pth",
+   "converter": "u2net-to-safetensors",
+   "config": [
+    "IK_VAL_U2NET"
+   ]
+  },
+  {
+   "key": "WHISPER",
+   "file": "whisper-tiny.safetensors",
+   "raw": "whisper_tiny.pt",
+   "bytes": 75572083,
+   "url": "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt",
+   "converter": "whisper-to-safetensors",
+   "config": [
+    "IK_VAL_WHISPER"
+   ]
+  },
+  {
+   "key": "CLIP",
+   "file": "clip.safetensors",
+   "raw": "clip_vit_b32.pt",
+   "bytes": 353976522,
+   "url": "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
+   "converter": "clip-to-safetensors",
+   "config": [
+    "IK_VAL_CLIP",
+    "IK_TRIAGE_CLIP"
+   ]
+  },
+  {
+   "key": "SAM",
+   "file": "sam.safetensors",
+   "raw": "sam_vit_b.pth",
+   "bytes": 375042383,
+   "url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+   "converter": "sam-to-safetensors",
+   "config": [
+    "IK_VAL_SAM",
+    "IK_TRIAGE_SAM"
+   ]
+  },
+  {
+   "key": "DEEPLAB",
+   "file": "deeplab.safetensors",
+   "raw": "deeplabv3_resnet50.pth",
+   "bytes": 168312152,
+   "url": "https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth",
+   "converter": "deeplab-to-safetensors",
+   "config": [
+    "IK_VAL_DEEPLAB",
+    "IK_TRIAGE_DEEPLAB"
+   ]
+  },
+  {
+   "key": "DENOISER",
+   "file": "denoiser.safetensors",
+   "raw": "dns48.th",
+   "bytes": 75478395,
+   "url": "https://dl.fbaipublicfiles.com/adiyoss/denoiser/dns48-11decc9d8e3f0998.th",
+   "converter": "denoiser-to-safetensors",
+   "config": [
+    "IK_VAL_DENOISER",
+    "IK_TRIAGE_DENOISER"
+   ]
+  },
+  {
+   "key": "DEMUCS",
+   "file": "demucs-v2.safetensors",
+   "raw": "demucs_v2.th",
+   "bytes": 1062738817,
+   "url": "https://dl.fbaipublicfiles.com/demucs/v3.0/demucs-e07c671f.th",
+   "converter": "demucs-to-safetensors",
+   "config": [
+    "IK_VAL_DEMUCS",
+    "IK_TRIAGE_DEMUCS"
+   ]
+  },
+  {
+   "key": "POSE",
+   "file": "pose.safetensors",
+   "raw": "pose_resnet50.pth",
+   "bytes": 143443289,
+   "url": "https://download.openmmlab.com/mmpose/v1/body_2d_keypoint/topdown_heatmap/coco/td-hm_res50_8xb64-210e_coco-256x192-04af38ce_20220923.pth",
+   "converter": "pose-to-safetensors",
+   "config": [
+    "IK_VAL_POSE"
+   ]
+  },
+  {
+   "key": "AUDIOTAGGER",
+   "file": "audiotagger.safetensors",
+   "raw": "panns_cnn14.pth",
+   "bytes": 327428481,
+   "url": "https://zenodo.org/records/3987831/files/Cnn14_mAP%3D0.431.pth?download=1",
+   "converter": "audio-tagger-to-safetensors",
+   "config": [
+    "IK_VAL_AUDIOTAGGER",
+    "IK_TRIAGE_AUDIOTAGGER"
+   ]
+  },
+  {
+   "key": "RAFT",
+   "file": "raft-things.safetensors",
+   "raw": "raft_things.pth",
+   "bytes": 21108000,
+   "url": "https://huggingface.co/sbalani/raft-things/resolve/main/raft-things.pth",
+   "converter": "raft-to-safetensors",
+   "config": [
+    "IK_VAL_RAFT"
+   ]
+  },
+  {
+   "key": "SEGFORMER",
+   "file": "segformer.safetensors",
+   "raw": "segformer_b0.bin",
+   "bytes": 15092257,
+   "url": "https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512/resolve/main/pytorch_model.bin",
+   "converter": "segformer-to-safetensors",
+   "config": [
+    "IK_VAL_SEGFORMER",
+    "IK_TRIAGE_SEGFORMER"
+   ]
+  },
+  {
+   "key": "CONVTASNET",
+   "file": "convtasnet.safetensors",
+   "raw": "convtasnet.bin",
+   "bytes": 20394640,
+   "url": "https://huggingface.co/JorisCos/ConvTasNet_Libri2Mix_sepclean_16k/resolve/main/pytorch_model.bin",
+   "converter": "conv-tasnet-to-safetensors",
+   "config": [
+    "IK_VAL_CONVTASNET",
+    "IK_TRIAGE_CONVTASNET"
+   ]
+  },
+  {
+   "key": "SWINIR",
+   "file": "swinir.safetensors",
+   "raw": "swinir_x4.pth",
+   "bytes": 59611499,
+   "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x4.pth",
+   "converter": "swinir-to-safetensors",
+   "config": [
+    "IK_VAL_SWINIR",
+    "IK_TRIAGE_SWINIR"
+   ]
+  },
+  {
+   "key": "SWINIR_X3",
+   "file": "swinir_x3.safetensors",
+   "raw": "swinir_x3.pth",
+   "bytes": 59758497,
+   "url": "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x3.pth",
+   "converter": "swinir-to-safetensors",
+   "config": [
+    "IK_VAL_SWINIR_X3",
+    "IK_TRIAGE_SWINIR_X3"
+   ],
+   "note": "the x3 release: ONE \u00d73 pixel-shuffle stage where x4 runs two \u00d72 stages, so it fits only the x3 geometry"
+  },
+  {
+   "key": "COLORIZER",
+   "file": "colorizer-eccv16.safetensors",
+   "raw": "colorizer_eccv16.pth",
+   "bytes": 128976165,
+   "url": "https://colorizers.s3.us-east-2.amazonaws.com/colorization_release_v2-9b330a0b.pth",
+   "converter": "colorizer-to-safetensors",
+   "config": [
+    "IK_VAL_COLORIZER"
+   ]
+  },
+  {
+   "key": "ZERODCE",
+   "file": "zero-dce.safetensors",
+   "raw": "zero_dce.pth",
+   "bytes": 320017,
+   "url": "https://github.com/Li-Chongyi/Zero-DCE/raw/master/Zero-DCE_code/snapshots/Epoch99.pth",
+   "converter": "zero-dce-to-safetensors",
+   "config": [
+    "IK_VAL_ZERODCE"
+   ]
+  },
+  {
+   "key": "VAD",
+   "file": "vad.safetensors",
+   "raw": "marblenet_vad.nemo",
+   "bytes": 501760,
+   "url": "https://huggingface.co/nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0/resolve/main/frame_vad_multilingual_marblenet_v2.0.nemo",
+   "converter": "vad-to-safetensors",
+   "config": [
+    "IK_VAL_VAD",
+    "IK_TRIAGE_VAD"
+   ]
+  },
+  {
+   "key": "FACE",
+   "kind": "input",
+   "file": "face960.jpg",
+   "bytes": 243764,
+   "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/Neil_Armstrong_pose.jpg/960px-Neil_Armstrong_pose.jpg",
+   "config": [
+    "IK_VAL_FACE"
+   ],
+   "note": "A photograph with a human face, for NFKMLXFaceAlignment's detection and paste-back tests. NASA Apollo XI portrait (photo ID S69-31741), a work of the US government and therefore public domain \u2014 Wikimedia records it as not copyrighted. The general validation plate (IK_VAL_IMAGE) is an animal, so it cannot serve here."
+  },
+  {
+   "key": "RETINAFACE",
+   "file": "retinaface.safetensors",
+   "raw": "detection_mobilenet0.25_Final.pth",
+   "bytes": 1789735,
+   "url": "https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth",
+   "converter": "retinaface-to-safetensors",
+   "config": [
+    "IK_VAL_RETINAFACE",
+    "IK_TRIAGE_RETINAFACE"
+   ],
+   "note": "The face detector the CodeFormer reference pipeline runs through facexlib. mobile0.25 is 1.7 MB, so the parity-exact alignment path costs almost nothing beside CodeFormer's own checkpoint."
+  },
+  {
+   "key": "SAM2_TINY",
+   "file": "sam2-tiny.safetensors",
+   "raw": "sam2_hiera_tiny.pt",
+   "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_tiny.pt",
+   "converter": "sam2-to-safetensors",
+   "config": [
+    "IK_VAL_SAM2",
+    "IK_TRIAGE_SAM2",
+    "IK_VAL_SAM2MEMORY",
+    "IK_TRIAGE_SAM2DECODER",
+    "IK_TRIAGE_SAM2MEMORY"
+   ],
+   "note": "The .pt wraps the state dict under a `model` key; names pass through."
+  },
+  {
+   "key": "SAM2_BASE_PLUS",
+   "file": "sam2-base-plus.safetensors",
+   "raw": "sam2_hiera_base_plus.pt",
+   "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_base_plus.pt",
+   "converter": "sam2-to-safetensors",
+   "config": [
+    "IK_VAL_SAM2_BASE_PLUS"
+   ],
+   "note": "The .pt wraps the state dict under a `model` key; names pass through."
+  },
+  {
+   "key": "SAM2_LARGE",
+   "file": "sam2-large.safetensors",
+   "raw": "sam2_hiera_large.pt",
+   "url": "https://dl.fbaipublicfiles.com/segment_anything_2/072824/sam2_hiera_large.pt",
+   "converter": "sam2-to-safetensors",
+   "config": [
+    "IK_VAL_SAM2_LARGE"
+   ],
+   "note": "The .pt wraps the state dict under a `model` key; names pass through."
+  },
+  {
+   "key": "HIFIGAN_UNIVERSAL",
+   "file": "hifigan-universal.safetensors",
+   "raw": "hifigan_universal_v1_g_02500000.pt",
+   "url": "https://huggingface.co/csdc-atl/hifigan-universal_v1/resolve/main/g_02500000",
+   "converter": "hifigan-to-safetensors",
+   "config": [
+    "IK_VAL_HIFIGAN"
+   ],
+   "note": "The official jik876 UNIVERSAL_V1 generator (the repo mirrors the Google Drive release). Weight-normalized; the converter fuses g*v/||v||, which is remove_weight_norm. The config beside it must be saved as hifigan_universal_v1_config.json for the oracle."
+  },
+  {
+   "key": "HIFIGAN_LJSPEECH_ESPNET",
+   "file": "hifigan-ljspeech-espnet.safetensors",
+   "raw": "fs2c-with-hifigan.bin",
+   "url": "https://huggingface.co/espnet/fastspeech2_conformer_with_hifigan/resolve/main/pytorch_model.bin",
+   "converter": "hifigan-to-safetensors",
+   "config": [
+    "IK_VAL_HIFIGAN_LJSPEECH"
+   ],
+   "note": "The vocoder PAIRED with the espnet FastSpeech2 release - trained on its normalized mels, where the universal jik876 generator expects raw log-mels and produces loud garbage (Whisper hears '(indistinct)'). The converter strips the vocoder. prefix; weight norm is already fused."
+  },
+  {
+   "key": "FASTSPEECH2",
+   "file": "fastspeech2-conformer.safetensors",
+   "raw": "fs2c-model.bin",
+   "url": "https://huggingface.co/espnet/fastspeech2_conformer/resolve/main/pytorch_model.bin",
+   "converter": "fastspeech2-to-safetensors",
+   "config": [
+    "IK_VAL_FASTSPEECH2"
+   ],
+   "note": "The LJSpeech conformer FastSpeech2. Names pass through; the converter drops the batch-norm step counters and unwraps the paired release's model. prefix when given that file instead."
+  },
+  {
+   "key": "NAFNET",
+   "file": "nafnet.safetensors",
+   "raw": "nafnet_sidd_width32.pth",
+   "bytes": 116861841,
+   "url": "https://huggingface.co/nyanko7/nafnet-models/resolve/main/NAFNet-SIDD-width32.pth",
+   "converter": "nafnet-to-safetensors",
+   "config": [
+    "IK_VAL_NAFNET"
+   ],
+   "note": "The SIDD width-32 denoiser. The GoPro and REDS variants (IK_VAL_NAFNET_GOPRO / _REDS) are separate .pth files at the same repo, fetched by hand; only the SIDD one the native-reader parity test uses is tracked here."
+  },
+  {
+   "key": "RIFE",
+   "file": "rife_hdv3.safetensors",
+   "raw": "rife_flownet.pkl",
+   "bytes": 12186817,
+   "url": "https://huggingface.co/yow46228/RIFE/resolve/main/flownet.pkl",
+   "converter": "rife-to-safetensors",
+   "config": [
+    "IK_VAL_RIFE"
+   ],
+   "note": "The released HDv3 IFNet. The .pkl is a modern torch zip; the converter renames the block/head Sequentials and drops the teacher subtrees."
+  },
+  {
+   "key": "LAMA",
+   "file": "lama.safetensors",
+   "raw": "big_lama.ckpt",
+   "bytes": 410046389,
+   "url": "https://huggingface.co/smartywu/big-lama/resolve/main/big-lama.zip",
+   "extract": "big-lama/models/best.ckpt",
+   "converter": "lama-to-safetensors",
+   "config": [
+    "IK_VAL_LAMA"
+   ],
+   "note": "big-lama, distributed as a zip. `extract` names the checkpoint inside it (the Lightning best.ckpt); fetch.py downloads the archive and pulls that member out as the raw file."
+  },
+  {
+   "key": "MODNET",
+   "file": "modnet.safetensors",
+   "raw": "modnet_photographic.ckpt",
+   "bytes": 26255603,
+   "gdrive": "1mcr7ALciuAsHCpLnrtG_eop5-EYhbCmz",
+   "converter": "modnet-to-safetensors",
+   "config": [
+    "IK_VAL_MODNET"
+   ],
+   "note": "The photographic MODNet, served only from Google Drive. `gdrive` is the file id; fetch.py fetches it with gdown (pip install gdown). The HF ONNX exports remain unreadable by this loader."
+  },
+  {
+   "key": "YOLO",
+   "file": "yolo.safetensors",
+   "raw": "yolov8n.pt",
+   "bytes": 6549796,
+   "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
+   "converter": "yolo-to-safetensors",
+   "config": [
+    "IK_VAL_YOLO"
+   ],
+   "note": "YOLOv8 nano. The .pt pickles a live ultralytics DetectionModel tree; the native reader walks its nn.Module state (no ultralytics classes constructed) rather than needing the package the converter imports. The larger variants (yolo-l/x, IK_VAL_YOLO_LARGE/_XLARGE) are separate .pt files, fetched by hand."
   }
+ ],
+ "unresolved": [
+  {
+   "key": "STYLE",
+   "config": [
+    "IK_VAL_STYLE",
+    "IK_PARITY_STYLE"
+   ],
+   "status": "unresolved \u2014 the parity test skips",
+   "note": "fast-neural-style `mosaic.pth` is no longer served: download.pytorch.org/models/fast_neural_style/{mosaic.pth,saved_models.zip}, the S3 path, and the web.archive copy all 403/404 as of 2026-08-19, and the only HF hit is an ExecuTorch .pte this loader cannot read. A SEEDED checkpoint from the reference `transformer_net.py` was tried and REJECTED: the network is trained to emit 0...255, so with random weights its output is near-zero noise (range about +-1.5 before the divide by 255) and the cosine measures the port's noise floor rather than the model \u2014 it scored 0.68, which looks like a failure and means nothing. Same trap as matting on a synthetic plate. The recorded 0.9999926 was measured on the official checkpoint; re-running it needs that file to reappear or a mirror to be found."
+  }
+ ],
+ "sources": {
+  "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the three models whose reference is a whole small package get their own variable. Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py.",
+  "root_var": "IK_REF_SRC",
+  "files": [
+   [
+    "refsrc/rrdbnet_arch.py",
+    "https://raw.githubusercontent.com/XPixelGroup/BasicSR/master/basicsr/archs/rrdbnet_arch.py"
+   ],
+   [
+    "refsrc/u2net.py",
+    "https://raw.githubusercontent.com/xuebinqin/U-2-Net/master/model/u2net.py"
+   ],
+   [
+    "refsrc/zerodce.py",
+    "https://raw.githubusercontent.com/Li-Chongyi/Zero-DCE/master/Zero-DCE_code/model.py"
+   ],
+   [
+    "refsrc/pose_resnet.py",
+    "https://raw.githubusercontent.com/microsoft/human-pose-estimation.pytorch/master/lib/models/pose_resnet.py"
+   ],
+   [
+    "refsrc/panns_models.py",
+    "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/pytorch/models.py"
+   ],
+   [
+    "refsrc/pytorch_utils.py",
+    "https://raw.githubusercontent.com/qiuqiangkong/audioset_tagging_cnn/master/pytorch/pytorch_utils.py"
+   ],
+   [
+    "refsrc/transformer_net.py",
+    "https://raw.githubusercontent.com/pytorch/examples/main/fast_neural_style/neural_style/transformer_net.py"
+   ],
+   [
+    "refsrc/eccv16.py",
+    "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/eccv16.py"
+   ],
+   [
+    "refsrc/base_color.py",
+    "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/base_color.py"
+   ],
+   [
+    "refsrc/siggraph17.py",
+    "https://raw.githubusercontent.com/richzhang/colorization/master/colorizers/siggraph17.py"
+   ],
+   [
+    "refsrc/raft/raft.py",
+    "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/raft.py"
+   ],
+   [
+    "refsrc/raft/corr.py",
+    "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/corr.py"
+   ],
+   [
+    "refsrc/raft/extractor.py",
+    "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/extractor.py"
+   ],
+   [
+    "refsrc/raft/update.py",
+    "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/update.py"
+   ],
+   [
+    "refsrc/raft/utils/utils.py",
+    "https://raw.githubusercontent.com/princeton-vl/RAFT/master/core/utils/utils.py"
+   ],
+   [
+    "refsrc/raft/utils/__init__.py",
+    null
+   ],
+   [
+    "swinir/network_swinir.py",
+    "https://raw.githubusercontent.com/JingyunLiang/SwinIR/main/models/network_swinir.py"
+   ],
+   [
+    "demucs_v2/model.py",
+    "https://raw.githubusercontent.com/facebookresearch/demucs/v2/demucs/model.py"
+   ],
+   [
+    "denoiser/demucs.py",
+    "https://raw.githubusercontent.com/facebookresearch/denoiser/main/denoiser/demucs.py"
+   ],
+   [
+    "denoiser/resample.py",
+    "https://raw.githubusercontent.com/facebookresearch/denoiser/main/denoiser/resample.py"
+   ],
+   [
+    "refsrc/sam2/modeling/backbones/hieradet.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/hieradet.py"
+   ],
+   [
+    "refsrc/sam2/modeling/backbones/image_encoder.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/image_encoder.py"
+   ],
+   [
+    "refsrc/sam2/modeling/backbones/utils.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/backbones/utils.py"
+   ],
+   [
+    "refsrc/sam2/modeling/position_encoding.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/position_encoding.py"
+   ],
+   [
+    "refsrc/sam2/modeling/sam2_utils.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/sam2_utils.py"
+   ],
+   [
+    "refsrc/sam2/modeling/memory_attention.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/memory_attention.py"
+   ],
+   [
+    "refsrc/sam2/modeling/memory_encoder.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/modeling/memory_encoder.py"
+   ],
+   [
+    "refsrc/sam2/utils/misc.py",
+    "https://raw.githubusercontent.com/facebookresearch/sam2/main/sam2/utils/misc.py"
+   ],
+   [
+    "refsrc/sam2/__init__.py",
+    null
+   ],
+   [
+    "refsrc/sam2/modeling/__init__.py",
+    null
+   ],
+   [
+    "refsrc/sam2/modeling/backbones/__init__.py",
+    null
+   ],
+   [
+    "refsrc/sam2/utils/__init__.py",
+    null
+   ],
+   [
+    "refsrc/hifigan/models.py",
+    "https://raw.githubusercontent.com/jik876/hifi-gan/master/models.py"
+   ],
+   [
+    "refsrc/hifigan/utils.py",
+    "https://raw.githubusercontent.com/jik876/hifi-gan/master/utils.py"
+   ],
+   [
+    "refsrc/hifigan/env.py",
+    "https://raw.githubusercontent.com/jik876/hifi-gan/master/env.py"
+   ]
+  ],
+  "env": {
+   "IK_REF_SRC": "refsrc",
+   "IK_SWINIR_SRC": "swinir",
+   "IK_DEMUCS_SRC": "demucs_v2",
+   "IK_DENOISER_SRC": "denoiser"
+  }
+ },
+ "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place \u2014 the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
+ "releases": [
+  {
+   "key": "SD15",
+   "directory": "sd15",
+   "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+   "files": [
+    "model_index.json",
+    "scheduler/scheduler_config.json",
+    "text_encoder/config.json",
+    "text_encoder/model.safetensors",
+    "unet/config.json",
+    "unet/diffusion_pytorch_model.safetensors",
+    "vae/config.json",
+    "vae/diffusion_pytorch_model.safetensors",
+    "tokenizer/vocab.json",
+    "tokenizer/merges.txt",
+    "tokenizer/tokenizer_config.json",
+    "tokenizer/special_tokens_map.json",
+    "feature_extractor/preprocessor_config.json"
+   ],
+   "config": {
+    "IK_VAL_SD15_DIR": "",
+    "IK_VAL_SD15_TEXT": "text_encoder/model.safetensors",
+    "IK_TRIAGE_SD15TEXT": "text_encoder/model.safetensors",
+    "IK_VAL_SD15_TOKENIZER": "tokenizer",
+    "IK_VAL_SD15_UNET": "unet/diffusion_pytorch_model.safetensors",
+    "IK_VAL_SD15_VAE": "vae/diffusion_pytorch_model.safetensors"
+   },
+   "note": "The reference text-to-image pipeline for the `sd_text_encoder`, `sd_tokenizer`, and `sd_text_to_image` oracles."
+  },
+  {
+   "key": "SD21",
+   "directory": "sd21",
+   "repo": "friedrichor/stable-diffusion-2-1-realistic",
+   "files": [
+    "model_index.json",
+    "scheduler/scheduler_config.json",
+    "text_encoder/config.json",
+    "text_encoder/model.safetensors",
+    "unet/config.json",
+    "unet/diffusion_pytorch_model.safetensors",
+    "vae/config.json",
+    "vae/diffusion_pytorch_model.safetensors",
+    "tokenizer/vocab.json",
+    "tokenizer/merges.txt",
+    "tokenizer/tokenizer_config.json",
+    "tokenizer/special_tokens_map.json"
+   ],
+   "config": {
+    "IK_VAL_SD21_DIR": "",
+    "IK_VAL_SD21_TEXT": "text_encoder/model.safetensors",
+    "IK_TRIAGE_SD21TEXT": "text_encoder/model.safetensors",
+    "IK_VAL_SD21_TOKENIZER": "tokenizer",
+    "IK_VAL_SD21UNET": "unet/diffusion_pytorch_model.safetensors",
+    "IK_TRIAGE_SD21UNET": "unet/diffusion_pytorch_model.safetensors"
+   },
+   "note": "stabilityai/stable-diffusion-2-1-base is GATED and returns 401 without a credential. This is an ungated release of the same lineage and geometry (cross-attention 1024, heads [5, 10, 20, 20], linear projection, OpenCLIP text tower), at the 768 v-prediction settings \u2014 which also exercises the sampler's velocity path. Its `model_index.json` names a safety checker whose `feature_extractor/` it does not ship, so those two entries are removed before the reference pipeline loads it. Its text encoder and autoencoder are published in bfloat16."
+  },
+  {
+   "key": "SDXL",
+   "directory": "sdxl",
+   "repo": "stabilityai/sdxl-turbo",
+   "files": [
+    "model_index.json",
+    "scheduler/scheduler_config.json",
+    "text_encoder/config.json",
+    "text_encoder/model.fp16.safetensors",
+    "text_encoder_2/config.json",
+    "text_encoder_2/model.fp16.safetensors",
+    "unet/config.json",
+    "unet/diffusion_pytorch_model.fp16.safetensors",
+    "vae/config.json",
+    "vae/diffusion_pytorch_model.fp16.safetensors",
+    "tokenizer/vocab.json",
+    "tokenizer/merges.txt",
+    "tokenizer/tokenizer_config.json",
+    "tokenizer/special_tokens_map.json",
+    "tokenizer_2/vocab.json",
+    "tokenizer_2/merges.txt",
+    "tokenizer_2/tokenizer_config.json",
+    "tokenizer_2/special_tokens_map.json"
+   ],
+   "config": {
+    "IK_VAL_SDXL_DIR": "",
+    "IK_VAL_SDXL_TEXT": "text_encoder/model.fp16.safetensors",
+    "IK_VAL_SDXL_TEXT2": "text_encoder_2/model.fp16.safetensors",
+    "IK_VAL_SDXLUNET": "unet/diffusion_pytorch_model.fp16.safetensors",
+    "IK_TRIAGE_SDXLUNET": "unet/diffusion_pytorch_model.fp16.safetensors",
+    "IK_TRIAGE_SDXLTEXT": "text_encoder/model.fp16.safetensors",
+    "IK_TRIAGE_SDXLTEXT2": "text_encoder_2/model.fp16.safetensors"
+   },
+   "note": "Published only in half precision; every parity run loads it at float32."
+  },
+  {
+   "key": "QWEN3_0_6B",
+   "repo": "Qwen/Qwen3-0.6B",
+   "directory": "qwen3-0.6B",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "vocab.json",
+    "merges.txt",
+    "tokenizer_config.json"
+   ],
+   "config": {
+    "IK_VAL_QWEN3": ""
+   },
+   "note": "The smallest Qwen3 dense decoder, 1.4 GB. Its checkpoint ships lm_head.weight even though tie_word_embeddings is true; the two tensors are byte-identical, so the loader drops the duplicate rather than building a projection the tied model does not have."
+  },
+  {
+   "key": "QWEN3_EMBEDDING_0_6B",
+   "repo": "Qwen/Qwen3-Embedding-0.6B",
+   "directory": "qwen3-embedding-0.6B",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "vocab.json",
+    "merges.txt",
+    "tokenizer_config.json"
+   ],
+   "config": {
+    "IK_VAL_QWEN3_EMBEDDING": ""
+   },
+   "note": "The Qwen3-0.6B dense decoder fine-tuned as a text embedder, 1.2 GB. Its architecture is Qwen3ForCausalLM (model_type qwen3), so NFKMLXLanguage.configuration reads it unchanged; the embedder reads the base model's last hidden state, pools the LAST token (the tokenizer appends <|endoftext|>, whose position it reads), and L2-normalizes. Its embedding vocabulary is 151669, and its embeddings are tied."
+  },
+  {
+   "key": "EMBEDDINGGEMMA_300M",
+   "repo": "unsloth/embeddinggemma-300m",
+   "directory": "embeddinggemma-300m",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "special_tokens_map.json",
+    "config_sentence_transformers.json",
+    "2_Dense/config.json",
+    "2_Dense/model.safetensors",
+    "3_Dense/config.json",
+    "3_Dense/model.safetensors"
+   ],
+   "config": {
+    "IK_VAL_EMBEDDINGGEMMA": ""
+   },
+   "note": "EmbeddingGemma-300M, 1.2 GB. google/embeddinggemma-300m is gated; unsloth/embeddinggemma-300m is a faithful ungated mirror (the project uses mirrors for gated repos, as SD 2.1 does). The backbone is Gemma3TextModel (model_type gemma3_text) with use_bidirectional_attention true, NOT the causal Gemma 4 (gemma4_text) NFKMLXGemmaLanguage implements: `(1+w)` RMS norm (Gemma 3), sandwich norms, dual RoPE (local 10000 / global 1000000), sliding-window pattern 6 (window 512), QK-norm, GeGLU gelu_tanh, no value norm, no per-layer embeddings, no softcapping. The sentence-transformers head is mean pooling \u2192 Dense 768->3072 \u2192 Dense 3072->768 (both no-bias, Identity) \u2192 L2. Prompts: query 'task: search result | query: ', document 'title: none | text: '."
+  },
+  {
+   "key": "MODERNBERT_RERANKER",
+   "repo": "Alibaba-NLP/gte-reranker-modernbert-base",
+   "directory": "gte-reranker-modernbert-base",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "special_tokens_map.json"
+   ],
+   "config": {
+    "IK_VAL_MODERNBERT_RERANKER": ""
+   },
+   "note": "gte-reranker-modernbert-base, 0.6 GB. A ModernBertForSequenceClassification cross-encoder reranker: a bidirectional ModernBERT encoder over a [CLS] query [SEP] document [SEP] pair, mean-pooled, through a prediction head (dense + gelu + LayerNorm) and a single-logit classifier -> a relevance score. ModernBERT is RoPE (global theta 160000 every 3rd layer, local theta 10000 with a 128 sliding window elsewhere), GeGLU (Wi -> input,gate; act(input)*gate), LayerNorm throughout (norm_bias false), bias-free attention/mlp, no absolute position embeddings; layer 0's attn_norm is Identity (embeddings are pre-normed). Tokenizer is byte-level BPE (GPT-2 family), which the core NFKByteLevelBPETokenizer reads; the release ships only tokenizer.json, so vocab.json/merges.txt are extracted from it."
+  },
+  {
+   "key": "SMOLVLM2_500M",
+   "repo": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+   "directory": "smolvlm2-500m",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "preprocessor_config.json",
+    "processor_config.json",
+    "special_tokens_map.json"
+   ],
+   "config": {
+    "IK_VAL_SMOLVLM2": ""
+   },
+   "note": "SmolVLM2-500M-Video-Instruct, 2.0 GB (Apache, ungated). SmolVLMForConditionalGeneration: a SigLIP vision encoder (hidden 768, patch 16, image 512) -> pixel-shuffle connector (scale_factor 4: 768*16=12288 -> Linear -> 960) -> a Llama decoder (VLlama3ForCausalLM, hidden 960, 32 layers, 15 heads, 5 kv, head_dim 64, tie true, model_type llama, which NFKMLXLanguageNet reads). image_token_id 49190 marks where the projected vision tokens splice into the text embeddings. Oracle: transformers' own SmolVLMForConditionalGeneration + AutoProcessor."
+  },
+  {
+   "key": "GGUF_SMOLLM2",
+   "repo": "unsloth/SmolLM2-135M-Instruct-GGUF",
+   "directory": "gguf-smollm2-135m",
+   "files": [
+    "SmolLM2-135M-Instruct-Q4_K_M.gguf"
+   ],
+   "config": {
+    "IK_VAL_GGUF": "SmolLM2-135M-Instruct-Q4_K_M.gguf"
+   },
+   "note": "SmolLM2-135M-Instruct Q4_K_M GGUF, 105 MB (a small real quantized LLM). The test source for the native GGUF reader: a Q4_K_M model mixes Q4_K (most weights), Q6_K (embeddings/output), Q8_0, and F32 (norms), so one file exercises every dequantizer. IK_VAL_GGUF points at the file (config value is the relative path, joined to the directory)."
+  },
+  {
+   "key": "QWEN3_VL_2B",
+   "repo": "Qwen/Qwen3-VL-2B-Instruct",
+   "directory": "qwen3-vl-2b",
+   "files": [
+    "config.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "preprocessor_config.json",
+    "merges.txt",
+    "vocab.json",
+    "chat_template.jinja"
+   ],
+   "config": {
+    "IK_VAL_QWEN3_VL": ""
+   },
+   "note": "Qwen3-VL-2B-Instruct, 4.25 GB. Qwen3VLForConditionalGeneration: a qwen3_vl ViT (depth 24, hidden 1024, 2D rotary, spatial_merge_size 2, deepstack layers 5/11/17) + a qwen3_vl_text decoder (Qwen3 blocks, hidden 2048/28 layers, but M-RoPE interleaved mrope_section [24,20,20] and deepstack injection at decoder layers 0/1/2). image_token_id 151655. Far more than SmolVLM: M-RoPE 3D positions and deepstack are real additions to the reused Qwen3 decoder."
+  },
+  {
+   "key": "GEMMA4_E4B",
+   "repo": "google/gemma-4-E4B-it",
+   "directory": "gemma4-e4b",
+   "files": [
+    "config.json",
+    "generation_config.json",
+    "tokenizer_config.json",
+    "model.safetensors"
+   ],
+   "config": {
+    "IK_VAL_GEMMA4_E4B": ""
+   },
+   "note": "The next dense Gemma 4 size: 42 layers, hidden 2560, 2 KV heads, kv-shared 18. 16 GB of bf16, which doubles past this machine's RAM at float32 - so its oracle runs under IK_GEMMA_DTYPE=bfloat16 and the Swift side loads at .checkpoint precision."
+  },
+  {
+   "key": "DEEPSEEK_V4_PRO",
+   "repo": "deepseek-ai/DeepSeek-V4-Pro-0813",
+   "directory": "deepseek-v4-pro",
+   "files": [
+    "config.json",
+    "model.safetensors.index.json"
+   ],
+   "config": {
+    "IK_CONFIG_DEEPSEEK_V4_PRO": "config.json",
+    "IK_INDEX_DEEPSEEK_V4_PRO": "model.safetensors.index.json"
+   },
+   "note": "Structural only, like the Flash entry: shapes.json is built from the headers of the shards covering layers 0/3/60 plus the globals, fetched by HTTP range request (~1 MB against 400+ GB). The weights are never downloaded."
+  },
+  {
+   "key": "FASTSPEECH2_CONFORMER",
+   "repo": "espnet/fastspeech2_conformer",
+   "directory": "fastspeech2-conformer",
+   "files": [
+    "config.json",
+    "pytorch_model.bin",
+    "vocab.json"
+   ],
+   "config": {
+    "IK_VOCAB_FASTSPEECH2": "vocab.json"
+   },
+   "note": "The LJSpeech-trained conformer FastSpeech2 and its 78-symbol ARPAbet vocabulary - the matching phoneme table the TTS chain needs. IK_VAL_FASTSPEECH2 is the .bin converted to safetensors (a passthrough that drops num_batches_tracked); the transformers implementation is the oracle."
+  },
+  {
+   "key": "MUSIC3",
+   "repo": "MiniMaxAI/MiniMax-Music3",
+   "directory": "minimax-music3",
+   "files": [
+    "LICENSE",
+    "vocoder/config.json",
+    "vocoder/diffusion_pytorch_model.safetensors",
+    "condition_encoder/config.json",
+    "condition_encoder/diffusion_pytorch_model.safetensors",
+    "rvq_depth_decoder/config.json",
+    "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
+    "scheduler/scheduler_config.json",
+    "transformer/config.json",
+    "transformer/diffusion_pytorch_model.safetensors.index.json",
+    "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+    "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+    "language_model/config.json",
+    "language_model/model.safetensors.index.json",
+    "language_model/model-00001-of-00004.safetensors",
+    "language_model/model-00002-of-00004.safetensors",
+    "language_model/model-00003-of-00004.safetensors",
+    "language_model/model-00004-of-00004.safetensors",
+    "tokenizer/tokenizer.json",
+    "tokenizer/tokenizer_config.json",
+    "qwen_7B/qwen3-8B-tokenizer-music/vocab.json",
+    "qwen_7B/qwen3-8B-tokenizer-music/merges.txt",
+    "qwen_7B/qwen3-8B-tokenizer-music/added_tokens.json"
+   ],
+   "config": {
+    "IK_VAL_MUSIC3_DIR": "",
+    "IK_VAL_MUSIC3_VOCODER": "vocoder/diffusion_pytorch_model.safetensors",
+    "IK_VAL_MUSIC3_CONDITION": "condition_encoder/diffusion_pytorch_model.safetensors",
+    "IK_VAL_MUSIC3_DEPTH": "rvq_depth_decoder/diffusion_pytorch_model.safetensors",
+    "IK_VAL_MUSIC3_DIT": "transformer",
+    "IK_VAL_MUSIC3_LM": "language_model",
+    "IK_VAL_MUSIC3_TOKENIZER": "tokenizer",
+    "IK_VAL_MUSIC3_BPE": "qwen_7B/qwen3-8B-tokenizer-music"
+   },
+   "note": "MiniMax Music 3, the Diffusers-format release, fetched component by component as the port lands each stage (vocoder so far; condition_encoder, rvq_depth_decoder, transformer, language_model follow). The official checkpoint is already safetensors, so it is used in place: the Swift loader fuses the weight-norm pairs and transposes the conv layouts itself, and the diffusers implementation (>= 0.40.0, MiniMaxMusic3Vocoder et al.) is the oracle. THE WEIGHTS ARE NOT PERMISSIVELY LICENSED - the MiniMax-Music3 Community License requires UI attribution in commercial products and separate authorization above USD 20M yearly revenue; see Docs/companions.md and the LICENSE fetched beside the weights."
+  },
+  {
+   "key": "WHISPER_TOKENIZER",
+   "repo": "openai/whisper-tiny",
+   "directory": "whisper-tokenizer",
+   "files": [
+    "vocab.json",
+    "merges.txt"
+   ],
+   "config": {
+    "IK_TOKENIZER_WHISPER": ""
+   },
+   "note": "The multilingual byte-level BPE vocabulary, which the voice loop-closure test uses to read Whisper's transcription of the synthesized speech."
+  }
+ ],
+ "oracle_environments": {
+  "comment": "diffusers cannot be installed beside the other oracles \u2014 it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against \u2014 so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
+  "diffusers": {
+   "path": "sdvenv",
+   "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate",
+   "modes": [
+    "sd_unet",
+    "sd_vae",
+    "sd_scheduler",
+    "sd_text_encoder",
+    "sd_tokenizer",
+    "sd_text_to_image"
+   ]
+  },
+  "llm": {
+   "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
+   "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor.",
+   "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate",
+   "modes": [
+    "qwen3",
+    "qwen3_embedding",
+    "embeddinggemma",
+    "modernbert_reranker",
+    "qwen3_moe",
+    "mixtral",
+    "smolvlm",
+    "gguf",
+    "qwen3_vl",
+    "gguf_lm"
+   ]
+  },
+  "music": {
+   "interpreter": "~/.inferkit-validation/musicvenv/bin/python3",
+   "why": "MiniMax Music 3's official implementation is in diffusers >= 0.40.0 (MiniMaxMusic3Vocoder, MiniMaxMusic3RVQDepthDecoder, MiniMaxMusic3ConditionEncoder, the flow-matching DiT), which cannot share the pinned diffusers 0.31.0 the SD records were measured against, so the music_* modes run under their own interpreter.",
+   "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/musicvenv && ~/.inferkit-validation/musicvenv/bin/python3 -m pip install 'diffusers==0.40.0' 'transformers>=5' torch safetensors accelerate",
+   "modes": [
+    "music_vocoder",
+    "music_depth",
+    "music_condition",
+    "music_dit",
+    "music_ar",
+    "music_tokenizer"
+   ]
+  },
+  "gemma": {
+   "interpreter": "~/.inferkit-validation/gemmavenv/bin/python3",
+   "why": "Gemma 4 is in no released transformers, and the version that has it requires Python 3.10; this machine's system Python is 3.9.6, so Homebrew's python@3.12 was installed alongside it and this environment built on that. It also carries the deepseek_quant oracle: torch 2.13 is the first here with float8_e4m3fn and float8_e8m0fnu on the CPU, and ml_dtypes supplies float4_e2m1fn, which torch has no CPU kernel for.",
+   "rebuild": "brew install python@3.12 && /opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/gemmavenv && ~/.inferkit-validation/gemmavenv/bin/python3 -m pip install 'git+https://github.com/huggingface/transformers.git@main' torch safetensors ml_dtypes",
+   "modes": [
+    "deepseek_quant",
+    "gemma4",
+    "qwen3_5",
+    "gemma4_moe",
+    "gemma4_unified",
+    "gemma4_vision",
+    "gemma4_audio",
+    "gemma4_mel",
+    "gemma4_embedder",
+    "gemma4_vision_real",
+    "gemma4_audio_real",
+    "gemma4_conditional_real"
+   ]
+  }
+ }
 }

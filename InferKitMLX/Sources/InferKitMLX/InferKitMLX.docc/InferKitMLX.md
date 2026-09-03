@@ -86,9 +86,28 @@ registration:
 - ``NFKMLXYOLO``
 - ``NFKMLXPose``
 
-### Embeddings
+### Embeddings & reranking
 
 - ``NFKMLXCLIP``
+- ``NFKMLXQwen3Embedding``
+- ``NFKMLXEmbeddingGemma``
+- ``NFKMLXTextEmbeddingBackend``
+- ``NFKMLXModernBERTReranker``
+
+### Vision-language
+
+- ``NFKMLXSmolVLM``
+- ``NFKMLXSigLIPNet``
+- ``NFKMLXSmolVLMConnector``
+- ``NFKMLXQwen3VLVisionNet``
+- ``NFKMLXGemma4VisionNet``
+- ``NFKMLXGemma4UnifiedNet``
+- ``NFKMLXGemma4AudioNet``
+- ``NFKMLXGemma4ImageProcessor``
+- ``NFKMLXGemma4AudioFeatureExtractor``
+- ``NFKMLXGemma4MultimodalEmbedder``
+- ``NFKMLXGemma4Fusion``
+- ``NFKMLXGemma4ConditionalGeneration``
 
 ### Video
 
@@ -163,6 +182,16 @@ registration:
 - ``NFKMLXCLIPProbeBackend``
 - ``NFKMLXWhisperNet``
 - ``NFKMLXWhisperObjective``
+
+### Chat templates
+
+- ``NFKMLXChatTemplateRenderer``
+
+### Weights & formats
+
+- ``NFKMLXTorchCheckpoint``
+- ``NFKMLXGGUF``
+- ``NFKMLXGGUFTensorInfo``
 
 ### Runtime
 

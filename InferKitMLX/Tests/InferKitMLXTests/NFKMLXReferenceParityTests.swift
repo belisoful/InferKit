@@ -18,6 +18,7 @@
 
 import XCTest
 import CoreGraphics
+import ImageIO
 import InferKit
 import MLX
 import MLXNN
@@ -2394,6 +2395,423 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
+    // MARK: Qwen3-Embedding
+
+    // The retrieval task the embedding record is measured on, declared identically to the oracle's so
+    // the tokenizer-agreement check reproduces the reference's ids from the text.
+    private static let embeddingTask =
+        "Given a web search query, retrieve relevant passages that answer the query"
+
+    // The embedder against the model card's own transformers recipe on the released 0.6B weights: the
+    // base decoder's last hidden state, pooled at the LAST token and L2-normalized. The record carries
+    // the reference's ids, so this feeds them and compares the embedding — isolating the network and
+    // pooling from the tokenizer, which the next test covers on its own.
+    func testQwen3EmbeddingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN3_EMBEDDING"],
+              let directory = config["IK_VAL_QWEN3_EMBEDDING"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_EMBEDDING and IK_VAL_QWEN3_EMBEDDING")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let queryTokens = try XCTUnwrap(arrays["query_tokens"]).asArray(Int32.self).map(Int.init)
+        let documentTokens = try XCTUnwrap(arrays["document_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceQuery = try XCTUnwrap(arrays["output"]).asArray(Float.self).map(Double.init)
+        let referenceDocument = try XCTUnwrap(arrays["document_embedding"]).asArray(Float.self).map(Double.init)
+        let referenceScore = Double(try XCTUnwrap(arrays["score"]).asArray(Float.self)[0])
+
+        let release = URL(fileURLWithPath: directory)
+        let configuration = try NFKMLXLanguage.configuration(
+            fromHuggingFace: release.appendingPathComponent("config.json"))
+        let net = NFKMLXLanguage.makeNet(configuration)
+        // The released checkpoint is the base model (no `model.` prefix), so the embedder's own loader
+        // reads it rather than the causal-LM loader.
+        try NFKMLXQwen3Embedding.loadWeights(into: net, fromDirectory: release)
+        // The recorded ids already carry the appended end token, so the embedder must not add another.
+        let embedder = NFKMLXTextEmbedder(net: net, configuration:
+            NFKMLXTextEmbedderConfiguration(pooling: .lastToken, appendedToken: nil, normalizes: true))
+
+        let ourQuery = embedder.embed(tokens: queryTokens)
+        let ourDocument = embedder.embed(tokens: documentTokens)
+        eval(ourQuery, ourDocument)
+        let query = ourQuery.asArray(Float.self).map(Double.init)
+        let document = ourDocument.asArray(Float.self).map(Double.init)
+
+        let querySimilarity = cosine(query, referenceQuery)
+        let documentSimilarity = cosine(document, referenceDocument)
+        let score = zip(query, document).map(*).reduce(0, +)
+        print("VALIDATION PARITY qwen3-embedding: query cosine \(querySimilarity), "
+              + "document cosine \(documentSimilarity), retrieval score \(score) vs \(referenceScore)")
+        XCTAssertGreaterThan(querySimilarity, 0.9999, "the query embedding matches the reference")
+        XCTAssertGreaterThan(documentSimilarity, 0.9999, "the document embedding matches the reference")
+        XCTAssertEqual(score, referenceScore, accuracy: 1e-3, "the retrieval score matches end to end")
+    }
+
+    // Token-for-token agreement with the reference tokenizer, so the ids the network reads are the ids
+    // the reference read. The GPT-2 default pre-tokenization would produce different, valid-looking ids
+    // for the same text, which no embedding would ever reveal.
+    func testQwen3EmbeddingTokenizerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN3_EMBEDDING"],
+              let directory = config["IK_VAL_QWEN3_EMBEDDING"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_EMBEDDING and IK_VAL_QWEN3_EMBEDDING")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceQuery = try XCTUnwrap(arrays["query_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceDocument = try XCTUnwrap(arrays["document_tokens"]).asArray(Int32.self).map(Int.init)
+
+        let release = URL(fileURLWithPath: directory)
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: release))
+        let (specials, _) = NFKMLXLanguage.specialTokens(inDirectory: release)
+        let endToken = specials["<|endoftext|>"] ?? 151_643
+
+        let query = NFKMLXQwen3Embedding.instruct(task: Self.embeddingTask,
+                                                  query: "What is the capital of China?")
+        let queryIds = tokenizer.encode(query).map(\.intValue) + [endToken]
+        let documentIds = tokenizer.encode("The capital of China is Beijing.").map(\.intValue) + [endToken]
+
+        XCTAssertEqual(queryIds, referenceQuery, "the query tokenizes to the reference's ids")
+        XCTAssertEqual(documentIds, referenceDocument, "the document tokenizes to the reference's ids")
+    }
+
+    // MARK: EmbeddingGemma
+
+    // The bidirectional Gemma 3 encoder + mean pooling + Dense bottleneck against the
+    // sentence-transformers pipeline on the released 300M weights. The record carries the reference's
+    // per-layer hidden states, so a divergence is located to a layer rather than guessed from the
+    // embedding — the harness that debugged the Gemma 4 decoder here.
+    func testEmbeddingGemmaMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_EMBEDDINGGEMMA"],
+              let directory = config["IK_VAL_EMBEDDINGGEMMA"] else {
+            throw XCTSkip("set IK_PARITY_EMBEDDINGGEMMA and IK_VAL_EMBEDDINGGEMMA")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let queryTokens = try XCTUnwrap(arrays["query_tokens"]).asArray(Int32.self).map(Int.init)
+        let documentTokens = try XCTUnwrap(arrays["document_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceQuery = try XCTUnwrap(arrays["output"]).asArray(Float.self).map(Double.init)
+        let referenceDocument = try XCTUnwrap(arrays["document_embedding"]).asArray(Float.self).map(Double.init)
+        let referenceScore = Double(try XCTUnwrap(arrays["score"]).asArray(Float.self)[0])
+
+        let release = URL(fileURLWithPath: directory)
+        let net = NFKMLXGemma3EncoderNet(.embeddingGemma300M)
+        let (dense2, dense3) = try NFKMLXEmbeddingGemma.loadWeights(into: net, fromDirectory: release)
+
+        // The recorded ids already carry BOS and EOS, so the embedder must not add its own markers.
+        let embedder = NFKMLXEmbeddingGemmaEmbedder(
+            net: net, dense2: dense2, dense3: dense3,
+            configuration: NFKMLXEmbeddingGemmaConfiguration(prependedToken: nil, appendedToken: nil))
+
+        // Per-layer isolation over the query, which is what locates a Gemma convention mistake.
+        let states = net.layerStates(MLXArray(queryTokens.map(Int32.init)).reshaped([1, queryTokens.count]))
+        eval(states)
+        var firstBad: Int?
+        var report = [String]()
+        for (index, state) in states.enumerated() {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = state[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let similarity = cosine(mine, theirs)
+            let name = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (name as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation embeddinggemma:\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let ourQuery = embedder.embed(tokens: queryTokens)
+        let ourDocument = embedder.embed(tokens: documentTokens)
+        eval(ourQuery, ourDocument)
+        let query = ourQuery.asArray(Float.self).map(Double.init)
+        let document = ourDocument.asArray(Float.self).map(Double.init)
+        let querySimilarity = cosine(query, referenceQuery)
+        let documentSimilarity = cosine(document, referenceDocument)
+        let score = zip(query, document).map(*).reduce(0, +)
+        print("VALIDATION PARITY embeddinggemma: query cosine \(querySimilarity), "
+              + "document cosine \(documentSimilarity), retrieval score \(score) vs \(referenceScore)")
+        XCTAssertGreaterThan(querySimilarity, 0.9999, "the query embedding matches the reference")
+        XCTAssertGreaterThan(documentSimilarity, 0.9999, "the document embedding matches the reference")
+        XCTAssertEqual(score, referenceScore, accuracy: 1e-3, "the retrieval score matches end to end")
+    }
+
+    // Token-for-token agreement with the reference tokenizer. Gemma's tokenizer is a SentencePiece
+    // unigram model; NFKUnigramTokenizer reads the converted unigram.json, and the embedder wraps its
+    // content ids in BOS and EOS. The whole path reproduces the reference's ids or the network reads a
+    // different sentence.
+    func testEmbeddingGemmaTokenizerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_EMBEDDINGGEMMA"],
+              let directory = config["IK_VAL_EMBEDDINGGEMMA"] else {
+            throw XCTSkip("set IK_PARITY_EMBEDDINGGEMMA and IK_VAL_EMBEDDINGGEMMA")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceQuery = try XCTUnwrap(arrays["query_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceDocument = try XCTUnwrap(arrays["document_tokens"]).asArray(Int32.self).map(Int.init)
+
+        let release = URL(fileURLWithPath: directory)
+        let tokenizer = try XCTUnwrap(NFKMLXGemmaTokenizer(directoryURL: release))
+        // BOS then the content ids then EOS, which is what the embedder builds around the tokenizer.
+        func wrapped(_ text: String) -> [Int] {
+            [2] + tokenizer.encode(text) + [1]
+        }
+        XCTAssertEqual(wrapped(NFKMLXEmbeddingGemma.query("What is the capital of China?")),
+                       referenceQuery, "the query tokenizes to the reference's ids")
+        XCTAssertEqual(wrapped(NFKMLXEmbeddingGemma.document("The capital of China is Beijing.")),
+                       referenceDocument, "the document tokenizes to the reference's ids")
+    }
+
+    // MARK: ModernBERT reranker
+
+    private static let rerankQuery = "What is the capital of France?"
+    private static let rerankRelevant =
+        "Paris is the capital and most populous city of France. Situated on the river Seine "
+        + "in the north of the country, it has been a major European centre of finance, "
+        + "diplomacy, commerce, fashion, and art for centuries. The city is home to landmarks "
+        + "such as the Eiffel Tower, the Louvre, and the cathedral of Notre-Dame, and its "
+        + "metropolitan area is among the largest in Europe."
+    private static let rerankIrrelevant =
+        "The Great Barrier Reef is the world's largest coral reef system, off Australia."
+
+    // The cross-encoder against transformers' own ModernBertForSequenceClassification on the released
+    // gte-reranker weights. The relevant pair is long enough to engage the local sliding window, and
+    // the record carries its per-layer hidden states so a wrong window or convention is located.
+    func testModernBertRerankerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MODERNBERT_RERANKER"],
+              let directory = config["IK_VAL_MODERNBERT_RERANKER"] else {
+            throw XCTSkip("set IK_PARITY_MODERNBERT_RERANKER and IK_VAL_MODERNBERT_RERANKER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let relevantTokens = try XCTUnwrap(arrays["relevant_tokens"]).asArray(Int32.self).map(Int.init)
+        let irrelevantTokens = try XCTUnwrap(arrays["irrelevant_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceRelevant = Double(try XCTUnwrap(arrays["output"]).asArray(Float.self)[0])
+        let referenceIrrelevant = Double(try XCTUnwrap(arrays["irrelevant_score"]).asArray(Float.self)[0])
+
+        let release = URL(fileURLWithPath: directory)
+        let net = NFKMLXModernBertRerankerNet(.gteReranker)
+        try NFKMLXModernBERTReranker.loadWeights(into: net, fromDirectory: release)
+
+        // Per-layer isolation over the relevant pair, which is what locates a window or norm mistake.
+        let states = net.model.layerStates(MLXArray(relevantTokens.map(Int32.init)).reshaped([1, relevantTokens.count]))
+        eval(states)
+        var firstBad: Int?
+        var report = [String]()
+        for (index, state) in states.enumerated() {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = state[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let similarity = cosine(mine, theirs)
+            report.append(String(format: "  %-16s cosine %.10f", ((index == 0 ? "embedding" : "after layer \(index - 1)") as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation modernbert-reranker:\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let relevant = Double(net.score(tokens: relevantTokens).asArray(Float.self)[0])
+        let irrelevant = Double(net.score(tokens: irrelevantTokens).asArray(Float.self)[0])
+        print("VALIDATION PARITY modernbert-reranker: relevant \(relevant) vs \(referenceRelevant), "
+              + "irrelevant \(irrelevant) vs \(referenceIrrelevant)")
+        XCTAssertEqual(relevant, referenceRelevant, accuracy: 5e-3, "the relevant score matches")
+        XCTAssertEqual(irrelevant, referenceIrrelevant, accuracy: 5e-3, "the irrelevant score matches")
+        XCTAssertGreaterThan(relevant, irrelevant, "the reranker ranks the relevant document first")
+
+        // The public ranking API over real weights: the relevant document sorts ahead of the other.
+        let reranker = try NFKMLXModernBERTReranker.reranker(directoryURL: release)
+        let ranked = reranker.rankedIndices(query: Self.rerankQuery,
+                                            documents: [Self.rerankIrrelevant, Self.rerankRelevant])
+        XCTAssertEqual(ranked.map(\.intValue), [1, 0], "the reranking puts the relevant document first")
+    }
+
+    // Token-for-token agreement: the byte-level BPE tokenizer plus the [CLS] query [SEP] document [SEP]
+    // wrapping reproduces the reference's ids.
+    func testModernBertRerankerTokenizerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_MODERNBERT_RERANKER"],
+              let directory = config["IK_VAL_MODERNBERT_RERANKER"] else {
+            throw XCTSkip("set IK_PARITY_MODERNBERT_RERANKER and IK_VAL_MODERNBERT_RERANKER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceRelevant = try XCTUnwrap(arrays["relevant_tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceIrrelevant = try XCTUnwrap(arrays["irrelevant_tokens"]).asArray(Int32.self).map(Int.init)
+
+        let reranker = try NFKMLXModernBERTReranker.reranker(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(reranker.tokens(query: Self.rerankQuery, document: Self.rerankRelevant),
+                       referenceRelevant, "the relevant pair tokenizes to the reference's ids")
+        XCTAssertEqual(reranker.tokens(query: Self.rerankQuery, document: Self.rerankIrrelevant),
+                       referenceIrrelevant, "the irrelevant pair tokenizes to the reference's ids")
+    }
+
+    // MARK: SmolVLM2 (vision-language)
+
+    // The whole VLM against transformers' own SmolVLMForConditionalGeneration on the released 500M
+    // weights, staged: the SigLIP vision encoder, the pixel-shuffle connector, the fused decoder logits,
+    // and the greedy continuation. The record carries the processor's pixel values, so the image
+    // processor is out of the comparison and each network is measured on its own.
+    func testSmolVLMMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SMOLVLM"], let directory = config["IK_VAL_SMOLVLM2"] else {
+            throw XCTSkip("set IK_PARITY_SMOLVLM and IK_VAL_SMOLVLM2")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let inputIds = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map(Int.init)
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let referenceVision = try XCTUnwrap(arrays["vision_hidden"])
+        let referenceFeatures = try XCTUnwrap(arrays["image_features"])
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self).map(Int.init)
+
+        let model = try NFKMLXSmolVLM.model(directoryURL: URL(fileURLWithPath: directory))
+
+        // 0. The SigLIP patch + position embeddings and the first encoder layer, when recorded, so a
+        // vision divergence is located to the embeddings, a layer, or the norm.
+        if let referenceEmbeddings = arrays["vision_embeddings"], let referenceLayer0 = arrays["vision_layer0"] {
+            let embeddings = model.vision.embeddings(pixelValues.transposed(0, 2, 3, 1))
+            let layer0 = model.vision.encoder.layers[0](embeddings)
+            eval(embeddings, layer0)
+            let embeddingSimilarity = cosine(embeddings.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                             referenceEmbeddings.reshaped([-1]).asArray(Float.self).map(Double.init))
+            let layer0Similarity = cosine(layer0.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                          referenceLayer0.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION isolation smolvlm: embeddings cosine \(embeddingSimilarity), layer0 cosine \(layer0Similarity)")
+            XCTAssertGreaterThan(embeddingSimilarity, 0.9999, "the patch + position embeddings match")
+            XCTAssertGreaterThan(layer0Similarity, 0.9999, "the first encoder layer matches")
+        }
+
+        // 1. The SigLIP vision encoder, over the reference's own pixel values.
+        let vision = model.vision(pixelValues.transposed(0, 2, 3, 1))
+        eval(vision)
+        let visionSimilarity = cosine(vision.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceVision.reshaped([-1]).asArray(Float.self).map(Double.init))
+        // 2. The connector's projected vision tokens.
+        let features = model.connector(vision)
+        eval(features)
+        let featureSimilarity = cosine(features.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                       referenceFeatures.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION isolation smolvlm: vision cosine \(visionSimilarity), connector cosine \(featureSimilarity)")
+        XCTAssertGreaterThan(visionSimilarity, 0.9999, "the SigLIP encoder matches the reference")
+        XCTAssertGreaterThan(featureSimilarity, 0.9999, "the connector matches the reference")
+
+        // 3. The fused decoder logits: the same next token at every position, and the last position exact.
+        let logits = model.logits(inputIds: inputIds, pixelValues: pixelValues)
+        eval(logits)
+        let ourArgmax = logits[0].argMax(axis: -1).asArray(Int32.self)
+        let referenceArgmax = referenceLogits.argMax(axis: -1).asArray(Int32.self)
+        let agreement = zip(ourArgmax, referenceArgmax).filter { $0 == $1 }.count
+        let last = inputIds.count - 1
+        let lastSimilarity = cosine(logits[0, last].asArray(Float.self).map(Double.init),
+                                    referenceLogits[last].asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY smolvlm: argmax agreement \(agreement)/\(ourArgmax.count), "
+              + "last-position logit cosine \(lastSimilarity)")
+        XCTAssertEqual(agreement, ourArgmax.count, "every position predicts the reference's token")
+        XCTAssertGreaterThan(lastSimilarity, 0.9999, "the last-position logits match")
+
+        // 4. The greedy continuation, token for token.
+        let produced = model.generate(inputIds: inputIds, pixelValues: pixelValues,
+                                      maxTokens: continuation.count, endTokens: [])
+        print("VALIDATION smolvlm continuation: \(produced)")
+        XCTAssertEqual(produced, continuation, "the greedy continuation reproduces the reference")
+    }
+
+    // The whole consumer path on a real photograph: the CoreGraphics image processor, the prompt, and
+    // greedy generation produce a coherent caption. The resize is not the reference's PIL LANCZOS, so
+    // this checks the answer is real language rather than a token-identical match.
+    func testSmolVLMAnswersAboutARealImage() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_SMOLVLM2"], let facePath = config["IK_VAL_FACE"] else {
+            throw XCTSkip("set IK_VAL_SMOLVLM2 and IK_VAL_FACE")
+        }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: facePath) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw XCTSkip("could not read the validation image")
+        }
+        let model = try NFKMLXSmolVLM.load(directoryURL: URL(fileURLWithPath: directory))
+        let answer = model.answer(image: image, question: "What is in this image?", maxTokens: 24)
+        print("VALIDATION smolvlm answer: \(answer)")
+        XCTAssertFalse(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, "produces a caption")
+        XCTAssertGreaterThan(answer.split(separator: " ").count, 2, "the caption is a multi-word description")
+    }
+
+    // The prompt builder plus the byte-level BPE tokenizer reproduce the processor's input ids: the
+    // "User:" opener, the 4×4 tiled image structure with a global thumbnail, the question, and the
+    // assistant turn, all token for token.
+    func testSmolVLMPromptMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_SMOLVLM"], let directory = config["IK_VAL_SMOLVLM2"] else {
+            throw XCTSkip("set IK_PARITY_SMOLVLM and IK_VAL_SMOLVLM2")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceIds = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map(Int.init)
+
+        let tokenizer = try XCTUnwrap(NFKMLXSmolVLM.tokenizer(inDirectory: URL(fileURLWithPath: directory)))
+        let prompt = NFKMLXSmolVLM.prompt(rows: 4, cols: 4, question: "What is in this image?")
+        let ids = tokenizer.encode(prompt).map(\.intValue)
+        XCTAssertEqual(ids, referenceIds, "the expanded prompt tokenizes to the reference's ids")
+    }
+
+    // MARK: Qwen3-VL vision tower
+
+    // The Qwen3-VL 2D-rotary ViT + merger + deepstack against transformers' own vision model on the
+    // released 2B weights, staged: the patch embedding, the interpolated position embedding, the merged
+    // output, and the three deepstack feature maps.
+    func testQwen3VLVisionMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN3_VL"], let directory = config["IK_VAL_QWEN3_VL"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_VL and IK_VAL_QWEN3_VL")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let g = try XCTUnwrap(arrays["image_grid_thw"]).asArray(Int32.self).map(Int.init)
+        let grid = (t: g[0], h: g[1], w: g[2])
+
+        let net = try NFKMLXQwen3VL.visionNet(directoryURL: URL(fileURLWithPath: directory))
+
+        func compare(_ ours: MLXArray, _ reference: MLXArray, _ label: String, threshold: Double = 0.9999) {
+            eval(ours)
+            let similarity = cosine(ours.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION isolation qwen3vl \(label): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "\(label) matches the reference")
+        }
+
+        compare(net.patchEmbed(pixelValues), try XCTUnwrap(arrays["patch_embed"]), "patch_embed")
+        compare(net.interpolatedPositionEmbedding(grid: grid), try XCTUnwrap(arrays["pos_embeds"]), "pos_embeds")
+
+        let (output, deepstack) = net(pixelValues, grid: grid)
+        compare(output, try XCTUnwrap(arrays["vision_output"]), "vision_output")
+        for index in 0 ..< deepstack.count {
+            compare(deepstack[index], try XCTUnwrap(arrays["deepstack_\(index)"]), "deepstack_\(index)")
+        }
+    }
+
+    // MARK: GGUF reader
+
+    // The native GGUF reader's dequantizers against the `gguf` package on a real Q4_K_M model. For the
+    // first tensor of each block-quant type (the same one both sides pick in file order), the
+    // dequantized values match the reference's.
+    func testGGUFDequantizationMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GGUF"], let ggufPath = config["IK_VAL_GGUF"] else {
+            throw XCTSkip("set IK_PARITY_GGUF and IK_VAL_GGUF")
+        }
+        let reference = try loadArrays(url: URL(fileURLWithPath: path))
+        let gguf = try NFKMLXGGUF.gguf(contentsOf: URL(fileURLWithPath: ggufPath))
+
+        for type in ["F32", "Q8_0", "Q5_0", "Q4_K", "Q6_K"] {
+            guard let recorded = reference[type] else { continue }
+            let referenceValues = recorded.asArray(Float.self)
+            let name = try XCTUnwrap(gguf.tensorNames.first { gguf.info(forTensor: $0)?.typeName == type },
+                                     "the model has a \(type) tensor")
+            let ours = try XCTUnwrap(gguf.array(forTensor: name)).reshaped([-1]).asArray(Float.self)
+            XCTAssertGreaterThanOrEqual(ours.count, referenceValues.count)
+
+            var worst = Float(0)
+            for index in 0 ..< referenceValues.count {
+                worst = Swift.max(worst, abs(ours[index] - referenceValues[index]))
+            }
+            print("VALIDATION PARITY gguf \(type) (\(name)): \(referenceValues.count) values, worst |diff| \(worst)")
+            XCTAssertLessThan(worst, 1e-4, "the \(type) dequantization matches the reference")
+        }
+
+        // The container's metadata reads too.
+        XCTAssertEqual(gguf.metadataString(forKey: "general.architecture"), "llama")
+        XCTAssertGreaterThan(gguf.tensorNames.count, 0)
+    }
+
     // MARK: Mixture of experts (tiny-configuration oracles)
 
     // The released mixture sizes do not fit this machine, so the routed feed-forward is measured
@@ -2937,6 +3355,737 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         } else {
             print("VALIDATION isolation gemma4: every layer matches")
         }
+    }
+
+    // MARK: Gemma 4 mixture of experts (the 26B-A4B family)
+
+    // The routed-expert block — the scale-free router norm, the learned per-channel and per-expert
+    // scales, the softmax and top-k, and the fused-projection experts summed BESIDE the dense
+    // feed-forward — at a tiny random configuration, since the released mixture does not fit. The
+    // oracle saves its weights in the release naming (`model.layers.N.experts.gate_up_proj`), which the
+    // net's own key paths match once the `model.` prefix is stripped, so no per-tensor remap is needed.
+    // Every hidden state is compared so a divergence lands on a layer.
+    func testGemma4MixtureTinyMatchesTheReferenceLayerByLayer() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_MOE"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_MOE (run_reference.py gemma4_moe)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXGemmaLanguage.makeNet(.tinyMixture)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let ours = net.hiddenStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(ours)
+
+        var firstBad: Int?
+        var report = [String]()
+        for index in 0 ..< ours.count {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = ours[index].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            guard mine.count == theirs.count else {
+                report.append("\(index): shape \(ours[index].shape) vs \(reference.shape)")
+                firstBad = firstBad ?? index
+                break
+            }
+            let similarity = cosine(mine, theirs)
+            let label = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (label as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation gemma4-moe-tiny:\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-moe-tiny: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the mixture block's arithmetic matches the reference")
+    }
+
+    // The Gemma text-generation backend end to end: build it from the released E2B directory and
+    // generate greedily. The decoder is already at parity layer by layer, so this exercises the
+    // tokenizer and the prefill-only generation loop — the pieces the backend adds — and asserts the
+    // output is coherent text rather than empty or garbage.
+    func testGemmaBackendGeneratesText() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_GEMMA4"] else { throw XCTSkip("set IK_VAL_GEMMA4") }
+        let backend = try NFKMLXGemmaLanguage.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertTrue(backend.isReady)
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "The capital of France is"],
+            parameters: [NFKParameterMaxTokens: 8, NFKParameterTemperature: 0])
+        let result = try backend.runInference(for: request)
+        let text = try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        print("VALIDATION gemma backend generated: \(text.debugDescription)")
+        XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       "the backend produces non-empty text")
+    }
+
+    // MARK: Gemma 4 unified text decoder (the 12B)
+
+    // The unified decoder — a different architecture from the E-series: no per-layer input embeddings
+    // and no mixture, but the same attention (learned query/key norms, a scale-free value norm, scale
+    // 1, per-layer head widths, the proportional rotary on the full layers). Measured at a tiny
+    // configuration over a sliding/sliding/full layer mix, since the 12B does not fit. The oracle saves
+    // its weights in the release naming, which the net's keys match once `model.` is stripped.
+    func testGemma4UnifiedTinyMatchesTheReferenceLayerByLayer() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_UNIFIED"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_UNIFIED (run_reference.py gemma4_unified)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXGemmaLanguage.makeUnifiedNet(.unifiedTiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let ours = net.hiddenStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(ours)
+
+        var firstBad: Int?
+        var report = [String]()
+        for index in 0 ..< ours.count {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = ours[index].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            guard mine.count == theirs.count else {
+                report.append("\(index): shape \(ours[index].shape) vs \(reference.shape)")
+                firstBad = firstBad ?? index
+                break
+            }
+            let similarity = cosine(mine, theirs)
+            let label = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (label as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation gemma4-unified-tiny:\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-unified-tiny: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the unified decoder's arithmetic matches the reference")
+    }
+
+    // MARK: Gemma 4 vision encoder
+
+    // The vision tower's patch embedder and bidirectional transformer, against transformers' own
+    // Gemma4VisionModel (its encoder output, before the pooler). The reference feeds flattened patches
+    // and their (x, y) grid, so the learned 2-D position embedding and the sandwich blocks are what
+    // this measures. The projections load under `.linear` (Gemma4ClippableLinear), and the reference's
+    // `encoder.layers.N` names map onto the net's flattened layer array.
+    func testGemma4VisionEncoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_VISION"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_VISION (run_reference.py gemma4_vision)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let positionIds = try XCTUnwrap(arrays["position_ids"])
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXGemmaLanguage.makeVisionNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3)).replacingOccurrences(of: "encoder.layers.",
+                                                                      with: "encoder_layers.")
+            return (name, value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let patches = pixelValues.shape[0]
+        let encoded = net(pixelValues.reshaped([1, patches, pixelValues.shape[1]]),
+                          positionIds: positionIds.reshaped([1, patches, 2]).asType(.int32))
+        eval(encoded)
+        let mine = encoded.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-vision-tiny: encoder cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the vision encoder matches the reference")
+
+        // The full tower, through the position-based pooler and the sqrt(hidden) scaling, against the
+        // reference's own soft tokens.
+        if let pooledReference = arrays["pooled"] {
+            let soft = net.softTokens(pixelValues.reshaped([1, patches, pixelValues.shape[1]]),
+                                      positionIds: positionIds.reshaped([1, patches, 2]).asType(.int32))
+            eval(soft)
+            let ours = soft.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let refPooled = pooledReference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let pooledSimilarity = cosine(ours, refPooled)
+            print("VALIDATION PARITY gemma4-vision-tiny: pooled cosine \(pooledSimilarity)")
+            XCTAssertGreaterThan(pooledSimilarity, 0.9999, "the vision pooler matches the reference")
+        }
+    }
+
+    // The two fixes the released vision weights forced — the 2-D rope and the finite clamp bounds —
+    // are each MEASURED to be load-bearing here, not merely asserted. Both were invisible at the tiny
+    // random-weight configuration; on the real tower, removing either collapses the encoder cosine.
+    func testGemma4VisionRopeAndClampsAreLoadBearingOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_VISION_REAL"], let directory = config["IK_VAL_GEMMA4"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_VISION_REAL and IK_VAL_GEMMA4")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let positionIds = try XCTUnwrap(arrays["position_ids"])
+        let reference = try XCTUnwrap(arrays["encoded"])
+        let release = URL(fileURLWithPath: directory)
+        let patches = pixelValues.shape[0]
+        let pixelInput = pixelValues.reshaped([1, patches, pixelValues.shape[1]])
+        let positionInput = positionIds.reshaped([1, patches, 2]).asType(.int32)
+
+        func configuration(useClippedLinears: Bool) -> NFKMLXGemma4VisionConfiguration {
+            NFKMLXGemma4VisionConfiguration(hiddenSize: 768, layerCount: 16, headCount: 12,
+                                            keyValueHeadCount: 12, headDimensions: 64, intermediateSize: 3072,
+                                            patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
+                                            useClippedLinears: useClippedLinears)
+        }
+        func load(_ vision: NFKMLXGemma4VisionNet, clamps: Bool) throws {
+            try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+                guard key.hasPrefix("model.vision_tower.") else { return nil }
+                let name = String(key.dropFirst("model.vision_tower.".count))
+                    .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
+                let isClamp = name.hasSuffix("input_min") || name.hasSuffix("input_max")
+                    || name.hasSuffix("output_min") || name.hasSuffix("output_max")
+                return (!clamps && isClamp) ? nil : name
+            }, to: vision)
+        }
+        func encoderCosine(_ hidden: MLXArray) -> Double {
+            eval(hidden)
+            return cosine(hidden.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        // Fix 1 removed: run the encoder layers with an identity rope (cos = 1, sin = 0), clamps kept.
+        let withoutRope = NFKMLXGemmaLanguage.makeVisionNet(configuration(useClippedLinears: true))
+        try load(withoutRope, clamps: true)
+        var hidden = withoutRope.patchEmbedder(pixelInput, positionIds: positionInput)
+        let identityCosine = MLXArray.ones([1, patches, 64]), identitySine = MLXArray.zeros([1, patches, 64])
+        for layer in withoutRope.layers { hidden = layer(hidden, cosine: identityCosine, sine: identitySine) }
+        let noRope = encoderCosine(hidden)
+
+        // Fix 2 removed: the release's finite clamps replaced by no clamp at all, rope kept.
+        let withoutClamps = NFKMLXGemmaLanguage.makeVisionNet(configuration(useClippedLinears: false))
+        try load(withoutClamps, clamps: false)
+        let noClamps = encoderCosine(withoutClamps(pixelInput, positionIds: positionInput))
+
+        print("VALIDATION load-bearing gemma4-vision-real: without rope \(noRope), without clamps \(noClamps)")
+        // With both, the encoder is 0.9999999999898 (the parity test); dropping either is far from that.
+        XCTAssertLessThan(noRope, 0.9, "the 2-D rope is load-bearing on the released weights")
+        XCTAssertLessThan(noClamps, 0.99, "the finite clamp bounds are load-bearing on the released weights")
+    }
+
+    // MARK: Gemma 4 vision path on the released weights
+
+    // The vision tower, pooler, and multimodal embedder on the RELEASED E2B weights (the release is the
+    // full tri-modal Gemma4ForConditionalGeneration, so the vision tower and embedder ship alongside the
+    // decoder). Random pixel values over a real grid are fed to both sides, so the tower and the
+    // projection into the decoder's space are compared on real weights.
+    func testGemma4VisionPathOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_VISION_REAL"], let directory = config["IK_VAL_GEMMA4"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_VISION_REAL and IK_VAL_GEMMA4")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let positionIds = try XCTUnwrap(arrays["position_ids"])
+        let pooledReference = try XCTUnwrap(arrays["pooled"])
+        let projectedReference = try XCTUnwrap(arrays["output"])
+        let release = URL(fileURLWithPath: directory)
+
+        let vision = NFKMLXGemmaLanguage.makeVisionNet(
+            NFKMLXGemma4VisionConfiguration(hiddenSize: 768, layerCount: 16, headCount: 12,
+                                            keyValueHeadCount: 12, headDimensions: 64, intermediateSize: 3072,
+                                            patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
+                                            useClippedLinears: true))
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
+
+        let visionWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            guard key.hasPrefix("model.vision_tower.") else { return nil }
+            return String(key.dropFirst("model.vision_tower.".count))
+                .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
+        }
+        try NFKMLXWeights.apply(visionWeights, to: vision)
+        let embedWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
+        }
+        try NFKMLXWeights.apply(embedWeights, to: embedder)
+
+        let patches = pixelValues.shape[0]
+        let pixelInput = pixelValues.reshaped([1, patches, pixelValues.shape[1]])
+        let positionInput = positionIds.reshaped([1, patches, 2]).asType(.int32)
+        if let encodedReference = arrays["encoded"] {
+            let encoded = vision(pixelInput, positionIds: positionInput)
+            eval(encoded)
+            let encoderSimilarity = cosine(encoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                           encodedReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY gemma4-vision-real: encoder \(encoderSimilarity)")
+            XCTAssertGreaterThan(encoderSimilarity, 0.9999, "the released vision encoder matches the reference")
+        }
+        let soft = vision.softTokens(pixelInput, positionIds: positionInput)
+        let projected = embedder(soft)
+        eval(soft, projected)
+
+        let pooledSimilarity = cosine(soft.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      pooledReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let projectedSimilarity = cosine(projected.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                         projectedReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma4-vision-real: pooled \(pooledSimilarity), projected \(projectedSimilarity)")
+        XCTAssertGreaterThan(pooledSimilarity, 0.9999, "the released vision tower matches the reference")
+        XCTAssertGreaterThan(projectedSimilarity, 0.9999, "the released vision embedder matches the reference")
+    }
+
+    // The audio Conformer and its multimodal embedder on the RELEASED E2B weights, fed random mel
+    // features. Validates the audio tower and its projection into the decoder's space on real weights.
+    func testGemma4AudioPathOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_AUDIO_REAL"], let directory = config["IK_VAL_GEMMA4"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_AUDIO_REAL and IK_VAL_GEMMA4")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let features = try XCTUnwrap(arrays["features"])
+        let encodedReference = try XCTUnwrap(arrays["encoded"])
+        let projectedReference = try XCTUnwrap(arrays["output"])
+        let release = URL(fileURLWithPath: directory)
+
+        let audio = NFKMLXGemmaLanguage.makeAudioNet(
+            NFKMLXGemma4AudioConfiguration(hiddenSize: 1024, layerCount: 12, headCount: 8, convKernelSize: 5,
+                                           chunkSize: 12, contextLeft: 13, contextRight: 0, rmsEpsilon: 1e-6,
+                                           subsampleChannels: [128, 32], outputProjDims: 1536,
+                                           useClippedLinears: true))
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 1536, textHidden: 1536)
+
+        let audioWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            key.hasPrefix("model.audio_tower.") ? String(key.dropFirst("model.audio_tower.".count)) : nil
+        }
+        try NFKMLXGemmaLanguage.loadAudioWeights(audioWeights, into: audio)
+        let embedWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            key.hasPrefix("model.embed_audio.") ? String(key.dropFirst("model.embed_audio.".count)) : nil
+        }
+        try NFKMLXWeights.apply(embedWeights, to: embedder)
+
+        let encoded = audio(features.reshaped([1, features.shape[0], features.shape[1]]))
+        let projected = embedder(encoded)
+        eval(encoded, projected)
+        let encoderSimilarity = cosine(encoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                       encodedReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let projectedSimilarity = cosine(projected.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                         projectedReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma4-audio-real: encoded \(encoderSimilarity), projected \(projectedSimilarity)")
+        XCTAssertGreaterThan(encoderSimilarity, 0.9999, "the released audio tower matches the reference")
+        XCTAssertGreaterThan(projectedSimilarity, 0.9999, "the released audio embedder matches the reference")
+    }
+
+    // The FULL Gemma4ForConditionalGeneration on the released E2B weights, end to end: an image and a
+    // placeholder-carrying prompt through the vision tower, the embedder, the splice, and the decoder.
+    // This is the numeric end-to-end run the tiny plumbing test stands in for — on real weights, against
+    // transformers' own conditional model.
+    func testGemma4ConditionalGenerationOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_CONDITIONAL_REAL"], let directory = config["IK_VAL_GEMMA4"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_CONDITIONAL_REAL and IK_VAL_GEMMA4")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let positionIds = try XCTUnwrap(arrays["position_ids"])
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let release = URL(fileURLWithPath: directory)
+
+        // The E-series decoder from the release's text config.
+        let decoder = NFKMLXGemmaLanguage.makeNet(
+            try NFKMLXGemmaLanguage.configuration(fromHuggingFace: release.appendingPathComponent("config.json")))
+        try NFKMLXGemmaLanguage.loadWeights(into: decoder, fromDirectory: release)
+
+        // The vision tower and its embedder from the release.
+        let vision = NFKMLXGemmaLanguage.makeVisionNet(
+            NFKMLXGemma4VisionConfiguration(hiddenSize: 768, layerCount: 16, headCount: 12,
+                                            keyValueHeadCount: 12, headDimensions: 64, intermediateSize: 3072,
+                                            patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
+                                            useClippedLinears: true))
+        let visionEmbedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            key.hasPrefix("model.vision_tower.")
+                ? String(key.dropFirst("model.vision_tower.".count)).replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
+                : nil
+        }, to: vision)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
+        }, to: visionEmbedder)
+
+        let model = NFKMLXGemma4ConditionalGeneration(
+            decoder: decoder, visionTower: vision, visionEmbedder: visionEmbedder,
+            imageTokenId: 258_880, audioTokenId: 258_881, padTokenId: 0)
+
+        // The four image placeholders read the four soft tokens the vision tower produces.
+        let patches = pixelValues.shape[0]
+        let soft = visionEmbedder(vision.softTokens(pixelValues.reshaped([1, patches, pixelValues.shape[1]]),
+                                                    positionIds: positionIds.reshaped([1, patches, 2]).asType(.int32)))
+        let (embeddings, ids) = model.fusedEmbeddings(tokens: tokens,
+                                                      visionSoftTokens: soft.reshaped([-1, 1536]),
+                                                      audioSoftTokens: nil)
+        let logits = decoder.logits(fromEmbeddings: embeddings, tokens: ids)
+        eval(logits)
+
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-conditional-real: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.999, "the full conditional model matches the reference")
+
+        let vocabulary = referenceLogits.shape[1]
+        var agreements = 0
+        for position in 0 ..< referenceLogits.shape[0] {
+            let base = position * vocabulary
+            let ourBest = (0 ..< vocabulary).max { mine[base + $0] < mine[base + $1] }
+            let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
+            if ourBest == theirBest { agreements += 1 }
+        }
+        print("VALIDATION PARITY gemma4-conditional-real: argmax \(agreements)/\(referenceLogits.shape[0])")
+        XCTAssertEqual(agreements, referenceLogits.shape[0], "every position predicts the same token")
+    }
+
+    // MARK: Gemma 4 multimodal fusion
+
+    // The multimodal embedder — a scale-free RMS norm and a projection into the language model's space —
+    // against transformers' own Gemma4MultimodalEmbedder, plus the splice that fuses soft tokens into a
+    // text embedding sequence at the placeholder positions.
+    func testGemma4MultimodalFusion() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_EMBEDDER"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_EMBEDDER (run_reference.py gemma4_embedder)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let soft = try XCTUnwrap(arrays["soft"])
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 32, textHidden: 48)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: embedder)
+        let projected = embedder(soft)
+        eval(projected)
+        let mine = projected.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-embedder: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the multimodal embedder matches the reference")
+
+        // The splice: three soft tokens replace the placeholder positions of a five-token sequence.
+        let hidden = 4
+        let text = MLXArray((0 ..< 5 * hidden).map { Float($0) }).reshaped([1, 5, hidden])
+        let softTokens = MLXArray((0 ..< 3 * hidden).map { Float(100 + $0) }).reshaped([3, hidden])
+        let fused = NFKMLXGemma4Fusion.fuse(textEmbeddings: text, softTokens: softTokens,
+                                            isPlaceholder: [false, true, true, true, false])
+        eval(fused)
+        let values = fused.reshaped([-1]).asArray(Float.self)
+        // Position 0 and 4 keep their text embeddings; 1,2,3 take the three soft tokens in order.
+        XCTAssertEqual(values[0], 0)                              // text position 0, channel 0
+        XCTAssertEqual(values[1 * hidden], 100)                  // position 1 = soft token 0
+        XCTAssertEqual(values[3 * hidden], 108)                  // position 3 = soft token 2
+        XCTAssertEqual(values[4 * hidden], 16)                   // text position 4, channel 0
+    }
+
+    // The full Gemma4ForConditionalGeneration chain, wired with tiny random-weight towers and decoder.
+    // No released tri-modal weights exist locally, so this is a plumbing check: the image flows through
+    // the processor, the vision tower, and the embedder into projected soft tokens, those replace the
+    // placeholder embeddings, and the prefill-only loop produces text. Every numeric component is at
+    // parity in its own test.
+    func testGemma4ConditionalGenerationChain() throws {
+        try requireMLXRuntime()
+        // A vision tower whose pooling is 1, so an 8×8 image's four patches stay four soft tokens.
+        let vision = NFKMLXGemmaLanguage.makeVisionNet(
+            NFKMLXGemma4VisionConfiguration(hiddenSize: 32, layerCount: 1, headCount: 4, keyValueHeadCount: 4,
+                                            headDimensions: 8, intermediateSize: 48, patchSize: 4,
+                                            positionEmbeddingSize: 16, poolingKernelSize: 1))
+        let decoder = NFKMLXGemmaLanguage.makeNet(
+            NFKMLXGemmaConfiguration(hiddenSize: 16, layerCount: 2, intermediateSize: 32, vocabularySize: 200,
+                                     headCount: 2, keyValueHeadCount: 1, headDimensions: 8,
+                                     globalHeadDimensions: 8, slidingWindow: 16, perLayerInputSize: 8,
+                                     sharedKeyValueLayers: 0, finalLogitSoftcap: 0,
+                                     layerTypes: [.sliding, .sliding], perLayerVocabularySize: 200))
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 32, textHidden: 16)
+        let imageToken = 100
+        let model = NFKMLXGemma4ConditionalGeneration(
+            decoder: decoder, visionTower: vision, visionEmbedder: embedder,
+            imageProcessor: NFKMLXGemma4ImageProcessor(patchSize: 4, poolingKernelSize: 1, maxSoftTokens: 4),
+            imageTokenId: imageToken, audioTokenId: 101, padTokenId: 0)
+
+        var bytes = [UInt8](repeating: 255, count: 8 * 8 * 4)
+        for i in stride(from: 0, to: bytes.count, by: 4) { bytes[i] = UInt8((i / 4) % 200) }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        let image = CGImage(width: 8, height: 8, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 8 * 4,
+                            space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+
+        let soft = try XCTUnwrap(model.visionSoftTokens(for: image))
+        eval(soft)
+        XCTAssertEqual(soft.shape, [4, 16])   // four soft tokens projected to the decoder width
+
+        // A prompt with four image placeholders, then two text tokens.
+        let prompt = [1, imageToken, imageToken, imageToken, imageToken, 5, 6]
+        let (fused, _) = model.fusedEmbeddings(tokens: prompt, visionSoftTokens: soft, audioSoftTokens: nil)
+        eval(fused)
+        XCTAssertEqual(fused.shape, [1, 7, 16])
+        // The placeholder positions carry the soft tokens, not the pad embedding.
+        let placeholder = fused[0, 1].asArray(Float.self)
+        let text = fused[0, 5].asArray(Float.self)
+        XCTAssertNotEqual(placeholder, text)
+
+        let produced = model.generate(promptTokens: prompt, image: image, maxTokens: 3)
+        XCTAssertEqual(produced.count, 3)     // the prefill-only loop runs and yields tokens
+        print("VALIDATION gemma4-conditional: produced \(produced)")
+    }
+
+    // MARK: Gemma 4 audio front end
+
+    // The mel front end — semicausal framing, a Hann window, a magnitude FFT, an HTK triangular mel
+    // filterbank, and log — against transformers' own Gemma4AudioFeatureExtractor on a shared waveform.
+    // Pure preprocessing, so it matches to floating precision.
+    func testGemma4MelFrontEndMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_MEL"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_MEL (run_reference.py gemma4_mel)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"]).asArray(Float.self)
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let features = NFKMLXGemma4AudioFeatureExtractor().features(waveform)
+        eval(features)
+        XCTAssertEqual(features.shape, [reference.shape[0], reference.shape[1]])
+        let mine = features.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-mel: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the mel front end matches the reference")
+    }
+
+    // MARK: Gemma 4 image processor
+
+    // The image processor's structure — the aspect-ratio-preserving resize dimensions, the patch
+    // flattening order, and the (x, y) position ids — against the reference algorithm. The resize
+    // pixels are a documented CoreGraphics approximation, so this checks the layout, which is exact.
+    func testGemma4ImageProcessorLayout() throws {
+        try requireMLXRuntime()
+        // Resized dimensions, largest within the 2520-patch budget and divisible by 48.
+        let processor = NFKMLXGemma4ImageProcessor()
+        let size = processor.resizedSize(width: 200, height: 100)
+        XCTAssertEqual(size.height, 528)
+        XCTAssertEqual(size.width, 1104)
+
+        // A synthetic gradient at a patch-aligned size, split by a 1×1-pooling processor so there is no
+        // padding: R encodes x, G encodes y. Patch (row, col) covers pixels [col·16, row·16].
+        let side = 48
+        var bytes = [UInt8](repeating: 255, count: side * side * 4)
+        for y in 0 ..< side {
+            for x in 0 ..< side {
+                let base = (y * side + x) * 4
+                bytes[base] = UInt8(x); bytes[base + 1] = UInt8(y); bytes[base + 2] = 128
+            }
+        }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        let image = CGImage(width: side, height: side, bitsPerComponent: 8, bitsPerPixel: 32,
+                            bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let tiles = NFKMLXGemma4ImageProcessor(patchSize: 16, poolingKernelSize: 1, maxSoftTokens: 9)
+        let (pixelValues, positionIds) = tiles.process(image)
+        XCTAssertEqual(pixelValues.shape, [9, 16 * 16 * 3])
+        eval(pixelValues, positionIds)
+
+        // Position ids run row-major as (x, y) = (column, row).
+        let positions = positionIds.reshaped([-1]).asArray(Int32.self)
+        let expected: [Int32] = [0,0, 1,0, 2,0, 0,1, 1,1, 2,1, 0,2, 1,2, 2,2]
+        XCTAssertEqual(Array(positions), expected)
+
+        // Patch (row 1, col 2) is index 1·3 + 2 = 5; its first pixel is the image pixel at (32, 16),
+        // so R ≈ 32/255 and G ≈ 16/255 (within CoreGraphics rounding of the identity resize).
+        let values = pixelValues.reshaped([-1]).asArray(Float.self)
+        let firstPixel = 5 * (16 * 16 * 3)
+        XCTAssertEqual(Double(values[firstPixel]), 32.0 / 255, accuracy: 0.02)
+        XCTAssertEqual(Double(values[firstPixel + 1]), 16.0 / 255, accuracy: 0.02)
+    }
+
+    // MARK: Gemma 4 audio Conformer
+
+    // The audio subsampler — two stride-2 convolutions, a channel LayerNorm, a ReLU, and a linear
+    // projection — against transformers' own Gemma4AudioModel subsampler. The convolution kernels load
+    // in PyTorch layout and are transposed to MLX's.
+    func testGemma4AudioSubSampleMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_AUDIO"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_AUDIO (run_reference.py gemma4_audio)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let features = try XCTUnwrap(arrays["input_features"])
+        let reference = try XCTUnwrap(arrays["subsampled"])
+
+        let subsample = NFKMLXGemmaLanguage.makeAudioSubSample(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::subsample_conv_projection.") else { return nil }
+            return (String(key.dropFirst("w::subsample_conv_projection.".count)), value)
+        }
+        try NFKMLXGemmaLanguage.loadAudioWeights(weights, into: subsample)
+
+        let out = subsample(features.reshaped([1, features.shape[0], features.shape[1]]))
+        eval(out)
+        let mine = out.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-audio-subsample: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the audio subsampler matches the reference")
+    }
+
+    // The Conformer layers and output projection — the blocked relative-position attention, the light
+    // convolution, the macaron feed-forwards — against transformers' own Gemma4AudioModel. The
+    // post-subsample hidden state, the position encoding, and the blocked mask come from the reference,
+    // so this isolates the Conformer's arithmetic (the hardest part: block conversion, the rel-shift,
+    // the softcap) from the subsampler and the mask construction.
+    func testGemma4AudioConformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_AUDIO"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_AUDIO (run_reference.py gemma4_audio)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let subsampled = try XCTUnwrap(arrays["subsampled"])
+        let positionEmbeddings = try XCTUnwrap(arrays["position_embeddings"])
+        let mask = try XCTUnwrap(arrays["attention_mask"])
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXGemmaLanguage.makeAudioNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            return (String(key.dropFirst(3)), value)
+        }
+        try NFKMLXGemmaLanguage.loadAudioWeights(weights, into: net)
+
+        let hidden = subsampled.reshaped([1, subsampled.shape[0], subsampled.shape[1]])
+        let maskF = mask.asType(.float32)
+
+        // Isolation: compare each sub-component of layer 0 to the reference's captured seam.
+        func score(_ a: MLXArray, _ key: String) {
+            guard let ref = arrays[key] else { return }
+            eval(a)
+            let m = a.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let t = ref.reshaped([-1]).asArray(Float.self).map(Double.init)
+            print("VALIDATION seam \(key): cosine \(cosine(m, t))")
+        }
+        let layer0 = net.layers[0]
+        let ff1 = layer0.feedForward1(hidden)
+        score(ff1, "seam_ff1")
+        let attn = layer0.attention(layer0.normPreAttention(ff1), positionEmbeddings: positionEmbeddings, mask: maskF)
+        score(attn, "seam_attn")
+
+        let output = net.conformer(hidden, positionEmbeddings: positionEmbeddings, mask: maskF)
+        eval(output)
+        let mine = output.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-audio-conformer: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the audio Conformer matches the reference")
+
+        // The full tower from the mel features, building its own sliding-window mask rather than being
+        // handed one — the end-to-end path.
+        if let features = arrays["input_features"] {
+            let full = net(features.reshaped([1, features.shape[0], features.shape[1]]))
+            eval(full)
+            let fullMine = full.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let fullSimilarity = cosine(fullMine, theirs)
+            print("VALIDATION PARITY gemma4-audio-full: cosine \(fullSimilarity)")
+            XCTAssertGreaterThan(fullSimilarity, 0.9999, "the full audio tower matches the reference")
+        }
+    }
+
+    // MARK: GGUF language model, end to end
+
+    // A GGUF release loaded through the native reader and run through the decoder, against transformers
+    // loading the SAME GGUF. This is the whole chain: metadata → configuration, the llama.cpp tensor
+    // names remapped onto the module's keys, and the reader's dequantization feeding the forward. The
+    // reference feeds its own token ids (a quantized model still has one correct answer), so the logits
+    // are compared directly and the greedy continuation token for token; a separate check confirms the
+    // rebuilt tokenizer reproduces the reference's ids from the shared text.
+    func testGGUFLanguageModelMatchesTheReferenceEndToEnd() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GGUF_LM"], let ggufPath = config["IK_VAL_GGUF"] else {
+            throw XCTSkip("set IK_PARITY_GGUF_LM (run_reference.py gguf_lm) and IK_VAL_GGUF")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let referenceContinuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+
+        let (net, tokenizer) = try NFKMLXLanguage.loadedGGUF(at: URL(fileURLWithPath: ggufPath))
+
+        // The whole-prompt logits: a quantized model has one correct dequantization, so the two agree
+        // closely rather than exactly (the reference and this port each run their own kernels).
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        XCTAssertEqual(logits.shape, [1, referenceLogits.shape[0], referenceLogits.shape[1]])
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gguf-lm smollm2-135m: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.999, "the GGUF decoder matches transformers loading the same file")
+
+        let vocabulary = referenceLogits.shape[1]
+        for position in 0 ..< referenceLogits.shape[0] {
+            let base = position * vocabulary
+            let ourBest = (0 ..< vocabulary).max { mine[base + $0] < mine[base + $1] }
+            let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
+            XCTAssertEqual(ourBest, theirBest, "position \(position) predicts the same token")
+        }
+
+        // Teacher-forced on the reference's own continuation, this port predicts the reference's next
+        // token at every step. Feeding the reference sequence keeps the context identical at each
+        // position, so this isolates the forward from the compounding a free run would add. The first
+        // sampled token from a free run is checked too — the end-to-end greedy step.
+        let forced = tokens.map(Int.init) + referenceContinuation.dropLast().map(Int.init)
+        let forcedLogits = net(MLXArray(forced).reshaped([1, forced.count]))
+        eval(forcedLogits)
+        let forcedFlat = forcedLogits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        var agreements = 0
+        for step in 0 ..< referenceContinuation.count {
+            let position = tokens.count - 1 + step
+            let base = position * vocabulary
+            let best = (0 ..< vocabulary).max { forcedFlat[base + $0] < forcedFlat[base + $1] }
+            if best == Int(referenceContinuation[step]) { agreements += 1 }
+        }
+        print("VALIDATION gguf-lm teacher-forced continuation: \(agreements)/\(referenceContinuation.count) agree")
+        // Quantized weights and two dequantization implementations flip an occasional near-tie, so this
+        // is a strong-majority check rather than an exact one; the logit cosine above is the tight bound.
+        XCTAssertGreaterThanOrEqual(agreements, referenceContinuation.count - 2,
+                                    "teacher-forced, the port predicts the reference's continuation")
+
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 1
+        let firstToken = net.generate(prompt: tokens.map(Int.init), options: options)
+        XCTAssertEqual(firstToken.first, Int(referenceContinuation[0]), "the first greedy token matches")
+
+        // The rebuilt tokenizer reproduces the reference's ids from the shared text (the reference
+        // prepends its bos token, which the encoder does not add).
+        let encoded = try XCTUnwrap(tokenizer).encode("The capital of France is").map(\.intValue)
+        XCTAssertEqual(encoded, Array(tokens.dropFirst().map(Int.init)), "the GGUF tokenizer matches the reference")
     }
 
     // Inside layer 0, sub-step by sub-step. The layer-level harness said layer 0 diverges while its
