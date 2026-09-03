@@ -2885,6 +2885,136 @@ def run_vad(image, checkpoint):
     return torch.softmax(logits, dim=-1)[0, :, 1].contiguous()  # [frames]
 
 
+def run_silero_vad(image):
+    """Silero VAD v6 (snakers4, PyPI `silero_vad` 6.2.1) per-chunk speech probability, `[chunks]`.
+
+    The clip is exactly 32 chunks of 512 samples (1.024 s at 16 kHz) with a boundary at 0.5 s, so no
+    padding enters and both sides produce the same chunk count. The record's `waveform` is the clip the
+    Swift side reads back; both sides stream 512-sample chunks with a 64-sample look-back and thread the
+    LSTM state, so a preprocessing or state-threading difference surfaces rather than hides.
+
+    The reference bundles the model, so this mode needs no `--checkpoint`. Requires: `silero_vad`,
+    `torchaudio` (pip install silero-vad torchaudio).
+    """
+    from silero_vad import load_silero_vad
+
+    model = load_silero_vad()
+    model.reset_states()
+    rate, chunk, chunks = 16000, 512, 32
+    samples = chunks * chunk
+    time = np.arange(samples, dtype=np.float32) / rate
+    generator = np.random.default_rng(13)
+    speech = sum(0.3 / (h + 1) * np.sin(2 * np.pi * 150 * (h + 1) * time) for h in range(6))
+    wave = np.where(time < 0.5, speech, 0.05 * generator.standard_normal(samples)).astype(np.float32)
+
+    probabilities = []
+    with torch.no_grad():
+        for index in range(chunks):
+            block = torch.from_numpy(wave[index * chunk:(index + 1) * chunk])[None]   # [1, 512]
+            probabilities.append(float(np.asarray(model(block, rate)).reshape(-1)[0]))
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous()}
+    return torch.tensor(probabilities, dtype=torch.float32)                            # [chunks]
+
+
+def run_dac(image):
+    """Descript Audio Codec (44 kHz) round trip: the codebook tokens and the waveform reconstructed from
+    them. The record's `waveform` is a clip an exact multiple of the hop long (so no padding enters and
+    the frame counts agree); `codes` is `[n_codebooks, frames]` and `reconstruction` is the decode of
+    those codes. Comparing codes exercises the encoder + RVQ; decoding the recorded codes isolates the
+    decoder from a single code flipping on a codebook near-tie.
+
+    Needs no `--checkpoint`; the `dac` package downloads the released weights. Requires: descript-audio-codec.
+    """
+    import dac
+
+    model = dac.DAC.load(dac.utils.download(model_type="44khz")).eval()
+    hop = model.hop_length
+    frames = 87
+    samples = frames * hop
+    time = np.arange(samples, dtype=np.float32) / model.sample_rate
+    generator = np.random.default_rng(19)
+    wave = (0.3 * np.sin(2 * np.pi * 220 * time) + 0.2 * np.sin(2 * np.pi * 440 * time)
+            + 0.1 * np.sin(2 * np.pi * 880 * time) + 0.02 * generator.standard_normal(samples)).astype(np.float32)
+    wave = np.clip(wave, -1, 1)
+
+    with torch.no_grad():
+        audio = model.preprocess(torch.from_numpy(wave)[None, None], model.sample_rate)
+        _, codes, _, _, _ = model.encode(audio)
+        reconstruction = model.decode(model.quantizer.from_codes(codes)[0])
+
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous(),
+                           "codes": codes[0].to(torch.int32).contiguous()}          # [n_codebooks, frames]
+    return reconstruction.reshape(-1)[:samples].contiguous()                         # [samples]
+
+
+def run_snac(image):
+    """SNAC (24 kHz multi-scale codec) round trip: the per-codebook tokens (`codes0`, `codes1`, … at each
+    codebook's own temporal rate) and the waveform reconstructed from them. The decoder's noise block is
+    DISABLED so the reconstruction is deterministic; its expected contribution is zero, and the Swift side
+    decodes with the same noise-off path.
+
+    Needs no `--checkpoint`; `SNAC.from_pretrained` fetches the released weights. Requires: snac.
+    """
+    import snac.layers as layers
+    from snac import SNAC
+
+    layers.NoiseBlock.forward = lambda self, x: x                      # deterministic decode
+    model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval()
+    hop = int(np.prod(model.encoder_rates)) if hasattr(model, "encoder_rates") else 512
+    frames = 24
+    samples = frames * hop
+    time = np.arange(samples, dtype=np.float32) / model.sampling_rate
+    generator = np.random.default_rng(23)
+    wave = (0.3 * np.sin(2 * np.pi * 180 * time) + 0.2 * np.sin(2 * np.pi * 360 * time)
+            + 0.02 * generator.standard_normal(samples)).astype(np.float32)
+    wave = np.clip(wave, -1, 1)
+
+    with torch.no_grad():
+        codes = model.encode(torch.from_numpy(wave)[None, None])
+        reconstruction = model.decode(codes)
+
+    extra = {"waveform": torch.from_numpy(wave).contiguous()}
+    for index, stream in enumerate(codes):
+        extra[f"codes{index}"] = stream[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return reconstruction.reshape(-1)[:samples].contiguous()
+
+
+def run_siglip2(image):
+    """SigLIP 2 (base-patch16-224) image-text model: the L2-normalized image embedding, plus the text
+    embeddings, token ids, and sigmoid logits for a few captions. The image pixel values are the plate
+    normalized to -1…1 (SigLIP's normalization), fed directly so the processor's resize is out of the
+    comparison; the plate must be 224×224 (`--size 224`).
+
+    Requires: transformers >= 4.51 (SigLIP 2), which the llm oracle env carries.
+    """
+    from transformers import AutoModel, AutoProcessor
+
+    model = AutoModel.from_pretrained("google/siglip2-base-patch16-224").eval()
+    processor = AutoProcessor.from_pretrained("google/siglip2-base-patch16-224")
+    pixel_values = torch.from_numpy((image * 2 - 1).transpose(2, 0, 1))[None].float()
+    texts = ["a photo of a cat", "a photo of two cats", "a city street at night"]
+    tokens = processor(text=texts, return_tensors="pt", padding="max_length", max_length=64).input_ids
+
+    with torch.no_grad():
+        image_features = model.get_image_features(pixel_values=pixel_values)
+        text_features = model.get_text_features(input_ids=tokens)
+        # Isolation seams: the embeddings output and the post-layernorm hidden (pre-head).
+        vision = model.vision_model
+        patch_embeds = vision.embeddings(pixel_values)
+        vision_last = vision(pixel_values=pixel_values).last_hidden_state
+    image_embeds = image_features / image_features.norm(dim=-1, keepdim=True)
+    text_embeds = text_features / text_features.norm(dim=-1, keepdim=True)
+    logits = text_embeds @ image_embeds.t() * model.logit_scale.exp() + model.logit_bias
+
+    globals()["_extra"] = {"text_embeds": text_embeds.contiguous(),
+                           "tokens": tokens.to(torch.int32).contiguous(),
+                           "logits": logits.reshape(-1).contiguous(),
+                           "patch_embeds": patch_embeds[0].contiguous(),
+                           "vision_last": vision_last[0].contiguous()}
+    return image_embeds[0].contiguous()                                    # [embed], L2-normalized
+
+
 def run_sam_encoder(image, checkpoint):
     """The official SAM image encoder's neck output — the seam between the ViT and the mask decoder.
 
@@ -3619,7 +3749,8 @@ def run_rope_scaling(image):
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
-          "rope_scaling": run_rope_scaling}
+          "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
+          "snac": run_snac, "siglip2": run_siglip2}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,

@@ -296,6 +296,44 @@ final class NFKMLXTorchParityTests: XCTestCase {
         assertIdenticalParameters(rawNet, convertedNet)
     }
 
+    func testTheSileroVADTorchScriptModelLoadsEquivalently() throws {
+        // The "no Python" path: the released silero_vad.jit (a scripted module carrying a 16 kHz and an
+        // 8 kHz branch) must land the same 16 kHz parameters as the converted safetensors, through
+        // Silero's own loader — which drops the 8 kHz branch and un-transposes either file the same way.
+        try requireMLXRuntime()
+        let rawNet = NFKMLXSileroVAD.makeNet()
+        try NFKMLXSileroVAD.loadWeights(into: rawNet, from: try filePath("IK_RAW_SILERO_VAD"))
+        let convertedNet = NFKMLXSileroVAD.makeNet()
+        try NFKMLXSileroVAD.loadWeights(into: convertedNet, from: try filePath("IK_VAL_SILERO_VAD"))
+        assertIdenticalParameters(rawNet, convertedNet)
+    }
+
+    func testTheDACCheckpointLoadsEquivalently() throws {
+        // The native torch reader end to end: the released DAC `.pth` (a torch save wrapping a
+        // weight-normalized `state_dict`) must land the same parameters as the converted safetensors,
+        // through DAC's own loader — which unwraps the state dict, fuses the weight norm, transposes,
+        // and remaps the nested Sequential names.
+        try requireMLXRuntime()
+        let rawNet = NFKMLXDAC.makeNet(.dac44kHz)
+        try NFKMLXDAC.loadWeights(into: rawNet, from: try filePath("IK_RAW_DAC"))
+        let convertedNet = NFKMLXDAC.makeNet(.dac44kHz)
+        try NFKMLXDAC.loadWeights(into: convertedNet, from: try filePath("IK_VAL_DAC"))
+        // Two float32 evaluations of `g·v/‖v‖` can differ in the last ulp.
+        assertIdenticalParameters(rawNet, convertedNet, tolerance: 1e-6)
+    }
+
+    func testTheSNACCheckpointLoadsEquivalently() throws {
+        // SNAC stores its weight norm through torch's parametrization API
+        // (`parametrizations.weight.original0/1`); the released checkpoint must land the same parameters
+        // as the converted safetensors, through SNAC's own loader (which fuses that form and transposes).
+        try requireMLXRuntime()
+        let rawNet = NFKMLXSNAC.makeNet(.snac24kHz)
+        try NFKMLXSNAC.loadWeights(into: rawNet, from: try filePath("IK_RAW_SNAC"))
+        let convertedNet = NFKMLXSNAC.makeNet(.snac24kHz)
+        try NFKMLXSNAC.loadWeights(into: convertedNet, from: try filePath("IK_VAL_SNAC"))
+        assertIdenticalParameters(rawNet, convertedNet, tolerance: 1e-6)
+    }
+
     func testTheObjCCheckpointConvertsOnDevice() throws {
         // The consumer path: inspect a raw checkpoint, convert it to safetensors with no Python, and
         // load the result through the ordinary checkpoint reader.

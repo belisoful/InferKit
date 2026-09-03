@@ -292,6 +292,18 @@
 
 	id<NFKInferenceBackend> inpaint = [NFKMLXLaMa backendWithWeightsURL:nil error:&error];
 	XCTAssertEqualObjects(inpaint.backendIdentifier, @"lama-inpaint", @"%@", error);
+
+	id<NFKInferenceBackend> silero = [NFKMLXSileroVAD backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(silero.backendIdentifier, @"silero-vad", @"%@", error);
+
+	id<NFKInferenceBackend> dac = [NFKMLXDAC backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(dac.backendIdentifier, @"dac", @"%@", error);
+
+	id<NFKInferenceBackend> snac = [NFKMLXSNAC backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(snac.backendIdentifier, @"snac", @"%@", error);
+
+	id<NFKInferenceBackend> siglip2 = [NFKMLXSigLIP2 backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(siglip2.backendIdentifier, @"siglip2-base-patch16-224", @"%@", error);
 }
 
 - (void)testObjectiveCDownloadFactoryFailsCleanlyForAnInvalidRepo

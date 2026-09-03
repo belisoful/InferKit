@@ -111,6 +111,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let result = try clip.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32)]))
         let embedding = try XCTUnwrap(result.embedding, "an L2-normalized image embedding")
         XCTAssertEqual(embedding.count, 512, "ViT-B/32 embedding width")
+
+        // SigLIP 2: the CLIP upgrade — image embedding via the attention-pooling head.
+        let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)
+        let siglip2Result = try siglip2.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(224)]))
+        XCTAssertNotNil(siglip2Result.output(forKey: NFKOutputEmbedding), "a SigLIP 2 image embedding")
     }
 
     func testTextEmbeddings() throws {
@@ -314,6 +319,19 @@ final class MLXModelGalleryExamples: XCTestCase {
 
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
+
+        // Silero VAD v6: a streaming STFT + conv + LSTM model, one speech probability per 512-sample chunk.
+        let silero = try NFKMLXSileroVAD.backend(weightsURL: nil)
+        XCTAssertNotNil(try silero.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
+
+        // DAC: a neural audio codec. The backend reconstructs audio → codes → audio; NFKMLXDAC.encode
+        // returns the codebook tokens themselves, which is what a codec-token speech-LLM generates.
+        let dac = try NFKMLXDAC.backend(weightsURL: nil)
+        XCTAssertNotNil(try dac.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // SNAC: a multi-scale codec — its codebooks emit token streams at different temporal rates.
+        let snac = try NFKMLXSNAC.backend(weightsURL: nil)
+        XCTAssertNotNil(try snac.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
         let tagger = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)
         XCTAssertNotNil(try tagger.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).classifications)

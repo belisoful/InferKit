@@ -503,6 +503,7 @@ final class MLXExamples: XCTestCase {
     func testExampleConstrainedDecoding() throws {
         try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
                       "runs the decoder; run via xcodebuild")
+        NFKMLXRandom.seed(0)          // random weights: pin the RNG so the outcome is suite-order independent
         let size = NFKMLXLanguageConfiguration.tiny.vocabularySize
         var tokens = (0 ..< 256).map { [UInt8($0)] } + ["{\"", "\":", "yes", "no", "}", "42"].map { Array($0.utf8) }
         while tokens.count < size - 1 { tokens.append(Array("t\(tokens.count)".utf8)) }

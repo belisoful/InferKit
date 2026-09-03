@@ -77,6 +77,47 @@ final class NFKMLXCheckpointRoundTripTests: XCTestCase {
         }
     }
 
+    // Silero VAD carries 3-D Conv1d weights (the STFT basis and the encoder), so a fine-tuned save must
+    // skip the PyTorch transpose the released `.jit` needs. The LSTM parameters round-trip as the
+    // module's own `Wx`/`Wh`/`bias` rather than through the reference bias fold.
+    func testSileroVADRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXSileroVAD.makeNet(), into: NFKMLXSileroVAD.makeNet()) { net, url in
+            try NFKMLXSileroVAD.loadWeights(into: net as! NFKMLXSileroVADNet, from: url)
+        }
+    }
+
+    // DAC's decoder carries weight-normalized transposed convolutions (the shared vocoder block's
+    // `conv_t1`) and Snake `alpha`; a fine-tuned save is already fused and in the module's layout, so the
+    // loader must skip both the weight-norm fusion and every transpose. The codebook embeddings ride
+    // along as ordinary 2-D parameters.
+    func testDACRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXDAC.makeNet(.tiny), into: NFKMLXDAC.makeNet(.tiny)) { net, url in
+            try NFKMLXDAC.loadWeights(into: net as! NFKMLXDACNet, from: url)
+        }
+    }
+
+    // SNAC carries depthwise convolutions, weight-normalized transposed convolutions, and the decoder
+    // noise block's 1×1 conv; a fine-tuned save is fused and in the module's layout, so the loader skips
+    // both the parametrization fusion and every transpose.
+    func testSNACRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXSNAC.makeNet(.tiny), into: NFKMLXSNAC.makeNet(.tiny)) { net, url in
+            try NFKMLXSNAC.loadWeights(into: net as! NFKMLXSNACNet, from: url)
+        }
+    }
+
+    // SigLIP 2's only transposed weight is the 4-D patch convolution; a fine-tuned save is in the
+    // module's layout, so the loader must skip that transpose. The probe and fused attention projection
+    // are 2-D/3-D and ride along untouched.
+    func testSigLIP2RoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXSigLIP2.makeNet(.tiny), into: NFKMLXSigLIP2.makeNet(.tiny)) { net, url in
+            try NFKMLXSigLIP2.loadWeights(into: net as! NFKMLXSigLIP2Net, from: url)
+        }
+    }
+
     // A saved music vocoder is already fused and in the module's layout, so the loader must skip both
     // the weight-norm fusion and every transpose — the alpha reshape included, which is this model's
     // own variant of the double-transpose hazard.

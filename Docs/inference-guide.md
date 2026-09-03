@@ -503,13 +503,54 @@ What remains of each:
 
 ### Model additions
 
-- **Audio.** Kokoro TTS, Silero VAD v6, Parakeet ASR, the SNAC and DAC codecs, pyannote diarization,
-  and the four dereverberation candidates (SGMSE+, Resemble Enhance, VoiceFixer, DeepFilterNet).
-- **Image.** Z-Image Turbo, SANA, IP-Adapter, TAESD, SigLIP 2 as the CLIP upgrade.
-- **Vision.** Depth Anything V3 (a drop-in), BiRefNet, SAM 3.1, RT-DETR / RF-DETR.
-- **Video generation**, a new capability: LTX-Video / LTX-2, Wan 2.2.
+The standout pick per modality, each entry naming what makes it worth the port ahead of its
+alternatives.
 
-Licensing gates what ships as a default: permissive weights ship, research-only weights (FLUX.1-dev,
-F5-TTS, DMD2, Apple's FastVLM and Depth Pro) are gated the way Music 3's are, and a permissively
-licensed detector is preferred over an AGPL one. `ml-explore/mlx-lm` and `Blaizzy/mlx-audio` are the
+- **Audio.**
+  - `Kokoro-82M` TTS (Apache) — an 82M-parameter voice, small enough to ship as a default.
+  - `Silero VAD v6` (~1 MB) — **SHIPPED** (`NFKMLXSileroVAD`). A streaming STFT + conv encoder + LSTM
+    decoder scoring one speech probability per 512-sample chunk, beside the existing MarbleNet VAD.
+    At reference parity against the released snakers4 JIT (silero_vad 6.2.1): per-chunk cosine
+    0.9999999999998, max |difference| 6.9e-7, threshold agreement 32/32. Loads the released `.jit`
+    through its own `_model.*` weights (the converter keeps them; the 8 kHz branch is dropped).
+  - `Parakeet` ASR (NVIDIA/NeMo-licensed) — a faster second speech-to-text engine beside Whisper. Its
+    license is NVIDIA's rather than a standard permissive one, so it is gated the way research-only
+    weights are rather than shipped as a default.
+  - the `SNAC` and `DAC` neural codecs — the codec class the toolkit had no path for. Codec tokens are
+    what a speech-LLM TTS generates, so this unlocks that whole approach. **`DAC` is SHIPPED**
+    (`NFKMLXDAC`): the 44.1 kHz model (encoder + residual vector quantizer + decoder, the decoder reusing
+    the Music 3 Snake blocks), at reference parity against `descript-audio-codec` — codebook tokens
+    matching exactly (783/783) and the decoder reconstructing at cosine 0.99999999999986. `encode`
+    returns the tokens; `decode` and the backend reconstruct. **`SNAC` is SHIPPED too** (`NFKMLXSNAC`,
+    the 24 kHz speech model): a multi-scale codec whose codebooks code at different temporal rates (strides
+    `[4,2,1]`), with depthwise convolutions and a decoder noise block, at reference parity against the
+    `snac` package — per-codebook tokens matching exactly (42/42) and the decoder reconstructing at cosine
+    0.9999999999998 (noise disabled, its expected contribution zero).
+  - `pyannote` diarization — who-spoke-when over a recording.
+  - `Chatterbox` voice cloning (MIT).
+  - The four dereverberation candidates (SGMSE+, Resemble Enhance, VoiceFixer, DeepFilterNet) stay on
+    the list beneath these.
+- **Image.**
+  - `Z-Image Turbo` (6B, Apache) — the leading open text-to-image model, it fits a Mac, and it reuses
+    the DiT, autoencoder, and scheduler already ported.
+  - `SANA` (0.6B) — the only new text-to-image model small enough for a phone.
+  - `IP-Adapter` — image conditioning, a cheap gap to close.
+  - `TAESD` — a tiny autoencoder for an instant latent preview.
+  - `SigLIP 2` — **SHIPPED** (`NFKMLXSigLIP2`, base-patch16-224): the CLIP upgrade that doubles as a VLM
+    vision tower. Vision ViT (reusing the SigLIP encoder) + attention-pooling head + a 256k-vocab text
+    tower + sigmoid logit scale/bias, at reference parity against transformers (image and text embedding
+    cosine 0.999999999999, logits to 1e-5).
+- **Vision.**
+  - `Depth Anything V3` — a drop-in on the V2 port.
+  - `BiRefNet` (MIT) — matting.
+  - `SAM 3.1`.
+  - `RT-DETR` / `RF-DETR` — a detector that avoids YOLO's AGPL.
+- **Video generation**, a new capability the toolkit lacks (it only interpolates and upscales today).
+  - `LTX-Video` / `LTX-2` — the first video generator here, with MLX ports available as parity
+    references.
+  - `Wan 2.2` — for quality.
+
+Licensing gates what ships as a default: permissive weights ship, research-only and vendor-licensed
+weights (FLUX.1-dev, F5-TTS, DMD2, Apple's FastVLM and Depth Pro, and Parakeet under NVIDIA/NeMo) are
+gated the way Music 3's are, and a permissively licensed detector is preferred over an AGPL one. `ml-explore/mlx-lm` and `Blaizzy/mlx-audio` are the
 standing parity oracles for the language and audio work.

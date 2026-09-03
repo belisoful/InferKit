@@ -1440,6 +1440,7 @@ let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: cocoJoints)     /
 
 // Embeddings, video, promptable segmentation
 let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]
+let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"
 let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey
 
@@ -1449,6 +1450,9 @@ let stems       = try NFKMLXDemucs.backend(weightsURL: nil)                    /
 let speakers    = try NFKMLXConvTasNet.backend(weightsURL: nil)               // audio → "speaker-1"/"speaker-2"
 let clean       = try NFKMLXDenoiser.backend(weightsURL: nil)                  // audio → NFKOutputAudio
 let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       // result.segments : [NFKAudioSegment]
+let sileroVAD   = try NFKMLXSileroVAD.backend(weightsURL: nil)                  // Silero v6: result.segments : [NFKAudioSegment]
+let dac         = try NFKMLXDAC.backend(weightsURL: nil)                        // neural codec: audio → codes → audio (NFKMLXDAC.encode for the tokens)
+let snac        = try NFKMLXSNAC.backend(weightsURL: nil)                       // multi-scale codec (NFKMLXSNAC.encode → per-codebook streams at different rates)
 let tagger      = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)  // result.classifications : [NFKClassification]
 
 // Music generation (MiniMax Music 3): a description under NFKInputPrompt and lyrics under

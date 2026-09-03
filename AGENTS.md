@@ -1208,6 +1208,30 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   caller can pass token ids through `encodeText`). `+register` under `clip-vit-b-32`.
   `Tools/clip-to-safetensors/convert.py` targets the OpenAI JIT/state-dict (names match). Forward,
   round-trip, and unit-length embedding tested.
+- `NFKMLXSigLIP2` (`@objc`) — real image+text embeddings (SigLIP 2, base-patch16-224), the CLIP UPGRADE
+  and the vision tower a VLM reads. The vision and text towers are the SAME transformer the SmolVLM
+  SigLIP encoder uses (`NFKSigLIPLayer`/`NFKSigLIPAttention`/`NFKSigLIPMLP`/`NFKSigLIPEncoder` are reused
+  directly); SigLIP 2 adds an **attention-pooling head** over the vision patches (`NFKSigLIP2ProbeAttention`:
+  a learned probe token cross-attends over the patch features through `nn.MultiheadAttention`'s fused
+  `in_proj_weight`, then a residual LayerNorm and MLP), a **text tower** over a 256k multilingual
+  vocabulary (last-token pooled through a `head` projection), and learned `logit_scale`/`logit_bias` for
+  the sigmoid similarity. The image embedding is the pooling head's output; the text embedding is the
+  last token's; both are L2-normalized and `logit = scale·(text·image) + bias`. The vision embeddings
+  read the position table ROW-MAJOR (SigLIP 2 does NOT use SmolVLM's fractional position buckets, which
+  is why `NFKSigLIP2VisionEmbeddings` is separate from the SmolVLM one). `NFKMLXSigLIP2Backend` reads
+  `NFKInputImage` → the image embedding under `NFKOutputEmbedding`; `imageEmbedding`/`textEmbedding` are
+  the object accessors. `+register` under `siglip2-base-patch16-224`. **The MAP head's `attention` is a
+  real submodule, not a dotted parameter key** — MLX splits parameter keys on `.`, so `@ParameterInfo(key:
+  "attention.in_proj_weight")` would NOT nest into an `attention` child and the head weights load as
+  random (measured: image cosine collapses to ~0.5 while the text tower stays exact, the seam that
+  localized it). The release is ALREADY a PyTorch-layout safetensors the loader reads directly (it
+  transposes the 4-D patch conv and maps the `vision_model.`/`text_model.` prefixes; Linear/embedding
+  weights and the fused attention projection are 2-D and pass through). **Reference parity** against
+  transformers on the released weights (`run_reference.py siglip2`, llm oracle env, transformers ≥ 4.51):
+  image embedding cosine 0.999999999999, every text embedding 0.999999999999, and the sigmoid logits to
+  1e-5. The architecture is SigLIP v1 (`model_type` "siglip"); the "2" is the training. Most of the
+  1.5 GB checkpoint is the 256k text embedding table. Converter `Tools/siglip2-to-safetensors` is a
+  passthrough normalizer.
 - `NFKMLXRVM` (`@objc`) — real video matting (Robust Video Matting): the reference `MattingNetwork` —
   a torchvision **MobileNetV3-Large** encoder (inverted residuals with squeeze-and-excitation,
   hardswish, **BatchNorm epsilon 1e-3**, the last stage dilated), the reference LR-ASPP, and a
@@ -2430,6 +2454,78 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   divisor first — 44100 → 16000 would otherwise build 16000 polyphase kernels instead of 160). Frame
   times are computed at the model's rate, which is the caller's own seconds because resampling
   preserves duration.
+- `NFKMLXSileroVAD` (`@objc`) — real voice activity detection (Silero VAD v6, snakers4), a SECOND VAD
+  architecture beside MarbleNet and the first of the standout per-modality roadmap adds. A learned-STFT
+  front end (`Conv1d(1→258, k256, s128)`, no bias) → magnitude of `real[:129]`/`imag[129:]` → four
+  `Conv1d+ReLU` (129→128→64→64→128, convs 2/3 stride-2) → a one-layer `LSTM(128→128)` → ReLU →
+  `Conv1d(128→1, k1)` → sigmoid, scoring one speech probability per 512-sample chunk (32 ms). It STREAMS:
+  each chunk carries the previous chunk's last 64 samples as look-back (context roll; the first chunk
+  zeros) and the LSTM state threads across chunks. The whole clip runs as ONE pass with the chunks on
+  the LSTM's sequence axis, which reproduces the reference's chunk-by-chunk stream exactly (zero-init
+  state, sequential). `NFKMLXSileroVADBackend` reads `NFKInputAudio` → `NSArray<NFKAudioSegment *>` under
+  `NFKOutputSegments`; `+register` under `silero-vad`. **v6 differs from v5 in the STFT padding alone**:
+  v5 pads the 576-sample (64 context + 512 chunk) input symmetrically by 128 and drops transform frame 0;
+  v6 pads the right by 64 → 640 → four frames directly, no drop (`NFKMLXHTDemucs.reflectPadded(left:right:)`
+  gives the right-only reflect). The **LSTM reuses the Demucs bottleneck idiom** — MLXNN's `LSTM`
+  (`Wx`/`Wh`/fused `bias`, gate order `i,f,g,o`), PyTorch's `bias_ih`+`bias_hh` folded — which is what
+  de-risked the port. **Reference parity** against the released snakers4 JIT (`silero_vad` 6.2.1) on the
+  first numeric run: per-chunk cosine 0.9999999999998, max |difference| 6.9e-7, threshold agreement
+  32/32. `remapReferenceKey` maps `_model.stft.forward_basis_buffer`→stft, `_model.encoder.{0..3}.reparam_conv`
+  →conv1..4, `_model.decoder.rnn.weight_ih/hh`→`Wx`/`Wh`, `_model.decoder.decoder.2`→final; the released
+  `.jit` also carries an 8 kHz `_model_8k.*` branch this port drops (`"_model."` is not a prefix of
+  `"_model_8k."`, char 7 being `_` not `.`, and the loader skips `_model_8k` explicitly). The converter
+  `Tools/silero-vad-to-safetensors` reads the `.jit` with `torch.jit.load` (torch alone, no `silero-vad`
+  package) and keeps the 16 kHz `_model.*` in PyTorch layout; the native `.pth`/JIT reader reads the raw
+  `.jit` too. The parity oracle (`run_reference.py silero_vad`, llm env, needs `silero-vad`+`torchaudio`)
+  streams the JIT chunk by chunk. Resampled to 16 kHz through `NFKMLXAudioRate.matched`.
+- `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
+  codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
+  then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
+  and halving the resolution), a **residual vector quantizer** (`NFKDACResidualVectorQuantize`: a stack
+  of quantizers, each projecting the latent to the codebook width through `in_proj`, matching each frame
+  to its nearest L2-NORMALIZED codebook entry, projecting the RAW chosen entry back through `out_proj`,
+  and coding the residual the previous ones left), and a **decoder** (the mirror, upsampling through
+  transposed convs). The Snake activation, the dilated residual unit, and the decoder's upsample block
+  are the SHARED Music 3 vocoder blocks (`NFKMusic3Snake`/`NFKMusic3ResidualUnit`/`NFKMusic3VocoderBlock`);
+  the strided encoder and the RVQ are what the codec adds. `NFKMLXDAC.encode(_:)` returns the codebook
+  tokens `[[Int]]` (codebook × frame) — the codec's product — and `decode(_:)` reconstructs; the
+  `NFKMLXDACBackend` runs the round trip (audio → codes → audio under `NFKOutputAudio`). `+register`
+  under `dac`. The released convolutions are weight-normalized, so the loader **fuses `g·v/‖v‖`** (reusing
+  `NFKMLXMusic3.fusedWeightNorm`) and transposes; `remapReferenceKey` translates the reference's nested
+  `nn.Sequential` names (`encoder.block.N.block.M.block.K`, `decoder.model.N.block.M`,
+  `quantizer.quantizers.N`). The nearest-neighbor search compares normalized vectors (maximizing the dot
+  product of unit vectors is minimizing Euclidean distance); the reconstruction uses the RAW codebook
+  entry, as the reference does. **Reference parity** against `descript-audio-codec` on the released 44.1
+  kHz model (`run_reference.py dac`, llm oracle env, needs `descript-audio-codec`), on the first numeric
+  run: codebook tokens matching EXACTLY (783/783 over 9 codebooks × 87 frames) and the decoder
+  reconstructing the reference's waveform from its codes at cosine 0.99999999999986. `NFKMLXDACConfiguration`
+  carries the released `.dac44kHz`/`.dac24kHz`/`.dac16kHz` geometries (all four encoder rates, differing
+  in the rates, codebook count, and sample rate); the native torch reader loads the released `.pth`
+  directly (its `state_dict` is unwrapped, the weight norm fused). Converter `Tools/dac-to-safetensors`.
+- `NFKMLXSNAC` (`@objc`) — SNAC, the toolkit's SECOND neural audio codec and the first MULTI-SCALE one.
+  Its codebooks code at DIFFERENT temporal rates: the residual is average-pooled before a coarse codebook
+  quantizes it and repeat-interleaved back afterward, so codebook 0 emits one token per `vqStrides[0]`
+  frames, codebook 1 per `vqStrides[1]`, and so on (`[4, 2, 1]` for the 24 kHz model). This is the 24 kHz
+  SPEECH model — the codec the common speech codec-token LLMs use — with depthwise-separable convolutions,
+  a decoder **noise block**, three codebooks, and NO bottleneck attention (the release's
+  `attn_window_size` is null). Structure like DAC with three SNAC-specific pieces: the depthwise blocks
+  (`NFKSNACResidualUnit`'s dilated conv is grouped over every channel), the `NFKSNACNoiseBlock` (a learned
+  per-position scale times a fresh Gaussian, added in the decoder), and the multi-scale RVQ
+  (`NFKSNACResidualVectorQuantize`: `avgPool` before `in_proj`, `repeatInterleave` after `out_proj`). The
+  Snake activation and the transposed-conv upsample are the shared Music 3 blocks. `NFKMLXSNAC.encode(_:)`
+  returns the per-codebook token streams `[[Int]]` at their own rates (the coarser emit fewer),
+  `decode(_:deterministic:)` reconstructs, and `NFKMLXSNACBackend` runs the round trip under
+  `NFKOutputAudio`. `+register` under `snac`. **The noise block is non-deterministic** (`torch.randn`), so
+  a decode is reproducible only with `deterministic: true` (which skips it); parity is measured that way,
+  the noise's expected contribution being zero. The release weight-normalizes through torch's
+  parametrization API (`parametrizations.weight.original0` = g, `original1` = v), where DAC used the older
+  `weight_g`/`weight_v`; `NFKMLXSNAC.fusedWeightNorm` fuses that form. `remapReferenceKey` translates the
+  nested `encoder.block.N.block.M.block.K` / `decoder.model.N.block.M` (0 snake, 1 transposed conv, 2 the
+  noise block, 3..5 residual units) / `quantizer.quantizers.N` names. **Reference parity** against the
+  `snac` package on the released 24 kHz model (`run_reference.py snac`, llm oracle env, needs `snac`), on
+  the first numeric run: per-codebook tokens matching EXACTLY (42/42 over the three multi-scale codebooks)
+  and the decoder reconstructing at cosine 0.9999999999998. Native torch reader loads the release
+  directly. Converter `Tools/snac-to-safetensors`.
 - `NFKMLXAudioTagger` (`@objc`) — real audio tagging (PANNs Cnn14): a log-mel spectrogram, normalized
   across its mel bands (`bn0`), feeds six VGG-style blocks (two 3×3 convolutions and an average pooling
   each), and the result pools over time — max plus mean — into an independent score per class; the top
@@ -2630,9 +2726,9 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (CorridorKey's GreenFormer) registers the same way. `InferKitMLXObjCExamples` proves the ObjC path.
   `NFKMLXReferenceModels.registerAll` registers every shipped model at once — the real models
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
-  `fast-style-transfer`, `clip-vit-b-32`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
+  `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

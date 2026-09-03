@@ -223,6 +223,58 @@
    ]
   },
   {
+   "key": "SILERO_VAD",
+   "file": "silero-vad.safetensors",
+   "raw": "silero_vad.jit",
+   "bytes": 2272526,
+   "url": "https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.jit",
+   "converter": "silero-vad-to-safetensors",
+   "note": "Silero VAD v6 (snakers4). The released .jit carries a 16 kHz `_model.*` branch and an 8 kHz `_model_8k.*` branch; the converter keeps the 16 kHz branch. The parity record is produced by `run_reference.py silero_vad` under the llm oracle env, which needs the `silero-vad` package (its wrapper streams 512-sample chunks and threads the LSTM state); the converter needs only torch. `bytes` pins the master file, so a drift fails loudly.",
+   "config": [
+    "IK_VAL_SILERO_VAD",
+    "IK_TRIAGE_SILERO_VAD"
+   ]
+  },
+  {
+   "key": "DAC",
+   "file": "dac.safetensors",
+   "raw": "dac_44khz.pth",
+   "bytes": 306717287,
+   "url": "https://github.com/descriptinc/descript-audio-codec/releases/download/0.0.1/weights.pth",
+   "converter": "dac-to-safetensors",
+   "note": "The Descript Audio Codec, 44.1 kHz 8 kbps (9 codebooks). The released `.pth` wraps a weight-normalized `state_dict`; the converter extracts it in PyTorch layout and the loader fuses and transposes. The parity record is produced by `run_reference.py dac` under the llm oracle env, which needs the `descript-audio-codec` package (the encode/decode reference); the converter needs only torch.",
+   "config": [
+    "IK_VAL_DAC",
+    "IK_TRIAGE_DAC"
+   ]
+  },
+  {
+   "key": "SNAC",
+   "file": "snac.safetensors",
+   "raw": "snac_24khz.bin",
+   "bytes": 79488254,
+   "url": "https://huggingface.co/hubertsiuzdak/snac_24khz/resolve/main/pytorch_model.bin",
+   "converter": "snac-to-safetensors",
+   "note": "SNAC 24 kHz multi-scale speech codec (3 codebooks at strides [4,2,1], depthwise convs, a decoder noise block, no bottleneck attention). The release's convolutions are weight-normalized through torch's parametrization API (`parametrizations.weight.original0/1`); the converter keeps them and the loader fuses. The parity record is produced by `run_reference.py snac` under the llm oracle env (needs `snac`), with the decoder noise block disabled so the reconstruction is deterministic.",
+   "config": [
+    "IK_VAL_SNAC",
+    "IK_TRIAGE_SNAC"
+   ]
+  },
+  {
+   "key": "SIGLIP2",
+   "file": "siglip2.safetensors",
+   "raw": "siglip2_base.safetensors",
+   "bytes": 1500800904,
+   "url": "https://huggingface.co/google/siglip2-base-patch16-224/resolve/main/model.safetensors",
+   "converter": "siglip2-to-safetensors",
+   "note": "SigLIP 2 base-patch16-224, the CLIP upgrade / VLM vision tower. The release is ALREADY a PyTorch-layout safetensors the loader reads directly (transposing the 4-D patch conv, mapping the vision_model./text_model. prefixes), so the converter is a passthrough normalizer. Most of the 1.5 GB is the 256k multilingual text embedding table. Parity via `run_reference.py siglip2` (llm oracle env, transformers >= 4.51). The architecture is SigLIP v1 (model_type 'siglip'); '2' is the training.",
+   "config": [
+    "IK_VAL_SIGLIP2",
+    "IK_TRIAGE_SIGLIP2"
+   ]
+  },
+  {
    "key": "FACE",
    "kind": "input",
    "file": "face960.jpg",
@@ -871,7 +923,7 @@
   "llm": {
    "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
    "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor.",
-   "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate",
+   "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac'",
    "modes": [
     "qwen3",
     "qwen3_embedding",
@@ -882,7 +934,11 @@
     "smolvlm",
     "gguf",
     "qwen3_vl",
-    "gguf_lm"
+    "gguf_lm",
+    "silero_vad",
+    "dac",
+    "snac",
+    "siglip2"
    ]
   },
   "music": {

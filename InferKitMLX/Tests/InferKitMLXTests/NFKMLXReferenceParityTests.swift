@@ -330,6 +330,180 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.99, "the cleaned waveform matches the reference implementation")
     }
 
+    // MARK: Silero VAD
+
+    // Silero VAD v6 is a stateful streaming model: each 512-sample chunk carries a 64-sample look-back
+    // and the LSTM state threads across chunks. Running the whole clip as one LSTM sequence has to
+    // reproduce the reference's chunk-by-chunk stream, which a wrong context roll or a dropped state
+    // would break silently. The reference is the released snakers4 JIT (silero_vad 6.2.1), loaded into
+    // this port through its own `_model.*` weights.
+    func testSileroVADMatchesTheReferenceProbabilities() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SILERO_VAD"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SILERO_VAD to a silero_vad record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"])                  // [samples]
+        let reference = try XCTUnwrap(arrays["output"])                   // [chunks]
+
+        let net = NFKMLXSileroVAD.makeNet()
+        try NFKMLXSileroVAD.loadWeights(into: net, from: weights("IK_VAL_SILERO_VAD"))
+        let ours = net.speechProbabilities(waveform.asArray(Float.self), sampleRate: 16000)
+        let theirs = reference.asArray(Float.self)
+
+        XCTAssertEqual(ours.count, theirs.count, "one probability per 512-sample chunk")
+        let mine = ours.map(Double.init), refd = theirs.map(Double.init)
+        let similarity = cosine(mine, refd)
+        let maxAbsolute = zip(mine, refd).map { abs($0 - $1) }.max() ?? 0
+        // The spans either implementation would emit are decided at the threshold, so agreement there is
+        // what makes the ports interchangeable rather than merely close.
+        let agreement = zip(mine, refd).filter { ($0 >= 0.5) == ($1 >= 0.5) }.count
+        print("VALIDATION PARITY silero-vad: cosine \(similarity), max |difference| \(maxAbsolute), threshold agreement \(agreement)/\(theirs.count)")
+        XCTAssertGreaterThan(similarity, 0.9999, "per-chunk speech probabilities match the reference JIT")
+        XCTAssertLessThan(maxAbsolute, 1e-3, "and match pointwise, not only in direction")
+        XCTAssertEqual(agreement, theirs.count, "the same chunks cross the speech threshold")
+    }
+
+    // MARK: DAC
+
+    // The Descript Audio Codec end to end: the encoder + RVQ must assign the same codebook tokens as the
+    // reference, and the decoder must reconstruct the same waveform from a given set of codes. Decoding
+    // the REFERENCE codes isolates the decoder from any single code that flips on a codebook near-tie.
+    func testDACMatchesTheReferenceCodesAndReconstruction() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DAC"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DAC to a dac record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"])                  // [samples]
+        let referenceCodes = try XCTUnwrap(arrays["codes"])               // [codebooks, frames]
+        let referenceRecon = try XCTUnwrap(arrays["output"])              // [samples], the decode of the codes
+
+        let codec = try NFKMLXDAC.codec(configuration: .dac44kHz, weightsURL: weights("IK_VAL_DAC"))
+
+        let (books, frames) = (referenceCodes.shape[0], referenceCodes.shape[1])
+        let referenceFlat = referenceCodes.asType(.int32).asArray(Int32.self)
+        let referenceGrid = (0 ..< books).map { book in (0 ..< frames).map { Int(referenceFlat[book * frames + $0]) } }
+
+        // Codes: the encoder + RVQ assignment.
+        let mine = codec.encode(waveform.asArray(Float.self))
+        var agree = 0
+        for book in 0 ..< books {
+            for frame in 0 ..< frames where mine[book][frame] == referenceGrid[book][frame] { agree += 1 }
+        }
+        let agreement = Double(agree) / Double(books * frames)
+
+        // Reconstruction: the decoder, fed the reference's codes.
+        let myRecon = codec.decode(referenceGrid)
+        let count = min(myRecon.count, referenceRecon.shape[0])
+        let similarity = cosine(Array(myRecon.prefix(count)).map(Double.init),
+                                referenceRecon[0 ..< count].asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY dac: code agreement \(agree)/\(books * frames), reconstruction cosine \(similarity)")
+        XCTAssertGreaterThan(agreement, 0.99, "the encoder + RVQ assign the reference's codes")
+        XCTAssertGreaterThan(similarity, 0.999, "the decoder reconstructs the reference's waveform from its codes")
+    }
+
+    // MARK: SNAC
+
+    // The multi-scale codec: the encoder + RVQ must assign the same tokens at each codebook's own
+    // temporal rate (the coarser codebooks emit fewer), and the decoder must reconstruct the same
+    // waveform from a given set of codes. The reference's decoder noise block is disabled on both sides
+    // (its expected contribution is zero), so the decode is deterministic and comparable.
+    func testSNACMatchesTheReferenceCodesAndReconstruction() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SNAC"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SNAC to a snac record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"])
+        let referenceRecon = try XCTUnwrap(arrays["output"])
+
+        // One code stream per codebook, at that codebook's rate.
+        var referenceGrid = [[Int]]()
+        var index = 0
+        while let stream = arrays["codes\(index)"] {
+            referenceGrid.append(stream.asType(.int32).asArray(Int32.self).map(Int.init))
+            index += 1
+        }
+        XCTAssertGreaterThan(referenceGrid.count, 1, "SNAC has several codebooks at different rates")
+
+        let codec = try NFKMLXSNAC.codec(configuration: .snac24kHz, weightsURL: weights("IK_VAL_SNAC"))
+
+        let mine = codec.encode(waveform.asArray(Float.self))
+        XCTAssertEqual(mine.map(\.count), referenceGrid.map(\.count), "the per-codebook code counts match")
+        var agree = 0, total = 0
+        for (mineStream, referenceStream) in zip(mine, referenceGrid) {
+            for (a, b) in zip(mineStream, referenceStream) where a == b { agree += 1 }
+            total += referenceStream.count
+        }
+
+        let myRecon = codec.decode(referenceGrid, deterministic: true)
+        let count = min(myRecon.count, referenceRecon.shape[0])
+        let similarity = cosine(Array(myRecon.prefix(count)).map(Double.init),
+                                referenceRecon[0 ..< count].asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY snac: code agreement \(agree)/\(total), reconstruction cosine \(similarity)")
+        XCTAssertGreaterThan(Double(agree) / Double(total), 0.99, "the encoder + multi-scale RVQ assign the reference's codes")
+        XCTAssertGreaterThan(similarity, 0.999, "the decoder reconstructs the reference's waveform from its codes")
+    }
+
+    // MARK: SigLIP 2
+
+    // The image-text model end to end: the image embedding (attention-pooling head), the text embeddings
+    // (last-token projection over the 256k-vocab tower), and the sigmoid logits must all match the
+    // reference. The float plate is fed directly so the comparison is not blunted by 8-bit image
+    // quantization.
+    func testSigLIP2MatchesTheReferenceEmbeddingsAndLogits() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SIGLIP2"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SIGLIP2 to a siglip2 record")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let plate = try XCTUnwrap(arrays["input_image"])                  // [224, 224, 3] in 0…1
+        let referenceImage = try XCTUnwrap(arrays["output"])              // [768]
+        let referenceText = try XCTUnwrap(arrays["text_embeds"])          // [texts, 768]
+        let tokens = try XCTUnwrap(arrays["tokens"])                      // [texts, 64] int
+        let referenceLogits = try XCTUnwrap(arrays["logits"])             // [texts]
+
+        let net = NFKMLXSigLIP2.makeNet(.base)
+        try NFKMLXSigLIP2.loadWeights(into: net, from: weights("IK_VAL_SIGLIP2"))
+
+        let pixels = plate.reshaped([1, plate.shape[0], plate.shape[1], 3]) * 2 - 1
+        let ids = tokens.asType(.int32)
+
+        // Localize any vision mismatch: the embeddings seam and the post-layernorm hidden (pre-head).
+        if let patchEmbeds = arrays["patch_embeds"], let visionLast = arrays["vision_last"] {
+            let myEmbeds = net.vision.embeddings(pixels); eval(myEmbeds)
+            let embedCosine = cosine(myEmbeds.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     patchEmbeds.reshaped([-1]).asArray(Float.self).map(Double.init))
+            var hidden = myEmbeds
+            for layer in net.vision.encoder.layers { hidden = layer(hidden) }
+            hidden = net.vision.postLayerNorm(hidden); eval(hidden)
+            let lastCosine = cosine(hidden.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    visionLast.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM siglip2: embeddings cosine \(embedCosine), post-layernorm cosine \(lastCosine)")
+        }
+
+        let image = net.imageEmbedding(pixels)[0].asArray(Float.self).map(Double.init)
+        let imageSimilarity = cosine(image, referenceImage.asArray(Float.self).map(Double.init))
+
+        let text = net.textEmbedding(ids)                                 // [texts, 768]
+        eval(text)
+        var worstText = 1.0
+        for row in 0 ..< referenceText.shape[0] {
+            let mine = text[row].asArray(Float.self).map(Double.init)
+            let theirs = referenceText[row].asArray(Float.self).map(Double.init)
+            worstText = Swift.min(worstText, cosine(mine, theirs))
+        }
+
+        let logits = net.logits(image: pixels, text: ids).reshaped([-1]).asArray(Float.self).map(Double.init)
+        let logitError = zip(logits, referenceLogits.asArray(Float.self).map(Double.init)).map { abs($0 - $1) }.max() ?? 0
+
+        print("VALIDATION PARITY siglip2: image cosine \(imageSimilarity), worst text cosine \(worstText), max |logit diff| \(logitError)")
+        XCTAssertGreaterThan(imageSimilarity, 0.9999, "the image embedding matches the reference")
+        XCTAssertGreaterThan(worstText, 0.9999, "every text embedding matches the reference")
+        XCTAssertLessThan(logitError, 1e-2, "the sigmoid logits match the reference")
+    }
+
     // MARK: The models validated by eye
 
     // These four ran end to end on real weights and looked right, which is exactly the evidence that
