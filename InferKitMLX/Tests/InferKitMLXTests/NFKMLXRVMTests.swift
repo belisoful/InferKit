@@ -201,6 +201,9 @@ final class NFKMLXRVMTests: XCTestCase {
     /// a decreasing loss alone could ride on the decoder while the backbone stays untouched.
     func testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks() throws {
         try requireMLXRuntime()
+        // Seeded, and clipped: an unseeded init under a 0.05 step can diverge to NaN within six
+        // steps, which reads as a trainer failure rather than an unlucky draw.
+        NFKMLXRandom.seed(20_260_904)
         let net = NFKMLXRVMNet(.tiny)
         let before = Dictionary(uniqueKeysWithValues: net.parameters().flattened()
             .filter { $0.0.contains(".se.") }
@@ -215,7 +218,8 @@ final class NFKMLXRVMTests: XCTestCase {
             loss: { model, input, expected in
                 let (_, alpha, _) = model.forward(input, state: NFKMLXRVMNet.initialState)
                 return ((alpha - expected) * (alpha - expected)).mean()
-            })
+            },
+            clipGradientNorm: 1)
 
         XCTAssertLessThan(losses.last!, losses.first!, "the loss falls over the run")
         let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened()

@@ -59,6 +59,22 @@ and reranking, vision-language, speech recognition and synthesis, neural audio c
 Music 3 text-to-music — each validated numerically against its reference implementation) and
 **InferKitFoundationModels** (Apple's on-device model, with tool calling and structured output).
 
+## Models (InferKitMLX)
+
+Every row links to its class, configuration, and factory in the [model index](Docs/model-index.md);
+the measured parity of each is in [model parity](Docs/model-parity.md).
+
+- **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN, SwinIR, NAFNet, Zero-DCE, fast style transfer, colorizers (ECCV-16, SIGGRAPH-17), LaMa, CodeFormer, TAESD, SD inpainting
+- **[Image → map](Docs/model-index.md#image-to-map)** — Depth Anything V2, Marigold, SegFormer, DeepLabV3, BiSeNet V1 / V2
+- **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, Robust Video Matting, MODNet, SAM, SAM 2, RetinaFace, face alignment
+- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR, SimpleBaseline pose
+- **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP, SigLIP 2, Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Qwen3-VL, Gemma 4 vision / audio
+- **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Mixtral, GGUF, Qwen3.5 / 3.8, Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
+- **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend
+- **[Audio](Docs/model-index.md#audio)** — Whisper (tiny–large-v3), Demucs v2 / HT Demucs, speech denoiser, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC
+- **[Speech & music](Docs/model-index.md#text-to-speech-and-music)** — FastSpeech2 + HiFi-GAN voice, Kokoro-82M, phonemizers, MiniMax Music 3
+- **[Text → image & video](Docs/model-index.md#text-to-image-and-video)** — Stable Diffusion 1.5 / 2.1 / SDXL-Turbo, IP-Adapter, Z-Image, SANA, LTX-Video, Wan
+
 ## Documentation
 
 | | |
@@ -68,6 +84,8 @@ Music 3 text-to-music — each validated numerically against its reference imple
 | **[Installation](Docs/installation.md)** | Swift Package Manager, CocoaPods, and adding a companion package. |
 | **[Core ML language models](Docs/coreml-llm.md)** | Converting a Hugging Face checkpoint and running it on device. |
 | **[Companion packages](Docs/companions.md)** | InferKitMLX and InferKitFoundationModels: what each ships, and the full model gallery. |
+| **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
+| **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
 | **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
 | **[Changelog](CHANGELOG.md)** | What each release contains. |
 | **[Validation](Tools/validation-assets/manifest.json)** | Every model's reference-parity evidence, rebuildable with `Tools/validation-assets/fetch.py`. |

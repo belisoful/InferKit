@@ -119,6 +119,10 @@ weights:
   remapped and the query/key projections un-permuted for the decoder's rotary, and the embedded
   tokenizer is rebuilt. Reference parity against transformers loading the same GGUF (logit cosine
   0.9999999999).
+Each model's classes, configuration preset, registered name, and factory are tabulated in
+[model-index.md](model-index.md); the per-model parity numbers, the reference each is measured against,
+and the subsystems the models share are in [model-parity.md](model-parity.md).
+
 Every shipped real model has a direct Objective-C factory — `[Model backendWith[Variant:]weightsURL:error:]`
 for local weights and `[Model backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:]`
 to download from Hugging Face and build — so a consumer (e.g. MetalForge) constructs them without the

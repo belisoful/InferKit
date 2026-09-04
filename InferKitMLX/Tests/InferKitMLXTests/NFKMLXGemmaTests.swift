@@ -61,9 +61,10 @@ final class NFKMLXGemmaTests: XCTestCase {
     }
 
     // The wide second embedding holds one slice per layer, which is what its width has to be.
-    /// The reader takes exactly the architecture it implements. `gemma4_unified_text` (the 12B) and
-    /// the mixture-of-experts 26B both satisfy a `gemma4` PREFIX, which is how a wrong checkpoint
-    /// would load cleanly and produce fluent nonsense — so the guard is exact, not a prefix.
+    /// The reader takes exactly the architecture it implements. `gemma4_unified_text` (the 12B)
+    /// satisfies a `gemma4` PREFIX, which is how a wrong checkpoint would load cleanly and produce
+    /// fluent nonsense — so the guard is exact, not a prefix. The 26B-A4B mixture is the same
+    /// decoder with a routed branch, distinguished by `enable_moe_block`, and is accepted.
     func testTheConfigurationRejectsTheArchitecturesItDoesNotImplement() throws {
         func write(_ json: [String: Any]) throws -> URL {
             let url = FileManager.default.temporaryDirectory
@@ -77,14 +78,20 @@ final class NFKMLXGemmaTests: XCTestCase {
         XCTAssertThrowsError(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: unified))
 
         let mixture = try write(["model_type": "gemma4",
-                                 "text_config": ["model_type": "gemma4_text", "num_experts": 128]])
+                                 "text_config": ["model_type": "gemma4_text", "enable_moe_block": true,
+                                                 "num_experts": 128, "top_k_experts": 8,
+                                                 "moe_intermediate_size": 1024]])
         defer { try? FileManager.default.removeItem(at: mixture) }
-        XCTAssertThrowsError(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: mixture))
+        let routed = try NFKMLXGemmaLanguage.configuration(fromHuggingFace: mixture)
+        XCTAssertEqual(routed.expertCount, 128)
+        XCTAssertEqual(routed.activeExpertCount, 8)
+        XCTAssertTrue(routed.isMixtureOfExperts)
 
         let dense = try write(["model_type": "gemma4",
-                               "text_config": ["model_type": "gemma4_text"]])
+                               "text_config": ["model_type": "gemma4_text", "num_experts": 128]])
         defer { try? FileManager.default.removeItem(at: dense) }
-        XCTAssertNoThrow(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: dense))
+        let plain = try NFKMLXGemmaLanguage.configuration(fromHuggingFace: dense)
+        XCTAssertFalse(plain.isMixtureOfExperts, "without `enable_moe_block` the expert fields are inert")
     }
 
     func testThePerLayerEmbeddingIsOneSlicePerLayer() throws {
