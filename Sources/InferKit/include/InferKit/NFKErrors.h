@@ -22,6 +22,10 @@ typedef NS_ENUM(NSInteger, NFKInferenceError) {
 	kNFKError_InferenceMissingInput		= 2,
 	kNFKError_InferenceBackendFailure	= 3,
 	kNFKError_InferenceUnsupported		= 4,
+	/*! A remote endpoint produced no response at all: the host is down or refused the connection. The
+		URL-loading error is under NSUnderlyingErrorKey. Distinct from a server that answered with an
+		error, which is kNFKError_InferenceBackendFailure. Introduced in InferKit 0.3.0. */
+	kNFKError_RemoteUnreachable			= 5,
 };
 
 NS_ASSUME_NONNULL_END

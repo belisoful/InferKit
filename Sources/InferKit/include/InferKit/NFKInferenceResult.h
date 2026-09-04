@@ -38,6 +38,9 @@ NS_ASSUME_NONNULL_BEGIN
 /*! Convenience for NFKOutputStructured: the structured result keyed by field name, or nil. */
 @property (nonatomic, readonly, nullable) NSDictionary<NSString *, id> *structured;
 
+/*! NFKOutputToolCalls as an array of {id, name, arguments} dictionaries, or nil when absent or of another type. Introduced in InferKit 0.3.0. */
+@property (nonatomic, readonly, nullable) NSArray<NSDictionary<NSString *, id> *> *toolCalls;
+
 /*! Convenience for NFKOutputEmbedding: the feature embedding vector, or nil when absent or not an
 	array of numbers. */
 @property (nonatomic, readonly, nullable) NSArray<NSNumber *> *embedding;

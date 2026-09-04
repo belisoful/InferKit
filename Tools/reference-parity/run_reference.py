@@ -3141,6 +3141,427 @@ def run_ltx_t5(image):
     return output[0].contiguous()                                          # [S, 4096]
 
 
+def run_z_image(image):
+    """The Z-Image S3-DiT velocity prediction at a tiny random configuration, from diffusers' own
+    ZImageTransformer2DModel, plus the timestep, noise-refiner, and first unified-layer seams.
+
+    Single-stream: the image latent and the caption features are concatenated and every layer's
+    self-attention runs over the join. The caption features are supplied directly (no Qwen3), so the
+    DiT is verified in isolation, as the LTX DiT is. Sequence lengths are deliberately NOT a multiple
+    of 32, so the learned pad tokens (`x_pad_token`, `cap_pad_token`) and the (0,0,0) pad positions are
+    exercised. Runs under the `ltx` oracle env (diffusers with ZImageTransformer2DModel). `image` unused.
+    """
+    from diffusers import ZImageTransformer2DModel
+
+    model = ZImageTransformer2DModel(
+        all_patch_size=(2,), all_f_patch_size=(1,), in_channels=4, dim=32, n_layers=2,
+        n_refiner_layers=1, n_heads=2, n_kv_heads=2, norm_eps=1e-5, qk_norm=True, cap_feat_dim=24,
+        rope_theta=256.0, t_scale=1000.0, axes_dims=[4, 6, 6], axes_lens=[1024, 512, 512])
+    model = _randomized(model, seed=19)
+
+    generator = torch.Generator().manual_seed(5)
+    latent = torch.randn(4, 1, 8, 8, generator=generator)                  # [C, F, H, W] -> 16 tokens
+    cap = torch.randn(20, 24, generator=generator)                         # 20 caption tokens
+    t = torch.tensor([0.3])
+
+    seams = {}
+    model.t_embedder.register_forward_hook(lambda m, i, o: seams.__setitem__("t_emb", o.detach()))
+    model.noise_refiner[-1].register_forward_hook(lambda m, i, o: seams.__setitem__("noise_out", o.detach()))
+    model.layers[0].register_forward_hook(lambda m, i, o: seams.__setitem__("layer0", o.detach()))
+    with torch.no_grad():
+        output = model([latent], t, [cap], patch_size=2, f_patch_size=1, return_dict=False)[0][0]
+
+    extra = {"latent": latent.contiguous(), "cap_feats": cap.contiguous(), "timestep": t.contiguous(),
+             "t_emb": seams["t_emb"][0].contiguous(), "noise_out": seams["noise_out"][0].contiguous(),
+             "layer0": seams["layer0"][0].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [C, F, H, W]
+
+
+def run_sana(image):
+    """The SANA linear-attention DiT velocity at a tiny random configuration, from diffusers'
+    SanaTransformer2DModel, plus the patch-embed, first-block, and embedded-timestep seams.
+
+    SANA replaces softmax self-attention with ReLU LINEAR attention and the MLP with a GLUMBConv
+    (gated depthwise convolution over the token grid); each block cross-attends to the caption. The
+    caption embedding is supplied directly (no Gemma), so the DiT is verified in isolation. Runs under
+    the `ltx` oracle env (diffusers with SanaTransformer2DModel). `image` unused.
+    """
+    from diffusers import SanaTransformer2DModel
+
+    model = SanaTransformer2DModel(
+        in_channels=8, out_channels=8, num_attention_heads=2, attention_head_dim=8, num_layers=2,
+        num_cross_attention_heads=2, cross_attention_head_dim=8, cross_attention_dim=16,
+        caption_channels=12, mlp_ratio=2.0, patch_size=1, attention_bias=False,
+        norm_elementwise_affine=False, norm_eps=1e-6, qk_norm=None, guidance_embeds=False,
+        timestep_scale=1.0, sample_size=8)
+    model = _randomized(model, seed=23)
+
+    generator = torch.Generator().manual_seed(6)
+    latent = torch.randn(1, 8, 4, 4, generator=generator)                  # [B, C, H, W]
+    cap = torch.randn(1, 6, 12, generator=generator)                       # [B, Lc, caption_channels]
+    t = torch.tensor([0.4])
+
+    seams = {}
+    model.patch_embed.register_forward_hook(lambda m, i, o: seams.__setitem__("patch", o.detach()))
+    model.time_embed.register_forward_hook(lambda m, i, o: seams.__setitem__("embedded", o[1].detach()))
+    model.transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o.detach()))
+    with torch.no_grad():
+        output = model(hidden_states=latent, encoder_hidden_states=cap, timestep=t, return_dict=False)[0][0]
+
+    extra = {"latent": latent[0].contiguous(), "cap_feats": cap[0].contiguous(), "timestep": t.contiguous(),
+             "patch": seams["patch"][0].contiguous(), "embedded": seams["embedded"][0].contiguous(),
+             "block0": seams["block0"][0].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [C, H, W]
+
+
+def run_wan(image):
+    """The Wan text-to-video DiT velocity at a tiny random configuration, from diffusers'
+    WanTransformer3DModel, plus the patch-embed and first-block seams.
+
+    A 3-D sequence transformer over a Conv3d-patchified video latent, with a 3-axis interleaved rotary
+    over the (frame, height, width) grid, self + cross attention, and an across-heads RMS q/k norm. The
+    text embedding is supplied directly (no umT5), so the DiT is verified in isolation. Runs under the
+    `ltx` oracle env (diffusers with WanTransformer3DModel). `image` unused.
+    """
+    from diffusers import WanTransformer3DModel
+
+    model = WanTransformer3DModel(
+        patch_size=(1, 2, 2), num_attention_heads=2, attention_head_dim=16, in_channels=4,
+        out_channels=4, text_dim=10, freq_dim=256, ffn_dim=48, num_layers=2, cross_attn_norm=True,
+        qk_norm="rms_norm_across_heads", eps=1e-6, image_dim=None, added_kv_proj_dim=None,
+        rope_max_seq_len=1024)
+    model = _randomized(model, seed=29)
+
+    generator = torch.Generator().manual_seed(8)
+    latent = torch.randn(1, 4, 2, 4, 4, generator=generator)               # [B, C, T, H, W]
+    text = torch.randn(1, 6, 10, generator=generator)                      # [B, Lc, text_dim]
+    t = torch.tensor([0.35])
+
+    seams = {}
+    model.patch_embedding.register_forward_hook(lambda m, i, o: seams.__setitem__("patch", o.detach()))
+    model.blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o.detach()))
+    with torch.no_grad():
+        output = model(hidden_states=latent, timestep=t, encoder_hidden_states=text, return_dict=False)[0][0]
+
+    extra = {"latent": latent[0].contiguous(), "text": text[0].contiguous(), "timestep": t.contiguous(),
+             "patch": seams["patch"][0].flatten(1).transpose(0, 1).contiguous(),
+             "block0": seams["block0"][0].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [C, F, H, W]
+
+
+def run_umt5(image):
+    """The umT5 text encoder (`UMT5EncoderModel`, Wan's text encoder) at a tiny random configuration,
+    from transformers. umT5 differs from plain T5 in giving EVERY layer its own relative-position bias;
+    everything else (T5LayerNorm, the gated FFN, the unscaled attention) is shared with T5. Records the
+    last hidden state and the weights. Runs under the `llm` oracle env. `image` unused.
+    """
+    from transformers import UMT5Config, UMT5EncoderModel
+
+    config = UMT5Config(
+        d_model=32, num_layers=3, num_heads=2, d_kv=16, d_ff=64, vocab_size=128,
+        relative_attention_num_buckets=16, relative_attention_max_distance=32, dropout_rate=0.0)
+    model = _randomized(UMT5EncoderModel(config), seed=47)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    with torch.no_grad():
+        output = model(input_ids=tokens).last_hidden_state[0]
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for key, value in model.state_dict().items():
+        if key == "encoder.embed_tokens.weight":                          # tied to shared.weight
+            continue
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [N, d_model]
+
+
+def run_gemma2(image):
+    """The Gemma-2 text decoder (`Gemma2Model`, SANA's text encoder) at a tiny random configuration,
+    from transformers. Records the last hidden state and the weights. Exercises the sandwich norms, the
+    (1+w) RMS, the attention logit soft-cap, GQA, and the alternating sliding-window / full attention
+    (a small window makes the sliding layers differ from the full ones). Runs under the `llm` oracle env
+    (transformers with Gemma2Model). `image` unused.
+    """
+    from transformers import Gemma2Config, Gemma2Model
+
+    config = Gemma2Config(
+        hidden_size=32, num_hidden_layers=3, num_attention_heads=2, num_key_value_heads=1, head_dim=8,
+        intermediate_size=64, vocab_size=128, query_pre_attn_scalar=8, attn_logit_softcapping=50.0,
+        sliding_window=3, rope_theta=10000.0, hidden_activation="gelu_pytorch_tanh", max_position_embeddings=64)
+    model = _randomized(Gemma2Model(config), seed=43)
+    print("layer_types:", config.layer_types)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5, 88, 30]], dtype=torch.long)
+    with torch.no_grad():
+        output = model(tokens).last_hidden_state[0]
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [N, hidden]
+
+
+def run_dpm_solver(image):
+    """SANA's released sampler, `DPMSolverMultistepScheduler` in its flow-prediction configuration, run
+    over a FIXED sequence of velocities so the scheduler math is verified with no model. Records the
+    sigma schedule, the timesteps, and the sample trajectory. Runs under the `ltx` oracle env.
+    """
+    from diffusers import DPMSolverMultistepScheduler
+
+    scheduler = DPMSolverMultistepScheduler(
+        num_train_timesteps=1000, algorithm_type="dpmsolver++", solver_order=2,
+        prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=3.0,
+        final_sigmas_type="zero", solver_type="midpoint", lower_order_final=True)
+    steps = 8
+    scheduler.set_timesteps(steps)
+
+    generator = torch.Generator().manual_seed(3)
+    initial = torch.randn(4, 4, 4, generator=generator)
+    velocities = [torch.randn(4, 4, 4, generator=generator) for _ in range(steps)]
+
+    sample = initial.clone()
+    trajectory = []
+    for i, t in enumerate(scheduler.timesteps):
+        sample = scheduler.step(velocities[i], t, sample, return_dict=False)[0]
+        trajectory.append(sample.clone())
+
+    extra = {"sigmas": scheduler.sigmas.float().contiguous(), "timesteps": scheduler.timesteps.float().contiguous(),
+             "initial": initial.contiguous(), "velocities": torch.stack(velocities).contiguous(),
+             "trajectory": torch.stack(trajectory).contiguous()}
+    globals()["_extra"] = extra
+    return trajectory[-1].contiguous()
+
+
+def run_unipc(image):
+    """Wan's released sampler, `UniPCMultistepScheduler` in its flow-prediction configuration, run over a
+    FIXED sequence of velocities so the predictor-corrector math is verified with no model. Records the
+    sigma schedule, timesteps, and the sample trajectory. Runs under the `ltx` oracle env.
+    """
+    from diffusers import UniPCMultistepScheduler
+
+    scheduler = UniPCMultistepScheduler(
+        num_train_timesteps=1000, solver_order=2, solver_type="bh2", predict_x0=True,
+        prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=5.0, lower_order_final=True)
+    steps = 8
+    scheduler.set_timesteps(steps)
+
+    generator = torch.Generator().manual_seed(4)
+    initial = torch.randn(4, 4, 4, generator=generator)
+    velocities = [torch.randn(4, 4, 4, generator=generator) for _ in range(steps)]
+
+    sample = initial.clone()
+    trajectory = []
+    for i, t in enumerate(scheduler.timesteps):
+        sample = scheduler.step(velocities[i], t, sample, return_dict=False)[0]
+        trajectory.append(sample.clone())
+
+    extra = {"sigmas": scheduler.sigmas.float().contiguous(), "timesteps": scheduler.timesteps.float().contiguous(),
+             "initial": initial.contiguous(), "velocities": torch.stack(velocities).contiguous(),
+             "trajectory": torch.stack(trajectory).contiguous()}
+    globals()["_extra"] = extra
+    return trajectory[-1].contiguous()
+
+
+def run_wan_vae(image):
+    """The Wan 3D causal VAE (`AutoencoderKLWan`, Wan 2.2 residual path) at a tiny random configuration,
+    from diffusers' own class. Exercises the stateful feat_cache streaming loop — the encoder consumes
+    frames in chunks (1 then 4) and the decoder emits one latent frame at a time, threading the causal
+    convolutions' temporal cache — plus the residual AvgDown3D / DupUp3D shortcuts, the temporal
+    resample time_convs, and the patchify (2×). Records the encoded latent mean and the decode. Runs
+    under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderKLWan
+
+    model = AutoencoderKLWan(
+        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[2, 2], num_res_blocks=1, attn_scales=[],
+        temperal_downsample=[True], is_residual=True, patch_size=2, in_channels=12, out_channels=12)
+    model = _randomized(model, seed=41)
+
+    generator = torch.Generator().manual_seed(13)
+    video = torch.randn(1, 3, 5, 16, 16, generator=generator)              # [B, C, T, H, W], 5 frames
+    seams = {}
+    model.decoder.conv_in.register_forward_hook(lambda m, i, o: seams.__setitem__("dec_conv_in", o.detach()))
+    model.decoder.mid_block.register_forward_hook(lambda m, i, o: seams.__setitem__("dec_mid", o.detach()))
+    model.decoder.up_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("dec_up0", o.detach()))
+    with torch.no_grad():
+        latent = model.encode(video).latent_dist.mean
+        enc_raw = model._encode(video)                                     # pre-quant-split moments
+        enc_1frame = model._encode(video[:, :, 0:1])                       # single-chunk encode
+        decoded = model.decode(latent).sample
+        decoded_f0 = model.decode(latent[:, :, 0:1]).sample                # first latent frame alone (hooks fire here)
+
+    def ndhwc(t):
+        return t[0].permute(1, 2, 3, 0).contiguous()                       # [C,T,H,W] -> [T,H,W,C]
+
+    extra = {"video": ndhwc(video), "latent": ndhwc(latent),
+             "decoded_f0": ndhwc(decoded_f0), "enc_raw": ndhwc(enc_raw), "enc_1frame": ndhwc(enc_1frame),
+             "dec_conv_in": ndhwc(seams["dec_conv_in"]), "dec_mid": ndhwc(seams["dec_mid"]),
+             "dec_up0": ndhwc(seams["dec_up0"])}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return ndhwc(decoded)                                                  # [T, H, W, 3]
+
+
+def run_wan_vae_21(image):
+    """The Wan 2.1 autoencoder (`AutoencoderKLWan`, the NON-residual path) at a tiny random configuration.
+    Wan 2.1 differs from 2.2 in a flat down-block list (no AvgDown3D / DupUp3D shortcuts), a halving
+    upsampler, no patchify, and 16 latent channels. Records the encoded latent mean and the decode. Runs
+    under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderKLWan
+
+    model = AutoencoderKLWan(
+        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[1, 2], num_res_blocks=1, attn_scales=[],
+        temperal_downsample=[True], is_residual=False, patch_size=None, in_channels=3, out_channels=3)
+    model = _randomized(model, seed=53)
+
+    generator = torch.Generator().manual_seed(17)
+    video = torch.randn(1, 3, 5, 16, 16, generator=generator)
+    with torch.no_grad():
+        latent = model.encode(video).latent_dist.mean
+        decoded = model.decode(latent).sample
+
+    def ndhwc(t):
+        return t[0].permute(1, 2, 3, 0).contiguous()
+
+    extra = {"video": ndhwc(video), "latent": ndhwc(latent)}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return ndhwc(decoded)
+
+
+def run_dc_ae(image):
+    """The Deep-Compression Autoencoder (SANA's VAE) at a tiny random configuration, from diffusers'
+    own AutoencoderDC. Deterministic (encode returns one latent). Exercises a ResBlock stage, an
+    EfficientViTBlock stage (multiscale ReLU linear attention + GLUMBConv), the Conv downsample /
+    interpolate upsample with their channel-average / channel-repeat shortcuts, and the in/out
+    shortcuts. Records the latent and the decode. Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderDC
+
+    model = AutoencoderDC(
+        in_channels=3, latent_channels=8, attention_head_dim=4,
+        encoder_block_types=["ResBlock", "EfficientViTBlock"],
+        decoder_block_types=["ResBlock", "EfficientViTBlock"],
+        encoder_block_out_channels=[16, 32], decoder_block_out_channels=[16, 32],
+        encoder_layers_per_block=[1, 1], decoder_layers_per_block=[1, 1],
+        encoder_qkv_multiscales=[(), (3,)], decoder_qkv_multiscales=[(), (3,)],
+        downsample_block_type="Conv", upsample_block_type="interpolate")
+    model = _randomized(model, seed=37)
+
+    generator = torch.Generator().manual_seed(11)
+    sample = torch.randn(1, 3, 8, 8, generator=generator)
+    with torch.no_grad():
+        latent = model.encode(sample).latent
+        decoded = model.decode(latent).sample
+
+    extra = {"sample": sample[0].permute(1, 2, 0).contiguous(),           # [H, W, 3] NHWC
+             "latent": latent[0].permute(1, 2, 0).contiguous()}            # [h, w, latent] NHWC
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return decoded[0].permute(1, 2, 0).contiguous()                        # [H, W, 3] NHWC
+
+
+def run_ip_adapter(image):
+    """IP-Adapter's two pieces at a tiny random configuration, from diffusers: the ImageProjection (CLIP
+    image embedding → image-text tokens) and the decoupled cross-attention (`IPAdapterAttnProcessor2_0`:
+    the text cross-attention plus a scaled image-conditioned attention sharing the query). Records both
+    seams. Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers.models.embeddings import ImageProjection
+    from diffusers.models.attention_processor import Attention, IPAdapterAttnProcessor2_0
+
+    torch.manual_seed(59)
+    # 1. Image projection.
+    proj = ImageProjection(image_embed_dim=16, cross_attention_dim=12, num_image_text_embeds=4)
+    proj = _randomized(proj, seed=59)
+    image_embeds = torch.randn(1, 16)
+    with torch.no_grad():
+        ip_tokens = proj(image_embeds)                                     # [1, 4, 12]
+
+    # 2. Decoupled cross-attention.
+    attn = Attention(query_dim=12, cross_attention_dim=12, heads=2, dim_head=6)
+    processor = IPAdapterAttnProcessor2_0(hidden_size=12, cross_attention_dim=12, num_tokens=[4], scale=0.7)
+    attn.set_processor(processor)
+    attn = _randomized(attn, seed=61)
+    hidden = torch.randn(1, 8, 12)
+    text = torch.randn(1, 5, 12)
+    with torch.no_grad():
+        output = attn(hidden, encoder_hidden_states=(text, [ip_tokens]))   # [1, 8, 12]
+
+    extra = {"image_embeds": image_embeds[0].contiguous(), "ip_tokens": ip_tokens[0].contiguous(),
+             "hidden": hidden[0].contiguous(), "text": text[0].contiguous()}
+    for key, value in proj.state_dict().items():
+        extra[f"wp::{key}"] = value.float().contiguous()
+    for key, value in attn.state_dict().items():
+        extra[f"wa::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output[0].contiguous()
+
+
+def run_dc_ae_real(image):
+    """The Deep-Compression Autoencoder on the RELEASED SANA weights, from diffusers' AutoencoderDC. A
+    real-weights end-to-end validation: it loads the actual `Sana_600M` VAE, encodes the plate, and
+    decodes, so the released config, the sharded/real checkpoint, and the loader are exercised — not just
+    the architecture at a tiny config. Loads from `IK_VAL_DCAE` (default `~/.inferkit-validation/raw/
+    sana-dcae`). Runs under the `ltx` oracle env.
+    """
+    import os
+    from diffusers import AutoencoderDC
+
+    directory = os.environ.get("IK_VAL_DCAE", os.path.expanduser("~/.inferkit-validation/raw/sana-dcae"))
+    model = AutoencoderDC.from_pretrained(directory, torch_dtype=torch.float32).eval()
+    sample = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0) * 2 - 1   # [1, 3, H, W] in -1..1
+    with torch.no_grad():
+        latent = model.encode(sample).latent
+        decoded = model.decode(latent).sample
+
+    globals()["_extra"] = {"latent": latent[0].permute(1, 2, 0).contiguous()} # [h, w, 32] NHWC
+    return decoded[0].permute(1, 2, 0).contiguous()                          # [H, W, 3] NHWC (input_image is the plate)
+
+
+def run_flux_vae(image):
+    """The Flux autoencoder (the one Z-Image encodes into) at a tiny random configuration, from
+    diffusers' own AutoencoderKL. It is the same class Stable Diffusion uses, differing only in the
+    16 latent channels and in dropping the quant convolutions (`use_quant_conv=False`), which is the
+    path this record exercises. Records the encoded mean latent and the decode. Runs under the `ltx`
+    oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderKL
+
+    model = AutoencoderKL(
+        in_channels=3, out_channels=3, block_out_channels=[8, 16], layers_per_block=1,
+        latent_channels=4, norm_num_groups=4, use_quant_conv=False, use_post_quant_conv=False,
+        mid_block_add_attention=True,
+        down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D"],
+        up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"])
+    model = _randomized(model, seed=31)
+
+    generator = torch.Generator().manual_seed(9)
+    sample = torch.randn(1, 3, 16, 16, generator=generator)
+    with torch.no_grad():
+        mean = model.encode(sample).latent_dist.mean
+        decoded = model.decode(mean).sample
+
+    extra = {"sample": sample[0].permute(1, 2, 0).contiguous(),           # [H, W, 3] NHWC
+             "mean": mean[0].permute(1, 2, 0).contiguous()}                # [h, w, latent] NHWC
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return decoded[0].permute(1, 2, 0).contiguous()                        # [H, W, 3] NHWC
+
+
 def run_sam_encoder(image, checkpoint):
     """The official SAM image encoder's neck output — the seam between the ViT and the mask decoder.
 
@@ -3872,11 +4293,189 @@ def run_rope_scaling(image):
     return torch.cat(outputs)
 
 
+def run_rtdetr(image):
+    """RT-DETR object detection end to end at a tiny random configuration, from transformers' own
+    RTDetrForObjectDetection: the ResNet-D backbone (deep 3-conv stem, avgpool-in-shortcut bottleneck),
+    the hybrid encoder (an AIFI transformer on the deepest level + a CSP-RepVGG FPN/PAN), query
+    selection over generated anchors, and the deformable-attention decoder with iterative box
+    refinement. `anchor_image_size=None`, so anchors are generated per forward; `with_box_refine=True`,
+    so class/box heads are cloned per decoder layer. Records the backbone features, the encoder's PAN
+    outputs, the query-selection seams, and the per-layer decoder logits/boxes so a divergence localizes.
+    License-clean (Apache-2.0). Runs under the `llm` oracle env (transformers). `image` unused.
+    """
+    from transformers import RTDetrConfig, RTDetrForObjectDetection
+    from transformers.models.rt_detr.configuration_rt_detr_resnet import RTDetrResNetConfig
+
+    backbone = RTDetrResNetConfig(
+        embedding_size=16, hidden_sizes=[16, 32, 64, 128], depths=[1, 1, 1, 1],
+        layer_type="bottleneck", downsample_in_bottleneck=False, downsample_in_first_stage=False,
+        out_features=["stage2", "stage3", "stage4"], num_channels=3)
+    config = RTDetrConfig(
+        backbone_config=backbone, use_timm_backbone=False, backbone=None,
+        encoder_in_channels=[32, 64, 128], feat_strides=[8, 16, 32], encoder_hidden_dim=32,
+        encoder_ffn_dim=48, num_attention_heads=2, encoder_layers=1, encode_proj_layers=[2],
+        d_model=32, decoder_attention_heads=2, decoder_ffn_dim=48, decoder_layers=2,
+        decoder_n_points=4, num_feature_levels=3, decoder_in_channels=[32, 32, 32],
+        num_queries=10, num_denoising=0, learn_initial_query=False, anchor_image_size=None,
+        with_box_refine=True, num_labels=4, hidden_expansion=1.0)
+    # Randomize the trainable parameters only, NOT the BatchNorm buffers: a randomized `running_var`
+    # can go negative, and `rsqrt(var + eps)` is then NaN in both the reference and the port. Left at
+    # their init (mean 0, var 1), the frozen BatchNorms stay physical and deterministic.
+    model = RTDetrForObjectDetection(config)
+    torch.manual_seed(29)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn_like(parameter) * 0.05)
+    model = model.eval().float()
+
+    generator = torch.Generator().manual_seed(7)
+    pixels = torch.randn(1, 3, 64, 64, generator=generator)
+
+    feats = {}
+    model.model.backbone.register_forward_hook(
+        lambda m, i, o: feats.__setitem__("bb", [f.detach() for f, _ in o]))
+    with torch.no_grad():
+        out = model(pixels, output_hidden_states=False, return_dict=True)
+        topk_ind = torch.topk(out.enc_outputs_class.max(-1).values, config.num_queries, dim=1).indices
+
+    extra = {
+        "pixels": pixels[0].permute(1, 2, 0).contiguous(),                 # [H, W, 3] NHWC
+        "pred_boxes": out.pred_boxes[0].clone().contiguous(),              # [Q, 4]
+        "enc_class": out.enc_outputs_class[0].contiguous(),               # [S, num_labels]
+        "enc_coord": out.enc_outputs_coord_logits[0].contiguous(),         # [S, 4]
+        "init_ref": out.init_reference_points[0].contiguous(),             # [Q, 4]
+        "topk_ind": topk_ind[0].to(torch.int32).contiguous(),              # [Q]
+        "inter_logits": out.intermediate_logits[0].clone().contiguous(),   # [layers, Q, num_labels]
+        "inter_ref": out.intermediate_reference_points[0].clone().contiguous(),  # [layers, Q, 4]
+        "enc_last": out.encoder_last_hidden_state[-1][0].permute(1, 2, 0).contiguous(),  # last PAN, NHWC
+    }
+    for level, feature in enumerate(feats["bb"]):
+        extra[f"bb.{level}"] = feature[0].permute(1, 2, 0).contiguous()     # backbone stage NHWC
+    for key, value in model.state_dict().items():
+        if not key.startswith("model.") or key.endswith("num_batches_tracked"):
+            continue
+        extra[f"w::{key}"] = value.float().contiguous() if value.is_floating_point() else value.contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].clone().contiguous()                              # [Q, num_labels]
+
+
+def run_kokoro(image, checkpoint):
+    """Kokoro-82M (StyleTTS2 / iSTFTNet) text-to-speech, from the vendored `kokoro_vendor.KModel` on the
+    RELEASED weights — a real-weights end-to-end validation captured seam by seam: the PL-BERT (Albert)
+    text encoder, the bert_encoder projection, the duration predictor (DurationEncoder + LSTM + duration
+    proj), the F0/energy predictor, the TextEncoder, the alignment-expanded asr, and the iSTFTNet decoder
+    audio. The phonemes are supplied directly (misaki is NOT installed), so the model is verified without
+    the phonemizer. The sine source's phase noise and additive noise are zeroed so the decoder is
+    deterministic and comparable. `checkpoint` is the local Kokoro release directory. Runs under the
+    `llm` oracle env (torch, transformers, scipy; the model files are vendored, no spacy).
+    """
+    import sys
+    sys.path.insert(0, os.path.expanduser("~/.inferkit-validation"))
+    import kokoro_vendor.istftnet as istftnet
+    from kokoro_vendor.model import KModel
+
+    # Make the sine source deterministic: zero the initial phase noise and the additive noise, so the
+    # excitation is a pure function of F0 and the whole decoder is reproducible cross-framework.
+    original_rand, original_randn = torch.rand, torch.randn_like
+    istftnet.torch.rand = lambda *a, **k: torch.zeros(*a, **{key: v for key, v in k.items() if key != "device"})
+    istftnet.torch.randn_like = lambda x, *a, **k: torch.zeros_like(x)
+
+    model = KModel(config=os.path.join(checkpoint, "config.json"),
+                   model=os.path.join(checkpoint, "kokoro-v1_0.pth")).eval()
+    voice = torch.load(os.path.join(checkpoint, "voices/af_heart.pt"), weights_only=True)
+    phonemes = "həlˈoʊ wˈɜːld"
+    ref_s = voice[len(phonemes) - 1]
+
+    with torch.no_grad():
+        input_ids = [i for i in (model.vocab.get(p) for p in phonemes) if i is not None]
+        input_ids = torch.LongTensor([[0, *input_ids, 0]])
+        input_lengths = torch.LongTensor([input_ids.shape[-1]])
+        text_mask = torch.arange(input_lengths.max()).unsqueeze(0).expand(input_lengths.shape[0], -1).type_as(input_lengths)
+        text_mask = torch.gt(text_mask + 1, input_lengths.unsqueeze(1))
+        bert_dur = model.bert(input_ids, attention_mask=(~text_mask).int())
+        d_en = model.bert_encoder(bert_dur).transpose(-1, -2)
+        s = ref_s[:, 128:]
+        d = model.predictor.text_encoder(d_en, s, input_lengths, text_mask)
+        lstm_out, _ = model.predictor.lstm(d)
+        duration = model.predictor.duration_proj(lstm_out)
+        duration = torch.sigmoid(duration).sum(axis=-1)
+        pred_dur = torch.round(duration).clamp(min=1).long().squeeze()
+        indices = torch.repeat_interleave(torch.arange(input_ids.shape[1]), pred_dur)
+        pred_aln_trg = torch.zeros((input_ids.shape[1], indices.shape[0]))
+        pred_aln_trg[indices, torch.arange(indices.shape[0])] = 1
+        pred_aln_trg = pred_aln_trg.unsqueeze(0)
+        en = d.transpose(-1, -2) @ pred_aln_trg
+        F0_pred, N_pred = model.predictor.F0Ntrain(en, s)
+        t_en = model.text_encoder(input_ids, input_lengths, text_mask)
+        asr = t_en @ pred_aln_trg
+        decoder_seams = {}
+        model.decoder.encode.register_forward_hook(
+            lambda m, i, o: decoder_seams.__setitem__("encode", o.detach()))
+        model.decoder.generator.register_forward_pre_hook(
+            lambda m, args: decoder_seams.__setitem__("gen_in", args[0].detach()))
+        model.decoder.generator.conv_post.register_forward_hook(
+            lambda m, i, o: decoder_seams.__setitem__("conv_post", o.detach()))
+        model.decoder.generator.m_source.register_forward_hook(
+            lambda m, i, o: decoder_seams.__setitem__("har_source", o[0].detach()))
+        audio = model.decoder(asr, F0_pred, N_pred, ref_s[:, :128]).squeeze()
+
+    istftnet.torch.rand, istftnet.torch.randn_like = original_rand, original_randn
+
+    extra = {
+        "ids": input_ids[0].to(torch.int32).contiguous(),
+        "ref_s": ref_s[0].contiguous(),                                    # [256]
+        "bert": bert_dur[0].contiguous(),                                  # [T, 768]
+        "d_en": d_en[0].contiguous(),                                      # [512, T]
+        "d": d[0].contiguous(),                                            # [T, 640]
+        "duration": duration[0].contiguous(),                             # [T] pre-round
+        "pred_dur": pred_dur.to(torch.int32).contiguous(),                 # [T]
+        "f0": F0_pred[0].contiguous(),                                     # [frames]
+        "n": N_pred[0].contiguous(),                                       # [frames]
+        "t_en": t_en[0].contiguous(),                                      # [512, T]
+        "asr": asr[0].contiguous(),                                        # [512, frames]
+        "dec_encode": decoder_seams["encode"][0].contiguous(),            # [1024, frames]
+        "dec_gen_in": decoder_seams["gen_in"][0].contiguous(),            # [512, frames·2]
+        "dec_conv_post": decoder_seams["conv_post"][0].contiguous(),      # [22, T_stft]
+        "dec_har_source": decoder_seams["har_source"][0].contiguous(),    # [L, 1] the sine excitation
+    }
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous() if value.is_floating_point() else value.contiguous()
+    globals()["_extra"] = extra
+    return audio.contiguous()                                              # [samples]
+
+
+def run_rtdetr_real(image, checkpoint):
+    """RT-DETR on the RELEASED `PekingU/rtdetr_r50vd` weights, from transformers' own
+    RTDetrForObjectDetection and its image processor — a real-weights end-to-end validation (the r50vd
+    ResNet-50-vd geometry, the actual checkpoint, and the loader, including the stage-1 stride-1 shortcut
+    the tiny config does not exercise). `checkpoint` is the local release directory. Records the
+    preprocessed pixel values so the port runs on the identical input, plus the reference's query
+    selection. Runs under the `llm` oracle env (transformers, needs Pillow).
+    """
+    from transformers import RTDetrForObjectDetection, RTDetrImageProcessor
+    from PIL import Image
+
+    model = RTDetrForObjectDetection.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = RTDetrImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8"))
+    pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]   # [1, 3, 640, 640]
+    with torch.no_grad():
+        out = model(pixel_values, return_dict=True)
+        topk = torch.topk(out.enc_outputs_class.max(-1).values, model.config.num_queries, dim=1).indices
+
+    globals()["_extra"] = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),                # [640, 640, 3] NHWC
+        "pred_boxes": out.pred_boxes[0].clone().contiguous(),                   # [300, 4]
+        "topk_ind": topk[0].to(torch.int32).contiguous(),                       # [300]
+    }
+    return out.logits[0].clone().contiguous()                                   # [300, 80]
+
+
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,
@@ -3885,7 +4484,7 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "depth": run_depth, "depth_encoder": run_depth_encoder,
                      "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer}
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "kokoro": run_kokoro}
 
 
 def main():

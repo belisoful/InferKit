@@ -50,8 +50,8 @@ and returns an [`NFKInferenceResult`](../Sources/InferKit/include/InferKit/NFKIn
 The vocabulary lives in [`NFKInferenceKeys.h`](../Sources/InferKit/include/InferKit/NFKInferenceKeys.h).
 A backend maps the shared keys to its provider's own names and ignores what it does not use. The keys
 with a single natural type have typed accessors (`result.text`, `result.structured`,
-`result.embedding`, `request.prompt`, `request.messages`), each returning nil on a type mismatch
-rather than crashing.
+`result.embedding`, `result.toolCalls`, `request.prompt`, `request.messages`), each returning nil on
+a type mismatch rather than crashing.
 
 Inference is multi-second, so run it off the render thread. `runInferenceForRequest:error:` blocks;
 `submitInferenceJobForRequest:` returns an [`NFKInferenceJob`](../Sources/InferKit/include/InferKit/NFKInferenceJob.h)
@@ -86,6 +86,12 @@ companion packages add heavier engines without raising the core's platform floor
 | `NFKRemoteBackend` | core | An OpenAI-compatible endpoint | Twelve named presets, hosted and local (Ollama, LM Studio, llama.cpp, vLLM). Foundation-only. |
 | `NFKAnthropicBackend` | core | Anthropic's Messages API | Its own backend, because the protocol differs; the same request shape. |
 | `NFKRemoteTranscriptionBackend` | core | An OpenAI-compatible audio→text (Whisper) endpoint | `NFKInputAudio` in, `NFKOutputText` out. |
+| `NFKRemoteEmbeddingBackend` | core | An OpenAI-compatible embeddings endpoint | `NFKInputPrompt` in, `NFKOutputEmbedding` out; batches through `embeddingsForTexts:error:`. |
+| `NFKRemoteSpeechBackend` | core | An OpenAI-compatible text→speech endpoint | `NFKInputPrompt` in, an `NFKAudioAsset` (WAV by default) under `NFKOutputAudio`. A voice is required. |
+| `NFKRemoteImageBackend` | core | OpenAI-compatible image generation and edits | Prompt → image; `NFKInputImage` → edit; `+ NFKInputMask` → inpaint. 32BGRA `CVPixelBuffer` under `NFKOutputImage`. |
+| `NFKRemoteVideoBackend` | core | OpenAI's videos API (job-style) | Prompt, or prompt + reference image → an `.mp4` `NFKVideoAsset` under `NFKOutputVideo`; submit, poll, download on `NFKAsyncGenerationBackend`. |
+| `NFKRemoteModerationBackend` | core | An OpenAI-compatible moderation endpoint | Text (and an image) → per-category `NFKClassification`s and the verdict under `NFKOutputStructured`. |
+| `NFKRemoteReranker` | core | A hosted rerank endpoint | Query + documents → scores; the same shape as the on-device reranker. A scoring object, not a backend. |
 | `NFKAsyncGenerationBackend` | core | A submit → poll → fetch generation service | Subclass and fill in the five request-shape methods. |
 | `NFKCoreMLBackend` | core | A Core ML image/tensor model | Image and MLMultiArray I/O; `NFKComputePlan` reports where each operation lands. |
 | `NFKMLXBackend` | `InferKitMLX/` | A bundled Stable Diffusion release | Text-to-image / image-to-image. SD 1.5, SD 2.1 base, or SDXL-Turbo, at end-to-end parity. |
@@ -325,8 +331,15 @@ of `GeneratedContent`. The parsed fields land under `NFKOutputStructured`; the J
 
 [`NFKRemoteProvider`](../Sources/InferKit/include/InferKit/NFKRemoteProvider.h) names the services a
 consumer is likely to call, so pointing at one is an identifier rather than a hand-typed URL. Every
-preset carries its endpoint and protocol and deliberately **no default model name**: model identifiers
-change faster than a release does, and each preset's `modelsURL` is where the current list lives.
+preset carries its API base and protocol, derives each operation's URL from the base (`endpointURL`
+for chat, `modelsURL` for the list, `URLForPath:` for anything else), and deliberately carries
+**no default model name**: model identifiers change faster than a release does.
+`modelsWithAPIKey:error:` (and its completion-handler form) asks the provider for its current list as
+`NFKRemoteModel`s, so an app populates a picker from the server rather than from a constant; every
+preset answers the same envelope, and Anthropic's pagination is followed to the end. A local runner
+that is not running fails with `kNFKError_RemoteUnreachable`, which is a different answer from an
+empty list. `providerWithBaseURL:` re-points a preset at another port or another machine, keeping its
+identity and protocol.
 
 - **OpenAI-compatible**, served by `NFKRemoteBackend`: `openai`, `xai`, `gemini`, `groq`, `mistral`,
   `deepseek`, `together`, `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`,
@@ -349,6 +362,58 @@ switching from a local server to Anthropic changes one argument. Both backends s
 text protocol and block, so run them off the render thread. `NFKRemoteTranscriptionBackend` is the
 audio→text counterpart for an OpenAI-compatible transcription endpoint, and
 `NFKAsyncGenerationBackend` is the base for a service that answers with a job identifier to poll.
+`NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`, which the hosted
+providers and every local runner serve): `NFKInputPrompt` in, the vector under `NFKOutputEmbedding`
+out, the same key the on-device embedders in InferKitMLX answer with, so search or clustering code does
+not change with the engine; `embeddingsForTexts:error:` embeds a batch in one call.
+
+**Local runners have a second surface.** The OpenAI-compatible endpoints say nothing about what is
+installed, what is loaded, how large a model is, or how to get one. `-[NFKRemoteProvider localRunner]`
+hands back an adapter over the runner's native API (`NFKOllamaRunner`, `NFKLMStudioRunner`; llama.cpp
+and vLLM have nothing beyond the OpenAI surface, so they answer nil), each adopting `NFKLocalModelRunner`:
+`isRunning`, `installedModelsWithError:` (size, quantization, context length, and capabilities per
+model), `loadedModelsWithError:`, and `detailsForModel:error:`. The optional actions change the machine
+and are offered only where the runner has them, so a caller checks `respondsToSelector:` before showing
+a button: Ollama's `pullModel:` streams a download as an `NFKInferenceJob` (progress, a status line
+under `partialResult`, cancellation), and `deleteModel:error:` removes weights. Shapes were measured
+against Ollama 0.33.
+
+**The other directions have remote backends too.** `NFKRemoteSpeechBackend` (text → an `NFKAudioAsset`
+under `NFKOutputAudio`, `POST /audio/speech`) and `NFKRemoteImageBackend` (a prompt → image, an image →
+an edit of it, an image and mask → an inpaint; `POST /images/generations` and `/images/edits`) answer
+with the keys the on-device speech and Stable Diffusion backends use, so a feature built on one engine
+falls back to a hosted one without leaving the contract. Which presets serve each path was verified by
+probe at release and is recorded on each factory. An image beside a prompt is a vision question through
+the ordinary chat backends: `NFKRemoteBackend` sends it as an inline `image_url` content part, which the
+local runners' vision models read too (measured against Ollama with `qwen3.5:27b`), and
+`NFKAnthropicBackend` as an `image` block. `NFKImageCoding` is the public codec under all of it —
+`CGImage`, `CVPixelBuffer`, or `MTLTexture` to PNG, and any ImageIO-readable bytes back to a 32BGRA
+pixel buffer.
+
+**The chat backends stream, and a cancelled job cancels the request.** `submitInferenceJobForRequest:`
+on both sends the request with streaming on and reads server-sent events into the job's
+`partialResult` token by token, so a chat interface on a remote provider fills in exactly as it does
+on the on-device engines; `[job cancel]` closes the connection, so an abandoned completion stops
+costing then. Tools go under `NFKParameterTools` (`{name, description, parameters}`, translated into
+each provider's shape) and what the model called comes back under `NFKOutputToolCalls`
+(`result.toolCalls`, arguments parsed); a JSON Schema under `NFKParameterJSONSchema` comes back parsed
+under `NFKOutputStructured` — a `json_schema` response format on the OpenAI shape, a forced tool on
+Anthropic's, which has none. Several images go under `NFKInputImages`. Every blocking remote call
+retries a rate limit or gateway error after the provider's `Retry-After` or an exponential delay,
+bounded by `NFKRemoteTransport.retryAttempts` and `maximumRetryDelay`; a refused connection is not
+retried. Streaming and the tool call are measured against a live Ollama.
+
+**Audio, documents, and video in; speech out.** Beside images, the chat backends take `NFKInputAudio`
+(an `input_audio` part; the Messages API refuses audio rather than dropping it), `NFKInputDocument` /
+`NFKInputDocuments` (PDFs, as `file` parts or `document` blocks), and `NFKInputVideo`, which
+`NFKVideoSampling` turns into `NFKParameterVideoFrameCount` evenly spaced frames for a vision model —
+measured against a live Ollama, which names the colours of a sampled clip. `NFKParameterAudioOutput`
+asks an OpenAI-compatible chat model to speak its reply, which arrives as an `NFKAudioAsset` under
+`NFKOutputAudio` beside the text, streamed or not. The transcription backend gains `emitsTimestamps`
+(segments under `NFKOutputSegments`, as the on-device Whisper backend emits) and `translates`. Three
+more services complete the surface: `NFKRemoteVideoBackend` (OpenAI's job-style videos API on
+`NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart), `NFKRemoteReranker` (Together,
+OpenRouter; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
 
 ## Speech in, text out
 
@@ -531,9 +596,25 @@ alternatives.
   - The four dereverberation candidates (SGMSE+, Resemble Enhance, VoiceFixer, DeepFilterNet) stay on
     the list beneath these.
 - **Image.**
-  - `Z-Image Turbo` (6B, Apache) — the leading open text-to-image model, it fits a Mac, and it reuses
-    the DiT, autoencoder, and scheduler already ported.
-  - `SANA` (0.6B) — the only new text-to-image model small enough for a phone.
+  - `Z-Image Turbo` (6B, Apache) — the leading open text-to-image model, it fits a Mac. **The DiT stage
+    is SHIPPED** (`NFKMLXZImageTransformerNet`): the single-stream S3-DiT — image and caption tokens
+    concatenated into one self-attention sequence, a `noise_refiner` / `context_refiner` / unified
+    `layers` structure, sandwich RMS norms, 4-chunk adaptive modulation, SwiGLU FFN, and a 3-axis complex
+    rotary — at reference parity against diffusers on the first numeric run (velocity cosine
+    0.9999999999999653, pad-token path exercised), verified in isolation with recorded Qwen3 captions.
+    The Flux VAE (a diffusers `AutoencoderKL`, 16 channels) and the Qwen3-4B encoder are the remaining
+    stages; the flow sampler is already shipped.
+  - `SANA` (0.6B) — the only new text-to-image model small enough for a phone. **The DiT stage is
+    SHIPPED** (`NFKMLXSANATransformerNet`): the linear-attention DiT — ReLU O(N) self-attention, GLUMBConv
+    gated-depthwise Mix-FFN, softmax cross-attention to the Gemma text, PixArt-α shared-timestep
+    modulation — at reference parity against diffusers on the first numeric run (velocity cosine
+    0.9999999999999959). **The DC-AE stage is SHIPPED too** (`NFKMLXDCAutoencoderNet`): the 32×
+    deep-compression autoencoder — ResBlocks + EfficientViTBlocks (multiscale ReLU linear attention +
+    GLUMBConv) + pixel-shuffle up/down blocks — at reference parity against diffusers (latent cosine
+    0.99999999999993, decode 0.99999999999998). **`NFKMLXSANAPipeline` chains it end to end** (DiT + flow
+    → DC-AE decode; caller supplies the Gemma embedding). The released DPM-Solver sampler is now ported
+    (`NFKMLXDPMSolverScheduler`, at reference parity), and the Gemma-2 text encoder is ported
+    too (`NFKMLXGemma2Net`, at parity) — SANA runs end to end from a raw prompt.
   - `IP-Adapter` — image conditioning, a cheap gap to close.
   - `TAESD` — **SHIPPED** (`NFKMLXTAESD`): the tiny SD autoencoder for an instant latent preview, at
     reference parity against madebyollin's own taesd (latent and decode cosine 0.9999999999, mean
@@ -564,7 +645,16 @@ alternatives.
     classifier-free guidance → VAE decode) all ship, so LTX-Video runs end to end. The T5 encoder and the
     flow sampler are reusable across the other flow-matching models (Wan 2.2 shares the T5 family; Z-Image
     / SANA / Flux share the flow sampler).
-  - `Wan 2.2` — for quality.
+  - `Wan 2.2` — for quality. **The DiT stage is SHIPPED** (`NFKMLXWanTransformerNet`): the text-to-video
+    transformer — a `Conv3d`-patchified video latent, a 3-axis interleaved rotary (the Z-Image rope
+    reused), self + cross attention with an across-heads RMS q/k norm, gelu FFN, and PixArt-α adaptive
+    norms — at reference parity against diffusers on the first numeric run (velocity cosine
+    0.9999999999999767). **The 3D causal VAE is SHIPPED too** (`NFKMLXWanVideoVAENet`, the hardest port
+    of the batch): a stateful feat_cache STREAMING autoencoder (chunked encode, per-frame decode) at
+    reference parity (encoder 0.9999999999999997, decode 0.999999999999892). **`NFKMLXWanPipeline` chains
+    it end to end** (DiT + UniPC flow sampler → 3D VAE decode; caller supplies the umT5 embedding).
+    The released UniPC sampler is now ported (`NFKMLXUniPCScheduler`, at reference parity), and umT5
+    is verified (`NFKMLXT5Encoder` per-layer-bias mode) — Wan runs end to end from a raw prompt.
 
 Licensing gates what ships as a default: permissive weights ship, research-only and vendor-licensed
 weights (FLUX.1-dev, F5-TTS, DMD2, Apple's FastVLM and Depth Pro, and Parakeet under NVIDIA/NeMo) are

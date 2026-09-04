@@ -4,10 +4,13 @@
 //
 
 #import "NFKRemoteTranscriptionBackend.h"
+#import "NFKRemoteTransport.h"
+#import "NFKRemoteProvider.h"
 #import "NFKInferenceRequest.h"
 #import "NFKInferenceResult.h"
 #import "NFKInferenceKeys.h"
 #import "NFKAudioAsset.h"
+#import "NFKAudioSegment.h"
 #import "NFKErrors.h"
 
 @implementation NFKRemoteTranscriptionBackend
@@ -16,6 +19,19 @@
 {
 	NFKRemoteTranscriptionBackend *backend = [[self alloc] init];
 	backend.endpointURL = endpointURL;
+	return backend;
+}
+
++ (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
+									 apiKey:(nullable NSString *)apiKey
+								  modelName:(nullable NSString *)modelName
+{
+	if (provider.apiStyle != NFKRemoteAPIStyleOpenAIChat) {
+		return nil;
+	}
+	NFKRemoteTranscriptionBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"audio/transcriptions"]];
+	backend.apiKey = apiKey;
+	backend.modelName = modelName;
 	return backend;
 }
 
@@ -66,15 +82,13 @@
 	NSString *boundary = [@"InferKitBoundary-" stringByAppendingString:NSUUID.UUID.UUIDString];
 	NSData *body = [self multipartBodyForAudio:audio filename:filename request:request boundary:boundary];
 
-	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:[self requestURL]];
 	urlRequest.HTTPMethod = @"POST";
 	urlRequest.timeoutInterval = self.timeout;
 	urlRequest.HTTPBody = body;
 	NSString *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary];
 	[urlRequest setValue:contentType forHTTPHeaderField:@"Content-Type"];
-	if (self.apiKey.length > 0) {
-		[urlRequest setValue:[@"Bearer " stringByAppendingString:self.apiKey] forHTTPHeaderField:@"Authorization"];
-	}
+	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
 
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
@@ -83,12 +97,23 @@
 		[self propagateError:sendError to:outError];
 		return nil;
 	}
-	if (response != nil && (response.statusCode < 200 || response.statusCode >= 300)) {
-		NSString *reason = [NSString stringWithFormat:@"the endpoint returned HTTP %ld", (long)response.statusCode];
-		[self setError:outError code:kNFKError_InferenceBackendFailure reason:reason];
+	NSError *statusError = [NFKRemoteTransport errorForResponse:response data:responseData];
+	if (statusError != nil) {
+		[self propagateError:statusError to:outError];
 		return nil;
 	}
 	return [self resultFromResponseData:responseData error:outError];
+}
+
+// The translations endpoint is the transcriptions one's sibling, so the switch replaces the path's
+// last component rather than asking for a second URL.
+- (NSURL *)requestURL
+{
+	if (!self.translates) {
+		return self.endpointURL;
+	}
+	NSURL *base = [self.endpointURL URLByDeletingLastPathComponent];
+	return [base URLByAppendingPathComponent:@"translations"];
 }
 
 #pragma mark Audio and body
@@ -133,6 +158,10 @@
 	if (self.modelName.length > 0) {
 		appendField(@"model", self.modelName);
 	}
+	// Timestamps come with the verbose reply; a caller's own response_format wins.
+	if (self.emitsTimestamps && request.parameters[@"response_format"] == nil) {
+		appendField(@"response_format", @"verbose_json");
+	}
 	// Parameters fold in as form fields so a caller sets language, prompt, response_format, temperature.
 	for (NSString *key in request.parameters) {
 		appendField(key, [request.parameters[key] description]);
@@ -158,6 +187,10 @@
 			outputs[NFKOutputText] = responseBody[@"text"];
 		}
 		outputs[NFKOutputStructured] = responseBody;
+		NSArray<NFKAudioSegment *> *segments = [self segmentsInBody:responseBody];
+		if (segments != nil) {
+			outputs[NFKOutputSegments] = segments;
+		}
 	} else {
 		// response_format=text/srt/vtt returns a plain body, not JSON; take it as the transcript.
 		NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
@@ -170,37 +203,41 @@
 	return [NFKInferenceResult resultWithOutputs:outputs];
 }
 
+// The verbose reply's segments carry start, end, text, and the decoder's mean log probability,
+// which becomes the confidence as e to that power.
+- (nullable NSArray<NFKAudioSegment *> *)segmentsInBody:(NSDictionary *)body
+{
+	NSArray *entries = body[@"segments"];
+	if (![entries isKindOfClass:NSArray.class]) {
+		return nil;
+	}
+	NSMutableArray<NFKAudioSegment *> *segments = [NSMutableArray array];
+	for (NSDictionary *entry in entries) {
+		if (![entry isKindOfClass:NSDictionary.class] ||
+			![entry[@"start"] isKindOfClass:NSNumber.class] || ![entry[@"end"] isKindOfClass:NSNumber.class]) {
+			continue;
+		}
+		NSString *text = [entry[@"text"] isKindOfClass:NSString.class]
+			? [entry[@"text"] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet] : nil;
+		double confidence = 1.0;
+		if ([entry[@"avg_logprob"] isKindOfClass:NSNumber.class]) {
+			confidence = MIN(1.0, exp([entry[@"avg_logprob"] doubleValue]));
+		}
+		[segments addObject:[NFKAudioSegment segmentWithStartSeconds:[entry[@"start"] doubleValue]
+														  endSeconds:[entry[@"end"] doubleValue]
+															   label:text
+														  confidence:confidence]];
+	}
+	return segments;
+}
+
 #pragma mark Transport
 
 - (nullable NSData *)sendRequest:(NSURLRequest *)request
 					   response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
 						  error:(NSError * _Nullable *)outError
 {
-	__block NSData *resultData = nil;
-	__block NSURLResponse *resultResponse = nil;
-	__block NSError *resultError = nil;
-	dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-	NSURLSessionDataTask *task = [self.session dataTaskWithRequest:request
-												completionHandler:^(NSData *data, NSURLResponse *response, NSError *taskError) {
-		resultData = data;
-		resultResponse = response;
-		resultError = taskError;
-		dispatch_semaphore_signal(semaphore);
-	}];
-	[task resume];
-	dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-
-	if (outResponse != NULL && [resultResponse isKindOfClass:NSHTTPURLResponse.class]) {
-		*outResponse = (NSHTTPURLResponse *)resultResponse;
-	}
-	if (resultData == nil && outError != NULL) {
-		*outError = resultError != nil ? resultError
-									  : [NSError errorWithDomain:NFKInferenceErrorDomain
-															code:kNFKError_InferenceBackendFailure
-														userInfo:@{ NSLocalizedDescriptionKey: @"the request returned no data" }];
-	}
-	return resultData;
+	return [NFKRemoteTransport sendRequest:request session:self.session response:outResponse error:outError];
 }
 
 #pragma mark Errors

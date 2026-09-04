@@ -1400,10 +1400,304 @@ NFKInferenceRequest *chat = [NFKInferenceRequest requestWithInputs:@{ NFKInputMe
 ] }];
 ```
 
-**No preset carries a default model name** — identifiers change faster than releases do. Each
-provider's `modelsURL` points at its list. Midjourney has no official public API, so there is no preset
-for it; `opencode.ai` is a coding agent rather than an inference service; and Codex is OpenAI's agent
-using the OpenAI API, so it is the `openai` preset.
+**No preset carries a default model name** — identifiers change faster than releases do. Ask the
+provider for its current list instead, and set `modelName` from one of those. Every preset answers the
+same way, so one call serves a hosted API and a local runner alike:
+
+```objc
+// Blocks; run it off the render thread. A runner that is not running fails with
+// kNFKError_RemoteUnreachable, which is a different answer from an empty list.
+NSError *error = nil;
+NSArray<NFKRemoteModel *> *models = [NFKRemoteProvider.ollama modelsWithAPIKey:nil error:&error];
+if (error.code == kNFKError_RemoteUnreachable) {
+    // Ollama is not running.
+}
+for (NFKRemoteModel *model in models) {
+    NSLog(@"%@ (%@)", model.identifier, model.displayName);   // "llama3.2:latest"
+}
+
+// The same, off the calling thread.
+[NFKRemoteProvider.openAI modelsWithAPIKey:key completionHandler:^(NSArray<NFKRemoteModel *> *models,
+                                                                    NSError *error) {
+    // populate a picker
+}];
+```
+
+```swift
+let models = try NFKRemoteProvider.ollama.models(withAPIKey: nil)
+let names = models.map(\.identifier)
+```
+
+The list is returned as the provider orders it and is not filtered: the envelope says nothing about
+what a model does, so a hosted list includes embedding and speech models the chat endpoint rejects.
+`NFKRemoteModel.raw` keeps each entry for a field the type does not normalize (`ownedBy`, `createdAt`,
+and `contextLength` are read where the provider publishes them). `NFKRemoteModelCatalog` is the object
+under the convenience, for a timeout, a session, or `isReachableWithError:`.
+
+A preset re-points at another address with one field changed — a runner on another port, or on another
+machine on the network — keeping its identity and protocol:
+
+```objc
+NFKRemoteProvider *lanOllama = [NFKRemoteProvider.ollama providerWithBaseURL:
+                                [NSURL URLWithString:@"http://192.168.1.20:11434/v1"]];
+NSURL *transcribe = [NFKRemoteProvider.openAI URLForPath:@"audio/transcriptions"];
+```
+
+Embeddings are the same shape everywhere (`POST /embeddings`), and the vector comes back under the
+core key the on-device embedders use, so search code does not change with the engine:
+
+```objc
+NFKRemoteEmbeddingBackend *embedder =
+    [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.ollama
+                                           apiKey:nil
+                                        modelName:@"nomic-embed-text"];   // nil for Anthropic: no endpoint
+NFKInferenceResult *one = [embedder runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a red barn" }] error:&error];
+NSArray<NSNumber *> *vector = one.embedding;
+
+// A corpus, one request; the ith vector belongs to the ith text.
+NSArray<NSArray<NSNumber *> *> *vectors = [embedder embeddingsForTexts:documents error:&error];
+```
+
+**Local runners have a second surface.** The OpenAI-compatible endpoints say nothing about what is
+installed, what is loaded, how large a model is, or how to get one. The preset hands back an adapter
+over the runner's native API — Ollama and LM Studio have one; llama.cpp and vLLM have nothing beyond
+the OpenAI surface, so they answer nil:
+
+```objc
+id<NFKLocalModelRunner> runner = NFKRemoteProvider.ollama.localRunner;   // http://localhost:11434
+if (!runner.isRunning) { /* show "start Ollama" */ }
+
+for (NFKRemoteModel *model in [runner installedModelsWithError:&error]) {
+    // "gpt-oss:20b" · 13.8 GB · MXFP4 · 131072 tokens · completion, tools, thinking
+    NSLog(@"%@ %@ %@ %@ %@", model.identifier, model.sizeBytes, model.quantization,
+          model.contextLength, model.capabilities);
+}
+NSArray<NFKRemoteModel *> *loaded = [runner loadedModelsWithError:&error];   // in memory now
+
+// The actions that change the machine are offered only where the runner has them.
+if ([runner respondsToSelector:@selector(pullModel:)]) {
+    NFKInferenceJob *pull = [runner pullModel:@"llama3.2"];   // Ollama: streams the download
+    pull.progressHandler = ^(NFKInferenceJob *job) {
+        // job.progress is the fraction of the layer being fetched;
+        // job.partialResult carries the runner's status line under NFKOutputText
+    };
+    pull.completionHandler = ^(NFKInferenceJob *job) { /* job.result or job.error */ };
+    // [pull cancel] stops the download
+}
+```
+
+```swift
+let runner = NFKRemoteProvider.ollama.localRunner
+let installed = try runner?.installedModels()
+let embedder = NFKRemoteEmbeddingBackend.backend(for: .ollama, apiKey: nil, modelName: "nomic-embed-text")
+```
+
+A pull of a name the registry does not have fails with the runner's own message — measured against
+Ollama 0.33, which answers HTTP 200 and puts the failure in an error line inside the stream, so the
+job reads every line rather than trusting the status.
+
+**The remaining modalities have remote backends too**, so every direction an on-device engine serves
+has a hosted counterpart answering with the same key. Text to speech (`POST /audio/speech`; served by
+openai, groq, together, xai, mistral, and openrouter, verified at release) returns an `NFKAudioAsset`
+under `NFKOutputAudio`, a WAV by default, which is what `NFKMLXSpeechBackend` writes; a voice is required
+and has no default, for the reason a model name has none:
+
+```objc
+NFKRemoteSpeechBackend *speaker =
+    [NFKRemoteSpeechBackend backendForProvider:NFKRemoteProvider.openAI
+                                        apiKey:key modelName:@"gpt-4o-mini-tts" voice:@"alloy"];
+NFKAudioAsset *clip = [[speaker runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Rendering complete." }] error:&error]
+    outputForKey:NFKOutputAudio];                       // clip.fileURL is a .wav
+```
+
+Image generation chooses its operation from the request the way `NFKMLXBackend` does: a prompt alone is
+text-to-image (`POST /images/generations`; openai, together, xai, openrouter), an image under
+`NFKInputImage` is an edit of it (`POST /images/edits`, multipart; openai, xai), and an image with a
+mask under `NFKInputMask` is an inpaint of the mask's region. `NFKParameterWidth`/`Height` become the
+service's size; the result is a 32BGRA `CVPixelBuffer` under `NFKOutputImage`:
+
+```objc
+NFKRemoteImageBackend *painter =
+    [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-image-1"];
+NFKInferenceRequest *generate =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dusk" }
+                                parameters:@{ NFKParameterWidth: @1024, NFKParameterHeight: @1024 }
+                            outputModality:NFKModalityImage];
+CVPixelBufferRef image = (__bridge CVPixelBufferRef)[[painter runInferenceForRequest:generate error:&error]
+                                                      outputForKey:NFKOutputImage];
+
+NFKInferenceRequest *edit =                             // image + prompt → image
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"make the sky stormy",
+                                              NFKInputImage: (__bridge id)image }];
+NFKInferenceRequest *inpaint =                          // + mask → the masked region only
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"add a sailboat",
+                                              NFKInputImage: (__bridge id)image,
+                                              NFKInputMask: (__bridge id)mask }];
+```
+
+And an image beside a prompt is a vision question through the ordinary chat backend — no new class.
+`NFKRemoteBackend` puts it on the last user turn as an `image_url` content part (inline, base64 PNG),
+which every OpenAI-compatible vision model reads, local runners included; `NFKAnthropicBackend` puts
+it there as an `image` block. Measured against a live Ollama with `qwen3.5:27b`: a flat blue square
+and "what color is this?" come back "blue".
+
+```objc
+id<NFKInferenceBackend> eyes = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.ollama
+                                                              apiKey:nil modelName:@"qwen3.5:27b"];
+NFKInferenceRequest *look = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputPrompt: @"What is in this frame?",
+    NFKInputImage: (__bridge id)frame }];               // CGImage, CVPixelBuffer, or a BGRA/RGBA MTLTexture
+NSString *answer = [[eyes runInferenceForRequest:look error:&error] outputForKey:NFKRemoteBackendTextKey];
+```
+
+```swift
+let speaker = NFKRemoteSpeechBackend(for: .openAI, apiKey: key, modelName: "gpt-4o-mini-tts", voice: "alloy")
+let painter = NFKRemoteImageBackend(for: .openAI, apiKey: key, modelName: "gpt-image-1")
+let png = NFKImageCoding.pngData(for: image)            // the codec under both, public
+```
+
+The three image representations the contract carries (`CGImage`, `CVPixelBuffer`, `MTLTexture`) are
+accepted wherever an image is taken, through `NFKImageCoding`, which is public: PNG bytes or a data
+URL out of any of them, and a 32BGRA pixel buffer back from any format ImageIO reads. Several images
+go under `NFKInputImages` (an array), attached in order after `NFKInputImage`.
+
+**The chat backends stream.** `submitInferenceJobForRequest:` on `NFKRemoteBackend` and
+`NFKAnthropicBackend` sends the request with streaming on and reads the reply as server-sent events:
+each token appends to the job's `partialResult`, the job finishes with the same result the blocking
+form returns, and **cancelling the job cancels the request**, so an abandoned completion stops costing
+at that moment. `NFKInferenceSubmit` reaches this form too, so the snippet in the contract section
+above streams from a remote provider exactly as it does from an on-device one. Measured against a live
+Ollama: the reply arrives in more than one piece and the last partial is the final text.
+
+```objc
+NFKInferenceJob *job = [backend submitInferenceJobForRequest:request];   // any remote chat backend
+job.progressHandler = ^(NFKInferenceJob *j) {
+    NSString *soFar = j.partialResult.text;                                 // the text so far, not the delta
+};
+job.completionHandler = ^(NFKInferenceJob *j) {
+    NSString *text = j.result.text;                                         // or j.error
+};
+[job cancel];                                                               // closes the connection
+```
+
+**Tools and structured output** use two contract keys, each translated into the provider's own shape:
+
+```objc
+NSDictionary *weather = @{ @"name": @"get_weather",
+                           @"description": @"Current weather in a city.",
+                           @"parameters": @{ @"type": @"object",
+                                             @"properties": @{ @"city": @{ @"type": @"string" } },
+                                             @"required": @[ @"city" ] } };
+NFKInferenceRequest *ask =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What's the weather in Paris?" }
+                                parameters:@{ NFKParameterTools: @[ weather ] }
+                            outputModality:NFKModalityText];
+NFKInferenceResult *turn = [backend runInferenceForRequest:ask error:&error];
+for (NSDictionary *call in turn.toolCalls) {          // {id, name, arguments (parsed), argumentsJSON}
+    // run the tool, then send its result back as a tool message
+}
+
+NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
+NFKInferenceRequest *structured =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What is 6 × 7?" }
+                                parameters:@{ NFKParameterJSONSchema: schema }
+                            outputModality:NFKModalityText];
+NSDictionary *answer = [backend runInferenceForRequest:structured error:&error].structured;   // @{ answer: 42 }
+```
+
+`NFKRemoteBackend` sends the tools as OpenAI `function` tools and the schema as a `json_schema`
+response format; `NFKAnthropicBackend` sends the tools in the Messages shape and, since that API has
+no response format, asks for the schema through a forced tool whose input is the reply. Both assemble
+a streamed tool call across its argument deltas. A tool already written in a provider's wire shape
+passes through unwrapped. Measured against a live Ollama: asked for the weather with the tool declared,
+`qwen3.5:27b` calls `get_weather` with `{"city": "Paris"}`.
+
+**A rate limit is retried.** Every blocking remote call retries a 429, 502, 503, or 504 after the
+provider's `Retry-After` or an exponential delay from half a second — `NFKRemoteTransport.retryAttempts`
+(default 2) more times, never after a delay above `NFKRemoteTransport.maximumRetryDelay` (default 8 s),
+where waiting would cost more than failing. A refused connection is not retried: a server that is not
+there is an answer in itself.
+
+**More directions, in and out.** The chat backends take three more inputs beside the prompt, each
+riding on the last user turn in the provider's own shape, and one more output:
+
+```objc
+// Audio in (OpenAI-compatible only; the Messages API refuses it rather than dropping it):
+NFKInferenceRequest *heard = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputPrompt: @"What did I ask for?",
+    NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:recording] }];    // wav or mp3, by extension
+
+// A document (PDF), on both — a `file` part for OpenAI, a `document` block for Anthropic:
+NFKInferenceRequest *summarized = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputPrompt: @"Summarize the brief.",
+    NFKInputDocument: briefPDFURL,                                      // NSURL or NSData
+    NFKInputDocuments: @[ appendixPDFData ] }];
+
+// A clip, sampled into frames for a vision model (video → text), on both:
+NFKInferenceRequest *watched = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputPrompt: @"What happens in this clip?",
+    NFKInputVideo: [NFKVideoAsset videoAssetWithFileURL:clipURL] }
+    parameters:@{ NFKParameterVideoFrameCount: @8 }                    // evenly spaced; 8 by default
+    outputModality:NFKModalityText];
+
+// A spoken reply beside the text (OpenAI-compatible only), streamed or not:
+NFKInferenceRequest *spoken = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Read me the summary." }
+    parameters:@{ NFKParameterAudioOutput: @{ @"voice": @"alloy" } }      // format wav by default
+    outputModality:NFKModalityAudio];
+NFKInferenceResult *turn = [backend runInferenceForRequest:spoken error:&error];
+NFKAudioAsset *voice = [turn outputForKey:NFKOutputAudio];                // turn.text is the transcript
+```
+
+`NFKVideoSampling` is the public piece under the clip input: `framesOfVideoAtURL:count:error:` returns
+evenly spaced `CGImage`s. Measured against a live Ollama: four frames of a red–green–blue–white clip
+and `qwen3.5:27b` names the colours.
+
+The transcription backend gains what the on-device Whisper backend has: `emitsTimestamps` asks for the
+verbose reply and adds the segments under `NFKOutputSegments` as `NFKAudioSegment`s, and `translates`
+sends the audio to the sibling `/audio/translations` endpoint for an English transcript.
+
+```objc
+NFKRemoteTranscriptionBackend *ears = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.groq
+                                                                                 apiKey:key modelName:@"whisper-large-v3"];
+ears.emitsTimestamps = YES;
+NSArray<NFKAudioSegment *> *segments = [ears runInferenceForRequest:request error:&error].segments;
+```
+
+Three more services round out the remote surface:
+
+```objc
+// Text/image → video, the job-style shape (OpenAI's videos API): submit, poll, download.
+NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.openAI
+                                                                     apiKey:key modelName:@"sora-2"];
+NFKInferenceJob *shoot = [director submitInferenceJobForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dusk",
+                                              NFKInputImage: (__bridge id)referenceFrame }   // optional
+                                parameters:@{ NFKParameterDurationSeconds: @8,
+                                              NFKParameterWidth: @1280, NFKParameterHeight: @720 }
+                            outputModality:NFKModalityVideo]];
+shoot.completionHandler = ^(NFKInferenceJob *job) {
+    NFKVideoAsset *clip = [job.result outputForKey:NFKOutputVideo];       // an .mp4 on disk
+};
+
+// Rerank, the same shape as the on-device NFKMLXModernBERTReranker (Together and OpenRouter serve it):
+NFKRemoteReranker *ranker = [NFKRemoteReranker rerankerForProvider:NFKRemoteProvider.together
+                                                            apiKey:key modelName:@"Salesforce/Llama-Rank-V1"];
+NSArray<NSNumber *> *order = [ranker rankedIndicesForQuery:query documents:shortlist error:&error];
+
+// Moderation (OpenAI and Mistral): per-category scores, most confident first, and the verdict.
+NFKRemoteModerationBackend *gate = [NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.openAI
+                                                                           apiKey:key modelName:@"omni-moderation-latest"];
+NFKInferenceResult *verdict = [gate runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: userText }] error:&error];
+BOOL flagged = [verdict.structured[@"flagged"] boolValue];
+NFKClassification *top = verdict.classifications.firstObject;           // e.g. "harassment" 0.91
+```
+
+Midjourney has no official public API, so there is no preset for it; `opencode.ai` is a coding agent
+rather than an inference service; and Codex is OpenAI's agent using the OpenAI API, so it is the
+`openai` preset.
 
 ## Model gallery
 

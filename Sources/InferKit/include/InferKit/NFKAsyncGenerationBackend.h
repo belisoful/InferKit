@@ -48,6 +48,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The JSON submit body. The default sends the model and the request's inputs and parameters. */
 - (NSDictionary<NSString *, id> *)submitBodyForRequest:(NFKInferenceRequest *)request;
 
+/*! The whole submit request. The default POSTs submitBodyForRequest: as JSON to submitURL with the
+	key; a service that takes a file (a reference image) overrides this to build a multipart body.
+	Introduced in InferKit 0.3.0. */
+- (NSURLRequest *)submitRequestForRequest:(NFKInferenceRequest *)request;
+
+/*! The service's own reason from a failed status response, or nil for a generic one. The default
+	reads error.message, then error. Introduced in InferKit 0.3.0. */
+- (nullable NSString *)failureReasonFromStatusResponse:(NSDictionary *)response;
+
 /*! The provider job id from a submit response. The default reads the "id" key. */
 - (nullable NSString *)jobIdentifierFromResponse:(NSDictionary *)response;
 

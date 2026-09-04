@@ -141,6 +141,71 @@
 	XCTAssertNil([NFKRemoteProvider providerWithIdentifier:@"nonesuch"]);
 }
 
+#pragma mark URLs derived from the base
+
+// Every operation's URL is the base plus a path, so a preset carries one address rather than one
+// per operation. The chat and model-list URLs are what the presets carried as literals before the
+// base existed, asserted here so the derivation reproduces them exactly.
+- (void)testEveryOperationURLIsDerivedFromTheBase
+{
+	NSDictionary<NSString *, NSString *> *bases = @{
+		@"openai": @"https://api.openai.com/v1",
+		@"anthropic": @"https://api.anthropic.com/v1",
+		@"gemini": @"https://generativelanguage.googleapis.com/v1beta/openai",
+		@"groq": @"https://api.groq.com/openai/v1",
+		@"openrouter": @"https://openrouter.ai/api/v1",
+		@"ollama": @"http://localhost:11434/v1",
+	};
+	for (NSString *identifier in bases) {
+		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
+		XCTAssertEqualObjects(provider.baseURL.absoluteString, bases[identifier], @"%@", identifier);
+		NSString *chat = provider.apiStyle == NFKRemoteAPIStyleAnthropicMessages ? @"/messages" : @"/chat/completions";
+		XCTAssertEqualObjects(provider.endpointURL.absoluteString,
+							  [bases[identifier] stringByAppendingString:chat], @"%@", identifier);
+		XCTAssertEqualObjects(provider.modelsURL.absoluteString,
+							  [bases[identifier] stringByAppendingString:@"/models"], @"%@", identifier);
+	}
+	for (NFKRemoteProvider *provider in NFKRemoteProvider.allProviders) {
+		XCTAssertNotNil(provider.baseURL, @"%@ has no base", provider.identifier);
+		XCTAssertTrue([provider.modelsURL.path hasSuffix:@"/models"], @"%@", provider.identifier);
+	}
+}
+
+- (void)testURLForPathJoinsWithExactlyOneSlash
+{
+	NFKRemoteProvider *provider = NFKRemoteProvider.openAI;
+	XCTAssertEqualObjects([provider URLForPath:@"audio/transcriptions"].absoluteString,
+						  @"https://api.openai.com/v1/audio/transcriptions");
+	XCTAssertEqualObjects([provider URLForPath:@"/embeddings"].absoluteString,
+						  @"https://api.openai.com/v1/embeddings", @"a leading slash is not doubled");
+
+	NFKRemoteProvider *trailing = [provider providerWithBaseURL:[NSURL URLWithString:@"https://example.test/v1/"]];
+	XCTAssertEqualObjects([trailing URLForPath:@"models"].absoluteString,
+						  @"https://example.test/v1/models", @"a trailing slash on the base is not doubled");
+}
+
+// A runner on another port or another machine is the same preset with its base changed: the
+// identity, protocol, and key requirement travel with it, and every derived URL follows.
+- (void)testAPresetRepointedAtAnotherBaseKeepsItsIdentity
+{
+	NFKRemoteProvider *remote = [NFKRemoteProvider.ollama providerWithBaseURL:
+								 [NSURL URLWithString:@"http://192.168.1.20:11434/v1"]];
+	XCTAssertEqualObjects(remote.identifier, @"ollama");
+	XCTAssertEqualObjects(remote.displayName, NFKRemoteProvider.ollama.displayName);
+	XCTAssertEqual(remote.apiStyle, NFKRemoteAPIStyleOpenAIChat);
+	XCTAssertFalse(remote.requiresAPIKey);
+	XCTAssertEqualObjects(remote.endpointURL.absoluteString, @"http://192.168.1.20:11434/v1/chat/completions");
+	XCTAssertEqualObjects(remote.modelsURL.absoluteString, @"http://192.168.1.20:11434/v1/models");
+	XCTAssertEqualObjects(NFKRemoteProvider.ollama.endpointURL.host, @"localhost", @"the preset itself is unchanged");
+
+	NFKRemoteProvider *proxied = [NFKRemoteProvider.anthropic providerWithBaseURL:[NSURL URLWithString:@"https://proxy.test/anthropic/v1"]];
+	XCTAssertEqual(proxied.apiStyle, NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertEqualObjects(proxied.endpointURL.absoluteString, @"https://proxy.test/anthropic/v1/messages");
+	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:proxied apiKey:@"k" modelName:@"m"];
+	XCTAssertEqualObjects([(NFKAnthropicBackend *)backend endpointURL], proxied.endpointURL,
+						  @"the factory points the backend at the re-based endpoint");
+}
+
 // Anthropic is the one provider that is not OpenAI-compatible, so the factory has to hand back its
 // own backend rather than a repointed remote one.
 - (void)testTheFactoryChoosesTheBackendTheProviderNeeds

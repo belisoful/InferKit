@@ -6,31 +6,28 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKAnthropicBackend.h>
-#import "NFK_ARC.h"
+#import <InferKit/NFKRemoteModelCatalog.h>
 
 @interface NFKRemoteProvider ()
 @property (nonatomic, copy, readwrite) NSString *identifier;
 @property (nonatomic, copy, readwrite) NSString *displayName;
-@property (nonatomic, copy, readwrite) NSURL *endpointURL;
+@property (nonatomic, copy, readwrite) NSURL *baseURL;
 @property (nonatomic, assign, readwrite) NFKRemoteAPIStyle apiStyle;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
-@property (nonatomic, copy, readwrite, nullable) NSURL *modelsURL;
 @end
 
 @implementation NFKRemoteProvider
 
 + (instancetype)providerWithIdentifier:(NSString *)identifier
 						   displayName:(NSString *)displayName
-						   endpoint:(NSString *)endpoint
-							  models:(nullable NSString *)models
-							   style:(NFKRemoteAPIStyle)style
-						  requiresKey:(BOOL)requiresKey
+							   base:(NSString *)base
+							  style:(NFKRemoteAPIStyle)style
+						requiresKey:(BOOL)requiresKey
 {
 	NFKRemoteProvider *provider = [[self alloc] initPrivate];
 	provider.identifier = identifier;
 	provider.displayName = displayName;
-	provider.endpointURL = [NSURL URLWithString:endpoint];
-	provider.modelsURL = models != nil ? [NSURL URLWithString:models] : nil;
+	provider.baseURL = [NSURL URLWithString:base];
 	provider.apiStyle = style;
 	provider.requiresAPIKey = requiresKey;
 	return provider;
@@ -46,29 +43,57 @@
 	return self;			// immutable
 }
 
+- (instancetype)providerWithBaseURL:(NSURL *)baseURL
+{
+	NFKRemoteProvider *provider = [[self.class alloc] initPrivate];
+	provider.identifier = self.identifier;
+	provider.displayName = self.displayName;
+	provider.baseURL = baseURL;
+	provider.apiStyle = self.apiStyle;
+	provider.requiresAPIKey = self.requiresAPIKey;
+	return provider;
+}
+
+#pragma mark Derived URLs
+
+- (NSURL *)URLForPath:(NSString *)path
+{
+	NSCharacterSet *slash = [NSCharacterSet characterSetWithCharactersInString:@"/"];
+	NSString *base = [self.baseURL.absoluteString stringByTrimmingCharactersInSet:slash];
+	NSString *relative = [path stringByTrimmingCharactersInSet:slash];
+	return [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", base, relative]];
+}
+
+- (NSURL *)endpointURL
+{
+	return [self URLForPath:self.apiStyle == NFKRemoteAPIStyleAnthropicMessages ? @"messages" : @"chat/completions"];
+}
+
+- (NSURL *)modelsURL
+{
+	return [self URLForPath:@"models"];
+}
+
 #pragma mark Hosted
 
 + (NFKRemoteProvider *)openAI
 {
 	return [self providerWithIdentifier:@"openai" displayName:@"OpenAI"
-							   endpoint:@"https://api.openai.com/v1/chat/completions"
-								 models:@"https://api.openai.com/v1/models"
+								   base:@"https://api.openai.com/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)anthropic
 {
 	return [self providerWithIdentifier:@"anthropic" displayName:@"Anthropic"
-							   endpoint:@"https://api.anthropic.com/v1/messages"
-								 models:@"https://api.anthropic.com/v1/models"
+								   base:@"https://api.anthropic.com/v1"
 								  style:NFKRemoteAPIStyleAnthropicMessages requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)xAI
 {
 	return [self providerWithIdentifier:@"xai" displayName:@"xAI Grok"
-							   endpoint:@"https://api.x.ai/v1/chat/completions"
-								 models:@"https://api.x.ai/v1/models"
+								   base:@"https://api.x.ai/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
@@ -76,48 +101,42 @@
 {
 	// Gemini's OpenAI-compatible layer, which is what lets one backend serve it.
 	return [self providerWithIdentifier:@"gemini" displayName:@"Google Gemini"
-							   endpoint:@"https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-								 models:@"https://generativelanguage.googleapis.com/v1beta/openai/models"
+								   base:@"https://generativelanguage.googleapis.com/v1beta/openai"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)groq
 {
 	return [self providerWithIdentifier:@"groq" displayName:@"Groq"
-							   endpoint:@"https://api.groq.com/openai/v1/chat/completions"
-								 models:@"https://api.groq.com/openai/v1/models"
+								   base:@"https://api.groq.com/openai/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)mistral
 {
 	return [self providerWithIdentifier:@"mistral" displayName:@"Mistral"
-							   endpoint:@"https://api.mistral.ai/v1/chat/completions"
-								 models:@"https://api.mistral.ai/v1/models"
+								   base:@"https://api.mistral.ai/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)deepSeek
 {
 	return [self providerWithIdentifier:@"deepseek" displayName:@"DeepSeek"
-							   endpoint:@"https://api.deepseek.com/v1/chat/completions"
-								 models:@"https://api.deepseek.com/v1/models"
+								   base:@"https://api.deepseek.com/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)together
 {
 	return [self providerWithIdentifier:@"together" displayName:@"Together AI"
-							   endpoint:@"https://api.together.xyz/v1/chat/completions"
-								 models:@"https://api.together.xyz/v1/models"
+								   base:@"https://api.together.xyz/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
 + (NFKRemoteProvider *)openRouter
 {
 	return [self providerWithIdentifier:@"openrouter" displayName:@"OpenRouter"
-							   endpoint:@"https://openrouter.ai/api/v1/chat/completions"
-								 models:@"https://openrouter.ai/api/v1/models"
+								   base:@"https://openrouter.ai/api/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
@@ -126,32 +145,28 @@
 + (NFKRemoteProvider *)ollama
 {
 	return [self providerWithIdentifier:@"ollama" displayName:@"Ollama"
-							   endpoint:@"http://localhost:11434/v1/chat/completions"
-								 models:@"http://localhost:11434/v1/models"
+								   base:@"http://localhost:11434/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:NO];
 }
 
 + (NFKRemoteProvider *)lmStudio
 {
 	return [self providerWithIdentifier:@"lmstudio" displayName:@"LM Studio"
-							   endpoint:@"http://localhost:1234/v1/chat/completions"
-								 models:@"http://localhost:1234/v1/models"
+								   base:@"http://localhost:1234/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:NO];
 }
 
 + (NFKRemoteProvider *)llamaCpp
 {
 	return [self providerWithIdentifier:@"llamacpp" displayName:@"llama.cpp server"
-							   endpoint:@"http://localhost:8080/v1/chat/completions"
-								 models:@"http://localhost:8080/v1/models"
+								   base:@"http://localhost:8080/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:NO];
 }
 
 + (NFKRemoteProvider *)vLLM
 {
 	return [self providerWithIdentifier:@"vllm" displayName:@"vLLM"
-							   endpoint:@"http://localhost:8000/v1/chat/completions"
-								 models:@"http://localhost:8000/v1/models"
+								   base:@"http://localhost:8000/v1"
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:NO];
 }
 
@@ -188,6 +203,20 @@
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;
+}
+
+#pragma mark Models
+
+- (nullable NSArray<NFKRemoteModel *> *)modelsWithAPIKey:(nullable NSString *)apiKey
+												   error:(NSError * _Nullable *)outError
+{
+	return [[NFKRemoteModelCatalog catalogForProvider:self apiKey:apiKey] modelsWithError:outError];
+}
+
+- (void)modelsWithAPIKey:(nullable NSString *)apiKey
+	   completionHandler:(void (^)(NSArray<NFKRemoteModel *> * _Nullable, NSError * _Nullable))completionHandler
+{
+	[[NFKRemoteModelCatalog catalogForProvider:self apiKey:apiKey] modelsWithCompletionHandler:completionHandler];
 }
 
 @end

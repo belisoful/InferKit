@@ -242,6 +242,188 @@
 	XCTAssertEqual(chat.messages.count, 2);
 }
 
+- (void)testExampleRemoteModelDiscovery
+{
+	// No preset carries a default model name; the provider's own list is where a picker is filled
+	// from. Every preset derives its URLs from one base, and a preset re-points at another address
+	// with that one field changed — a runner on another port, or on another machine.
+	NFKRemoteProvider *ollama = NFKRemoteProvider.ollama;
+	XCTAssertEqualObjects(ollama.modelsURL.absoluteString, @"http://localhost:11434/v1/models");
+
+	NFKRemoteProvider *lanOllama = [ollama providerWithBaseURL:[NSURL URLWithString:@"http://192.168.1.20:11434/v1"]];
+	XCTAssertEqualObjects(lanOllama.identifier, @"ollama");
+	XCTAssertEqualObjects(lanOllama.endpointURL.absoluteString, @"http://192.168.1.20:11434/v1/chat/completions");
+	XCTAssertEqualObjects([NFKRemoteProvider.openAI URLForPath:@"audio/transcriptions"].absoluteString,
+						  @"https://api.openai.com/v1/audio/transcriptions");
+
+	// A runner that is not running is a different answer from an empty list. Nothing listens on the
+	// discard port, so the call comes back with kNFKError_RemoteUnreachable rather than a model list.
+	NFKRemoteProvider *stopped = [ollama providerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1"]];
+	NFKRemoteModelCatalog *catalog = [NFKRemoteModelCatalog catalogForProvider:stopped apiKey:nil];
+	catalog.timeout = 5;
+	NSError *error = nil;
+	NSArray<NFKRemoteModel *> *models = [catalog modelsWithError:&error];   // blocks; off the render thread
+	XCTAssertNil(models);
+	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+
+	// One entry of a provider's list, as the picker would show it.
+	NFKRemoteModel *model = [NFKRemoteModel modelWithEntry:@{ @"id": @"llama3.2:latest", @"owned_by": @"library" }];
+	XCTAssertEqualObjects(model.identifier, @"llama3.2:latest");
+	XCTAssertEqualObjects(model.displayName, @"llama3.2:latest");
+	XCTAssertEqualObjects(model.ownedBy, @"library");
+}
+
+- (void)testExampleRemoteEmbeddingsAndLocalRunners
+{
+	// Embeddings are the same shape everywhere, and the vector comes back under the core key the
+	// on-device embedders use. Anthropic serves no embeddings endpoint, so its factory answers nil.
+	NFKRemoteEmbeddingBackend *embedder = [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.ollama
+																				 apiKey:nil
+																			  modelName:@"nomic-embed-text"];
+	XCTAssertEqualObjects(embedder.endpointURL.absoluteString, @"http://localhost:11434/v1/embeddings");
+	XCTAssertTrue(embedder.isReady);
+	XCTAssertNil([NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"]);
+
+	// A local runner has a second surface, its native API, which is where "what is installed",
+	// "what is loaded", and "get me this model" are answered. Only the presets with one hand it back.
+	id<NFKLocalModelRunner> runner = NFKRemoteProvider.ollama.localRunner;
+	XCTAssertNotNil(runner);
+	XCTAssertEqualObjects(runner.nativeBaseURL.absoluteString, @"http://localhost:11434");
+	XCTAssertTrue([runner respondsToSelector:@selector(pullModel:)], @"Ollama downloads");
+	XCTAssertFalse([NFKRemoteProvider.lmStudio.localRunner respondsToSelector:@selector(pullModel:)],
+				   @"LM Studio's REST surface does not");
+	XCTAssertNil(NFKRemoteProvider.llamaCpp.localRunner, @"nothing beyond the OpenAI surface to adapt");
+
+	// One entry of Ollama's installed list, as the picker would show it: the list carries no id,
+	// and the size, quantization, context length, and capabilities come with it.
+	NFKRemoteModel *installed = [NFKRemoteModel modelWithEntry:@{
+		@"name": @"gpt-oss:20b", @"model": @"gpt-oss:20b", @"size": @13793441244,
+		@"details": @{ @"quantization_level": @"MXFP4", @"context_length": @131072 },
+		@"capabilities": @[ @"completion", @"tools", @"thinking" ],
+	}];
+	XCTAssertEqualObjects(installed.identifier, @"gpt-oss:20b");
+	XCTAssertEqualObjects(installed.quantization, @"MXFP4");
+	XCTAssertEqualObjects(installed.contextLength, @131072);
+	XCTAssertTrue([installed.capabilities containsObject:@"tools"]);
+}
+
+- (void)testExampleRemoteSpeechImageAndVision
+{
+	// Text to speech: the same NFKOutputAudio the on-device speech backend answers with, a WAV by
+	// default. A voice is required and has no default, for the reason a model name has none.
+	NFKRemoteSpeechBackend *speaker = [NFKRemoteSpeechBackend backendForProvider:NFKRemoteProvider.openAI
+																		  apiKey:@"sk-…" modelName:@"gpt-4o-mini-tts" voice:@"alloy"];
+	XCTAssertEqualObjects(speaker.endpointURL.absoluteString, @"https://api.openai.com/v1/audio/speech");
+	XCTAssertEqualObjects(speaker.responseFormat, @"wav");
+	XCTAssertNil([NFKRemoteSpeechBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m" voice:@"v"]);
+
+	// Image generation chooses its operation from the request the way the Stable Diffusion backend
+	// does: a prompt alone generates, an image under NFKInputImage edits it, a mask inpaints.
+	NFKRemoteImageBackend *painter = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.openAI
+																		apiKey:@"sk-…" modelName:@"gpt-image-1"];
+	XCTAssertEqualObjects(painter.generationsURL.absoluteString, @"https://api.openai.com/v1/images/generations");
+	XCTAssertEqualObjects(painter.editsURL.absoluteString, @"https://api.openai.com/v1/images/edits");
+
+	// The codec under both, public: any of the three image representations the contract carries
+	// becomes PNG bytes or a data URL, and any ImageIO-readable bytes become a 32BGRA pixel buffer.
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 2, 2, 8, 8, colorSpace,
+												 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGContextSetRGBFillColor(context, 0, 0, 1, 1);
+	CGContextFillRect(context, CGRectMake(0, 0, 2, 2));
+	CGImageRef square = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+
+	NSData *png = [NFKImageCoding PNGDataForImage:(__bridge id)square];
+	XCTAssertNotNil(png);
+	XCTAssertTrue([[NFKImageCoding dataURLForImage:(__bridge id)square] hasPrefix:@"data:image/png;base64,"]);
+	CVPixelBufferRef decoded = [NFKImageCoding pixelBufferWithImageData:png];
+	XCTAssertEqual(CVPixelBufferGetPixelFormatType(decoded), kCVPixelFormatType_32BGRA);
+	CVPixelBufferRelease(decoded);
+
+	// A vision question is the ordinary chat request with an image beside the prompt; the chat
+	// backend attaches it to the user turn in the shape the endpoint reads. No new class.
+	NFKInferenceRequest *look = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What is in this frame?",
+																		   NFKInputImage: (__bridge id)square }];
+	XCTAssertNotNil([look inputForKey:NFKInputImage]);
+	CGImageRelease(square);
+}
+
+- (void)testExampleRemoteStreamingToolsAndRetries
+{
+	// Tools and a schema are contract keys, translated into each provider's shape; what the model
+	// called comes back parsed under result.toolCalls, and a schema's reply under result.structured.
+	NSDictionary *weather = @{ @"name": @"get_weather",
+							   @"description": @"Current weather in a city.",
+							   @"parameters": @{ @"type": @"object",
+												 @"properties": @{ @"city": @{ @"type": @"string" } },
+												 @"required": @[ @"city" ] } };
+	NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Weather in Paris?" }
+														  parameters:@{ NFKParameterTools: @[ weather ] }
+													  outputModality:NFKModalityText];
+	XCTAssertEqual([[ask parameterForKey:NFKParameterTools] count], 1);
+
+	NFKInferenceResult *turn = [NFKInferenceResult resultWithOutputs:@{
+		NFKOutputToolCalls: @[ @{ @"id": @"call_1", @"name": @"get_weather",
+								   @"arguments": @{ @"city": @"Paris" }, @"argumentsJSON": @"{\"city\":\"Paris\"}" } ] }];
+	XCTAssertEqualObjects(turn.toolCalls.firstObject[@"arguments"][@"city"], @"Paris");
+	XCTAssertNil(turn.text, @"a tool-calling turn has no text");
+
+	// The chat backends stream through the ordinary job. Nothing listens on the discard port, so the
+	// job fails with the unreachable code — asynchronously, through the completion handler, which
+	// is the path a chat interface reads token by token when the server is there.
+	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1/chat/completions"]];
+	backend.timeout = 5;
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:ask];
+	XCTAssertNotNil(job.cancellationHandler, @"cancelling the job cancels the request");
+	XCTestExpectation *ended = [self expectationWithDescription:@"stream ended"];
+	job.completionHandler = ^(NFKInferenceJob *j) { [ended fulfill]; };
+	[self waitForExpectations:@[ ended ] timeout:10];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(job.error.code, kNFKError_RemoteUnreachable);
+
+	// Every blocking remote call retries a rate limit or gateway error; the two knobs are global.
+	XCTAssertEqual(NFKRemoteTransport.retryAttempts, 2);
+	XCTAssertEqualWithAccuracy(NFKRemoteTransport.maximumRetryDelay, 8, 1e-9);
+}
+
+- (void)testExampleRemoteMediaModes
+{
+	// Beside images, the chat backends take audio, documents, and a clip beside the prompt, and can
+	// answer in speech. The request is the same shape whichever engine reads it.
+	NSURL *pdf = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:@"brief.pdf"];
+	[[@"%PDF-1.4 example" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:pdf atomically:YES];
+	NFKInferenceRequest *summarize = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize the brief.",
+																			   NFKInputDocument: pdf }];
+	XCTAssertEqualObjects([summarize inputForKey:NFKInputDocument], pdf);
+
+	NFKInferenceRequest *spoken = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Read me the summary." }
+															 parameters:@{ NFKParameterAudioOutput: @{ @"voice": @"alloy" } }
+														 outputModality:NFKModalityAudio];
+	XCTAssertEqualObjects([spoken parameterForKey:NFKParameterAudioOutput][@"voice"], @"alloy");
+	[NSFileManager.defaultManager removeItemAtURL:pdf error:NULL];
+
+	// The transcription backend gains what the on-device Whisper backend has: timed segments under
+	// NFKOutputSegments, and translation to English through the sibling endpoint.
+	NFKRemoteTranscriptionBackend *ears = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.groq
+																					 apiKey:@"gsk_…" modelName:@"whisper-large-v3"];
+	ears.emitsTimestamps = YES;
+	XCTAssertEqualObjects(ears.endpointURL.absoluteString, @"https://api.groq.com/openai/v1/audio/transcriptions");
+
+	// Three more services: video generation as a job, rerank, and moderation.
+	NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"sk-…" modelName:@"sora-2"];
+	XCTAssertEqualObjects(director.submitURL.absoluteString, @"https://api.openai.com/v1/videos");
+	XCTAssertTrue([director isKindOfClass:NFKAsyncGenerationBackend.class], @"submit, poll, download");
+
+	NFKRemoteReranker *ranker = [NFKRemoteReranker rerankerForProvider:NFKRemoteProvider.together apiKey:@"k" modelName:@"Salesforce/Llama-Rank-V1"];
+	XCTAssertEqualObjects(ranker.endpointURL.absoluteString, @"https://api.together.xyz/v1/rerank");
+
+	NFKRemoteModerationBackend *gate = [NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"sk-…" modelName:@"omni-moderation-latest"];
+	XCTAssertEqualObjects(gate.endpointURL.absoluteString, @"https://api.openai.com/v1/moderations");
+	XCTAssertNil([NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"]);
+}
+
 - (void)testExampleAsyncGenerationBackendContract
 {
 	ExampleImageGenerationBackend *backend = [[ExampleImageGenerationBackend alloc] init];

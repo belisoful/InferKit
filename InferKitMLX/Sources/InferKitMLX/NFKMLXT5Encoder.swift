@@ -26,10 +26,12 @@ public struct NFKMLXT5Configuration: Sendable {
     public var relativeBuckets: Int
     public var relativeMaxDistance: Int
     public var layerNormEps: Float
+    /// umT5 gives EVERY layer its own relative-position bias; plain T5 shares block 0's across the stack.
+    public var perLayerBias: Bool
 
     public init(dModel: Int = 4096, layers: Int = 24, heads: Int = 64, keyDim: Int = 64, ffDim: Int = 10240,
                 vocabularySize: Int = 32128, relativeBuckets: Int = 32, relativeMaxDistance: Int = 128,
-                layerNormEps: Float = 1e-6) {
+                layerNormEps: Float = 1e-6, perLayerBias: Bool = false) {
         self.dModel = dModel
         self.layers = layers
         self.heads = heads
@@ -39,12 +41,20 @@ public struct NFKMLXT5Configuration: Sendable {
         self.relativeBuckets = relativeBuckets
         self.relativeMaxDistance = relativeMaxDistance
         self.layerNormEps = layerNormEps
+        self.perLayerBias = perLayerBias
     }
 
     public static let xxl = NFKMLXT5Configuration()
 
+    /// umT5-XXL, Wan's text encoder: T5-XXL geometry with a per-layer relative-position bias.
+    public static let umt5XXL = NFKMLXT5Configuration(vocabularySize: 256384, perLayerBias: true)
+
     public static let tiny = NFKMLXT5Configuration(dModel: 32, layers: 2, heads: 2, keyDim: 16, ffDim: 64,
                                                    vocabularySize: 128, relativeBuckets: 16, relativeMaxDistance: 32)
+
+    public static let tinyUMT5 = NFKMLXT5Configuration(dModel: 32, layers: 3, heads: 2, keyDim: 16, ffDim: 64,
+                                                       vocabularySize: 128, relativeBuckets: 16,
+                                                       relativeMaxDistance: 32, perLayerBias: true)
 
     var inner: Int { heads * keyDim }
 }
@@ -194,7 +204,7 @@ final class NFKT5Stack: Module {
     @ModuleInfo(key: "final_layer_norm") var finalLayerNorm: NFKT5LayerNorm
 
     init(_ c: NFKMLXT5Configuration) {
-        _block.wrappedValue = (0 ..< c.layers).map { NFKT5Block(c, hasBias: $0 == 0) }
+        _block.wrappedValue = (0 ..< c.layers).map { NFKT5Block(c, hasBias: c.perLayerBias || $0 == 0) }
         _finalLayerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 }
@@ -215,8 +225,12 @@ final class NFKMLXT5EncoderNet: Module {
     /// Token ids `[B, S]` → the text embedding `[B, S, dModel]`.
     func callAsFunction(_ tokens: MLXArray) -> MLXArray {
         var hidden = shared(tokens)
-        let bias = encoder.block[0].selfAttention.attention.computeBias(tokens.shape[1])
+        let length = tokens.shape[1]
+        // umT5 gives every layer its own bias; plain T5 shares block 0's across the stack.
+        let sharedBias = configuration.perLayerBias ? nil
+            : encoder.block[0].selfAttention.attention.computeBias(length)
         for block in encoder.block {
+            let bias = sharedBias ?? block.selfAttention.attention.computeBias(length)
             hidden = block(hidden, bias: bias)
         }
         return encoder.finalLayerNorm(hidden)

@@ -195,6 +195,136 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(claude.backendIdentifier, "anthropic-messages")
     }
 
+    // Model discovery from Swift: the importer's naming for the list, the re-based preset, and the
+    // unreachable-runner error. A picker is filled from `models(withAPIKey:)`, which throws.
+    func testRemoteModelDiscovery() {
+        let ollama = NFKRemoteProvider.ollama
+        XCTAssertEqual(ollama.modelsURL.absoluteString, "http://localhost:11434/v1/models")
+
+        let lan = ollama.withBaseURL(URL(string: "http://192.168.1.20:11434/v1")!)
+        XCTAssertEqual(lan.identifier, "ollama")
+        XCTAssertEqual(lan.endpointURL.absoluteString, "http://192.168.1.20:11434/v1/chat/completions")
+
+        // Nothing listens on the discard port: the runner is "not running", which is
+        // `NFKInferenceError.remoteUnreachable`, not an empty list.
+        let stopped = ollama.withBaseURL(URL(string: "http://127.0.0.1:9/v1")!)
+        let catalog = NFKRemoteModelCatalog(for: stopped, apiKey: nil)
+        catalog.timeout = 5
+        XCTAssertThrowsError(try catalog.models()) { error in
+            XCTAssertEqual((error as NSError).domain, NFKInferenceErrorDomain)
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_RemoteUnreachable.rawValue)
+        }
+
+        let model = NFKRemoteModel(entry: ["id": "llama3.2:latest", "owned_by": "library"])
+        XCTAssertEqual(model?.identifier, "llama3.2:latest")
+        XCTAssertEqual(model?.ownedBy, "library")
+    }
+
+    // The embeddings backend and the local-runner surface from Swift: the importer's naming for the
+    // factory, the optional actions as optional protocol requirements, and the Ollama list entry.
+    func testRemoteEmbeddingsAndLocalRunners() {
+        // The class factory imports as a failable initializer.
+        let embedder = NFKRemoteEmbeddingBackend(for: .ollama, apiKey: nil, modelName: "nomic-embed-text")
+        XCTAssertEqual(embedder?.endpointURL?.absoluteString, "http://localhost:11434/v1/embeddings")
+        XCTAssertNil(NFKRemoteEmbeddingBackend(for: .anthropic, apiKey: "k", modelName: "m"))
+
+        let runner = NFKRemoteProvider.ollama.localRunner
+        XCTAssertEqual(runner?.nativeBaseURL.absoluteString, "http://localhost:11434")
+        // The actions that change the machine are optional requirements; check before offering one.
+        XCTAssertTrue(runner!.responds(to: #selector(NFKLocalModelRunner.pullModel(_:))), "Ollama downloads")
+        XCTAssertFalse(NFKRemoteProvider.lmStudio.localRunner!.responds(to: #selector(NFKLocalModelRunner.pullModel(_:))),
+                       "LM Studio's REST surface does not")
+        XCTAssertNil(NFKRemoteProvider.llamaCpp.localRunner, "nothing beyond the OpenAI surface to adapt")
+
+        let installed = NFKRemoteModel(entry: [
+            "name": "gpt-oss:20b", "size": 13_793_441_244,
+            "details": ["quantization_level": "MXFP4", "context_length": 131_072],
+            "capabilities": ["completion", "tools", "thinking"],
+        ])
+        XCTAssertEqual(installed?.identifier, "gpt-oss:20b")
+        XCTAssertEqual(installed?.contextLength, 131_072)
+        XCTAssertEqual(installed?.capabilities, ["completion", "tools", "thinking"])
+    }
+
+    // Speech, image, and the codec from Swift: both class factories import as failable initializers,
+    // and NFKImageCoding's methods take the importer's `for:` spelling.
+    func testRemoteSpeechImageAndVision() {
+        let speaker = NFKRemoteSpeechBackend(for: .openAI, apiKey: "sk-…", modelName: "gpt-4o-mini-tts", voice: "alloy")
+        XCTAssertEqual(speaker?.endpointURL?.absoluteString, "https://api.openai.com/v1/audio/speech")
+        XCTAssertEqual(speaker?.responseFormat, "wav")
+
+        let painter = NFKRemoteImageBackend(for: .xAI, apiKey: "xai-…", modelName: "grok-2-image")
+        XCTAssertEqual(painter?.generationsURL?.absoluteString, "https://api.x.ai/v1/images/generations")
+        XCTAssertEqual(painter?.editsURL?.absoluteString, "https://api.x.ai/v1/images/edits")
+        XCTAssertNil(NFKRemoteImageBackend(for: .anthropic, apiKey: "k", modelName: "m"))
+
+        let context = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)!
+        context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        let square = context.makeImage()!
+
+        let png = NFKImageCoding.pngData(forImage: square)
+        XCTAssertNotNil(png)
+        XCTAssertTrue(NFKImageCoding.dataURL(forImage: square)?.hasPrefix("data:image/png;base64,") == true)
+        let decoded = NFKImageCoding.pixelBuffer(withImageData: png!)   // owned: CF_RETURNS_RETAINED imports managed
+        XCTAssertNotNil(decoded)
+        XCTAssertEqual(CVPixelBufferGetPixelFormatType(decoded!), kCVPixelFormatType_32BGRA)
+
+        // A vision question: the ordinary chat request with an image beside the prompt.
+        let look = NFKInferenceRequest(inputs: [NFKInputPrompt: "What is in this frame?", NFKInputImage: square])
+        XCTAssertNotNil(look.input(forKey: NFKInputImage))
+    }
+
+    // Streaming, tools, and the retry knobs from Swift: the job form imports as
+    // `submitInferenceJob(for:)`, the typed accessor as `toolCalls`, the knobs as class properties.
+    func testRemoteStreamingToolsAndRetries() {
+        let weather: [String: Any] = ["name": "get_weather",
+                                      "parameters": ["type": "object", "properties": ["city": ["type": "string"]]]]
+        let ask = NFKInferenceRequest(inputs: [NFKInputPrompt: "Weather in Paris?"],
+                                      parameters: [NFKParameterTools: [weather]], outputModality: .text)
+        let turn = NFKInferenceResult(outputs: [NFKOutputToolCalls: [["id": "call_1", "name": "get_weather",
+                                                                       "arguments": ["city": "Paris"]]]])
+        XCTAssertEqual(turn.toolCalls?.first?["name"] as? String, "get_weather")
+
+        let backend = NFKRemoteBackend(endpointURL: URL(string: "http://127.0.0.1:9/v1/chat/completions"))
+        backend.timeout = 5
+        let job = backend.submitInferenceJob(for: ask)
+        XCTAssertNotNil(job.cancellationHandler)
+        let ended = expectation(description: "stream ended")
+        job.completionHandler = { _ in ended.fulfill() }
+        wait(for: [ended], timeout: 10)
+        XCTAssertEqual(job.status, .failed)
+        XCTAssertEqual((job.error as NSError?)?.code, NFKInferenceError.error_RemoteUnreachable.rawValue)
+
+        XCTAssertEqual(NFKRemoteTransport.retryAttempts, 2)
+        XCTAssertEqual(NFKRemoteTransport.maximumRetryDelay, 8)
+    }
+
+    // The remaining directions from Swift: the importer's names for the three new services and the
+    // transcription options, and the request keys for documents, clips, and a spoken reply.
+    func testRemoteMediaModes() {
+        let ears = NFKRemoteTranscriptionBackend(for: .groq, apiKey: "gsk_…", modelName: "whisper-large-v3")
+        ears?.emitsTimestamps = true
+        ears?.translates = true
+        XCTAssertEqual(ears?.endpointURL?.absoluteString, "https://api.groq.com/openai/v1/audio/transcriptions")
+
+        let director = NFKRemoteVideoBackend(for: .openAI, apiKey: "sk-…", modelName: "sora-2")
+        XCTAssertEqual(director?.submitURL?.absoluteString, "https://api.openai.com/v1/videos")
+        let ranker = NFKRemoteReranker(for: .together, apiKey: "k", modelName: "Salesforce/Llama-Rank-V1")
+        XCTAssertEqual(ranker?.endpointURL?.absoluteString, "https://api.together.xyz/v1/rerank")
+        let gate = NFKRemoteModerationBackend(for: .mistral, apiKey: "k", modelName: "mistral-moderation-latest")
+        XCTAssertEqual(gate?.endpointURL?.absoluteString, "https://api.mistral.ai/v1/moderations")
+
+        let watched = NFKInferenceRequest(inputs: [NFKInputPrompt: "What happens?",
+                                                   NFKInputVideo: NFKVideoAsset(fileURL: URL(fileURLWithPath: "/tmp/clip.mp4"))],
+                                          parameters: [NFKParameterVideoFrameCount: 8, NFKParameterAudioOutput: ["voice": "alloy"]],
+                                          outputModality: .text)
+        XCTAssertNotNil(watched.input(forKey: NFKInputVideo))
+        XCTAssertEqual((watched.parameter(forKey: NFKParameterAudioOutput) as? [String: String])?["voice"], "alloy")
+    }
+
     // MARK: Where Core ML runs (Docs/examples.md: Where Core ML actually runs)
 
     // `MLComputeUnitsCPUOnly` is zero, so an unset property would move every model off the

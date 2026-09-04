@@ -11,6 +11,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKRemoteProvider;
+
 /*!
 	@class      NFKRemoteTranscriptionBackend
 	@abstract   An inference backend that transcribes audio to text through an OpenAI-compatible
@@ -22,6 +24,11 @@ NS_ASSUME_NONNULL_BEGIN
 				with the model name and any request parameters folded in as form fields (language,
 				prompt, response_format, temperature), then returns the transcript under
 				NFKOutputText and the parsed response under NFKOutputStructured.
+
+				emitsTimestamps asks for the verbose reply and adds the segments under
+				NFKOutputSegments as NFKAudioSegments, which is what the on-device Whisper backend
+				emits, so the two are interchangeable. translates sends the audio to the sibling
+				translations endpoint, which answers in English whatever the audio's language.
 
 				One path serves a hosted API and a local server; the difference is the endpoint URL
 				and the key. runInferenceForRequest: blocks until the call returns, so a caller runs
@@ -38,6 +45,13 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The model name sent as the multipart `model` field, for example a Whisper model name. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
+/*! Asks for per-segment times and adds them under NFKOutputSegments. Off by default. Introduced in InferKit 0.3.0. */
+@property (nonatomic, assign) BOOL emitsTimestamps;
+
+/*! Sends the audio to the translations endpoint beside the transcriptions one, for an English
+	transcript of any language. Off by default. Introduced in InferKit 0.3.0. */
+@property (nonatomic, assign) BOOL translates;
+
 /*! The request timeout in seconds. Defaults to 60. */
 @property (nonatomic, assign) NSTimeInterval timeout;
 
@@ -45,6 +59,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) NSURLSession *session;
 
 + (instancetype)backendWithEndpointURL:(nullable NSURL *)endpointURL;
+
+/*!
+	@method     backendForProvider:apiKey:modelName:
+	@abstract   A backend pointed at the provider's transcriptions endpoint.
+	@discussion Returns nil for Anthropic, which serves none. openai, groq, and mistral were
+				verified to serve the path at release; vLLM serves it when a speech model is loaded.
+				Introduced in InferKit 0.3.0.
+*/
++ (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
+									 apiKey:(nullable NSString *)apiKey
+								  modelName:(nullable NSString *)modelName;
 
 /*!
 	@method     sendRequest:response:error:

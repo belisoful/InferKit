@@ -31,5 +31,5 @@ Pod::Spec.new do |s|
   s.requires_arc        = true
 
   # System frameworks the sources link against.
-  s.frameworks = 'Foundation', 'CoreML', 'CoreVideo', 'CoreGraphics', 'Metal', 'IOSurface'
+  s.frameworks = 'Foundation', 'CoreML', 'CoreVideo', 'CoreGraphics', 'ImageIO', 'AVFoundation', 'Metal', 'IOSurface'
 end

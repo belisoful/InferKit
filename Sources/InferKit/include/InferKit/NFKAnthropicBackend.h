@@ -55,6 +55,30 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)backendWithEndpointURL:(nullable NSURL *)endpointURL;
 
+/*!
+	@method     submitInferenceJobForRequest:
+	@abstract   Starts a streamed run and returns the job to follow it.
+	@discussion The request is sent with stream enabled and the reply read as the Messages API's
+				events; each text delta appends to the job's partialResult under
+				NFKRemoteBackendTextKey, and a tool use's input assembles across its deltas. The job
+				finishes with the same result the blocking form returns. Cancelling the job cancels
+				the request. Introduced in InferKit 0.3.0.
+*/
+- (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request;
+
+/*!
+	@method     streamRequest:lineHandler:completionHandler:
+	@abstract   Performs a request whose reply is read line by line as it arrives.
+	@discussion The transport seam for the streamed form; the default delegates to
+				NFKRemoteTransport. Returns the block that cancels the request. A test overrides it
+				to feed staged lines. Introduced in InferKit 0.3.0.
+*/
+- (void (^)(void))streamRequest:(NSURLRequest *)request
+					lineHandler:(void (^)(NSString *line))lineHandler
+			  completionHandler:(void (^)(NSHTTPURLResponse * _Nullable response,
+										  NSData * _Nullable errorBody,
+										  NSError * _Nullable error))completionHandler;
+
 @end
 
 NS_ASSUME_NONNULL_END

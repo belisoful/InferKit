@@ -28,6 +28,8 @@ let package = Package(
                 .linkedFramework("CoreML"),
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreGraphics"),
+                .linkedFramework("ImageIO"),
+                .linkedFramework("AVFoundation"),
                 .linkedFramework("Metal"),
                 .linkedFramework("IOSurface"),
             ]

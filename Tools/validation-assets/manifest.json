@@ -966,6 +966,34 @@
     "IK_VAL_LTX_T5": ""
    },
    "note": "T5-XXL v1.1 text encoder for LTX-Video (also the text encoder family for Wan/PixArt/SD3/Flux). ~19 GB fp32 sharded. Loads directly (keys mirror T5EncoderModel). Parity via run_reference.py ltx_t5 under the ltx oracle env."
+  },
+  {
+   "key": "RTDETR",
+   "repo": "PekingU/rtdetr_r50vd",
+   "directory": "raw/rtdetr-r50vd",
+   "files": [
+    "config.json",
+    "preprocessor_config.json",
+    "model.safetensors"
+   ],
+   "config": {
+    "IK_VAL_RTDETR": ""
+   },
+   "note": "RT-DETR r50vd object detector (Apache-2.0, the license-clean YOLO alternative). 172 MB single-file. Loads directly through NFKMLXRTDetr.loadWeights (model. prefix stripped, tied top-level heads and num_batches_tracked dropped, stage-1 stride-1 shortcut re-indexed). Real-weights parity via run_reference.py rtdetr_real under the llm oracle env; the tiny-config architecture parity is run_reference.py rtdetr (no weights)."
+  },
+  {
+   "key": "KOKORO",
+   "repo": "hexgrad/Kokoro-82M",
+   "directory": "raw/kokoro",
+   "files": [
+    "config.json",
+    "kokoro-v1_0.pth",
+    "voices/af_heart.pt"
+   ],
+   "config": {
+    "IK_VAL_KOKORO": ""
+   },
+   "note": "Kokoro-82M StyleTTS2/iSTFTNet TTS (Apache-2.0). 327 MB. The oracle vendors KModel + istftnet + modules from the pip `kokoro` package (torch/transformers/scipy, NO spaCy/misaki), running with phonemes supplied directly and the sine source's noise/phase zeroed for determinism. Loads directly through NFKMLXKokoro.loadWeights (module. prefix stripped, weight-norm fused, LSTMs folded, alpha ParameterLists stacked, ups transposed). Real-weights parity via run_reference.py kokoro under the llm oracle env. A voicepack .pt is a bare tensor: convert to a single-`voice` safetensors offline (Tools/kokoro-voice-to-safetensors) for NFKMLXKokoro.loadVoice."
   }
  ],
  "oracle_environments": {
@@ -1001,7 +1029,12 @@
     "dac",
     "snac",
     "siglip2",
-    "taesd"
+    "taesd",
+    "gemma2",
+    "umt5",
+    "rtdetr",
+    "rtdetr_real",
+    "kokoro"
    ]
   },
   "music": {
@@ -1042,9 +1075,19 @@
    "modes": [
     "ltx_vae",
     "ltx_transformer",
-    "ltx_t5"
+    "ltx_t5",
+    "z_image",
+    "sana",
+    "wan",
+    "dc_ae",
+    "flux_vae",
+    "wan_vae",
+    "dpm_solver",
+    "unipc",
+    "wan_vae_21",
+    "dc_ae_real"
    ],
-   "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles."
+   "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles. diffusers 0.36 also carries ZImageTransformer2DModel, SanaTransformer2DModel, and WanTransformer3DModel (the z_image / sana / wan DiT parity oracles)."
   }
  }
 }

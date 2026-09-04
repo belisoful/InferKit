@@ -663,6 +663,664 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.9999, "the text embedding matches the reference T5 encoder")
     }
 
+    // MARK: Z-Image S3-DiT
+
+    // The single-stream Z-Image DiT at a tiny random configuration, against diffusers'
+    // ZImageTransformer2DModel. Sequence lengths are not a multiple of 32, so the learned pad tokens and
+    // the (0,0,0) pad positions are exercised. The t_embedder seam localizes a timestep-conditioning
+    // mismatch; the final velocity covers the refiners, the unified layers, the complex 3-axis rope, and
+    // the sandwich adaptive norms.
+    func testZImageTransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_Z_IMAGE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_Z_IMAGE (run_reference.py z_image)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])
+        let capFeats = try XCTUnwrap(arrays["cap_feats"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXZImageTransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        if let reference = arrays["t_emb"] {
+            let mine = net.tEmbedder(timestep * net.config.timestepScale)[0]; eval(mine)
+            print("SEAM z-image t_emb: cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+
+        let output = net(latent, capFeats: capFeats, t: timestep); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY z-image: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference S3-DiT")
+    }
+
+    // MARK: SANA linear-attention DiT
+
+    // The SANA DiT at a tiny random configuration, against diffusers' SanaTransformer2DModel. The
+    // patch-embed and block seams localize the linear-attention / GLUMBConv / adaptive-norm path; the
+    // final velocity covers the whole stack. The convolution weights load transposed to MLX's NHWC.
+    func testSANATransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SANA"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SANA (run_reference.py sana)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])
+        let capFeats = try XCTUnwrap(arrays["cap_feats"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXSANATransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        if let reference = arrays["embedded"] {
+            let mine = net.timeEmbed(timestep * net.config.timestepScale).embedded[0]; eval(mine)
+            print("SEAM sana embedded: cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+
+        let output = net(latent, capFeats: capFeats, t: timestep); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY sana: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference SANA DiT")
+    }
+
+    // MARK: Wan text-to-video DiT
+
+    // The Wan DiT at a tiny random configuration, against diffusers' WanTransformer3DModel. The final
+    // velocity covers the Conv3d patch embed, the 3-axis interleaved rotary, the across-heads q/k norm,
+    // self + cross attention, and the adaptive norms. The 5-D convolution weight loads transposed to NHWC.
+    func testWanTransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WAN"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_WAN (run_reference.py wan)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])
+        let text = try XCTUnwrap(arrays["text"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXWanTransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let output = net(latent, text: text, t: timestep); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY wan: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference Wan DiT")
+    }
+
+    // MARK: Flux autoencoder (Z-Image's VAE)
+
+    // The Flux autoencoder Z-Image encodes into, at a tiny random configuration, against diffusers'
+    // AutoencoderKL. It is the same class Stable Diffusion uses; the only new path is dropping the quant
+    // convolutions (use_quant_conv=False), so the encoder's conv_out is the moments directly. Both the
+    // encoded mean and the decode are compared.
+    func testFluxAutoencoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_VAE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX_VAE (run_reference.py flux_vae)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let sample = try XCTUnwrap(arrays["sample"]).reshaped([1, 16, 16, 3])
+        let referenceMean = try XCTUnwrap(arrays["mean"])
+        let referenceDecoded = try XCTUnwrap(arrays["output"])
+
+        var configuration = NFKMLXSDVAEConfiguration()
+        configuration.latentChannels = 4
+        configuration.blockChannels = [8, 16]
+        configuration.layersPerBlock = 1
+        configuration.normalizationGroups = 4
+        configuration.useQuantConv = false
+        let net = NFKMLXSDAutoencoder(configuration: configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = NFKMLXStableDiffusionModels.remapVAEKey(String(key.dropFirst(3)))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let mean = net.encode(sample).mean; eval(mean)
+        let meanSimilarity = cosine(mean.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    referenceMean.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux-vae: latent cosine \(meanSimilarity)")
+        XCTAssertGreaterThan(meanSimilarity, 0.9999, "the encoded mean matches the reference")
+
+        let decoded = net.decode(mean); eval(decoded)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux-vae: decode cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the decode matches the reference")
+    }
+
+    // MARK: DC-AE (SANA's autoencoder)
+
+    // The Deep-Compression Autoencoder at a tiny random configuration, against diffusers' AutoencoderDC.
+    // Deterministic encode/decode. The tiny config exercises a ResBlock stage, an EfficientViTBlock stage
+    // (multiscale ReLU linear attention + GLUMBConv), and the Conv-downsample / interpolate-upsample with
+    // their channel-average / channel-repeat shortcuts. The reference's `<blocks>.<i>.<j>` Sequential
+    // indices map onto the module's `<i>.block.<j>`; the convolution weights load transposed to NHWC.
+    func testDCAutoencoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DC_AE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DC_AE (run_reference.py dc_ae)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let sample = try XCTUnwrap(arrays["sample"]).reshaped([1, 8, 8, 3])
+        let referenceLatent = try XCTUnwrap(arrays["latent"])
+        let referenceDecoded = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXDCAutoencoderNet(.tiny)
+        let stageIndex = try! NSRegularExpression(pattern: "(down_blocks|up_blocks)\\.([0-9]+)\\.([0-9]+)\\.")
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            var name = String(key.dropFirst(3))
+            name = stageIndex.stringByReplacingMatches(in: name, range: NSRange(name.startIndex..., in: name),
+                                                       withTemplate: "$1.$2.block.$3.")
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let latent = net.encode(sample); eval(latent)
+        let latentSimilarity = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY dc-ae: latent cosine \(latentSimilarity)")
+        XCTAssertGreaterThan(latentSimilarity, 0.9999, "the encoded latent matches the reference")
+
+        let decoded = net.decode(latent); eval(decoded)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY dc-ae: decode cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the decode matches the reference")
+    }
+
+    // MARK: IP-Adapter (image conditioning)
+
+    // IP-Adapter's two pieces at a tiny random configuration, against diffusers: the ImageProjection and
+    // the decoupled cross-attention (text attention + scale·image attention, shared query). The
+    // processor's `to_k_ip`/`to_v_ip` load under the attention module (the reference stores them under a
+    // `processor.` prefix, stripped here).
+    func testIPAdapterMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_IP_ADAPTER"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_IP_ADAPTER (run_reference.py ip_adapter)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let imageEmbeds = try XCTUnwrap(arrays["image_embeds"]).reshaped([1, -1])
+        let referenceTokens = try XCTUnwrap(arrays["ip_tokens"])
+        let hidden = try XCTUnwrap(arrays["hidden"]).reshaped([1, 8, 12])
+        let text = try XCTUnwrap(arrays["text"]).reshaped([1, 5, 12])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        // Image projection.
+        let proj = NFKMLXIPAdapterImageProjection(imageEmbedDim: 16, crossAttentionDim: 12, numTokens: 4)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix("wp::") ? (String(key.dropFirst(4)), value) : nil }, to: proj)
+        let ipTokens = proj(imageEmbeds); eval(ipTokens)
+        let tokenSimilarity = cosine(ipTokens.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     referenceTokens.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ip-adapter: projection cosine \(tokenSimilarity)")
+        XCTAssertGreaterThan(tokenSimilarity, 0.9999, "the image projection matches the reference")
+
+        // Decoupled cross-attention.
+        let attn = NFKMLXIPAdapterAttention(queryDim: 12, crossAttentionDim: 12, heads: 2, headDim: 6)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("wa::") else { return nil }
+            return (String(key.dropFirst(4)).replacingOccurrences(of: "processor.", with: ""), value)
+        }, to: attn)
+        let output = attn(hidden, text: text, ipTokens: ipTokens, scale: 0.7); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ip-adapter: decoupled-attention cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the decoupled cross-attention matches the reference")
+    }
+
+    // MARK: DC-AE on the RELEASED weights
+
+    // The Deep-Compression Autoencoder on the ACTUAL released SANA VAE weights, against diffusers'
+    // AutoencoderDC — a real-weights end-to-end validation (the released config, the real checkpoint, and
+    // the loader), not just the tiny-config architecture check. Loads through the model's own loadWeights.
+    func testDCAutoencoderMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DC_AE_REAL"], let directory = config["IK_VAL_DCAE"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DC_AE_REAL + IK_VAL_DCAE (run_reference.py dc_ae_real, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let inputImage = try XCTUnwrap(arrays["input_image"])              // [H, W, 3] in 0...1
+        let (h, w) = (inputImage.shape[0], inputImage.shape[1])
+        let sample = (inputImage * 2 - 1).reshaped([1, h, w, 3])           // the reference's -1...1 input
+        let referenceLatent = try XCTUnwrap(arrays["latent"])
+        let referenceDecoded = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXDCAutoencoderNet(.sana)
+        let weightsURL = URL(fileURLWithPath: directory).appendingPathComponent("diffusion_pytorch_model.safetensors")
+        try NFKMLXDCAutoencoderNet.loadWeights(into: net, from: weightsURL)
+
+        let latent = net.encode(sample); eval(latent)
+        let latentSimilarity = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY dc-ae-real: latent cosine \(latentSimilarity)")
+        XCTAssertGreaterThan(latentSimilarity, 0.9999, "the released-weights latent matches the reference")
+
+        let decoded = net.decode(latent); eval(decoded)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY dc-ae-real: decode cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the released-weights decode matches the reference")
+    }
+
+    // MARK: RT-DETR object detection
+
+    // RT-DETR end to end at a tiny random configuration, against transformers' own
+    // RTDetrForObjectDetection: the ResNet-D backbone, the hybrid encoder (AIFI + CSP-RepVGG FPN/PAN),
+    // anchor query selection, and the deformable-attention decoder with iterative box refinement. The
+    // backbone/encoder/query-selection seams localize a divergence; the final logits and boxes cover the
+    // whole stack. Weights load with the `model.` prefix stripped (the net root is HF's RTDetrModel), the
+    // 4-D convolution weights transposed to NHWC, and BatchNorm run in eval mode.
+    func testRTDetrMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR (run_reference.py rtdetr)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)       // [1, H, W, 3] NHWC
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let referenceBoxes = try XCTUnwrap(arrays["pred_boxes"])
+
+        let net = NFKMLXRTDetrNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            let name = String(key.dropFirst("w::model.".count))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        net.train(false)                                                  // BatchNorm running statistics
+
+        func similarity(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+        func seam(_ label: String, _ mine: MLXArray, _ key: String) {
+            guard let reference = arrays[key] else { return }
+            print("SEAM rtdetr \(label): cosine \(similarity(mine, reference))")
+        }
+
+        let detection = net(pixels)
+        // The whole architecture, seam by seam: the ResNet-D backbone, the hybrid encoder's PAN
+        // outputs, and the query-selection scores (enc_class) and boxes (enc_coord) are exact.
+        seam("backbone.0", detection.backboneFeatures[0], "bb.0")
+        seam("backbone.1", detection.backboneFeatures[1], "bb.1")
+        seam("backbone.2", detection.backboneFeatures[2], "bb.2")
+        seam("enc_last", detection.encLastPAN, "enc_last")
+        for (label, key, mine) in [("enc_class", "enc_class", detection.encClass),
+                                   ("enc_coord", "enc_coord", detection.encCoord)] {
+            let reference = try XCTUnwrap(arrays[key])
+            let value = similarity(mine, reference)
+            print("VALIDATION PARITY rtdetr: \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the query-selection \(label) matches the reference")
+        }
+
+        // The deformable-attention decoder in isolation of the top-k selection: run it over the
+        // REFERENCE's selected query indices, so the logits and boxes are exact. This is the decisive
+        // decoder parity, independent of the float-sensitive selection below.
+        let refTopk = try XCTUnwrap(arrays["topk_ind"])
+        let (decLogits, decBoxes) = net.decode(indices: refTopk, detection: detection)
+        let decLogitSimilarity = similarity(decLogits, referenceLogits)
+        let decBoxSimilarity = similarity(decBoxes, referenceBoxes)
+        print("VALIDATION PARITY rtdetr (reference selection): logits cosine \(decLogitSimilarity), boxes cosine \(decBoxSimilarity)")
+        XCTAssertGreaterThan(decLogitSimilarity, 0.9999, "the decoder logits match the reference over its selection")
+        XCTAssertGreaterThan(decBoxSimilarity, 0.9999, "the decoder boxes match the reference over its selection")
+
+        // The end-to-end run uses the port's OWN top-k selection, which differs from the reference's
+        // only where two tokens' selection scores tie to within a float ulp — `torch.topk` and MLX's
+        // `argSort` break such ties differently, so one or two of the 10 queries can swap. The logits
+        // stay near-exact; the boxes carry the swapped queries, so they are asserted at a tolerance
+        // that reflects the selection tie rather than a modeling error.
+        let logitSimilarity = similarity(detection.logits, referenceLogits)
+        let boxSimilarity = similarity(detection.boxes, referenceBoxes)
+        print("VALIDATION PARITY rtdetr (own selection): logits cosine \(logitSimilarity), boxes cosine \(boxSimilarity)")
+        XCTAssertGreaterThan(logitSimilarity, 0.9999, "the end-to-end detection logits match the reference")
+        XCTAssertGreaterThan(boxSimilarity, 0.97, "the end-to-end boxes match up to the top-k selection tie")
+    }
+
+    // RT-DETR on the ACTUAL released PekingU/rtdetr_r50vd weights, against transformers' own
+    // RTDetrForObjectDetection — a real-weights end-to-end validation of the r50vd geometry, the
+    // released checkpoint, and the loader (including the stage-1 stride-1 shortcut the tiny config does
+    // not exercise). Runs on the reference's own preprocessed pixels and its query selection, so the
+    // logits and boxes are exact.
+    func testRTDetrMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR_REAL"], let directory = config["IK_VAL_RTDETR"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR_REAL + IK_VAL_RTDETR (run_reference.py rtdetr_real, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)       // [1, 640, 640, 3] NHWC
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let referenceBoxes = try XCTUnwrap(arrays["pred_boxes"])
+        let refTopk = try XCTUnwrap(arrays["topk_ind"])
+
+        let net = NFKMLXRTDetrNet(.r50vd)
+        let weightsURL = URL(fileURLWithPath: directory).appendingPathComponent("model.safetensors")
+        try NFKMLXRTDetr.loadWeights(into: net, from: weightsURL)
+        net.train(false)
+
+        let detection = net(pixels)
+        let (decLogits, decBoxes) = net.decode(indices: refTopk, detection: detection)
+        eval(decLogits); eval(decBoxes)
+        let logitSimilarity = cosine(decLogits.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let boxSimilarity = cosine(decBoxes.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                   referenceBoxes.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY rtdetr-real: logits cosine \(logitSimilarity), boxes cosine \(boxSimilarity)")
+        XCTAssertGreaterThan(logitSimilarity, 0.9999, "the released-weights detection logits match the reference")
+        XCTAssertGreaterThan(boxSimilarity, 0.9999, "the released-weights detection boxes match the reference")
+    }
+
+    // MARK: Kokoro-82M (StyleTTS2 / iSTFTNet) — text path
+
+    // Kokoro's text path on the RELEASED weights, against the vendored KModel, seam by seam: the PL-BERT
+    // (Albert) text encoder, the bert_encoder projection, the DurationEncoder, the duration head, the
+    // F0/energy predictor, the TextEncoder, and the alignment-expanded asr. The F0/N/asr seams run over
+    // the reference's own integer durations, so they are independent of the duration rounding.
+    func testKokoroTextPathMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_KOKORO"], let directory = config["IK_VAL_KOKORO"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_KOKORO + IK_VAL_KOKORO (run_reference.py kokoro, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let ids = try XCTUnwrap(arrays["ids"]).expandedDimensions(axis: 0)             // [1, T]
+        let refS = try XCTUnwrap(arrays["ref_s"]).reshaped([1, 256])
+        let predDur = try XCTUnwrap(arrays["pred_dur"]).asArray(Int32.self).map(Int.init)
+
+        let net = NFKMLXKokoroNet(.v1)
+        let weightsURL = URL(fileURLWithPath: directory).appendingPathComponent("kokoro-v1_0.pth")
+        try NFKMLXKokoro.loadTextWeights(into: net, from: weightsURL)
+
+        let seams = net.textPath(ids: ids, refS: refS, durationsOverride: predDur)
+        func check(_ label: String, _ mine: MLXArray, _ key: String, _ threshold: Double = 0.9999) {
+            guard let reference = arrays[key] else { return }
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY kokoro: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "kokoro \(label) matches the reference")
+        }
+        check("bert", seams.bert, "bert")
+        check("d_en", seams.dEn, "d_en")
+        check("d", seams.d, "d")
+        check("duration", seams.duration, "duration")
+        check("f0", seams.f0, "f0")
+        check("n", seams.n, "n")
+        check("t_en", seams.tEn, "t_en")
+        check("asr", seams.asr, "asr")
+
+        // The iSTFTNet decoder, over the reference's F0/N/asr so it is isolated from the text path: the
+        // encode output, the generator input, the conv_post output, and the final waveform.
+        let f0 = try XCTUnwrap(arrays["f0"]).reshaped([1, -1])
+        let energy = try XCTUnwrap(arrays["n"]).reshaped([1, -1])
+        let asr = try XCTUnwrap(arrays["asr"]).expandedDimensions(axis: 0)
+        // The sine source and the final audio are limited by float32 `sin` precision: the reference
+        // multiplies the accumulated phase by the upsample scale (≈18000 rad) before `sin`, where a
+        // float32 argument holds ~two fractional digits, so a torch/MLX rounding difference bounds the
+        // waveform cosine near 0.99. The encode/gen-in seams are exact; the reconstruction is close.
+        check("har_source", net.decoder.generator.sineSource(f0: f0), "dec_har_source", 0.999)
+        let (audio, decSeams) = net.decoder.callWithSeams(asr, f0Curve: f0, n: energy, style: refS[0..., 0 ..< 128])
+        check("dec_encode", decSeams.encode, "dec_encode")
+        check("dec_gen_in", decSeams.genIn, "dec_gen_in")
+        check("dec_conv_post", decSeams.convPost, "dec_conv_post", 0.9999)
+        check("audio", audio.reshaped([-1]), "output", 0.99)
+
+        // The full consumer path: load the vocabulary and the voicepack, synthesize from the phoneme
+        // string (the model's own rounded durations), and reproduce the reference waveform. This
+        // additionally exercises loadVocab, loadVoice, and the per-scalar phoneme mapping.
+        let vocab = try NFKMLXKokoro.loadVocab(directoryURL: URL(fileURLWithPath: directory))
+        let voice = try NFKMLXKokoro.loadVoice(url: URL(fileURLWithPath: directory).appendingPathComponent("voices/af_heart.pt"))
+        let phonemeAudio = net.synthesize(phonemes: "həlˈoʊ wˈɜːld", voice: voice, vocab: vocab)
+        check("phoneme_audio", phonemeAudio.reshaped([-1]), "output", 0.99)
+    }
+
+    // MARK: Wan 3D causal VAE
+
+    // The Wan 3D causal VAE at a tiny random configuration, against diffusers' AutoencoderKLWan (the
+    // Wan 2.2 residual path). A 5-frame clip exercises the stateful feat_cache streaming — chunked encode
+    // (1 then 4 frames) and per-frame decode, threading the causal convolutions' temporal cache — plus the
+    // temporal resample time_convs and the AvgDown3D / DupUp3D shortcuts. The RMS `gamma` loads flattened
+    // from its `[C,1,1,1]` layout; the 5-D and 4-D convolution weights load transposed to NDHWC/NHWC.
+    func testWanVideoVAEMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WAN_VAE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_WAN_VAE (run_reference.py wan_vae)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let video = try XCTUnwrap(arrays["video"]).expandedDimensions(axis: 0)         // [1, T, H, W, 3]
+        let referenceLatent = try XCTUnwrap(arrays["latent"])
+        let referenceDecoded = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXWanVideoVAENet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            if name.hasSuffix(".gamma") { return (name, value.reshaped([-1])) }
+            if value.ndim == 5 { return (name, value.transposed(0, 2, 3, 4, 1)) }
+            if value.ndim == 4 { return (name, value.transposed(0, 2, 3, 1)) }
+            return (name, value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        func seam(_ key: String, _ produce: () -> MLXArray) {
+            guard let reference = arrays[key] else { return }
+            let mine = produce(); eval(mine)
+            print("SEAM wan-vae \(key): cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+        seam("enc_raw") { net.encodeMoments(video) }
+        seam("enc_1frame") { net.encodeMoments(video[0..., 0 ..< 1, 0..., 0..., 0...]) }
+        let latentF0 = referenceLatent.expandedDimensions(axis: 0)[0..., 0 ..< 1, 0..., 0..., 0...]
+        let stages = net.decodeStages(latentF0)
+        seam("dec_conv_in") { stages.convIn }
+        seam("dec_mid") { stages.mid }
+        seam("dec_up0") { stages.up0 }
+        seam("decoded_f0") { net.decode(latentF0) }
+
+        let latent = net.encode(video); eval(latent)
+        let latentSimilarity = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY wan-vae: latent cosine \(latentSimilarity)")
+        XCTAssertGreaterThan(latentSimilarity, 0.9999, "the encoded latent matches the reference")
+
+        let decoded = net.decode(referenceLatent.expandedDimensions(axis: 0)); eval(decoded)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY wan-vae: decode cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the decode matches the reference")
+    }
+
+    // The Wan 2.1 autoencoder (the non-residual path) at a tiny random configuration, against diffusers'
+    // AutoencoderKLWan. Exercises the flat down-block list, the halving upsampler, and the no-patchify
+    // path — the pieces that differ from the 2.2 residual VAE.
+    func testWanVideoVAE21MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WAN_VAE_21"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_WAN_VAE_21 (run_reference.py wan_vae_21)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let video = try XCTUnwrap(arrays["video"]).expandedDimensions(axis: 0)
+        let referenceLatent = try XCTUnwrap(arrays["latent"])
+        let referenceDecoded = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXWanVideoVAENet(.tiny21)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            if name.hasSuffix(".gamma") { return (name, value.reshaped([-1])) }
+            if value.ndim == 5 { return (name, value.transposed(0, 2, 3, 4, 1)) }
+            if value.ndim == 4 { return (name, value.transposed(0, 2, 3, 1)) }
+            return (name, value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let latent = net.encode(video); eval(latent)
+        let latentSimilarity = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY wan-vae-21: latent cosine \(latentSimilarity)")
+        XCTAssertGreaterThan(latentSimilarity, 0.9999, "the 2.1 encoded latent matches the reference")
+
+        let decoded = net.decode(referenceLatent.expandedDimensions(axis: 0)); eval(decoded)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY wan-vae-21: decode cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the 2.1 decode matches the reference")
+    }
+
+    // MARK: DPM-Solver++ (SANA's sampler)
+
+    // SANA's released DPMSolverMultistepScheduler in its flow-prediction configuration, against diffusers'
+    // own, over a fixed velocity sequence (no model). The sigma schedule is checked exactly; the sample
+    // trajectory is checked step by step, so the flow→x0 conversion and the first/second-order multistep
+    // updates are all covered.
+    func testDPMSolverSchedulerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DPM_SOLVER"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DPM_SOLVER (run_reference.py dpm_solver)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceSigmas = try XCTUnwrap(arrays["sigmas"]).asArray(Float.self)
+        let referenceTimesteps = try XCTUnwrap(arrays["timesteps"]).asArray(Float.self)
+        let initial = try XCTUnwrap(arrays["initial"])
+        let velocities = try XCTUnwrap(arrays["velocities"])                // [steps, ...]
+        let trajectory = try XCTUnwrap(arrays["trajectory"])               // [steps, ...]
+        let steps = referenceTimesteps.count
+
+        var scheduler = NFKMLXDPMSolverScheduler(.sana)
+        scheduler.setTimesteps(steps)
+
+        let sigmaError = zip(scheduler.sigmas, referenceSigmas).map { abs($0 - $1) }.max() ?? 0
+        let timestepError = zip(scheduler.timesteps, referenceTimesteps).map { abs($0 - $1) }.max() ?? 0
+        print("VALIDATION PARITY dpm-solver: worst sigma \(sigmaError), worst timestep \(timestepError)")
+        XCTAssertLessThan(sigmaError, 1e-4, "the sigma schedule matches the reference")
+        XCTAssertLessThan(timestepError, 1e-3, "the timesteps match the reference")
+
+        var sample = initial
+        var worst = 0.0
+        for i in 0 ..< steps {
+            sample = scheduler.step(velocity: velocities[i], sample: sample, index: i)
+            eval(sample)
+            let reference = trajectory[i].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let mine = sample.reshaped([-1]).asArray(Float.self).map(Double.init)
+            worst = max(worst, zip(mine, reference).map { abs($0 - $1) }.max() ?? 0)
+        }
+        print("VALIDATION PARITY dpm-solver: worst trajectory |difference| \(worst)")
+        XCTAssertLessThan(worst, 1e-4, "the sample trajectory matches the reference DPM-Solver++")
+    }
+
+    // MARK: UniPC (Wan's sampler)
+
+    // Wan's released UniPCMultistepScheduler in its flow-prediction configuration, against diffusers' own,
+    // over a fixed velocity sequence. The sigma schedule is exact and the sample trajectory is checked
+    // step by step, so the predictor, the corrector, and the order warm-up are all covered.
+    func testUniPCSchedulerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_UNIPC"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_UNIPC (run_reference.py unipc)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceSigmas = try XCTUnwrap(arrays["sigmas"]).asArray(Float.self)
+        let initial = try XCTUnwrap(arrays["initial"])
+        let velocities = try XCTUnwrap(arrays["velocities"])
+        let trajectory = try XCTUnwrap(arrays["trajectory"])
+        let steps = try XCTUnwrap(arrays["timesteps"]).asArray(Float.self).count
+
+        var scheduler = NFKMLXUniPCScheduler(.wan)
+        scheduler.setTimesteps(steps)
+        let sigmaError = zip(scheduler.sigmas, referenceSigmas).map { abs($0 - $1) }.max() ?? 0
+        XCTAssertLessThan(sigmaError, 1e-4, "the sigma schedule matches the reference")
+
+        var sample = initial
+        var worst = 0.0
+        for i in 0 ..< steps {
+            sample = scheduler.step(velocity: velocities[i], sample: sample, index: i)
+            eval(sample)
+            let reference = trajectory[i].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let mine = sample.reshaped([-1]).asArray(Float.self).map(Double.init)
+            worst = max(worst, zip(mine, reference).map { abs($0 - $1) }.max() ?? 0)
+        }
+        print("VALIDATION PARITY unipc: worst sigma \(sigmaError), worst trajectory |difference| \(worst)")
+        XCTAssertLessThan(worst, 1e-4, "the sample trajectory matches the reference UniPC")
+    }
+
+    // MARK: Gemma 2 (SANA's text encoder)
+
+    // The Gemma-2 text decoder at a tiny random configuration, against transformers' Gemma2Model. The
+    // small sliding window makes the alternating sliding/full layers differ, so the soft-capped GQA, the
+    // sandwich norms, and the (1+w) RMS are all covered. Module keys are the checkpoint's, no transpose.
+    func testGemma2MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA2"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_GEMMA2 (run_reference.py gemma2)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asType(.int32)
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXGemma2Net(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let output = net(tokens); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma2: last hidden cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the last hidden state matches the reference Gemma2Model")
+    }
+
+    // MARK: umT5 (Wan's text encoder)
+
+    // umT5 at a tiny random configuration, against transformers' UMT5EncoderModel. umT5 differs from plain
+    // T5 in giving every layer its own relative-position bias, which this exercises; the module keys are
+    // the checkpoint's (each block carries a bias table), no transpose.
+    func testUMT5MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_UMT5"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_UMT5 (run_reference.py umt5)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asType(.int32).reshaped([1, -1])
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXT5Encoder.makeNet(.tinyUMT5)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let output = net(tokens); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY umt5: text embedding cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the text embedding matches the reference umT5 encoder")
+    }
+
     // MARK: The models validated by eye
 
     // These four ran end to end on real weights and looked right, which is exactly the evidence that

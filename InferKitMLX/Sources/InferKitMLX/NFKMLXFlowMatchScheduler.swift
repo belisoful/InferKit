@@ -35,6 +35,22 @@ public struct NFKMLXFlowMatchConfiguration: Sendable {
     }
 
     public static let ltxVideo = NFKMLXFlowMatchConfiguration()
+
+    /// Z-Image's schedule: a smaller resolution shift, no terminal stretch (its `sigma_min` is 0).
+    public static let zImage = NFKMLXFlowMatchConfiguration(
+        baseShift: 0.5, maxShift: 1.15, baseSequenceLength: 256, maxSequenceLength: 4096,
+        shiftTerminal: nil, useDynamicShifting: true)
+
+    /// A static-shift flow schedule at SANA's `flow_shift` (3.0). SANA's released sampler is a
+    /// `DPMSolverMultistepScheduler` (flow prediction); this is the rectified-flow stand-in the pipeline
+    /// glue runs, the way the LTX pipeline substitutes DDIM for SDXL-Turbo's named sampler.
+    public static let sana = NFKMLXFlowMatchConfiguration(
+        baseShift: 3.0, shiftTerminal: nil, useDynamicShifting: false)
+
+    /// A static-shift flow schedule at Wan's `flow_shift` (5.0). Wan's released sampler is a
+    /// `UniPCMultistepScheduler`; this is the rectified-flow stand-in the pipeline glue runs.
+    public static let wan = NFKMLXFlowMatchConfiguration(
+        baseShift: 5.0, shiftTerminal: nil, useDynamicShifting: false)
 }
 
 /// A rectified-flow sampler.

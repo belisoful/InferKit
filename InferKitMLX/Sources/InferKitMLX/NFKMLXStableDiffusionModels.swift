@@ -136,6 +136,12 @@ public struct NFKMLXSDVAEConfiguration: Sendable {
     /// Multiplies an encoded latent (and divides before decoding) so its variance suits the UNet —
     /// the diffusers `scaling_factor`, which each release trains with.
     public var scaleFactor: Float = 0.18215
+    /// Added before decoding (and subtracted after encoding) — the diffusers `shift_factor`. The
+    /// Flux-family autoencoders center their latents; the Stable Diffusion ones leave it at zero.
+    public var shiftFactor: Float = 0.0
+    /// Whether the `1×1` `quant_conv` / `post_quant_conv` are present. Stable Diffusion keeps them; the
+    /// Flux-family autoencoders drop both, so the encoder's `conv_out` is the moments directly.
+    public var useQuantConv: Bool = true
 
     public init() {}
 
@@ -146,6 +152,17 @@ public struct NFKMLXSDVAEConfiguration: Sendable {
         var c = NFKMLXSDVAEConfiguration()
         c.blockChannels = [128, 256, 512]
         c.scaleFactor = 0.08333
+        return c
+    }()
+
+    /// The Flux autoencoder Z-Image encodes into: 16 latent channels, no quant convolutions, and a
+    /// centering shift. Architecturally the same `AutoencoderKL` as Stable Diffusion's.
+    public static let flux: NFKMLXSDVAEConfiguration = {
+        var c = NFKMLXSDVAEConfiguration()
+        c.latentChannels = 16
+        c.scaleFactor = 0.3611
+        c.shiftFactor = 0.1159
+        c.useQuantConv = false
         return c
     }()
 }
@@ -814,8 +831,8 @@ final class NFKSDVAEDecoder: Module {
 public final class NFKMLXSDAutoencoder: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKSDVAEEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKSDVAEDecoder
-    @ModuleInfo(key: "quant_conv") var quantConv: Conv2d
-    @ModuleInfo(key: "post_quant_conv") var postQuantConv: Conv2d
+    @ModuleInfo(key: "quant_conv") var quantConv: Conv2d?
+    @ModuleInfo(key: "post_quant_conv") var postQuantConv: Conv2d?
 
     public let configuration: NFKMLXSDVAEConfiguration
 
@@ -823,24 +840,32 @@ public final class NFKMLXSDAutoencoder: Module {
         self.configuration = configuration
         self._encoder.wrappedValue = NFKSDVAEEncoder(configuration)
         self._decoder.wrappedValue = NFKSDVAEDecoder(configuration)
-        self._quantConv.wrappedValue = Conv2d(inputChannels: 2 * configuration.latentChannels,
-                                              outputChannels: 2 * configuration.latentChannels,
-                                              kernelSize: 1)
-        self._postQuantConv.wrappedValue = Conv2d(inputChannels: configuration.latentChannels,
-                                                  outputChannels: configuration.latentChannels,
+        if configuration.useQuantConv {
+            self._quantConv.wrappedValue = Conv2d(inputChannels: 2 * configuration.latentChannels,
+                                                  outputChannels: 2 * configuration.latentChannels,
                                                   kernelSize: 1)
+            self._postQuantConv.wrappedValue = Conv2d(inputChannels: configuration.latentChannels,
+                                                      outputChannels: configuration.latentChannels,
+                                                      kernelSize: 1)
+        } else {
+            self._quantConv.wrappedValue = nil
+            self._postQuantConv.wrappedValue = nil
+        }
     }
 
     /// The latent distribution's mean and log-variance, each `[batch, height/8, width/8, latent]`.
     /// A caller that wants the deterministic latent takes the mean.
     public func encode(_ image: MLXArray) -> (mean: MLXArray, logVariance: MLXArray) {
-        let moments = quantConv(encoder(image))
+        var moments = encoder(image)
+        if let quantConv {
+            moments = quantConv(moments)
+        }
         let latent = configuration.latentChannels
         return (moments[.ellipsis, 0 ..< latent], moments[.ellipsis, latent ..< (2 * latent)])
     }
 
     public func decode(_ latent: MLXArray) -> MLXArray {
-        decoder(postQuantConv(latent))
+        decoder(postQuantConv?(latent) ?? latent)
     }
 }
 

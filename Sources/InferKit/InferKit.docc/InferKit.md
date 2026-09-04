@@ -64,8 +64,35 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKCoreMLBackend``
 - ``NFKCoreMLLanguageBackend``
 - ``NFKRemoteBackend``
+- ``NFKRemoteEmbeddingBackend``
+- ``NFKRemoteSpeechBackend``
+- ``NFKRemoteImageBackend``
 - ``NFKRemoteTranscriptionBackend``
 - ``NFKAsyncGenerationBackend``
+
+### Remote providers
+
+- ``NFKRemoteProvider``
+- ``NFKRemoteModelCatalog``
+- ``NFKRemoteModel``
+- ``NFKRemoteTransport``
+
+### Local runners
+
+- ``NFKLocalModelRunner``
+- ``NFKOllamaRunner``
+- ``NFKLMStudioRunner``
+
+### More remote services
+
+- ``NFKRemoteVideoBackend``
+- ``NFKRemoteModerationBackend``
+- ``NFKRemoteReranker``
+
+### Media coding
+
+- ``NFKImageCoding``
+- ``NFKVideoSampling``
 
 ### Dynamic discovery
 

@@ -323,9 +323,127 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKTokenizer.bytesForTokenId:` returns the bytes one id contributes to decoded text (a fragment of
   a multi-byte character as that fragment, a special token as its literal), implemented by the
   byte-level BPE, unigram, and word-piece tokenizers.
+- Remote model discovery. `NFKRemoteProvider.modelsWithAPIKey:error:` (and a completion-handler form)
+  lists the models a provider currently serves as `NFKRemoteModel`s (identifier, display name, owner,
+  creation time, and context length where the provider publishes them, plus the entry as received),
+  so an app fills a picker from the server rather than from a constant. Every preset answers the
+  same `data[].id` envelope, hosted and local alike; the credential travels in the provider's own
+  header style, and Anthropic's pagination is followed to the end. `NFKRemoteModelCatalog` is the
+  object under the convenience, with a timeout, a session, `isReachableWithError:`, and the
+  overridable transport seam the other remote classes carry.
+- `NFKRemoteProvider.baseURL` is the one address a preset carries; `endpointURL` and `modelsURL` are
+  derived from it, and `URLForPath:` builds any other operation's URL. `providerWithBaseURL:` re-points
+  a preset at another port or another machine, keeping its identity, protocol, and key requirement.
+- `NFKRemoteTransport` holds the blocking request, the per-style credential headers, and the
+  status-to-error mapping the chat, Anthropic, transcription, and catalog classes each carried a copy
+  of. Each class keeps its own `sendRequest:response:error:` seam, delegating there by default.
+- `kNFKError_RemoteUnreachable`: a remote endpoint produced no response at all (the host is down or
+  refused the connection), with the URL-loading error under `NSUnderlyingErrorKey`. A local runner that
+  is not running is now told apart from one that answered with an error or an empty list.
+- `NFKRemoteEmbeddingBackend`, the embeddings counterpart of the chat client (`POST /embeddings`, which
+  the hosted providers and every local runner serve): `NFKInputPrompt` (or joined `NFKInputMessages`)
+  in, the vector under `NFKOutputEmbedding` out, the key the on-device embedders in InferKitMLX
+  answer with. `embeddingsForTexts:error:` embeds a batch in one request, ordered by the provider's
+  index rather than by arrival. `backendForProvider:apiKey:modelName:` derives the endpoint and
+  answers nil for Anthropic, which serves none.
+- Local-runner management. `NFKLocalModelRunner` is the shape a runner's native API is reached
+  through — `isRunning`, `installedModelsWithError:`, `loadedModelsWithError:`,
+  `detailsForModel:error:`, and the optional `versionWithError:`, `pullModel:`, and
+  `deleteModel:error:` that change the machine — and `-[NFKRemoteProvider localRunner]` hands back
+  the adapter for a preset. `NFKOllamaRunner` adopts the whole set over `/api/tags`, `/api/ps`,
+  `/api/show`, `/api/version`, `/api/pull`, and `/api/delete`; the pull is streamed as an
+  `NFKInferenceJob` with the layer fraction as progress, the runner's status line as `partialResult`,
+  and cancellation. `NFKLMStudioRunner` adopts the reading set over `/api/v0/models`, whose entries
+  carry the loaded state. llama.cpp and vLLM have nothing beyond the OpenAI surface, so their presets
+  answer nil. Measured against Ollama 0.33: the installed list already carries each model's context
+  length, quantization, and capabilities, and a failing pull answers HTTP 200 with the failure in an
+  error line inside the stream, which the job reads rather than trusting the status.
+- `NFKRemoteModel` gains `sizeBytes`, `quantization`, and `capabilities`, read where a runner reports
+  them, and takes its identifier from `model` or `name` where a list carries no `id`.
+  `NFKRemoteModelCatalog.modelWithIdentifier:error:` reads one model (`GET /models/{id}`), which
+  answers 404 for a name the provider does not know.
+- `NFKRemoteSpeechBackend` (text → speech, `POST /audio/speech`): `NFKInputPrompt` in, an
+  `NFKAudioAsset` under `NFKOutputAudio` out, a WAV by default so it is interchangeable with what
+  `NFKMLXSpeechBackend` writes; the voice is required and has no default. Verified by probe to be
+  served by openai, groq, together, xai, mistral, and openrouter.
+- `NFKRemoteImageBackend` (`POST /images/generations` and `/images/edits`): a prompt alone generates,
+  an image under `NFKInputImage` edits it (a multipart body carrying the image as PNG), and a mask
+  under `NFKInputMask` inpaints — the operation chosen from the request the way `NFKMLXBackend`
+  chooses. `NFKParameterWidth`/`Height` become the service's size, seed and steps pass through, and an
+  inline base64 reply or a URL the backend fetches both decode to a 32BGRA `CVPixelBuffer` under
+  `NFKOutputImage`. Generations verified for openai, together, xai, and openrouter; edits for openai
+  and xai. This is the synchronous shape; `NFKAsyncGenerationBackend` remains the job-style one.
+- Vision through the chat backends. An image under `NFKInputImage` beside a prompt or a conversation
+  rides on the last user turn: `NFKRemoteBackend` sends it as an inline `image_url` content part
+  (base64 PNG), which the OpenAI-compatible vision models read, the local runners' included —
+  measured against Ollama with `qwen3.5:27b` — and `NFKAnthropicBackend` as a base64 `image` block
+  before the text. An image that is not one of the accepted representations is refused before any
+  request as `kNFKError_InferenceMissingInput`.
+- `NFKImageCoding`, the public codec under the above: PNG bytes or a data URL from a `CGImage`, a
+  32BGRA/32RGBA `CVPixelBuffer`, or a BGRA8/RGBA8 `MTLTexture`, and a 32BGRA pixel buffer back from
+  any format ImageIO reads. The core now links ImageIO.
+- The chat backends stream. `submitInferenceJobForRequest:` on `NFKRemoteBackend` and
+  `NFKAnthropicBackend` sends the request with streaming on and reads the reply as server-sent
+  events: each text delta appends to the job's `partialResult`, a tool call assembles across its
+  argument deltas, and the job finishes with the same result the blocking form returns.
+  **Cancelling the job cancels the request**, where the generic wrapper let a cancelled remote call
+  run to the end on the server. `NFKInferenceSubmit` reaches the streamed form. Measured against a
+  live Ollama: the text arrives in more than one piece and the last partial is the final text.
+- Tool calling and structured output over remote. `NFKParameterTools` (`{name, description,
+  parameters}`) becomes OpenAI `function` tools or Anthropic's tool shape; what the model called comes
+  back under `NFKOutputToolCalls` (`result.toolCalls`: `{id, name, arguments, argumentsJSON}`, the
+  arguments parsed). `NFKParameterJSONSchema` becomes a `json_schema` response format, or on Anthropic
+  a forced tool whose input is the reply, and the parsed reply comes back under `NFKOutputStructured`;
+  a `response_format` folded in by name is parsed the same way. A tool already in a provider's wire
+  shape passes through unwrapped. Measured against a live Ollama: `qwen3.5:27b` calls `get_weather`
+  with `{"city": "Paris"}`.
+- `NFKInputImages` carries further images beside `NFKInputImage`, attached in order.
+- `NFKRemoteTransport` retries a blocking call on 429, 502, 503, or 504 after the provider's
+  `Retry-After` or an exponential delay from half a second, `retryAttempts` (default 2) more times and
+  never after a delay above `maximumRetryDelay` (default 8 s); a refused connection is not retried.
+  `streamRequest:session:lineHandler:completionHandler:` is the line-delimited streaming primitive the
+  chat backends and the Ollama pull share, delivering a failing status's body whole; `SSEDataForLine:`
+  reads a server-sent-events data line.
+- More directions in and out of the chat backends. `NFKInputAudio` beside the prompt is sent as an
+  `input_audio` part (the Messages API refuses audio rather than dropping it); `NFKInputDocument` and
+  `NFKInputDocuments` (PDFs, as an NSURL or NSData) as `file` parts or `document` blocks;
+  `NFKInputVideo` is sampled into `NFKParameterVideoFrameCount` evenly spaced frames (default 8) for
+  a vision model, on both backends — measured against a live Ollama, which names the colours of a
+  sampled clip. `NFKParameterAudioOutput` (`{voice, format}`) asks an OpenAI-compatible model to
+  speak its reply, returned as an `NFKAudioAsset` under `NFKOutputAudio` beside the text, its chunks
+  assembled when streamed.
+- `NFKVideoSampling`, the public piece under the clip input: `framesOfVideoAtURL:count:error:`
+  returns evenly spaced `CGImage`s through AVFoundation, which the core now links. A sample is taken
+  a millisecond into the frame its midpoint falls in rather than on a frame edge, and a decode
+  session that comes up broken is recreated once — measured: right after a large model had
+  occupied the GPU, the hardware decoder reported `kVTVideoDecoderMalfunctionErr` after a
+  four-minute timeout, and the next session decoded correctly.
+- `NFKRemoteTranscriptionBackend.emitsTimestamps` asks for the verbose reply and adds its segments
+  under `NFKOutputSegments` as `NFKAudioSegment`s (confidence from the decoder's mean log
+  probability), which is what the on-device Whisper backend emits; `translates` sends the audio to
+  the sibling `/audio/translations` endpoint for an English transcript. `backendForProvider:apiKey:
+  modelName:` derives the endpoint.
+- `NFKRemoteVideoBackend`, the first shipped `NFKAsyncGenerationBackend`: OpenAI's videos API
+  (verified by probe; no other preset serves one) as submit, poll, and download. A prompt, or a
+  prompt with `NFKInputImage` as the reference frame (a multipart submit), `NFKParameterDurationSeconds`
+  and the size; the service's percentage progress becomes the job's fraction, and the finished clip
+  is downloaded as an `.mp4` `NFKVideoAsset` under `NFKOutputVideo`. The base gained two hooks:
+  `submitRequestForRequest:` (a subclass building a multipart submit) and
+  `failureReasonFromStatusResponse:` (the service's own message in the job's error).
+- `NFKRemoteReranker`: query and documents → one relevance score each (`POST /rerank`; verified on
+  together and openrouter), put back in the documents' order; `rankedIndicesForQuery:documents:error:`
+  and `scoreForQuery:document:error:` beside it, the shape of the on-device `NFKMLXModernBERTReranker`.
+- `NFKRemoteModerationBackend` (`POST /moderations`; verified on openai and mistral): text, and an
+  image where the service reads one, → per-category `NFKClassification`s under
+  `NFKOutputClassifications`, most confident first, and the verdict under `NFKOutputStructured`
+  (`flagged`).
 
 ### Changed
 
+- The remote backends report a connection-level failure as `kNFKError_RemoteUnreachable` in
+  `NFKInferenceErrorDomain` where they previously passed the `NSURLErrorDomain` error through; that
+  error is now the underlying one. A failing HTTP status carries the response body in its description
+  for every remote backend, where only the Anthropic backend included it before.
 - `NFKMLXLanguage.backend(directoryURL:)` now reads the release's special tokens and `eos_token` from
   `tokenizer_config.json`. A ChatML marker encodes to its single id where it previously encoded as
   plain text, and generation stops at the release's end-of-sequence token when a request names no

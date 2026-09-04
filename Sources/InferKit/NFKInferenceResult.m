@@ -46,6 +46,12 @@
 	return [value isKindOfClass:NSDictionary.class] ? value : nil;
 }
 
+- (nullable NSArray<NSDictionary<NSString *, id> *> *)toolCalls
+{
+	id value = _outputs[NFKOutputToolCalls];
+	return [value isKindOfClass:NSArray.class] ? value : nil;
+}
+
 - (nullable NSArray<NSNumber *> *)embedding
 {
 	id value = _outputs[NFKOutputEmbedding];

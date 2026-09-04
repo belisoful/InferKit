@@ -97,6 +97,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let detected = try yolo.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32)]))
         XCTAssertNotNil(detected.detections, "detections (possibly empty)")
 
+        // RT-DETR: the license-clean (Apache-2.0) detector — same NFKOutputDetections contract, no NMS.
+        let rtdetr = try NFKMLXRTDetr.backend(weightsURL: nil, labels: nil)
+        let rtDetected = try rtdetr.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(rtDetected.detections, "detections (possibly empty)")
+
         // Pose returns NFKKeypoint joints under NFKOutputPose; positions are normalized 0…1.
         let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: nil)
         let estimated = try pose.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(48)]))
@@ -352,6 +357,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         let tts = NFKMLXTTS(phonemizer: NFKMLXNeuralG2P(), symbols: (0 ..< 40).map { "p\($0)" })
         let speech = tts.makeSpeechBackend()                     // reads NFKInputPrompt, writes a WAV NFKAudioAsset
         XCTAssertEqual(speech.backendIdentifier, "tts")
+
+        // Kokoro-82M (StyleTTS2 / iSTFTNet): a phoneme string + a voicepack row → a 24 kHz waveform. Run
+        // here with random weights to exercise the whole pipeline (PL-BERT → duration → F0/N → iSTFTNet).
+        let kokoro = NFKMLXKokoroNet(.v1)
+        let voice = MLXArray.zeros([512, 1, 256]) + 0.01
+        var vocab = [String: Int]()
+        for scalar in "hɛloʊwɜld ".unicodeScalars { vocab[String(scalar)] = Int(scalar.value) % 170 + 1 }
+        let kokoroAudio = kokoro.synthesize(phonemes: "hɛloʊ wɜld", voice: voice, vocab: vocab)
+        XCTAssertGreaterThan(kokoroAudio.dim(0), 0, "Kokoro produces a waveform")
 
         // MiniMax Music 3: a music description under NFKInputPrompt and lyrics under NFKInputLyrics
         // become a stereo 44.1 kHz clip. The stack is 27 GB of separately licensed weights, so the

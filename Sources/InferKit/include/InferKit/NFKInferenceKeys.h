@@ -35,6 +35,15 @@ extern NSString * const NFKInputNegativePrompt;
 extern NSString * const NFKInputImage;
 /*! The inpaint or region mask (CVPixelBuffer or texture). */
 extern NSString * const NFKInputMask;
+/*! Further images beside NFKInputImage (NSArray of CGImage, CVPixelBuffer, or texture), for a question
+	over several frames. A vision backend attaches them in order after NFKInputImage. Introduced in
+	InferKit 0.3.0. */
+extern NSString * const NFKInputImages;
+/*! A document for a text model to read (an NSURL to a PDF file, or NSData holding one). A chat backend
+	attaches it to the user turn in its provider's document shape. Introduced in InferKit 0.3.0. */
+extern NSString * const NFKInputDocument;
+/*! Further documents beside NFKInputDocument (NSArray of NSURL or NSData). Introduced in InferKit 0.3.0. */
+extern NSString * const NFKInputDocuments;
 /*! A control map that conditions generation (a ControlNet input: edges, depth, pose, a scribble),
 	CVPixelBuffer or texture. Distinct from NFKInputImage (the base/source) and NFKInputMask. */
 extern NSString * const NFKInputControl;
@@ -64,6 +73,21 @@ extern NSString * const NFKParameterStrength;
 extern NSString * const NFKParameterWidth;
 /*! The output height in pixels (NSNumber). */
 extern NSString * const NFKParameterHeight;
+/*! The tools a text model may call (NSArray of NSDictionary), each {name, description, parameters}
+	with parameters a JSON Schema object. A backend wraps them in its provider's wire shape and returns
+	what the model called under NFKOutputToolCalls. Introduced in InferKit 0.3.0. */
+extern NSString * const NFKParameterTools;
+/*! A JSON Schema (NSDictionary) the text reply must conform to. The backend asks the provider for it
+	in the provider's way and returns the parsed reply under NFKOutputStructured. Introduced in
+	InferKit 0.3.0. */
+extern NSString * const NFKParameterJSONSchema;
+/*! How many frames a chat backend samples from NFKInputVideo, evenly spaced, to show a vision model
+	(NSNumber; default 8). Introduced in InferKit 0.3.0. */
+extern NSString * const NFKParameterVideoFrameCount;
+/*! Asks a chat model to answer in speech as well as text (NSDictionary {voice, format}; format wav by
+	default). The spoken reply comes back as an NFKAudioAsset under NFKOutputAudio beside the text.
+	Introduced in InferKit 0.3.0. */
+extern NSString * const NFKParameterAudioOutput;
 /*! The number of outputs to generate (NSNumber). */
 extern NSString * const NFKParameterSampleCount;
 /*! The number of video frames to generate (NSNumber). */
@@ -115,6 +139,10 @@ extern NSString * const NFKOutputStructured;
     text into a shared representation. An encoder that L2-normalizes returns a unit vector, so a
     consumer compares two embeddings by dot product. */
 extern NSString * const NFKOutputEmbedding;
+/*! The tool calls a text model made (NSArray of NSDictionary), each {id, name, arguments} with
+	arguments the parsed argument object, beside argumentsJSON, the provider's own text of it. Present
+	only when the model called a tool. Introduced in InferKit 0.3.0. */
+extern NSString * const NFKOutputToolCalls;
 /*! Detected objects (NSArray<NFKDetection *>), for an object-detection backend. Each box is normalized
     to the input image. */
 extern NSString * const NFKOutputDetections;

@@ -85,7 +85,10 @@
 			return;
 		}
 		if ([self isFailedStatusResponse:statusResponse]) {
-			[job finishWithError:[self errorWithReason:@"the generation job failed"]];
+			NSString *reason = [self failureReasonFromStatusResponse:statusResponse];
+			[job finishWithError:[self errorWithReason:reason.length > 0
+								  ? [@"the generation job failed: " stringByAppendingString:reason]
+								  : @"the generation job failed"]];
 			return;
 		}
 		if ([self isSucceededStatusResponse:statusResponse]) {
@@ -198,6 +201,15 @@
 {
 	NSString *status = [response[@"status"] isKindOfClass:NSString.class] ? response[@"status"] : nil;
 	return [status isEqualToString:@"failed"] || [status isEqualToString:@"error"];
+}
+
+- (nullable NSString *)failureReasonFromStatusResponse:(NSDictionary *)response
+{
+	id error = response[@"error"];
+	if ([error isKindOfClass:NSDictionary.class] && [error[@"message"] isKindOfClass:NSString.class]) {
+		return error[@"message"];
+	}
+	return [error isKindOfClass:NSString.class] ? error : nil;
 }
 
 - (nullable NFKInferenceResult *)resultFromStatusResponse:(NSDictionary *)response

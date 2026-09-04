@@ -46,7 +46,7 @@ public struct NFKMLXLTXTransformerConfiguration: Sendable {
 }
 
 /// The sinusoidal timestep embedding diffusers' `Timesteps(256, flip_sin_to_cos, shift 0)` produces.
-private func ltxTimestepEmbedding(_ timesteps: MLXArray, channels: Int = 256) -> MLXArray {
+func ltxTimestepEmbedding(_ timesteps: MLXArray, channels: Int = 256) -> MLXArray {
     let half = channels / 2
     let exponent = -log(10000.0) * MLXArray(0 ..< half).asType(.float32) / Float(half)
     let emb = timesteps.reshaped([-1, 1]).asType(.float32) * exp(exponent).reshaped([1, -1])

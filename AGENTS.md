@@ -294,10 +294,190 @@ preset was added (a 401 or 405 without credentials is what confirms the path).
 
 **No preset carries a default model name.** Model identifiers change faster than a release does, and a
 stale default fails at the first call with a message about the model rather than about the default.
-Each provider's `modelsURL` is where its list lives. Readiness is not the same question:
+**The provider's own list is the source instead**: `modelsWithAPIKey:error:` (and a completion-handler
+form at user-initiated QoS) returns `NFKRemoteModel`s — identifier, display name, and where the
+provider publishes them `ownedBy` / `createdAt` / `contextLength`, with the entry kept under `raw`.
+Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
+thirteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
+`after_id`, page size raised to 1000 from its default 20), which the catalog follows to the end. The
+list is deliberately NOT filtered to chat models: the envelope carries no capability field, so any
+filter would be a name heuristic that breaks on the next release. `NFKRemoteModelCatalog` is the
+object under the convenience (timeout, session, `isReachableWithError:`, and the overridable
+`sendRequest:` seam the tests stub). Readiness is not the same question:
 `NFKAnthropicBackend` reports not-ready without a model because the API requires one, while an
 OpenAI-compatible backend is ready with an endpoint alone, which **llama.cpp depends on** — its server
 answers for whatever model it has loaded.
+
+**A preset carries ONE address, `baseURL`, and derives the rest** (`endpointURL` = base +
+`/chat/completions`, or `/messages` for Anthropic; `modelsURL` = base + `/models`; `URLForPath:` for
+anything else, joining with exactly one slash). The bases differ per provider in ways a caller should
+not have to know (Gemini's is `/v1beta/openai`, Groq's `/openai/v1`, OpenRouter's `/api/v1`), and the
+derivation reproduces the literals the presets carried before, asserted by
+`testEveryOperationURLIsDerivedFromTheBase`. `providerWithBaseURL:` re-points a preset — Ollama on
+another port, or on a LAN machine — keeping its identity, protocol, and key requirement.
+
+**`NFKRemoteTransport` is the shared plumbing** the chat, Anthropic, transcription, and catalog classes
+used to each carry a copy of: the semaphore-blocked send, `authorizeRequest:apiKey:style:` (Bearer,
+or `x-api-key` + `anthropic-version`), and `errorForResponse:data:` (a non-2xx status becomes
+`kNFKError_InferenceBackendFailure` carrying the body, which is where a provider explains a rejected key
+or an unknown model). Each class keeps its own `sendRequest:response:error:` override seam delegating
+there, so a test stubs one class without touching the others. **A failure that produced no response
+at all is `kNFKError_RemoteUnreachable`** with the URL-loading error under `NSUnderlyingErrorKey` — a
+runner that is not running is a different answer from one that answered with an error or an empty
+list, and an app shows "start Ollama" on that code. It is measured against a refused connection on the
+discard port (`testTheTransportReportsARefusedConnectionAsUnreachable`), not stubbed.
+
+**`NFKRemoteEmbeddingBackend` is the embeddings counterpart** (`POST /embeddings`, every preset but
+Anthropic): `NFKInputPrompt` or joined `NFKInputMessages` → `NFKOutputEmbedding`, the key the MLX
+embedders answer with, so a consumer's search code is engine-agnostic. `embeddingsForTexts:error:`
+batches, **ordered by the provider's `index` rather than by arrival** (measured: a stub returning
+index 1 before index 0 comes back in text order). `backendForProvider:apiKey:modelName:` answers nil
+for Anthropic — it imports to Swift as the failable initializer `NFKRemoteEmbeddingBackend(for:apiKey:modelName:)`,
+which the Swift example pins.
+
+**The local runners' native APIs are a second surface, and they are built** (`NFKLocalModelRunner`,
+`-[NFKRemoteProvider localRunner]` — a PROPERTY, so Swift reads `.localRunner`; as a method it imported
+as a function value and `runner?.x` failed to compile). The OpenAI endpoints say nothing about what is
+installed, loaded, how large, or how to get one; the protocol's required set reads (`isRunning`,
+`installedModelsWithError:`, `loadedModelsWithError:`, `detailsForModel:error:`) and its `@optional`
+set changes the machine (`versionWithError:`, `pullModel:` → `NFKInferenceJob`, `deleteModel:error:`),
+so an adapter adopts only what its runner has and a caller checks `respondsToSelector:` before
+offering a button. `NFKOllamaRunner` adopts everything; `NFKLMStudioRunner` the reading set over
+`/api/v0/models` (entries carry `state: loaded`, `type`, `quantization`, `max_context_length`; LM
+Studio was NOT running here, so its shapes are its documented v0 REST API, stub-tested only);
+llama.cpp and vLLM answer nil (nothing beyond the OpenAI surface to adapt — `/health` is what
+`isReachableWithError:` already answers via `/v1/models`). The native base is the provider's base
+minus `/v1` (`NFKLocalRunnerNativeBase`, private `NFKLocalRunnerSupport.h`), so a re-based preset
+keeps its runner.
+**Measured against a live Ollama 0.33.2**, read-only plus a pull/delete of a nonexistent name
+(`testALiveOllamaAnswersItsNativeAPI`, gated on `INFERKIT_LIVE_LOCAL_MODEL`): `/api/tags` ALREADY
+carries `details.context_length`, `details.quantization_level`, and `capabilities` per model, so a
+picker fills in one call with no `/api/show` per model; `/api/show` carries no id and keys the context
+length by architecture inside `model_info` (`gptoss.context_length`), which the adapter lifts to where
+`NFKRemoteModel` reads it; **and a failing `/api/pull` answers HTTP 200** with `{"error":…}` as a line
+INSIDE the NDJSON stream, so the pull job reads every line and treats an error line as failure and
+`status: success` as completion — trusting the status code would report a failed pull as success. The
+stream seam is `streamRequest:lineHandler:completionHandler:cancellation:` (overridable; the stub feeds
+staged lines), distinct from `sendRequest:` because a streamed body cannot go through a blocking send.
+`NFKRemoteModel` gained `sizeBytes` / `quantization` / `capabilities` and takes its id from `model` or
+`name` where a list carries no `id` (Ollama's). **A colon is legal in a URL path segment and is how
+Ollama spells a tag** (`llama3.2:latest`), but Foundation's `URLPathAllowedCharacterSet` encodes it to
+`%3A`; `modelWithIdentifier:` and the LM Studio detail add `:` to the allowed set, pinned by a test.
+**Two hazards from this round:** an `@[ a, b ]` literal inside an `XCTAssert…` macro argument splits
+the macro on its comma unless the whole expression is parenthesized; and adjacent string-literal
+concatenation as a DIRECT element of an `@[ ]`/`@{ }` literal raises `-Wobjc-string-concatenation`
+(parenthesize the element) — four of those had shipped in the catalog tests a round earlier because a
+`tail` on the test log hid them. Grep the log for `warning:` without a tail.
+
+**The remaining modalities have remote backends, so every on-device direction has a hosted
+counterpart on the same key** (`NFKRemoteSpeechBackend` → `NFKOutputAudio` as an `NFKAudioAsset`, WAV
+by default to match `NFKMLXSpeechBackend`; `NFKRemoteImageBackend` → 32BGRA `CVPixelBuffer` under
+`NFKOutputImage`, choosing generations / edits / inpaint from `NFKInputImage` + `NFKInputMask` exactly
+as `NFKMLXBackend` chooses; vision rides through the EXISTING chat backends — `NFKRemoteBackend` attaches
+`NFKInputImage` to the last user turn as an inline `image_url` content part, `NFKAnthropicBackend` as a
+base64 `image` block before the text). **Which presets serve which path was measured by probe, and the
+probe needs a control**: a `401` on a host that walls EVERY path (DeepSeek answers 401 to
+`/v1/nonesuch` too) proves nothing, so each host was also sent a nonsense path — served means the real
+path answers 401/422/validation while the nonsense path 404s. Speech: openai, groq, together, xai,
+mistral, openrouter. Generations: openai, together, xai, openrouter. Edits: openai, xai. Gemini's
+OpenAI layer and all four local runners serve none; DeepSeek is undeterminable. Recorded on each
+factory's `@discussion`. **Vision is measured live** (`testALocalVisionModelSeesTheImage`, gated on
+`INFERKIT_LIVE_VISION_MODEL`): Ollama `qwen3.5:27b` given a flat blue square answers "blue" through the
+content-parts shape, 23 s with the model load. `NFKImageCoding` is the public codec (ImageIO, now linked
+by the core in `Package.swift` AND the podspec): CGImage / 32BGRA-32RGBA CVPixelBuffer / BGRA8-RGBA8
+MTLTexture → PNG or data URL; ImageIO-readable bytes → 32BGRA pixel buffer. Its private `CGImage…`
+helpers MUST carry `CF_RETURNS_RETAINED` in a class extension — the public method promises +1 and the
+analyzer reported five RetainCount issues when the helpers it delegates to did not. Importer names the
+Swift examples pin: the class factories are failable initializers
+(`NFKRemoteSpeechBackend(for:apiKey:modelName:voice:)`, `NFKRemoteImageBackend(for:apiKey:modelName:)`),
+`NFKImageCoding.pngData(forImage:)` keeps `forImage:` (the parameter is not the type name), and a
+`CF_RETURNS_RETAINED` CF return imports MANAGED (no `takeRetainedValue()`). Two more ObjC traps from the
+round: `inline` is a C keyword and not a variable name; and the `@{ a, b }`-inside-an-XCTAssert-macro
+comma split struck twice more — hoist the request into a local before the macro, every time.
+
+**The remote chat path streams, cancels, calls tools, and returns structured output — the last
+asymmetries with the on-device engines are closed.** `submitInferenceJobForRequest:` on
+`NFKRemoteBackend` / `NFKAnthropicBackend` sends `stream: true` and parses SSE through
+`NFKRemoteTransport.streamRequest:session:lineHandler:completionHandler:` (the line-delimited primitive
+the Ollama pull now shares; a failing status's body is collected whole and handed to the completion,
+since a provider explains a rejected request in JSON, not a stream) and `SSEDataForLine:`. Each backend
+keeps an overridable `streamRequest:lineHandler:completionHandler:` seam RETURNING THE CANCEL BLOCK,
+which becomes `job.cancellationHandler` — the generic `NFKInferenceSubmit` wrapper never wired
+cancellation, so a cancelled remote job used to run to the end on the server; now it reaches the
+streamed form (`respondsToSelector:`) and the task is cancelled. OpenAI deltas: `choices[0].delta.content`
+appends; `delta.tool_calls[]` assemble BY INDEX (id/name in the first delta, `function.arguments`
+fragments after); `data: [DONE]` finishes; a stream closing without `[DONE]` still delivers what it
+delivered. Anthropic events: `content_block_start` opens a block by index, `text_delta` /
+`input_json_delta` append, `message_stop` finishes, an `error` event fails. **Tools:**
+`NFKParameterTools` (`{name, description, parameters}`) → OpenAI `{type: function, function}` /
+Anthropic `{name, description, input_schema}`; replies → `NFKOutputToolCalls` = `{id, name, arguments
+(parsed), argumentsJSON}` (`result.toolCalls`). **The key is spelled `"tools"`, the wire field's own
+name**, so an entry already in wire shape (has `type`, or `input_schema`) passes through unwrapped —
+otherwise a caller who folded OpenAI tools by name gets double-wrapped. **Schema:**
+`NFKParameterJSONSchema` → `response_format: {type: json_schema, json_schema: {name: response, schema}}`
+(no `strict`, which demands `additionalProperties: false` throughout) / Anthropic has NO response
+format, so it is a forced tool `structured_output` (`tool_choice: {type: tool, name}`) whose `input` is
+`NFKOutputStructured` and is NOT listed as a tool call. JSON is promoted to `structured` only when JSON
+was asked for (schema, or a folded `response_format` of type `json_object`/`json_schema`) — JSON-looking
+text is not guessed at. `NFKInputImages` attaches further images after `NFKInputImage`. **Retry:** the
+transport's blocking send retries 429/502/503/504 after `Retry-After` (seconds; an HTTP-date falls to
+the schedule) or `0.5·2^attempt`, `retryAttempts` (2) more times, never past `maximumRetryDelay` (8 s)
+— a longer Retry-After ends the retries rather than waiting; a refused connection is NOT retried
+(unreachable is an answer). Tested through an `NSURLProtocol` registered on a session configuration,
+which drives a real `NSURLSession` with no network — the retry schedule, the ragged-chunk line splitter
+(a CR is dropped, an unterminated last line arrives), and the whole-body collection on a 401.
+**Measured live on Ollama `qwen3.5:27b`**: streaming delivers the reply in more than one partial with
+the last partial equal to the final text (`testALocalRunnerStreamsTokenByToken`,
+`INFERKIT_LIVE_LOCAL_MODEL`), and a declared `get_weather` tool is called with `{"city": "Paris"}`
+(`testALocalModelCallsTheTool`, `INFERKIT_LIVE_TOOL_MODEL`). Swift importer: `submitInferenceJob(for:)`,
+`result.toolCalls`, `NFKRemoteTransport.retryAttempts` as a class property. The two stubs' stream seams
+deliver lines SYNCHRONOUSLY, so a test that wants to read a partial holds the stream open
+(`holdOpen`) and asserts `.running`; a `[DONE]` inside the staged lines finishes the job before the
+call returns.
+
+**The chat backends take audio, documents, and video in, and speak out; three more services close
+the surface.** `NFKRemoteAttachments` (private, `NFKRemoteMediaSupport.h`) gathers a request's media
+ONCE — images + `NFKInputImages` + the frames sampled from `NFKInputVideo` as PNG, `NFKInputAudio` as
+bytes + a format from the file extension, `NFKInputDocument(s)` as `{data, filename}` — and each backend
+writes its own wire shape: OpenAI `image_url` / `input_audio` / `file` parts, Anthropic `image` /
+`document` blocks (the Messages API takes NO audio, so `NFKAnthropicBackend` REFUSES `NFKInputAudio`
+and `NFKParameterAudioOutput` with `kNFKError_InferenceUnsupported` rather than dropping them).
+`NFKParameterAudioOutput` → `modalities: [text, audio]` + `audio: {voice, format}` (format defaults to
+wav, the container `NFKMLXSpeechBackend` writes); the reply's `message.audio.data` (base64) is written
+through `NFKRemoteWriteMediaFile` → `NFKOutputAudio`, and `message.audio.transcript` stands in for the
+null `content`; streamed `delta.audio.data` chunks are CONCATENATED AS BASE64 then decoded once.
+`NFKVideoSampling` (public; core now links AVFoundation — Package.swift AND the podspec) samples
+`count` frames at `(i + 0.5)/count` of the duration **plus one millisecond**, because a clip whose
+frames divide the count evenly lands every midpoint on a frame edge, with a half-frame seek tolerance
+from the track's `nominalFrameRate` (loaded through `loadValuesAsynchronouslyForKeys:@[@"tracks"]` —
+`loadTracksWithMediaType:` is macOS 12 / iOS 15, above the core's floor, and trips
+`-Wunguarded-availability-new`). **Measured on this machine and worth remembering:** sampling a clip
+right after Ollama's 27B model had occupied the GPU fails with `AVFoundationErrorDomain -11821`
+"Cannot Decode", underlying OSStatus **-12911 `kVTVideoDecoderMalfunctionErr`**, after a ~4-minute
+timeout — a broken hardware decode session — and the NEXT session works; the sampler recreates its
+generator once on `AVErrorDecodeFailed`, which turns that run from a failure into a slow pass
+(`testFewerSamplesAreSpacedEvenlyThroughTheClip` at 245 s in the live ordering, 0.1 s otherwise). Two
+boundary theories preceded that finding and were wrong; the sampler's own error, once the test
+printed it, was what settled it. The test clip writer (`NFKTestClip`, AVAssetWriter, 64×64 H.264 at
+2 fps) must HOLD every pixel buffer until `finishWriting` — the pool hands a released buffer straight
+back and the encoder may still be reading it — and H.264 chroma subsampling bleeds ~0.27 into a pure
+primary's other channels, so colour assertions carry a 0.35 tolerance. **Video → text is measured
+live**: `qwen3.5:27b` names red and blue from four frames of a red–green–blue–white clip
+(`testALocalVisionModelDescribesASampledClip`, `INFERKIT_LIVE_VISION_MODEL`).
+`NFKRemoteTranscriptionBackend` gained `emitsTimestamps` (`response_format=verbose_json` unless the
+caller set one; `segments[]` → `NFKAudioSegment` with `exp(avg_logprob)` as confidence, matching the
+on-device Whisper backend's `NFKOutputSegments`) and `translates` (the path's last component swapped
+to `translations`). `NFKRemoteVideoBackend` is the FIRST shipped `NFKAsyncGenerationBackend`
+subclass (OpenAI `/v1/videos`, verified by probe; no other preset serves one): JSON submit, or
+multipart with `input_reference` when `NFKInputImage` is present — the base gained the
+`submitRequestForRequest:` hook for that and `failureReasonFromStatusResponse:` so the service's
+`error.message` reaches the job — percentage `progress` → fraction, poll every 5 s, then GET
+`/videos/{id}/content` → `.mp4` `NFKVideoAsset`. `NFKRemoteReranker` (`/rerank`, together +
+openrouter verified; results arrive in relevance order and are put back in the documents' order) and
+`NFKRemoteModerationBackend` (`/moderations`, openai + mistral; `category_scores` →
+`NFKClassification`s most confident first, the verdict under `NFKOutputStructured`). Unverified live:
+audio in/out, PDFs, video generation, rerank, moderation — all need paid keys; their envelopes are
+stub-tested and their paths probe-verified.
 
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
 shipping a preset would imply one exists. `opencode.ai` answers `Not Found` on its API path — it is a
@@ -1149,6 +1329,43 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   Whisper (real weights, at parity) transcribe it — with the universal vocoder Whisper hears
   "(indistinct)", with the paired one **" hello, world."** — which closes the loop TTS → audio → ASR
   entirely inside this package on released weights.
+- `NFKMLXKokoro` / `NFKMLXKokoroNet` (`@objc`) — **Kokoro-82M**, a StyleTTS2 / iSTFTNet text-to-speech
+  voice (hexgrad, Apache-2.0), a SECOND TTS beside FastSpeech2 and the most popular on-device one. The
+  pipeline: a **PL-BERT (Albert)** phoneme encoder (12 parameter-SHARED layers over a factorized 128-wide
+  embedding), a `bert_encoder` projection, a **duration predictor** (a DurationEncoder of bidirectional
+  LSTM + AdaLayerNorm blocks that re-concatenates the style vector each layer, then an LSTM and a
+  duration head), the **alignment** by the rounded durations, an **F0/energy predictor** (a shared LSTM
+  then AdaIN residual blocks with a depthwise-ConvTranspose upsample), a separate **TextEncoder** (CNN +
+  LSTM), and an **iSTFTNet decoder** — AdaIN residual blocks over the alignment-expanded encoding, then a
+  generator with a **harmonic sine source** (`SourceModuleHnNSF`), upsampling transposed convolutions,
+  Snake-activated `AdaINResBlock1`s, a noise band from the source's STFT, and an **inverse-STFT** head.
+  **Reference parity on the RELEASED weights, seam by seam** against the vendored `KModel` (`run_reference.py
+  kokoro`, `IK_PARITY_KOKORO` + `IK_VAL_KOKORO`, the `llm` env): the PL-BERT 0.99999999999, the projection
+  0.99999999999, the DurationEncoder 0.99999999999, durations 0.99999999999, F0/energy 0.99999999999, the
+  TextEncoder 0.99999999999, the asr 0.99999999999, and the decoder's **encode and full decode stack EXACT**
+  (0.9999999999995 / 0.9999999999991 — every AdaIN residual block, the F0/N stride-2 convs, and the
+  depthwise-ConvTranspose upsample). **The vocoder is float-precision-limited, not a modeling gap**: the
+  reference multiplies the accumulated sine phase by the upsample scale (≈18000 radians — the NSF sine
+  oscillates at F0 over the whole clip) BEFORE `sin`, and a float32 argument of that size holds ~two
+  fractional digits, so a torch/MLX rounding difference bounds the sine source at 0.99999 and the waveform
+  cosine near 0.996 — the same class as the Music3 e2e, so the deterministic seams are the ground and the
+  audio is compared loosely. The full consumer path (`loadVocab` + `loadVoice` + `synthesize(phonemes:voice:)`,
+  per-Unicode-scalar phoneme mapping) reproduces the reference waveform at 0.997.
+  **Three facts are load-bearing, all found by the parity run.** The released `.pth` stores each top-level
+  module's state_dict under a `module.` DataParallel prefix (`bert.module.embeddings…`) which KModel strips
+  at load and the loader strips too. The sine source's voiced threshold is **10, not 0** — SourceModuleHnNSF
+  passes `voiced_threshod=10` to SineGen. And the generator's ONE bare `leaky_relu` before `conv_post` runs
+  at the default slope 0.01 where every other activation is 0.1 (the same HiFi-GAN trap). All the
+  bidirectional LSTMs load through the shared PyTorch→MLX fold (`weight_ih_l0`/`hh` → `Wx`/`Wh`, biases
+  summed, forward/reverse), the weight-norm convs fuse `g·v/‖v‖`, and the `AdaINResBlock1` Snake `alpha`
+  ParameterLists stack into one parameter. **The misaki phonemizer is NOT required** (it pulls spaCy, which
+  will not build here): the oracle vendors just `KModel` + `istftnet` + `modules` (torch/transformers/scipy,
+  no spaCy), and the backend takes a PHONEME string under `NFKInputPrompt` directly — a caller brings the
+  grapheme→phoneme front end (`NFKMLXNeuralG2P` or espeak). The `@objc` `NFKMLXKokoro.backend(directoryURL:voiceName:)`
+  returns an `NFKMLXSpeechBackend` (24 kHz WAV under `NFKOutputAudio`); a **voicepack `.pt` is a bare tensor
+  the native reader will not interpret**, so it converts to a single-`voice` safetensors offline (the
+  `Tools/kokoro-voice-to-safetensors` treatment), which `loadVoice` reads. The weights are
+  `hexgrad/Kokoro-82M` (327 MB `kokoro-v1_0.pth` + `config.json` + `voices/*.pt`).
 - `NFKMLXVideoBackend` / `NFKMLXVideoFile` — the first backend that PRODUCES video, and the AVFoundation
   decode/encode layer under it (the video counterpart of `NFKMLXWaveFile`). `NFKModalityVideo` and the
   `NFKInputVideo` / `NFKOutputVideo` keys were in the core's vocabulary with nothing emitting a clip.
@@ -1232,6 +1449,19 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   1e-5. The architecture is SigLIP v1 (`model_type` "siglip"); the "2" is the training. Most of the
   1.5 GB checkpoint is the 256k text embedding table. Converter `Tools/siglip2-to-safetensors` is a
   passthrough normalizer.
+- `NFKMLXIPAdapterImageProjection` / `NFKMLXIPAdapterAttention` — IP-Adapter, lightweight image
+  conditioning for a diffusion model (steer a Stable Diffusion generation with a reference image, not
+  only text). Two pieces: the image projection maps a CLIP image embedding to a short sequence of
+  image-text tokens (`image_embeds` Linear → reshape → LayerNorm), and the DECOUPLED cross-attention
+  adds a second, image-conditioned attention beside the text cross-attention — `text_attn + scale·ip_attn`,
+  sharing the query, through its own `to_k_ip` / `to_v_ip` projections (the reference stores those under a
+  `processor.` prefix, stripped on load). The projection and the extra key/value weights are the only
+  trained parameters; the base UNet is frozen, so an adapter is a small file over a shipped SD model.
+  **Reference parity** against diffusers (`run_reference.py ip_adapter`, `ltx` env): the ImageProjection
+  against `diffusers.models.embeddings.ImageProjection`, and the decoupled attention against
+  `IPAdapterAttnProcessor2_0` — both cosine 0.9999999999999997. Wiring the `to_k_ip`/`to_v_ip` into the
+  shipped `NFKMLXSDUNet` cross-attention (threading the ip tokens + scale) is the remaining integration;
+  the mechanism and the projection are ported and validated.
 - `NFKMLXTAESD` (`@objc`) — TAESD (Tiny AutoEncoder for Stable Diffusion), the fast preview decoder a
   latent-diffusion pipeline uses: a small distilled autoencoder mapping an image to a four-channel latent
   and back (8× down/up). The encoder and decoder are flat `nn.Sequential` stacks of 3×3 convolutions and
@@ -1321,6 +1551,177 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   the guided loop, unpacking, and decode produce a correct-shaped clip) plus the four stages' own parity —
   a sampled clip cannot be compared bitwise, as with Music 3. The VAE + DiT + T5 + flow are the complete
   LTX text-to-video path.
+- `NFKMLXZImageTransformerNet` — the Z-Image S3-DiT (`ZImageTransformer2DModel`, Alibaba Tongyi), the
+  denoising transformer of a 6B text-to-image model and the third DiT family beside the SD UNet and LTX.
+  **Single-stream**: the image latent tokens and the caption tokens are concatenated and every layer's
+  self-attention runs over the join, rather than a separate cross-attention branch. Three stages: a
+  `noise_refiner` (2 MODULATED blocks over the image tokens alone), a `context_refiner` (2 UN-modulated
+  blocks over the caption tokens alone), then 30 unified `layers` over the concatenation. The block is a
+  SANDWICH: `attention_norm1` before and `attention_norm2` after the attention, the same for the FFN,
+  with a 4-chunk adaptive modulation (scale/gate for each of attention and FFN, gates `tanh`'d, scales
+  `1 +`). SwiGLU FFN (hidden `dim/3·8` = 10240), per-head RMS q/k norm, and a **3-axis complex rotary**
+  (`view_as_complex`, axes `[32,48,48]` summing to headDim 128, θ 256) over the (frame, height, width)
+  grid. The caption is a Qwen3-4B embedding (`cap_feat_dim` 2560) projected in through
+  `RMSNorm → Linear`; base text-to-image feeds only the latent + caption (the SigLIP visual-semantic
+  tokens are the EDIT variant's input). Sequence lengths pad to a multiple of 32 with learned
+  `x_pad_token`/`cap_pad_token` at (0,0,0) positions. **Module keys mirror the reference exactly** (73
+  at the tiny config, `all_x_embedder.2-1`/`all_final_layer.2-1` ModuleDict keys included), so a release
+  loads with no remap and no transpose (every weight ≤ 2-D). For parity the caption features are
+  supplied directly (no Qwen3), so the DiT is validated in isolation, as the LTX DiT is. **Reference
+  parity** against diffusers on the first numeric run (`run_reference.py z_image`, tiny random config,
+  the `ltx` oracle env — diffusers 0.36 carries ZImageTransformer2DModel): the t_embedder seam exact and
+  the full velocity cosine **0.9999999999999653**, with the pad-token path exercised (sequence lengths
+  not a multiple of 32).
+  **The Flux VAE Z-Image encodes into IS the shared `NFKMLXSDAutoencoder`**: its `vae/config.json` is a
+  diffusers `AutoencoderKL` (16 latent channels, `[128,256,512,512]`, `mid_block_add_attention`) that
+  differs from Stable Diffusion's only in dropping the quant convolutions (`use_quant_conv: false`,
+  `use_post_quant_conv: false`) and in a centering `shift_factor` 0.1159 / `scaling_factor` 0.3611. So
+  `NFKMLXSDVAEConfiguration` gained `useQuantConv` (the two 1×1 convs are now optional `Conv2d?` — when
+  absent the encoder's `conv_out` is the moments directly and decode reads the latent directly) and
+  `shiftFactor`, and `.flux` is the preset. **Reference parity** against diffusers' AutoencoderKL at a
+  tiny `use_quant_conv=False` config (`run_reference.py flux_vae`, `ltx` env): encoded-mean cosine
+  0.9999998591898961, decode cosine 0.9999999948059418.
+  **`NFKMLXZImagePipeline` chains it end to end** (S3-DiT denoised over the flow schedule with
+  classifier-free guidance → Flux VAE decode). The caller supplies the caption embedding (the Qwen3-4B
+  hidden states), as the SD pipeline takes a text context — Z-Image's text step is the shipped Qwen3
+  decoder (already at reference parity), read for its PENULTIMATE hidden state (`hidden_states[-2]`, which
+  is `NFKMLXLanguageNet.layerStates(tokens)[count − 2]` — the existing per-layer seam) after the Qwen chat
+  template, run and freed separately. So no new port is needed for the text step; Qwen3 + the seam cover
+  it. `NFKMLXFlowMatchConfiguration.zImage`
+  is its schedule (a smaller resolution shift, no terminal stretch, `sigma_min` 0); the DiT timestep is
+  `1 − σ` and the flow velocity is NEGATED before the Euler step, both the reference's conventions.
+  Validated by a weight-free tiny-config glue test (the guided loop, the timestep/latent conventions,
+  the centered-latent decode) plus the DiT/VAE/flow parities — a sampled image is not bitwise-comparable,
+  as with LTX and Music 3. The Qwen3-4B DiT + Flux VAE + flow are the complete Z-Image text-to-image path.
+  **`generate(image:strength:…)` is the image-to-image (edit) path** — the Flux VAE encodes the source, the
+  latent is noised to `strength` through the scheduler's flow `addNoise`, and the denoise runs from the
+  matching step, diffusers' own `pipeline_z_image_img2img`. The paper's SigLIP-CONDITIONED editing is a
+  separate original-repo model NOT present in the diffusers Z-Image (its transformer takes only the image
+  latent and the caption; neither diffusers pipeline references SigLIP), so there is no reference to port
+  it against — the img2img path here is diffusers' actual edit capability.
+- `NFKMLXSANATransformerNet` — the SANA linear-attention DiT (`SanaTransformer2DModel`, NVIDIA), the
+  fourth DiT family. Two things set it apart: the self-attention is **LINEAR** — ReLU feature maps,
+  `O = ((V·1̂) @ ReLU(K)) @ ReLU(Q)` normalized by the ones row, O(N) rather than O(N²), which is what
+  lets it run at high resolution — and the feed-forward is a **GLUMBConv** (an inverted-bottleneck gated
+  DEPTHWISE convolution over the 2-D token grid: `conv_inverted` 1×1 to `2·hidden`, SiLU, `conv_depth`
+  3×3 depthwise, gate-split `x · silu(gate)`, `conv_point` 1×1, no bias), not a pointwise MLP. Each
+  block also cross-attends to the Gemma text embedding through ordinary softmax attention (heads 20,
+  head_dim 112). Conditioning is PixArt-α `AdaLayerNormSingle`: ONE shared timestep embedding plus a
+  per-block learned `scale_shift_table` [6, inner], expanded to the six modulation parameters; the output
+  norm reads the pre-linear embedded timestep against a top-level `scale_shift_table` [2, inner]. Patch
+  embed is a stride-`patch` `Conv2d` (no positional embedding). The caption enters through
+  `PixArtAlphaTextProjection` (Linear → GELU-tanh → Linear) and an RMS `caption_norm`. Module keys mirror
+  the reference (54 at tiny); the convolution weights load transposed to MLX's NHWC. **Reference parity**
+  against diffusers on the first numeric run (`run_reference.py sana`, tiny random config, `ltx` env):
+  embedded-timestep seam exact, full velocity cosine **0.9999999999999959**.
+  **`NFKMLXDCAutoencoderNet` is SANA's Deep-Compression Autoencoder** (`AutoencoderDC`), which compresses
+  an image 32× spatially (against a Stable Diffusion VAE's 8×) — that is what keeps SANA's latent-token
+  count low enough to run at high resolution. It is DETERMINISTIC (`encode` returns one latent, not a
+  Gaussian), built from two block families: `ResBlock`s at the shallow stages and `EfficientViTBlock`s
+  (a multiscale ReLU LINEAR attention — grouped multiscale-kernel q/k/v projections, then the same
+  `O = ((V·1̂) @ ReLU(K)) @ ReLU(Q)` linear attention the DiT uses — plus a GLUMBConv with an RMS norm and
+  a residual) at the deep stages. Down/up sampling is pixel-unshuffle / pixel-shuffle with a
+  channel-averaging (`DCDownBlock`) or channel-repeating (`DCUpBlock`) shortcut; the released SANA uses a
+  stride-2 Conv downsample and a nearest-interpolate upsample. The `pixelUnshuffle` / `NFKMLXPixelShuffle`
+  helpers are shared with Real-ESRGAN / BiSeNet. The reference's `<blocks>.<i>.<j>` `nn.Sequential`
+  indices map onto the module's `<i>.block.<j>` (a stage is an `NFKDCStage` holding a `[Module]`); the
+  convolution weights load transposed to NHWC. **Reference parity** against diffusers' AutoencoderDC on
+  the first numeric run (`run_reference.py dc_ae`, tiny random config, `ltx` env): latent cosine
+  0.9999999999999344, decode cosine 0.9999999999999848. **Also validated on the ACTUAL released SANA
+  weights** end to end (`NFKMLXDCAutoencoderNet.loadWeights` reads the diffusers checkpoint, remapping the
+  `<blocks>.<i>.<j>` Sequential indices to `<i>.block.<j>` and transposing the convs): on the real 1.2 GB
+  `Sana_600M` VAE over a 256×256 image at the full 32× compression, latent cosine 0.9999999999918, decode
+  cosine 0.9999999998 (`run_reference.py dc_ae_real`, `IK_VAL_DCAE`) — the released config, the real
+  checkpoint, and the loader confirmed, not just the tiny-config architecture.
+  **`NFKMLXSANAPipeline` chains it end to end** (linear-attention DiT denoised over the flow schedule with
+  classifier-free guidance → DC-AE decode). The caller supplies the caption embedding (the Gemma text
+  encoder's last hidden state), as the SD pipeline takes a text context. **The sampler is SANA's released
+  `DPMSolverMultistepScheduler`** (`NFKMLXDPMSolverScheduler`, at reference parity — see the scheduler
+  entry below), not a stand-in. Validated by a weight-free tiny-config glue test plus the DiT/VAE
+  parities. **SANA's text encoder is `NFKMLXGemma2Net`** (Gemma-2, ported here — see the Gemma-2 entry):
+  the caller runs it for the caption features. The SANA text-to-image path is complete.
+- `NFKMLXGemma2Net` — the Gemma-2 text decoder (`Gemma2Model`), SANA's text encoder (its DiT
+  cross-attends to Gemma-2's last hidden state). Gemma 2 is a DISTINCT architecture from the Gemma 3 /
+  Gemma 4 text models here: it keeps the `(1 + w)` RMS normalization and the sandwich block (a norm
+  before AND after each of attention and the feed-forward), but it has NO query/key norm, it SOFT-CAPS
+  the attention logits (`tanh(logit/cap)·cap`, cap 50), it uses a single rotary base (10000) with
+  sliding-window attention on the EVEN layers, and it scales the query by `query_pre_attn_scalar^-0.5`.
+  The attention is computed explicitly (matmul + soft-cap + softmax, not the fused SDPA) because of the
+  soft-cap. Module keys are the checkpoint's (`embed_tokens`, `layers.N.self_attn.{q,k,v,o}_proj`,
+  `layers.N.mlp.{gate,up,down}_proj`, the four sandwich norms, `norm`), no transpose. **Reference parity**
+  against transformers' Gemma2Model at a tiny configuration with a small sliding window (so the
+  alternating sliding/full layers differ): last hidden cosine 0.9999999999998679 on the first numeric
+  run (`run_reference.py gemma2`, the `llm` oracle env).
+- `NFKMLXWanTransformerNet` — the Wan text-to-video DiT (`WanTransformer3DModel`, Alibaba Wan), the fifth
+  DiT family. A 3-D sequence transformer over a `Conv3d`-patchified video latent (patch `(1,2,2)`), with
+  the SAME 3-axis interleaved rotary as Z-Image (`NFKZImageRope` reused, θ 10000, axes `t = headDim −
+  2·h`, `h = w = 2·(headDim/6)`) over the (frame, height, width) grid. Each block runs self-attention
+  (with rotary), cross-attention to the text embedding, and a gelu-approximate feed-forward
+  (`ffn.net.0.proj`/`net.2`), under PixArt-α adaptive norms — a shared `time_proj` [6·inner] plus a
+  per-block `scale_shift_table` [1,6,inner]; the cross-attention norm (`norm2`) is an AFFINE LayerNorm
+  applied UN-modulated, where `norm1`/`norm3` are non-affine and modulated. **The q/k norm is
+  `rms_norm_across_heads`** — an RMS norm over the WHOLE inner width BEFORE the head split, where
+  Z-Image norms per head. The condition embedder is `time_embedder` (TimestepEmbedding) → `time_proj`,
+  plus `text_embedder` (`PixArtAlphaTextProjection`). This is the text-to-video path (no
+  image-conditioning branch, no `added_kv`). Module keys mirror the reference (69 at tiny); the 5-D
+  `Conv3d` weight loads transposed to NDHWC. **Reference parity** against diffusers on the first numeric
+  run (`run_reference.py wan`, tiny random config, `ltx` env): full velocity cosine
+  **0.9999999999999767**.
+  **`NFKMLXWanVideoVAENet` is the Wan 3D causal VAE** (`AutoencoderKLWan`, the Wan 2.2 residual path),
+  the last stage of the Wan pipeline and the hardest port of this batch. It compresses a video 4× in
+  time and 16× in space. Unlike the LTX VAE (a clean full-clip causal forward), it runs a STATEFUL
+  streaming loop: the encoder consumes frames in CHUNKS (1, then 4 at a time) and the decoder emits ONE
+  latent frame at a time, threading a per-convolution feature cache (`feat_cache`) that supplies each
+  causal convolution's temporal context across chunk boundaries — the temporal up/downsampling happens
+  ONLY on that cache path, so a one-shot forward would skip it. `NFKWanCache` holds the per-conv slots
+  (persisting across chunks, the index reset per chunk) with the reference's `Rep` / `frames` / `empty`
+  states; `wanCausal` runs the caching dance (borrow the previous chunk's last frame when a chunk has
+  fewer than two). `NFKWanCausalConv3d` holds its `weight`/`bias` directly (the reference is an
+  `nn.Conv3d` subclass) via the functional `conv3d`, zero-padding the time axis on the LEFT only. The
+  residual down/up blocks carry the cacheless `AvgDown3D` / `DupUp3D` reshape shortcuts; the temporal
+  resample `time_conv` doubles the frame count by splitting its doubled channel and interleaving it as a
+  new frame sub-axis. **Reference parity** against diffusers' AutoencoderKLWan at a tiny residual config
+  on a 5-frame clip (`run_reference.py wan_vae`, `ltx` env): encoder moments cosine 0.9999999999999997,
+  decode cosine 0.999999999999892. **The one load-bearing trap was the patchify channel order**: the
+  reference packs the `patch²` spatial block into the channel as `(C, pw, ph)`, not `(C, ph, pw)` — the
+  swapped order left the encoder at 0.998 and the decode at 0.26 (the per-stage seams were exact THROUGH
+  the last up-block, which pinned the fault to the final unpatchify and, symmetrically, the conv_in
+  patchify). The RMS `gamma` loads flattened from its `[C,1,1,1]` layout; the 5-D/4-D conv weights
+  transpose to NDHWC/NHWC. **The non-residual Wan 2.1 path is implemented too** (`isResidual` config,
+  `.wan21` / `.tiny21`): Wan 2.1 replaces the residual down/up blocks (AvgDown3D / DupUp3D shortcuts) with
+  a FLAT down-block list and a halving upsampler (`NFKWanUpBlock`, whose `WanResample` defaults
+  `upsample_out_dim` to `dim/2`, so an inner decoder stage's input is halved), drops the patchify, and
+  uses 16 latent channels. The encoder/decoder branch on `isResidual` and hold the blocks as `[Module]`
+  with a type-dispatched forward. **Reference parity** against diffusers' AutoencoderKLWan at a tiny
+  non-residual config (`run_reference.py wan_vae_21`): latent cosine 0.9999999999999978, decode
+  0.9999999999999261, with the 2.2 residual path still at parity.
+  **`NFKMLXWanPipeline` chains it end to end** (DiT denoised over the flow schedule with classifier-free
+  guidance → the 3D VAE decode, over the `[C,F,H,W]`↔`[1,F,H,W,C]` bridge and the release's per-channel
+  latent mean/std). The caller supplies the umT5 text embedding (a T5-family encoder). **The sampler is
+  Wan's released `UniPCMultistepScheduler`** (`NFKMLXUniPCScheduler`, at reference parity — see the
+  scheduler entry below), not a stand-in. Validated by a weight-free tiny-config glue test plus the
+  DiT/VAE parities. **Wan's text encoder is umT5**, now verified: `NFKMLXT5Encoder` gained a
+  `perLayerBias` configuration (`.umt5XXL` / `.tinyUMT5`) — umT5 (`UMT5EncoderModel`) differs from plain
+  T5 ONLY in giving EVERY layer its own relative-position bias (plain T5 shares block 0's across the
+  stack); everything else (T5LayerNorm, the gated FFN, the unscaled attention) is the same code.
+  **Reference parity** against transformers' UMT5EncoderModel at a tiny configuration (`run_reference.py
+  umt5`, the `llm` env): text embedding cosine 0.9999999999999984, with the plain-T5 shared-bias path
+  still at parity. The Wan text-to-video path is complete.
+- `NFKMLXDPMSolverScheduler` / `NFKMLXUniPCScheduler` — the released multistep samplers SANA and Wan use,
+  ported in their flow-prediction configurations. Both are value types with no weights, so both are
+  verified EXACTLY against diffusers with no downloads (`run_reference.py dpm_solver` / `unipc`, `ltx`
+  env): a fixed velocity sequence is run through the reference and this port, and the whole sample
+  trajectory is compared step by step (worst |difference| 1.7e-6 and 1.4e-6), with the sigma schedule
+  exact. **`NFKMLXDPMSolverScheduler`** is DPM-Solver++ (`algorithm_type: dpmsolver++`, `solver_order: 2`,
+  `solver_type: midpoint`, `final_sigmas_type: zero`): each step converts the flow velocity to a data
+  prediction `x0` and takes a first- or second-order multistep update, the coefficients computed as
+  `Float` scalars (so the `log 0` at the terminal zero sigma resolves to a clean `x0`) and applied to the
+  `MLXArray`. **`NFKMLXUniPCScheduler`** is UniPC (`solver_order: 2`, `solver_type: bh2`, `predict_x0`):
+  a predictor-corrector — from step 1 on it corrects the previous sample before predicting the next — with
+  the order-2 corrector's 2×2 `B(h)` linear system solved in closed form. Both take their flow sigma ramp
+  from the release's `flow_shift` (SANA 3.0, Wan 5.0) and truncate the flow timesteps to integers as
+  diffusers does. The `NFKMLXFlowMatchScheduler.sana`/`.wan` presets remain for a caller who wants the
+  plain rectified-flow sampler, but the pipelines now run the released multistep samplers.
 - `NFKMLXRVM` (`@objc`) — real video matting (Robust Video Matting): the reference `MattingNetwork` —
   a torchvision **MobileNetV3-Large** encoder (inverted residuals with squeeze-and-excitation,
   hardswish, **BatchNorm epsilon 1e-3**, the last stage dilated), the reference LR-ASPP, and a
@@ -2416,6 +2817,47 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   their C2f stages repeat `[3, 6, 6, 3]`, and x is wider again. The records must be made at
   `--size 640`, where the reference's letterboxing is an identity — generating one at another size
   produces a different anchor count and looks like a model failure.
+- `NFKMLXRTDetr` (`@objc`) — real object detection, the **license-clean (Apache-2.0) alternative to the
+  AGPL YOLO**: RT-DETR (`RTDetrForObjectDetection`, PekingU/lyuwenyu) in `MLXNN` — a **ResNet-D**
+  backbone (deep 3-conv stem, avgpool-in-shortcut bottleneck), a **hybrid encoder** (an AIFI transformer
+  on the deepest feature plus a CSP-RepVGG FPN/PAN), **query selection** over generated anchors, and a
+  **deformable-attention decoder** with iterative box refinement. Run through `NFKMLXRTDetrBackend`
+  (`NFKInputImage` → `NSArray<NFKDetection *>` under `NFKOutputDetections`, boxes normalized 0…1, origin
+  top-left). `+register` under `rtdetr`. **DETR-family, so there is NO non-max suppression** — the
+  one-to-one training makes the queries distinct — and the image processor **squashes** to 640×640 (no
+  aspect-preserving pad), so a normalized box maps to the original frame unchanged.
+  **The decoder's cross-attention is multi-scale deformable ATTENTION, not DCNv2 deformable
+  CONVOLUTION**: a `grid_sample` bilinear gather at learned offset locations (`loc·size − 0.5`,
+  `align_corners=false`, zero padding), which MLX expresses with `takeAlong` the way RAFT/RIFE do their
+  warps — so unlike BiRefNet (which needs a deformable *conv* MLX has no op for), RT-DETR is portable.
+  Anchors are generated per forward (`anchor_image_size=None`) as `logit(centre/size)` with a validity
+  mask; query selection takes the top `num_queries` by the best class score; the decoder runs
+  `sigmoid(reference)`, a per-layer `query_pos_head` MLP position, deformable cross-attention over the
+  flattened encoder tokens, and `sigmoid(corner + inverse_sigmoid(reference))` box refinement, with
+  `class_embed`/`bbox_embed` **cloned per layer** (`with_box_refine`). BatchNorm runs in eval (the
+  reference freezes the backbone BNs). **Reference parity** against transformers' own
+  RTDetrForObjectDetection, seam by seam at a tiny config: backbone 0.99999999999998, the PAN encoder
+  0.9999999999999988, query-selection scores (`enc_class`) 0.9999999999999925 and boxes (`enc_coord`)
+  0.9999999999999999, and — decisively — **the deformable-attention decoder EXACT over the reference's
+  selection** (logits 0.9999999999999958, boxes 0.9999999999999966). **Also at parity on the RELEASED
+  `PekingU/rtdetr_r50vd` weights end to end** (`run_reference.py rtdetr_real`, `IK_PARITY_RTDETR_REAL` +
+  `IK_VAL_RTDETR`): logits cosine 0.9999999999887, boxes 0.9999999999642 over the reference selection —
+  the r50vd ResNet-50-vd geometry, the actual checkpoint, and the loader (the **stage-1 stride-1
+  shortcut** re-indexed to `.0.`, the `model.` prefix stripped, the tied top-level `class_embed`/
+  `bbox_embed` and every `num_batches_tracked` dropped) exercised, which the tiny config does not cover.
+  **Two facts are load-bearing, both found by the parity run.** The oracle's shared `_randomized`
+  randomizes ALL floating state including the BatchNorm `running_var` buffer, which can go negative, and
+  `rsqrt(var + eps)` is then NaN in BOTH the reference and the port; `run_rtdetr` therefore randomizes
+  only the trainable parameters, leaving the BN buffers physical (mean 0, var 1). And the **end-to-end
+  top-k selection is float-tie-sensitive**: `torch.topk` and MLX's `argSort` break a sub-ulp score tie
+  differently, so one or two of the selected queries can swap (end-to-end boxes 0.981 where the decoder
+  over the reference selection is exact) — the same near-tie class as the GGUF/Whisper greedy flips, so
+  the decoder parity is measured over the reference's own selection and the end-to-end boxes are asserted
+  at a tolerance that reflects the tie rather than a modeling error. `NFKMLXRTDetrConfiguration`
+  (`.tiny`/`.r50vd`) selects the geometry; the backbone/encoder/decoder use `[Module]` arrays so the
+  module keys mirror the checkpoint's nested `nn.Sequential` layout, with only the shortcut re-index in
+  the remap. RT-DETR-v2 (a v2 deformable-attention variant) and the license-clean RF-DETR are the
+  remaining detection candidates.
 - `NFKMLXSegFormer` (`@objc`) — real semantic segmentation: the SegFormer MiT transformer encoder
   (efficient self-attention with spatially reduced keys/values + Mix-FFN depthwise conv, so no
   positional embedding) and an all-MLP decode head in `MLXNN`, run through `NFKMLXModuleBackend`. The
@@ -2817,7 +3259,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`
