@@ -72,6 +72,26 @@ serialized code is interpreted, only the pickle's tensor records and module attr
 ``NFKMLXTorchCheckpoint`` is the consumer API over the same reader: inspect a state dict's names and
 shapes, read a tensor's bytes, or convert to safetensors on device with `writeSafetensors(to:)`.
 
+### Reading a GGUF file natively
+
+``NFKMLXGGUF`` reads the container most quantized language models are distributed in: the typed
+metadata, the tensor table, and the `F32` / `F16` / `Q4_0` / `Q5_0` / `Q8_0` / `Q4_K` / `Q6_K`
+dequantizers, bit-exact against the reference `gguf` package. A type it does not implement leaves the
+tensor listed and refuses only the read. `NFKMLXLanguage.backend(ggufURL:)` builds a text-generation
+backend straight from a dense `llama` / `qwen2` / `qwen3` file, undoing llama.cpp's rotary permutation
+and rebuilding the embedded tokenizer.
+
+### Whole releases: sharded, at a precision, quantized
+
+A language or diffusion release is a directory rather than one file — `config.json`, the tokenizer,
+and weights split across shards named by `model.safetensors.index.json`. The `backend(directoryURL:)`
+factories read the whole tree, and ``NFKMLXWeightPrecision`` chooses whether a bf16 release loads at
+the precision it ships in or at float32; the parity records were measured at float32, which costs
+twice the memory. Runtime MLX quantization packs a model's linear layers to 4 or 8 bits, and a saved
+quantized checkpoint records its bit width in metadata so the loaders rebuild the packed structure
+before applying it. `NFKMLXMusic3.quantizeRelease(at:to:)` writes a quantized copy of a release in
+the release's own layout.
+
 ### The offline converters
 
 Each model has an offline converter under `Tools/<model>-to-safetensors/` that turns a released `.pth` /
@@ -91,6 +111,16 @@ mismatches.
 
 - ``NFKMLXModelRegistry``
 - ``NFKMLXReferenceModels``
+
+### GGUF
+
+- ``NFKMLXGGUF``
+- ``NFKMLXGGUFTensorInfo``
+- ``NFKMLXGGMLType``
+
+### Precision
+
+- ``NFKMLXWeightPrecision``
 
 ### PyTorch checkpoints
 

@@ -15,9 +15,12 @@ Heavier engines live outside the core and link in only when a consumer wants the
 - **The contract** — ``NFKInferenceRequest``, ``NFKInferenceResult``, ``NFKInferenceJob`` and the
   shared key vocabulary.
 - **Shipped backends** — ``NFKPassthroughBackend`` (the mock), ``NFKCoreMLBackend`` and
-  ``NFKCoreMLLanguageBackend`` (in-process Core ML), ``NFKRemoteBackend`` and
-  ``NFKRemoteTranscriptionBackend`` (OpenAI-compatible), and ``NFKAsyncGenerationBackend`` (a
-  submit-poll-fetch base). Every one is pure Apple frameworks.
+  ``NFKCoreMLLanguageBackend`` (in-process Core ML), the remote clients — ``NFKRemoteBackend`` and
+  ``NFKAnthropicBackend`` for chat, plus embeddings, speech, image generation, transcription, video
+  generation, reranking, and moderation over the same ``NFKRemoteProvider`` presets — and
+  ``NFKAsyncGenerationBackend`` (a submit-poll-fetch base). Every one is pure Apple frameworks.
+- **Machine readings** — ``NFKHardwareProfile`` reports what the machine is and how much memory is
+  free; ``NFKComputePlan`` reports where Core ML plans to run each operation.
 - **Download / cache** — ``NFKHFHub`` resolves and caches Hugging Face files. See <doc:DownloadingModels>.
 - **Discovery** — ``NFKDynamicBackend`` activates an engine only when its classes are linked. See
   <doc:DynamicDiscovery>.
@@ -27,8 +30,9 @@ Heavier engines live outside the core and link in only when a consumer wants the
 Two optional Swift packages build on the core without raising its platform floor or adding
 dependencies to it:
 
-- **InferKitMLX** (Apple Silicon) — 31 real MLXNN models (upscaling, depth, matting, segmentation,
-  detection, pose, restoration, colorization, embeddings, audio) plus a bundled Stable Diffusion.
+- **InferKitMLX** (Apple Silicon) — 60-plus real MLXNN models: image restoration and analysis,
+  video, audio, text-to-image and text-to-video diffusion, on-device language models, embeddings,
+  and vision-language, plus a bundled Stable Diffusion and on-device fine-tuning.
 - **InferKitFoundationModels** (macOS 26 / iOS 26) — a bridge to Apple's on-device system language
   model.
 

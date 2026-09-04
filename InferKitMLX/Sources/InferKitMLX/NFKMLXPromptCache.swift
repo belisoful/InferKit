@@ -14,7 +14,7 @@ import MLX
 /// @discussion A chat turn's prompt is the previous turn's prompt plus the reply plus the new
 /// message, and a system prompt is the same on every request. Prefilling that prefix again is the
 /// largest cost in a conversation, and it buys nothing: the cache rows it produces are the rows
-/// already held. This keeps the cache and the token ids it was built from, and ``align(to:)``
+/// already held. This keeps the cache and the token ids it was built from, and `align(to:)`
 /// rolls it back to the last position the new prompt shares, so generation prefills only what is
 /// new. The result is exact — every retained row was written by an ordinary forward pass — and the
 /// rollback moves cursors rather than copying.

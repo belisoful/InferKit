@@ -18,7 +18,9 @@ Pure Apple frameworks, always available:
   keeps builds and tests green without weights.
 - ``NFKCoreMLBackend`` — in-process Core ML with image and tensor I/O.
 - ``NFKCoreMLLanguageBackend`` — a Core ML causal-LM runner.
-- ``NFKRemoteBackend`` — an OpenAI-compatible chat client. ``NFKRemoteProvider`` names the services
+- ``NFKRemoteBackend`` and ``NFKAnthropicBackend`` — the chat clients: one OpenAI-compatible, one for
+  Anthropic's Messages API, which differs in its headers, its required `max_tokens`, and its top-level
+  system prompt. ``NFKRemoteProvider`` names the services
   it is pointed at (hosted APIs and the local runners Ollama, LM Studio, llama.cpp, and vLLM), and
   ``NFKRemoteModelCatalog`` lists the models a provider serves so a caller chooses one from the
   server's own list. A local runner's native API — what is installed and loaded, and Ollama's
@@ -45,8 +47,9 @@ Pure Apple frameworks, always available:
 
 ### Companion (link to enable)
 
-Bringing a heavier runtime is a matter of linking a package: InferKitMLX (31 MLX models, plus the
-bundled Stable Diffusion `NFKMLXBackend`) and InferKitFoundationModels (on-device LLM).
+Bringing a heavier runtime is a matter of linking a package: InferKitMLX (60-plus MLX models across
+image, video, audio, and language, plus the bundled Stable Diffusion `NFKMLXBackend`) and
+InferKitFoundationModels (Apple's on-device LLM).
 
 ### Brought by you
 
@@ -77,6 +80,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKCoreMLBackend``
 - ``NFKCoreMLLanguageBackend``
 - ``NFKRemoteBackend``
+- ``NFKAnthropicBackend``
 - ``NFKRemoteEmbeddingBackend``
 - ``NFKRemoteSpeechBackend``
 - ``NFKRemoteImageBackend``

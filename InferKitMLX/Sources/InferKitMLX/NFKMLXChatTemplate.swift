@@ -74,10 +74,13 @@ public enum NFKMLXChatTemplateRenderer {
     /// Renders `template` over `messages` and the standard chat variables.
     ///
     /// - Parameters:
+    ///   - template: the Jinja source, the release's `chat_template`.
     ///   - messages: each a `["role": ..., "content": ...]` dictionary; a content that is a list of
     ///     typed parts (a multimodal message) is passed through as a list.
     ///   - addGenerationPrompt: whether to append the assistant turn opener.
-    ///   - bosToken / eosToken: the release's markers, for templates that reference them.
+    ///   - bosToken: the release's beginning-of-sequence marker, for templates that reference it.
+    ///   - eosToken: the release's end-of-sequence marker, for templates that reference it.
+    ///   - tools: tool definitions in the provider's wire shape, bound to the template's `tools`.
     public static func render(_ template: String, messages: [[String: Any]],
                               addGenerationPrompt: Bool = true,
                               bosToken: String = "", eosToken: String = "",

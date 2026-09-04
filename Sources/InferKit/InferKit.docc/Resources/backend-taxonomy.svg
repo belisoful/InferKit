@@ -24,15 +24,15 @@
   <text x="150" y="186" text-anchor="middle" font-size="13" font-weight="700" fill="#2D6CDF">Shipped, zero-dependency</text>
   <text x="60" y="210" font-size="11" fill="#1F2933">• NFKPassthroughBackend</text>
   <text x="60" y="230" font-size="11" fill="#1F2933">• NFKCoreMLBackend · …Language</text>
-  <text x="60" y="250" font-size="11" fill="#1F2933">• NFKRemoteBackend · …Transcription</text>
+  <text x="60" y="250" font-size="11" fill="#1F2933">• NFKRemote… · NFKAnthropicBackend</text>
   <text x="60" y="270" font-size="11" fill="#1F2933">• NFKAsyncGenerationBackend</text>
   <text x="72" y="286" font-size="10" fill="#5A6672">a submit → poll → fetch base</text>
 
   <!-- group 2: companion -->
   <rect x="270" y="164" width="220" height="132" rx="11" fill="#F3EEFE" stroke="#7A5AF8" stroke-width="1.5"/>
   <text x="380" y="186" text-anchor="middle" font-size="13" font-weight="700" fill="#7A5AF8">Companion (link to enable)</text>
-  <text x="290" y="212" font-size="11.5" fill="#1F2933">• InferKitMLX — 31 models</text>
-  <text x="304" y="230" font-size="10.5" fill="#5A6672">upscale · depth · matting · audio…</text>
+  <text x="290" y="212" font-size="11.5" fill="#1F2933">• InferKitMLX — 60+ models</text>
+  <text x="304" y="230" font-size="10.5" fill="#5A6672">image · video · audio · LLM · diffusion</text>
   <text x="290" y="252" font-size="11.5" fill="#1F2933">• NFKMLXBackend — Stable Diffusion</text>
   <text x="290" y="274" font-size="11.5" fill="#1F2933">• InferKitFoundationModels — LLM</text>
 

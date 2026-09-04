@@ -24,10 +24,12 @@ baseline.
 ## InferKitMLX (optional companion)
 
 `InferKitMLX/` is a separate SwiftPM package (Apple Silicon, macOS 14 / iOS 17) that keeps MLX out
-of the core. It ships five bring-your-own-model backends and a gallery of real models — upscaling,
-depth, matting, segmentation, detection, pose, restoration, interpolation, optical flow, colorization,
-diffusion, speech, and music — each implemented in MLXNN and validated numerically against its
-reference implementation on the released weights:
+of the core. It ships five bring-your-own-model backends and a gallery of sixty-plus real models —
+upscaling, depth, matting, segmentation, detection, faces, pose, restoration, interpolation, optical
+flow, colorization, embeddings, reranking, vision-language, on-device language models, text-to-image
+and text-to-video diffusion, speech recognition and synthesis, audio codecs, and music — each
+implemented in MLXNN and validated numerically against its reference implementation on the released
+weights:
 
 - **`NFKMLXBackend`** — a bundled Stable Diffusion release: SD 1.5, SD 2.1 base, or SDXL-Turbo. A
   request with no image runs text-to-image; a request with a `CGImage` under `NFKInputImage` runs
@@ -212,6 +214,90 @@ models.
   `transformerBits: 6` trades the DiT down to a measured velocity cosine of 0.99844 (0.99990 at
   8-bit) for roughly 0.6 GB more — do a listening A/B first, because the DiT's error compounds over
   the sampling loop.
+- **`NFKMLXHybridLanguage`** — the Qwen3.5 / 3.6 / 3.8 decoder: a gated delta-rule recurrence in three
+  of every four layers (a fixed-size state instead of a growing cache) with gated full attention in the
+  fourth. At reference parity on the released Qwen3.5-4B, layer by layer; the 27B is accounted for by
+  shape against its checkpoint headers.
+- **`NFKMLXDeepSeek`** — the DeepSeek V4 decoder: multi-head latent attention over a mixture of
+  experts, hyper-connections, the compressor and sparse indexer, and the release's fp8 / fp4 block-scaled
+  storage decoded exactly. The arithmetic is measured against transformers at a tiny configuration; the
+  released weights exceed a workstation, so the checkpoint is verified structurally.
+- **`NFKMLXLanguage.backend(ggufURL:)`** — text generation straight from a dense `llama` / `qwen2` /
+  `qwen3` GGUF file through the native `NFKMLXGGUF` reader, undoing llama.cpp's rotary permutation and
+  rebuilding the embedded tokenizer; at parity against transformers loading the same file.
+- **Generation runtime** — a prompt cache kept between turns (`NFKMLXPromptCache`, persistable),
+  speculative decoding with a draft model (`backend(directoryURL:draftDirectoryURL:)`, greedy-exact),
+  key-value cache quantization and a bounded context window, chunked prefill, JSON and fixed-choice
+  constrained decoding (`NFKMLXJSONConstraint`, `NFKMLXChoiceConstraint`), Qwen3-MoE and Mixtral
+  mixtures, runtime 4- / 8-bit quantization with a checkpoint contract that reloads packed weights onto
+  matching structure, and `NFKMLXModelSizing`, which answers whether a release fits the machine — and
+  at what context window — before any weight loads. Every option reaches Objective-C through
+  `NFKMLXGenerationParameterKey`.
+- **`NFKMLXT5Encoder`** / **`NFKMLXGemma2Net`** — the text encoders the diffusion pipelines condition on:
+  T5 v1.1 and umT5 (`perLayerBias`) for LTX and Wan, Gemma 2 for SANA. Each at reference parity.
+- **`NFKMLXSigLIP2`** — real image + text embeddings (SigLIP 2, base-patch16-224): the SigLIP encoder
+  with an attention-pooling head and a 256k-vocabulary multilingual text tower, sigmoid similarity.
+  `siglip2-base-patch16-224`; parity ~1e-12 on both towers.
+- **`NFKMLXRTDetr`** — real object detection under Apache-2.0 (RT-DETR r50vd): a ResNet-D backbone, a
+  hybrid encoder, query selection, and a deformable-attention decoder with box refinement; no non-max
+  suppression, since the one-to-one training makes the queries distinct. `rtdetr`; at parity on the
+  released weights end to end.
+- **`NFKMLXRetinaFace`** — real face detection with five-point landmarks (mobile0.25, the detector the
+  CodeFormer reference pipeline uses); `retinaface-mobile025`. `NFKMLXPhotoFaceBackend` restores every
+  face in a photograph through `NFKMLXFaceAlignment` (RetinaFace or a weight-free Vision detector) and
+  CodeFormer, compositing each back with a feathered edge.
+- **`NFKMLXTAESD`** — the tiny Stable Diffusion autoencoder (`taesd`), a fast preview encode / decode;
+  the `[Module]`-array modeling loads the flat `nn.Sequential` release with no remap.
+- **`NFKMLXIPAdapterImageProjection`** / **`NFKMLXIPAdapterAttention`** — IP-Adapter image conditioning
+  for a diffusion model: a CLIP image embedding becomes a few tokens read through a second,
+  image-conditioned cross-attention beside the text one. Both at parity against diffusers.
+- **`NFKMLXZImagePipeline`** — Z-Image text-to-image and image-to-image: the single-stream S3-DiT
+  (`NFKMLXZImageTransformerNet`, at parity), the Flux VAE (a preset of the shared `NFKMLXSDAutoencoder`),
+  and a Qwen3-4B caption embedding read from the shipped decoder's penultimate layer, over the flow
+  scheduler.
+- **`NFKMLXSANAPipeline`** — SANA text-to-image: the ReLU linear-attention DiT (`NFKMLXSANATransformerNet`),
+  the 32× Deep-Compression Autoencoder (`NFKMLXDCAutoencoderNet`, at parity on the released `Sana_600M`
+  VAE), a Gemma 2 caption, and the released DPM-Solver++ sampler (`NFKMLXDPMSolverScheduler`).
+- **`NFKMLXLTXPipeline`** — LTX-Video text-to-video: a causal 3-D VAE (`NFKMLXLTXVideoVAE`), the 2B
+  DiT (`NFKMLXLTXTransformer`, 3-D rotary + adaLN + cross-attention), a T5-XXL prompt, and the
+  rectified-flow sampler (`NFKMLXFlowMatchScheduler`, exact against diffusers). Every stage at parity;
+  the caller stages the 19 GB encoder and the 7.7 GB DiT in turn.
+- **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
+  3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
+  a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
+- **`NFKMLXSAM2`** — SAM 2's Hiera image encoder (tiny, base_plus, large), prompt encoder, mask decoder,
+  and the video memory encoder and memory attention, each at parity against facebookresearch's sources.
+- **`NFKMLXDemucs`** / **`NFKMLXHTDemucs`** — real four-stem music separation: the Demucs v2 time-domain
+  U-Net (`demucs`) and the v4 Hybrid Transformer Demucs (`htdemucs`), a spectrogram branch and a
+  waveform branch joined by a cross-transformer; both at parity on the released weights.
+- **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder (tiny, small, medium, large-v3)
+  with the reference's suppression rules and timestamped decoding (`emitsTimestamps` → segments);
+  `whisper-tiny`; exact token matches against openai-whisper. Also the core's `transcription`
+  capability through `NFKMLXWhisperProvider`.
+- **`NFKMLXSileroVAD`** — real voice-activity detection (Silero VAD v6): a learned STFT, four
+  convolutions, and an LSTM that streams chunk by chunk; `silero-vad`; threshold agreement 32/32 against
+  the released JIT.
+- **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
+  generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
+  SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,
+  `decode` reconstructs; both match the reference's codes exactly.
+- **`NFKMLXVoice`** / **`NFKMLXFastSpeech2`** / **`NFKMLXHiFiGAN`** — a complete text-to-speech voice:
+  the espnet FastSpeech2 conformer on the released LJSpeech weights (durations exact frame for frame)
+  with its paired HiFi-GAN vocoder, exposed through `makeSpeechBackend(phonemize:)`. The package's own
+  Whisper transcribes its output as "hello, world." `NFKMLXTTS` chains a phonemizer
+  (`NFKMLXNeuralG2P`, or a system espeak-ng), an acoustic model, and a vocoder by hand.
+- **`NFKMLXKokoro`** — Kokoro-82M (StyleTTS2 / iSTFTNet), a second text-to-speech voice: a PL-BERT
+  phoneme encoder, duration / F0 / energy predictors, and an iSTFTNet decoder with a harmonic sine
+  source. `backend(directoryURL:voiceName:)` takes a phoneme string under `NFKInputPrompt`; every
+  deterministic seam at parity, the waveform at 0.997.
+- **`NFKMLXVideoBackend`** — the first backend that produces video: an `NFKVideoAsset` in, every frame
+  through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
+  `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.
+- **Customizing a model on device** — `NFKMLXTrainer` runs supervised and zero-reference fine-tuning
+  with clipping, checkpoints, and early stop; `NFKMLXLoRA` adapts attention blocks and merges the
+  result back into plain weights; `NFKMLXCLIPProbe` trains a classifier over frozen CLIP embeddings;
+  recipes ship for Zero-DCE, SegFormer's decode head, and Whisper, each with its loss at reference
+  parity. A fine-tuned file loads through the model's ordinary `weightsURL:` factory.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
   the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
   the backend runs the denoise loop with per-step progress and cancellation. No source latent runs

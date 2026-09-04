@@ -64,6 +64,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKCoreMLBackend``
 - ``NFKCoreMLLanguageBackend``
 - ``NFKRemoteBackend``
+- ``NFKAnthropicBackend``
 - ``NFKRemoteEmbeddingBackend``
 - ``NFKRemoteSpeechBackend``
 - ``NFKRemoteImageBackend``
@@ -118,6 +119,15 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 ### Tokenizers & tensors
 
 - ``NFKTokenizer``
+
+### The machine
+
+- ``NFKHardwareProfile``
+- ``NFKComputePlan``
+
+### Library
+
+- ``NFKInferKit``
 
 ### Modality
 

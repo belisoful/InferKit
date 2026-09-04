@@ -29,7 +29,7 @@
   <text x="60" y="237" font-size="14" font-weight="700" fill="#7A5AF8">Companion packages (optional)</text>
   <rect x="60" y="250" width="140" height="46" rx="9" fill="#FFFFFF" stroke="#D6C9F9"/>
   <text x="130" y="270" text-anchor="middle" font-size="12" font-weight="600" fill="#1F2933">InferKitMLX</text>
-  <text x="130" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">31 MLX models · SD</text>
+  <text x="130" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">60+ MLX models · SD · LLMs</text>
   <rect x="212" y="250" width="146" height="46" rx="9" fill="#FFFFFF" stroke="#D6C9F9"/>
   <text x="285" y="270" text-anchor="middle" font-size="10.5" font-weight="600" fill="#1F2933">InferKitFoundationModels</text>
   <text x="285" y="286" text-anchor="middle" font-size="10.5" fill="#5A6672">on-device LLM</text>

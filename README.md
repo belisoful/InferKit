@@ -3,7 +3,8 @@
 A small, cross-platform (macOS / iOS / tvOS) inference toolkit for Objective-C, usable from Swift.
 
 One protocol — `NFKInferenceBackend` — covers every engine, so the same request and result types drive
-a Core ML model, an OpenAI-compatible endpoint, Apple's on-device Foundation Models, or an MLX model.
+a Core ML model, an OpenAI-compatible or Anthropic endpoint (hosted, or a local runner such as Ollama),
+Apple's on-device Foundation Models, or an MLX model.
 There is no FxPlug or host-framework dependency, so any Metal or Apple app can use it.
 
 ```objc
@@ -36,18 +37,27 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   `NFKInferenceResult` carry named inputs, parameters, and outputs; `NFKInferenceJob` runs one
   asynchronously with progress and cancellation.
 - **Backends**, on Apple frameworks alone: a passthrough mock, in-process Core ML for images and
-  tensors, an on-device Core ML language-model runner, OpenAI-compatible chat and transcription
-  clients, and a submit-poll-fetch base for generation services.
-- **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, a tokenizer
-  (BPE / WordPiece / Unigram), and a Hugging Face download and cache layer.
+  tensors, an on-device Core ML language-model runner, OpenAI-compatible and Anthropic chat clients
+  that stream, cancel, call tools, return structured output, and take images, audio, documents, and
+  video beside the prompt, remote embeddings / speech / image generation / transcription / video
+  generation / reranking / moderation clients, and a submit-poll-fetch base for job-style services.
+- **Remote providers** — `NFKRemoteProvider` names thirteen services (OpenAI, Anthropic, xAI, Gemini,
+  Groq, Mistral, DeepSeek, Together, OpenRouter, and the local runners Ollama, LM Studio, llama.cpp,
+  and vLLM), lists each one's models from the server rather than a constant, and reaches a local
+  runner's native API — what is installed and loaded, and Ollama's pull and delete.
+- **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, image and video coding
+  (`NFKImageCoding`, `NFKVideoSampling`), a tokenizer (BPE / CLIP / WordPiece / Unigram), a Core ML
+  compute-plan reader, a hardware profile, and a Hugging Face download and cache layer.
 - **Runtime discovery** — `NFKDynamicBackend` activates an optional engine only when it is linked,
   resolving it by name, so the core never references it.
 
 A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
-companion packages already do: **InferKitMLX** (35-plus models across image, video, and audio —
-including Stable Diffusion text-to-image and MiniMax Music 3 text-to-music — each validated
-numerically against its reference implementation) and **InferKitFoundationModels** (Apple's on-device
-model, with tool calling and structured output).
+companion packages already do: **InferKitMLX** (60-plus models across image, video, audio, and
+language — text-to-image with Stable Diffusion, Z-Image, and SANA, text-to-video with LTX-Video and Wan,
+on-device language models (Qwen3, Qwen3.5, Gemma 4, DeepSeek V4, and any dense GGUF), text embeddings
+and reranking, vision-language, speech recognition and synthesis, neural audio codecs, and MiniMax
+Music 3 text-to-music — each validated numerically against its reference implementation) and
+**InferKitFoundationModels** (Apple's on-device model, with tool calling and structured output).
 
 ## Documentation
 
@@ -91,7 +101,7 @@ Tools/xcframework/build.sh                      # -> .xcframework-build/InferKit
 ```
 
 That yields a universal static XCFramework with three slices — macOS (arm64 + x86_64), iOS device,
-and iOS simulator — carrying the 30 public headers.
+and iOS simulator — carrying the 44 public headers.
 
 The MLX companion packages too, through its own script:
 
@@ -105,17 +115,21 @@ of that slice ships.
 `--verify` links a consumer against each and runs a model on the GPU, because a binary that links can
 still fail to find its Metal library. `--variant`, `--slices`, and `--no-swift-interfaces` trim the
 build and the output. A consumer's binary grows by about 14 MB plus a 3.6 MB Metal library, of which
-MLX is roughly 97% — every model InferKitMLX ships is 193 KB of it.
+MLX is roughly 97% — InferKitMLX and the core together are a few hundred kilobytes of it.
 
 [Docs/installation.md](Docs/installation.md) carries a linking recipe for each case — Xcode app,
 framework, plug-in bundle, SwiftPM `binaryTarget`, your own static library — and the release-asset
 matrix. The artifacts are not committed; they compress to about 49 MB across three release assets.
 
-The MLX companion's tests need the Metal library only Xcode's build system bundles, so run those with
-`xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`.
+The MLX companion's tests need the Metal library only Xcode's build system bundles, so run those
+through `xcodebuild test -destination 'platform=macOS' -skipPackagePluginValidation` with each of its
+three shared schemes in turn — `InferKitMLXTests`, `InferKitMLXExamples`, and `InferKitMLXObjCExamples`
+(the library scheme `InferKitMLX` runs only the first of them). The parity suites read real checkpoints
+from `~/.inferkit-validation`, fetched by `Tools/validation-assets/fetch.py`, and skip where a
+checkpoint is absent.
 `InferKit.xcworkspace` opens all three packages in one window, each still built as its own package.
-Its ten schemes cover every target; the core's suite splits across `InferKitTests` (174),
-`InferKitExamples` (15), and `InferKitSwiftExamples` (15) — the same 204 `swift test` runs.
+Its schemes cover every target; the core's suite splits across `InferKitTests` (297),
+`InferKitExamples` (20), and `InferKitSwiftExamples` (20) — the same 337 `swift test` runs.
 
 ## Consumers
 

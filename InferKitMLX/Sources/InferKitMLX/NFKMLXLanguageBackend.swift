@@ -97,7 +97,7 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// without one — the roles and turn markers it learned are absent, and it answers a different
     /// question than it was asked. `.chatML` applies the `<|im_start|>role … <|im_end|>` template the
     /// Qwen and Llama instruct families use, with the release's own special tokens; it is off by
-    /// default because a base model wants the plain text, and a raw ``NFKInputPrompt`` is always used
+    /// default because a base model wants the plain text, and a raw `NFKInputPrompt` is always used
     /// verbatim whatever this says.
     public var chatTemplate: NFKMLXChatTemplate = .none
 
@@ -434,7 +434,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
     }
 
-    /// The prompt text, from either input key. A raw ``NFKInputPrompt`` is used verbatim; a message
+    /// The prompt text, from either input key. A raw `NFKInputPrompt` is used verbatim; a message
     /// list is flattened plainly, or rendered through the chat template when one is asked for.
     static func prompt(from request: NFKInferenceRequest,
                        template: NFKMLXChatTemplate = .none) -> String? {
