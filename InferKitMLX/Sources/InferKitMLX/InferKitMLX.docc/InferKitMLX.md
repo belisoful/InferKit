@@ -18,7 +18,8 @@ Three ways to use it:
 
 - **Shipped models** — sixty-plus real models, each implemented in `MLXNN` and measured against its
   reference implementation on the released weights, each with a public `@objc` factory. See
-  <doc:ModelGallery>.
+  <doc:ModelGallery> for what each does and <doc:ModelIndex> for the class, configuration, and a
+  construction line to copy.
 - **Generative pipelines** — Stable Diffusion, Z-Image, and SANA text-to-image; LTX-Video and Wan
   text-to-video; on-device language models (Qwen3, Qwen3.5, Gemma 4, DeepSeek V4, any dense GGUF); and
   MiniMax Music 3 text-to-music. See <doc:DiffusionAndSchedulers> and ``NFKMLXLanguageBackend``.
@@ -64,6 +65,7 @@ limits.
 ### Concepts
 
 - <doc:ModelGallery>
+- <doc:ModelIndex>
 - <doc:BringYourOwnBackends>
 - <doc:DiffusionAndSchedulers>
 - <doc:WeightsAndConversion>

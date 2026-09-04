@@ -27,7 +27,8 @@ let depth = try NFKMLXModelRegistry.backend(named: "depth-anything-v2-small", we
 ```
 
 Every backend runs `runInference(for:)` synchronously and multi-second — call it off the render thread,
-or submit a job for progress and cancellation.
+or submit a job for progress and cancellation. <doc:ModelIndex> lists, per model, the network class, the
+configuration preset behind each registered name, and a construction line to copy.
 
 ### Image → image
 
@@ -199,6 +200,7 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 
 ### Related
 
+- <doc:ModelIndex>
 - <doc:BringYourOwnBackends>
 - <doc:DiffusionAndSchedulers>
 - <doc:WeightsAndConversion>
