@@ -54,8 +54,13 @@ final class NFKMLXDepthAnythingTests: XCTestCase {
     func testASafetensorsCheckpointLoadsAndReproducesTheForward() throws {
         try requireMLXRuntime()
         let trained = NFKMLXDepthAnything.makeNet(tinyConfiguration())
-        let pytorchLayout = Dictionary(uniqueKeysWithValues: trained.parameters().flattened().map { key, value in
-            (key, value.ndim == 4 ? value.transposed(0, 3, 1, 2) : value)
+        // The two resize_layers are ConvTranspose, whose PyTorch weight is `[C_in, C_out, kH, kW]`, so
+        // to MLX layout is `(3, 0, 1, 2)` here — the inverse of the loader's `(1, 2, 3, 0)` — where a
+        // regular convolution uses `(0, 3, 1, 2)`, the inverse of its `(0, 2, 3, 1)`.
+        let convTranspose: Set<String> = ["depth_head.resize_layers.0.weight", "depth_head.resize_layers.1.weight"]
+        let pytorchLayout = Dictionary(uniqueKeysWithValues: trained.parameters().flattened().map { key, value -> (String, MLXArray) in
+            guard value.ndim == 4 else { return (key, value) }
+            return (key, convTranspose.contains(key) ? value.transposed(3, 0, 1, 2) : value.transposed(0, 3, 1, 2))
         })
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("dav2-\(UUID().uuidString).safetensors")
         defer { try? FileManager.default.removeItem(at: url) }

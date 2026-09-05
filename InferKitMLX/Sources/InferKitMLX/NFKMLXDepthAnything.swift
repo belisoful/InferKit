@@ -228,7 +228,7 @@ final class NFKDPTFusion: Module {
             out = out + unit1(skip)
         }
         out = unit2(out)
-        out = NFKMLXResample.resizeNearest(out, height: height, width: width)
+        out = NFKMLXResample.resizeBilinearAlignCorners(out, height: height, width: width)
         return outConv(out)
     }
 }
@@ -412,6 +412,37 @@ enum NFKMLXResample {
         let bottom = c10 * (1 - wx) + c11 * wx
         return (top * (1 - wy) + bottom * wy).reshaped([n, height, width, c])
     }
+
+    /// Resamples `[N, H, W, C]` to `height` × `width` by bilinear interpolation with
+    /// `align_corners=true` — the DPT head's fusion convention (`F.interpolate(mode: "bilinear",
+    /// align_corners=True)`), where the corner samples map to the corners and the source coordinate is
+    /// `o · (in - 1) / (out - 1)`.
+    static func resizeBilinearAlignCorners(_ x: MLXArray, height: Int, width: Int) -> MLXArray {
+        let (n, h, w, c) = (x.shape[0], x.shape[1], x.shape[2], x.shape[3])
+        if h == height && w == width { return x }
+        func axis(_ outSize: Int, _ inSize: Int) -> (MLXArray, MLXArray, [Float]) {
+            var lo = [Int32](), hi = [Int32](), frac = [Float]()
+            let scale = outSize > 1 ? Float(inSize - 1) / Float(outSize - 1) : 0
+            for o in 0 ..< outSize {
+                let src = Float(o) * scale
+                let low = min(Int(src.rounded(.down)), inSize - 1)
+                lo.append(Int32(low))
+                hi.append(Int32(min(low + 1, inSize - 1)))
+                frac.append(src - Float(low))
+            }
+            return (MLXArray(lo), MLXArray(hi), frac)
+        }
+        let (y0, y1, yf) = axis(height, h)
+        let (x0, x1, xf) = axis(width, w)
+        let rows0 = x[0..., y0], rows1 = x[0..., y1]
+        let c00 = rows0[0..., 0..., x0], c01 = rows0[0..., 0..., x1]
+        let c10 = rows1[0..., 0..., x0], c11 = rows1[0..., 0..., x1]
+        let wy = MLXArray(yf).reshaped([1, height, 1, 1])
+        let wx = MLXArray(xf).reshaped([1, 1, width, 1])
+        let top = c00 * (1 - wx) + c01 * wx
+        let bottom = c10 * (1 - wx) + c11 * wx
+        return (top * (1 - wy) + bottom * wy).reshaped([n, height, width, c])
+    }
 }
 
 /// Depth Anything V2 as an InferKit backend, and its registration for the Objective-C path.
@@ -497,9 +528,21 @@ public final class NFKMLXDepthAnything: NSObject {
     static func loadWeights(into net: NFKMLXDepthAnythingNet, from url: URL,
                             remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
-        let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
-            (remap(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        // The DPT head's two transposed-convolution resize layers (`depth_head.resize_layers.0` and
+        // `.1`) store their weight as PyTorch `[C_in, C_out, kH, kW]`, which MLX's ConvTransposed2d
+        // reads as `[C_out, kH, kW, C_in]` — a different axis order from a regular convolution's
+        // `[out, kH, kW, in]`. Both are square (in == out), so the regular-convolution transpose loads
+        // without a shape error but scrambles the kernel's in/out arrangement.
+        let convTranspose: Set<String> = ["depth_head.resize_layers.0.weight", "depth_head.resize_layers.1.weight"]
+        let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
+            let remapped = remap(key)
+            let array: MLXArray
+            if checkpoint.needsConvTranspose && value.ndim == 4 {
+                array = convTranspose.contains(remapped) ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            } else {
+                array = value
+            }
+            return (remapped, array)
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }
