@@ -572,7 +572,12 @@ The standout pick per modality, each entry naming what makes it worth the port a
 alternatives.
 
 - **Audio.**
-  - `Kokoro-82M` TTS (Apache) — an 82M-parameter voice, small enough to ship as a default.
+  - `Kokoro-82M` TTS (Apache) — **SHIPPED** (`NFKMLXKokoro`): the StyleTTS2 / iSTFTNet voice (PL-BERT
+    phoneme encoder, duration and F0/energy predictors, an iSTFTNet decoder with a harmonic sine
+    source), at reference parity on the released weights stage by stage. The deterministic seams are
+    exact and the vocoder is float-precision-limited by the sine phase (waveform cosine ~0.997), the
+    same class as the Music 3 end to end. The backend takes a phoneme string, so a caller brings the
+    grapheme-to-phoneme front end (`NFKMLXNeuralG2P` or espeak).
   - `Silero VAD v6` (~1 MB) — **SHIPPED** (`NFKMLXSileroVAD`). A streaming STFT + conv encoder + LSTM
     decoder scoring one speech probability per 512-sample chunk, beside the existing MarbleNet VAD.
     At reference parity against the released snakers4 JIT (silero_vad 6.2.1): per-chunk cosine
@@ -599,8 +604,19 @@ alternatives.
     S3 speech tokenizer, the T3 Llama with llama3 rope scaling, S3Gen's flow-matching decoder, the HiFT
     vocoder) at reference parity on the released weights, stage by stage; a clip synthesized in the
     validation clip's voice transcribes back through the package's own Parakeet exactly.
-  - The four dereverberation candidates (SGMSE+, Resemble Enhance, VoiceFixer, DeepFilterNet) stay on
-    the list beneath these.
+  - **Dereverberation and denoising** — the capability the earlier audit flagged, now scoped.
+    `SGMSE+` is the first dereverb target: MIT, with a dedicated dereverberation checkpoint (16 kHz
+    WSJ0-REVERB, 48 kHz EARS-Reverb), matching the mic-room task. Its NCSN++ score network is standard
+    MLXNN but for the FIR anti-aliasing resample (`upfirdn2d`, kernel [1,3,3,1], a pad-plus-strided-conv
+    the DAC/SNAC resamplers resemble); the complex spectrogram packs into four real channels, and the
+    EMA weights are what inference reads. Its sampler is not the shipped DDIM or flow scheduler; it is
+    an OUVE variance-exploding SDE with a predictor-corrector (annealed Langevin) step, a small new
+    value type the way the five shipped schedulers were. The oracle is `sp-uhh/sgmse`, CPU-clean
+    through its pure-Python `upfirdn2d` fallback. `DeepFilterNet` follows as a cheap denoiser beside
+    `NFKMLXDenoiser` (dual MIT/Apache, ~2.3M parameters, a multi-frame `takeAlong` gather plus a
+    complex multiply); its dereverberation is weak, so it ships as a denoiser, not the dereverb answer.
+    `VoiceFixer` and `Resemble Enhance` are heavier general-restoration ports for later, both MIT;
+    Resemble Enhance reuses the flow-matching sampler and has a community MLX port to diff against.
 - **Image.**
   - `Z-Image Turbo` (6B, Apache) — the leading open text-to-image model, it fits a Mac. **The DiT stage
     is SHIPPED** (`NFKMLXZImageTransformerNet`): the single-stream S3-DiT — image and caption tokens
@@ -608,8 +624,12 @@ alternatives.
     `layers` structure, sandwich RMS norms, 4-chunk adaptive modulation, SwiGLU FFN, and a 3-axis complex
     rotary — at reference parity against diffusers on the first numeric run (velocity cosine
     0.9999999999999653, pad-token path exercised), verified in isolation with recorded Qwen3 captions.
-    The Flux VAE (a diffusers `AutoencoderKL`, 16 channels) and the Qwen3-4B encoder are the remaining
-    stages; the flow sampler is already shipped.
+    **The full text-to-image pipeline is now COMPLETE** (`NFKMLXZImagePipeline`): the Flux VAE is the
+    shared `NFKMLXSDAutoencoder` under a `.flux` preset (quant convolutions dropped, a centering
+    shift/scale), at reference parity against diffusers; the Qwen3-4B text step is the shipped Qwen3
+    decoder read at its penultimate hidden state, so it needs no new port; and the flow sampler was
+    already shipped. The image-to-image edit path also ships (`generate(image:strength:)`), diffusers'
+    own Z-Image img2img.
   - `SANA` (0.6B) — the only new text-to-image model small enough for a phone. **The DiT stage is
     SHIPPED** (`NFKMLXSANATransformerNet`): the linear-attention DiT — ReLU O(N) self-attention, GLUMBConv
     gated-depthwise Mix-FFN, softmax cross-attention to the Gemma text, PixArt-α shared-timestep
@@ -621,7 +641,12 @@ alternatives.
     → DC-AE decode; caller supplies the Gemma embedding). The released DPM-Solver sampler is now ported
     (`NFKMLXDPMSolverScheduler`, at reference parity), and the Gemma-2 text encoder is ported
     too (`NFKMLXGemma2Net`, at parity) — SANA runs end to end from a raw prompt.
-  - `IP-Adapter` — image conditioning, a cheap gap to close.
+  - `IP-Adapter` — image conditioning. **SHIPPED** (`NFKMLXIPAdapterImageProjection` /
+    `NFKMLXIPAdapterAttention`): the image projection (a CLIP image embedding to a short token
+    sequence) and the decoupled cross-attention (`text_attn + scale·ip_attn` through its own
+    `to_k_ip` / `to_v_ip`), at reference parity against diffusers (cosine ~1.0). Threading the ip
+    tokens and scale into the shipped `NFKMLXSDUNet` cross-attention is the remaining integration; the
+    base UNet is frozen, so an adapter is a small file over a shipped SD model.
   - `TAESD` — **SHIPPED** (`NFKMLXTAESD`): the tiny SD autoencoder for an instant latent preview, at
     reference parity against madebyollin's own taesd (latent and decode cosine 0.9999999999, mean
     |difference| 1.9e-7). Encoder + decoder modeled as `[Module]` arrays so the numeric Sequential keys
@@ -630,11 +655,46 @@ alternatives.
     vision tower. Vision ViT (reusing the SigLIP encoder) + attention-pooling head + a 256k-vocab text
     tower + sigmoid logit scale/bias, at reference parity against transformers (image and text embedding
     cosine 0.999999999999, logits to 1e-5).
-- **Vision.**
-  - `Depth Anything V3` — a drop-in on the V2 port.
-  - `BiRefNet` (MIT) — matting.
-  - `SAM 3.1`.
-  - `RT-DETR` / `RF-DETR` — a detector that avoids YOLO's AGPL.
+- **Vision.** Scoped by a Sept 2026 recon; the build order is Depth Anything 3, then RF-DETR, then
+  BiRefNet, with SAM 3 blocked on weight access.
+  - `Depth Anything 3` (monocular) — **SHIPPED** (`NFKMLXDepthAnything3`): DA3-SMALL, at reference
+    parity on the released weights, seam by seam, against the authors' `depth_anything_3` package (the
+    four hooked backbone features and every head stage ≥ 0.9999999999; the exp-depth map mean-removed
+    0.99999999997, max relative difference 8e-7). The backbone is a DINOv2 ViT variant, not a reuse of
+    the V2 encoder: from block 4 it adds a 2D rotary embedding, per-head query/key normalization, a
+    learned camera token injected into the class-token slot, and alternating local/global attention
+    whose cross-view "global" blocks collapse to query/key-normalized self-attention for a single
+    image. Each hooked feature concatenates the preceding local block's output with the current
+    global block's (`cat_token`), so the DualDPT head reads twice the embedding width. Only the depth
+    branch of the DualDPT is built; the ray branch, the camera decoder/encoder, and the aux heads are
+    dropped and named as deliberately unimplemented. The output convention is exp-depth, not V2's
+    relative disparity. Reaching parity found that the head's two `ConvTranspose2d` resize layers need
+    the transposed-convolution axis order (`[C_in, C_out, kH, kW]` → `[C_out, kH, kW, C_in]`), not a
+    regular convolution's — both are square, so the wrong order loaded silently and scrambled the
+    kernel (stage cosines ~0.01), a latent defect the shipped V2 port carried too and that is now
+    fixed there — along with the larger V2 bug the audit surfaced: its DPT fusion upsampled nearest
+    where the reference uses bilinear with align_corners, which was the dominant cause of V2's ~0.998
+    parity (now ~0.9999 across all three sizes).
+  - `RT-DETR` — a detector that avoids YOLO's AGPL. **SHIPPED** (`NFKMLXRTDetr`): the ResNet-D
+    backbone, hybrid encoder, query selection, and the deformable-attention decoder (a `grid_sample`
+    gather MLX expresses with `takeAlong`), at reference parity against transformers seam by seam and
+    on the released `rtdetr_r50vd` weights end to end.
+  - `RF-DETR` (nano) — the license-clean detector to follow Depth 3. Its three-layer
+    deformable-attention decoder is the one `NFKMLXRTDetr` already ships; the new pieces are a
+    DINOv2-with-registers ViT backbone, a C2f projector, and a mixed-query scheme, all built from
+    primitives already here. The oracle is first-party `transformers` `RfDetrForObjectDetection`
+    (4.58+). Apache-2.0 for the nano through large sizes; the XL/2XL are PML-1.0 and are not targets.
+    No unsupported op. Medium.
+  - `BiRefNet` (MIT) — high-resolution matting, and portable now rather than blocked as an earlier
+    note claimed. The released weights use an `ASPPDeformable` decoder, and its deformable convolution
+    reduces to the same bilinear-gather (`takeAlong`) primitive used for RAFT/RIFE/RVM and RT-DETR's
+    deformable attention, so no DCNv2 Metal kernel is needed for correctness. `torchvision.ops.deform_conv2d`
+    has a CPU kernel, so the oracle runs here. The real work is the Swin-v1-L backbone. Medium.
+  - `SAM 3 / 3.1` — the successor to the shipped SAM 2, and a large staged effort rather than an
+    increment. The SAM 2 Hiera encoder does not transfer: SAM 3 uses a different Perception Encoder, a
+    CLIP-style text encoder, and a DETR detector, and only the tracker and mask decoder reuse SAM 2.
+    transformers v5 carries a CPU `Sam3Model` oracle. The weights are gated behind Meta's custom SAM
+    License, so this is blocked on weight access here, the way pyannote is.
 - **Video generation**, a new capability the toolkit lacks (it only interpolates and upscales today).
   - `LTX-Video` / `LTX-2` — the first video generator here, with MLX ports available as parity
     references. **The VAE stage is SHIPPED** (`NFKMLXLTXVideoVAE`): the causal 3D autoencoder
@@ -661,6 +721,10 @@ alternatives.
     it end to end** (DiT + UniPC flow sampler → 3D VAE decode; caller supplies the umT5 embedding).
     The released UniPC sampler is now ported (`NFKMLXUniPCScheduler`, at reference parity), and umT5
     is verified (`NFKMLXT5Encoder` per-layer-bias mode) — Wan runs end to end from a raw prompt.
+
+Two ports are blocked on weight access here rather than on engineering: pyannote diarization (gated
+`pyannote/segmentation-3.0`) and SAM 3 (gated Meta SAM License). Each needs a credential the way the
+gated Stable Diffusion 2.1 base does, which `NFKHFHub.accessToken` / `HF_TOKEN` supply.
 
 Licensing gates what ships as a default: permissive weights ship, research-only and vendor-licensed
 weights (FLUX.1-dev, F5-TTS, DMD2, Apple's FastVLM and Depth Pro, and Parakeet under NVIDIA/NeMo) are

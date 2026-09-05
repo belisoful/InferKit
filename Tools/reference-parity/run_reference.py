@@ -140,6 +140,66 @@ def run_depth_encoder(image, checkpoint):
     return features[0][0][0].contiguous()                       # [tokens, C], class token excluded
 
 
+def run_depth3(image, checkpoint):
+    """Depth Anything 3 (DA3-SMALL) monocular depth, seam by seam.
+
+    The `depth_anything_3` package is not in transformers; IK_REF_SRC holds it (the pip wheel's own
+    `depth_anything_3/` importable directory). Only the backbone (DinoV2 vits) and the DualDPT depth
+    branch are built — the camera decoder/encoder and the aux/ray branch are not needed for depth, so
+    this drops them the way the InferKitMLX port does. The image is fed to the backbone directly (no
+    ImageNet normalization), so the Swift parity test feeds the same `input_image` tensor and the
+    comparison isolates the network. The seams (the four hooked features, the head's four resized
+    stage features, the fused map, and the pre-exp logits) are recorded in `_extra` for localization;
+    the returned `output` is the exp-depth map.
+    """
+    sys.path.insert(0, _reference_source())
+    from safetensors.torch import load_file
+    from depth_anything_3.model.dinov2.dinov2 import DinoV2
+    from depth_anything_3.model.dualdpt import DualDPT
+
+    size = image.shape[0]
+    net = DinoV2(name="vits", out_layers=[5, 7, 9, 11], alt_start=4, qknorm_start=4, rope_start=4, cat_token=True)
+    head = DualDPT(dim_in=768, output_dim=2, features=64, out_channels=[48, 96, 192, 384], head_names=("depth", "ray"))
+    state = load_file(checkpoint) if checkpoint.endswith(".safetensors") else torch.load(checkpoint, map_location="cpu")
+    net.load_state_dict({k[len("model.backbone."):]: v for k, v in state.items() if k.startswith("model.backbone.")}, strict=False)
+    head.load_state_dict({k[len("model.head."):]: v for k, v in state.items() if k.startswith("model.head.")}, strict=False)
+    net.eval()
+    head.eval()
+
+    img = torch.from_numpy(image).permute(2, 0, 1)[None, None].float()   # [1, 1, 3, H, W]
+    extra = {}
+    with torch.no_grad():
+        feats, _ = net.pretrained.get_intermediate_layers(img, [5, 7, 9, 11], cam_token=None)
+        for i, (ft, _) in enumerate(feats):
+            extra[f"hook{i}"] = ft[0, 0].contiguous()
+        # The head's depth branch, step by step (see NFKMLXDepthAnything3.NFKDA3Head.seams).
+        from depth_anything_3.model.utils.head_utils import custom_interpolate
+        ph = pw = size // 14
+        flat = [f[0].reshape(1, ph * pw, f[0].shape[-1]) for f in feats]
+        resized = []
+        for si, x in enumerate(flat):
+            x = head.norm(x).permute(0, 2, 1).reshape(1, x.shape[-1], ph, pw)
+            x = head._add_pos_embed(head.projects[si](x), size, size)
+            x = head.resize_layers[si](x)
+            resized.append(x)
+            extra[f"stage{si}"] = x[0].contiguous()
+        sc = head.scratch
+        o = sc.refinenet4(sc.layer4_rn(resized[3]), size=sc.layer3_rn(resized[2]).shape[2:])
+        o = sc.refinenet3(o, sc.layer3_rn(resized[2]), size=sc.layer2_rn(resized[1]).shape[2:])
+        o = sc.refinenet2(o, sc.layer2_rn(resized[1]), size=sc.layer1_rn(resized[0]).shape[2:])
+        o = sc.refinenet1(o, sc.layer1_rn(resized[0]))
+        o = sc.output_conv1(o)
+        extra["fused"] = o[0].contiguous()
+        o = custom_interpolate(o, (size, size), mode="bilinear", align_corners=True)
+        o = head._add_pos_embed(o, size, size)
+        logits = sc.output_conv2(o)
+        extra["logits"] = logits[0].contiguous()
+        depth = torch.exp(logits[0, 0])
+
+    globals()["_extra"] = extra
+    return depth.contiguous()
+
+
 def run_segformer(image):
     """SegFormer-B0 (ADE20k) class logits at the decode head's native quarter resolution."""
     from transformers import SegformerForSemanticSegmentation, SegformerImageProcessor
@@ -4894,7 +4954,7 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,
                      "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
-                     "depth": run_depth, "depth_encoder": run_depth_encoder,
+                     "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
                      "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,

@@ -30,6 +30,7 @@ public final class NFKMLXReferenceModels: NSObject {
         registerControlNet()
         NFKMLXRealESRGAN.register()
         NFKMLXDepthAnything.register()
+        NFKMLXDepthAnything3.register()
         NFKMLXU2Net.register()
         NFKMLXNAFNet.register()
         NFKMLXSAM.register()

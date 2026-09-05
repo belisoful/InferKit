@@ -24,6 +24,16 @@
       ]
     },
     {
+      "key": "DEPTH3",
+      "file": "da3-small/model.safetensors",
+      "bytes": 137248940,
+      "url": "https://huggingface.co/depth-anything/DA3-SMALL/resolve/main/model.safetensors",
+      "note": "Depth Anything 3 monocular (DA3-SMALL, Apache-2.0). Already a PyTorch-layout safetensors NFKMLXDepthAnything3.loadWeights reads directly: it keeps model.backbone.pretrained.* (the DinoV2 vits backbone with rope/qknorm/camera-token/cat_token from block 4) and the model.head.* DualDPT DEPTH branch, dropping the aux/ray branch and model.cam_enc/cam_dec. 4-D convs transpose to NHWC; the two resize_layers ConvT weights take the transposed-conv axis order [C_in,C_out,kH,kW]->[C_out,kH,kW,C_in], NOT a regular conv's. The reference (IK_VAL_DEPTH3_REF) is produced by `run_reference.py depth3 <out> --checkpoint <this> --size 518` under the da3 oracle env with IK_REF_SRC pointing at the unpacked `depth_anything_3` pip package; it records the 4 hooked features, the 4 head stages, the fused map, the pre-exp logits, and the exp-depth output.",
+      "config": [
+        "IK_VAL_DEPTH3_WEIGHTS"
+      ]
+    },
+    {
       "key": "U2NET",
       "file": "u2net.safetensors",
       "raw": "u2net.pth",
@@ -1071,6 +1081,14 @@
       "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]' torch safetensors",
       "modes": [
         "parakeet"
+      ]
+    },
+    "da3": {
+      "interpreter": "~/.inferkit-validation/da3venv/bin/python3",
+      "why": "Depth Anything 3 is not in transformers; its `depth_anything_3` package pins numpy<2 and a recent torch that would fight the other oracles, so it runs under its own interpreter. `run_reference.py depth3` imports only DinoV2 + DualDPT (no camera/GS/alignment machinery), so the heavy app/3DGS deps (open3d, pycolmap, xformers) are not installed. Set IK_REF_SRC to the unpacked `depth_anything_3` package directory (the pip wheel: `pip download depth_anything_3` then unzip).",
+      "rebuild": "python3 -m venv ~/.inferkit-validation/da3venv && ~/.inferkit-validation/da3venv/bin/pip install 'numpy<2' einops omegaconf addict safetensors huggingface-hub pillow torch torchvision",
+      "modes": [
+        "depth3"
       ]
     },
     "music": {

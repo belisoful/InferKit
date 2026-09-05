@@ -916,8 +916,15 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   518×518 (so `pos_embed` matches without interpolation) and the map resizes back. `loadWeights(into:from:remap:)`
   loads a **safetensors** checkpoint; the DPT key layout is intricate, so `Tools/depth-anything-to-safetensors/convert.py`
   is self-validating (matches every key against the module's expected layout, reports mismatches).
-  **Reference parity across all three released sizes** — Small 0.99817 (encoder seam 0.9999924),
-  **Base 0.99807**, **Large 0.99846**. The oracle drives the authors' own `depth_anything_v2` package
+  **Reference parity across all three released sizes** — Small 0.99992 (encoder seam 0.9999924),
+  **Base 0.99995**, **Large 0.99984**, on the min-max-normalized 8-bit depth map. Two DPT-head fixes
+  found while porting Depth Anything 3 raised these from ~0.998: the two `resize_layers` are
+  `ConvTransposed2d`, whose PyTorch weight is `[C_in, C_out, kH, kW]` and needs the transposed-conv
+  axis order `(1,2,3,0)` → `[C_out, kH, kW, C_in]`, not a regular convolution's `(0,2,3,1)` (both are
+  square, so the wrong order loaded silently and scrambled the kernel — a small effect on the
+  normalized map); and the FeatureFusionBlock upsamples **bilinear with align_corners=true**
+  (`NFKMLXResample.resizeBilinearAlignCorners`), not nearest — the dominant fix. The oracle drives the
+  authors' own `depth_anything_v2` package
   (the real directory on `sys.path`; `IK_DEPTH_VARIANT` picks the encoder config, and both depth modes
   take a `--checkpoint`). It drove `transformers` until that package stopped registering the
   `depth_anything` model type and every size began raising `KeyError` — the parity test kept passing
