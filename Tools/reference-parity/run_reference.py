@@ -5092,7 +5092,163 @@ def run_chatterbox_s3gen(image, checkpoint):
     return wav[0].clone().contiguous()
 
 
+def run_dcn(image):
+    """DeformableConv2d core (modulated deform-conv v2) vs torchvision.ops.deform_conv2d — the one novel
+    op BiRefNet's ASPPDeformable needs, de-risked in isolation before the tower is built. For each kernel
+    in {1, 3, 7} at stride 1, dilation 1, padding k//2: random x, offset, mask (in [0, 4] via
+    2*sigmoid), weight, and bias are fed to torchvision's kernel, and the port reproduces the same
+    bilinear gather at the offset locations + tap-weighted sum. Every tensor is recorded NHWC except the
+    weight, which is kept in PyTorch [OC, C, kH, kW] layout (the port transposes it on load, as every
+    other conv here does). Needs torchvision; the plate is ignored.
+    """
+    from torchvision.ops import deform_conv2d
+    g = torch.Generator().manual_seed(0)
+    C, OC, H, W = 6, 5, 12, 10
+    x = torch.randn(1, C, H, W, generator=g)
+    extra = {"dcn_x": x[0].permute(1, 2, 0).contiguous()}                         # [H, W, C]
+    primary = None
+    for k in (1, 3, 7):
+        pad = k // 2
+        offset = torch.randn(1, 2 * k * k, H, W, generator=g) * 0.7               # exercise fractional + OOB
+        mask = 2.0 * torch.sigmoid(torch.randn(1, k * k, H, W, generator=g))      # the modulator, in [0, 4]
+        weight = torch.randn(OC, C, k, k, generator=g)
+        bias = torch.randn(OC, generator=g)
+        out = deform_conv2d(x, offset, weight, bias, stride=(1, 1), padding=(pad, pad), mask=mask)
+        extra[f"dcn{k}_offset"] = offset[0].permute(1, 2, 0).contiguous()         # [H, W, 2·k·k], (Δy,Δx) per tap
+        extra[f"dcn{k}_mask"] = mask[0].permute(1, 2, 0).contiguous()             # [H, W, k·k]
+        extra[f"dcn{k}_weight"] = weight.contiguous()                             # [OC, C, kH, kW] PyTorch layout
+        extra[f"dcn{k}_bias"] = bias.contiguous()                                 # [OC]
+        extra[f"dcn{k}_out"] = out[0].permute(1, 2, 0).contiguous()              # [H, W, OC]
+        if k == 7:
+            primary = out[0].permute(1, 2, 0).contiguous()
+    globals()["_extra"] = extra
+    return primary
+
+
+def run_birefnet_backbone(image, checkpoint):
+    """BiRefNet's Swin-v1-L backbone (`swin_v1_l`) on the RELEASED `bb.*` weights, against the model's
+    own reference (the vendored `swin_v1.py` under `IK_REF_SRC/birefnet`, with a stub `config` that
+    disables SDPA so the explicit-softmax path the MLX port reproduces is what runs). `checkpoint` is
+    the release `model.safetensors`. Records the ImageNet-normalized pixels both sides read and the four
+    stage feature maps (NHWC). The released weights are fp16; both sides upcast to float32 so the
+    comparison measures the port rather than half precision. Feed `--size 256 --plate subject`.
+    """
+    import sys
+    from safetensors.torch import load_file
+    ref = os.environ.get("IK_REF_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "refsrc"))
+    sys.path.insert(0, os.path.join(ref, "birefnet"))
+    from swin_v1 import swin_v1_l
+
+    state = load_file(checkpoint)
+    backbone_state = {key[len("bb."):]: value.float() for key, value in state.items() if key.startswith("bb.")}
+    model = swin_v1_l().float()
+    model.eval()   # SwinTransformer overrides train() and returns None, so eval() cannot be chained
+    missing, unexpected = model.load_state_dict(backbone_state, strict=False)
+    print(f"birefnet backbone: loaded {len(backbone_state)} bb tensors, missing {len(missing)}, unexpected {len(unexpected)}")
+
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixels = (torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float() - mean) / std    # [1, 3, H, W]
+    with torch.no_grad():
+        feats = model(pixels)
+
+    extra = {"pixels": pixels[0].permute(1, 2, 0).contiguous()}                              # [H, W, 3] NHWC
+    for level, feature in enumerate(feats):
+        extra[f"bb.{level}"] = feature[0].permute(1, 2, 0).contiguous()                       # [H_i, W_i, C_i] NHWC
+    globals()["_extra"] = extra
+    return feats[3][0].permute(1, 2, 0).contiguous()
+
+
+def run_birefnet_neck(image, checkpoint):
+    """BiRefNet's neck on the RELEASED weights, from the full model's own forward_enc + squeeze_module.
+    mul_scl_ipt='cat' runs the backbone at full and half resolution and concatenates the features
+    (doubling channels), cxt concatenates x1/x2/x3 interpolated to x4 with x4 (-> 5760 ch), and the
+    squeeze BasicDecBlk reduces that to 3072 — and that BasicDecBlk contains an ASPPDeformable, so this
+    exercises the deformable conv on real weights. Records the normalized pixels, the doubled stage
+    features x1/x2/x3 (for the decoder step), the cxt-concatenated x4 (pre-squeeze), and the squeezed x4.
+    The reference is the vendored HF birefnet.py (`IK_REF_SRC/birefnet_hf`); fp16 release, float32 both
+    sides. `checkpoint` is model.safetensors. Feed `--size 256 --plate subject`.
+    """
+    import sys
+    from safetensors.torch import load_file
+    ref = os.environ.get("IK_REF_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "refsrc"))
+    sys.path.insert(0, ref)
+    from birefnet_hf.birefnet import BiRefNet
+
+    model = BiRefNet(bb_pretrained=False)
+    model.float()
+    model.eval()   # BiRefNet/SwinTransformer override train() and return None, so eval() is a statement
+    model.load_state_dict({key: value.float() for key, value in load_file(checkpoint).items()}, strict=True)
+
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixels = (torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float() - mean) / std
+    with torch.no_grad():
+        (x1, x2, x3, x4), _ = model.forward_enc(pixels)
+        squeezed = model.squeeze_module(x4)
+
+    globals()["_extra"] = {
+        "pixels": pixels[0].permute(1, 2, 0).contiguous(),
+        "x1": x1[0].permute(1, 2, 0).contiguous(),                     # doubled stage features (NHWC)
+        "x2": x2[0].permute(1, 2, 0).contiguous(),
+        "x3": x3[0].permute(1, 2, 0).contiguous(),
+        "x4_cxt": x4[0].permute(1, 2, 0).contiguous(),                 # cxt-concatenated x4, pre-squeeze (5760)
+        "x4_squeezed": squeezed[0].permute(1, 2, 0).contiguous(),      # squeezed x4 (3072)
+    }
+    return squeezed[0].permute(1, 2, 0).contiguous()
+
+
+def run_birefnet_decode(image, checkpoint):
+    """BiRefNet's decoder on the RELEASED weights, from the full model's own Decoder.forward at eval.
+    The four decoder stages (BasicDecBlk with ASPPDeformable) with BasicLatBlk lateral skips, the
+    dec_ipt multi-scale image-patch injection (image2patches -> SimpleConvs), the gdt attention gating
+    (gdt_convs -> gdt_convs_attn -> sigmoid -> p*attn, which runs at EVAL — only gdt pred/label and the
+    ms-supervision heads are training-only), the bilinear upsampling, and conv_out1 -> the 1-channel
+    logit. Records the normalized pixels and the four encoder inputs (x1/x2/x3/x4_squeezed) so the port
+    runs on identical inputs, the four pre-gate decoder-block outputs (for localization), and the final
+    logit. fp16 release, float32 both sides. `checkpoint` is model.safetensors. Feed `--size 256`.
+    """
+    import sys
+    from safetensors.torch import load_file
+    ref = os.environ.get("IK_REF_SRC", os.path.join(os.path.dirname(os.path.abspath(__file__)), "refsrc"))
+    sys.path.insert(0, ref)
+    from birefnet_hf.birefnet import BiRefNet
+
+    model = BiRefNet(bb_pretrained=False)
+    model.float()
+    model.eval()
+    model.load_state_dict({key: value.float() for key, value in load_file(checkpoint).items()}, strict=True)
+
+    seams = {}
+    for name in ["decoder_block4", "decoder_block3", "decoder_block2", "decoder_block1"]:
+        getattr(model.decoder, name).register_forward_hook(
+            lambda module, inputs, output, key=name: seams.__setitem__(key, output.detach()))
+
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixels = (torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).float() - mean) / std
+    with torch.no_grad():
+        (x1, x2, x3, x4), _ = model.forward_enc(pixels)
+        squeezed = model.squeeze_module(x4)
+        outs = model.decoder([pixels, x1, x2, x3, squeezed])
+    logit = outs[-1]
+
+    globals()["_extra"] = {
+        "pixels": pixels[0].permute(1, 2, 0).contiguous(),
+        "x1": x1[0].permute(1, 2, 0).contiguous(),
+        "x2": x2[0].permute(1, 2, 0).contiguous(),
+        "x3": x3[0].permute(1, 2, 0).contiguous(),
+        "x4_squeezed": squeezed[0].permute(1, 2, 0).contiguous(),
+        "p4": seams["decoder_block4"][0].permute(1, 2, 0).contiguous(),
+        "p3": seams["decoder_block3"][0].permute(1, 2, 0).contiguous(),
+        "p2": seams["decoder_block2"][0].permute(1, 2, 0).contiguous(),
+        "p1": seams["decoder_block1"][0].permute(1, 2, 0).contiguous(),
+    }
+    return logit[0].permute(1, 2, 0).contiguous()                 # [H, W, 1] full-resolution logit
+
+
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
+          "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
@@ -5108,7 +5264,10 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
-                     "chatterbox_s3gen": run_chatterbox_s3gen}
+                     "chatterbox_s3gen": run_chatterbox_s3gen,
+                     "birefnet_backbone": run_birefnet_backbone,
+                     "birefnet_neck": run_birefnet_neck,
+                     "birefnet_decode": run_birefnet_decode}
 
 
 def main():

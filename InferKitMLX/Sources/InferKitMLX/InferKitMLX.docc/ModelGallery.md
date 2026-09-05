@@ -67,8 +67,8 @@ map under `NFKOutputImage` — recover the class index as `round(gray · (classC
 
 ### Matting, segmentation & faces
 
-`NFKMLXU2Net`, `NFKMLXRVM`, and `NFKMLXMODNet` produce a straight foreground plus an alpha matte under
-`NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NFKMLXRetinaFace` returns
+`NFKMLXU2Net`, `NFKMLXRVM`, `NFKMLXMODNet`, and `NFKMLXBiRefNet` produce a straight foreground plus an
+alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NFKMLXRetinaFace` returns
 `[NFKDetection]` with five-point landmarks through ``NFKMLXRetinaFaceDetector``.
 
 | Model | Name | Task |
@@ -76,6 +76,7 @@ map under `NFKOutputImage` — recover the class index as `round(gray · (classC
 | ``NFKMLXU2Net`` | `u2net` · `u2netp` | salient-object matting |
 | ``NFKMLXRVM`` | `robust-video-matting` | recurrent video matting |
 | ``NFKMLXMODNet`` | `modnet` | trimap-free portrait matting |
+| ``NFKMLXBiRefNet`` | `birefnet` | high-resolution background removal, MIT (Swin-v1-L + ASPPDeformable) |
 | ``NFKMLXSAM`` | `sam` | promptable segmentation |
 | ``NFKMLXSAM2`` | — | SAM 2: Hiera encoder, prompt encoder, mask decoder, and the video memory path |
 | ``NFKMLXRetinaFace`` | `retinaface-mobile025` | face detection with landmarks |

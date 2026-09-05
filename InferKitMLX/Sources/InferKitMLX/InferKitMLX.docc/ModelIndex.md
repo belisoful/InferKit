@@ -149,6 +149,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | U²-Net | ``NFKMLXU2Net`` | `NFKMLXU2NetNet` | ``NFKMLXU2NetVariant`` `.full` / `.light` | `u2net` · `u2netp` | ``NFKMLXMattingBackend`` |
 | Robust Video Matting | ``NFKMLXRVM`` | `NFKMLXRVMNet` | `NFKMLXRVMConfiguration.large` (MobileNetV3-Large); `downsampleRatio` for the guided-filter path | `robust-video-matting` | ``NFKMLXMattingBackend`` (single frame) / `NFKMLXRVMNet.forward` (video) |
 | MODNet | ``NFKMLXMODNet`` | `NFKMLXMODNetNet` | `NFKMLXMODNetConfiguration.base` | `modnet` | ``NFKMLXMattingBackend`` |
+| BiRefNet | ``NFKMLXBiRefNet`` | `NFKMLXBiRefNetModel` (Swin-v1-L backbone + ASPPDeformable decoder) | released `ZhengPeng7/BiRefNet` (`model.safetensors`, MIT); resizes to 1024 | `birefnet` | ``NFKMLXMattingBackend`` |
 | SAM | ``NFKMLXSAM`` | `NFKMLXSAMNet` | ``NFKMLXSAMVariant`` `.vitB` (`NFKMLXSAMConfiguration.vitB`); `.compact` for tests | `sam` | ``NFKMLXMattingBackend`` (point under `NFKSAMPointKey`) |
 | SAM 2 | ``NFKMLXSAM2`` | `NFKMLXSAM2EncoderNet`, `NFKMLXSAM2MemoryEncoderNet`, `NFKMLXSAM2MemoryAttentionNet` | `NFKMLXSAM2Configuration.tiny` / `.basePlus` / `.large` | — | Swift API (`MLXArray`) |
 | RetinaFace | ``NFKMLXRetinaFace`` | `NFKMLXRetinaFaceNet` | `NFKMLXRetinaFaceConfiguration()` = mobile0.25 | `retinaface-mobile025` | detection backend; `detector(weightsURL:)` for landmarks |
@@ -162,6 +163,8 @@ let backend = try NFKMLXU2Net.backend(variant: .full, weightsURL: url)
 let backend = try NFKMLXRVM.backend(weightsURL: url)
 // MODNet
 let backend = try NFKMLXMODNet.backend(weightsURL: url)
+// BiRefNet
+let backend = try NFKMLXBiRefNet.backend(weightsURL: url)
 // SAM
 let backend = try NFKMLXSAM.backend(variant: .vitB, weightsURL: url)
 // SAM 2
@@ -181,6 +184,8 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 [NFKMLXRVM backendWithWeightsURL:url error:&error]
 // MODNet
 [NFKMLXMODNet backendWithWeightsURL:url error:&error]
+// BiRefNet
+[NFKMLXBiRefNet backendWithWeightsURL:url error:&error]
 // SAM
 [NFKMLXSAM backendWithVariant:NFKMLXSAMVariantVitB weightsURL:url error:&error]
 // RetinaFace

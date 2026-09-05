@@ -69,7 +69,9 @@ final class MLXModelGalleryExamples: XCTestCase {
         let u2net = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)
         let rvm = try NFKMLXRVM.backend(weightsURL: nil)
         let modnet = try NFKMLXMODNet.backend(weightsURL: nil)
-        for backend in [u2net, rvm, modnet] {
+        // BiRefNet: high-resolution background removal (MIT), the same foreground + alpha contract.
+        let birefnet = try NFKMLXBiRefNet.backend(weightsURL: nil)
+        for backend in [u2net, rvm, modnet, birefnet] {
             XCTAssertTrue(backend.isReady)
         }
         // Representative run: MODNet portrait matte → foreground image + a separate matte.

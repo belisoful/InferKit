@@ -3449,7 +3449,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

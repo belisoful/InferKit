@@ -1085,6 +1085,174 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
+    // BiRefNet's one novel op, the modulated deformable convolution (deform-conv-v2) its ASPPDeformable
+    // branches use, against torchvision's own `deform_conv2d`. Random x/offset/mask/weight/bias at
+    // stride 1 for kernels 1/3/7 exercise the bilinear gather at the offset locations + the tap-weighted
+    // sum in isolation, so the gather — the historically-flagged "MLX has no deformable conv" blocker —
+    // is measured before the Swin backbone and the decoder are built on top of it.
+    func testDeformableConv2dMatchesTorchvision() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DCN"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DCN (run_reference.py dcn)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let x = try XCTUnwrap(arrays["dcn_x"]).expandedDimensions(axis: 0)              // [1, H, W, C] NHWC
+        for kernel in [1, 3, 7] {
+            let offset = try XCTUnwrap(arrays["dcn\(kernel)_offset"]).expandedDimensions(axis: 0)   // [1, H, W, 2·k·k]
+            let mask = try XCTUnwrap(arrays["dcn\(kernel)_mask"]).expandedDimensions(axis: 0)        // [1, H, W, k·k]
+            let weight = try XCTUnwrap(arrays["dcn\(kernel)_weight"]).transposed(0, 2, 3, 1)         // [OC, k, k, C]
+            let bias = try XCTUnwrap(arrays["dcn\(kernel)_bias"])
+            let reference = try XCTUnwrap(arrays["dcn\(kernel)_out"])                                 // [H, W, OC]
+            let out = NFKMLXDeformableConv2d.deform(x, offset: offset, mask: mask, weight: weight, bias: bias,
+                                                    kernel: (kernel, kernel), stride: (1, 1),
+                                                    padding: (kernel / 2, kernel / 2), dilation: (1, 1))
+            eval(out)
+            let value = cosine(out.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY dcn: k=\(kernel) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999999, "the deformable conv (k=\(kernel)) matches torchvision")
+        }
+    }
+
+    // BiRefNet's Swin-v1-L backbone on the ACTUAL released `bb.*` weights, against the model's own
+    // reference (the vendored swin_v1.py). The four stage feature maps (strides 4/8/16/32, channels
+    // 192/384/768/1536) are each compared over the recorded ImageNet-normalized pixels. This pins the
+    // window-attention core (reused from SwinIR), the per-block padding to the window multiple, patch
+    // merging, and the per-stage output norms. The released weights are fp16; both sides upcast to float32.
+    func testSwinBackboneMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let recordPath = config["IK_PARITY_BIREFNET_BACKBONE"], FileManager.default.fileExists(atPath: recordPath),
+              let weightsPath = config["IK_VAL_BIREFNET"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_BIREFNET_BACKBONE (run_reference.py birefnet_backbone) and IK_VAL_BIREFNET (model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0).asType(.float32)   // [1, H, W, 3]
+
+        let net = NFKMLXSwinBackbone()
+        let released = try loadArrays(url: URL(fileURLWithPath: weightsPath))
+        let weights = released.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("bb."), !key.hasSuffix("relative_position_index"), !key.hasSuffix("attn_mask") else { return nil }
+            let name = String(key.dropFirst("bb.".count))
+            let array = value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value       // conv weight -> NHWC
+            return (name, array.asType(.float32))
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        net.train(false)
+
+        let outputs = net(pixels)
+        for level in 0 ..< 4 {
+            let reference = try XCTUnwrap(arrays["bb.\(level)"])
+            eval(outputs[level])
+            let value = cosine(outputs[level].reshaped([-1]).asArray(Float.self).map(Double.init),
+                               reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY birefnet_backbone: bb.\(level) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the swin backbone stage \(level) matches the reference")
+        }
+    }
+
+    // BiRefNet's neck (mul_scl_ipt='cat' + cxt context concat + the squeeze BasicDecBlk) on the ACTUAL
+    // released weights, against the full model's own forward_enc + squeeze_module. The doubled stage
+    // features and the 5760-channel cxt x4 pin the multi-scale/context wiring; the squeeze is fed the
+    // reference's own cxt x4 so it isolates BasicDecBlk + ASPPDeformable (the deformable conv on real
+    // weights) + eval BatchNorm. Released weights fp16; both sides upcast to float32.
+    func testBiRefNetNeckMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let recordPath = config["IK_PARITY_BIREFNET_NECK"], FileManager.default.fileExists(atPath: recordPath),
+              let weightsPath = config["IK_VAL_BIREFNET"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_BIREFNET_NECK (run_reference.py birefnet_neck) and IK_VAL_BIREFNET (model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0).asType(.float32)
+
+        let encoder = NFKMLXBiRefNetEncoder()
+        let released = try loadArrays(url: URL(fileURLWithPath: weightsPath))
+        let weights = released.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("bb.") || key.hasPrefix("squeeze_module.") else { return nil }
+            guard !key.hasSuffix("relative_position_index"), !key.hasSuffix("attn_mask") else { return nil }
+            let array = value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            return (key, array.asType(.float32))
+        }
+        try NFKMLXWeights.apply(weights, to: encoder)
+        encoder.train(false)
+
+        let features = encoder.multiScale(pixels)
+        let contextX4 = encoder.contextConcat(features)
+        let squeezed = encoder.squeeze(try XCTUnwrap(arrays["x4_cxt"]).expandedDimensions(axis: 0).asType(.float32))
+
+        for (label, mine, key) in [("x1", features[0], "x1"), ("x2", features[1], "x2"), ("x3", features[2], "x3"),
+                                   ("x4_cxt", contextX4, "x4_cxt"), ("x4_squeezed", squeezed, "x4_squeezed")] as [(String, MLXArray, String)] {
+            let reference = try XCTUnwrap(arrays[key])
+            eval(mine)
+            let value = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY birefnet_neck: \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the birefnet neck \(label) seam matches the reference")
+        }
+    }
+
+    // BiRefNet's decoder on the ACTUAL released weights, against the full model's own Decoder.forward at
+    // eval, fed the recorded encoder inputs. The four pre-gate decoder-block outputs and the final
+    // 1-channel logit pin the BasicDecBlk stages, the lateral skips, the dec_ipt image-patch injection,
+    // the gdt attention gating (eval-active), the upsampling, and conv_out1. Released weights fp16 -> float32.
+    func testBiRefNetDecoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let recordPath = config["IK_PARITY_BIREFNET_DECODE"], FileManager.default.fileExists(atPath: recordPath),
+              let weightsPath = config["IK_VAL_BIREFNET"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_BIREFNET_DECODE (run_reference.py birefnet_decode) and IK_VAL_BIREFNET (model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key]).expandedDimensions(axis: 0).asType(.float32) }
+
+        let decoder = NFKMLXBiRefNetDecoder()
+        let released = try loadArrays(url: URL(fileURLWithPath: weightsPath))
+        let weights = released.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("decoder.") else { return nil }
+            let name = String(key.dropFirst("decoder.".count))
+            // The port omits the training-only gdt-prediction and ms-supervision heads.
+            guard !name.hasPrefix("gdt_convs_pred"), !name.hasPrefix("conv_ms_spvn"), !name.hasSuffix("num_batches_tracked") else { return nil }
+            let array = value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            return (name, array.asType(.float32))
+        }
+        try NFKMLXWeights.apply(weights, to: decoder)
+        decoder.train(false)
+
+        let result = decoder(try input("pixels"), try input("x1"), try input("x2"), try input("x3"), try input("x4_squeezed"))
+        for (label, mine, key) in [("p4", result.blocks[0], "p4"), ("p3", result.blocks[1], "p3"),
+                                   ("p2", result.blocks[2], "p2"), ("p1", result.blocks[3], "p1"),
+                                   ("logit", result.logit, "output")] as [(String, MLXArray, String)] {
+            let reference = try XCTUnwrap(arrays[key])
+            eval(mine)
+            let value = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY birefnet_decode: \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the birefnet decoder \(label) seam matches the reference")
+        }
+    }
+
+    // The assembled BiRefNet end to end (encoder -> decoder) on the ACTUAL released weights, through the
+    // public `NFKMLXBiRefNet.loadWeights` (which routes bb./squeeze_module./decoder. and upcasts fp16 to
+    // float32). The full-model logit is compared against the decode record's final output — the same
+    // pixels the reference's own forward_enc + squeeze + decoder produced — so this pins the whole
+    // encoder->decoder wiring.
+    func testBiRefNetEndToEndMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let recordPath = config["IK_PARITY_BIREFNET_DECODE"], FileManager.default.fileExists(atPath: recordPath),
+              let weightsPath = config["IK_VAL_BIREFNET"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_BIREFNET_DECODE (run_reference.py birefnet_decode) and IK_VAL_BIREFNET (model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0).asType(.float32)
+
+        let model = NFKMLXBiRefNetModel()
+        try NFKMLXBiRefNet.loadWeights(into: model, from: URL(fileURLWithPath: weightsPath))
+        let logit = model.logit(pixels)
+        eval(logit)
+        let value = cosine(logit.reshaped([-1]).asArray(Float.self).map(Double.init),
+                           try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY birefnet_e2e: logit cosine \(value)")
+        XCTAssertGreaterThan(value, 0.9999, "the assembled BiRefNet matches the reference end to end")
+    }
+
     // RF-DETR on the ACTUAL released Roboflow/rf-detr-base weights, against transformers' own
     // RfDetrForObjectDetection and its image processor (560x560). The released DINOv2-small windowed
     // backbone (num_windows 4, global attention at the out-index layers), the bicubic position-embedding

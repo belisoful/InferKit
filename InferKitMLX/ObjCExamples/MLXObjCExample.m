@@ -287,6 +287,9 @@
 	id<NFKInferenceBackend> cutout = [NFKMLXU2Net backendWithVariant:NFKMLXU2NetVariantLight weightsURL:nil error:&error];
 	XCTAssertEqualObjects(cutout.backendIdentifier, @"u2netp", @"%@", error);
 
+	id<NFKInferenceBackend> birefnet = [NFKMLXBiRefNet backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(birefnet.backendIdentifier, @"birefnet", @"%@", error);
+
 	id<NFKInferenceBackend> restore = [NFKMLXNAFNet backendWithWeightsURL:nil error:&error];
 	XCTAssertEqualObjects(restore.backendIdentifier, @"nafnet", @"%@", error);
 

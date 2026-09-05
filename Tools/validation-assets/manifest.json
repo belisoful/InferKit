@@ -196,7 +196,7 @@
         "IK_VAL_SWINIR_X3",
         "IK_TRIAGE_SWINIR_X3"
       ],
-      "note": "the x3 release: ONE ×3 pixel-shuffle stage where x4 runs two ×2 stages, so it fits only the x3 geometry"
+      "note": "the x3 release: ONE \u00d73 pixel-shuffle stage where x4 runs two \u00d72 stages, so it fits only the x3 geometry"
     },
     {
       "key": "COLORIZER",
@@ -319,7 +319,7 @@
       "config": [
         "IK_VAL_FACE"
       ],
-      "note": "A photograph with a human face, for NFKMLXFaceAlignment's detection and paste-back tests. NASA Apollo XI portrait (photo ID S69-31741), a work of the US government and therefore public domain — Wikimedia records it as not copyrighted. The general validation plate (IK_VAL_IMAGE) is an animal, so it cannot serve here."
+      "note": "A photograph with a human face, for NFKMLXFaceAlignment's detection and paste-back tests. NASA Apollo XI portrait (photo ID S69-31741), a work of the US government and therefore public domain \u2014 Wikimedia records it as not copyrighted. The general validation plate (IK_VAL_IMAGE) is an animal, so it cannot serve here."
     },
     {
       "key": "RETINAFACE",
@@ -473,8 +473,8 @@
         "IK_VAL_STYLE",
         "IK_PARITY_STYLE"
       ],
-      "status": "unresolved — the parity test skips",
-      "note": "fast-neural-style `mosaic.pth` is no longer served: download.pytorch.org/models/fast_neural_style/{mosaic.pth,saved_models.zip}, the S3 path, and the web.archive copy all 403/404 as of 2026-08-19, and the only HF hit is an ExecuTorch .pte this loader cannot read. A SEEDED checkpoint from the reference `transformer_net.py` was tried and REJECTED: the network is trained to emit 0...255, so with random weights its output is near-zero noise (range about +-1.5 before the divide by 255) and the cosine measures the port's noise floor rather than the model — it scored 0.68, which looks like a failure and means nothing. Same trap as matting on a synthetic plate. The recorded 0.9999926 was measured on the official checkpoint; re-running it needs that file to reappear or a mirror to be found."
+      "status": "unresolved \u2014 the parity test skips",
+      "note": "fast-neural-style `mosaic.pth` is no longer served: download.pytorch.org/models/fast_neural_style/{mosaic.pth,saved_models.zip}, the S3 path, and the web.archive copy all 403/404 as of 2026-08-19, and the only HF hit is an ExecuTorch .pte this loader cannot read. A SEEDED checkpoint from the reference `transformer_net.py` was tried and REJECTED: the network is trained to emit 0...255, so with random weights its output is near-zero noise (range about +-1.5 before the divide by 255) and the cosine measures the port's noise floor rather than the model \u2014 it scored 0.68, which looks like a failure and means nothing. Same trap as matting on a synthetic plate. The recorded 0.9999926 was measured on the official checkpoint; re-running it needs that file to reappear or a mirror to be found."
     }
   ],
   "sources": {
@@ -633,7 +633,7 @@
       "IK_DENOISER_SRC": "denoiser"
     }
   },
-  "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place — the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
+  "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place \u2014 the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
   "releases": [
     {
       "key": "SD15",
@@ -690,7 +690,7 @@
         "IK_VAL_SD21UNET": "unet/diffusion_pytorch_model.safetensors",
         "IK_TRIAGE_SD21UNET": "unet/diffusion_pytorch_model.safetensors"
       },
-      "note": "stabilityai/stable-diffusion-2-1-base is GATED and returns 401 without a credential. This is an ungated release of the same lineage and geometry (cross-attention 1024, heads [5, 10, 20, 20], linear projection, OpenCLIP text tower), at the 768 v-prediction settings — which also exercises the sampler's velocity path. Its `model_index.json` names a safety checker whose `feature_extractor/` it does not ship, so those two entries are removed before the reference pipeline loads it. Its text encoder and autoencoder are published in bfloat16."
+      "note": "stabilityai/stable-diffusion-2-1-base is GATED and returns 401 without a credential. This is an ungated release of the same lineage and geometry (cross-attention 1024, heads [5, 10, 20, 20], linear projection, OpenCLIP text tower), at the 768 v-prediction settings \u2014 which also exercises the sampler's velocity path. Its `model_index.json` names a safety checker whose `feature_extractor/` it does not ship, so those two entries are removed before the reference pipeline loads it. Its text encoder and autoencoder are published in bfloat16."
     },
     {
       "key": "SDXL",
@@ -781,7 +781,7 @@
       "config": {
         "IK_VAL_EMBEDDINGGEMMA": ""
       },
-      "note": "EmbeddingGemma-300M, 1.2 GB. google/embeddinggemma-300m is gated; unsloth/embeddinggemma-300m is a faithful ungated mirror (the project uses mirrors for gated repos, as SD 2.1 does). The backbone is Gemma3TextModel (model_type gemma3_text) with use_bidirectional_attention true, NOT the causal Gemma 4 (gemma4_text) NFKMLXGemmaLanguage implements: `(1+w)` RMS norm (Gemma 3), sandwich norms, dual RoPE (local 10000 / global 1000000), sliding-window pattern 6 (window 512), QK-norm, GeGLU gelu_tanh, no value norm, no per-layer embeddings, no softcapping. The sentence-transformers head is mean pooling → Dense 768->3072 → Dense 3072->768 (both no-bias, Identity) → L2. Prompts: query 'task: search result | query: ', document 'title: none | text: '."
+      "note": "EmbeddingGemma-300M, 1.2 GB. google/embeddinggemma-300m is gated; unsloth/embeddinggemma-300m is a faithful ungated mirror (the project uses mirrors for gated repos, as SD 2.1 does). The backbone is Gemma3TextModel (model_type gemma3_text) with use_bidirectional_attention true, NOT the causal Gemma 4 (gemma4_text) NFKMLXGemmaLanguage implements: `(1+w)` RMS norm (Gemma 3), sandwich norms, dual RoPE (local 10000 / global 1000000), sliding-window pattern 6 (window 512), QK-norm, GeGLU gelu_tanh, no value norm, no per-layer embeddings, no softcapping. The sentence-transformers head is mean pooling \u2192 Dense 768->3072 \u2192 Dense 3072->768 (both no-bias, Identity) \u2192 L2. Prompts: query 'task: search result | query: ', document 'title: none | text: '."
     },
     {
       "key": "MODERNBERT_RERANKER",
@@ -1046,10 +1046,22 @@
         "IK_VAL_KOKORO": ""
       },
       "note": "Kokoro-82M StyleTTS2/iSTFTNet TTS (Apache-2.0). 327 MB. The oracle vendors KModel + istftnet + modules from the pip `kokoro` package (torch/transformers/scipy, NO spaCy/misaki), running with phonemes supplied directly and the sine source's noise/phase zeroed for determinism. Loads directly through NFKMLXKokoro.loadWeights (module. prefix stripped, weight-norm fused, LSTMs folded, alpha ParameterLists stacked, ups transposed). Real-weights parity via run_reference.py kokoro under the llm oracle env. A voicepack .pt is a bare tensor: convert to a single-`voice` safetensors offline (Tools/kokoro-voice-to-safetensors) for NFKMLXKokoro.loadVoice."
+    },
+    {
+      "key": "BIREFNET",
+      "directory": "birefnet",
+      "repo": "ZhengPeng7/BiRefNet",
+      "files": [
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_BIREFNET": "model.safetensors"
+      },
+      "note": "BiRefNet (ZhengPeng7, MIT): high-resolution dichotomous segmentation for background removal, at REFERENCE PARITY end to end on this released model.safetensors (fp16), validated seam by seam in NFKMLXReferenceParityTests: the deformable conv vs torchvision (testDeformableConv2dMatchesTorchvision, run_reference.py dcn \u2014 no weights, system torchvision), the Swin-v1-L backbone (testSwinBackboneMatchesTheReference, run_reference.py birefnet_backbone), the neck = mul_scl_ipt + cxt + the ASPPDeformable squeeze (testBiRefNetNeckMatchesTheReference, run_reference.py birefnet_neck), the decoder (testBiRefNetDecoderMatchesTheReference, run_reference.py birefnet_decode), and the assembled model (testBiRefNetEndToEndMatchesTheReference, reuses the decode record). Every seam ~1e-12. NFKMLXBiRefNet loads this file directly (loadWeights routes bb./squeeze_module.->encoder, decoder.->decoder, drops relative_position_index / num_batches_tracked / the training-only gdt_pred and conv_ms_spvn heads, and upcasts fp16->float32); it MUST train(false) after loading or the squeeze/decoder BatchNorms use batch stats (the backbone is all LayerNorm, which masks the bug). The reference is the vendored BiRefNet code, COMMITTED at Tools/reference-parity/refsrc: refsrc/birefnet/swin_v1.py (+ a config stub, SDPA disabled) for the backbone oracle, and refsrc/birefnet_hf/ (the HF single-file birefnet.py + BiRefNet_config.py, with the training-only kornia laplacian import stubbed) for the full-model oracles. run_reference.py defaults IK_REF_SRC to that committed dir, so the birefnet_* modes run with IK_REF_SRC unset. Needs system torch + timm + torchvision + einops + transformers (PretrainedConfig). Registered in registerAll; the @objc factories load IK_VAL_BIREFNET. The IK_PARITY_BIREFNET_{BACKBONE,NECK,DECODE} records are generated by the modes above (parity/*.safetensors) and their paths set in the local config JSON."
     }
   ],
   "oracle_environments": {
-    "comment": "diffusers cannot be installed beside the other oracles — it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against — so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
+    "comment": "diffusers cannot be installed beside the other oracles \u2014 it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against \u2014 so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
     "diffusers": {
       "path": "sdvenv",
       "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate",
