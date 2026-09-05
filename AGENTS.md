@@ -931,6 +931,33 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   because it compares against a stored record, not a live oracle. Rebuilding on the original
   repository reproduced the previous numbers to five decimals, which is what proves the replacement
   faithful rather than merely green.
+- `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth (DA3-SMALL), at **reference
+  parity** on the released weights against the authors' `depth_anything_3` package: the four hooked
+  backbone features and every DualDPT head stage ≥ 0.9999999999, the exp-depth map mean-removed
+  0.99999999992 (max relative difference 5.5e-7). The backbone is a DINOv2 ViT VARIANT, not a reuse of
+  the V2 encoder: from block 4 it adds a 2-D rotary embedding, per-head query/key normalization, a
+  learned **camera token** injected into the class-token slot, and alternating local/global attention
+  whose cross-view "global" blocks collapse to query/key-normalized self-attention for a single image
+  (their uniform rotary positions cancel in the score). Each hooked feature CONCATENATES the preceding
+  local block's output with the current global block's (`cat_token`), the final norm applied to the
+  global half only, so the `DualDPT` head reads twice the embedding width (`dim_in` 768). Only the
+  **depth branch** of the DualDPT is built — the ray branch, the camera decoder/encoder, and the aux
+  heads are dropped and named as deliberately unimplemented (269 tensors loaded, 168 dropped, 0
+  unaccounted). The head adds a UV positional embedding and upsamples **bilinear with align_corners**,
+  and the output convention is **exp-depth** (`exp(logits)`), not V2's relative disparity.
+  `loadWeights` reads the released safetensors directly (`model.backbone.pretrained.*` +
+  `model.head.*`), and — the load-bearing detail also fixed in the V2 port — the two `resize_layers`
+  are `ConvTransposed2d` whose weight takes the transposed-conv axis order `(1,2,3,0)`
+  (`[C_in,C_out,kH,kW]` → `[C_out,kH,kW,C_in]`), not a regular convolution's `(0,2,3,1)`; both are
+  square, so the wrong order scrambled the kernel (stage cosines ~0.01) until fixed. `depth()` applies
+  the pipeline's ImageNet normalization. `+register` under `depth-anything-3-small`. The oracle is
+  reproducible in-repo (`run_reference.py depth3`, the `da3` oracle env, `IK_REF_SRC` = the unpacked
+  `depth_anything_3` wheel), recording the input, the four hooks, the four head stages, the fused map,
+  the pre-exp logits, and the depth; the parity test compares every seam by cosine plus **mean-removed
+  correlation** (raw cosine on the near-constant ~1.0 depth is misleading, the diffusion-preview
+  lesson), and a coverage test asserts every released tensor is loaded or named as dropped. Weights:
+  `depth-anything/DA3-SMALL` (Apache-2.0, ~80M); the larger sizes are `DA3-BASE` (Apache) and the
+  CC-BY-NC `DA3-LARGE`.
 - `NFKMLXU2Net` (`@objc`) — a real single-forward background remover: the U²-Net nested-U saliency
   network (Residual U-blocks) in `MLXNN`, run through `NFKMLXMattingBackend` (plate → straight
   foreground + saliency alpha, matte under `NFKOutputMask`). `+register` adds full `u2net` and light

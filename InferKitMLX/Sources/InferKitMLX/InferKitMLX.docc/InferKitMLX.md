@@ -86,6 +86,7 @@ limits.
 ### Image → map (depth & segmentation)
 
 - ``NFKMLXDepthAnything``
+- ``NFKMLXDepthAnything3``
 - ``NFKMLXMarigold``
 - ``NFKMLXSegFormer``
 - ``NFKMLXDeepLab``

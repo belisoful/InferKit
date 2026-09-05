@@ -58,6 +58,7 @@ map under `NFKOutputImage` — recover the class index as `round(gray · (classC
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXDepthAnything`` | `depth-anything-v2-small` · `-base` · `-large` | monocular depth |
+| ``NFKMLXDepthAnything3`` | `depth-anything-3-small` | monocular depth (DA3) |
 | ``NFKMLXMarigold`` | `marigold-depth` | diffusion depth |
 | ``NFKMLXSegFormer`` | `segformer-b0` | transformer segmentation |
 | ``NFKMLXDeepLab`` | `deeplabv3` | CNN segmentation |

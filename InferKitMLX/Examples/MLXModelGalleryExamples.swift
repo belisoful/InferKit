@@ -55,6 +55,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(depthAnything.backendIdentifier, "depth-anything-v2-small")
         let result = try depthAnything.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "grayscale depth map")
+
+        let depth3 = try NFKMLXDepthAnything3.backend(weightsURL: nil)
+        XCTAssertEqual(depth3.backendIdentifier, "depth-anything-3-small")
+        let result3 = try depth3.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(result3.output(forKey: NFKOutputImage), "grayscale depth map (DA3)")
     }
 
     // MARK: Matting (plate → foreground + alpha, matting backend)

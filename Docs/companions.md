@@ -135,6 +135,11 @@ models.
 - **`NFKMLXDepthAnything`** — a real single-forward depth model: the Depth Anything V2 DINOv2 + DPT
   network in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). Register and build by
   name; a self-validating converter turns the release into a safetensors checkpoint.
+- **`NFKMLXDepthAnything3`** — Depth Anything 3 monocular depth (DA3-SMALL): a DINOv2 ViT variant
+  (2D rotary, query/key norm, a camera token, and `cat_token` local/global hooking from block 4) plus
+  the DualDPT depth branch, in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). At
+  reference parity against the authors' `depth_anything_3` package; the released safetensors loads
+  directly (`depth-anything-3-small`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXSAM`** — real promptable segmentation (Segment Anything): a ViT encoder, prompt encoder, and

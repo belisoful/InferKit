@@ -97,6 +97,7 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | Depth Anything V2 | ``NFKMLXDepthAnything`` | `NFKMLXDepthAnythingNet` | ``NFKMLXDepthVariant`` `.small` / `.base` / `.large` (`NFKMLXDepthConfiguration.small` …) | `depth-anything-v2-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
+| Depth Anything 3 | ``NFKMLXDepthAnything3`` | `NFKMLXDepthAnything3Net` | `NFKMLXDepth3Configuration.small` | `depth-anything-3-small` | ``NFKMLXModuleBackend`` |
 | Marigold depth | ``NFKMLXMarigold`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.marigold` | `marigold-depth` | ``NFKMLXDiffusionBackend`` |
 | SegFormer | ``NFKMLXSegFormer`` | ``NFKMLXSegFormerNet`` | `NFKMLXSegFormerConfiguration.mitB0`; `network(weightsURL:classCount:)` for a custom head | `segformer-b0` | ``NFKMLXModuleBackend`` |
 | DeepLabV3 | ``NFKMLXDeepLab`` | `NFKMLXDeepLabNet` over `NFKMLXResNetBackbone` | `NFKMLXDeepLabConfiguration.base` (`NFKMLXResNetConfiguration.deepLab`) | `deeplabv3` | ``NFKMLXModuleBackend`` |
@@ -107,6 +108,8 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 // Depth Anything V2
 let backend = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: url)
 // .base / .large · …VariantBase / …VariantLarge
+// Depth Anything 3 (DA3-SMALL)
+let backend = try NFKMLXDepthAnything3.backend(weightsURL: url)
 // Marigold depth
 let backend = try NFKMLXMarigold.backend(unetWeightsURL: unetURL, vaeWeightsURL: vaeURL, textContextURL: contextURL)
 // SegFormer
@@ -123,6 +126,8 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 ```objc
 // Depth Anything V2
 [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantSmall weightsURL:url error:&error]
+// Depth Anything 3
+[NFKMLXDepthAnything3 backendWithWeightsURL:url error:&error]
 // Marigold depth
 [NFKMLXMarigold backendWithUNetWeightsURL:unetURL vaeWeightsURL:vaeURL textContextURL:contextURL error:&error]
 // SegFormer
