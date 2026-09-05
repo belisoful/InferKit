@@ -1241,6 +1241,126 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   up by one. Both come from the model's own tokenizer rather than the smallest size's constants; the
   parity record carries the prompt the reference used, so a shifted id surfaces as a prompt mismatch
   rather than a mysterious token difference.
+- `NFKMLXParakeet` / `NFKMLXParakeetNet` / `NFKMLXParakeetBackend` (`@objc`) — **Parakeet-TDT 0.6B v2**
+  (NVIDIA NeMo, CC-BY-4.0), a SECOND on-device speech recognizer beside Whisper and the fast one: a
+  **FastConformer** encoder — the NeMo mel front end (128 mels, 25 ms / 10 ms, a 512-point transform,
+  `log(x + 2^-24)`, **per-feature normalization** by each band's unbiased standard deviation over time
+  plus 1e-5), a **depthwise-striding 8× subsampler** (a full 3×3 stride-2 conv, then two depthwise
+  3×3 stride-2 + pointwise 1×1 pairs over the `(time, mel)` plane, flattening `(channel, mel)` into a
+  4096→1024 linear), and 24 **relative-position (Transformer-XL) conformer layers** (half-weighted
+  macaron feed-forwards, rel-pos attention with per-layer `pos_bias_u`/`pos_bias_v` and the appendix-B
+  shift, a GLU → depthwise-9 → BatchNorm → Swish convolution module, **no biases** on any projection or
+  convolution) — and a **token-and-duration transducer**: a two-layer LSTM prediction network (640) over a
+  blank-as-pad embedding, a joint (`enc` 1024→640 + `pred` 640→640, ReLU, a linear to 1024 tokens + blank
+  + 5 duration classes), and greedy TDT decoding — at each encoder frame the joint scores the next token
+  AND how many frames to skip (`[0, 1, 2, 3, 4]`), a non-blank advances the LSTM state, and a zero
+  duration keeps decoding the same frame (at most 10 symbols). `NFKMLXParakeetBackend` reads
+  `NFKInputAudio` (resampled to 16 kHz) → the transcript under `NFKOutputText` plus one
+  `NFKAudioSegment` per token under `NFKOutputSegments` (an encoder frame is 80 ms, so every token
+  carries its onset). The release is an unpacked `.nemo` tar (`model_weights.ckpt` through the native
+  torch reader; the SentencePiece **BPE** `*_tokenizer.vocab` piece table — recognition only DECODES,
+  so the pieces alone reproduce SentencePiece's `decode`: concatenate, `▁` → space, drop the leading
+  space); `@objc backendWithDirectoryURL:error:`.
+  **Reference parity on the RELEASED weights, on the real validation clip, seam by seam** against
+  NeMo's own EncDecRNNTBPEModel (`run_reference.py parakeet --checkpoint <the .nemo>`,
+  `IK_PARITY_PARAKEET` + `IK_VAL_PARAKEET`, the new `nemo` oracle env): features 0.9999999996, the
+  subsampler 0.99999999989, the first layer 0.99999999975, the encoder 0.99999999999, the joint
+  0.99999999999997, and the greedy TDT decode reproducing the reference's **19 tokens AND their frame
+  timestamps exactly** — transcription **"The quick brown fox jumps over the lazy dog."** — through the
+  public backend too (`testParakeetBackendTranscribesTheValidationClip`).
+  **Three facts are load-bearing, all found by the parity run.** NeMo's valid frame count is
+  `floor((samples + n_fft − n_fft) / hop)` — **WITHOUT the `+ 1`** the transform's own frame count
+  carries — so the transform's last frame lies past the valid length: it is zeroed (`pad_value`),
+  excluded from the normalization statistics, and masked through the encoder; cropping to the valid
+  length is exactly that through the stride-2 subsampler (with it, features went from 0.9975 to
+  0.9999999996 and every downstream seam became exact). The blank / start state of the prediction net
+  feeds the LSTM a ZERO vector in place of an embedding (`blank_as_pad`) and the LSTM STILL RUNS — its
+  output and state are what the joint and the next step read; returning raw zeros scored the frame-0
+  joint at −0.52 and dropped the first word. And NeMo's `joint()` **log-softmaxes on the CPU** when
+  `log_softmax` is null — a constant shift over the whole 1030-vector that leaves both argmaxes alone,
+  so the port keeps raw logits and the seam is compared in log-softmax space. The STFT pads with
+  **zeros** (`pad_mode="constant"`), where the older MarbleNet VAD front end here reflects — measured
+  both ways, reflect scores 0.974. The LSTM loads through the shared PyTorch→MLX fold (`weight_ih_l<n>`
+  / `hh` → `Wx` / `Wh`, biases summed) under `dec_rnn.lstm.<n>`; the `nn.Sequential` indices of the
+  subsampler (ReLU at 1, 4, 7) and the joint (ReLU 0, Dropout 1, Linear 2) are kept with marker modules
+  so every other key matches with no remap; the 4-D and 3-D convolutions transpose to channels-last.
+  Weights: `nvidia/parakeet-tdt-0.6b-v2` (2.47 GB `.nemo`; v3 and the CTC release are the same encoder).
+- `NFKMLXChatterbox` / `NFKMLXChatterboxTTS` (`@objc` factory) — **Chatterbox** (Resemble AI, MIT), zero-shot
+  VOICE-CLONING text-to-speech, the third TTS beside FastSpeech2 and Kokoro and the first that takes a
+  reference voice. Five networks, ported STAGE BY STAGE with a parity record gating each
+  (`run_reference.py chatterbox_voice` / `chatterbox_t3` / `chatterbox_s3gen`, the `chatterbox` oracle env,
+  `IK_VAL_CHATTERBOX` = the release directory), all on the RELEASED weights and the validation clip:
+  - **VoiceEncoder** (`NFKMLXChatterboxVoiceEncoderNet`, `ve.safetensors`): a 40-band UNSCALED power mel
+    (no log; librosa Slaney to 8 kHz, every STFT frame kept) over the librosa-TRIMMED 16 kHz prompt
+    (20 dB below the loudest 2048-sample frame, ported exactly), cut into 160-frame partials at step 77
+    (`round((16000 / 1.3) / 160)`), a 3-layer LSTM → linear → ReLU → L2 per partial, mean → L2. Trim
+    exact, mel 0.99999999999984, partials 0.999999999999, embedding 0.9999999999995.
+  - **S3 speech tokenizer** (`NFKMLXS3TokenizerNet`, the `tokenizer.` subtree of `s3gen.safetensors`):
+    Whisper's 128-band log-mel EXACTLY (`NFKMLXMel.logMel` is reused), two stride-2 GELU convolutions
+    (100 Hz → 25 Hz), six FSMN-attention blocks at 1280 over 20 heads (a depthwise 31-tap memory over
+    the values added to the attention output; rotate-half rotary at 64, base 10000; the reference's
+    `headDim^-0.25` on q AND k is one `1/√headDim`), and an 8-channel base-3 FSQ (`round(tanh · 0.999) + 1`
+    read as a base-3 number, 6561 codes). Mel 0.99999999998, states 0.9999999999, codes **87/87 EXACT** on
+    both the six-second crop and the whole prompt.
+  - **T3** (`NFKMLXT3Net`, `t3_cfg.safetensors`): the shipped dense decoder `NFKMLXLanguageNet` as a
+    Llama 520M (30 layers, 16 heads × 64, no q/k norm, theta 500000) under **llama3 rope scaling**, which
+    `NFKMLXRoPEScaling` now implements (factor 8, low/high frequency factors 1/4 over the 8192 window; at
+    parity with transformers' `ROPE_INIT_FUNCTIONS` on two configurations, worst relative difference
+    < 1e-5, added to the rope record). Conditioning is a 34-token prefix: `spkr_enc(speaker)`, a
+    **Perceiver** (32 learned queries cross-attend to the prompt codes' `speech_emb + speech_pos_emb`, then
+    self-attend once; 4 heads, one shared LayerNorm) and `emotion_adv_fc(exaggeration)`; then the text
+    with LEARNED positions and the start-of-speech token. **Three reference quirks are reproduced, not
+    fixed**: `inference` feeds the start-of-speech embedding TWICE at speech position 0; the CFG
+    unconditional row zeroes the text EMBEDDING but keeps the text positions; and generated code `i`
+    takes speech position `i + 1`. The text tokenizer (`NFKMLXChatterboxTextTokenizer`) reads
+    `tokenizer.json` directly — a plain character BPE with a `Whitespace` pre-tokenizer and literal added
+    tokens, spaces replaced by `[SPACE]` first, plus `punc_norm` — token-exact against `tokenizers`.
+    Sampling is the reference's chain (CFG 0.5 → repetition penalty 1.2 over every generated id → temperature
+    0.8 → min-p 0.05 → top-p; `NFKMLXT3Sampler.processed`), pinned against transformers' own processors on
+    the first step to 2e-5; temperature 0 is this port's greedy addition. Teacher-forced over the
+    reference's own sampled sequence: cond 0.9999999999997, embeds 0.9999999999997, logits
+    0.99999999999943 / 0.9999999999992 (both CFG rows), **argmax 79/79**. HF `hidden_states[-1]` IS the
+    post-norm state (verified empirically on transformers 5.2, since T3 reads it as the head input).
+  - **S3Gen token-to-mel** (`NFKMLXS3GenNet.flow`): the **CAMPPlus x-vector** over a ported Kaldi fbank
+    (25/10 ms, 512-point, DC removed per frame, pre-emphasis 0.97 with replicate padding, the POVEY window
+    `hann^0.85`, HTK mel 20 Hz–Nyquist, `log(max(x, ε))`, then the utterance mean removed) — an FCM 2-D
+    head over the (frequency, time) plane whose stride hits FREQUENCY only, three CAM-dense TDNN blocks
+    (12/24/16 layers, growth 32, a sigmoid gate from the utterance mean plus a 100-frame segment mean),
+    statistics pooling (unbiased std), a 192-wide affine-free BatchNorm embedding; fbank 0.99999999995,
+    x-vector 0.999999999999. The 24 kHz prompt mel (Matcha's: 1920/480, reflect pad 720, `sqrt(power +
+    1e-9)`, log-clamp 1e-5) 0.9999999998. The **UpsampleConformerEncoder** (espnet `rel_pos` positions
+    `T-1 … -(T-1)` with `√d` input scale, a 3-frame PRE-LOOKAHEAD convolution, six pre-norm rel-pos layers
+    at epsilon 1e-12 with the appendix-B shift, nearest ×2 + left-padded 5-tap conv, four more layers, a
+    final norm) 0.9999999999997; `mu` 0.9999999999998. The **CausalConditionalCFM**: ten Euler steps on
+    `1 − cos(t·π/2)`, the estimator run as a batch of two (the unconditional row with ZERO mu, speaker, and
+    prompt mel), `(1 + 0.7)·cond − 0.7·uncond`; the **ConditionalDecoder** (input `[x, mu, speaker, cond]` =
+    320 channels; one down stage, twelve mid, one up, each a CAUSAL resnet block — left-padded 3-tap convs,
+    LayerNorm over channels, Mish, the timestep MLP added between — plus four diffusers
+    `BasicTransformerBlock`s with plain LayerNorms and a GELU FF; the released single level makes both
+    resamples a causal 3-tap conv). First-step velocity 0.9999999999997, the solved mel 0.9999999999999.
+  - **HiFT vocoder** (`NFKHiFTGeneratorNet`, `mel2wav.`): ConvRNNF0Predictor (five ELU convs, `|linear|`)
+    0.99999999999997; the NSF harmonic source (nine harmonics, `2π·(cumsum(f0·k/sr) mod 1)`, voiced above
+    **10 Hz**, `tanh(linear)`) **cosine 1.0** with the random phases and noise zeroed (the oracle zeroes
+    them; the consumer path draws them); the generator — three transposed-conv upsamples (×8, ×5, ×3), the
+    source's own 16-point STFT injected at each scale through strided convolutions, Snake residual blocks, a
+    ONE-sample reflection pad before the last scale, the ONE bare `leaky_relu` at 0.01 before `conv_post`
+    (the HiFi-GAN/Kokoro trap again), `exp` magnitude clipped at 100, `sin` phase, iSTFT at 16/4 through the
+    shared `NFKKokoroSTFT` — waveform 0.99999999999, with the reference's 40 ms leading fade.
+  **End to end on the released weights**: the validation clip as the voice, "The quick brown fox jumps
+  over the lazy dog." → 3.38 s of 24 kHz speech that the package's own Parakeet (at parity) transcribes
+  back EXACTLY (`testChatterboxSynthesizesSpeechParakeetTranscribes`), and the release's built-in voice
+  (`conds.pt`, read through the native torch reader: nested dicts flatten to `t3.` / `gen.` keys)
+  speaks through the backend. `NFKMLXChatterboxTTS(directoryURL:)` loads all five; `conditionals(voice:
+  sampleRate:)` is `prepare_conditionals` (resample to 24 kHz then to 16 kHz through
+  `NFKMLXAudioRate.matched` — the reference's librosa/torchaudio resamplers are not bitwise, so the
+  parity records take the recorded waveforms at each rate as inputs and the consumer path is a documented
+  resampler approximation); `@objc chatterboxBackendWithDirectoryURL:voiceURL:error:` returns an
+  `NFKMLXSpeechBackend` (24 kHz WAV under `NFKOutputAudio`; nil voice = `conds.pt`). **Two oracle
+  traps**: `solve_euler` calls `estimator.forward` DIRECTLY, so a forward hook never fires (wrap the
+  method); and the prompt mel's frame count can be odd (173) while the codes are trimmed to `mel // 2`
+  (86), so the generated mel is `2n − 1` frames rather than `2n`. Weights: `ResembleAI/chatterbox`
+  (`ve.safetensors` 7 MB, `t3_cfg.safetensors` 2.1 GB, `s3gen.safetensors` 1.1 GB, `tokenizer.json`,
+  `conds.pt`). pyannote diarization stays BLOCKED (gated `pyannote/segmentation-3.0`, no token here).
 - `NFKMLXDemucs` / `NFKMLXDemucsBackend` (`@objc`) — real music stem separation: the time-domain Demucs
   U-Net in `MLXNN` (strided Conv1d + GLU encoder, transposed-conv decoder with skips, via `NFKMLXDemucsBackend`
   audio → four stems, each an `NFKAudioAsset` under its name "drums"/"bass"/"other"/"vocals"). `+register`

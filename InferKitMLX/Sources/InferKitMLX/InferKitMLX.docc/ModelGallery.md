@@ -168,6 +168,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXDAC`` | `dac` | neural audio codec (Descript, 44.1 / 24 / 16 kHz) |
 | ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech) |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / small / medium / large-v3, timestamps) |
+| ``NFKMLXParakeet`` | `parakeet-tdt` | speech → text (Parakeet-TDT 0.6B v2, FastConformer + token-and-duration transducer; per-token timestamps) |
 | ``NFKMLXVAD`` | `vad-marblenet` | voice-activity detection (MarbleNet) |
 | ``NFKMLXSileroVAD`` | `silero-vad` | voice-activity detection (Silero v6, streaming) |
 | ``NFKMLXAudioTagger`` | `audio-tagger-panns` | audio tagging |
@@ -178,6 +179,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | --- | --- | --- |
 | ``NFKMLXVoice`` | `makeSpeechBackend(phonemize:)` | FastSpeech2 conformer + the paired HiFi-GAN (LJSpeech) |
 | ``NFKMLXKokoro`` | `backend(directoryURL:voiceName:)` | Kokoro-82M (StyleTTS2 / iSTFTNet), a phoneme string in |
+| ``NFKMLXChatterbox`` | `chatterbox` | text → speech in a cloned voice (VoiceEncoder + S3 tokenizer + T3 Llama + S3Gen flow matching + HiFT, 24 kHz) |
 | ``NFKMLXTTS`` | — | a phonemizer, an acoustic model, and a vocoder chained by hand |
 | ``NFKMLXMusicBackend`` | `NFKMLXMusic3.backend(directoryURL:)` | MiniMax Music 3: description + lyrics → stereo 44.1 kHz music (`minimax-music3`; separately licensed weights, ~27 GB or 7.7 GiB quantized) |
 

@@ -244,11 +244,11 @@ launch overhead instead (on an M1 Max: 40 GB/s at 16 MB, 158 at 256 MB, settling
 
 **Extended context.** A release that was trained short and extended long says so in its config's
 `rope_scaling`, and `NFKMLXLanguage.configuration(fromHuggingFace:)` reads it — there is nothing to
-switch on. `linear` and `yarn` are implemented and measured against `transformers`' own
+switch on. `linear`, `yarn`, and `llama3` are implemented and measured against `transformers`' own
 initializers. A kind that is not implemented throws rather than loading:
 
 ```swift
-// Throws NFKMLXError.unsupportedConfiguration for `dynamic`, `llama3`, or `longrope`.
+// Throws NFKMLXError.unsupportedConfiguration for `dynamic` or `longrope`.
 let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: configURL)
 ```
 

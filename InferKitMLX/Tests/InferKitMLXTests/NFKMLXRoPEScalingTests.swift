@@ -48,17 +48,20 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
             let expectedFactor = try XCTUnwrap(record["case\(index)_attention_factor"]).item(Float.self)
 
             // [dimensions, base, maxPositions, factor, originalMax, betaFast, betaSlow, kind,
-            //  declaredAttentionFactor or -1]
+            //  declaredAttentionFactor or -1, lowFrequencyFactor, highFrequencyFactor]
             let dimensions = Int(parameters[0])
             let base = parameters[1]
             let declared = parameters[8]
+            let kinds: [Float: NFKMLXRoPEScaling.Kind] = [0: .linear, 1: .yarn, 2: .llama3]
             let scaling = NFKMLXRoPEScaling(
-                kind: parameters[7] == 1 ? .yarn : .linear,
+                kind: try XCTUnwrap(kinds[parameters[7]]),
                 factor: parameters[3],
                 originalMaxPositionEmbeddings: Int(parameters[4]),
                 betaFast: parameters[5],
                 betaSlow: parameters[6],
-                declaredAttentionFactor: declared < 0 ? nil : declared)
+                declaredAttentionFactor: declared < 0 ? nil : declared,
+                lowFrequencyFactor: parameters.count > 9 ? parameters[9] : 1,
+                highFrequencyFactor: parameters.count > 10 ? parameters[10] : 4)
 
             let produced = scaling.inverseFrequencies(dimensions: dimensions, base: base)
             XCTAssertEqual(produced.count, expected.count, "case \(index): pair count")
@@ -171,7 +174,7 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
     /// frequencies. Loading one under a rotary that does not match produces a model that runs and is
     /// wrong, so it is refused.
     func testAnUnimplementedKindIsRefusedRatherThanApproximated() {
-        for kind in ["dynamic", "llama3", "longrope"] {
+        for kind in ["dynamic", "longrope"] {
             XCTAssertThrowsError(try NFKMLXRoPEScaling.read(["rope_type": kind, "factor": 4.0],
                                                             maximumPositions: 4096)) { error in
                 guard case NFKMLXError.unsupportedConfiguration(let message) = error else {

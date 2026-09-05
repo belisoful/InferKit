@@ -22,7 +22,7 @@ import Foundation
 
 /// The rotary scaling a release declares, and the inverse frequencies it implies.
 ///
-/// @discussion Two kinds are implemented, and they work differently. `linear` divides every frequency
+/// @discussion Three kinds are implemented, and they work differently. `linear` divides every frequency
 /// by the same factor, which is position interpolation: the model sees a longer sequence squeezed into
 /// its trained range, at the cost of resolution everywhere.
 ///
@@ -34,6 +34,11 @@ import Foundation
 /// the whole window; run past that length it reaches angles the model has never seen, and it is the
 /// one that has to be squeezed.
 ///
+/// `llama3` is the same idea with hard edges instead of a ramp: a channel whose wavelength exceeds the
+/// trained window is divided by `factor`, a channel turning at least `high_freq_factor` times inside
+/// it is left alone, and the band between is blended linearly in turn count. It carries no attention
+/// factor. Chatterbox's T3 decoder declares it, which is what brought it here.
+///
 /// Both are measured against `transformers`' own `ROPE_INIT_FUNCTIONS`, which is the dispatch every
 /// released decoder's config is read by. See `NFKMLXRoPEScalingTests`.
 public struct NFKMLXRoPEScaling: Sendable, Equatable {
@@ -44,6 +49,10 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
         case linear
         /// The wavelength-dependent blend of interpolation and extrapolation.
         case yarn
+        /// Llama 3.1's three-band rule: channels whose wavelength exceeds the trained window are
+        /// interpolated by `factor`, channels turning at least `highFrequencyFactor` times inside it
+        /// are left alone, and the band between is blended linearly in wavelength.
+        case llama3
     }
 
     public var kind: Kind
@@ -63,19 +72,29 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
 
     /// The config's own `attention_factor`, when it states one. `nil` derives it.
     public var declaredAttentionFactor: Float?
+    /// `llama3`'s `low_freq_factor`: a channel completing fewer than this many turns inside the trained
+    /// window is interpolated by the full factor. The release default is 1.
+    public var lowFrequencyFactor: Float
+    /// `llama3`'s `high_freq_factor`: a channel completing at least this many turns is left unscaled.
+    /// The release default is 4.
+    public var highFrequencyFactor: Float
 
     public init(kind: Kind,
                 factor: Float,
                 originalMaxPositionEmbeddings: Int = 0,
                 betaFast: Float = 32,
                 betaSlow: Float = 1,
-                declaredAttentionFactor: Float? = nil) {
+                declaredAttentionFactor: Float? = nil,
+                lowFrequencyFactor: Float = 1,
+                highFrequencyFactor: Float = 4) {
         self.kind = kind
         self.factor = factor
         self.originalMaxPositionEmbeddings = originalMaxPositionEmbeddings
         self.betaFast = betaFast
         self.betaSlow = betaSlow
         self.declaredAttentionFactor = declaredAttentionFactor
+        self.lowFrequencyFactor = lowFrequencyFactor
+        self.highFrequencyFactor = highFrequencyFactor
     }
 
     /// The factor the rotated queries and keys are multiplied by.
@@ -85,7 +104,7 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
     /// alike, so an attention score carries its square.
     ///
     /// The reference derives it as `0.1·ln(factor) + 1` when the config does not state one, and a
-    /// config that states one overrides that. `linear` uses no such factor.
+    /// config that states one overrides that. `linear` and `llama3` use no such factor.
     public var attentionFactor: Float {
         guard kind == .yarn else { return 1 }
         if let declared = declaredAttentionFactor { return declared }
@@ -126,6 +145,19 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
                 let extrapolation = 1 - ramp
                 return unscaled[index] / factor * (1 - extrapolation) + unscaled[index] * extrapolation
             }
+        case .llama3:
+            let window = Float(originalMaxPositionEmbeddings)
+            let lowWavelength = window / lowFrequencyFactor
+            let highWavelength = window / highFrequencyFactor
+            return unscaled.map { frequency in
+                let wavelength = 2 * Float.pi / frequency
+                if wavelength > lowWavelength { return frequency / factor }
+                if wavelength < highWavelength { return frequency }
+                // The middle band blends the interpolated and the unscaled frequency by how far the
+                // channel's turn count sits between the two factors.
+                let smooth = (window / wavelength - lowFrequencyFactor) / (highFrequencyFactor - lowFrequencyFactor)
+                return (1 - smooth) * frequency / factor + smooth * frequency
+            }
         }
     }
 
@@ -141,7 +173,7 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
     /// - Returns: the scaling, or `nil` when the config declares none or declares the no-op `default`.
     ///
     /// - Throws: `NFKMLXError.unsupportedConfiguration` for a kind this does not implement —
-    ///   `dynamic`, `llama3` and `longrope` all appear in released configs and all compute different
+    ///   `dynamic` and `longrope` both appear in released configs and both compute different
     ///   frequencies. Loading one of those under a rotary it does not match produces a model that
     ///   runs and is wrong, so it is refused.
     public static func read(_ block: Any?, maximumPositions: Int) throws -> NFKMLXRoPEScaling? {
@@ -159,7 +191,7 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
 
         guard let kind = Kind(rawValue: name == "deepseek_yarn" ? "yarn" : name) else {
             throw NFKMLXError.unsupportedConfiguration(
-                "rope_scaling type '\(name)' is not implemented; this reads 'linear' and 'yarn'. "
+                "rope_scaling type '\(name)' is not implemented; this reads 'linear', 'yarn', and 'llama3'. "
                 + "Loading a release under a rotary it was not trained with produces a model that "
                 + "runs and is wrong, so it is refused rather than approximated.")
         }
@@ -174,6 +206,8 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
                                                    maximumPositions),
             betaFast: real("beta_fast", 32),
             betaSlow: real("beta_slow", 1),
-            declaredAttentionFactor: (scaling["attention_factor"] as? NSNumber)?.floatValue)
+            declaredAttentionFactor: (scaling["attention_factor"] as? NSNumber)?.floatValue,
+            lowFrequencyFactor: real("low_freq_factor", 1),
+            highFrequencyFactor: real("high_freq_factor", 4))
     }
 }

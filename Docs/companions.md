@@ -294,6 +294,17 @@ models.
   phoneme encoder, duration / F0 / energy predictors, and an iSTFTNet decoder with a harmonic sine
   source. `backend(directoryURL:voiceName:)` takes a phoneme string under `NFKInputPrompt`; every
   deterministic seam at parity, the waveform at 0.997.
+- **`NFKMLXChatterbox`** — Chatterbox (Resemble AI, MIT), zero-shot voice cloning: a VoiceEncoder speaker
+  embedding and the S3 speech tokenizer read a reference voice, a T3 Llama (llama3 rope scaling, a
+  Perceiver-resampled prompt) samples speech codes for the text, and S3Gen renders them through a
+  conditional flow-matching decoder and the HiFT vocoder at 24 kHz. `speechBackend(directoryURL:voiceURL:)`
+  takes text under `NFKInputPrompt`; nil voice speaks the release's built-in `conds.pt`. Every stage at
+  reference parity on the released weights; the synthesized validation sentence transcribes back
+  through Parakeet exactly.
+- **`NFKMLXParakeet`** — Parakeet-TDT 0.6B v2 (NVIDIA, CC-BY-4.0), a second speech recognizer beside
+  Whisper: a FastConformer encoder and a token-and-duration transducer, greedy TDT decoding, a
+  timestamp per token under `NFKOutputSegments`. `backend(directoryURL:)` reads an unpacked `.nemo`;
+  at reference parity against NeMo (tokens and timestamps exact).
 - **`NFKMLXVideoBackend`** — the first backend that produces video: an `NFKVideoAsset` in, every frame
   through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
   `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.

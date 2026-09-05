@@ -202,7 +202,7 @@ Generation stops at the release's end-of-sequence token unless the request names
 
 Two things are refused rather than approximated, because both load cleanly and produce fluent
 nonsense: a mixture-of-experts or hybrid config handed to the dense loader, and a `rope_scaling` kind
-the port does not implement (`dynamic`, `llama3`, `longrope`; `linear` and `yarn` are implemented).
+the port does not implement (`dynamic`, `longrope`; `linear`, `yarn`, and `llama3` are implemented).
 A release whose weights exceed the memory budget is refused before any are materialized
 (`NFKMLXReleaseWeights.verifyFits`), and `NFKMLXModelSizing` derives the context window from what the
 machine can hold and reports the decode rate memory bandwidth allows. `NFKMLXQuantization` packs a
@@ -578,9 +578,11 @@ alternatives.
     At reference parity against the released snakers4 JIT (silero_vad 6.2.1): per-chunk cosine
     0.9999999999998, max |difference| 6.9e-7, threshold agreement 32/32. Loads the released `.jit`
     through its own `_model.*` weights (the converter keeps them; the 8 kHz branch is dropped).
-  - `Parakeet` ASR (NVIDIA/NeMo-licensed) — a faster second speech-to-text engine beside Whisper. Its
-    license is NVIDIA's rather than a standard permissive one, so it is gated the way research-only
-    weights are rather than shipped as a default.
+  - `Parakeet` ASR — **SHIPPED** (`NFKMLXParakeet`): Parakeet-TDT 0.6B v2 (CC-BY-4.0), the FastConformer
+    encoder and the token-and-duration transducer at reference parity against NeMo on the released
+    weights and the validation clip (encoder 0.99999999999, tokens and frame timestamps exact), reading
+    the unpacked `.nemo` through the native torch reader. A faster second speech-to-text engine beside
+    Whisper, with a timestamp per token.
   - the `SNAC` and `DAC` neural codecs — the codec class the toolkit had no path for. Codec tokens are
     what a speech-LLM TTS generates, so this unlocks that whole approach. **`DAC` is SHIPPED**
     (`NFKMLXDAC`): the 44.1 kHz model (encoder + residual vector quantizer + decoder, the decoder reusing
@@ -591,8 +593,12 @@ alternatives.
     `[4,2,1]`), with depthwise convolutions and a decoder noise block, at reference parity against the
     `snac` package — per-codebook tokens matching exactly (42/42) and the decoder reconstructing at cosine
     0.9999999999998 (noise disabled, its expected contribution zero).
-  - `pyannote` diarization — who-spoke-when over a recording.
-  - `Chatterbox` voice cloning (MIT).
+  - `pyannote` diarization — who-spoke-when over a recording. BLOCKED: `pyannote/segmentation-3.0`
+    is a gated repository and no token is available here.
+  - `Chatterbox` voice cloning (MIT) — **SHIPPED** (`NFKMLXChatterbox`): all five networks (VoiceEncoder,
+    S3 speech tokenizer, the T3 Llama with llama3 rope scaling, S3Gen's flow-matching decoder, the HiFT
+    vocoder) at reference parity on the released weights, stage by stage; a clip synthesized in the
+    validation clip's voice transcribes back through the package's own Parakeet exactly.
   - The four dereverberation candidates (SGMSE+, Resemble Enhance, VoiceFixer, DeepFilterNet) stay on
     the list beneath these.
 - **Image.**

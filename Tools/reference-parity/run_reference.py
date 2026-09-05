@@ -4247,6 +4247,12 @@ def run_rope_scaling(image):
             self.max_position_embeddings = max_positions
             self.rope_scaling = scaling
             self.partial_rotary_factor = 1.0
+            # transformers 5.x reads `rope_parameters` (the scaling block plus `rope_theta`) and calls
+            # `standardize_rope_params`; older releases read `rope_scaling`. Both are served.
+            self.rope_parameters = dict(scaling, rope_theta=base)
+
+        def standardize_rope_params(self):
+            pass
 
     # dim, base, max_positions, scaling
     cases = [
@@ -4266,9 +4272,13 @@ def run_rope_scaling(image):
                              "attention_factor": 1.25}),
         # Linear, which is position scaling rather than a frequency blend.
         (64, 10000.0, 8192, {"rope_type": "linear", "factor": 4.0}),
+        (64, 500000.0, 131072, {"rope_type": "llama3", "factor": 8.0, "low_freq_factor": 1.0,
+                                "high_freq_factor": 4.0, "original_max_position_embeddings": 8192}),
+        (128, 500000.0, 131072, {"rope_type": "llama3", "factor": 32.0, "low_freq_factor": 1.0,
+                                 "high_freq_factor": 4.0, "original_max_position_embeddings": 8192}),
     ]
 
-    kinds = {"yarn": 1.0, "linear": 0.0}
+    kinds = {"yarn": 1.0, "linear": 0.0, "llama3": 2.0}
     _extra = globals().setdefault("_extra", {})
     _extra.clear()
     outputs = []
@@ -4287,6 +4297,8 @@ def run_rope_scaling(image):
             kinds[scaling["rope_type"]],
             # -1 marks "the config declares none", so the Swift side exercises the derivation.
             float(scaling.get("attention_factor", -1.0)),
+            float(scaling.get("low_freq_factor", 1.0)),
+            float(scaling.get("high_freq_factor", 4.0)),
         ])
         outputs.append(inv_freq.float())
     _extra["case_count"] = torch.tensor([len(cases)], dtype=torch.int32)
@@ -4471,6 +4483,407 @@ def run_rtdetr_real(image, checkpoint):
     return out.logits[0].clone().contiguous()                                   # [300, 80]
 
 
+def run_parakeet(image, checkpoint):
+    """NVIDIA Parakeet-TDT (0.6B v2) speech recognition, from NeMo's own EncDecRNNTBPEModel on the
+    RELEASED `.nemo` archive (`--checkpoint`): the FastConformer encoder (dw-striding 8x subsampling,
+    24 rel-pos conformer layers, no biases) and the token-and-duration transducer (an LSTM prediction
+    net, the joint, greedy TDT decoding over durations [0..4]). The clip is the validation speech WAV
+    (`IK_VAL_AUDIO`, 16 kHz), so the transcription is a real measurement. Recorded seam by seam: the
+    normalized mel features, the pre-encode output, the first conformer layer, the encoder output, the
+    joint logits for frame 0 at the blank/SOS state, and the greedy tokens, text, and frame timestamps.
+    Dither is zeroed (training-time noise). Runs under the `nemo` oracle env (nemo_toolkit[asr]).
+    """
+    import wave as wavemodule
+    import huggingface_hub
+    for name in ["ModelFilter", "DatasetFilter"]:
+        if not hasattr(huggingface_hub, name):
+            setattr(huggingface_hub, name, type(name, (), {}))
+    import nemo.collections.asr as nemo_asr
+
+    model = nemo_asr.models.EncDecRNNTBPEModel.restore_from(checkpoint, strict=False).eval()
+    model.preprocessor.featurizer.dither = 0.0
+
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    with wavemodule.open(path) as handle:
+        assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
+        pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+    wave = (pcm.astype(np.float32) / 32768.0)
+    signal = torch.from_numpy(wave)[None]
+    length = torch.tensor([wave.shape[0]])
+
+    seams = {}
+    model.encoder.pre_encode.register_forward_hook(lambda m, i, o: seams.__setitem__("pre", o[0].detach()))
+    model.encoder.layers[0].register_forward_hook(lambda m, i, o: seams.__setitem__("layer0", o.detach()))
+    with torch.no_grad():
+        features, feature_length = model.preprocessor(input_signal=signal, length=length)
+        encoded, encoded_length = model.encoder(audio_signal=features, length=feature_length)  # [1, D, T]
+        g, _ = model.decoder.predict(None, None, add_sos=False, batch_size=1)            # SOS state
+        f = encoded.transpose(1, 2)[:, 0:1, :]
+        joint0 = model.joint.joint(f, g)                                                 # [1, 1, 1, V+1+durations]
+        hypotheses = model.decoding.rnnt_decoder_predictions_tensor(
+            encoder_output=encoded, encoded_lengths=encoded_length, return_hypotheses=True)
+    if isinstance(hypotheses, tuple):
+        hypotheses = hypotheses[0]
+    hypothesis = hypotheses[0]
+    tokens = list(hypothesis.y_sequence.tolist() if hasattr(hypothesis.y_sequence, "tolist") else hypothesis.y_sequence)
+    text = model.tokenizer.ids_to_text(tokens)
+    timestamps = list(hypothesis.timestamp.tolist() if hasattr(hypothesis.timestamp, "tolist") else hypothesis.timestamp)
+    print(f"parakeet transcription: {text!r} ({len(tokens)} tokens, {int(encoded_length[0])} frames)")
+
+    extra = {
+        "waveform": torch.from_numpy(wave).contiguous(),
+        "features": features[0].transpose(0, 1).contiguous(),               # [frames, mels] normalized
+        "pre": seams["pre"][0].contiguous(),                                 # [T', d_model]
+        "layer0": seams["layer0"][0].contiguous(),                           # [T', d_model]
+        "encoded": encoded[0].transpose(0, 1).contiguous(),                  # [T', d_model]
+        "joint0": joint0[0, 0, 0].contiguous(),                              # [V + 1 + durations]
+        "tokens": torch.tensor(tokens, dtype=torch.int32),
+        "timestamps": torch.tensor(timestamps, dtype=torch.int32),
+        "text": torch.tensor(list(text.encode("utf-8")), dtype=torch.int32),
+    }
+    for key, value in model.state_dict().items():
+        if key.endswith("num_batches_tracked"):
+            continue
+        extra[f"w::{key}"] = value.float().contiguous() if value.is_floating_point() else value.contiguous()
+    globals()["_extra"] = extra
+    return encoded[0].transpose(0, 1).clone().contiguous()
+
+
+def _chatterbox_reference_audio():
+    """The validation clip prepared the way `ChatterboxTTS.prepare_conditionals` prepares a voice
+    prompt: `librosa.load(sr=24000)` (a 16 kHz file resampled up), then `librosa.resample` back down to
+    16 kHz. Returns (wav24, wav16) as float32 numpy arrays."""
+    import librosa
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    wav24, _ = librosa.load(path, sr=24000)
+    wav16 = librosa.resample(wav24, orig_sr=24000, target_sr=16000)
+    return wav24.astype(np.float32), wav16.astype(np.float32)
+
+
+def run_chatterbox_voice(image, checkpoint):
+    """Chatterbox stage 1 + 2 (ResembleAI, `chatterbox-tts`): the VoiceEncoder speaker embedding and
+    the S3 speech tokenizer, on the RELEASED weights (`--checkpoint` is the release directory holding
+    `ve.safetensors` and `s3gen.safetensors`) and the validation clip, prepared exactly as
+    `prepare_conditionals` does. Recorded: `wav16` (the 16 kHz prompt both networks read); the voice
+    encoder's librosa-trimmed input (`ve_wav`), unscaled 40-band power mel (`ve_mel`, [T, 40]), the
+    per-partial embeddings (`ve_partials`, [N, 256]) and the utterance embedding (`ve_embed`); the S3
+    tokenizer's log-mel on the six-second crop (`s3_mel`, [128, T]), the encoder output (`s3_hidden`,
+    [T', 1280]) and the FSQ codes truncated to the 150-token conditioning prompt (`s3_codes`), and the
+    codes of the whole 16 kHz prompt as `embed_ref` tokenizes it (`s3_ref_codes`, from torchaudio's
+    24 kHz to 16 kHz resample, recorded as `ref_wav16`). Weights as `w::ve.*` and `w::tokenizer.*`.
+    Runs under the `chatterbox` oracle env.
+    """
+    import librosa
+    import torchaudio
+    from safetensors.torch import load_file
+    from chatterbox.models.voice_encoder import VoiceEncoder
+    from chatterbox.models.voice_encoder.melspec import melspectrogram
+    from chatterbox.models.s3tokenizer import S3Tokenizer, S3_SR
+    from chatterbox.models.s3gen.const import S3GEN_SR
+
+    directory = checkpoint
+    ve = VoiceEncoder()
+    ve.load_state_dict(load_file(os.path.join(directory, "ve.safetensors")))
+    ve.eval()
+    s3gen_state = load_file(os.path.join(directory, "s3gen.safetensors"))
+    tokenizer = S3Tokenizer("speech_tokenizer_v2_25hz")
+    tokenizer_state = {k[len("tokenizer."):]: v for k, v in s3gen_state.items() if k.startswith("tokenizer.")}
+    missing, unexpected = tokenizer.load_state_dict(tokenizer_state, strict=False)
+    assert not unexpected and set(missing) <= {"_mel_filters", "window"}, (missing, unexpected)
+    tokenizer.eval()
+
+    wav24, wav16 = _chatterbox_reference_audio()
+
+    # Voice encoder, as embeds_from_wavs: trim at 20 dB, unscaled power mel, partials at rate 1.3.
+    ve_wav = librosa.effects.trim(wav16, top_db=20)[0]
+    ve_mel = melspectrogram(ve_wav, ve.hp).T                                  # [T, 40]
+    from chatterbox.models.voice_encoder.voice_encoder import get_frame_step, get_num_wins
+    frame_step = get_frame_step(0.5, 1.3, ve.hp)
+    n_partials, target_len = get_num_wins(len(ve_mel), frame_step, 0.8, ve.hp)
+    mel_t = torch.from_numpy(np.ascontiguousarray(ve_mel)).float()
+    if target_len > mel_t.shape[0]:
+        mel_t = torch.cat([mel_t, torch.zeros(target_len - mel_t.shape[0], ve.hp.num_mels)], dim=0)
+    partials = torch.stack([mel_t[i * frame_step: i * frame_step + ve.hp.ve_partial_frames] for i in range(n_partials)])
+    with torch.inference_mode():
+        partial_embeds = ve(partials)                                          # [N, 256]
+        ve_embed = torch.from_numpy(ve.embeds_from_wavs([wav16], sample_rate=S3_SR))  # [1, 256]
+    assert ve_embed.shape == (1, 256)
+    print(f"chatterbox voice encoder: trimmed {len(ve_wav)} of {len(wav16)} samples, {len(ve_mel)} mel frames, "
+          f"{n_partials} partials at step {frame_step}")
+
+    # S3 tokenizer on the six-second crop (the T3 conditioning prompt), seam by seam.
+    crop = torch.from_numpy(wav16[: 6 * S3_SR])[None]
+    with torch.inference_mode():
+        s3_mel = tokenizer.log_mel_spectrogram(crop)                           # [1, 128, T]
+        s3_mel = s3_mel[..., :150 * 4]
+        mel_len = torch.tensor([s3_mel.shape[-1]])
+        hidden, code_len = tokenizer.encoder(s3_mel, mel_len)                  # [1, T', 1280]
+        codes = tokenizer.quantizer.encode(hidden)                             # [1, T']
+        cond_codes, cond_len = tokenizer.forward([wav16[: 6 * S3_SR]], max_len=150)
+    assert torch.equal(codes[0, :cond_len[0]], cond_codes[0, :cond_len[0]])
+
+    # The whole prompt as `S3Gen.embed_ref` tokenizes it: torchaudio's resample of the 24 kHz wav.
+    ref_wav16 = torchaudio.transforms.Resample(S3GEN_SR, S3_SR)(torch.from_numpy(wav24)[None])
+    with torch.inference_mode():
+        ref_codes, ref_len = tokenizer(ref_wav16.float())
+    print(f"chatterbox s3 tokenizer: {s3_mel.shape[-1]} mel frames -> {int(code_len[0])} codes; "
+          f"ref {ref_wav16.shape[-1]} samples -> {int(ref_len[0])} codes; first codes {codes[0, :8].tolist()}")
+
+    extra = {
+        "wav24": torch.from_numpy(wav24).contiguous(),
+        "wav16": torch.from_numpy(wav16).contiguous(),
+        "ve_wav": torch.from_numpy(np.ascontiguousarray(ve_wav)).contiguous(),
+        "ve_mel": torch.from_numpy(np.ascontiguousarray(ve_mel)).float().contiguous(),
+        "ve_partials": partial_embeds.contiguous(),
+        "ve_embed": ve_embed[0].contiguous(),
+        "s3_mel": s3_mel[0].contiguous(),
+        "s3_hidden": hidden[0].contiguous(),
+        "s3_codes": codes[0, :cond_len[0]].to(torch.int32).contiguous(),
+        "ref_wav16": ref_wav16[0].contiguous(),
+        "s3_ref_codes": ref_codes[0, :ref_len[0]].to(torch.int32).contiguous(),
+    }
+    for key, value in ve.state_dict().items():
+        extra[f"w::ve.{key}"] = value.float().contiguous()
+    for key, value in tokenizer_state.items():
+        extra[f"w::tokenizer.{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return ve_embed[0].clone().contiguous()
+
+
+def run_chatterbox_t3(image, checkpoint):
+    """Chatterbox stage 3: T3, the text-to-speech-token model (a Llama 520M with llama3 rope scaling
+    over learned position embeddings, conditioned on the VoiceEncoder speaker embedding, a 32-token
+    Perceiver resample of the prompt's speech codes, and an emotion scalar), on the RELEASED
+    `t3_cfg.safetensors`. The conditioning is rebuilt from the validation clip exactly as
+    `prepare_conditionals` builds it. Recorded: the text tokens with SOT/EOT (`text_tokens`), the
+    speaker embedding and prompt codes, the conditioning sequence (`cond_emb`, [34, 1024]), the CFG pair
+    of input embeddings (`embeds`, [2, L, 1024], row 1 with the text embedding zeroed), the reference's
+    own sampled speech tokens under a fixed seed (`speech_tokens`), the teacher-forced speech logits over
+    that sequence for both CFG rows (`tf_logits`, [2, n, 8194]), and the first step's fully processed
+    logits (`step0_processed`: CFG 0.5, repetition penalty 1.2, temperature 0.8, min-p 0.05, top-p 1.0).
+    The 2 GB of weights are not copied into the record; the Swift side loads the release itself. Runs
+    under the `chatterbox` oracle env.
+    """
+    import torch.nn.functional as F
+    from safetensors.torch import load_file
+    from transformers.generation.logits_process import (RepetitionPenaltyLogitsProcessor, MinPLogitsWarper,
+                                                        TopPLogitsWarper)
+    from chatterbox.models.t3 import T3
+    from chatterbox.models.t3.modules.cond_enc import T3Cond
+    from chatterbox.models.tokenizers import EnTokenizer
+    from chatterbox.models.voice_encoder import VoiceEncoder
+    from chatterbox.models.s3tokenizer import S3Tokenizer, S3_SR
+    from chatterbox.tts import punc_norm
+
+    directory = checkpoint
+    t3 = T3()
+    t3.load_state_dict(load_file(os.path.join(directory, "t3_cfg.safetensors")))
+    t3.eval()
+    ve = VoiceEncoder()
+    ve.load_state_dict(load_file(os.path.join(directory, "ve.safetensors")))
+    ve.eval()
+    s3gen_state = load_file(os.path.join(directory, "s3gen.safetensors"))
+    tokenizer = S3Tokenizer("speech_tokenizer_v2_25hz")
+    tokenizer.load_state_dict({k[len("tokenizer."):]: v for k, v in s3gen_state.items() if k.startswith("tokenizer.")},
+                              strict=False)
+    tokenizer.eval()
+    del s3gen_state
+    text_tokenizer = EnTokenizer(os.path.join(directory, "tokenizer.json"))
+
+    wav24, wav16 = _chatterbox_reference_audio()
+    with torch.inference_mode():
+        ve_embed = torch.from_numpy(ve.embeds_from_wavs([wav16], sample_rate=S3_SR)).mean(axis=0, keepdim=True)
+        cond_tokens, _ = tokenizer.forward([wav16[: 6 * S3_SR]], max_len=t3.hp.speech_cond_prompt_len)
+    cond_tokens = torch.atleast_2d(cond_tokens)
+    exaggeration = 0.5
+    t3_cond = T3Cond(speaker_emb=ve_embed, cond_prompt_speech_tokens=cond_tokens,
+                     emotion_adv=exaggeration * torch.ones(1, 1, 1))
+
+    raw_text = "The quick brown fox jumps over the lazy dog."
+    text = punc_norm(raw_text)
+    text_tokens = text_tokenizer.text_to_tokens(text)
+    text_tokens = torch.cat([text_tokens, text_tokens], dim=0)
+    text_tokens = F.pad(text_tokens, (1, 0), value=t3.hp.start_text_token)
+    text_tokens = F.pad(text_tokens, (0, 1), value=t3.hp.stop_text_token).long()
+
+    cfg_weight, temperature, repetition_penalty, min_p, top_p = 0.5, 0.8, 1.2, 0.05, 1.0
+    sos = t3.hp.start_speech_token
+    with torch.inference_mode():
+        cond_emb = t3.prepare_conditioning(t3_cond)                                         # [1, 34, 1024]
+        embeds, len_cond = t3.prepare_input_embeds(
+            t3_cond=t3_cond, text_tokens=text_tokens,
+            speech_tokens=sos * torch.ones_like(text_tokens[:, :1]), cfg_weight=cfg_weight)  # [2, L0, 1024]
+        torch.manual_seed(0)
+        speech_tokens = t3.inference(t3_cond=t3_cond, text_tokens=text_tokens, max_new_tokens=1000,
+                                     temperature=temperature, cfg_weight=cfg_weight,
+                                     repetition_penalty=repetition_penalty, min_p=min_p, top_p=top_p)
+        gen = speech_tokens[0].long()                                                        # [n]
+        n = gen.numel()
+        bos_embed = t3.speech_emb(torch.tensor([[sos]])) + t3.speech_pos_emb.get_fixed_embedding(0)
+        gen_embed = t3.speech_emb(gen[None, :-1]) + t3.speech_pos_emb.get_fixed_embedding(torch.arange(1, n))
+        tf_embeds = torch.cat([embeds, torch.cat([bos_embed, bos_embed]), torch.cat([gen_embed, gen_embed])], dim=1)
+        out = t3.tfmr(inputs_embeds=tf_embeds, output_hidden_states=True, return_dict=True)
+        logits = t3.speech_head(out.hidden_states[-1])                                       # [2, L, 8194]
+        start = len_cond + text_tokens.size(1) + 1                                           # the second BOS
+        tf_logits = logits[:, start: start + n]                                               # predicts gen[0..n-1]
+        step0 = tf_logits[:, 0]
+        cfg = step0[0:1] + cfg_weight * (step0[0:1] - step0[1:2])
+        ids = torch.tensor([[sos]])
+        processed = RepetitionPenaltyLogitsProcessor(penalty=repetition_penalty)(ids, cfg) / temperature
+        processed = MinPLogitsWarper(min_p=min_p)(ids, processed)
+        processed = TopPLogitsWarper(top_p=top_p)(ids, processed)
+    assert bool(torch.isfinite(processed[0, gen[0]])), "the sampled first token is admissible under the processors"
+    print(f"chatterbox t3: text {text!r} -> {text_tokens.size(1)} tokens; cond {cond_emb.shape[1]}; "
+          f"{n} speech tokens sampled (last {int(gen[-1])}), embeds {tuple(embeds.shape)}")
+
+    extra = {
+        "text_tokens": text_tokens[0].to(torch.int32).contiguous(),
+        "speaker_emb": ve_embed[0].contiguous(),
+        "cond_tokens": cond_tokens[0].to(torch.int32).contiguous(),
+        "emotion_adv": torch.tensor([exaggeration]),
+        "cond_emb": cond_emb[0].contiguous(),
+        "embeds": embeds.contiguous(),
+        "speech_tokens": gen.to(torch.int32).contiguous(),
+        "tf_logits": tf_logits.contiguous(),
+        "step0_processed": processed[0].contiguous(),
+        "text": torch.tensor(list(raw_text.encode("utf-8")), dtype=torch.int32),
+    }
+    globals()["_extra"] = extra
+    return tf_logits[0, 0].clone().contiguous()
+
+
+def run_chatterbox_s3gen(image, checkpoint):
+    """Chatterbox stages 4 and 5: S3Gen, the speech-code-to-waveform decoder, on the RELEASED
+    `s3gen.safetensors` and the validation clip as the voice prompt (`embed_ref` on its first ten
+    seconds at 24 kHz). Stage 4 is the CAMPPlus x-vector over a Kaldi fbank, the 24 kHz prompt mel, the
+    UpsampleConformerEncoder over the prompt-plus-target codes, and the causal conditional flow matching
+    (ten Euler steps on a cosine schedule, classifier-free guidance 0.7) through the ConditionalDecoder
+    U-Net; stage 5 is the HiFT vocoder (ConvRNNF0Predictor, harmonic sine source, iSTFT head). The
+    target codes are the T3 record's sampled speech tokens when that record exists (the real pipeline's
+    input), else the prompt's own codes. Two random sources are pinned so the seams are exact: the flow's
+    initial noise is drawn once and RECORDED (`flow_noise`, the Swift side takes it as an input), and the
+    sine source's random harmonic phases and additive noise are zeroed (the reference's `SineGen` draws
+    them fresh per call; the port draws its own in the consumer path). Recorded seam by seam: `fbank`,
+    `xvector_head`, `xvector`, `prompt_mel`, `token_emb`, `encoder_h`, `mu`, `spk80`, `t_span`,
+    `estimator0` (the first Euler step's velocity, both guidance rows), `mel_full`, `mel`, `f0`,
+    `source`, and `wav` (with the reference's 40 ms leading fade). Runs under the `chatterbox` oracle env.
+    """
+    import torch.nn.functional as F
+    import torchaudio
+    import torchaudio.compliance.kaldi as Kaldi
+    from safetensors.torch import load_file, load_file as _lf
+    from chatterbox.models.s3gen import S3Gen, S3GEN_SR
+    from chatterbox.models.s3tokenizer import S3_SR
+    import chatterbox.models.s3gen.hifigan as hifigan_module
+
+    directory = checkpoint
+    s3gen = S3Gen()
+    s3gen.load_state_dict(load_file(os.path.join(directory, "s3gen.safetensors")), strict=False)
+    s3gen.eval()
+
+    wav24, wav16 = _chatterbox_reference_audio()
+    ref24 = torch.from_numpy(wav24[: 10 * S3GEN_SR])[None]
+    ref16 = torchaudio.transforms.Resample(S3GEN_SR, S3_SR)(ref24)
+
+    seams = {}
+    def record(name):
+        def hook(module, inputs, output):
+            value = output[0] if isinstance(output, tuple) else output
+            seams.setdefault(name, []).append(value.detach().clone())
+        return hook
+    hooks = [
+        s3gen.speaker_encoder.head.register_forward_hook(record("xvector_head")),
+        s3gen.flow.input_embedding.register_forward_hook(record("token_emb")),
+        s3gen.flow.encoder.register_forward_hook(record("encoder_h")),
+        s3gen.flow.encoder_proj.register_forward_hook(record("mu")),
+        s3gen.flow.spk_embed_affine_layer.register_forward_hook(record("spk80")),
+        s3gen.flow.decoder.register_forward_hook(record("mel_full")),
+        s3gen.mel2wav.f0_predictor.register_forward_hook(record("f0")),
+        s3gen.mel2wav.m_source.register_forward_hook(record("source")),
+    ]
+
+    # `solve_euler` calls `estimator.forward` directly, which bypasses forward hooks; wrap the method.
+    estimator = s3gen.flow.decoder.estimator
+    original_estimator_forward = estimator.forward
+    def recording_estimator_forward(*args, **kwargs):
+        output = original_estimator_forward(*args, **kwargs)
+        seams.setdefault("estimator", []).append(output.detach().clone())
+        return output
+    estimator.forward = recording_estimator_forward
+
+    t3_record = os.path.expanduser("~/.inferkit-validation/records/chatterbox_t3.safetensors")
+    with torch.inference_mode():
+        fbank = Kaldi.fbank(ref16, num_mel_bins=80)
+        fbank = fbank - fbank.mean(dim=0, keepdim=True)
+        ref_dict = s3gen.embed_ref(ref24, S3GEN_SR)
+        if os.path.exists(t3_record):
+            tokens = _lf(t3_record)["speech_tokens"].long()
+            tokens = tokens[tokens < 6561]
+            source = "t3 record"
+        else:
+            tokens = ref_dict["prompt_token"][0].long()
+            source = "prompt codes"
+        n_prompt, n_tokens = ref_dict["prompt_token"].shape[1], tokens.numel()
+        total_mel = 2 * (n_prompt + n_tokens)
+        torch.manual_seed(0)
+        noise = torch.randn(1, 80, total_mel)
+
+    class ZeroUniform:
+        def __init__(self, low, high): pass
+        def sample(self, sample_shape):
+            return torch.zeros(sample_shape)
+    original_uniform, original_randn_like = hifigan_module.Uniform, torch.randn_like
+    def pinned_randn_like(tensor, **kwargs):
+        if tuple(tensor.shape) == tuple(noise.shape):
+            return noise.to(tensor.dtype)
+        return torch.zeros_like(tensor)
+    hifigan_module.Uniform = ZeroUniform
+    torch.randn_like = pinned_randn_like
+    try:
+        with torch.inference_mode():
+            wav, _ = s3gen.inference(speech_tokens=tokens, ref_dict=ref_dict)
+    finally:
+        hifigan_module.Uniform = original_uniform
+        torch.randn_like = original_randn_like
+        for hook in hooks:
+            hook.remove()
+        estimator.forward = original_estimator_forward
+
+    t_span = torch.linspace(0, 1, 11)
+    t_span = 1 - torch.cos(t_span * 0.5 * torch.pi)
+    mel_full = seams["mel_full"][0]                         # [1, 80, total]
+    mel = mel_full[:, :, ref_dict["prompt_feat"].shape[1]:]
+    print(f"chatterbox s3gen: prompt {n_prompt} codes / {ref_dict['prompt_feat'].shape[1]} mel frames, "
+          f"{n_tokens} target codes ({source}) -> mel {tuple(mel.shape)}, wav {tuple(wav.shape)}; "
+          f"{len(seams['estimator'])} estimator calls")
+    assert len(seams["estimator"]) == 10
+
+    extra = {
+        "ref_wav24": ref24[0].contiguous(),
+        "ref_wav16": ref16[0].contiguous(),
+        "fbank": fbank.contiguous(),                                          # [T, 80]
+        "xvector_head": seams["xvector_head"][0][0].contiguous(),             # [C·F/8, T']
+        "xvector": ref_dict["embedding"][0].contiguous(),                     # [192]
+        "prompt_mel": ref_dict["prompt_feat"][0].contiguous(),                # [T2, 80]
+        "prompt_tokens": ref_dict["prompt_token"][0].to(torch.int32).contiguous(),
+        "speech_tokens": tokens.to(torch.int32).contiguous(),
+        "token_emb": seams["token_emb"][0][0].contiguous(),                   # [T_all, 512]
+        "encoder_h": seams["encoder_h"][0][0].contiguous(),                   # [2·T_all, 512]
+        "mu": seams["mu"][0][0].contiguous(),                                 # [2·T_all, 80]
+        "spk80": seams["spk80"][0][0].contiguous(),                           # [80]
+        "flow_noise": noise[0].contiguous(),                                  # [80, total]
+        "t_span": t_span.contiguous(),
+        "estimator0": seams["estimator"][0].contiguous(),                     # [2, 80, total]
+        "mel_full": mel_full[0].contiguous(),                                 # [80, total]
+        "mel": mel[0].contiguous(),                                           # [80, 2·n_tokens]
+        "f0": seams["f0"][0][0].contiguous(),                                 # [2·n_tokens]
+        "source": seams["source"][0][0, :, 0].contiguous(),                   # [samples]
+        "wav": wav[0].contiguous(),                                           # [samples]
+    }
+    globals()["_extra"] = extra
+    return wav[0].clone().contiguous()
+
+
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
@@ -4484,7 +4897,10 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "depth": run_depth, "depth_encoder": run_depth_encoder,
                      "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "kokoro": run_kokoro}
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,
+                     "chatterbox_voice": run_chatterbox_voice,
+                     "chatterbox_t3": run_chatterbox_t3,
+                     "chatterbox_s3gen": run_chatterbox_s3gen}
 
 
 def main():

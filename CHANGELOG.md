@@ -219,6 +219,32 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   by returning false. This is the `NFKMLXMusic3` mechanism lifted out for the shared-conditioning case
   (text-to-long-image, an extendable texture). Swift-only: it takes a closure over `MLXArray`.
 
+#### Speech: a second recognizer and voice cloning
+
+- `NFKMLXParakeet` runs Parakeet-TDT 0.6B v2 (NVIDIA NeMo, CC-BY-4.0): a FastConformer encoder with a
+  depthwise-striding 8× subsampler and 24 relative-position conformer layers, and a token-and-duration
+  transducer decoded greedily, so each step scores the next token AND how many frames to skip.
+  `NFKMLXParakeetBackend` reads `NFKInputAudio` and returns the transcript under `NFKOutputText` plus one
+  `NFKAudioSegment` per token under `NFKOutputSegments`. `backend(directoryURL:)` /
+  `backendWithDirectoryURL:error:` read an unpacked `.nemo` through the native torch reader. At reference
+  parity against NeMo's own model on the released weights and the validation clip: every encoder seam
+  ≥ 0.99999999999, tokens and frame timestamps exact.
+- `NFKMLXChatterbox` runs Chatterbox (Resemble AI, MIT), zero-shot voice cloning, ported stage by stage:
+  the VoiceEncoder speaker embedding (`NFKMLXChatterboxVoiceEncoderNet`), the S3 speech tokenizer
+  (`NFKMLXS3TokenizerNet`, FSMN attention over Whisper's log-mel, an 8-channel base-3 FSQ), T3
+  (`NFKMLXT3Net`, the shipped dense decoder as a Llama 520M under llama3 rope scaling with a Perceiver
+  prompt resampler, sampled with the reference's guidance, repetition-penalty, min-p, top-p chain), and
+  S3Gen (`NFKMLXS3GenNet`: a CAMPPlus x-vector over a Kaldi filterbank, an upsampling conformer encoder,
+  a causal conditional flow-matching U-Net, and the HiFT vocoder). `NFKMLXChatterboxTTS(directoryURL:)`
+  loads the release; `conditionals(voice:sampleRate:)` prepares a voice from any WAV;
+  `speechBackend(directoryURL:voiceURL:)` / `chatterboxBackendWithDirectoryURL:voiceURL:error:` return an
+  `NFKMLXSpeechBackend` (24 kHz WAV under `NFKOutputAudio`; nil voice uses the built-in `conds.pt`).
+  Every stage at reference parity on the released weights (speech codes 87/87 exact, teacher-forced T3
+  argmax 79/79, waveform 0.99999999999); the validation sentence synthesized in the validation clip's
+  voice transcribes back through `NFKMLXParakeet` exactly.
+- `NFKMLXRoPEScaling` implements `llama3` beside `linear` and `yarn` (Chatterbox's T3 declares it), at
+  parity with transformers' own initializer; `dynamic` and `longrope` stay refused.
+
 #### Objective-C parity
 
 - `NFKMLXGenerationParameterKey` carries the MLX generation options that have no core parameter key

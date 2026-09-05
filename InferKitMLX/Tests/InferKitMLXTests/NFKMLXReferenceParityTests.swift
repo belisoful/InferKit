@@ -1035,6 +1035,357 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(boxSimilarity, 0.9999, "the released-weights detection boxes match the reference")
     }
 
+    // MARK: Parakeet-TDT speech recognition
+
+    // Parakeet-TDT 0.6B v2 on the RELEASED weights, against NeMo's own EncDecRNNTBPEModel on the validation
+    // speech clip, seam by seam: the normalized mel features, the depthwise-striding subsampler, the first
+    // conformer layer, the full encoder, the joint's first-frame logits at the blank state, and the greedy
+    // token-and-duration decode — which must reproduce the reference's tokens and frame timestamps exactly,
+    // and the transcription text through the release's SentencePiece pieces.
+    func testParakeetMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_PARAKEET"], let directory = config["IK_VAL_PARAKEET"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_PARAKEET + IK_VAL_PARAKEET (run_reference.py parakeet, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"]).asArray(Float.self)
+        let referenceTokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceTimestamps = try XCTUnwrap(arrays["timestamps"]).asArray(Int32.self).map(Int.init)
+        let referenceText = String(decoding: try XCTUnwrap(arrays["text"]).asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+
+        let net = NFKMLXParakeetNet(.tdt06B)
+        let releaseURL = URL(fileURLWithPath: directory)
+        try NFKMLXParakeet.loadWeights(into: net, from: releaseURL.appendingPathComponent("model_weights.ckpt"))
+
+        func check(_ label: String, _ mine: MLXArray, _ key: String, _ threshold: Double = 0.9999) throws {
+            let reference = try XCTUnwrap(arrays[key])
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY parakeet: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "parakeet \(label) matches the reference")
+        }
+        let features = net.frontEnd.features(waveform)
+        try check("features", features, "features")
+        let pre = net.encoder.preEncode(features)
+        try check("pre_encode", pre, "pre")
+        let posEmb = net.encoder.positionEmbedding(length: pre.dim(1))
+        try check("layer0", net.encoder.layers[0](pre, posEmb: posEmb), "layer0")
+        let encoded = net.encode(features: features)
+        try check("encoded", encoded, "encoded")
+        // NeMo's joint log-softmaxes its output on the CPU when `log_softmax` is null — a constant shift
+        // over the whole vector that leaves both argmaxes alone, so the port keeps raw logits and the seam
+        // is compared in the reference's own log-softmax space.
+        let (g, _) = net.decoder.prediction(token: nil, state: nil)
+        let logits = net.joint(frame: encoded[0, 0, 0...], prediction: g)
+        try check("joint0", logits - logSumExp(logits, axis: -1, keepDims: true), "joint0")
+
+        let tokens = net.decode(encoded: encoded)
+        XCTAssertEqual(tokens.map(\.id), referenceTokens, "the greedy TDT tokens match the reference")
+        XCTAssertEqual(tokens.map(\.frame), referenceTimestamps, "the emission frames match the reference")
+        let vocabURL = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: releaseURL, includingPropertiesForKeys: nil)
+            .first { $0.lastPathComponent.hasSuffix("_tokenizer.vocab") })
+        let text = try NFKMLXParakeetVocabulary(vocabURL: vocabURL).text(for: tokens.map(\.id))
+        print("VALIDATION PARITY parakeet: transcription \(text.debugDescription)")
+        XCTAssertEqual(text, referenceText)
+    }
+
+    // The public backend path on the released weights: the unpacked `.nemo` directory → `backendWithDirectoryURL:`
+    // → the validation WAV under NFKInputAudio → the reference transcription under NFKOutputText, with one
+    // timestamped segment per token under NFKOutputSegments.
+    func testParakeetBackendTranscribesTheValidationClip() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_PARAKEET"], let audio = config["IK_VAL_AUDIO"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_PARAKEET + IK_VAL_AUDIO")
+        }
+        let backend = try NFKMLXParakeet.backend(directoryURL: URL(fileURLWithPath: directory))
+        let asset = NFKAudioAsset(fileURL: URL(fileURLWithPath: audio), durationSeconds: 3.47, sampleRate: 16000, channelCount: 1)
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
+        print("VALIDATION PARITY parakeet-backend: \(result.text.debugDescription)")
+        XCTAssertEqual(result.text, "The quick brown fox jumps over the lazy dog.")
+        XCTAssertEqual(result.segments?.count, 19)
+        XCTAssertEqual(result.segments?.first?.startSeconds ?? -1, 0, accuracy: 1e-9)
+    }
+
+    // MARK: Chatterbox — voice encoder + S3 speech tokenizer
+
+    func testChatterboxVoiceEncoderAndTokenizerMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CHATTERBOX_VOICE"], let directory = config["IK_VAL_CHATTERBOX"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_CHATTERBOX_VOICE + IK_VAL_CHATTERBOX (run_reference.py chatterbox_voice, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        let wave16 = try XCTUnwrap(arrays["wav16"]).asArray(Float.self)
+
+        func check(_ label: String, _ mine: MLXArray, _ reference: MLXArray, _ threshold: Double = 0.9999) {
+            eval(mine)
+            XCTAssertEqual(mine.shape, reference.shape, "chatterbox \(label) shape")
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY chatterbox: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "chatterbox \(label) matches the reference")
+        }
+
+        // Voice encoder: the librosa trim is exact, then mel → partials → embedding.
+        let voice = NFKMLXChatterboxVoiceEncoderNet(.released)
+        try NFKMLXChatterbox.loadVoiceEncoderWeights(into: voice, from: release.appendingPathComponent("ve.safetensors"))
+        let trimmed = NFKMLXChatterboxVoiceFrontEnd.trimmed(wave16, topDecibels: 20)
+        let referenceTrimmed = try XCTUnwrap(arrays["ve_wav"]).asArray(Float.self)
+        XCTAssertEqual(trimmed.count, referenceTrimmed.count, "the trim cuts the same samples")
+        XCTAssertEqual(trimmed.first, referenceTrimmed.first)
+        let mel = NFKMLXChatterboxVoiceFrontEnd.mel(trimmed, configuration: .released)
+        check("ve_mel", mel, try XCTUnwrap(arrays["ve_mel"]))
+        let partials = NFKMLXChatterboxVoiceFrontEnd.partials(of: mel, configuration: .released)
+        check("ve_partials", voice.embedPartials(partials), try XCTUnwrap(arrays["ve_partials"]))
+        check("ve_embed", voice.embed(samples: wave16), try XCTUnwrap(arrays["ve_embed"]))
+
+        // S3 tokenizer: mel, encoder states, and the codes, which must match exactly.
+        let tokenizer = NFKMLXS3TokenizerNet(.released)
+        try NFKMLXChatterbox.loadTokenizerWeights(into: tokenizer, from: release.appendingPathComponent("s3gen.safetensors"))
+        let crop = Array(wave16.prefix(6 * 16000))
+        let s3Mel = tokenizer.logMel(crop)
+        check("s3_mel", s3Mel, try XCTUnwrap(arrays["s3_mel"]).transposed(1, 0))
+        let hidden = tokenizer.hidden(mel: s3Mel)
+        check("s3_hidden", hidden, try XCTUnwrap(arrays["s3_hidden"]))
+        let referenceCodes = try XCTUnwrap(arrays["s3_codes"]).asArray(Int32.self).map(Int.init)
+        let codes = tokenizer.codes(hidden: hidden)
+        XCTAssertEqual(codes, referenceCodes, "the FSQ speech codes match the reference exactly")
+        XCTAssertEqual(tokenizer.tokenize(crop, maximumCodes: 150), referenceCodes)
+        let referenceWave = try XCTUnwrap(arrays["ref_wav16"]).asArray(Float.self)
+        let referenceRefCodes = try XCTUnwrap(arrays["s3_ref_codes"]).asArray(Int32.self).map(Int.init)
+        let refCodes = tokenizer.tokenize(referenceWave)
+        let agreement = zip(refCodes, referenceRefCodes).filter(==).count
+        print("VALIDATION PARITY chatterbox: s3_ref_codes agreement \(agreement)/\(referenceRefCodes.count)")
+        XCTAssertEqual(refCodes, referenceRefCodes, "the whole-prompt speech codes match the reference exactly")
+    }
+
+    // MARK: Chatterbox — T3 text-to-speech-token model
+
+    func testChatterboxT3MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CHATTERBOX_T3"], let directory = config["IK_VAL_CHATTERBOX"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_CHATTERBOX_T3 + IK_VAL_CHATTERBOX (run_reference.py chatterbox_t3, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        func check(_ label: String, _ mine: MLXArray, _ reference: MLXArray, _ threshold: Double = 0.9999) {
+            eval(mine)
+            XCTAssertEqual(mine.shape, reference.shape, "chatterbox t3 \(label) shape")
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY chatterbox t3: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "chatterbox t3 \(label) matches the reference")
+        }
+
+        // The text tokenizer reproduces the reference ids, start and stop tokens included.
+        let text = String(decoding: try XCTUnwrap(arrays["text"]).asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+        let referenceText = try XCTUnwrap(arrays["text_tokens"]).asArray(Int32.self).map(Int.init)
+        let tokenizer = try NFKMLXChatterboxTextTokenizer(url: release.appendingPathComponent("tokenizer.json"))
+        XCTAssertEqual(tokenizer.encodeForSynthesis(NFKMLXChatterboxTextTokenizer.normalizedPunctuation(text)),
+                       referenceText, "the T3 text tokens match the reference")
+
+        let net = NFKMLXT3Net(.released)
+        try NFKMLXChatterbox.loadT3Weights(into: net, from: release.appendingPathComponent("t3_cfg.safetensors"))
+        let condition = NFKMLXT3Condition(
+            speakerEmbedding: try XCTUnwrap(arrays["speaker_emb"]),
+            promptTokens: try XCTUnwrap(arrays["cond_tokens"]).asArray(Int32.self).map(Int.init),
+            exaggeration: try XCTUnwrap(arrays["emotion_adv"]).item(Float.self))
+        let conditionEmbedding = net.conditionEmbedding(condition)
+        check("cond_emb", conditionEmbedding[0], try XCTUnwrap(arrays["cond_emb"]))
+        let embeddings = net.inputEmbeddings(condition: conditionEmbedding, textTokens: referenceText, guidance: true)
+        check("embeds", embeddings, try XCTUnwrap(arrays["embeds"]))
+
+        // Teacher-forced over the reference's own sampled codes: the second start token at position 0,
+        // then each code at its position, both guidance rows.
+        let speech = try XCTUnwrap(arrays["speech_tokens"]).asArray(Int32.self).map(Int.init)
+        let width = embeddings.dim(2)
+        var pieces = [embeddings, broadcast(net.speechTokenEmbedding(net.configuration.startSpeechToken, position: 0),
+                                            to: [2, 1, width])]
+        for (index, token) in speech.dropLast().enumerated() {
+            pieces.append(broadcast(net.speechTokenEmbedding(token, position: index + 1), to: [2, 1, width]))
+        }
+        let logits = net.speechLogits(embeddings: concatenated(pieces, axis: 1))
+        let start = conditionEmbedding.dim(1) + referenceText.count + 1
+        let mine = logits[0..., start ..< (start + speech.count)]
+        let reference = try XCTUnwrap(arrays["tf_logits"])
+        check("tf_logits conditional", mine[0], reference[0])
+        check("tf_logits unconditional", mine[1], reference[1])
+        let agreement = zip(mine[0].argMax(axis: -1).asArray(Int32.self), reference[0].argMax(axis: -1).asArray(Int32.self))
+            .filter(==).count
+        print("VALIDATION PARITY chatterbox t3: argmax agreement \(agreement)/\(speech.count)")
+        XCTAssertEqual(agreement, speech.count, "every teacher-forced position predicts the reference's top code")
+
+        // The first step's processors (guidance, repetition penalty, temperature, min-p, top-p).
+        let step0 = mine[0..., 0]
+        let guided = (step0[0] + 0.5 * (step0[0] - step0[1])).asArray(Float.self)
+        let options = NFKMLXT3SamplingOptions()
+        let processed = NFKMLXT3Sampler.processed(guided, generated: [net.configuration.startSpeechToken], options: options)
+        let referenceProcessed = try XCTUnwrap(arrays["step0_processed"]).asArray(Float.self)
+        XCTAssertEqual(processed.count, referenceProcessed.count)
+        var kept = 0, worst: Float = 0
+        for (a, b) in zip(processed, referenceProcessed) {
+            XCTAssertEqual(a.isFinite, b.isFinite, "min-p keeps the same codes")
+            if a.isFinite && b.isFinite { kept += 1; worst = max(worst, abs(a - b)) }
+        }
+        print("VALIDATION PARITY chatterbox t3: step0 processed keeps \(kept) codes, worst |difference| \(worst)")
+        XCTAssertGreaterThan(kept, 0)
+        XCTAssertLessThan(worst, 1e-2)
+        XCTAssertTrue(processed[speech[0]].isFinite, "the reference's sampled first code is admissible")
+
+        // Generation runs through the cache: a short greedy run yields valid speech codes.
+        var greedy = NFKMLXT3SamplingOptions()
+        greedy.temperature = 0
+        greedy.maximumTokens = 12
+        let codes = net.generate(condition: condition, textTokens: referenceText, options: greedy)
+        XCTAssertFalse(codes.isEmpty)
+        XCTAssertTrue(codes.allSatisfy { $0 < net.configuration.startSpeechToken }, "greedy codes are speech codes: \(codes)")
+    }
+
+    // MARK: Chatterbox — S3Gen (x-vector, flow, vocoder)
+
+    func testChatterboxS3GenMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CHATTERBOX_S3GEN"], let directory = config["IK_VAL_CHATTERBOX"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_CHATTERBOX_S3GEN + IK_VAL_CHATTERBOX (run_reference.py chatterbox_s3gen, real weights)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        func reference(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], "record carries \(key)") }
+        @discardableResult
+        func check(_ label: String, _ mine: MLXArray, _ reference: MLXArray, _ threshold: Double = 0.9999) -> Double {
+            eval(mine)
+            XCTAssertEqual(mine.shape, reference.shape, "chatterbox s3gen \(label) shape")
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY chatterbox s3gen: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, threshold, "chatterbox s3gen \(label) matches the reference")
+            return similarity
+        }
+
+        let net = NFKMLXS3GenNet()
+        try NFKMLXChatterbox.loadS3GenWeights(into: net, from: release.appendingPathComponent("s3gen.safetensors"))
+
+        // The x-vector: Kaldi fbank, the 2-D head, the embedding.
+        let wave16 = try reference("ref_wav16").asArray(Float.self)
+        let fbank = NFKKaldiFbank.features(wave16)
+        check("fbank", fbank, try reference("fbank"))
+        let referenceFbank = try reference("fbank").expandedDimensions(axis: 0)
+        check("xvector_head", net.speakerEncoder.head(referenceFbank)[0].transposed(1, 0), try reference("xvector_head"))
+        check("xvector", net.speakerEncoder(referenceFbank)[0], try reference("xvector"))
+
+        // The 24 kHz prompt mel.
+        let wave24 = try reference("ref_wav24").asArray(Float.self)
+        check("prompt_mel", NFKChatterboxPromptMel.features(wave24), try reference("prompt_mel"))
+
+        // The flow's conditioning: token embedding, the upsampling conformer, mu, the speaker projection.
+        let promptTokens = try reference("prompt_tokens").asArray(Int32.self).map(Int.init)
+        let speechTokens = try reference("speech_tokens").asArray(Int32.self).map(Int.init)
+        let tokenEmbedding = net.flow.tokenEmbedding(promptTokens + speechTokens)
+        check("token_emb", tokenEmbedding[0], try reference("token_emb"))
+        let encoded = net.flow.encoder(tokenEmbedding)
+        check("encoder_h", encoded[0], try reference("encoder_h"))
+        check("mu", net.flow.encoderProjection(encoded)[0], try reference("mu"))
+        check("spk80", net.flow.speakerEmbedding(xVector: try reference("xvector"))[0], try reference("spk80"))
+
+        // The estimator on the reference's own conditioning and noise, then the whole Euler solve.
+        let mu = try reference("mu").expandedDimensions(axis: 0)
+        let speaker = try reference("spk80").expandedDimensions(axis: 0)
+        let promptMel = try reference("prompt_mel")
+        let total = mu.dim(1)
+        let condition = concatenated([promptMel, MLXArray.zeros([total - promptMel.dim(0), 80])], axis: 0).expandedDimensions(axis: 0)
+        let noise = try reference("flow_noise").transposed(1, 0).expandedDimensions(axis: 0)
+        let span = try reference("t_span").asArray(Float.self)
+        for (mine, theirs) in zip(NFKS3FlowNet.timeSpan(steps: 10), span) { XCTAssertEqual(mine, theirs, accuracy: 1e-6) }
+        var firstVelocity: MLXArray?
+        let melFull = net.flow.solve(noise: noise, mu: mu, speaker: speaker, condition: condition) { step, velocity in
+            if step == 0 { firstVelocity = velocity }
+        }
+        check("estimator0", try XCTUnwrap(firstVelocity).transposed(0, 2, 1), try reference("estimator0"))
+        check("mel_full", melFull[0].transposed(1, 0), try reference("mel_full"), 0.999)
+        let mel = melFull[0, promptMel.dim(0)...]
+        check("mel", mel.transposed(1, 0), try reference("mel"), 0.999)
+
+        // The vocoder: F0, the harmonic source, and the generator, each on the reference's own input.
+        let referenceMel = try reference("mel").transposed(1, 0).expandedDimensions(axis: 0)
+        let f0 = net.vocoder.f0(mel: referenceMel)
+        check("f0", f0[0], try reference("f0"))
+        let source = net.vocoder.source(f0: try reference("f0").expandedDimensions(axis: 0), deterministic: true)
+        check("source", source[0], try reference("source"), 0.99)
+        var decoded = net.vocoder.decode(mel: referenceMel, source: try reference("source").expandedDimensions(axis: 0))[0].asArray(Float.self)
+        let trim = net.vocoder.sampleRate / 50
+        for index in 0 ..< (2 * trim) {
+            decoded[index] *= index < trim ? 0 : (cosf(Float.pi * (1 - Float(index - trim) / Float(trim - 1))) + 1) / 2
+        }
+        check("wav (reference source)", MLXArray(decoded), try reference("wav"), 0.999)
+        let waveform = net.vocoder.waveform(mel: referenceMel[0], deterministicSource: true)
+        check("wav (own source)", MLXArray(waveform), try reference("wav"), 0.99)
+    }
+
+    // MARK: Chatterbox — the whole pipeline on the released weights
+
+    func testChatterboxSynthesizesSpeechParakeetTranscribes() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_CHATTERBOX"], let audio = config["IK_VAL_AUDIO"],
+              let parakeetDirectory = config["IK_VAL_PARAKEET"], FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_CHATTERBOX + IK_VAL_AUDIO + IK_VAL_PARAKEET")
+        }
+        let release = URL(fileURLWithPath: directory)
+        let tts = try NFKMLXChatterboxTTS(directoryURL: release)
+        let voice = try XCTUnwrap(NFKMLXWaveFile.read(try Data(contentsOf: URL(fileURLWithPath: audio))))
+        let conditionals = tts.conditionals(voice: voice.samples, sampleRate: voice.sampleRate)
+        XCTAssertEqual(conditionals.t3.speakerEmbedding.shape, [256])
+        XCTAssertEqual(conditionals.s3gen.mel.dim(0) / 2, conditionals.s3gen.tokens.count, "the prompt codes are trimmed to half the mel frames")
+
+        let text = "The quick brown fox jumps over the lazy dog."
+        let samples = tts.synthesize(text: text, conditionals: conditionals)
+        let seconds = Double(samples.count) / Double(tts.sampleRate)
+        let rms = sqrt(samples.reduce(0) { $0 + Double($1 * $1) } / Double(max(samples.count, 1)))
+        print("VALIDATION PARITY chatterbox-e2e: \(samples.count) samples (\(seconds) s), RMS \(rms)")
+        XCTAssertGreaterThan(seconds, 1.5)
+        XCTAssertLessThan(seconds, 10)
+        XCTAssertGreaterThan(rms, 0.01, "the clip is signal, not silence")
+
+        // Closing the loop: the package's own Parakeet, at parity, must hear the sentence.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("chatterbox-e2e-\(UUID().uuidString).wav")
+        try NFKMLXWaveFile.write(samples: samples, sampleRate: tts.sampleRate, to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let parakeet = try NFKMLXParakeet.backend(directoryURL: URL(fileURLWithPath: parakeetDirectory))
+        let asset = NFKAudioAsset(fileURL: url, durationSeconds: seconds, sampleRate: Double(tts.sampleRate), channelCount: 1)
+        let heard = try parakeet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset])).text ?? ""
+        print("VALIDATION PARITY chatterbox-e2e: Parakeet hears \(heard.debugDescription)")
+        let normalized = heard.lowercased().filter { $0.isLetter || $0 == " " }
+        XCTAssertTrue(normalized.contains("quick brown fox"), "Parakeet transcribes the synthesized sentence: \(heard)")
+        XCTAssertTrue(normalized.contains("lazy dog"), "Parakeet transcribes the synthesized sentence: \(heard)")
+
+        // The release's built-in voice reads through the native checkpoint reader.
+        let builtin = try tts.builtinConditionals(url: release.appendingPathComponent("conds.pt"))
+        XCTAssertEqual(builtin.t3.speakerEmbedding.shape, [256])
+        XCTAssertEqual(builtin.t3.promptTokens.count, 150)
+        XCTAssertEqual(builtin.s3gen.mel.shape, [2 * builtin.s3gen.tokens.count, 80])
+        XCTAssertEqual(builtin.s3gen.xVector.shape, [192])
+        XCTAssertEqual(builtin.t3.exaggeration, 0.5, accuracy: 1e-6)
+    }
+
+    func testChatterboxBackendSpeaksTheBuiltinVoice() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_CHATTERBOX"], FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_CHATTERBOX")
+        }
+        let backend = try NFKMLXChatterbox.backend(directoryURL: URL(fileURLWithPath: directory), voiceURL: nil)
+        XCTAssertTrue(backend.isReady)
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Hello there."]))
+        let asset = try XCTUnwrap(result.output(forKey: NFKOutputAudio) as? NFKAudioAsset)
+        XCTAssertEqual(asset.sampleRate, 24000, accuracy: 0.5)
+        XCTAssertGreaterThan(asset.durationSeconds, 0.3)
+        print("VALIDATION PARITY chatterbox-backend: \(asset.durationSeconds) s at \(asset.sampleRate) Hz")
+    }
+
     // MARK: Kokoro-82M (StyleTTS2 / iSTFTNet) — text path
 
     // Kokoro's text path on the RELEASED weights, against the vendored KModel, seam by seam: the PL-BERT

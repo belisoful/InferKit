@@ -358,6 +358,30 @@ final class MLXModelGalleryExamples: XCTestCase {
         let speech = tts.makeSpeechBackend()                     // reads NFKInputPrompt, writes a WAV NFKAudioAsset
         XCTAssertEqual(speech.backendIdentifier, "tts")
 
+        // Parakeet-TDT (NeMo FastConformer + token-and-duration transducer): a second ASR beside Whisper.
+        // Random weights at a shrunk geometry run the whole path — mel front end, dw-striding subsampler,
+        // rel-pos conformer, LSTM prediction net, joint, greedy TDT decode — on the same clip.
+        let parakeet = NFKMLXParakeet.backend(configuration: .tiny)
+        let recognized = try parakeet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave]))
+        XCTAssertNotNil(recognized.output(forKey: NFKOutputText), "a transcript (token ids without a vocabulary)")
+
+        // Chatterbox (zero-shot voice cloning TTS): a VoiceEncoder speaker embedding and the S3 speech
+        // tokenizer read the voice prompt, T3 samples speech codes for the text, and S3Gen (flow matching +
+        // HiFT vocoder) renders them. Shrunk random geometries run the prompt side and a few T3 steps.
+        let promptSamples = Self.tone(16000)
+        let voiceEncoder = NFKMLXChatterboxVoiceEncoderNet(.tiny)
+        let speakerEmbedding = voiceEncoder.embed(samples: promptSamples)
+        let speechTokenizer = NFKMLXS3TokenizerNet(.tiny)
+        let promptCodes = speechTokenizer.tokenize(promptSamples, maximumCodes: 8)
+        XCTAssertTrue(promptCodes.allSatisfy { $0 < speechTokenizer.configuration.codebookSize }, "S3 codes are base-3 indices")
+        let t3 = NFKMLXT3Net(.tiny)
+        var sampling = NFKMLXT3SamplingOptions()
+        sampling.temperature = 0
+        sampling.maximumTokens = 4
+        let condition = NFKMLXT3Condition(speakerEmbedding: speakerEmbedding, promptTokens: promptCodes)
+        let speechCodes = t3.generate(condition: condition, textTokens: [255, 3, 4, 5, 0], options: sampling)
+        XCTAssertLessThanOrEqual(speechCodes.count, 4, "T3 emits speech codes step by step")
+
         // Kokoro-82M (StyleTTS2 / iSTFTNet): a phoneme string + a voicepack row → a 24 kHz waveform. Run
         // here with random weights to exercise the whole pipeline (PL-BERT → duration → F0/N → iSTFTNet).
         let kokoro = NFKMLXKokoroNet(.v1)

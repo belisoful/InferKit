@@ -181,6 +181,7 @@ limits.
 ### Audio → text & labels
 
 - ``NFKMLXWhisper``
+- ``NFKMLXParakeet``
 - ``NFKMLXVAD``
 - ``NFKMLXSileroVAD``
 - ``NFKMLXAudioTagger``
@@ -192,6 +193,8 @@ limits.
 - ``NFKMLXFastSpeech2``
 - ``NFKMLXHiFiGAN``
 - ``NFKMLXKokoro``
+- ``NFKMLXChatterbox``
+- ``NFKMLXChatterboxTTS``
 - ``NFKMLXPhonemizer``
 - ``NFKMLXNeuralG2P``
 - ``NFKMLXEspeakPhonemizer``

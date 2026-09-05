@@ -635,7 +635,7 @@ final class MLXExamples: XCTestCase {
         XCTAssertNil(try NFKMLXRoPEScaling.read(nil, maximumPositions: 32768))
 
         XCTAssertThrowsError(try NFKMLXRoPEScaling.read(
-            ["rope_type": "llama3", "factor": 8.0], maximumPositions: 131072))
+            ["rope_type": "longrope", "factor": 8.0], maximumPositions: 131072))
     }
 
     // Docs/examples.md: Sizing it to the machine. The window is derived from what is free rather than

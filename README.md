@@ -71,8 +71,8 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 - **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP, SigLIP 2, Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Qwen3-VL, Gemma 4 vision / audio
 - **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Mixtral, GGUF, Qwen3.5 / 3.8, Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
 - **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend
-- **[Audio](Docs/model-index.md#audio)** — Whisper (tiny–large-v3), Demucs v2 / HT Demucs, speech denoiser, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC
-- **[Speech & music](Docs/model-index.md#text-to-speech-and-music)** — FastSpeech2 + HiFi-GAN voice, Kokoro-82M, phonemizers, MiniMax Music 3
+- **[Audio](Docs/model-index.md#audio)** — Whisper (tiny–large-v3), Parakeet-TDT, Demucs v2 / HT Demucs, speech denoiser, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC
+- **[Speech & music](Docs/model-index.md#text-to-speech-and-music)** — FastSpeech2 + HiFi-GAN voice, Kokoro-82M, Chatterbox voice cloning, phonemizers, MiniMax Music 3
 - **[Text → image & video](Docs/model-index.md#text-to-image-and-video)** — Stable Diffusion 1.5 / 2.1 / SDXL-Turbo, IP-Adapter, Z-Image, SANA, LTX-Video, Wan
 
 ## Documentation

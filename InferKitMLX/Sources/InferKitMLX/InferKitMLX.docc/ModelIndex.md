@@ -364,6 +364,8 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | Whisper | ``NFKMLXWhisper`` | ``NFKMLXWhisperNet`` | ``NFKMLXWhisperVariant`` `.tiny` / `.small` / `.medium` / `.largeV3` (`NFKMLXWhisperConfiguration.tiny` …); `emitsTimestamps` | `whisper-tiny` | ``NFKMLXWhisperBackend`` (`backend(variant:weightsURL:tokenizer:timestamps:)`) |
+| Parakeet-TDT | ``NFKMLXParakeet`` | ``NFKMLXParakeetNet`` | `NFKMLXParakeetConfiguration.tdt06B` (0.6B v2: 24 rel-pos conformer layers, TDT durations 0…4) | `parakeet-tdt`; `backend(directoryURL:)` | ``NFKMLXParakeetBackend`` (text + per-token `NFKOutputSegments`) |
+| Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on every stage (VoiceEncoder 3×256, S3 tokenizer 6×1280, T3 Llama 520M with llama3 rope, S3Gen flow + HiFT) | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
 | HT Demucs (v4) | ``NFKMLXHTDemucs`` | ``NFKMLXHTDemucsNet`` | `NFKMLXHTDemucsConfiguration.htdemucs` | `htdemucs` | ``NFKMLXHTDemucsBackend`` |
@@ -377,6 +379,10 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 ```swift
 // Whisper
 let backend = try NFKMLXWhisper.backend(variant: .tiny, weightsURL: url, tokenizer: tokenizer, timestamps: false)
+// Parakeet-TDT (an unpacked .nemo directory)
+let backend = try NFKMLXParakeet.backend(directoryURL: dir)
+// Chatterbox (a release directory; nil voice = the built-in conds.pt)
+let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // .small / .medium / .largeV3 · …VariantSmall / …VariantMedium / …VariantLargeV3
 // Demucs v2
 let backend = try NFKMLXDemucs.backend(weightsURL: url)
@@ -403,6 +409,10 @@ let backend = try NFKMLXSNAC.backend(weightsURL: url)
 ```objc
 // Whisper
 [NFKMLXWhisper backendWithVariant:NFKMLXWhisperVariantTiny weightsURL:url tokenizer:tokenizer timestamps:NO error:&error]
+// Parakeet-TDT
+[NFKMLXParakeet backendWithDirectoryURL:dir error:&error]
+// Chatterbox
+[NFKMLXChatterbox chatterboxBackendWithDirectoryURL:dir voiceURL:voiceWAV error:&error]
 // Demucs v2
 [NFKMLXDemucs backendWithWeightsURL:url error:&error]
 // Speech denoiser
