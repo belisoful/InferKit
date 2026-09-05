@@ -83,13 +83,14 @@ map under `NFKOutputImage` — recover the class index as `round(gray · (classC
 
 ### Detection & pose
 
-`NFKMLXYOLO` and `NFKMLXRTDetr` return `[NFKDetection]` under `NFKOutputDetections`; `NFKMLXPose`
-returns `[NFKKeypoint]` under `NFKOutputPose`.
+`NFKMLXYOLO`, `NFKMLXRTDetr`, and `NFKMLXRFDetr` return `[NFKDetection]` under `NFKOutputDetections`;
+`NFKMLXPose` returns `[NFKKeypoint]` under `NFKOutputPose`.
 
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXYOLO`` | `yolo` | object detection (YOLOv8 n / s / m / l / x) |
 | ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR r50vd; no NMS) |
+| ``NFKMLXRFDetr`` | `rf-detr` | object detection, Apache-2.0 (RF-DETR base, Roboflow; no NMS) |
 | ``NFKMLXPose`` | `pose-simplebaseline` | top-down pose |
 
 ### Embeddings & reranking

@@ -4543,6 +4543,154 @@ def run_rtdetr_real(image, checkpoint):
     return out.logits[0].clone().contiguous()                                   # [300, 80]
 
 
+def run_rf_detr(image):
+    """RF-DETR object detection end to end at a tiny random configuration, from transformers' own
+    RfDetrForObjectDetection (transformers 5.16): the WINDOWED DINOv2 backbone (each block partitions
+    the patch grid into num_windows^2 local windows with a replicated CLS; a global-attention block
+    unpartitions to one sequence per image before attending and re-partitions after; the selected
+    stages are layernormed, the CLS dropped, unpartitioned, and reshaped to feature maps), the C2f +
+    RepVGG scale projector (concat the stage maps -> C2FLayer -> channels-first LayerNorm), two-stage
+    query selection (enc_output Linear + enc_output_norm LayerNorm, the enc_out_class/bbox heads over
+    every token, top-k by the class max), the MIXED queries (the learned reference_point_embed refined
+    by the top-k coords via refine_bboxes in DIRECT box space — NOT sigmoid space like RT-DETR — plus
+    the learned query_feat), and the LW-DETR decoder (self-attention with the query position added to
+    q AND k and the value read WITHOUT position; deformable cross-attention over the single feature
+    level; NO iterative box refine — the reference points are constant and one box refinement happens
+    at the end in the ForObjectDetection head). Group-DETR collapses to one group at inference.
+
+    Recorded seam by seam so a divergence localizes: the backbone feature maps (`bb.N`), the projector
+    output (`proj`), the first-stage class head over ALL tokens (`enc_class_full`, pre-mask), the
+    reference's top-k selection (`topk_ind`, float-tie-sensitive so the port's decoder is verified over
+    it), the mixed init reference points (`init_ref`), the gathered first-stage class/coord
+    (`enc_class_topk` / `enc_coord_topk`), the decoder last hidden state (`dec_last`), and the final
+    logits/pred_boxes. Weights as `w::model.*` / `w::class_embed.*` / `w::bbox_embed.*` (the top-level
+    heads are the REAL final heads here, not tied duplicates as in RT-DETR). Runs under the `rfdetr`
+    oracle env (transformers 5.16.1). `image` unused.
+    """
+    from transformers import RfDetrConfig
+    from transformers.models.rf_detr.configuration_rf_detr import RfDetrDinov2Config
+    from transformers.models.rf_detr.modeling_rf_detr import RfDetrForObjectDetection
+
+    # A shrunk RF-DETR that carries every structural form: 4 backbone layers with a global-attention
+    # block (layer 2) among the windowed ones, two selected stages at one resolution (DINOv2 does not
+    # downsample), a C2f projector, group-DETR (2 groups, only group 0 used at inference), and a
+    # two-layer LW-DETR decoder over a single 4x4 feature level (16 tokens > 10 queries).
+    backbone = RfDetrDinov2Config(
+        hidden_size=32, num_hidden_layers=4, num_attention_heads=2, mlp_ratio=4,
+        patch_size=14, image_size=56, num_windows=2, use_swiglu_ffn=False,
+        layerscale_value=1.0, layer_norm_eps=1e-6, use_mask_token=True,
+        out_features=["stage2", "stage4"], apply_layernorm=True, reshape_hidden_states=True)
+    config = RfDetrConfig(
+        backbone_config=backbone, d_model=32, num_labels=4, num_queries=10, group_detr=2,
+        decoder_layers=2, decoder_self_attention_heads=2, decoder_cross_attention_heads=4,
+        decoder_n_points=4, num_feature_levels=1, decoder_ffn_dim=48,
+        decoder_activation_function="relu", hidden_expansion=0.5, c2f_num_blocks=2,
+        activation_function="silu", disable_custom_kernels=True, layer_norm_eps=1e-5)
+
+    model = RfDetrForObjectDetection(config)
+    torch.manual_seed(29)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn_like(parameter) * 0.05)
+    model = model.eval().float()
+
+    generator = torch.Generator().manual_seed(7)
+    pixels = torch.randn(1, 3, 56, 56, generator=generator)
+
+    seams = {}
+    model.model.backbone.backbone.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("bb", [f.detach() for f in o.feature_maps]))
+    model.model.backbone.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("proj", o[0].detach()))
+    cls_calls = []
+    model.model.enc_out_class_embed[0].register_forward_hook(lambda m, i, o: cls_calls.append(o.detach()))
+
+    # The top-k index selection is float-tie-sensitive (torch.topk vs MLX argSort can break a sub-ulp
+    # tie differently), so capture the reference's own indices for the port to verify its decoder over.
+    original_topk = torch.topk
+    topk_captured = []
+    def spy(*a, **k):
+        result = original_topk(*a, **k)
+        topk_captured.append(result.indices.detach())
+        return result
+    torch.topk = spy
+    with torch.no_grad():
+        out = model(pixels, return_dict=True)
+    torch.topk = original_topk
+
+    extra = {
+        "pixels": pixels[0].permute(1, 2, 0).contiguous(),                       # [H, W, 3] NHWC
+        "proj": seams["proj"][0].permute(1, 2, 0).contiguous(),                  # [Hp, Wp, d_model] NHWC
+        "enc_class_full": cls_calls[0][0].contiguous(),                          # [S, num_labels] pre-mask
+        "topk_ind": topk_captured[0][0].to(torch.int32).contiguous(),            # [Q]
+        "init_ref": out.init_reference_points[0].contiguous(),                   # [Q, 4] direct box space
+        "enc_coord_topk": out.enc_outputs_coord_logits[0].contiguous(),          # [Q, 4]
+        "enc_class_topk": out.enc_outputs_class[0].contiguous(),                 # [Q, num_labels]
+        "dec_last": out.last_hidden_state[0].contiguous(),                       # [Q, d_model]
+        "pred_boxes": out.pred_boxes[0].contiguous(),                            # [Q, 4]
+    }
+    for level, feature in enumerate(seams["bb"]):
+        extra[f"bb.{level}"] = feature[0].permute(1, 2, 0).contiguous()          # backbone feature map NHWC
+    for key, value in model.state_dict().items():
+        if key.endswith("num_batches_tracked"):
+            continue
+        extra[f"w::{key}"] = value.float().contiguous() if value.is_floating_point() else value.contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].clone().contiguous()                                    # [Q, num_labels]
+
+
+def run_rf_detr_real(image, checkpoint):
+    """RF-DETR on the RELEASED `Roboflow/rf-detr-base` weights (transformers 5.16), from
+    RfDetrForObjectDetection and its image processor — a real-weights end-to-end validation exercising
+    the DINOv2-small windowed backbone (hidden 384, 12 layers, num_windows 4, global attention at the
+    out-index layers), the bicubic-antialias position-embedding interpolation to the processor's
+    resolution (the tiny config sidesteps it, so this is where that seam is measured), the projector,
+    query selection, and the decoder on the actual checkpoint. `checkpoint` is the local release
+    directory. Records the preprocessed pixel values (so the port runs on the identical input), the
+    projector output, the mixed init reference points, the decoder last hidden state, the reference's
+    top-k selection, and the final logits/pred_boxes. Runs under the `rfdetr` oracle env (transformers
+    5.16.1, needs Pillow).
+    """
+    from transformers import RfDetrForObjectDetection, AutoImageProcessor
+    from PIL import Image
+
+    model = RfDetrForObjectDetection.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = AutoImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8"))
+    pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]    # [1, 3, S, S]
+
+    seams = {}
+    model.model.backbone.backbone.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("bb", [f.detach() for f in o.feature_maps]))
+    model.model.backbone.register_forward_hook(lambda m, i, o: seams.__setitem__("proj", o[0].detach()))
+    original_topk = torch.topk
+    topk_captured = []
+    def spy(*a, **k):
+        result = original_topk(*a, **k)
+        topk_captured.append(result.indices.detach())
+        return result
+    torch.topk = spy
+    with torch.no_grad():
+        out = model(pixel_values, return_dict=True)
+    torch.topk = original_topk
+
+    extra = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),                 # [S, S, 3] NHWC
+        "proj": seams["proj"][0].permute(1, 2, 0).contiguous(),                  # [Hp, Wp, d_model] NHWC
+        "init_ref": out.init_reference_points[0].contiguous(),                   # [Q, 4]
+        "dec_last": out.last_hidden_state[0].contiguous(),                       # [Q, d_model]
+        "topk_ind": topk_captured[0][0].to(torch.int32).contiguous(),            # [Q]
+        "pred_boxes": out.pred_boxes[0].contiguous(),                            # [Q, 4]
+    }
+    for level, feature in enumerate(seams["bb"]):
+        extra[f"bb.{level}"] = feature[0].permute(1, 2, 0).contiguous()          # backbone feature map NHWC
+    # No weight dump: the port loads the RELEASED file directly through NFKMLXRFDetr.loadWeights, which
+    # converts the original Roboflow naming (backbone./transformer./refpoint_embed, the fused self_attn
+    # in_proj) to the module names on device — the same conversion from_pretrained does here.
+    globals()["_extra"] = extra
+    return out.logits[0].clone().contiguous()                                    # [Q, num_labels]
+
+
 def run_parakeet(image, checkpoint):
     """NVIDIA Parakeet-TDT (0.6B v2) speech recognition, from NeMo's own EncDecRNNTBPEModel on the
     RELEASED `.nemo` archive (`--checkpoint`): the FastConformer encoder (dw-striding 8x subsampling,
@@ -4948,7 +5096,7 @@ MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_s
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,
@@ -4957,7 +5105,7 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
                      "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen}

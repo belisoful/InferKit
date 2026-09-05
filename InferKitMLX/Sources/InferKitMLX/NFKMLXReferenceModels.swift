@@ -49,6 +49,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXMODNet.register()
         NFKMLXYOLO.register()
         NFKMLXRTDetr.register()
+        NFKMLXRFDetr.register()
         NFKMLXRetinaFace.register()
         NFKMLXSegFormer.register()
         NFKMLXSwinIR.register()

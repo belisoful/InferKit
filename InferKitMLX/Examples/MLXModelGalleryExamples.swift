@@ -107,6 +107,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let rtDetected = try rtdetr.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
         XCTAssertNotNil(rtDetected.detections, "detections (possibly empty)")
 
+        // RF-DETR: the Roboflow windowed-DINOv2 / Group-DETR detector — same contract, no NMS.
+        let rfdetr = try NFKMLXRFDetr.backend(weightsURL: nil, labels: nil)
+        let rfDetected = try rfdetr.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(rfDetected.detections, "detections (possibly empty)")
+
         // Pose returns NFKKeypoint joints under NFKOutputPose; positions are normalized 0…1.
         let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: nil)
         let estimated = try pose.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(48)]))

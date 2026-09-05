@@ -251,6 +251,11 @@ models.
   hybrid encoder, query selection, and a deformable-attention decoder with box refinement; no non-max
   suppression, since the one-to-one training makes the queries distinct. `rtdetr`; at parity on the
   released weights end to end.
+- **`NFKMLXRFDetr`** — real object detection under Apache-2.0 (RF-DETR base, Roboflow): a windowed
+  DINOv2 backbone, a C2f / RepVGG projector, two-stage Group-DETR query selection, and an LW-DETR
+  deformable decoder; no non-max suppression. `rf-detr`; at parity on the released weights end to end.
+  `loadWeights` converts the original Roboflow naming on device (and splits the fused self-attention
+  projection), so the released file loads directly.
 - **`NFKMLXRetinaFace`** — real face detection with five-point landmarks (mobile0.25, the detector the
   CodeFormer reference pipeline uses); `retinaface-mobile025`. `NFKMLXPhotoFaceBackend` restores every
   face in a photograph through `NFKMLXFaceAlignment` (RetinaFace or a weight-free Vision detector) and

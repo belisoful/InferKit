@@ -67,7 +67,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 - **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN, SwinIR, NAFNet, Zero-DCE, fast style transfer, colorizers (ECCV-16, SIGGRAPH-17), LaMa, CodeFormer, TAESD, SD inpainting
 - **[Image → map](Docs/model-index.md#image-to-map)** — Depth Anything V2, Marigold, SegFormer, DeepLabV3, BiSeNet V1 / V2
 - **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, Robust Video Matting, MODNet, SAM, SAM 2, RetinaFace, face alignment
-- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR, SimpleBaseline pose
+- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR, RF-DETR, SimpleBaseline pose
 - **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP, SigLIP 2, Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Qwen3-VL, Gemma 4 vision / audio
 - **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Mixtral, GGUF, Qwen3.5 / 3.8, Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
 - **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend

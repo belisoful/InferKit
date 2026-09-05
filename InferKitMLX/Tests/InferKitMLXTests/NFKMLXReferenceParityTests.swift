@@ -1035,6 +1035,113 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(boxSimilarity, 0.9999, "the released-weights detection boxes match the reference")
     }
 
+    // MARK: RF-DETR object detection
+
+    // RF-DETR (Roboflow) end to end at a tiny random configuration, against transformers' own
+    // RfDetrForObjectDetection: the WINDOWED DINOv2 backbone, the C2f/RepVGG scale projector, two-stage
+    // query selection, mixed queries, and the LW-DETR deformable decoder. GROUNDWORK: this test drives
+    // the incremental seam validation. The full key layout loads (the top-level class_embed/bbox_embed
+    // are the real final heads, so nothing is dropped); 4-D conv weights transpose to NHWC. The first
+    // seam under assertion is the backbone feature map (`bb.0`); the rest print for localization.
+    func testRFDetrMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RF_DETR"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RF_DETR (run_reference.py rf_detr)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)       // [1, H, W, 3] NHWC
+
+        let net = NFKMLXRFDetrNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::"), !key.hasSuffix("num_batches_tracked") else { return nil }
+            let name = String(key.dropFirst("w::".count))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        net.train(false)
+
+        func similarity(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        let detection = net(pixels)
+        // The whole tiny-config stack, seam by seam: the windowed DINOv2 backbone feature maps, the
+        // projector, the first-stage class head over all tokens, the decoder last hidden state, and the
+        // final logits and boxes are each exact. bb.0 is the first seam — the window-partition order and
+        // the re-partition shape (the reference reads the UNPARTITIONED shape) are what it pins.
+        for (label, mine, key) in [("bb.0", detection.backboneMaps[0], "bb.0"),
+                                   ("bb.1", detection.backboneMaps[1], "bb.1"),
+                                   ("proj", detection.projected, "proj"),
+                                   ("enc_class_full", detection.encClassFull, "enc_class_full"),
+                                   ("dec_last", detection.decoderLast, "dec_last"),
+                                   ("logits", detection.logits, "output"),
+                                   ("pred_boxes", detection.boxes, "pred_boxes")] as [(String, MLXArray, String)] {
+            let reference = try XCTUnwrap(arrays[key])
+            let value = similarity(mine, reference)
+            print("VALIDATION PARITY rf_detr: \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the rf_detr \(label) seam matches the reference")
+        }
+    }
+
+    // RF-DETR on the ACTUAL released Roboflow/rf-detr-base weights, against transformers' own
+    // RfDetrForObjectDetection and its image processor (560x560). The released DINOv2-small windowed
+    // backbone (num_windows 4, global attention at the out-index layers), the bicubic position-embedding
+    // interpolation 518 -> 560 (a no-op antialias because it upsamples), the projector, and the decoder
+    // run on the recorded preprocessed pixels. `proj` is independent of the top-k; the decoder/heads are
+    // verified over the REFERENCE's selection (the float-tie top-k isolated), then end to end.
+    func testRFDetrMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RF_DETR_REAL"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RF_DETR_REAL (run_reference.py rf_detr_real --checkpoint <rf-detr-base>)")
+        }
+        guard let weightsDir = config["IK_VAL_RFDETR"] else {
+            throw XCTSkip("set IK_VAL_RFDETR to the Roboflow/rf-detr-base release directory")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)       // [1, 560, 560, 3]
+
+        // Load the RELEASED file through the real on-device loader, which converts the original Roboflow
+        // naming (backbone.0.encoder.encoder.*, transformer.*, refpoint_embed, the fused self_attn.in_proj)
+        // to the module names and splits the fused qkv — the same conversion from_pretrained does.
+        let net = NFKMLXRFDetrNet(.base)
+        try NFKMLXRFDetr.loadWeights(
+            into: net, from: URL(fileURLWithPath: weightsDir).appendingPathComponent("model.safetensors"))
+        net.train(false)
+
+        func similarity(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        // Over the reference's own top-k selection: the backbone/projector and the decoder/heads are exact.
+        let refTopk = try XCTUnwrap(arrays["topk_ind"])
+        let detection = net.detection(pixels, topkOverride: refTopk)
+        for (label, mine, key) in [("bb.0", detection.backboneMaps[0], "bb.0"),
+                                   ("bb.1", detection.backboneMaps[1], "bb.1"),
+                                   ("proj", detection.projected, "proj"),
+                                   ("init_ref", detection.initReference, "init_ref"),
+                                   ("dec_last", detection.decoderLast, "dec_last"),
+                                   ("logits", detection.logits, "output"),
+                                   ("pred_boxes", detection.boxes, "pred_boxes")] as [(String, MLXArray, String)] {
+            let reference = try XCTUnwrap(arrays[key])
+            let value = similarity(mine, reference)
+            print("VALIDATION PARITY rf_detr_real (reference selection): \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the released-weights \(label) matches the reference")
+        }
+
+        // End to end with the port's OWN top-k: the logits stay near-exact; the boxes carry any query the
+        // float-tie selection swaps, so they are asserted at a tie-reflecting tolerance (the RT-DETR lesson).
+        let endToEnd = net.detection(pixels)
+        let logitSimilarity = similarity(endToEnd.logits, try XCTUnwrap(arrays["output"]))
+        let boxSimilarity = similarity(endToEnd.boxes, try XCTUnwrap(arrays["pred_boxes"]))
+        print("VALIDATION PARITY rf_detr_real (own selection): logits cosine \(logitSimilarity), boxes cosine \(boxSimilarity)")
+        XCTAssertGreaterThan(logitSimilarity, 0.999, "the end-to-end released-weights logits match the reference")
+        XCTAssertGreaterThan(boxSimilarity, 0.97, "the end-to-end released-weights boxes match up to the top-k tie")
+    }
+
     // MARK: Parakeet-TDT speech recognition
 
     // Parakeet-TDT 0.6B v2 on the RELEASED weights, against NeMo's own EncDecRNNTBPEModel on the validation

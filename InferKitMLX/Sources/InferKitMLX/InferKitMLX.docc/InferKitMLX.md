@@ -111,6 +111,7 @@ limits.
 
 - ``NFKMLXYOLO``
 - ``NFKMLXRTDetr``
+- ``NFKMLXRFDetr``
 - ``NFKMLXPose``
 
 ### Embeddings & reranking

@@ -195,6 +195,7 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 | --- | --- | --- | --- | --- | --- |
 | YOLOv8 | ``NFKMLXYOLO`` | `NFKMLXYOLONet` | ``NFKMLXYOLOVariant`` `.nano` / `.small` / `.medium` / `.large` / `.extraLarge` (`NFKMLXYOLOConfiguration.base`, `.small` …) | `yolo` | ``NFKMLXYOLOBackend`` (`labels:`) |
 | RT-DETR | ``NFKMLXRTDetr`` | ``NFKMLXRTDetrNet`` | `NFKMLXRTDetrConfiguration.r50vd` | `rtdetr` | ``NFKMLXRTDetrBackend`` (`labels:`) |
+| RF-DETR | ``NFKMLXRFDetr`` | ``NFKMLXRFDetrNet`` | `NFKMLXRFDetrConfiguration.base` | `rf-detr` | ``NFKMLXRFDetrBackend`` (`labels:`); Roboflow naming converted on device |
 | SimpleBaseline pose | ``NFKMLXPose`` | `NFKMLXPoseNet` over `NFKMLXResNetBackbone` | `NFKMLXPoseConfiguration.simpleBaseline` (ResNet-50, 256×192) | `pose-simplebaseline` | ``NFKMLXPoseBackend`` (`jointNames:`) |
 
 ```swift
@@ -203,6 +204,8 @@ let backend = try NFKMLXYOLO.backend(variant: .nano, weightsURL: url, labels: ni
 // .small / .medium / .large / .extraLarge · …VariantSmall … …VariantExtraLarge
 // RT-DETR
 let backend = try NFKMLXRTDetr.backend(weightsURL: url, labels: nil)
+// RF-DETR
+let backend = try NFKMLXRFDetr.backend(weightsURL: url, labels: nil)
 // SimpleBaseline pose
 let backend = try NFKMLXPose.backend(weightsURL: url, jointNames: nil)
 ```
@@ -212,6 +215,8 @@ let backend = try NFKMLXPose.backend(weightsURL: url, jointNames: nil)
 [NFKMLXYOLO backendWithVariant:NFKMLXYOLOVariantNano weightsURL:url labels:nil error:&error]
 // RT-DETR
 [NFKMLXRTDetr backendWithWeightsURL:url labels:nil error:&error]
+// RF-DETR
+[NFKMLXRFDetr backendWithWeightsURL:url labels:nil error:&error]
 // SimpleBaseline pose
 [NFKMLXPose backendWithWeightsURL:url jointNames:nil error:&error]
 ```

@@ -992,6 +992,20 @@
       "note": "RT-DETR r50vd object detector (Apache-2.0, the license-clean YOLO alternative). 172 MB single-file. Loads directly through NFKMLXRTDetr.loadWeights (model. prefix stripped, tied top-level heads and num_batches_tracked dropped, stage-1 stride-1 shortcut re-indexed). Real-weights parity via run_reference.py rtdetr_real under the llm oracle env; the tiny-config architecture parity is run_reference.py rtdetr (no weights)."
     },
     {
+      "key": "RFDETR",
+      "repo": "Roboflow/rf-detr-base",
+      "directory": "raw/rf-detr-base",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_RFDETR": ""
+      },
+      "note": "RF-DETR base object detector (Roboflow, Apache-2.0): a windowed DINOv2-small backbone + C2f/RepVGG projector + two-stage Group-DETR deformable decoder, run at 560 (num_labels 91, decoder_n_points 2). At REFERENCE PARITY seam by seam on these released weights (testRFDetrMatchesTheReferenceOnReleasedWeights): every seam >=~1e-8 over the reference top-k, e2e within the top-k tie tolerance; the antialiased-bicubic pos-embed interp (a=-0.5, 37->40) was the one seam bug. The released file uses the ORIGINAL Roboflow naming (backbone.0.encoder.encoder.*, transformer.*, refpoint_embed, a fused self_attn.in_proj); NFKMLXRFDetr.loadWeights converts it on device (remapReferenceKey + the fused-qkv split), so it loads directly with no offline step. Registered in registerAll with the @objc download factories; the tests load this released file through loadWeights (IK_VAL_RFDETR). Real-weights parity via run_reference.py rf_detr_real --checkpoint <the directory> under the rfdetr oracle env (transformers 5.16.1); the tiny-config parity is run_reference.py rf_detr (no weights)."
+    },
+    {
       "key": "PARAKEET",
       "repo": "nvidia/parakeet-tdt-0.6b-v2",
       "directory": "raw/parakeet",
@@ -1152,6 +1166,15 @@
         "chatterbox_t3",
         "chatterbox_s3gen",
         "rope_scaling"
+      ]
+    },
+    "rfdetr": {
+      "interpreter": "~/.inferkit-validation/rfdetrvenv/bin/python3",
+      "why": "RF-DETR (RfDetrForObjectDetection) landed in transformers 5.16, newer than the llm oracle's pin (which serves rtdetr/rtdetr_real), so it runs under its own interpreter. The tiny rf_detr mode needs no weights; rf_detr_real loads the released Roboflow/rf-detr-base checkpoint and its image processor (Pillow).",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/rfdetrvenv && ~/.inferkit-validation/rfdetrvenv/bin/pip install 'transformers==5.16.1' torch safetensors Pillow",
+      "modes": [
+        "rf_detr",
+        "rf_detr_real"
       ]
     }
   }

@@ -111,6 +111,8 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | YOLOv8x | `NFKMLXYOLO` (`.extraLarge`) | same | yolov8x | box 0.99999999999994, class 0.99999999999975 |
 | RT-DETR (tiny config) | `NFKMLXRTDetr` | transformers `RTDetrForObjectDetection` | random tiny | backbone and encoder seams ≥ 0.99999999999999; query-selection scores 0.9999999999999925, boxes 0.9999999999999999; decoder over the reference's selection: logits 0.9999999999999958, boxes 0.9999999999999966; over its own selection 0.9999998 / 0.981 (a sub-ulp top-k tie swaps one query) |
 | RT-DETR r50vd | `NFKMLXRTDetr` (`.r50vd`) | same | PekingU/rtdetr_r50vd | logits 0.99999999998875, boxes 0.99999999996419 |
+| RF-DETR (tiny config) | `NFKMLXRFDetr` | transformers `RfDetrForObjectDetection` | random tiny | every seam (windowed DINOv2 backbone, projector, first-stage class head, decoder last hidden) ≥ 0.9999999999999; over its own selection logits 0.9999999999999996, boxes 1.0 |
+| RF-DETR base | `NFKMLXRFDetr` (`.base`) | same | Roboflow/rf-detr-base | over the reference's selection: backbone/projector 0.9999999999940, decoder last / logits / boxes 0.9999999976 / 0.9999999999 / 0.9999999919; over its own selection logits 0.9999350, boxes 0.9978662 (a sub-ulp top-k tie swaps a few of the 300 queries). The released file loads directly (`loadWeights` converts the original Roboflow naming); the antialiased-bicubic position-embedding interpolation (PIL a=-0.5) was the one seam bug |
 | SimpleBaseline pose | `NFKMLXPose` | microsoft `pose_resnet.py` | mmpose ResNet-50 COCO | heatmap cosine 0.99999999999495, peak agreement 1.0 |
 
 ## Embeddings, reranking, and vision-language

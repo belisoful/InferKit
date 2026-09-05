@@ -3010,8 +3010,44 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   at a tolerance that reflects the tie rather than a modeling error. `NFKMLXRTDetrConfiguration`
   (`.tiny`/`.r50vd`) selects the geometry; the backbone/encoder/decoder use `[Module]` arrays so the
   module keys mirror the checkpoint's nested `nn.Sequential` layout, with only the shortcut re-index in
-  the remap. RT-DETR-v2 (a v2 deformable-attention variant) and the license-clean RF-DETR are the
-  remaining detection candidates.
+  the remap. RT-DETR-v2 (a v2 deformable-attention variant) is the remaining RT-DETR candidate.
+- `NFKMLXRFDetr` (`@objc`) — real object detection under Apache-2.0 (RF-DETR base, Roboflow), a two-stage
+  Group-DETR detector ported from transformers' `RfDetrForObjectDetection`, at **reference parity** on
+  both a tiny random config and the released weights (`testRFDetrMatchesTheReference` /
+  `…OnReleasedWeights`). A **windowed DINOv2** backbone (each block partitions the patch grid into
+  `num_windows²` local windows with a replicated CLS; a global-attention block — the out-index layers
+  2/5/8/11 — unpartitions to one sequence per image before attending and re-partitions after; selected
+  stages are layernormed, the CLS dropped, unpartitioned, and reshaped to feature maps), a **C2f /
+  RepVGG scale projector** (concat the stage maps → a C2FLayer → a channels-first LayerNorm, which in NHWC
+  is a plain last-axis LayerNorm), **two-stage query selection** (an `enc_output` Linear + LayerNorm, the
+  `enc_out_class`/`bbox` heads over every token, top-k by the class max), **mixed queries** (a learned
+  `reference_point_embed` refined by the top-k coords in DIRECT normalized box space — cxcy = Δxy·wh + xy,
+  wh = exp(Δwh)·wh, NOT the sigmoid space RT-DETR uses — plus a learned `query_feat`), and an **LW-DETR
+  deformable decoder** (self-attention with the query position added to q AND k and the value WITHOUT
+  position; deformable cross-attention over ONE feature level; NO iterative box refine — the reference
+  points are constant and one box refinement runs at the end in the head). Group-DETR collapses to one
+  group at inference.
+  **Two seam bugs the parity ladder caught.** The global-attention block re-partitions using the
+  UNPARTITIONED shape — the reference reassigns `hidden_states` before reading `.shape`, so it takes
+  `[B/windows², windows²·seq, C]`, not the original windowed shape (a wrong shape crashes the reshape).
+  And the released backbone interpolates its 518-trained pos_embed to 560 (37→40 patches) with `bicubic,
+  align_corners=false, ANTIALIAS=true`, which is NOT a no-op when upsampling: antialias uses the PIL cubic
+  coefficient **a = -0.5** (torch's non-antialias bicubic, and `NFKMLXBicubic`, use -0.75) with per-output
+  weight normalization — `antialiasResampleMatrix` builds the `[out, in]` operator (measured to reproduce
+  torch to 2e-6). The width/height-swapped window reshape, the direct box space, the channels-first
+  LayerNorm eps (conv norms 1e-5, the projector norm 1e-6), and the DETR sinusoidal position embedding
+  were all correct as first written.
+  **The released file loads directly on device.** It is prefix-free with the ORIGINAL Roboflow naming
+  (`backbone.0.encoder.encoder.*`, `transformer.*`, `refpoint_embed`, a FUSED `self_attn.in_proj_*`);
+  `remapReferenceKey` converts it to the module names — the exact map derived by tensor-identity matching
+  the raw checkpoint (487 keys) against the converted state_dict (499), since transformers exposes no
+  mapping dict — and `loadWeights` splits the fused `in_proj` (packed `[q; k; v]`) into q/k/v_proj. The
+  base geometry was read from the release: **`num_labels` 91, `decoder_n_points` 2 (NOT 4), resolution
+  560**. `+register` under `rf-detr`; `detect()` applies the image processor's ImageNet normalization
+  (mean/std, 560 resize; the PIL-bilinear resize is a documented approximation). The tiny parity loads the
+  oracle's converted weights and the released parity loads the raw file through `loadWeights`, so both the
+  network and the on-device naming conversion are measured. Oracle: `run_reference.py rf_detr` /
+  `rf_detr_real` under the `rfdetr` env (transformers 5.16.1).
 - `NFKMLXSegFormer` (`@objc`) — real semantic segmentation: the SegFormer MiT transformer encoder
   (efficient self-attention with spatially reduced keys/values + Mix-FFN depthwise conv, so no
   positional embedding) and an all-MLP decode head in `MLXNN`, run through `NFKMLXModuleBackend`. The
@@ -3413,7 +3449,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

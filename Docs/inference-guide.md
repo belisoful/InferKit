@@ -655,8 +655,8 @@ alternatives.
     vision tower. Vision ViT (reusing the SigLIP encoder) + attention-pooling head + a 256k-vocab text
     tower + sigmoid logit scale/bias, at reference parity against transformers (image and text embedding
     cosine 0.999999999999, logits to 1e-5).
-- **Vision.** Scoped by a Sept 2026 recon; the build order is Depth Anything 3, then RF-DETR, then
-  BiRefNet, with SAM 3 blocked on weight access.
+- **Vision.** Scoped by a Sept 2026 recon; the build order was Depth Anything 3, then RT-DETR, then
+  RF-DETR (all SHIPPED), then BiRefNet, with SAM 3 blocked on weight access.
   - `Depth Anything 3` (monocular) — **SHIPPED** (`NFKMLXDepthAnything3`): DA3-SMALL, at reference
     parity on the released weights, seam by seam, against the authors' `depth_anything_3` package (the
     four hooked backbone features and every head stage ≥ 0.9999999999; the exp-depth map mean-removed
@@ -679,12 +679,17 @@ alternatives.
     backbone, hybrid encoder, query selection, and the deformable-attention decoder (a `grid_sample`
     gather MLX expresses with `takeAlong`), at reference parity against transformers seam by seam and
     on the released `rtdetr_r50vd` weights end to end.
-  - `RF-DETR` (nano) — the license-clean detector to follow Depth 3. Its three-layer
-    deformable-attention decoder is the one `NFKMLXRTDetr` already ships; the new pieces are a
-    DINOv2-with-registers ViT backbone, a C2f projector, and a mixed-query scheme, all built from
-    primitives already here. The oracle is first-party `transformers` `RfDetrForObjectDetection`
-    (4.58+). Apache-2.0 for the nano through large sizes; the XL/2XL are PML-1.0 and are not targets.
-    No unsupported op. Medium.
+  - `RF-DETR` (base) — the license-clean detector following RT-DETR. **SHIPPED** (`NFKMLXRFDetr`): a
+    windowed DINOv2 backbone (per-block window partition, global attention at the out-index layers), a
+    C2f/RepVGG projector, two-stage Group-DETR query selection, mixed queries, and an LW-DETR deformable
+    decoder, at reference parity against transformers' `RfDetrForObjectDetection` (5.16) on a tiny config
+    and on the released `Roboflow/rf-detr-base` weights end to end. The released file loads directly on
+    device — `loadWeights` converts the original Roboflow naming (`backbone.0.encoder.encoder.*`,
+    `transformer.*`, `refpoint_embed`) and splits the fused self-attention projection into q/k/v — and
+    `detect()` applies the image processor's ImageNet normalization. Two seam bugs were caught: the
+    global-attention re-partition shape (it reads the unpartitioned shape), and the position-embedding
+    interpolation's antialiased-bicubic coefficient (torch's antialias uses the PIL a=-0.5, not the
+    -0.75 of the non-antialias path).
   - `BiRefNet` (MIT) — high-resolution matting, and portable now rather than blocked as an earlier
     note claimed. The released weights use an `ASPPDeformable` decoder, and its deformable convolution
     reduces to the same bilinear-gather (`takeAlong`) primitive used for RAFT/RIFE/RVM and RT-DETR's
