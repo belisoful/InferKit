@@ -371,6 +371,13 @@ final class MLXModelGalleryExamples: XCTestCase {
         let deepfilternet = try NFKMLXDeepFilterNetFactory.backend(weightsURL: nil)
         XCTAssertNotNil(try deepfilternet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
+        // VoiceRestore: a flow-matching universal restorer (an E2-TTS transformer with a gateloop mixing
+        // layer + a BigVGAN vocoder). Random weights, 2 CFM steps, guidance off — the fast gallery path.
+        let voiceRestore = NFKMLXVoiceRestoreBackend(net: NFKMLXVoiceRestoreFactory.makeNet(),
+                                                     vocoder: NFKMLXBigVGAN(.init()),
+                                                     identifier: "voicerestore", steps: 2, cfgStrength: 0)
+        XCTAssertNotNil(try voiceRestore.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 

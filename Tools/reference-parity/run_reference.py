@@ -5847,6 +5847,117 @@ def run_deepfilternet(image, checkpoint):
     return (audio_out[0] if audio_out.dim() > 1 else audio_out).contiguous()
 
 
+def run_voicerestore(image, checkpoint):
+    """VoiceRestore (skirdey/voicerestore, MIT) — the E2-TTS flow-matching TRANSFORMER, seam by seam.
+
+    Set IK_VR_SRC to the source dir (voice_restore.py + tensor_typing.py). `--checkpoint` is the released
+    transformer (`pytorch_model.bin`, keyed `transformer.*`/`proj_in`/`cond_proj`/`to_pred`). Needs
+    x-transformers==1.34.0, gateloop-transformer==0.2.5, torchdiffeq, jaxtyping. Records the pre-transformer
+    additive condition, every block's gateloop/attn/ff seam over the packed sequence (32 registers + mel),
+    and the final velocity — and the null (cfg cond=None) velocity for the CFG path. The hooks are removed
+    BEFORE the null pass so the recorded seams stay the CONDITIONED ones.
+    """
+    import os
+    sys.path.insert(0, os.environ["IK_VR_SRC"])
+    from voice_restore import VoiceRestore
+
+    model = VoiceRestore(sigma=0.0, transformer=dict(dim=768, depth=20, heads=16, dim_head=64,
+                         skip_connect_type="concat", max_seq_len=2000), num_channels=100)
+    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    sd = sd.get("model_state_dict", sd) if isinstance(sd, dict) else sd
+    model.load_state_dict(sd, strict=True)
+    model.eval()
+
+    torch.manual_seed(0)
+    x_t = torch.randn(1, 64, 100); cond = torch.randn(1, 64, 100); t = torch.tensor(0.5)
+    seams = {}
+    handles = []
+    for i, layer in enumerate(model.transformer.layers):
+        gl, skip, an, at, az, fn, ff, fz = layer
+        handles.append(at.register_forward_hook(lambda m, inp, o, i=i: seams.__setitem__(f"attn{i}", o.detach().clone())))
+        if i in (0, 19):
+            handles.append(gl.register_forward_hook(lambda m, inp, o, i=i: seams.__setitem__(f"gl{i}", o.detach().clone())))
+            handles.append(ff.register_forward_hook(lambda m, inp, o, i=i: seams.__setitem__(f"ff{i}", o.detach().clone())))
+    with torch.no_grad():
+        x_in = model.proj_in(x_t) + model.cond_proj(cond)
+        velocity = model.transformer_with_pred_head(x_t, times=t, cond=cond)
+    for h in handles:
+        h.remove()
+    with torch.no_grad():
+        null_vel = model.transformer_with_pred_head(x_t, times=t, cond=None)
+
+    globals()["_extra"] = {"x_t": x_t[0], "cond": cond[0], "t": t.reshape(1),
+                           "x_in": x_in[0], "null_velocity": null_vel[0]}
+    for i in range(20):
+        globals()["_extra"][f"attn{i}"] = seams[f"attn{i}"][0]
+    for i in (0, 19):
+        globals()["_extra"][f"gl{i}"] = seams[f"gl{i}"][0]
+        globals()["_extra"][f"ff{i}"] = seams[f"ff{i}"][0]
+    return velocity[0].contiguous()
+
+
+def run_bigvgan(image, checkpoint):
+    """BigVGAN v2 (`nvidia/bigvgan_v2_24khz_100band_256x`, MIT) — mel → waveform. Set IK_VR_SRC to the dir
+    holding the vendored `BigVGAN/` package. `--checkpoint` is `bigvgan_generator.pt`."""
+    import os, json
+    sys.path.insert(0, os.environ["IK_VR_SRC"])
+    from BigVGAN.bigvgan import BigVGAN
+    from BigVGAN.env import AttrDict
+
+    h = AttrDict(json.load(open(os.environ["IK_VR_SRC"] + "/BigVGAN/configs/bigvgan_v2_24khz_100band_256x.json")))
+    model = BigVGAN(h, use_cuda_kernel=False)
+    ck = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    ck = ck.get("generator", ck) if isinstance(ck, dict) else ck
+    model.load_state_dict(ck, strict=True)
+    model.eval(); model.remove_weight_norm()
+    torch.manual_seed(1)
+    mel = torch.randn(1, 100, 64)
+    with torch.no_grad():
+        wav = model(mel)
+    globals()["_extra"] = {"mel": mel[0]}
+    return wav[0, 0].contiguous()
+
+
+def run_voicerestore_e2e(image, checkpoint):
+    """VoiceRestore end to end: the BigVGAN mel front end, the CFM midpoint sampler seeded with a recorded
+    `y0`, and the vocoder. `--checkpoint` is the transformer; set IK_VR_BIGVGAN to `bigvgan_generator.pt`."""
+    import os, json
+    sys.path.insert(0, os.environ["IK_VR_SRC"])
+    from voice_restore import VoiceRestore
+    from BigVGAN.bigvgan import BigVGAN
+    from BigVGAN.env import AttrDict
+    from BigVGAN.meldataset import get_mel_spectrogram
+    from torchdiffeq import odeint
+
+    model = VoiceRestore(sigma=0.0, transformer=dict(dim=768, depth=20, heads=16, dim_head=64,
+                         skip_connect_type="concat", max_seq_len=2000), num_channels=100)
+    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    sd = sd.get("model_state_dict", sd) if isinstance(sd, dict) else sd
+    model.load_state_dict(sd, strict=True); model.eval()
+    h = AttrDict(json.load(open(os.environ["IK_VR_SRC"] + "/BigVGAN/configs/bigvgan_v2_24khz_100band_256x.json")))
+    bv = BigVGAN(h, use_cuda_kernel=False)
+    bck = torch.load(os.environ["IK_VR_BIGVGAN"], map_location="cpu", weights_only=False)
+    bck = bck.get("generator", bck) if isinstance(bck, dict) else bck
+    bv.load_state_dict(bck, strict=True); bv.eval(); bv.remove_weight_norm()
+
+    sr = 24000; n = sr // 2; ta = np.arange(n, dtype=np.float32) / sr
+    g = np.random.default_rng(3); speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 150 * (k + 1) * ta) for k in range(4))
+    wave = (0.7 * speech * (0.5 + 0.5 * np.sin(2 * np.pi * 3 * ta)) + 0.05 * g.standard_normal(n)).astype(np.float32)
+    audio = torch.from_numpy(wave).unsqueeze(0)
+    mel = get_mel_spectrogram(audio, h)
+    processed = mel.transpose(1, 2)
+    steps = 8; torch.manual_seed(5); y0 = torch.randn_like(processed)
+    times = torch.linspace(0, 1, steps)
+    def ode_fn(tt, x): return model.cfg_transformer_with_pred_head(x, times=tt, cond=processed, cfg_strength=0.5)
+    with torch.no_grad():
+        restored = odeint(ode_fn, y0, times, atol=1e-5, rtol=1e-5, method="midpoint")[-1]
+        wav = bv(restored.transpose(1, 2))
+    globals()["_extra"] = {"audio": audio[0].contiguous(), "mel": mel[0].contiguous(),
+                           "processed": processed[0].contiguous(), "y0": y0[0].contiguous(),
+                           "restored": restored[0].contiguous()}   # the waveform is `output`
+    return wav[0, 0].contiguous()
+
+
 MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
@@ -5872,7 +5983,10 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "gtcrn": run_gtcrn,
                      "sgmse": run_sgmse,
                      "mossformer2_se": run_mossformer2_se,
-                     "deepfilternet": run_deepfilternet}
+                     "deepfilternet": run_deepfilternet,
+                     "voicerestore": run_voicerestore,
+                     "bigvgan": run_bigvgan,
+                     "voicerestore_e2e": run_voicerestore_e2e}
 
 
 def main():

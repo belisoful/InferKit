@@ -683,10 +683,12 @@ alternatives.
        Rust `libdf` STFT / ERB / normalization DSP is reproduced in MLX + Swift. At reference parity on
        the released weights: every net seam and the DSP features exact, and the enhanced waveform
        0.9999999. Its dereverberation is weak, so it ships as a denoiser rather than the dereverb answer.
-    7. **VoiceRestore** (`skirdey/voicerestore`, MIT) — a 301M flow-matching transformer over mel with
-       a BigVGAN vocoder, trained to fix noise, reverberation, clipping, and band-limiting together.
-       It reuses the flow-matching sampler, the transformer blocks, the mel front end, and the
-       Snake-based vocoder from DAC and Music 3, so it is mostly assembly. It is the permissively
+    7. **VoiceRestore** (`skirdey/voicerestore`, MIT) — **SHIPPED** (`NFKMLXVoiceRestore` /
+       `NFKMLXBigVGAN`): a 301M flow-matching transformer over mel with a BigVGAN v2 vocoder, trained to
+       fix noise, reverberation, clipping, and band-limiting together. The E2-TTS transformer (a
+       `SimpleGateLoopLayer` gated-linear recurrence + adaLN attention/FFN over 32 register tokens), the
+       BigVGAN vocoder (SnakeBeta + anti-aliased activations), the BigVGAN mel front end, and the midpoint
+       CFM sampler are all at reference parity, seam by seam and end to end. It is the permissively
        licensed one-model general restorer, preferred over VoiceFixer and Resemble Enhance for the
        license and infrastructure fit.
     8. **VoiceFixer / Resemble Enhance** (both MIT) — secondary general restorers, whichever

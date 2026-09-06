@@ -314,6 +314,13 @@ models.
   `SqueezedGRU_S` encoder / ERB decoder / DF decoder. Its STFT / ERB / normalization DSP (Rust `libdf` in
   the reference) is reproduced in MLX + Swift. At reference parity on the released weights: every net seam
   and the DSP features exact (1.0000000) and the enhanced waveform 0.9999999.
+- **`NFKMLXVoiceRestore`** — VoiceRestore (`voicerestore`, skirdey/voicerestore, MIT), a ~301M-parameter
+  flow-matching universal speech restorer (noise + reverb + clipping + band-limiting in one model, text-
+  free). An E2-TTS transformer (a `SimpleGateLoopLayer` gated-linear recurrence + adaLN attention/FFN over
+  32 register tokens) predicts the CFM velocity; a midpoint ODE sampler restores the mel; `NFKMLXBigVGAN`
+  (BigVGAN v2, MIT, SnakeBeta + anti-aliased activations) vocodes it. At reference parity on the released
+  weights, seam by seam and end to end: the transformer velocity 0.99999994, the BigVGAN waveform
+  0.9999997, and the restored mel / waveform ~1.0.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,

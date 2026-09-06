@@ -3347,6 +3347,52 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `deepfilterlib` + torch, Python 3.9; `init_df` downloads the model, and `IK_DEEPFILTERNET_WEIGHTS_OUT`
   dumps the state dict as the weights). No offline converter: the pip package ships the weights and the
   DSP oracle.
+- `NFKMLXVoiceRestore` / `NFKMLXBigVGAN` / `NFKMLXVoiceRestoreBackend` (`@objc(NFKMLXVoiceRestore_Factory)`)
+  — **VoiceRestore** (skirdey/voicerestore, **MIT**), a ~301M-parameter **flow-matching (CFM) universal
+  speech restorer**, text-free, that fixes noise, reverberation, clipping, and band-limiting together in
+  one model. **E2-TTS-derived, NOT F5** (deps pin `x-transformers==1.34.0`,
+  `gateloop-transformer==0.2.5`). The pipeline (24 kHz): degraded audio → a BigVGAN log-mel → a CFM ODE
+  `dx/dt = v_θ(x_t, t | degraded_mel)` from noise to the restored mel → BigVGAN → waveform. **At
+  reference parity on the released weights, seam by seam and end to end.**
+  **The velocity net** `NFKMLXVoiceRestore` is the vendored E2-TTS transformer: the condition is
+  **ADDITIVE and frame-aligned** (`x = proj_in(x_t) + cond_proj(degraded_mel)`, not F5's concat), the
+  sequence carries **32 learned register tokens** prepended (unpacked after the blocks) plus an absolute
+  positional embedding on the mel frames, and each of the 20 blocks is a **residual
+  `SimpleGateLoopLayer`** → adaptive-RMSNorm attention (adaLN-zero gated) → adaptive-RMSNorm GEGLU
+  feed-forward (adaLN-zero gated), with U-net concat skips over the second half. **At reference parity**
+  against the `x-transformers 1.34.0` / `gateloop 0.2.5` reference (`run_reference.py voicerestore`):
+  every seam exact (`x_in` / each block's gateloop, attention, feed-forward / the final velocity all
+  cosine 0.99999994–1.0). The **`SimpleGateLoopLayer`** (the one research-grade piece) is a data-dependent
+  gated linear recurrence: an RMSNorm, a bias-free `Linear(dim, 3·dim)` → q/kv/a, a **sigmoid** forget
+  gate, a per-channel first-order recurrence `h_t = a_t·h_{t-1} + kv_t`, and the output `q_t·h_t` — a
+  sequential scan, which is exact in MLX (no associative scan needed). The **x-transformers `Attention`**
+  carries `gate_value_heads` (a per-head sigmoid value gate) and `softclamp_logits` (`tanh(logit/50)·50`);
+  **`AdaptiveRMSNorm`** is `F.normalize(x)·√dim·(1 + γ)` and **`AdaLNZero`** is a `-2`-biased **sigmoid**
+  gate; rotary is adjacent-pair over `dim_head`.
+  **The vocoder** `NFKMLXBigVGAN` is BigVGAN v2 (`nvidia/bigvgan_v2_24khz_100band_256x`, MIT), a
+  HiFi-GAN-style generator with two BigVGAN additions: **SnakeBeta** periodic activations
+  (`x + (1/(exp(β)+1e-9))·sin²(exp(α)·x)`) and an **anti-aliased `Activation1d`** — a fixed kaiser-sinc
+  up/down FIR (cutoff 0.25, half-width 0.3, kernel 12) around each activation, which this port
+  **recomputes** (the Bessel-I0 Kaiser window in Swift) rather than loading. All convolutions are
+  weight-normed (`g·v/‖v‖`, the shared `NFKMLXMusic3.fusedWeightNorm`); the `ups` are ConvTranspose1d.
+  **At reference parity** against the released generator end to end (mel → waveform cosine 0.9999997,
+  `run_reference.py bigvgan`). **The mel front end** reproduces `meldataset.mel_spectrogram` (n_fft 1024,
+  hop 256, win 1024, fmin 0, fmax 12000, Hann, center=False with a reflect pad of `(n_fft-hop)/2`,
+  magnitude `sqrt(·+1e-9)`, `log(clamp(·, 1e-5))`, the shared Slaney filterbank). **The sampler**
+  reproduces `VoiceRestore.sample` (`torchdiffeq` fixed-step **midpoint**, `times = linspace(0, 1, steps)`,
+  default 32 steps, classifier-free guidance 0.5). **End to end at reference parity** with the sampler
+  seeded from the reference's `y0` (`run_reference.py voicerestore_e2e`): the mel 1.0, the restored mel
+  0.9999999, the restored waveform ~1.0. `+register` under `voicerestore` (a directory holding the
+  transformer checkpoint + `bigvgan_generator.pt`).
+  **The costliest debugging was an ORACLE bug, not a port bug:** the transformer was correct as first
+  written; the seam hooks fired during BOTH the conditioned velocity pass AND the CFG null pass, and the
+  null pass overwrote every recorded seam — so conditioned inputs were being compared against null-pass
+  seams. Removing the hooks before the null pass turned every seam green at once. The oracle runs in a
+  dedicated `vrvenv` (Python 3.9, torch 2.2.2, the pinned x-transformers / gateloop / torchdiffeq, plus
+  jaxtyping). Weights: `jadechoghari/VoiceRestore/pytorch_model.bin` (the transformer, keyed
+  `transformer.*` / `proj_in` / `cond_proj` / `to_pred`, loaded through the native torch reader; the
+  `abs_pos_emb` is 2000 rows) and `nvidia/bigvgan_v2_24khz_100band_256x/bigvgan_generator.pt`. No offline
+  converter.
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3597,7 +3643,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`, `voicerestore`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

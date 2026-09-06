@@ -183,6 +183,7 @@ limits.
 - ``NFKMLXStoRM``
 - ``NFKMLXMossFormer2SENet``
 - ``NFKMLXDeepFilterNet``
+- ``NFKMLXVoiceRestore``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

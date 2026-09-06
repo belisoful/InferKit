@@ -385,6 +385,7 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
 | MossFormer2 SE 48K | ``NFKMLXMossFormer2SENet`` | `NFKMLXMossFormer2SENet` (FLASH + `Gated_FSMN`) over `NFKMLXKaldiFbank` | `NFKMLXMossFormer2Configuration()` (48 kHz, 24 blocks) | `mossformer2-se` | ``NFKMLXMossFormer2Backend`` |
 | DeepFilterNet3 | ``NFKMLXDeepFilterNet`` | `DfNet` (`SqueezedGRU_S` encoder / ERB decoder / DF decoder) over a libdf-reproduced DSP | `NFKMLXDeepFilterNetConfiguration()` (48 kHz, 32 ERB bands, 96 DF bins) | `deepfilternet3` | ``NFKMLXDeepFilterNetBackend`` |
+| VoiceRestore | ``NFKMLXVoiceRestore`` / ``NFKMLXBigVGAN`` | E2-TTS CFM transformer (gateloop + adaLN) + BigVGAN v2 vocoder | `NFKMLXVoiceRestoreConfiguration()` + `NFKMLXBigVGANConfiguration()` | `voicerestore` | ``NFKMLXVoiceRestoreBackend`` |
 | HT Demucs (v4) | ``NFKMLXHTDemucs`` | ``NFKMLXHTDemucsNet`` | `NFKMLXHTDemucsConfiguration.htdemucs` | `htdemucs` | ``NFKMLXHTDemucsBackend`` |
 | Conv-TasNet | ``NFKMLXConvTasNet`` | `NFKMLXConvTasNetNet` | `NFKMLXConvTasNetConfiguration.libri2Mix16k`; `perChannelPReLU` optional | `conv-tasnet` | ``NFKMLXConvTasNetBackend`` |
 | MarbleNet VAD | ``NFKMLXVAD`` | `NFKMLXVADNet` | `NFKMLXVADConfiguration.marbleNet` | `vad-marblenet` | ``NFKMLXVADBackend`` |
@@ -409,6 +410,8 @@ let backend = try NFKMLXDenoiser.backend(weightsURL: url)
 let backend = try NFKMLXMossFormer2Factory.backend(weightsURL: url)
 // DeepFilterNet3 (real-time 48 kHz denoiser)
 let backend = try NFKMLXDeepFilterNetFactory.backend(weightsURL: url)
+// VoiceRestore (flow-matching universal restorer: transformer + BigVGAN)
+let backend = try NFKMLXVoiceRestoreFactory.backend(weightsURL: transformerURL, vocoderURL: bigvganURL, steps: 32, cfgStrength: 0.5)
 // HT Demucs (v4)
 let backend = try NFKMLXHTDemucs.backend(weightsURL: url)
 // Conv-TasNet
