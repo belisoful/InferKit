@@ -180,6 +180,7 @@ limits.
 - ``NFKMLXMPSENet``
 - ``NFKMLXGTCRN``
 - ``NFKMLXSGMSE``
+- ``NFKMLXStoRM``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

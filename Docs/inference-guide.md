@@ -655,9 +655,15 @@ alternatives.
        oracle records the geometry so the parity test builds a matching config from the record. Parity is
        measured at the deterministic net seam (a sampled clip's random stream is not reproducible). It
        unlocks StoRM.
-    4. **StoRM** (`sp-uhh/storm`, MIT) — the SGMSE+ NCSN++ backbone with a predictive stage prepended,
-       so the diffusion regenerates only residual artifacts in an order of magnitude fewer steps. It
-       is a small delta once SGMSE+ lands, and it makes the diffusion path practical on device.
+    4. **StoRM** (`sp-uhh/storm`, MIT) — **SHIPPED** (`NFKMLXStoRM`): a stochastic-regeneration follow-on
+       on SGMSE+. A DISCRIMINATIVE predictor (`NFKMLXNCSNppNet` in discriminative mode — no time embedding,
+       no sigma scaling) produces an initial estimate, then the score net REGENERATES from it: the reverse
+       SDE is re-centered on the denoised estimate and the score conditions on `[noisy, denoised]` (6 input
+       channels), so the diffusion repairs only residual artifacts in far fewer steps. The NCSN++ backbone
+       was generalized (`inputChannels` / `conditional` / `scaleBySigma`) to serve both roles, and SGMSE+
+       stayed at parity. Both networks are at reference parity (denoiser and score seams cosine
+       1.000000000000) at a tiny random configuration — the released combined checkpoints are GDrive-only,
+       and the NCSN++ backbone itself is already at released-weight parity via SGMSE+.
     5. **MossFormer2 SE 48K** (`alibabasglab/MossFormer2_SE_48K`, Apache) — a full-band 48 kHz
        production denoiser, the one high-fidelity denoiser in the family with redistributable weights
        and a clean oracle (Alibaba's ClearerVoice). Its gated-attention plus FSMN-recurrent block

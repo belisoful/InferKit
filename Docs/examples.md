@@ -1747,6 +1747,7 @@ let clean       = try NFKMLXDenoiser.backend(weightsURL: nil)                  /
 let enhanced    = try NFKMLXMPSENetFactory.backend(weightsURL: nil)            // MP-SENet: magnitude+phase transformer → NFKOutputAudio
 let realtime    = try NFKMLXGTCRNFactory.backend(weightsURL: nil)             // GTCRN: ~48K-param real-time enhancer → NFKOutputAudio
 let dereverbed  = try NFKMLXSGMSE.backend(weightsURL: nil)                     // SGMSE+: score-based generative dereverb (reverse-SDE sampler) → NFKOutputAudio
+let regenerated = try NFKMLXStoRM.backend(weightsURL: nil)                     // StoRM: few-step stochastic regeneration (predictor + conditioned score) → NFKOutputAudio
 let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       // result.segments : [NFKAudioSegment]
 let sileroVAD   = try NFKMLXSileroVAD.backend(weightsURL: nil)                  // Silero v6: result.segments : [NFKAudioSegment]
 let dac         = try NFKMLXDAC.backend(weightsURL: nil)                        // neural codec: audio → codes → audio (NFKMLXDAC.encode for the tokens)

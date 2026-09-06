@@ -58,13 +58,24 @@ public struct NFKMLXSGMSEConfiguration: Sendable {
     /// The STFT window is `hann^windowPower`: `0.5` is the sqrt-Hann the classic checkpoints use, `1.0`
     /// the plain Hann the `ncsnpp_48k` checkpoints use.
     public var windowPower: Float
+    /// The number of REAL input channels the network reads (`total_channels`): SGMSE+ packs `x` and the
+    /// observation `y` into 4 (real/imag of each); StoRM's score net conditions on `[x, y, y_denoised]`
+    /// for 6, and its discriminative predictor reads just `y` for 2. `output_layer` maps these to 2.
+    public var inputChannels: Int
+    /// Whether the network carries the Gaussian-Fourier time embedding (the score net) or omits it (the
+    /// StoRM discriminative predictor, `discriminative=True` → `conditional=False`).
+    public var conditional: Bool
+    /// Whether the output is divided by the noise level before the projection (the score net;
+    /// `False` for the discriminative predictor).
+    public var scaleBySigma: Bool
 
     public init(theta: Float = 1.5, sigmaMin: Float = 0.05, sigmaMax: Float = 0.5, reverseSteps: Int = 30,
                 tEps: Float = 0.03, correctorSNR: Float = 0.5, fftSize: Int = 510, hopSize: Int = 128,
                 specFactor: Float = 0.15, specAbsExponent: Float = 0.5, sampleRate: Int = 16000,
                 baseChannels: Int = 128, channelMultipliers: [Int] = [1, 1, 2, 2, 2, 2, 2],
                 residualBlocks: Int = 2, attentionResolutions: [Int] = [16], fourierScale: Float = 16,
-                imageSize: Int = 256, progressiveOutputSkip: Bool = true, windowPower: Float = 0.5) {
+                imageSize: Int = 256, progressiveOutputSkip: Bool = true, windowPower: Float = 0.5,
+                inputChannels: Int = 4, conditional: Bool = true, scaleBySigma: Bool = true) {
         self.theta = theta
         self.sigmaMin = sigmaMin
         self.sigmaMax = sigmaMax
@@ -84,6 +95,9 @@ public struct NFKMLXSGMSEConfiguration: Sendable {
         self.imageSize = imageSize
         self.progressiveOutputSkip = progressiveOutputSkip
         self.windowPower = windowPower
+        self.inputChannels = inputChannels
+        self.conditional = conditional
+        self.scaleBySigma = scaleBySigma
     }
 
     /// `log(sigma_max / sigma_min)`.
@@ -315,7 +329,7 @@ final class NFKSGMSEResnetBlock: Module {
         }
     }
 
-    func callAsFunction(_ x: MLXArray, _ temb: MLXArray) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, _ temb: MLXArray?) -> MLXArray {
         var h = silu(groupNorm0(x))
         var shortcut = x
         if up {
@@ -326,8 +340,12 @@ final class NFKSGMSEResnetBlock: Module {
             shortcut = NFKSGMSEFIR.downsample(shortcut)
         }
         h = conv0(h)
-        let bias = dense0(silu(temb))
-        h = h + bias.reshaped([bias.shape[0], 1, 1, outChannels])
+        // The discriminative predictor runs with no time embedding (`temb == nil`); the Dense weights
+        // still load from the checkpoint, they are simply not applied.
+        if let temb {
+            let bias = dense0(silu(temb))
+            h = h + bias.reshaped([bias.shape[0], 1, 1, outChannels])
+        }
         h = silu(groupNorm1(h))
         h = conv1(h)
         if let conv2 { shortcut = conv2(shortcut) }
@@ -374,7 +392,7 @@ public final class NFKMLXNCSNppNet: Module {
         self.allResolutions = (0 ..< chMult.count).map { config.imageSize / (1 << $0) }
         let allRes = self.allResolutions
 
-        let channels = 4                                  // x.real, x.imag, y.real, y.imag
+        let channels = config.inputChannels              // total_channels (spatial_channels = 1)
         self._outputLayer.wrappedValue = Conv2d(inputChannels: channels, outputChannels: 2,
                                                 kernelSize: 1, padding: 0)
 
@@ -383,11 +401,15 @@ public final class NFKMLXNCSNppNet: Module {
         }
 
         var modules: [Module] = []
-        // Time embedding: Gaussian-Fourier features (width 2·nf) then a two-layer MLP to 4·nf.
+        // Time embedding: the Gaussian-Fourier module is present whatever the mode (the discriminative
+        // predictor still carries it, its output discarded); the two-layer MLP to 4·nf exists only when
+        // the network is time-conditional (the score net).
         modules.append(NFKSGMSEGaussianFourier(size: nf, scale: config.fourierScale))
-        modules.append(Linear(2 * nf, tembDim))
-        modules.append(Linear(tembDim, tembDim))
-        // Input convolution 4 → nf.
+        if config.conditional {
+            modules.append(Linear(2 * nf, tembDim))
+            modules.append(Linear(tembDim, tembDim))
+        }
+        // Input convolution: total_channels → nf.
         modules.append(Conv2d(inputChannels: channels, outputChannels: nf, kernelSize: 3, padding: 1))
 
         var hsC = [nf]
@@ -449,11 +471,16 @@ public final class NFKMLXNCSNppNet: Module {
         let attn = config.attentionResolutions
         let progressive = config.progressiveOutputSkip
 
-        // Time embedding.
+        // Time embedding. The Gaussian-Fourier module is always consumed; the two-layer MLP runs only
+        // when the network is conditional (the discriminative predictor leaves `temb` nil).
         let fourier = modules[mIdx] as! NFKSGMSEGaussianFourier; mIdx += 1
-        var temb = fourier(log(sigmas))
-        temb = (modules[mIdx] as! Linear)(temb); mIdx += 1
-        temb = (modules[mIdx] as! Linear)(silu(temb)); mIdx += 1
+        var temb: MLXArray? = nil
+        if config.conditional {
+            var e = fourier(log(sigmas))
+            e = (modules[mIdx] as! Linear)(e); mIdx += 1
+            e = (modules[mIdx] as! Linear)(silu(e)); mIdx += 1
+            temb = e
+        }
 
         // Down path.
         var inputPyramid = x
@@ -508,14 +535,16 @@ public final class NFKMLXNCSNppNet: Module {
         }
 
         let sigma = sigmas.reshaped([sigmas.shape[0], 1, 1, 1])
+        let scale = config.scaleBySigma
         if progressive {
-            // classic: the pyramid IS h, scaled by sigma, then projected 4 → 2.
-            return outputLayer(pyramid! / sigma)
+            // classic: the pyramid IS h; scaled by sigma (score net), then projected → 2.
+            return outputLayer(scale ? pyramid! / sigma : pyramid!)
         }
-        // progressive='none': a final GroupNorm + conv, projected 4 → 2, THEN scaled by sigma.
+        // progressive='none': a final GroupNorm + conv, projected → 2, THEN scaled by sigma.
         h = silu((modules[mIdx] as! NFKSDGroupNorm)(h)); mIdx += 1
         h = (modules[mIdx] as! Conv2d)(h); mIdx += 1
-        return outputLayer(h) / sigma
+        let out = outputLayer(h)
+        return scale ? out / sigma : out
     }
 }
 
@@ -573,19 +602,35 @@ struct NFKSGMSESampler {
     let net: NFKMLXNCSNppNet
     let scheduler: NFKMLXOUVEScheduler
     let seed: UInt64
+    /// The SDE center the reverse process walks toward (the observation `y` for SGMSE+, the denoised
+    /// estimate `y_denoised` for StoRM): the drift is `θ(observation − x)` and the prior is
+    /// `observation + noise·std(1)`.
+    let observation: NFKSGMSESpectrogram
+    /// The extra channels the score network conditions on, concatenated after `x` (`[y]` for SGMSE+;
+    /// `[y]`, `[y_denoised]`, or `[y, y_denoised]` for StoRM per its `condition`).
+    let conditioning: [NFKSGMSESpectrogram]
+    /// Whether to run the annealed-Langevin corrector before each predictor step (SGMSE+ does; StoRM's
+    /// few-step default is `corrector='none'`).
+    let useCorrector: Bool
+
+    init(net: NFKMLXNCSNppNet, scheduler: NFKMLXOUVEScheduler, seed: UInt64,
+         observation: NFKSGMSESpectrogram, conditioning: [NFKSGMSESpectrogram]? = nil,
+         useCorrector: Bool = true) {
+        self.net = net
+        self.scheduler = scheduler
+        self.seed = seed
+        self.observation = observation
+        self.conditioning = conditioning ?? [observation]
+        self.useCorrector = useCorrector
+    }
 
     var config: NFKMLXSGMSEConfiguration { scheduler.config }
 
-    /// The raw network output at `(x_t, y, t)`, `[batch, freq, time, 2]`.
-    private func network(_ x: NFKSGMSESpectrogram, _ y: NFKSGMSESpectrogram, t: Float) -> MLXArray {
-        let packed = stacked([x.real, x.imaginary, y.real, y.imaginary], axis: -1)   // [B, F, T, 4]
-        let sigmas = MLXArray([t])
-        return net(packed, sigmas: sigmas)
-    }
-
-    /// The score `-net(...)`, split back into a `(real, imaginary)` pair.
-    private func score(_ x: NFKSGMSESpectrogram, _ y: NFKSGMSESpectrogram, t: Float) -> NFKSGMSESpectrogram {
-        let out = network(x, y, t: t)
+    /// The score `-net(cat[x, *conditioning], t)`, split into a `(real, imaginary)` pair.
+    private func score(_ x: NFKSGMSESpectrogram, t: Float) -> NFKSGMSESpectrogram {
+        var parts = [x.real, x.imaginary]
+        for c in conditioning { parts.append(c.real); parts.append(c.imaginary) }
+        let out = net(stacked(parts, axis: -1), sigmas: MLXArray([t]))
         return NFKSGMSESpectrogram(real: -out[0..., 0..., 0..., 0], imaginary: -out[0..., 0..., 0..., 1])
     }
 
@@ -598,12 +643,11 @@ struct NFKSGMSESampler {
         return NFKSGMSESpectrogram(real: re.reshaped([1, f, t]) * scale, imaginary: im.reshaped([1, f, t]) * scale)
     }
 
-    /// One annealed-Langevin corrector step (`AnnealedLangevinDynamics`, `n_steps = 1`). Returns the new
-    /// state and its noise-free mean.
-    private func correct(_ x: NFKSGMSESpectrogram, _ y: NFKSGMSESpectrogram, t: Float, tag: UInt64)
+    /// One annealed-Langevin corrector step (`AnnealedLangevinDynamics`, `n_steps = 1`).
+    private func correct(_ x: NFKSGMSESpectrogram, t: Float, tag: UInt64)
         -> (NFKSGMSESpectrogram, NFKSGMSESpectrogram) {
         let std = scheduler.std(t)
-        let grad = score(x, y, t: t)
+        let grad = score(x, t: t)
         let n = noise(like: x.real, tag: tag)
         let stepSize = powf(config.correctorSNR * std, 2) * 2
         let meanRe = x.real + stepSize * grad.real
@@ -616,33 +660,32 @@ struct NFKSGMSESampler {
 
     /// One reverse-diffusion predictor step (`ReverseDiffusionPredictor`). Returns the new state and its
     /// noise-free mean.
-    private func predict(_ x: NFKSGMSESpectrogram, _ y: NFKSGMSESpectrogram, t: Float, stepSize: Float, tag: UInt64)
+    private func predict(_ x: NFKSGMSESpectrogram, t: Float, stepSize: Float, tag: UInt64)
         -> (NFKSGMSESpectrogram, NFKSGMSESpectrogram) {
-        // discretize: drift = θ(y - x); diffusion = σ(t)·sqrt(2·logσ); f = drift·dt; G = diffusion·sqrt(dt).
+        // discretize: drift = θ(observation - x); diffusion = σ(t)·sqrt(2·logσ); f = drift·dt; G = diffusion·sqrt(dt).
         let theta = config.theta
-        let g = scheduler.diffusion(t)                       // σ(t)·sqrt(2·logσ)
-        let bigG = g * sqrtf(stepSize)
-        let grad = score(x, y, t: t)
+        let bigG = scheduler.diffusion(t) * sqrtf(stepSize)
+        let grad = score(x, t: t)
         let n = noise(like: x.real, tag: tag)
         // rev_f = f - G²·score; x_mean = x - rev_f = x - f + G²·score.
-        func meanComponent(_ xc: MLXArray, _ yc: MLXArray, _ scoreC: MLXArray) -> MLXArray {
-            let f = theta * (yc - xc) * stepSize
-            let revF = f - (bigG * bigG) * scoreC
-            return xc - revF
+        func meanComponent(_ xc: MLXArray, _ oc: MLXArray, _ scoreC: MLXArray) -> MLXArray {
+            let f = theta * (oc - xc) * stepSize
+            return xc - (f - (bigG * bigG) * scoreC)
         }
-        let meanRe = meanComponent(x.real, y.real, grad.real)
-        let meanIm = meanComponent(x.imaginary, y.imaginary, grad.imaginary)
+        let meanRe = meanComponent(x.real, observation.real, grad.real)
+        let meanIm = meanComponent(x.imaginary, observation.imaginary, grad.imaginary)
         let mean = NFKSGMSESpectrogram(real: meanRe, imaginary: meanIm)
         let next = NFKSGMSESpectrogram(real: meanRe + n.real * bigG, imaginary: meanIm + n.imaginary * bigG)
         return (next, mean)
     }
 
-    /// Runs the full PC loop over `y` (the compressed observation spectrogram) and returns the denoised
-    /// estimate `x_0` (the predictor's final mean, `denoise = True`).
-    func sample(_ y: NFKSGMSESpectrogram) -> NFKSGMSESpectrogram {
-        let prior = noise(like: y.real, tag: 0)
+    /// Runs the full reverse loop from the prior and returns the denoised estimate `x_0` (the predictor's
+    /// final mean, `denoise = True`).
+    func sample() -> NFKSGMSESpectrogram {
+        let prior = noise(like: observation.real, tag: 0)
         let std1 = scheduler.std(1)
-        var xt = NFKSGMSESpectrogram(real: y.real + prior.real * std1, imaginary: y.imaginary + prior.imaginary * std1)
+        var xt = NFKSGMSESpectrogram(real: observation.real + prior.real * std1,
+                                     imaginary: observation.imaginary + prior.imaginary * std1)
         var mean = xt
 
         let timesteps = scheduler.timesteps
@@ -651,8 +694,8 @@ struct NFKSGMSESampler {
             let t = timesteps[i]
             let stepSize = (i != n - 1) ? t - timesteps[i + 1] : timesteps[n - 1]
             let tag = UInt64(i) &* 0x100
-            (xt, mean) = correct(xt, y, t: t, tag: tag &+ 1)
-            (xt, mean) = predict(xt, y, t: t, stepSize: stepSize, tag: tag &+ 2)
+            if useCorrector { (xt, mean) = correct(xt, t: t, tag: tag &+ 1) }
+            (xt, mean) = predict(xt, t: t, stepSize: stepSize, tag: tag &+ 2)
             eval(xt.real, xt.imaginary)
         }
         return mean
@@ -757,8 +800,10 @@ public final class NFKMLXSGMSE: NSObject {
         let yRe = padTime > 0 ? MLX.padded(yRe0, widths: [IntOrPair(0), IntOrPair(0), IntOrPair((0, padTime))]) : yRe0
         let yIm = padTime > 0 ? MLX.padded(yIm0, widths: [IntOrPair(0), IntOrPair(0), IntOrPair((0, padTime))]) : yIm0
 
-        let sampler = NFKSGMSESampler(net: net, scheduler: NFKMLXOUVEScheduler(config), seed: seed)
-        let result = sampler.sample(NFKSGMSESpectrogram(real: yRe, imaginary: yIm))
+        let observation = NFKSGMSESpectrogram(real: yRe, imaginary: yIm)
+        let sampler = NFKSGMSESampler(net: net, scheduler: NFKMLXOUVEScheduler(config), seed: seed,
+                                      observation: observation)
+        let result = sampler.sample()
 
         // Crop the padded frames back off, undo the compression, invert.
         let sRe = result.real[0..., 0..., 0 ..< frames]

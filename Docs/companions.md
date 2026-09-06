@@ -297,6 +297,10 @@ models.
   generative dereverberation — a reverse-SDE predictor-corrector sampler over an NCSN++ score network.
   All three at reference parity on the released weights (SGMSE+'s net-seam cosine is 1.0 on both released
   backbone variants). The three share a complex-STFT front end and a PyTorch-`nn.GRU` weight fold.
+- **`NFKMLXStoRM`** — StoRM (`storm`), a few-step follow-on on SGMSE+: a discriminative predictor produces
+  an initial estimate, then a conditioned score network regenerates from it (the reverse SDE re-centered on
+  the estimate), so the diffusion needs far fewer steps. Reuses SGMSE+'s NCSN++ backbone (generalized for
+  the two roles); both networks at reference parity (cosine 1.0).
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,

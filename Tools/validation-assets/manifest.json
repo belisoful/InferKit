@@ -1098,6 +1098,16 @@
    "hf": "sp-uhh/speech-enhancement-sgmse"
   },
   {
+   "key": "STORM",
+   "git": "https://github.com/sp-uhh/storm",
+   "directory": "raw/storm",
+   "files": [],
+   "config": {
+    "IK_PARITY_STORM": "raw/storm/record.safetensors"
+   },
+   "note": "StoRM stochastic-regeneration speech enhancement / dereverberation (sp-uhh/storm, MIT), a FEW-STEP follow-on on SGMSE+ (NFKMLXStoRM). AT REFERENCE PARITY at a tiny random configuration: the discriminative-predictor seam and the conditioned-score seam both cosine 1.000000000000. git-clone the repo to reference-sources/storm (= IK_STORM_SRC). Parity is TINY-RANDOM (no download needed, the LTX/Wan/Z-Image method): `run_reference.py storm record.safetensors` with IK_STORM_SRC=<clone> builds StoRM's two NCSN++ networks from the backbone registry (a discriminative predictor input_channels=2, a condition='both' score net input_channels=6), randomizes them, and SAVES both nets' weights into the record under w::denoiser_net.* / w::score_net.*, plus the geometry (cfg_*) and the denoiser/score seams; the Swift test (NFKMLXStoRMTests, gated on IK_PARITY_STORM alone) loads the w:: weights and compares. This validates the NEW two-net architecture; the NCSN++ backbone is already at released-weight parity via SGMSE+ (net_out 1.0). ORACLE TRAP: the storm clone omits upfirdn2d_native.py and its op imports the FUSED CUDA extension (needs ninja), so the oracle injects an inline native upfirdn2d + a leaky-ReLU shim into sys.modules before importing the backbone; also needs h5py (storm data_module) and the torch>=2.6 weights_only patch. RELEASED combined StochasticRegenerationModel checkpoints are GDrive-only (folder 1ExFm97obaXTYFoBApWjbK_ypxTP-Cgdq: TIMIT+Chime3, WSJ0+Chime3, VB-DEMAND, WSJ0+Reverb dereverb, WSJ0+Wind); the NCSN++M/<task> folders there are SCORE-ONLY (single dnn.) not combined. Converter Tools/storm-to-safetensors dumps denoiser_net.*/score_net.* EMA for a combined ckpt when one is obtained. This port implements backbone='ncsnpp'; 'ncsnpp_v2' is out of scope."
+  },
+  {
    "key": "BIREFNET",
    "directory": "birefnet",
    "repo": "ZhengPeng7/BiRefNet",

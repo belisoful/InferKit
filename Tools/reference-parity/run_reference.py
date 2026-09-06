@@ -5556,7 +5556,135 @@ def run_sgmse(image, checkpoint):
     return ri(net_out)                                                    # the seam the parity test scores
 
 
-MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
+def run_storm(image):
+    """StoRM (sp-uhh/storm) stochastic-regeneration at a TINY RANDOM configuration.
+
+    Set IK_STORM_SRC to the cloned repository (holding `sgmse/`). StoRM's two NCSN++ networks — a
+    DISCRIMINATIVE predictor (`discriminative=True` → no time embedding, no sigma scaling, 2 input
+    channels) and a conditioned SCORE net (`input_channels=6` for `condition='both'`) — are built directly
+    from the backbone registry and randomized, so the architecture is verified with no download (the
+    released combined checkpoints are GDrive-only; the individual NCSN++ backbone is already at
+    released-weight parity via SGMSE+). Records the denoiser seam (y → y_denoised), the score seam
+    ([x_t, y, y_denoised] → the RAW score-net output, the score being `-` this), the geometry, and both
+    networks' weights (under `w::denoiser_net.*` / `w::score_net.*`). `image` unused.
+    """
+    import os
+    import types
+    import importlib.util
+
+    src = os.environ.get("IK_STORM_SRC", ".")
+    sys.path.insert(0, src)
+
+    # StoRM's op package imports the FUSED upfirdn2d (a compiled CUDA/C++ extension needing ninja);
+    # inject a shim exposing the repo's pure-Python native upfirdn2d and a plain leaky-ReLU so the
+    # backbone runs on the CPU with no compilation. Parent packages are imported first so the shim
+    # replaces only the leaf `op` module.
+    import torch.nn as _nn
+    import torch.nn.functional as _Fn
+
+    # The pure-Python upfirdn2d (StyleGAN2's `upfirdn2d_native`, which the storm clone omits): insert
+    # zeros to upsample, pad, convolve the flipped kernel, then stride to downsample. CPU-clean.
+    def _upfirdn2d_native(inp, kernel, up_x, up_y, down_x, down_y, pad_x0, pad_x1, pad_y0, pad_y1):
+        _, channel, in_h, in_w = inp.shape
+        inp = inp.reshape(-1, in_h, in_w, 1)
+        _, in_h, in_w, minor = inp.shape
+        kernel_h, kernel_w = kernel.shape
+        out = inp.view(-1, in_h, 1, in_w, 1, minor)
+        out = _Fn.pad(out, [0, 0, 0, up_x - 1, 0, 0, 0, up_y - 1])
+        out = out.view(-1, in_h * up_y, in_w * up_x, minor)
+        out = _Fn.pad(out, [0, 0, max(pad_x0, 0), max(pad_x1, 0), max(pad_y0, 0), max(pad_y1, 0)])
+        out = out[:, max(-pad_y0, 0): out.shape[1] - max(-pad_y1, 0),
+                  max(-pad_x0, 0): out.shape[2] - max(-pad_x1, 0), :]
+        out = out.permute(0, 3, 1, 2)
+        out = out.reshape([-1, 1, in_h * up_y + pad_y0 + pad_y1, in_w * up_x + pad_x0 + pad_x1])
+        w = torch.flip(kernel, [0, 1]).view(1, 1, kernel_h, kernel_w)
+        out = _Fn.conv2d(out, w)
+        out = out.reshape(-1, minor, in_h * up_y + pad_y0 + pad_y1 - kernel_h + 1,
+                          in_w * up_x + pad_x0 + pad_x1 - kernel_w + 1)
+        out = out.permute(0, 2, 3, 1)
+        out = out[:, ::down_y, ::down_x, :]
+        out_h = (in_h * up_y + pad_y0 + pad_y1 - kernel_h) // down_y + 1
+        out_w = (in_w * up_x + pad_x0 + pad_x1 - kernel_w) // down_x + 1
+        return out.view(-1, channel, out_h, out_w)
+
+    class _NativeUpfirdn:
+        def upfirdn2d(self, inp, kernel, up=1, down=1, pad=(0, 0)):
+            return _upfirdn2d_native(inp, kernel, up, up, down, down, pad[0], pad[1], pad[0], pad[1])
+    _native = _NativeUpfirdn()
+
+    class _FusedLeakyReLU(_nn.Module):
+        def __init__(self, channel, negative_slope=0.2, scale=2 ** 0.5):
+            super().__init__()
+            self.negative_slope, self.scale = negative_slope, scale
+        def forward(self, x):
+            return _nn.functional.leaky_relu(x, self.negative_slope) * self.scale
+
+    def _fused_leaky_relu(x, bias=None, negative_slope=0.2, scale=2 ** 0.5):
+        if bias is not None:
+            x = x + bias.view(1, -1, *([1] * (x.ndim - 2)))
+        return _nn.functional.leaky_relu(x, negative_slope) * scale
+
+    _op = types.ModuleType("sgmse.backbones.ncsnpp_utils.op")
+    _op.upfirdn2d = _native.upfirdn2d
+    _op.FusedLeakyReLU = _FusedLeakyReLU
+    _op.fused_leaky_relu = _fused_leaky_relu
+    sys.modules["sgmse.backbones.ncsnpp_utils.op"] = _op
+
+    from sgmse.backbones.shared import BackboneRegistry
+
+    ncsnpp = BackboneRegistry.get_by_name("ncsnpp")
+    common = dict(nf=8, ch_mult=[1, 2], num_res_blocks=1, attn_resolutions=[8], image_size=16,
+                  fourier_scale=16, centered=True)
+    denoiser = _randomized(ncsnpp(input_channels=2, discriminative=True, **common), seed=31)
+    score = _randomized(ncsnpp(input_channels=6, discriminative=False, **common), seed=32)
+
+    gen = torch.Generator().manual_seed(7)
+    freq, time = 16, 16
+    def crand():
+        return (torch.randn(1, 1, freq, time, generator=gen) + 1j * torch.randn(1, 1, freq, time, generator=gen))
+    Y = crand()
+    x_t = crand()
+    t_val = 0.5
+    vec_t = torch.tensor([t_val])
+
+    with torch.no_grad():
+        Y_denoised = denoiser(Y, time_cond=None)                        # [1,1,F,T] complex (discriminative)
+        score_out = score(torch.cat([x_t, Y, Y_denoised], dim=1), vec_t)  # RAW score-net output (score = -this)
+
+    def ri(spec):
+        s = spec[0, 0]
+        return torch.stack([s.real, s.imag], dim=-1).contiguous()
+
+    extra = {
+        "in_y": ri(Y),
+        "in_xt": ri(x_t),
+        "denoiser_out": ri(Y_denoised),
+        "t": torch.tensor([t_val], dtype=torch.float32),
+        "score_out": ri(score_out),
+        "cfg_nf": torch.tensor([8], dtype=torch.int32),
+        "cfg_num_res_blocks": torch.tensor([1], dtype=torch.int32),
+        "cfg_ch_mult": torch.tensor([1, 2], dtype=torch.int32),
+        "cfg_attn": torch.tensor([8], dtype=torch.int32),
+        "cfg_attn_len": torch.tensor([1], dtype=torch.int32),
+        "cfg_image_size": torch.tensor([16], dtype=torch.int32),
+        "cfg_progressive": torch.tensor([1], dtype=torch.int32),
+        "cfg_condition": torch.tensor([2], dtype=torch.int32),          # both
+        "cfg_fourier_scale": torch.tensor([16.0], dtype=torch.float32),
+        "cfg_window_power": torch.tensor([1.0], dtype=torch.float32),
+        "cfg_n_fft": torch.tensor([510], dtype=torch.int32),
+        "cfg_hop": torch.tensor([128], dtype=torch.int32),
+        "cfg_spec_factor": torch.tensor([0.15], dtype=torch.float32),
+        "cfg_spec_abs_exponent": torch.tensor([0.5], dtype=torch.float32),
+    }
+    for key, value in denoiser.state_dict().items():
+        extra[f"w::denoiser_net.{key}"] = value.float().contiguous()
+    for key, value in score.state_dict().items():
+        extra[f"w::score_net.{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return ri(score_out)
+
+
+MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,

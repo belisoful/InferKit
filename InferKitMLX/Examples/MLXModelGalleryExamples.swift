@@ -355,6 +355,13 @@ final class MLXModelGalleryExamples: XCTestCase {
                                             config: NFKMLXSGMSEConfiguration(reverseSteps: 2, baseChannels: 8))
         XCTAssertNotNil(try sgmse.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: shortClip])).output(forKey: NFKOutputAudio))
 
+        // StoRM: a few-step follow-on on SGMSE+ — a discriminative predictor then a conditioned score net
+        // regenerates from the estimate. Same reduced config for the smoke test.
+        let stormBase = NFKMLXSGMSEConfiguration(reverseSteps: 2, baseChannels: 8)
+        let storm = try NFKMLXStoRM.backend(weightsURL: nil, seed: 0,
+                                            config: NFKMLXStoRMConfiguration(base: stormBase, condition: .both))
+        XCTAssertNotNil(try storm.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: shortClip])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 

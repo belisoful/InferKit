@@ -256,6 +256,7 @@ constant does not fail CI — bumping it is a release step. SwiftPM takes its ve
 ├── Tools/mpsenet-to-safetensors/    # Offline: MP-SENet g_best .pth -> safetensors (names pass through; the GRU fold + Sequential remap live in Swift)
 ├── Tools/gtcrn-to-safetensors/      # Offline: GTCRN .tar/.pth -> safetensors (names pass through; the GRU fold + conv transpose live in Swift)
 ├── Tools/sgmse-to-safetensors/      # Offline: SGMSE+ Lightning .ckpt -> EMA safetensors (torch_ema applies EMA via model.eval(), then dumps dnn.state_dict())
+├── Tools/storm-to-safetensors/      # Offline: StoRM Lightning .ckpt -> EMA safetensors (both nets under denoiser_net./score_net.)
 ├── Tools/build-all.sh               # Builds (and optionally tests) all three packages in one command
 ├── Tools/xcframework/build.sh       # Core -> a 3-slice universal static XCFramework. `swift build`
 │                                    #   emits objects + a module, never a binary; `xcodebuild archive`
@@ -3262,6 +3263,24 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   oracle patch `torch.load`; and the net geometry must match the front-end freq bins or the flat
   `all_modules` walk desyncs (the config carries both). A sampled clip is not bitwise-comparable (random
   stream), so the deterministic net seam is the numeric ground and the e2e asserts signal.
+- `NFKMLXStoRM` (`@objc`) / `NFKMLXStoRMNet` — StoRM (`sp-uhh/storm`, MIT), a FEW-STEP stochastic-
+  regeneration follow-on on SGMSE+. A DISCRIMINATIVE predictor produces an initial denoised estimate,
+  then the score network REGENERATES from it: the reverse SDE is re-centered on the denoised estimate and
+  the score conditions on `[noisy, denoised]`, so the diffusion repairs only residual artifacts in far
+  fewer steps (default corrector `none`). Both networks are `NFKMLXNCSNppNet`, which was GENERALIZED for
+  the two roles — `inputChannels` (2 for the predictor, 6 for the `condition='both'` score), `conditional`
+  (the predictor runs `discriminative=True` → no Gaussian-Fourier time embedding, the Dense weights load
+  but are not applied), and `scaleBySigma` (off for the predictor) — and SGMSE+ stayed at parity as the
+  `inputChannels=4`/conditional/scaled case. The sampler (`NFKSGMSESampler`) gained an `observation` (the
+  SDE center = `y_denoised`) separate from the `conditioning` channels the score net reads, and a
+  `useCorrector` flag. Keys mirror the reference `StochasticRegenerationModel` (`denoiser_net.*` /
+  `score_net.*`), so the converted EMA safetensors loads with no remap. **At reference parity** at a tiny
+  random configuration (denoiser seam and score seam cosine 1.000000000000): the released combined
+  checkpoints are GDrive-only, and the NCSN++ backbone is already at released-weight parity via SGMSE+, so
+  the tiny-random oracle (`run_reference.py storm`, built from the backbone registry, saving both nets'
+  weights into the record under `w::…`) validates the NEW two-net architecture exactly. The StoRM clone
+  omits `upfirdn2d_native.py` and its op imports the fused CUDA extension, so the oracle injects an inline
+  native `upfirdn2d` + a leaky-ReLU shim into `sys.modules`. Registered under `storm`.
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3512,7 +3531,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`
