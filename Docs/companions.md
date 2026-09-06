@@ -291,6 +291,12 @@ models.
 - **`NFKMLXSileroVAD`** — real voice-activity detection (Silero VAD v6): a learned STFT, four
   convolutions, and an LSTM that streams chunk by chunk; `silero-vad`; threshold agreement 32/32 against
   the released JIT.
+- **`NFKMLXMPSENet`** / **`NFKMLXGTCRN`** / **`NFKMLXSGMSE`** — speech restoration (denoising and
+  dereverberation): MP-SENet (`mpsenet`), a time-frequency transformer that cleans magnitude and phase in
+  parallel; GTCRN (`gtcrn`), a ~48K-parameter real-time enhancer; and SGMSE+ (`sgmse`), score-based
+  generative dereverberation — a reverse-SDE predictor-corrector sampler over an NCSN++ score network.
+  All three at reference parity on the released weights (SGMSE+'s net-seam cosine is 1.0 on both released
+  backbone variants). The three share a complex-STFT front end and a PyTorch-`nn.GRU` weight fold.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,

@@ -891,6 +891,80 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.9999, "the decoupled cross-attention matches the reference")
     }
 
+    // IP-Adapter WIRED INTO the real Stable Diffusion 1.5 UNet, on the released adapter, against
+    // diffusers' own UNet with the adapter loaded. This covers what the isolated mechanism cannot: the
+    // ipTokens/scale threaded through every cross-attention, the adapter loader's per-layer key/value
+    // ordering (down blocks, then mid, then up), and the image projection — end to end on real weights.
+    func testIPAdapterUNetMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_IP_ADAPTER_UNET"], let sd15 = config["IK_SD15_DIR"],
+              let adapter = config["IK_VAL_IPADAPTER"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_IP_ADAPTER_UNET, IK_SD15_DIR, IK_VAL_IPADAPTER (run_reference.py ip_adapter_unet)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])              // [height, width, 4]
+        let context = try XCTUnwrap(arrays["context"])            // [77, 768]
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let imageEmbeds = try XCTUnwrap(arrays["image_embeds"])   // [1024]
+        let reference = try XCTUnwrap(arrays["output"])           // [height, width, 4]
+
+        var configuration = NFKMLXSDTextToImageConfiguration.stableDiffusion15.unet
+        configuration.inputChannels = 4
+        let net = NFKMLXSDUNet(configuration: configuration)
+        let unetURL = URL(fileURLWithPath: sd15)
+            .appendingPathComponent("unet/diffusion_pytorch_model.safetensors")
+        try NFKMLXStableDiffusionModels.loadUNetWeights(into: net, from: unetURL)
+        let adapterModel = try NFKMLXIPAdapter.load(from: URL(fileURLWithPath: adapter), into: net)
+        net.train(false)
+
+        let conditioning = adapterModel.conditioning(imageEmbedding: imageEmbeds.reshaped([1, 1024]),
+                                                     scale: 0.7)
+        let out = net(latent.reshaped([1] + latent.shape), timestep: timestep,
+                      context: context.reshaped([1] + context.shape),
+                      imageConditioning: conditioning)
+        eval(out)
+        XCTAssertEqual(Array(out.shape.dropFirst()), reference.shape, "the reference's output shape")
+        let similarity = cosine(out.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ip-adapter-unet: predicted noise cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the IP-Adapter-wired UNet matches the reference")
+    }
+
+    // The IP-Adapter threaded through the text-to-image PIPELINE's denoise: the adapter attached to the
+    // release UNet, the image embedding projected to tokens, and one denoise step run against the same
+    // reference (guidance 1, a single forward). This covers the pipeline wiring — attach, project, and
+    // pass the conditioning into `pipeline.unet` — on top of the UNet-level parity above.
+    func testIPAdapterPipelineDenoiseMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_IP_ADAPTER_UNET"], let sd15 = config["IK_SD15_DIR"],
+              let adapter = config["IK_VAL_IPADAPTER"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_IP_ADAPTER_UNET, IK_SD15_DIR, IK_VAL_IPADAPTER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])              // [height, width, 4]
+        let context = try XCTUnwrap(arrays["context"])            // [77, 768]
+        let imageEmbeds = try XCTUnwrap(arrays["image_embeds"])   // [1024]
+        let reference = try XCTUnwrap(arrays["output"])           // [height, width, 4]
+
+        let model = try NFKMLXSDTextToImageModel(
+            configuration: .stableDiffusion15,
+            files: NFKMLXSDReleaseFiles(directoryURL: URL(fileURLWithPath: sd15)))
+        try model.attachImageAdapter(url: URL(fileURLWithPath: adapter), scale: 0.7)
+
+        let ipTokens = try XCTUnwrap(model.imageAdapter).imageProjection(imageEmbeds.reshaped([1, 1024]))
+        let (height, width) = (latent.shape[0], latent.shape[1])
+        let diffusionContext = NFKDiffusionContext(
+            conditioning: ["context": context.reshaped([1] + context.shape), "ipTokens": ipTokens],
+            width: width, height: height)
+        let timestep = NFKDiffusionTimestep(index: 0, train: 951, alphaBar: 0, alphaBarPrev: 0)
+        let out = model.denoise(latent, timestep, diffusionContext, 1)
+        eval(out)
+        let similarity = cosine(out.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY ip-adapter-pipeline: denoise cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the pipeline denoise with the adapter matches the reference")
+    }
+
     // MARK: DC-AE on the RELEASED weights
 
     // The Deep-Compression Autoencoder on the ACTUAL released SANA VAE weights, against diffusers'
@@ -4393,6 +4467,90 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         for index in 0 ..< deepstack.count {
             compare(deepstack[index], try XCTUnwrap(arrays["deepstack_\(index)"]), "deepstack_\(index)")
         }
+    }
+
+    // The Qwen3-VL text decoder integration on the RELEASED weights, against transformers' own
+    // Qwen3VLForConditionalGeneration logits: the vision tokens spliced into the decoder embeddings, the
+    // interleaved 3-D M-RoPE, and the deepstack injected at the first three layers. The recorded vision
+    // features and deepstack (each separately at parity) are fed, so this isolates the decoder-side
+    // integration — the M-RoPE, the get_rope_index positions, and the deepstack — that the vision-tower
+    // test does not cover. Full-sequence logit cosine, plus the argmax at every position, plus the first
+    // generated token.
+    func testQwen3VLDecoderMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN3_VL"], let directory = config["IK_VAL_QWEN3_VL"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_QWEN3_VL and IK_VAL_QWEN3_VL (run_reference.py qwen3vl)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let inputIds = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map(Int.init)
+        let g = try XCTUnwrap(arrays["image_grid_thw"]).asArray(Int32.self).map(Int.init)
+        let visionOutput = try XCTUnwrap(arrays["vision_output"])
+        let deepstack = [try XCTUnwrap(arrays["deepstack_0"]), try XCTUnwrap(arrays["deepstack_1"]),
+                         try XCTUnwrap(arrays["deepstack_2"])]
+        let reference = try XCTUnwrap(arrays["output"])                       // [sequence, vocabulary]
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self).map(Int.init)
+
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: URL(fileURLWithPath: directory))
+        let logits = NFKMLXQwen3VL.logits(decoder: decoder, inputIds: inputIds,
+                                          visionFeatures: visionOutput, deepstack: deepstack,
+                                          gridT: g[0], gridH: g[1], gridW: g[2])[0]
+        eval(logits)
+
+        let similarity = cosine(logits.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwen3vl-decoder: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the decoder's logits match the reference")
+
+        let sequence = inputIds.count
+        let mineArgmax = logits.argMax(axis: -1).asArray(Int32.self)
+        let theirsArgmax = reference.argMax(axis: -1).asArray(Int32.self)
+        let agree = zip(mineArgmax, theirsArgmax).filter { $0 == $1 }.count
+        print("VALIDATION PARITY qwen3vl-decoder: argmax \(agree)/\(sequence)")
+        XCTAssertEqual(agree, sequence, "every position predicts the reference's token")
+        XCTAssertEqual(Int(mineArgmax[sequence - 1]), continuation[0],
+                       "the last position predicts the first generated token")
+
+        // The cached-decode M-RoPE generation reproduces the reference's greedy continuation token for
+        // token, which the single prefill forward above does not exercise — the KV cache and the
+        // continuing M-RoPE positions are what this measures.
+        let generated = NFKMLXQwen3VL.generate(decoder: decoder, inputIds: inputIds,
+                                               visionFeatures: visionOutput, deepstack: deepstack,
+                                               gridT: g[0], gridH: g[1], gridW: g[2],
+                                               maxTokens: continuation.count, endTokens: [])
+        print("VALIDATION PARITY qwen3vl-decoder: continuation \(generated == continuation ? "exact" : "\(generated) vs \(continuation)")")
+        XCTAssertEqual(generated, continuation, "the cached generation matches the reference continuation")
+    }
+
+    // The Qwen3-VL image processor's layout: a 256×256 image smart-resizes to itself (a multiple of
+    // patch·merge = 32), giving a 1×16×16 grid of 256 patches, each a 1536-wide flattened block. The
+    // pixel values are approximate (CoreGraphics resize), but the grid and layout are the reference's.
+    func testQwen3VLImageProcessorLayout() throws {
+        try requireMLXRuntime()
+        let processor = NFKMLXQwen3VLImageProcessor()
+        XCTAssertEqual(processor.smartResize(height: 256, width: 256).height, 256)
+        XCTAssertEqual(processor.smartResize(height: 100, width: 100).height, 256)   // up to min pixels
+        let cgImage = try image(from: MLXArray.zeros([256, 256, 3]))
+        let (pixelValues, grid) = processor.process(cgImage)
+        eval(pixelValues)
+        XCTAssertEqual([grid.t, grid.h, grid.w], [1, 16, 16])
+        XCTAssertEqual(pixelValues.shape, [256, 1536])
+    }
+
+    // The Qwen3-VL consumer path runs end to end on the released weights: the image processor, the
+    // vision tower, the prompt splice, and the cached-M-RoPE decoder generate a reply. The synthetic
+    // image makes the content meaningless, so this is a smoke test that the whole plumbing runs and
+    // produces tokens — the decoder-level parity above is the numeric check.
+    func testQwen3VLAnswerRunsOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3_VL"] else { throw XCTSkip("set IK_VAL_QWEN3_VL") }
+        let model = try NFKMLXQwen3VL.model(directoryURL: URL(fileURLWithPath: directory))
+        let plate = (config["IK_PARITY_QWEN3_VL"].flatMap { try? loadArrays(url: URL(fileURLWithPath: $0)) })?["input_image"]
+            ?? MLXArray.zeros([256, 256, 3])
+        let answer = model.answer(image: try image(from: plate), question: "What is in this image?",
+                                  maxTokens: 8)
+        print("VALIDATION smoke qwen3vl-answer: \"\(answer)\"")
+        XCTAssertFalse(answer.isEmpty, "the consumer path generates a reply")
     }
 
     // MARK: GGUF reader

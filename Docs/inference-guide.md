@@ -459,7 +459,9 @@ text, message, streaming, and parameter contract is shared across all of them.
 ## Roadmap
 
 What the toolkit does not do yet, in the order the work is likely to pay off. Each entry names the
-constraint that gates it. Kept beside the code so a stale entry is a diff rather than a memory.
+constraint that gates it. Kept beside the code so a stale entry is a diff rather than a memory. The
+wider field of unported open-weight models this roadmap draws from is surveyed in
+[Porting candidates](porting-candidates.md).
 
 ### Foundational gaps
 
@@ -604,19 +606,84 @@ alternatives.
     S3 speech tokenizer, the T3 Llama with llama3 rope scaling, S3Gen's flow-matching decoder, the HiFT
     vocoder) at reference parity on the released weights, stage by stage; a clip synthesized in the
     validation clip's voice transcribes back through the package's own Parakeet exactly.
-  - **Dereverberation and denoising** — the capability the earlier audit flagged, now scoped.
-    `SGMSE+` is the first dereverb target: MIT, with a dedicated dereverberation checkpoint (16 kHz
-    WSJ0-REVERB, 48 kHz EARS-Reverb), matching the mic-room task. Its NCSN++ score network is standard
-    MLXNN but for the FIR anti-aliasing resample (`upfirdn2d`, kernel [1,3,3,1], a pad-plus-strided-conv
-    the DAC/SNAC resamplers resemble); the complex spectrogram packs into four real channels, and the
-    EMA weights are what inference reads. Its sampler is not the shipped DDIM or flow scheduler; it is
-    an OUVE variance-exploding SDE with a predictor-corrector (annealed Langevin) step, a small new
-    value type the way the five shipped schedulers were. The oracle is `sp-uhh/sgmse`, CPU-clean
-    through its pure-Python `upfirdn2d` fallback. `DeepFilterNet` follows as a cheap denoiser beside
-    `NFKMLXDenoiser` (dual MIT/Apache, ~2.3M parameters, a multi-frame `takeAlong` gather plus a
-    complex multiply); its dereverberation is weak, so it ships as a denoiser, not the dereverb answer.
-    `VoiceFixer` and `Resemble Enhance` are heavier general-restoration ports for later, both MIT;
-    Resemble Enhance reuses the flow-matching sampler and has a community MLX port to diff against.
+  - **Speech restoration (dereverberation, denoising, bandwidth extension)** — the remaining audio
+    capability, widened from the earlier four-model note into a full build order by a 2026-09-05
+    survey of the family. The ordering favors redistributable weights, a runnable CPU oracle, and
+    reuse of shipped infrastructure.
+
+    Two shared primitives come first, because most models here read them: a complex-STFT front end
+    that carries phase (SGMSE+, MP-SENet, CMGAN, FRCRN, DeepFilterNet, and MossFormer2 all need it)
+    and an ERB filterbank (GTCRN and DeepFilterNet). Building these two well de-risks two thirds of
+    the table.
+
+    1. **MP-SENet** (`yxlu-0102/MP-SENet`, MIT) — **SHIPPED** (`NFKMLXMPSENet`): a single-forward
+       enhancer denoising magnitude and phase in parallel, about 2M parameters, at reference parity on
+       the released 16 kHz `g_best_dns` (end-to-end waveform cosine > 0.999). The released core is a
+       TS-TRANSFORMER (the repo's `conformer.py` is unused): `norm1` → fused-QKV self-attention →
+       `norm2` → an FFN of a bidirectional GRU, leaky-ReLU, and a linear → `norm3`. Its attention and
+       GRU are `batch_first=False`, so they run over the leading axis of the reshaped tensor (the
+       batch_first trap); the fix is one transpose in the transformer block. The shared complex STFT
+       (`NFKMLXComplexSTFT`) and GRU (`NFKMLXRecurrent`) come from here.
+    2. **GTCRN** (`Xiaobin-Rong/gtcrn`, MIT) — **SHIPPED** (`NFKMLXGTCRN`): a 48.2K-parameter grouped
+       TCRN (ERB, subband features, grouped-conv encoder/decoder, a dual-path grouped RNN, a complex
+       ratio mask) small enough to run per frame in real time, at reference parity on the released
+       `model_trained_on_dns3` (waveform cosine > 0.999, every seam exact). Five load-bearing facts,
+       each caught by seam isolation: the ERB projections are bias-free fixed filterbanks; the
+       transposed-convolution weight transpose is group-aware; the shared GRU must add the new-gate
+       hidden bias on the first step (MLX's GRU omits it); the deconv front-pads time and lets its own
+       padding remove the excess; and MLX's grouped transposed convolution is run one group at a time,
+       because its grouping does not match PyTorch's. Its STFT window is a square-root Hann.
+    3. **SGMSE+** (`sp-uhh/sgmse`, MIT) — **SHIPPED** (`NFKMLXSGMSE`): the generative dereverberation
+       anchor, with a dedicated dereverb checkpoint (16 kHz WSJ0-REVERB, 48 kHz EARS-Reverb) matching
+       the mic-room task. The `NFKMLXNCSNppNet` score network is standard MLXNN but for the FIR
+       anti-aliasing resample (`NFKSGMSEFIR.upfirdn2d`, kernel [1,3,3,1], a depthwise pad-plus-strided
+       conv the DAC/SNAC resamplers resemble); it is ported as the reference's flat `all_modules` list
+       (a `[Module]` array, keys match with no remap) walked by an index counter that mirrors the
+       reference forward. The complex spectrogram packs into four real channels
+       ([xt.re, xt.im, y.re, y.im]); the EMA weights are what inference reads (the converter lets
+       torch_ema apply them, then dumps `dnn.state_dict()`). The sampler is the OUVE variance-exploding
+       SDE (`NFKMLXOUVEScheduler`, a value type with the grounded closed-form mean / std / diffusion)
+       driven by a reverse-diffusion predictor plus an annealed-Langevin corrector. The front end is a
+       sqrt-Hann STFT (n_fft 510 / hop 128 → 256 bins) with the `|X|^0.5 · 0.15` amplitude compression
+       and the time axis padded to a multiple of 64. This port implements the classic backbone='ncsnpp'
+       path (score = `-dnn(cat[x_t, y], t)`); backbone='ncsnpp_v2' is a different forward and is out of
+       scope. **At reference parity on the released EMA weights** — the net-seam cosine is
+       1.000000000000 on BOTH released backbone variants: the classic `ncsnpp` (attention + progressive,
+       `sp-uhh/speech-enhancement-sgmse`) and `ncsnpp_48k` (no attention, `progressive='none'`, plain
+       Hann, output projection before the sigma division; the ReverbFX release). The port is
+       config-driven for both (`progressiveOutputSkip` / `windowPower` / `attentionResolutions`), and the
+       oracle records the geometry so the parity test builds a matching config from the record. Parity is
+       measured at the deterministic net seam (a sampled clip's random stream is not reproducible). It
+       unlocks StoRM.
+    4. **StoRM** (`sp-uhh/storm`, MIT) — the SGMSE+ NCSN++ backbone with a predictive stage prepended,
+       so the diffusion regenerates only residual artifacts in an order of magnitude fewer steps. It
+       is a small delta once SGMSE+ lands, and it makes the diffusion path practical on device.
+    5. **MossFormer2 SE 48K** (`alibabasglab/MossFormer2_SE_48K`, Apache) — a full-band 48 kHz
+       production denoiser, the one high-fidelity denoiser in the family with redistributable weights
+       and a clean oracle (Alibaba's ClearerVoice). Its gated-attention plus FSMN-recurrent block
+       reuses the FSMN memory already built for Chatterbox's S3 tokenizer, and its companion
+       super-resolution checkpoint covers bandwidth extension under the same Apache license.
+    6. **DeepFilterNet3** (`Rikorose/DeepFilterNet`, MIT/Apache) — a real-time denoiser beside
+       `NFKMLXDenoiser` (about 2.3M parameters, an ERB encoder plus a per-bin complex deep-filtering
+       FIR). Its dereverberation is weak, so it ships as a denoiser rather than the dereverb answer.
+    7. **VoiceRestore** (`skirdey/voicerestore`, MIT) — a 301M flow-matching transformer over mel with
+       a BigVGAN vocoder, trained to fix noise, reverberation, clipping, and band-limiting together.
+       It reuses the flow-matching sampler, the transformer blocks, the mel front end, and the
+       Snake-based vocoder from DAC and Music 3, so it is mostly assembly. It is the permissively
+       licensed one-model general restorer, preferred over VoiceFixer and Resemble Enhance for the
+       license and infrastructure fit.
+    8. **VoiceFixer / Resemble Enhance** (both MIT) — secondary general restorers, whichever
+       VoiceRestore does not cover. Resemble Enhance reuses the flow-matching sampler and has a
+       community MLX port to diff against.
+    9. **CMGAN, FRCRN, MetricGAN+** — mid-tier permissive fillers (MIT, Apache, Apache). MetricGAN+ is
+       a near-trivial BLSTM magnitude-mask, useful first as a plumbing smoke test. `NU-Wave 2`
+       (BSD-3) and `Apollo` (CC-BY-SA, music-leaning) are the targeted bandwidth-extension and
+       codec-artifact ports once the denoise and dereverb spine exists.
+
+    Skipped or blocked: `Miipher-2` has no open weights (the USM encoder is proprietary); `AudioSR`
+    carries AudioLDM-derived weights with a CC-BY-NC-SA risk; `SEMamba` needs a Mamba selective-scan
+    subsystem the toolkit has not built; `AnyEnhance` has an unclear research license. Declipping has
+    no strong dedicated redistributable model, so the general restorers cover it.
 - **Image.**
   - `Z-Image Turbo` (6B, Apache) — the leading open text-to-image model, it fits a Mac. **The DiT stage
     is SHIPPED** (`NFKMLXZImageTransformerNet`): the single-stream S3-DiT — image and caption tokens

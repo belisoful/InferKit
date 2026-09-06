@@ -291,33 +291,78 @@ final class NFKSDFeedForward: Module {
 }
 
 /// The transformer's attention. Queries, keys, and values carry no bias; only the output projection
+/// The IP-Adapter conditioning the UNet threads to its cross-attention: the projected image tokens and
+/// the scale the image-conditioned attention is blended in at. A run with no adapter passes `nil`, so
+/// the cross-attention is the text one unchanged.
+public struct NFKSDImageConditioning {
+    public let tokens: MLXArray
+    public let scale: Float
+    public init(tokens: MLXArray, scale: Float) {
+        self.tokens = tokens
+        self.scale = scale
+    }
+}
+
 /// does. Passing `context` makes it cross-attention.
 final class NFKSDAttention: Module {
     @ModuleInfo(key: "to_q") var toQ: Linear
     @ModuleInfo(key: "to_k") var toK: Linear
     @ModuleInfo(key: "to_v") var toV: Linear
     @ModuleInfo(key: "to_out") var toOut: Linear
+    // The IP-Adapter key/value projections exist only on a cross-attention an adapter is attached to;
+    // a base UNet checkpoint carries no such weights, so they stay nil and out of `parameters()`.
+    @ModuleInfo(key: "to_k_ip") var toKIP: Linear?
+    @ModuleInfo(key: "to_v_ip") var toVIP: Linear?
 
     let heads: Int
+    let dimensions: Int
+    let contextDimensions: Int
 
     init(dimensions: Int, contextDimensions: Int, heads: Int) {
         self.heads = heads
+        self.dimensions = dimensions
+        self.contextDimensions = contextDimensions
         self._toQ.wrappedValue = Linear(dimensions, dimensions, bias: false)
         self._toK.wrappedValue = Linear(contextDimensions, dimensions, bias: false)
         self._toV.wrappedValue = Linear(contextDimensions, dimensions, bias: false)
         self._toOut.wrappedValue = Linear(dimensions, dimensions)
     }
 
-    func callAsFunction(_ x: MLXArray, context: MLXArray? = nil) -> MLXArray {
+    /// Adds the IP-Adapter image key/value projections, loaded from the adapter's weights, so this
+    /// cross-attention blends an image-conditioned attention beside the text one. They read the context
+    /// width and write the query width, matching the text `to_k`/`to_v`. The projections are attached
+    /// through `update(modules:)`, the sanctioned way to register a `@ModuleInfo` child after init.
+    func attachIPAdapter(keyWeight: MLXArray, valueWeight: MLXArray) throws {
+        let toK = Linear(contextDimensions, dimensions, bias: false)
+        let toV = Linear(contextDimensions, dimensions, bias: false)
+        toK.update(parameters: ModuleParameters.unflattened([("weight", keyWeight)]))
+        toV.update(parameters: ModuleParameters.unflattened([("weight", valueWeight)]))
+        try update(modules: ModuleChildren.unflattened([("to_k_ip", toK), ("to_v_ip", toV)]),
+                   verify: .none)
+    }
+
+    func callAsFunction(_ x: MLXArray, context: MLXArray? = nil,
+                        ip: NFKSDImageConditioning? = nil) -> MLXArray {
         let source = context ?? x
         let batch = x.shape[0], dimensions = x.shape[2]
         let headDimensions = dimensions / heads
         func split(_ value: MLXArray) -> MLXArray {
-            value.reshaped([batch, value.shape[1], heads, headDimensions]).transposed(0, 2, 1, 3)
+            value.reshaped([value.shape[0], value.shape[1], heads, headDimensions]).transposed(0, 2, 1, 3)
         }
-        let out = MLXFast.scaledDotProductAttention(
-            queries: split(toQ(x)), keys: split(toK(source)), values: split(toV(source)),
+        let queries = split(toQ(x))
+        var out = MLXFast.scaledDotProductAttention(
+            queries: queries, keys: split(toK(source)), values: split(toV(source)),
             scale: 1 / sqrt(Float(headDimensions)), mask: nil)
+        // The image-conditioned attention shares the query and reads its own projections of the image
+        // tokens, added at the adapter's scale — the IP-Adapter's decoupled cross-attention.
+        if let ip, let toKIP, let toVIP {
+            let tokens = ip.tokens.shape[0] == batch ? ip.tokens
+                : broadcast(ip.tokens, to: [batch, ip.tokens.shape[1], ip.tokens.shape[2]])
+            let imageAttention = MLXFast.scaledDotProductAttention(
+                queries: queries, keys: split(toKIP(tokens)), values: split(toVIP(tokens)),
+                scale: 1 / sqrt(Float(headDimensions)), mask: nil)
+            out = out + ip.scale * imageAttention
+        }
         return toOut(out.transposed(0, 2, 1, 3).reshaped([batch, x.shape[1], dimensions]))
     }
 }
@@ -346,9 +391,10 @@ final class NFKSDTransformerBlock: Module {
         self._ff.wrappedValue = NFKSDFeedForward(dimensions: dimensions)
     }
 
-    func callAsFunction(_ x: MLXArray, context: MLXArray?) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, context: MLXArray?,
+                        ip: NFKSDImageConditioning? = nil) -> MLXArray {
         var out = x + attn1(norm1(x), context: onlyCrossAttention ? context : nil)
-        out = out + attn2(norm2(out), context: context)
+        out = out + attn2(norm2(out), context: context, ip: ip)
         return out + ff(norm3(out))
     }
 }
@@ -382,14 +428,15 @@ final class NFKSDTransformer2D: Module {
         }
     }
 
-    func callAsFunction(_ x: MLXArray, context: MLXArray?) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, context: MLXArray?,
+                        ip: NFKSDImageConditioning? = nil) -> MLXArray {
         let shape = x.shape
         var h = norm(x)
         // A convolution projects before the tokens are flattened; a linear layer projects after.
         if let projInConv { h = projInConv(h) }
         h = h.reshaped([shape[0], shape[1] * shape[2], shape[3]])
         if let projInLinear { h = projInLinear(h) }
-        for block in blocks { h = block(h, context: context) }
+        for block in blocks { h = block(h, context: context, ip: ip) }
         if let projOutLinear { h = projOutLinear(h) }
         h = h.reshaped(shape)
         if let projOutConv { h = projOutConv(h) }
@@ -459,12 +506,13 @@ final class NFKSDDownBlock: Module {
     }
 
     /// Returns the block's output together with every tensor the decoder will consume as a skip.
-    func callAsFunction(_ x: MLXArray, time: MLXArray, context: MLXArray?) -> (MLXArray, [MLXArray]) {
+    func callAsFunction(_ x: MLXArray, time: MLXArray, context: MLXArray?,
+                        ip: NFKSDImageConditioning? = nil) -> (MLXArray, [MLXArray]) {
         var h = x
         var skips = [MLXArray]()
         for (index, resnet) in resnets.enumerated() {
             h = resnet(h, time: time)
-            if index < attentions.count { h = attentions[index](h, context: context) }
+            if index < attentions.count { h = attentions[index](h, context: context, ip: ip) }
             skips.append(h)
         }
         for downsampler in downsamplers {
@@ -502,11 +550,11 @@ final class NFKSDUpBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, skips: inout [MLXArray], time: MLXArray,
-                        context: MLXArray?) -> MLXArray {
+                        context: MLXArray?, ip: NFKSDImageConditioning? = nil) -> MLXArray {
         var h = x
         for (index, resnet) in resnets.enumerated() {
             h = resnet(concatenated([h, skips.removeLast()], axis: 3), time: time)
-            if index < attentions.count { h = attentions[index](h, context: context) }
+            if index < attentions.count { h = attentions[index](h, context: context, ip: ip) }
         }
         for upsampler in upsamplers { h = upsampler(h) }
         return h
@@ -529,9 +577,10 @@ final class NFKSDMidBlock: Module {
         ]
     }
 
-    func callAsFunction(_ x: MLXArray, time: MLXArray, context: MLXArray?) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, time: MLXArray, context: MLXArray?,
+                        ip: NFKSDImageConditioning? = nil) -> MLXArray {
         var h = resnets[0](x, time: time)
-        h = attentions[0](h, context: context)
+        h = attentions[0](h, context: context, ip: ip)
         return resnets[1](h, time: time)
     }
 }
@@ -626,9 +675,26 @@ public final class NFKMLXSDUNet: Module {
     ///   - classLabel: the noise level, for a model that carries a class embedding.
     ///   - added: the pooled embedding and size descriptor, for a model that carries a `text_time`
     ///     addition embedding.
+    /// The cross-attention layers, in the diffusers `attn_processors` order — down blocks, then up
+    /// blocks, then the mid block, because `UNet2DConditionModel` registers the mid block last. This is
+    /// the order an IP-Adapter's per-layer key/value weights are stored in.
+    var crossAttentions: [NFKSDAttention] {
+        var attentions = [NFKSDAttention]()
+        func collect(_ transformers: [NFKSDTransformer2D]) {
+            for transformer in transformers {
+                for block in transformer.blocks { attentions.append(block.attn2) }
+            }
+        }
+        for block in downBlocks { collect(block.attentions) }
+        for block in upBlocks { collect(block.attentions) }
+        collect(midBlock.attentions)
+        return attentions
+    }
+
     public func callAsFunction(_ x: MLXArray, timestep: MLXArray, context: MLXArray?,
                                classLabel: MLXArray? = nil,
-                               added: NFKSDAddedConditioning? = nil) -> MLXArray {
+                               added: NFKSDAddedConditioning? = nil,
+                               imageConditioning: NFKSDImageConditioning? = nil) -> MLXArray {
         var time = timeEmbedding(NFKSDTimesteps.embedding(timestep,
                                                           channels: configuration.blockChannels[0]))
         if let classEmbedding, let classLabel {
@@ -647,13 +713,13 @@ public final class NFKMLXSDUNet: Module {
         var h = convIn(x)
         var skips = [h]
         for block in downBlocks {
-            let (out, produced) = block(h, time: time, context: context)
+            let (out, produced) = block(h, time: time, context: context, ip: imageConditioning)
             h = out
             skips += produced
         }
-        h = midBlock(h, time: time, context: context)
+        h = midBlock(h, time: time, context: context, ip: imageConditioning)
         for block in upBlocks {
-            h = block(h, skips: &skips, time: time, context: context)
+            h = block(h, skips: &skips, time: time, context: context, ip: imageConditioning)
         }
         return convOut(silu(normOut(h)))
     }

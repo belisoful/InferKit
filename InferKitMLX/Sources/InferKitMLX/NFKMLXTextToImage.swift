@@ -199,7 +199,38 @@ public final class NFKMLXTextToImage: NSObject {
     static func backend(configuration: NFKMLXSDTextToImageConfiguration) -> any NFKInferenceBackend {
         NFKMLXSDTextToImageModel(configuration: configuration).makeBackend()
     }
+
+    /// Builds a text-to-image backend that steers generation with an IP-Adapter reference image. The
+    /// adapter at `adapterURL` is loaded onto the release's UNet; a run reads the reference as a
+    /// precomputed CLIP image embedding under `NFKMLXInputImageEmbedding` (an array of numbers, computed
+    /// with the adapter's own image encoder — the h94 SD-1.5 adapter uses CLIP-ViT-H/14), blended at
+    /// `scale`. A request with no embedding is an ordinary text-to-image run.
+    public static func imageAdapterBackend(configuration: NFKMLXSDTextToImageConfiguration,
+                                           directoryURL: URL, adapterURL: URL, scale: Float = 1,
+                                           precision: NFKMLXWeightPrecision = .float32) throws
+        -> any NFKInferenceBackend {
+        let model = try NFKMLXSDTextToImageModel(
+            configuration: configuration,
+            files: NFKMLXSDReleaseFiles(directoryURL: directoryURL), precision: precision)
+        try model.attachImageAdapter(url: adapterURL, scale: scale)
+        return model.makeBackend()
+    }
+
+    /// Builds an IP-Adapter text-to-image backend by release name — the Objective-C path, where the
+    /// configuration struct cannot go. The release loads as published.
+    @objc(imageAdapterBackendWithModel:directoryURL:adapterURL:scale:error:)
+    public static func imageAdapterBackend(model: NFKMLXStableDiffusionModel, directoryURL: URL,
+                                           adapterURL: URL, scale: Float) throws
+        -> any NFKInferenceBackend {
+        try imageAdapterBackend(configuration: NFKMLXStableDiffusionRelease(model).configuration,
+                                directoryURL: directoryURL, adapterURL: adapterURL, scale: scale,
+                                precision: .checkpoint)
+    }
 }
+
+/// The request input key carrying an IP-Adapter reference-image embedding: an `NSArray` of numbers, the
+/// CLIP image embedding a caller computed with the adapter's own image encoder.
+public let NFKMLXInputImageEmbedding = "NFKMLXInputImageEmbedding"
 
 /// Owns the networks and the tokenizer, and builds the diffusion backend around them.
 final class NFKMLXSDTextToImageModel {
@@ -214,6 +245,19 @@ final class NFKMLXSDTextToImageModel {
     /// A starting latent in place of the loop's own seeded noise, for reproducing a run made by
     /// another implementation. See ``NFKDiffusionContext/initialLatent``.
     var startLatent: MLXArray?
+
+    /// An IP-Adapter attached to the UNet, so a run can steer generation with a reference image. The
+    /// per-request reference is a precomputed CLIP image embedding (the adapter's own image encoder,
+    /// which the caller supplies); the blend `imageAdapterScale` is the adapter's strength.
+    var imageAdapter: NFKMLXIPAdapter?
+    var imageAdapterScale: Float = 1
+
+    /// Loads an IP-Adapter onto the pipeline's UNet. A run then reads a per-request image embedding and
+    /// blends its image-conditioned attention into every cross-attention.
+    func attachImageAdapter(url: URL, scale: Float) throws {
+        imageAdapter = try NFKMLXIPAdapter.load(from: url, into: pipeline.unet)
+        imageAdapterScale = scale
+    }
 
     /// An untrained model, for structure and round-trip tests. Without a tokenizer, a prompt encodes
     /// as the empty sequence.
@@ -308,6 +352,12 @@ final class NFKMLXSDTextToImageModel {
             conditioning["pooled"] = pooled
             conditioning["unpooled"] = unpooled
         }
+        // The IP-Adapter's reference image tokens, and the zero-image tokens the guidance's
+        // unconditional row reads (the reference's `negative_image_embeds`).
+        if let imageAdapter, let embedding = requestImageEmbedding(request) {
+            conditioning["ipTokens"] = imageAdapter.imageProjection(embedding)
+            conditioning["ipUncond"] = imageAdapter.imageProjection(MLXArray.zeros(like: embedding))
+        }
 
         guard let image else {
             let (height, width) = latentSize(for: request)
@@ -354,15 +404,38 @@ final class NFKMLXSDTextToImageModel {
         let step = MLXArray([Int32(timestep.train)])
 
         guard guidanceScale > 1, let unconditional = context.conditioning["uncontext"] else {
+            let image = context.conditioning["ipTokens"].map {
+                NFKSDImageConditioning(tokens: $0, scale: imageAdapterScale)
+            }
             return pipeline.unet(batched, timestep: step, context: conditional,
-                                 added: added(context, key: "pooled", batch: 1)).reshaped(latent.shape)
+                                 added: added(context, key: "pooled", batch: 1),
+                                 imageConditioning: image).reshaped(latent.shape)
         }
-        // The reference orders the batch unconditional first, and reads the pair back the same way.
+        // The reference orders the batch unconditional first, and reads the pair back the same way. The
+        // adapter's image tokens ride the same order: zero-image for the unconditional row, the
+        // reference for the conditional one.
+        let image = context.conditioning["ipTokens"].flatMap { tokens in
+            context.conditioning["ipUncond"].map {
+                NFKSDImageConditioning(tokens: concatenated([$0, tokens], axis: 0), scale: imageAdapterScale)
+            }
+        }
         let prediction = pipeline.unet(concatenated([batched, batched], axis: 0), timestep: step,
                                        context: concatenated([unconditional, conditional], axis: 0),
-                                       added: added(context, key: "unpooled", other: "pooled", batch: 2))
+                                       added: added(context, key: "unpooled", other: "pooled", batch: 2),
+                                       imageConditioning: image)
         let guided = prediction[0] + guidanceScale * (prediction[1] - prediction[0])
         return guided.reshaped(latent.shape)
+    }
+
+    /// The per-request reference-image embedding for the IP-Adapter, `[1, embedDim]`, read from the
+    /// `NFKMLXInputImageEmbedding` input (an array of numbers — the CLIP image embedding the caller
+    /// computed with the adapter's own image encoder).
+    private func requestImageEmbedding(_ request: NFKInferenceRequest) -> MLXArray? {
+        guard let values = request.input(forKey: NFKMLXInputImageEmbedding) as? [NSNumber],
+              !values.isEmpty else {
+            return nil
+        }
+        return MLXArray(values.map { $0.floatValue }).reshaped([1, values.count])
     }
 
     /// The pooled embedding and size descriptor a two-tower release conditions on, batched to match the

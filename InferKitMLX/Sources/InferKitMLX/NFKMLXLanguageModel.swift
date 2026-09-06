@@ -462,8 +462,15 @@ final class NFKLMAttention: Module {
         super.init()
     }
 
+    /// Rotate-half over the last axis, the rotation `MLXFast.RoPE(traditional: false)` performs and the
+    /// form the precomputed multimodal rotary needs applied by hand.
+    static func rotateHalf(_ x: MLXArray) -> MLXArray {
+        let half = x.shape[x.ndim - 1] / 2
+        return concatenated([-x[.ellipsis, half...], x[.ellipsis, 0 ..< half]], axis: -1)
+    }
+
     func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXKeyValueCache?,
-                        layer: Int) -> MLXArray {
+                        layer: Int, rope multimodalRope: (cos: MLXArray, sin: MLXArray)? = nil) -> MLXArray {
         let (batch, length, _) = (x.shape[0], x.shape[1], x.shape[2])
 
         var queries = queryProjection(x).reshaped([batch, length, heads, headDimensions])
@@ -480,8 +487,18 @@ final class NFKLMAttention: Module {
         values = values.transposed(0, 2, 1, 3)
 
         let offset = cache?.offset ?? 0
-        queries = rope(queries, offset: offset)
-        keys = rope(keys, offset: offset)
+        if let multimodalRope {
+            // A vision-language model supplies per-position 3-D rotary tables (M-RoPE); the rotation is
+            // the ordinary rotate-half, only the cosines and sines differ from the 1-D case. The head
+            // axis broadcasts.
+            let cos = multimodalRope.cos.expandedDimensions(axis: 1)
+            let sin = multimodalRope.sin.expandedDimensions(axis: 1)
+            queries = queries * cos + NFKLMAttention.rotateHalf(queries) * sin
+            keys = keys * cos + NFKLMAttention.rotateHalf(keys) * sin
+        } else {
+            queries = rope(queries, offset: offset)
+            keys = rope(keys, offset: offset)
+        }
 
         if let cache {
             (keys, values) = cache.update(layer: layer, keys: keys, values: values)
@@ -662,10 +679,22 @@ final class NFKLMBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXKeyValueCache?,
-                        layer: Int) -> MLXArray {
-        let attended = x + attention(attentionNorm(x), mask: mask, cache: cache, layer: layer)
+                        layer: Int, rope: (cos: MLXArray, sin: MLXArray)? = nil) -> MLXArray {
+        let attended = x + attention(attentionNorm(x), mask: mask, cache: cache, layer: layer, rope: rope)
         return attended + feedForward(feedForwardNorm(attended))
     }
+}
+
+/// Opt-in multimodal conditioning for the decoder, supplied by a vision-language model. `rope` is the
+/// precomputed 3-D M-RoPE table used in place of the scalar-offset rotary at every layer; the deepstack
+/// adds each `features[i]` to the hidden state at the image-token positions after layer `i`, for the
+/// first `features.count` layers. `featureIndex` maps each sequence position to its row in a feature
+/// map, and `mask` selects the image-token positions.
+struct NFKLMMultimodal {
+    let rope: (cos: MLXArray, sin: MLXArray)
+    let features: [MLXArray]        // per injected layer, [visualCount, hidden]
+    let featureIndex: MLXArray      // [sequence] Int32
+    let mask: MLXArray             // [1, sequence, 1] bool
 }
 
 /// The transformer stack, under the `model.` prefix the released checkpoints use.
@@ -711,7 +740,8 @@ public final class NFKMLXLanguageNet: Module {
     /// Runs the stack over already-embedded inputs and returns the post-norm hidden states
     /// `[batch, length, hidden]` — what conditions synthesis in a hidden-state-driven pipeline.
     func hiddenStates(fromEmbeddings embeddings: MLXArray,
-                      cache: NFKMLXKeyValueCache? = nil) -> MLXArray {
+                      cache: NFKMLXKeyValueCache? = nil,
+                      multimodal: NFKLMMultimodal? = nil) -> MLXArray {
         var hidden = embeddings
         let length = embeddings.shape[1]
         // A single token attends to everything cached, so it needs no mask; a prefill does. The mask
@@ -721,7 +751,15 @@ public final class NFKMLXLanguageNet: Module {
             ? NFKMLXLanguageNet.causalMask(length, offset: cache?.maskCacheLength ?? 0)
             : nil
         for (index, layer) in model.layers.enumerated() {
-            hidden = layer(hidden, mask: mask, cache: cache, layer: index)
+            hidden = layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope)
+            // The deepstack adds a vision feature map to the image-token positions of the first several
+            // layers, the reference's `_deepstack_process`.
+            if let multimodal, index < multimodal.features.count {
+                let gathered = multimodal.features[index]
+                    .take(multimodal.featureIndex, axis: 0)
+                    .reshaped([1, length, -1])
+                hidden = hidden + MLX.where(multimodal.mask, gathered, MLXArray(Float(0)))
+            }
         }
         cache?.advance(by: length)
         return model.norm(hidden)

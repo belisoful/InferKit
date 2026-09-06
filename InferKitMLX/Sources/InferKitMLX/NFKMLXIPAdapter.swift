@@ -38,6 +38,73 @@ public final class NFKMLXIPAdapterImageProjection: Module {
     }
 }
 
+/// A loaded IP-Adapter: the image projection plus the per-cross-attention key/value weights attached to
+/// a Stable Diffusion UNet. `conditioning(imageEmbedding:scale:)` turns a CLIP image embedding into the
+/// ``NFKSDImageConditioning`` a UNet run reads.
+public final class NFKMLXIPAdapter {
+    /// The projection from a CLIP image embedding to the short image-token sequence the cross-attention
+    /// reads.
+    public let imageProjection: NFKMLXIPAdapterImageProjection
+
+    public init(imageProjection: NFKMLXIPAdapterImageProjection) {
+        self.imageProjection = imageProjection
+    }
+
+    /// Loads an adapter from the released safetensors and attaches its key/value projections to the
+    /// UNet's cross-attention layers. The file holds `image_proj.{proj,norm}.*` for the projection and
+    /// `ip_adapter.<N>.to_{k,v}_ip.weight` for the per-layer weights, where the indices `N`, sorted, are
+    /// the cross-attention order the UNet enumerates (down blocks, then mid, then up). The UNet must
+    /// already carry its base weights; this only adds the adapter's projections.
+    public static func load(from url: URL, into unet: NFKMLXSDUNet, imageEmbedDim: Int = 1024,
+                            numTokens: Int = 4) throws -> NFKMLXIPAdapter {
+        let attentions = unet.crossAttentions
+        let crossAttentionDim = attentions.first?.contextDimensions ?? 768
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let arrays = checkpoint.arrays
+
+        // The image projection: the released `proj` linear is this module's `image_embeds`.
+        let projection = NFKMLXIPAdapterImageProjection(imageEmbedDim: imageEmbedDim,
+                                                        crossAttentionDim: crossAttentionDim,
+                                                        numTokens: numTokens)
+        let projectionWeights: [(String, MLXArray)] = arrays.compactMap { key, value in
+            guard key.hasPrefix("image_proj.") else { return nil }
+            let name = String(key.dropFirst("image_proj.".count))
+                .replacingOccurrences(of: "proj.", with: "image_embeds.")
+            return (name, value)
+        }
+        try NFKMLXWeights.apply(projectionWeights, to: projection)
+
+        // The per-layer key/value: one pair per cross-attention, in the file's numeric-index order,
+        // which is the down-then-mid-then-up module order the UNet enumerates.
+        let indices = Set(arrays.keys.compactMap { key -> Int? in
+            let suffix = ".to_k_ip.weight"
+            guard key.hasPrefix("ip_adapter."), key.hasSuffix(suffix) else { return nil }
+            return Int(key.dropFirst("ip_adapter.".count).dropLast(suffix.count))
+        }).sorted()
+        guard indices.count == attentions.count else {
+            throw NFKMLXError.weightsMismatch(
+                "the adapter carries \(indices.count) cross-attention layers but the UNet has "
+                + "\(attentions.count); the adapter does not match this UNet")
+        }
+        for (attention, index) in zip(attentions, indices) {
+            let keyWeight = arrays["ip_adapter.\(index).to_k_ip.weight"]
+            let valueWeight = arrays["ip_adapter.\(index).to_v_ip.weight"]
+            guard let keyWeight, let valueWeight else {
+                throw NFKMLXError.weightsMismatch("the adapter is missing layer \(index)'s key/value")
+            }
+            try attention.attachIPAdapter(keyWeight: keyWeight, valueWeight: valueWeight)
+        }
+        return NFKMLXIPAdapter(imageProjection: projection)
+    }
+
+    /// Turns a CLIP image embedding `[batch, imageEmbedDim]` into the conditioning a UNet run reads, at
+    /// the given blend `scale` (0 leaves the text generation unchanged; the adapter's own default is
+    /// around 0.5–1.0).
+    public func conditioning(imageEmbedding: MLXArray, scale: Float) -> NFKSDImageConditioning {
+        NFKSDImageConditioning(tokens: imageProjection(imageEmbedding), scale: scale)
+    }
+}
+
 /// A decoupled cross-attention: the text cross-attention plus a scaled image-conditioned attention that
 /// shares the query. This is the IP-Adapter mechanism the UNet's cross-attention layers gain.
 public final class NFKMLXIPAdapterAttention: Module {

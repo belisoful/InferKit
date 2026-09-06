@@ -177,6 +177,9 @@ limits.
 - ``NFKMLXHTDemucs``
 - ``NFKMLXConvTasNet``
 - ``NFKMLXDenoiser``
+- ``NFKMLXMPSENet``
+- ``NFKMLXGTCRN``
+- ``NFKMLXSGMSE``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

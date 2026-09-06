@@ -9,9 +9,9 @@
 //  embeddings. The projections are `Gemma4ClippableLinear`, a linear under a `.linear` key whose
 //  clamps are identity by default.
 //
-//  Scope: the patch embedder and the transformer encoder, at reference parity. The pooler that reduces
-//  the patch grid to soft tokens, the optional standardization, and the image processor that extracts
-//  patches and their positions are the remaining integration.
+//  Scope: the patch embedder, the transformer encoder, the position-based pooler, and the optional
+//  learned standardization of the pooled soft tokens, all at reference parity. The image processor
+//  that extracts patches and their positions is ``NFKMLXGemma4ImageProcessor``.
 //
 
 import Foundation
@@ -34,11 +34,16 @@ public struct NFKMLXGemma4VisionConfiguration: Sendable {
     public var ropeTheta: Float
     /// Whether the projections clamp their inputs and outputs to the release's trained bounds.
     public var useClippedLinears: Bool
+    /// Whether the tower carries a learned per-channel standardization of the pooled soft tokens
+    /// (`standardize`). Every released Gemma 4 leaves it off, so the buffers are absent by default and
+    /// the pooler output is used as-is.
+    public var standardize: Bool
 
     public init(hiddenSize: Int = 768, layerCount: Int = 16, headCount: Int = 12,
                 keyValueHeadCount: Int = 12, headDimensions: Int = 64, intermediateSize: Int = 3072,
                 patchSize: Int = 16, positionEmbeddingSize: Int = 10240, poolingKernelSize: Int = 3,
-                rmsEpsilon: Float = 1e-6, ropeTheta: Float = 100, useClippedLinears: Bool = false) {
+                rmsEpsilon: Float = 1e-6, ropeTheta: Float = 100, useClippedLinears: Bool = false,
+                standardize: Bool = false) {
         self.hiddenSize = hiddenSize
         self.layerCount = layerCount
         self.headCount = headCount
@@ -51,12 +56,15 @@ public struct NFKMLXGemma4VisionConfiguration: Sendable {
         self.rmsEpsilon = rmsEpsilon
         self.ropeTheta = ropeTheta
         self.useClippedLinears = useClippedLinears
+        self.standardize = standardize
     }
 
-    /// A tiny geometry, matching the `gemma4_vision` reference record.
+    /// A tiny geometry, matching the `gemma4_vision` reference record. It enables `standardize` so the
+    /// pooled-soft-token path exercises the standardization buffers, which no released weight sets.
     public static let tiny = NFKMLXGemma4VisionConfiguration(
         hiddenSize: 32, layerCount: 2, headCount: 4, keyValueHeadCount: 4, headDimensions: 8,
-        intermediateSize: 48, patchSize: 4, positionEmbeddingSize: 16, poolingKernelSize: 2)
+        intermediateSize: 48, patchSize: 4, positionEmbeddingSize: 16, poolingKernelSize: 2,
+        standardize: true)
 }
 
 /// A `Gemma4ClippableLinear`: a bias-free linear under a `.linear` key, optionally with input and
@@ -234,6 +242,10 @@ final class NFKGemma4VisionPatchEmbedder: Module {
 public final class NFKMLXGemma4VisionNet: Module {
     @ModuleInfo(key: "patch_embedder") var patchEmbedder: NFKGemma4VisionPatchEmbedder
     @ModuleInfo(key: "encoder_layers") var layers: [NFKGemma4VisionBlock]
+    // The standardization buffers exist only when `standardize` is set; the default is identity so a
+    // model that loads no weights still pools correctly.
+    @ParameterInfo(key: "std_bias") var standardizeBias: MLXArray?
+    @ParameterInfo(key: "std_scale") var standardizeScale: MLXArray?
 
     let configuration: NFKMLXGemma4VisionConfiguration
 
@@ -241,6 +253,10 @@ public final class NFKMLXGemma4VisionNet: Module {
         configuration = c
         _patchEmbedder.wrappedValue = NFKGemma4VisionPatchEmbedder(c)
         _layers.wrappedValue = (0 ..< c.layerCount).map { _ in NFKGemma4VisionBlock(c) }
+        if c.standardize {
+            _standardizeBias.wrappedValue = MLXArray.zeros([c.hiddenSize])
+            _standardizeScale.wrappedValue = MLXArray.ones([c.hiddenSize])
+        }
         super.init()
     }
 
@@ -272,12 +288,17 @@ public final class NFKMLXGemma4VisionNet: Module {
     }
 
     /// The full tower: the encoder, then the position-based average pooler and the `√hidden` scaling,
-    /// producing the soft tokens a language model reads. Standardization (a released model can enable
-    /// it) is not modeled; the released defaults leave it off.
+    /// producing the soft tokens a language model reads. When the release enables `standardize`, a
+    /// learned per-channel affine `(pooled - std_bias) · std_scale` follows the pooler, matching the
+    /// reference's `Gemma4VisionModel`; every released weight leaves it off.
     public func softTokens(_ pixelValues: MLXArray, positionIds: MLXArray) -> MLXArray {
         let encoded = self(pixelValues, positionIds: positionIds)
         let outputLength = pixelValues.shape[1] / (configuration.poolingKernelSize * configuration.poolingKernelSize)
-        return pool(encoded, positionIds: positionIds, outputLength: outputLength)
+        let pooled = pool(encoded, positionIds: positionIds, outputLength: outputLength)
+        if let standardizeBias, let standardizeScale {
+            return (pooled - standardizeBias) * standardizeScale
+        }
+        return pooled
     }
 
     /// Averages the patches falling into each `k × k` grid cell — where `k` is the ratio of the input

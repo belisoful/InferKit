@@ -168,6 +168,9 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXHTDemucs`` | `htdemucs` | 4-stem music separation (Hybrid Transformer Demucs v4) |
 | ``NFKMLXConvTasNet`` | `conv-tasnet` | speech separation |
 | ``NFKMLXDenoiser`` | `denoiser` | speech noise suppression |
+| ``NFKMLXMPSENet`` | `mpsenet` | speech enhancement (MP-SENet, magnitude + phase) |
+| ``NFKMLXGTCRN`` | `gtcrn` | real-time speech enhancement (GTCRN, ~48K params) |
+| ``NFKMLXSGMSE`` | `sgmse` | score-based generative dereverberation / enhancement (SGMSE+, NCSN++) |
 | ``NFKMLXDAC`` | `dac` | neural audio codec (Descript, 44.1 / 24 / 16 kHz) |
 | ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech) |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / small / medium / large-v3, timestamps) |

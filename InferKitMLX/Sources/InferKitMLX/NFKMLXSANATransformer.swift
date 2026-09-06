@@ -284,7 +284,7 @@ public final class NFKMLXSANATransformerNet: Module {
         var hidden = patchEmbed(nhwc).reshaped([ph * pw, inner])           // [N, inner]
 
         let (modulation, embedded) = timeEmbed(t * config.timestepScale)   // [1, 6·inner], [1, inner]
-        var context = captionNorm(captionProjection(capFeats))            // [Lc, inner]
+        let context = captionNorm(captionProjection(capFeats))            // [Lc, inner]
 
         for block in blocks {
             hidden = block(hidden, context: context, temb: modulation[0], height: ph, width: pw)

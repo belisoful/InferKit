@@ -87,6 +87,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 | **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
 | **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
 | **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
+| **[Porting candidates](Docs/porting-candidates.md)** | A survey of open-weight models from large vendors not yet supported, scored as future port candidates. Preliminary research. |
 | **[Changelog](CHANGELOG.md)** | What each release contains. |
 | **[Validation](Tools/validation-assets/manifest.json)** | Every model's reference-parity evidence, rebuildable with `Tools/validation-assets/fetch.py`. |
 

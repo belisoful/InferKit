@@ -50,7 +50,7 @@ public final class NFKMLXZImagePipeline {
     public func generate(promptEmbeds: MLXArray, negativeEmbeds: MLXArray?, latentHeight: Int,
                          latentWidth: Int, steps: Int = 20, guidance: Float = 4, seed: UInt64 = 0) -> MLXArray {
         MLXRandom.seed(seed)
-        var latent = MLXRandom.normal([inChannels, 1, latentHeight, latentWidth])
+        let latent = MLXRandom.normal([inChannels, 1, latentHeight, latentWidth])
         let sequence = (latentHeight / 2) * (latentWidth / 2)              // the DiT's patch size is 2
         var scheduler = NFKMLXFlowMatchScheduler(.zImage)
         scheduler.setTimesteps(steps, sequenceLength: sequence)

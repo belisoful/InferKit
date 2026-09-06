@@ -253,6 +253,9 @@ constant does not fail CI — bumping it is a release step. SwiftPM takes its ve
 ├── Tools/audio-tagger-to-safetensors/ # Offline: PANNs Cnn14 .pth -> safetensors (carries the mel filterbank the model loads)
 ├── Tools/bisenet-to-safetensors/    # Offline: BiSeNet .pth -> safetensors (--list-keys; the two-path remap lives in Swift)
 ├── Tools/video-sr-to-safetensors/   # Offline: BasicVSR .pth -> safetensors (names pass through; the generator/Sequential remap lives in Swift)
+├── Tools/mpsenet-to-safetensors/    # Offline: MP-SENet g_best .pth -> safetensors (names pass through; the GRU fold + Sequential remap live in Swift)
+├── Tools/gtcrn-to-safetensors/      # Offline: GTCRN .tar/.pth -> safetensors (names pass through; the GRU fold + conv transpose live in Swift)
+├── Tools/sgmse-to-safetensors/      # Offline: SGMSE+ Lightning .ckpt -> EMA safetensors (torch_ema applies EMA via model.eval(), then dumps dnn.state_dict())
 ├── Tools/build-all.sh               # Builds (and optionally tests) all three packages in one command
 ├── Tools/xcframework/build.sh       # Core -> a 3-slice universal static XCFramework. `swift build`
 │                                    #   emits objects + a module, never a binary; `xcodebuild archive`
@@ -3199,6 +3202,66 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   package) and keeps the 16 kHz `_model.*` in PyTorch layout; the native `.pth`/JIT reader reads the raw
   `.jit` too. The parity oracle (`run_reference.py silero_vad`, llm env, needs `silero-vad`+`torchaudio`)
   streams the JIT chunk by chunk. Resampled to 16 kHz through `NFKMLXAudioRate.matched`.
+- **The speech-restoration family shares two front-end primitives** (`NFKMLXAudioSTFT.swift`):
+  `NFKMLXComplexSTFT` reproduces `torch.stft` / `torch.istft` (`center=true`, `pad_mode="reflect"`,
+  `normalized=false`) and returns EITHER magnitude+phase (`transform`/`inverse`) or real+imag
+  (`transformComplex`/`inverseComplex`) over one window-squared overlap-add; the window is a value the
+  caller supplies (sqrt-Hann or Hann). `NFKMLXERB` is the Glasberg-Moore ERB filterbank. A second shared
+  file `NFKMLXRecurrent.swift` carries `NFKMLXGRUCell` / `NFKMLXBiGRU` / `NFKMLXRecurrentFold` — the
+  PyTorch `nn.GRU` weight fold (bidirectional → forward/backward cells; `b = bias_ih + [bias_hh[:2H], 0]`,
+  `bhn = bias_hh[2H:3H]`). **THE GRU FIX lives here**: MLX's GRU drops the n-gate hidden bias `b_hn` at
+  step 0 where PyTorch keeps it (`n₁ = tanh(W_in x + b_in + r₁·b_hn)`), so the cell adds `bhn` at every
+  step; found in GTCRN, it improved MP-SENet too.
+- `NFKMLXMPSENet` / `NFKMLXMPSENetFactory` (`@objc(NFKMLXMPSENet_Factory)`) — MP-SENet
+  (`yxlu-0102/MP-SENet`, MIT), the FIRST speech-restoration port: a time-frequency transformer that
+  denoises the compressed magnitude and phase in parallel. A DenseEncoder, four **TS-transformer** blocks
+  (`norm1 → MHSA → norm2 → FFN → norm3`, the FFN a bidirectional GRU over the shared `NFKMLXBiGRU`), and
+  parallel mask / phase decoders producing a complex ratio mask. **Reference parity** against the
+  reference `MPNet` on the released `g_best_dns` (waveform cosine > 0.999, every seam exact). **The
+  released core is the TS-TRANSFORMER, not the conformer** the repo's `conformer.py` describes (it is
+  unused). **THE bug was the `batch_first` trap**: `nn.MultiheadAttention` / `nn.GRU` default
+  `batch_first=False`, so the block runs over axis 0 of `[B·F, T, C]` — one `transposed(1, 0, 2)` around
+  the block body fixed a 0.358 parity to > 0.999. `loadWeights` uses `NFKMLXRecurrentFold.fold` + a
+  Sequential-index remap. Config: fftSize 400, hop 100, denseChannel 64, 4 blocks, 4 heads, compress
+  0.3. The oracle (`run_reference.py mpsenet`) runs from the cloned source on `/usr/bin/python3` (3.9)
+  via `IK_MPSENET_SRC`.
+- `NFKMLXGTCRN` / `NFKMLXGTCRNFactory` — GTCRN (`Xiaobin-Rong/gtcrn`, MIT), a **~48.2K-parameter**
+  real-time speech enhancer, the second restoration port. An ERB band merge/split (bias-free `Linear`s
+  over the shared `NFKMLXComplexSTFT`), an SFE unfold, a grouped-convolution encoder/decoder, a **dual-path
+  grouped RNN** (DPGRNN, intra/inter over the shared `NFKMLXGRUCell`), and a complex ratio mask.
+  **Reference parity** on the released `model_trained_on_dns3` (waveform cosine > 0.999, every seam —
+  encoder / skips / DPGRNN / decoder — exact). **Five bugs, each caught by seam isolation:** `erb_fc` /
+  `ierb_fc` are `bias=False`; the grouped-deconv weight transpose is group-aware
+  (`[in, out/g, kH, kW]` → `[out, kH, kW, in/g]`); the shared GRU dropped `b_hn` at step 0 (fixed in
+  `NFKMLXRecurrent`); the deconv front-pads time for BOTH conv and deconv with `ConvTranspose` padding
+  `(2·dilation, 1)` and no crop; and **MLX's grouped `ConvTranspose` does not match PyTorch**, so a grouped
+  deconv runs each group as its own `groups=1` transpose. STFT is sqrt-Hann. The oracle
+  (`run_reference.py gtcrn`) runs from the cloned source via `IK_GTCRN_SRC` (torch only, 3.9).
+- `NFKMLXSGMSE` (`@objc`) / `NFKMLXNCSNppNet` — SGMSE+ (`sp-uhh/sgmse`, MIT), score-based generative
+  speech **dereverberation** / enhancement, the third restoration port and the first generative one. A
+  forward OUVE variance-exploding SDE walks a clean complex spectrogram toward the observation; inference
+  runs the REVERSE SDE (a predictor-corrector sampler) from `x_T = y + noise` to `x_0`, scored by an
+  NCSN++ network, then inverts the STFT. `NFKMLXNCSNppNet` is ported as the reference's flat `all_modules`
+  list (a `[Module]` array, keys match with NO remap) walked by an index counter that mirrors the
+  reference forward, plus a separate `output_layer`. The one new op is `NFKSGMSEFIR.upfirdn2d` — a
+  depthwise FIR resample (kernel `[1,3,3,1]`) the DAC/SNAC resamplers resemble. The complex spectrogram
+  packs into four real channels (`[xt.re, xt.im, y.re, y.im]`); the sampler is the OUVE SDE
+  (`NFKMLXOUVEScheduler`, a value type with the closed-form mean / std / diffusion) driven by a
+  reverse-diffusion predictor plus an annealed-Langevin corrector; the front end is a sqrt-Hann or Hann
+  STFT with the `|X|^a · factor` amplitude compression and the time axis padded to a multiple of 64.
+  **Inference reads the EMA weights**: `Tools/sgmse-to-safetensors` lets `torch_ema` apply them
+  (`model.eval()` → `ema.copy_to(dnn)`) then dumps `dnn.state_dict()`. **At reference parity on the
+  released EMA weights — net-seam cosine 1.000000000000 on BOTH released backbone variants**: the classic
+  `ncsnpp` (attention + progressive input/output skip, `sp-uhh/speech-enhancement-sgmse`) and `ncsnpp_48k`
+  (no attention, `progressive='none'`, plain Hann, and the output projection applied BEFORE the sigma
+  division; the ReverbFX release). The port is config-driven for both (`progressiveOutputSkip` /
+  `windowPower` / `attentionResolutions`), and the oracle (`run_reference.py sgmse`, source via
+  `IK_SGMSE_SRC`) records the net geometry from the DNN's own attributes so the Swift parity test builds a
+  matching config. `backbone='ncsnpp_v2'` (a different two-arg forward) is out of scope. Two traps:
+  `torch >= 2.6` defaults `weights_only=True` and refuses the pickled data module, so the converter and
+  oracle patch `torch.load`; and the net geometry must match the front-end freq bins or the flat
+  `all_modules` walk desyncs (the config carries both). A sampled clip is not bitwise-comparable (random
+  stream), so the deterministic net seam is the numeric ground and the e2e asserts signal.
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3449,7 +3512,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

@@ -2018,7 +2018,7 @@ def run_gemma4_vision(image, checkpoint):
         hidden_size=32, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=4,
         head_dim=8, intermediate_size=48, patch_size=4, position_embedding_size=16,
         pooling_kernel_size=2, rms_norm_eps=1e-6, hidden_activation="gelu_pytorch_tanh",
-        use_clipped_linears=False, standardize=False)
+        use_clipped_linears=False, standardize=True)
     model = _randomized(Gemma4VisionModel(config), seed=23)
 
     torch.manual_seed(3)
@@ -3568,6 +3568,55 @@ def run_ip_adapter(image):
         extra[f"wa::{key}"] = value.float().contiguous()
     globals()["_extra"] = extra
     return output[0].contiguous()
+
+
+def run_ip_adapter_unet(image, checkpoint):
+    """The IP-Adapter WIRED INTO the real Stable Diffusion 1.5 UNet, from diffusers — the end-to-end
+    validation of the threading, the adapter loader, and the per-layer key/value ordering, not just the
+    isolated mechanism `ip_adapter` covers.
+
+    `--checkpoint` is the SD 1.5 release directory (its `unet/` is loaded). The adapter file is
+    `IK_VAL_IPADAPTER` (the released `ip-adapter_sd15.safetensors`). diffusers loads the adapter into
+    the UNet, projecting the image embedding to image tokens through the UNet's own encoder_hid_proj and
+    blending a scaled image-conditioned attention at every cross-attention. Random latent, timestep,
+    text context, and CLIP image embedding are recorded so the MLX side loads the SAME base UNet and the
+    SAME adapter file and must reproduce the output. Runs under the `sd` (diffusers 0.31) oracle env.
+    """
+    import os
+    import torch
+    from diffusers import UNet2DConditionModel
+    from safetensors.torch import load_file
+
+    unet = UNet2DConditionModel.from_pretrained(
+        os.path.join(checkpoint, "unet"), torch_dtype=torch.float32).eval()
+    adapter = os.environ.get("IK_VAL_IPADAPTER",
+                             os.path.expanduser("~/.inferkit-validation/ip-adapter/ip-adapter_sd15.safetensors"))
+    state = load_file(adapter)
+    image_proj = {k[len("image_proj."):]: v for k, v in state.items() if k.startswith("image_proj.")}
+    ip_layers = {k[len("ip_adapter."):]: v for k, v in state.items() if k.startswith("ip_adapter.")}
+    unet._load_ip_adapter_weights([{"image_proj": image_proj, "ip_adapter": ip_layers}])
+
+    scale = 0.7
+    for processor in unet.attn_processors.values():
+        if hasattr(processor, "scale"):
+            processor.scale = [scale]
+
+    torch.manual_seed(7)
+    latent = torch.randn(1, 4, 32, 32)
+    timestep = torch.tensor(951)
+    text = torch.randn(1, 77, 768)
+    image_embeds = torch.randn(1, 1, 1024)                         # [batch, num_images, embed]
+    with torch.no_grad():
+        output = unet(latent, timestep, encoder_hidden_states=text,
+                      added_cond_kwargs={"image_embeds": [image_embeds]}).sample
+
+    globals()["_extra"] = {
+        "latent": latent[0].permute(1, 2, 0).contiguous(),        # [H, W, 4] NHWC
+        "context": text[0].contiguous(),                          # [77, 768]
+        "timestep": timestep.reshape(1).float().contiguous(),
+        "image_embeds": image_embeds[0, 0].contiguous(),          # [1024]
+    }
+    return output[0].permute(1, 2, 0).contiguous()                # [H, W, 4] NHWC
 
 
 def run_dc_ae_real(image):
@@ -5247,6 +5296,266 @@ def run_birefnet_decode(image, checkpoint):
     return logit[0].permute(1, 2, 0).contiguous()                 # [H, W, 1] full-resolution logit
 
 
+def run_mpsenet(image, checkpoint):
+    """MP-SENet (yxlu-0102/MP-SENet) speech enhancement of a deterministic noisy clip, seam by seam.
+
+    Prefers the `MPSENet` pip package (JacobLinCool, needs Python >= 3.10), which wraps the released
+    generator and its config; falls back to the cloned repository at IK_MPSENET_SRC (its `models/model.py`
+    holds `MPNet`), which runs under Python 3.9. The config JSON is `IK_MPSENET_CONFIG` (default the repo's
+    `config.json`). `--checkpoint` is the released `g_best` .pth or a `from_pretrained` id.
+
+    Records the compressed magnitude and phase the network reads, the dense-encoder output, every
+    TS-conformer block output, the denoised magnitude and phase, and the reconstructed waveform, so the
+    Swift parity test locates the first divergence rather than guessing.
+    """
+    import json
+    import os
+    import types
+
+    torch.manual_seed(0)
+    try:
+        from MPSENet import MPSENet as _MPSENet
+        wrapper = _MPSENet.from_pretrained(checkpoint)
+        model, h = wrapper.model.eval(), wrapper.h
+    except Exception:
+        source = os.environ.get("IK_MPSENET_SRC", ".")
+        sys.path.insert(0, source)
+        from models.model import MPNet                            # the generator lives in models/model.py
+        config = os.environ.get("IK_MPSENET_CONFIG", os.path.join(source, "config.json"))
+        h = types.SimpleNamespace(**json.load(open(config)))
+        model = MPNet(h).eval()
+        state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(state.get("generator", state), strict=True)
+
+    n_fft, hop, win, cf = h.n_fft, h.hop_size, h.win_size, h.compress_factor
+    samples = 16000
+    t = np.arange(samples, dtype=np.float32) / 16000.0
+    gen = np.random.default_rng(9)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 140 * (k + 1) * t) for k in range(5))
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * t)
+    wave = (speech * envelope + 0.05 * gen.standard_normal(samples)).astype(np.float32)
+    y = torch.from_numpy(wave).unsqueeze(0)
+
+    hann = torch.hann_window(win)
+    spec = torch.stft(y, n_fft, hop, win, hann, center=True, pad_mode="reflect", return_complex=True)
+    mag, pha = torch.abs(spec), torch.angle(spec)
+    mag_c = torch.pow(mag, cf)
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            seams[name] = o
+        return fn
+    blocks = model.TSTransformer                                # the released core (not the unused conformer)
+    handles = [model.dense_encoder.register_forward_hook(hook("encoder"))]
+    for idx, block in enumerate(blocks):
+        handles.append(block.register_forward_hook(hook(f"ts{idx}")))
+    with torch.no_grad():
+        amp_g, pha_g, _com = model(mag_c, pha)
+    for handle in handles:
+        handle.remove()
+
+    mag_d = torch.pow(amp_g, 1.0 / cf)
+    com = torch.complex(mag_d * torch.cos(pha_g), mag_d * torch.sin(pha_g))
+    wav = torch.istft(com, n_fft, hop, win, hann, center=True)
+
+    extra = {"waveform": y[0].contiguous(), "noisy_mag": mag_c[0].contiguous(),
+             "noisy_pha": pha[0].contiguous(), "encoder": seams["encoder"][0].contiguous(),
+             "denoised_mag": amp_g[0].contiguous(), "denoised_pha": pha_g[0].contiguous()}
+    for idx in range(len(blocks)):
+        extra[f"ts{idx}"] = seams[f"ts{idx}"][0].contiguous()
+    globals()["_extra"] = extra
+    return wav[0].contiguous()                                  # [samples]
+
+
+def run_gtcrn(image, checkpoint):
+    """GTCRN (Xiaobin-Rong/gtcrn) speech enhancement of a deterministic noisy clip, seam by seam.
+
+    Set IK_GTCRN_SRC to the directory holding `gtcrn.py`. `--checkpoint` is the released state dict
+    (e.g. `checkpoints/model_trained_on_dns3.tar`). Records the encoder bottleneck, each DPGRNN block,
+    the decoder mask, and the reconstructed waveform.
+    """
+    import os
+
+    sys.path.insert(0, os.environ.get("IK_GTCRN_SRC", "."))
+    from gtcrn import GTCRN
+
+    model = GTCRN().eval()
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = state.get("model", state) if isinstance(state, dict) else state
+    model.load_state_dict(state, strict=True)
+
+    n_fft, hop = 512, 256
+    samples = 16000
+    t = np.arange(samples, dtype=np.float32) / 16000.0
+    gen = np.random.default_rng(9)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 140 * (k + 1) * t) for k in range(5))
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * t)
+    wave = (speech * envelope + 0.05 * gen.standard_normal(samples)).astype(np.float32)
+    y = torch.from_numpy(wave).unsqueeze(0)
+
+    window = torch.hann_window(n_fft).pow(0.5)                              # infer.py uses the sqrt-Hann
+    spec = torch.stft(y, n_fft, hop, n_fft, window, center=True, return_complex=True)
+    spec_ri = torch.stack([spec.real, spec.imag], dim=-1)                   # [B, F, T, 2]
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            seams[name] = o[0] if isinstance(o, tuple) else o
+        return fn
+    handles = [model.encoder.register_forward_hook(hook("encoder")),
+               model.dpgrnn1.register_forward_hook(hook("dpgrnn1")),
+               model.dpgrnn1.intra_rnn.register_forward_hook(hook("d1_intra_rnn")),
+               model.dpgrnn1.intra_fc.register_forward_hook(hook("d1_intra_fc")),
+               model.dpgrnn1.intra_ln.register_forward_hook(hook("d1_intra_ln")),
+               model.dpgrnn1.inter_ln.register_forward_hook(hook("d1_inter_ln")),
+               model.dpgrnn2.register_forward_hook(hook("dpgrnn2")),
+               model.decoder.register_forward_hook(hook("decoder"))]
+    for idx, block in enumerate(model.encoder.en_convs):
+        handles.append(block.register_forward_hook(hook(f"en{idx}")))
+    for idx, block in enumerate(model.decoder.de_convs):
+        handles.append(block.register_forward_hook(hook(f"de{idx}")))
+    with torch.no_grad():
+        out_spec = model(spec_ri)                                          # [B, F, T, 2]
+    for handle in handles:
+        handle.remove()
+
+    enhanced = torch.complex(out_spec[..., 0], out_spec[..., 1])
+    wav = torch.istft(enhanced, n_fft, hop, n_fft, window, center=True)
+
+    globals()["_extra"] = {
+        "waveform": y[0].contiguous(),
+        "in_spec": spec_ri[0].contiguous(),                                # [F, T, 2] the net input
+        "encoder": seams["encoder"].contiguous(),
+        "dpgrnn1": seams["dpgrnn1"].contiguous(),
+        "d1_intra_rnn": seams["d1_intra_rnn"].contiguous(),
+        "d1_intra_fc": seams["d1_intra_fc"].contiguous(),
+        "d1_intra_ln": seams["d1_intra_ln"].contiguous(),
+        "d1_inter_ln": seams["d1_inter_ln"].contiguous(),
+        "dpgrnn2": seams["dpgrnn2"].contiguous(),
+        "decoder": seams["decoder"].contiguous(),
+        "out_spec": out_spec[0].contiguous(),
+    }
+    for idx in range(len(model.encoder.en_convs)):
+        globals()["_extra"][f"en{idx}"] = seams[f"en{idx}"].clone().contiguous()   # en4 aliases `encoder`
+    for idx in range(len(model.decoder.de_convs)):
+        globals()["_extra"][f"de{idx}"] = seams[f"de{idx}"].clone().contiguous()   # de4 aliases `decoder`
+    return wav[0].contiguous()                                             # [samples]
+
+
+def run_sgmse(image, checkpoint):
+    """SGMSE+ (sp-uhh/sgmse) score-based speech dereverberation / enhancement.
+
+    Set IK_SGMSE_SRC to the cloned repository (holding `sgmse/`). `--checkpoint` is a released Lightning
+    `.ckpt` (dereverb = WSJ0-REVERB, enhancement = VoiceBank-DEMAND, …). Inference reads the EMA weights,
+    which `model.eval()` copies into `model.dnn` via torch_ema.
+
+    Records the DETERMINISTIC net seam — a fixed `x_t`, the compressed observation `y`, the time `t`, and
+    the RAW NCSN++ output (the score is `-` this) plus the input-conv seam — which is the numeric ground,
+    since a sampled clip's random stream is not reproducible across implementations. Also records the
+    reference enhanced waveform for the end-to-end signal check.
+    """
+    import os
+
+    sys.path.insert(0, os.environ.get("IK_SGMSE_SRC", "."))
+    from sgmse.model import ScoreModel
+    from sgmse.util.other import pad_spec
+
+    # torch >= 2.6 defaults weights_only=True and refuses the pickled data module; restore pre-2.6.
+    _orig_load = torch.load
+    torch.load = lambda *a, **k: _orig_load(*a, **{**k, "weights_only": False})
+
+    model = ScoreModel.load_from_checkpoint(checkpoint, map_location="cpu", base_dir="/tmp", batch_size=1, num_workers=0)
+    model.eval()                                                          # copies EMA weights into model.dnn
+    dnn = model.dnn
+
+    # A deterministic noisy clip, the GTCRN/MP-SENet recipe.
+    sr = int(getattr(model, "sr", 16000))
+    samples = sr
+    t_axis = np.arange(samples, dtype=np.float32) / float(sr)
+    gen = np.random.default_rng(11)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 130 * (k + 1) * t_axis) for k in range(5))
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * t_axis)
+    reverb = np.convolve(speech * envelope, np.exp(-np.arange(400) / 120.0).astype(np.float32))[:samples]
+    wave = (0.7 * speech * envelope + 0.3 * reverb + 0.02 * gen.standard_normal(samples)).astype(np.float32)
+    y_wave = torch.from_numpy(wave).unsqueeze(0)                          # [1, samples]
+
+    norm_factor = y_wave.abs().max()
+    y_norm = y_wave / norm_factor
+    Y = torch.unsqueeze(model._forward_transform(model._stft(y_norm)), 0)  # [1, 1, F, T] complex
+    Y = pad_spec(Y)
+
+    # Deterministic x_t: the OUVE marginal about the observation at a fixed t, so it is a physical state.
+    t_val = 0.5
+    vec_t = torch.ones(Y.shape[0]) * t_val
+    torch.manual_seed(0)
+    z = torch.randn_like(Y)
+    std = model.sde._std(vec_t)[:, None, None, None]
+    x_t = Y + std * z                                                     # a plausible perturbed state
+
+    seams = {}
+    handle = dnn.all_modules[3].register_forward_hook(
+        lambda _m, _i, o: seams.__setitem__("conv_in", o))
+    with torch.no_grad():
+        net_out = dnn(torch.cat([x_t, Y], dim=1), vec_t)                # [B, 1, F, T] complex (raw dnn output)
+    handle.remove()
+
+    def ri(spec):                                                        # complex [B,1,F,T] -> [F,T,2]
+        s = spec[0, 0]
+        return torch.stack([s.real, s.imag], dim=-1).contiguous()
+
+    conv_in = seams["conv_in"][0].permute(1, 2, 0).contiguous()          # [C,F,T] -> [F,T,C]
+
+    # Reference end-to-end enhancement (random noise — recorded for the signal check, not compared bitwise).
+    with torch.no_grad():
+        sampler = model.get_pc_sampler("reverse_diffusion", "ald", Y, N=30, corrector_steps=1, snr=0.5)
+        sample, _ = sampler()
+        x_hat = model.to_audio(sample.squeeze(), samples)
+
+    # Record the net geometry + front-end params so the Swift test builds a matching config: the released
+    # SGMSE+ variants differ (classic 'ncsnpp' = progressive output_skip + attn@16 + sqrt-Hann; the
+    # 'ncsnpp_48k' variant = progressive 'none', no attention, plain Hann, and the output projection
+    # applied before the sigma division).
+    # Read the geometry from the DNN's OWN attributes, not the saved hparams: a checkpoint that took the
+    # backbone defaults (classic 'ncsnpp' → attn [16], progressive 'output_skip') carries neither in its
+    # hparams, so an hparams fallback would mis-record them. ch_mult is not stored on the module, so it
+    # comes from hparams with the backbone default.
+    hp = dict(model.hparams)
+    progressive = 1 if getattr(dnn, "progressive", "output_skip") == "output_skip" else 0
+    window_power = 0.5 if hp.get("window", "hann") == "sqrthann" else 1.0
+    ch_mult = list(hp.get("ch_mult", [1, 1, 2, 2, 2, 2, 2]))
+    attn = list(getattr(dnn, "attn_resolutions", []) or [])
+    nf_val = int(getattr(dnn, "nf", hp.get("nf", 128)))
+    num_res = int(getattr(dnn, "num_res_blocks", hp.get("num_res_blocks", 2)))
+    image_size = int(getattr(dnn, "all_resolutions", [256])[0])
+    globals()["_extra"] = {
+        "in_xt": ri(x_t),
+        "in_y": ri(Y),
+        "t": torch.tensor([t_val], dtype=torch.float32),
+        "net_out": ri(net_out),
+        "conv_in": conv_in,
+        "waveform": y_wave[0].contiguous(),
+        "enhanced": x_hat.reshape(-1).contiguous(),
+        "cfg_nf": torch.tensor([nf_val], dtype=torch.int32),
+        "cfg_num_res_blocks": torch.tensor([num_res], dtype=torch.int32),
+        "cfg_ch_mult": torch.tensor(ch_mult, dtype=torch.int32),
+        "cfg_attn": torch.tensor(attn if attn else [0], dtype=torch.int32),
+        "cfg_attn_len": torch.tensor([len(attn)], dtype=torch.int32),
+        "cfg_image_size": torch.tensor([image_size], dtype=torch.int32),
+        "cfg_progressive": torch.tensor([progressive], dtype=torch.int32),
+        "cfg_fourier_scale": torch.tensor([float(hp.get("fourier_scale", 16))], dtype=torch.float32),
+        "cfg_window_power": torch.tensor([window_power], dtype=torch.float32),
+        "cfg_n_fft": torch.tensor([int(hp.get("n_fft", 510))], dtype=torch.int32),
+        "cfg_hop": torch.tensor([int(hp.get("hop_length", 128))], dtype=torch.int32),
+        "cfg_spec_factor": torch.tensor([float(hp.get("spec_factor", 0.15))], dtype=torch.float32),
+        "cfg_spec_abs_exponent": torch.tensor([float(hp.get("spec_abs_exponent", 0.5))], dtype=torch.float32),
+        "cfg_theta": torch.tensor([float(hp.get("theta", 1.5))], dtype=torch.float32),
+        "cfg_sigma_min": torch.tensor([float(hp.get("sigma_min", 0.05))], dtype=torch.float32),
+        "cfg_sigma_max": torch.tensor([float(hp.get("sigma_max", 0.5))], dtype=torch.float32),
+    }
+    return ri(net_out)                                                    # the seam the parity test scores
+
+
 MODELS = {"sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
@@ -5261,13 +5570,16 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
                      "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "kokoro": run_kokoro, "parakeet": run_parakeet,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen,
                      "birefnet_backbone": run_birefnet_backbone,
                      "birefnet_neck": run_birefnet_neck,
-                     "birefnet_decode": run_birefnet_decode}
+                     "birefnet_decode": run_birefnet_decode,
+                     "mpsenet": run_mpsenet,
+                     "gtcrn": run_gtcrn,
+                     "sgmse": run_sgmse}
 
 
 def main():

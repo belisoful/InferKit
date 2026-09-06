@@ -11,10 +11,79 @@
 //
 
 import Foundation
+import CoreGraphics
 import InferKit
 import MLX
 import MLXFast
 import MLXNN
+
+/// Turns a `CGImage` into the flattened patches and grid the Qwen3-VL vision tower reads. The image is
+/// smart-resized so both sides are a multiple of `patchSize · mergeSize` and the pixel budget stays in
+/// range, rescaled and normalized to `-1 … 1`, the single frame doubled to the temporal patch, and
+/// patchified in the reference's `(t, h, w)` order.
+///
+/// The resize is CoreGraphics rather than the reference's bicubic, so the patch pixels are a close
+/// approximation, the documented difference the SmolVLM processor also carries; the grid and the patch
+/// layout are the reference's exactly.
+public struct NFKMLXQwen3VLImageProcessor {
+    public let patchSize = 16
+    public let temporalPatchSize = 2
+    public let mergeSize = 2
+    public let minPixels = 65_536
+    public let maxPixels = 16_777_216
+
+    public init() {}
+
+    /// The reference `smart_resize`: both sides a multiple of `patchSize · mergeSize`, the pixel count
+    /// held within `[minPixels, maxPixels]`, the aspect ratio kept as closely as possible.
+    public func smartResize(height: Int, width: Int) -> (height: Int, width: Int) {
+        let factor = patchSize * mergeSize
+        var barHeight = Int((Double(height) / Double(factor)).rounded()) * factor
+        var barWidth = Int((Double(width) / Double(factor)).rounded()) * factor
+        if barHeight * barWidth > maxPixels {
+            let beta = (Double(height * width) / Double(maxPixels)).squareRoot()
+            barHeight = Swift.max(factor, Int((Double(height) / beta / Double(factor)).rounded(.down)) * factor)
+            barWidth = Swift.max(factor, Int((Double(width) / beta / Double(factor)).rounded(.down)) * factor)
+        } else if barHeight * barWidth < minPixels {
+            let beta = (Double(minPixels) / Double(height * width)).squareRoot()
+            barHeight = Int((Double(height) * beta / Double(factor)).rounded(.up)) * factor
+            barWidth = Int((Double(width) * beta / Double(factor)).rounded(.up)) * factor
+        }
+        return (barHeight, barWidth)
+    }
+
+    /// The flattened patches `[grid_t·grid_h·grid_w, 3·temporalPatch·patch²]` and the `(t, h, w)` grid.
+    public func process(_ image: CGImage) -> (pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int)) {
+        let (height, width) = smartResize(height: image.height, width: image.width)
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,
+                                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        context?.interpolationQuality = .high
+        context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Channel-first pixels normalized to -1...1 (mean/std 0.5).
+        var planar = [Float](repeating: 0, count: 3 * height * width)
+        for y in 0 ..< height {
+            for x in 0 ..< width {
+                let base = (y * width + x) * 4
+                for channel in 0 ..< 3 {
+                    planar[channel * height * width + y * width + x] = Float(bytes[base + channel]) / 255 * 2 - 1
+                }
+            }
+        }
+        let gridT = 1, gridH = height / patchSize, gridW = width / patchSize
+        let frame = MLXArray(planar).reshaped([1, 3, height, width])
+        let temporal = concatenated([frame, frame], axis: 0)                // the temporal patch
+        let reshaped = temporal.reshaped([gridT, temporalPatchSize, 3,
+                                          gridH / mergeSize, mergeSize, patchSize,
+                                          gridW / mergeSize, mergeSize, patchSize])
+        let ordered = reshaped.transposed(0, 3, 6, 4, 7, 2, 1, 5, 8)
+        let flattened = ordered.reshaped([gridT * gridH * gridW,
+                                          3 * temporalPatchSize * patchSize * patchSize])
+        return (flattened, (gridT, gridH, gridW))
+    }
+}
 
 /// The geometry of the Qwen3-VL vision encoder.
 public struct NFKMLXQwen3VLVisionConfiguration: Sendable {
@@ -299,6 +368,56 @@ public final class NFKMLXQwen3VL: NSObject {
     /// A name for the model the factories produce.
     @objc public static let modelName = "qwen3-vl-2b"
 
+    private let visionNet: NFKMLXQwen3VLVisionNet
+    private let textDecoder: NFKMLXLanguageNet
+    private let tokenizer: NFKTokenizer
+    private let processor = NFKMLXQwen3VLImageProcessor()
+    private let endTokens: Set<Int>
+
+    init(visionNet: NFKMLXQwen3VLVisionNet, decoder: NFKMLXLanguageNet, tokenizer: NFKTokenizer,
+         endTokens: Set<Int>) {
+        self.visionNet = visionNet
+        self.textDecoder = decoder
+        self.tokenizer = tokenizer
+        self.endTokens = endTokens
+        super.init()
+    }
+
+    /// Loads the whole model — the vision tower, the text decoder, and the release tokenizer — from a
+    /// downloaded release directory, ready to answer a question about an image.
+    @objc(modelWithDirectoryURL:error:)
+    public static func model(directoryURL: URL) throws -> NFKMLXQwen3VL {
+        let vision = try visionNet(directoryURL: directoryURL)
+        let decoder = try decoder(directoryURL: directoryURL)
+        guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
+            throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
+        }
+        // Stop at the end of the assistant turn or the end of text.
+        let (specials, endToken) = NFKMLXLanguage.specialTokens(inDirectory: directoryURL)
+        var stops = Set([specials["<|im_end|>"], endToken].compactMap { $0 })
+        if stops.isEmpty { stops = [151_645] }
+        return NFKMLXQwen3VL(visionNet: vision, decoder: decoder, tokenizer: tokenizer, endTokens: stops)
+    }
+
+    /// Answers `question` about `image`: the image processor tiles the image, the vision tower and its
+    /// deepstack encode it, the tokens splice into the prompt, and the decoder generates a reply with
+    /// the cached M-RoPE. The CoreGraphics resize differs from the reference's, so the answer is a close
+    /// approximation of the reference pipeline's rather than token-identical.
+    @objc(answerForImage:question:maxTokens:)
+    public func answer(image: CGImage, question: String, maxTokens: Int) -> String {
+        let (pixelValues, grid) = processor.process(image)
+        let (visionOutput, deepstack) = visionNet(pixelValues, grid: grid)
+        let merged = (grid.h / processor.mergeSize) * (grid.w / processor.mergeSize)
+        let prompt = "<|im_start|>user\n<|vision_start|>"
+            + String(repeating: "<|image_pad|>", count: merged)
+            + "<|vision_end|>" + question + "<|im_end|>\n<|im_start|>assistant\n"
+        let inputIds = tokenizer.encode(prompt).map(\.intValue)
+        let generated = NFKMLXQwen3VL.generate(
+            decoder: textDecoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,
+            gridT: grid.t, gridH: grid.h, gridW: grid.w, maxTokens: maxTokens, endTokens: endTokens)
+        return tokenizer.decode(generated.map { NSNumber(value: $0) })
+    }
+
     /// Builds the vision tower from a downloaded release directory.
     public static func visionNet(directoryURL: URL) throws -> NFKMLXQwen3VLVisionNet {
         let net = NFKMLXQwen3VLVisionNet(.qwen3VL2B)
@@ -322,5 +441,193 @@ public final class NFKMLXQwen3VL: NSObject {
             return (stripped, keeps ? array : array.asType(.float32))
         }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
+    }
+
+    // The token ids and geometry the decoder integration needs. The text decoder is the Qwen3 1.7B
+    // dense stack at the release's rotary base.
+    static let imageTokenId = 151_655
+    static let spatialMergeSize = 2
+    /// The interleaved M-RoPE section widths (`mrope_section`): 24 temporal, 20 height, 20 width
+    /// channels of the 64 rotary frequency pairs.
+    static let mropeSection = [24, 20, 20]
+    static let deepstackLayerCount = 3
+
+    /// The text decoder configuration: the Qwen3 1.7B geometry the release's `text_config` uses, at its
+    /// own rotary base (5e6 rather than the dense 1.7B's 1e6).
+    public static let decoderConfiguration: NFKMLXLanguageConfiguration = {
+        var configuration = NFKMLXLanguageConfiguration.qwen3_1_7B
+        configuration.ropeTheta = 5_000_000
+        return configuration
+    }()
+
+    /// Builds the text decoder and loads the `model.language_model.` subtree, which is the Qwen3 dense
+    /// stack under a different prefix.
+    public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
+        let net = NFKMLXLanguageNet(decoderConfiguration)
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(
+            url: directoryURL.appendingPathComponent("model.safetensors"))
+        let prefix = "model.language_model."
+        let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix(prefix) else { return nil }
+            let stripped = "model." + String(key.dropFirst(prefix.count))
+            let keeps = value.dtype != .float16 && value.dtype != .bfloat16
+            return (stripped, keeps ? value : value.asType(.float32))
+        }
+        try NFKMLXWeights.apply(mapped, to: net)
+        return net
+    }
+
+    /// The 3-D M-RoPE positions `[3][sequence]` (temporal, height, width), the reference's
+    /// `get_rope_index` for the single-image case: a text run advances all three axes together, and an
+    /// image block holds the temporal axis constant while the height and width axes range over the
+    /// merged patch grid, both offset past the text that precedes it.
+    static func ropePositionIds(inputIds: [Int], gridT: Int, gridH: Int, gridW: Int) -> [[Int]] {
+        let sequence = inputIds.count
+        let llmH = gridH / spatialMergeSize, llmW = gridW / spatialMergeSize
+        var temporal = [Int](), height = [Int](), width = [Int]()
+        var start = 0, nextStart = 0
+        while start < sequence {
+            let imageStart = inputIds[start...].firstIndex(of: imageTokenId)
+            let end = imageStart ?? sequence
+            let textLength = end - start
+            for i in 0 ..< textLength {
+                temporal.append(nextStart + i); height.append(nextStart + i); width.append(nextStart + i)
+            }
+            if imageStart == nil {
+                nextStart += textLength
+                start = sequence
+                continue
+            }
+            // The image block's positions start past the text, the reference's `text_len + st_idx`.
+            let base = textLength + nextStart
+            for t in 0 ..< gridT {
+                for h in 0 ..< llmH {
+                    for w in 0 ..< llmW {
+                        temporal.append(base + t); height.append(base + h); width.append(base + w)
+                    }
+                }
+            }
+            nextStart = base + Swift.max(gridT - 1, Swift.max(llmH - 1, llmW - 1)) + 1
+            start = end + gridT * llmH * llmW
+        }
+        return [temporal, height, width]
+    }
+
+    /// The interleaved M-RoPE cosine and sine tables `[1, sequence, headDim]`. The 64 frequency pairs
+    /// are assigned to the three axes in an interleaved layout — channel `c` takes height when
+    /// `c % 3 == 1`, width when `c % 3 == 2`, and temporal otherwise — matching the reference's
+    /// `apply_interleaved_mrope`, and the rotation is the ordinary rotate-half over the doubled table.
+    static func mropeCosSin(positionIds: [[Int]], headDimensions: Int,
+                            theta: Float) -> (cos: MLXArray, sin: MLXArray) {
+        let half = headDimensions / 2
+        let sequence = positionIds[0].count
+        let inverseFrequencies = (0 ..< half).map { 1 / powf(theta, Float(2 * $0) / Float(headDimensions)) }
+        let lengthHeight = mropeSection[1] * 3, lengthWidth = mropeSection[2] * 3
+        var frequencies = [Float](repeating: 0, count: sequence * half)
+        for position in 0 ..< sequence {
+            for channel in 0 ..< half {
+                let axis: Int
+                if channel < lengthHeight && channel % 3 == 1 {
+                    axis = 1
+                } else if channel < lengthWidth && channel % 3 == 2 {
+                    axis = 2
+                } else {
+                    axis = 0
+                }
+                frequencies[position * half + channel] =
+                    Float(positionIds[axis][position]) * inverseFrequencies[channel]
+            }
+        }
+        let table = MLXArray(frequencies).reshaped([sequence, half])
+        let doubled = concatenated([table, table], axis: -1)     // [sequence, headDim]
+        return (cos(doubled).reshaped([1, sequence, headDimensions]),
+                sin(doubled).reshaped([1, sequence, headDimensions]))
+    }
+
+    /// The decoder logits over a fused image-and-text sequence, `[1, sequence, vocabulary]`. The vision
+    /// tokens splice into the decoder's input embeddings at the image-token positions, the M-RoPE
+    /// positions drive the rotary, and the deepstack features add to the first three layers.
+    public static func logits(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray,
+                              deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int) -> MLXArray {
+        let sequence = inputIds.count
+        let width = decoder.configuration.hiddenSize
+        var embeddings = decoder.embed(MLXArray(inputIds.map(Int32.init)).reshaped([1, sequence]))[0]
+
+        var featureIndex = [Int32](repeating: 0, count: sequence)
+        var isImage = [Float](repeating: 0, count: sequence)
+        var counter: Int32 = 0
+        for position in 0 ..< sequence where inputIds[position] == imageTokenId {
+            featureIndex[position] = counter
+            counter += 1
+            isImage[position] = 1
+        }
+        let indexArray = MLXArray(featureIndex)
+        let flatMask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
+        let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
+        embeddings = MLX.where(flatMask, gathered, embeddings).reshaped([1, sequence, width])
+
+        let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)
+        let rope = mropeCosSin(positionIds: positions,
+                               headDimensions: decoder.configuration.headDimensions,
+                               theta: decoder.configuration.ropeTheta)
+        let multimodal = NFKLMMultimodal(rope: rope, features: deepstack, featureIndex: indexArray,
+                                         mask: flatMask.reshaped([1, sequence, 1]))
+        let hidden = decoder.hiddenStates(fromEmbeddings: embeddings, multimodal: multimodal)
+        return decoder.logits(fromHidden: hidden)
+    }
+
+    /// Greedy continuation from a fused image-and-text prompt, cached: an M-RoPE prefill with the
+    /// deepstack, then one token at a time. A generated text token advances all three M-RoPE axes
+    /// together, so its rotary reduces to the ordinary 1-D one at the continuing position — the
+    /// deepstack applies only to the image tokens of the prompt.
+    public static func generate(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray,
+                                deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
+                                maxTokens: Int, endTokens: Set<Int>) -> [Int] {
+        let sequence = inputIds.count
+        let width = decoder.configuration.hiddenSize
+        let headDimensions = decoder.configuration.headDimensions
+        let theta = decoder.configuration.ropeTheta
+
+        var embeddings = decoder.embed(MLXArray(inputIds.map(Int32.init)).reshaped([1, sequence]))[0]
+        var featureIndex = [Int32](repeating: 0, count: sequence)
+        var isImage = [Float](repeating: 0, count: sequence)
+        var counter: Int32 = 0
+        for position in 0 ..< sequence where inputIds[position] == imageTokenId {
+            featureIndex[position] = counter
+            counter += 1
+            isImage[position] = 1
+        }
+        let indexArray = MLXArray(featureIndex)
+        let flatMask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
+        let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
+        embeddings = MLX.where(flatMask, gathered, embeddings).reshaped([1, sequence, width])
+
+        let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)
+        var nextPosition = (positions.flatMap { $0 }.max() ?? (sequence - 1)) + 1
+        let prefillRope = mropeCosSin(positionIds: positions, headDimensions: headDimensions, theta: theta)
+        let multimodal = NFKLMMultimodal(rope: prefillRope, features: deepstack, featureIndex: indexArray,
+                                         mask: flatMask.reshaped([1, sequence, 1]))
+
+        let cache = NFKMLXKeyValueCache(layerCount: decoder.configuration.layerCount)
+        var hidden = decoder.hiddenStates(fromEmbeddings: embeddings, cache: cache, multimodal: multimodal)
+
+        let dummyIndex = MLXArray([Int32(0)])
+        let dummyMask = MLXArray([Float(0)]).reshaped([1, 1, 1]) .> 0
+        var produced = [Int]()
+        for _ in 0 ..< maxTokens {
+            let lastHidden = hidden[0..., (hidden.dim(1) - 1)...]
+            let next = decoder.logits(fromHidden: lastHidden).reshaped([-1]).argMax().item(Int.self)
+            if endTokens.contains(next) { break }
+            produced.append(next)
+            let rope = mropeCosSin(positionIds: [[nextPosition], [nextPosition], [nextPosition]],
+                                   headDimensions: headDimensions, theta: theta)
+            nextPosition += 1
+            let decodeMultimodal = NFKLMMultimodal(rope: rope, features: [], featureIndex: dummyIndex,
+                                                   mask: dummyMask)
+            hidden = decoder.hiddenStates(
+                fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])),
+                cache: cache, multimodal: decodeMultimodal)
+        }
+        return produced
     }
 }

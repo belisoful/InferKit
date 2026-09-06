@@ -339,6 +339,22 @@ final class MLXModelGalleryExamples: XCTestCase {
         let denoiser = try NFKMLXDenoiser.backend(weightsURL: nil)
         XCTAssertNotNil(try denoiser.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
+        // MP-SENet: a time-frequency transformer that denoises magnitude and phase in parallel.
+        let mpsenet = try NFKMLXMPSENetFactory.backend(weightsURL: nil)
+        XCTAssertNotNil(try mpsenet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // GTCRN: an ultra-light grouped TCRN for real-time speech enhancement.
+        let gtcrn = try NFKMLXGTCRNFactory.backend(weightsURL: nil)
+        XCTAssertNotNil(try gtcrn.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // SGMSE+: score-based generative dereverberation, a reverse-SDE sampler over an NCSN++ score net.
+        // The released net is large and the sampler multi-step; this exercises the pipeline with a small,
+        // few-step configuration and a short clip (random weights — not the quality).
+        let shortClip = NFKMLXWaveFile.data(samples: Self.tone(4000), sampleRate: 16000)
+        let sgmse = try NFKMLXSGMSE.backend(weightsURL: nil, seed: 0,
+                                            config: NFKMLXSGMSEConfiguration(reverseSteps: 2, baseChannels: 8))
+        XCTAssertNotNil(try sgmse.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: shortClip])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 
