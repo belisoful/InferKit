@@ -339,7 +339,11 @@ for chat, `modelsURL` for the list, `URLForPath:` for anything else), and delibe
 preset answers the same envelope, and Anthropic's pagination is followed to the end. A local runner
 that is not running fails with `kNFKError_RemoteUnreachable`, which is a different answer from an
 empty list. `providerWithBaseURL:` re-points a preset at another port or another machine, keeping its
-identity and protocol.
+identity and protocol. `NFKRemoteModelCatalog` is the object under that convenience, with a timeout, a
+session, and two calls of its own: `isReachableWithError:` answers whether the server is there at all
+(a rejected key still counts; for a local runner, this is "is it running"), and
+`modelWithIdentifier:error:` reads one model by name (`GET /models/{id}`), which answers 404 for a
+name the provider does not know, so it is the cheap check before a request carries one.
 
 - **OpenAI-compatible**, served by `NFKRemoteBackend`: `openai`, `xai`, `gemini`, `groq`, `mistral`,
   `deepseek`, `together`, `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`,
