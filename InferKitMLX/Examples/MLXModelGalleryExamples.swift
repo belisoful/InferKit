@@ -378,6 +378,12 @@ final class MLXModelGalleryExamples: XCTestCase {
                                                      identifier: "voicerestore", steps: 2, cfgStrength: 0)
         XCTAssertNotNil(try voiceRestore.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
+        // Resemble Enhance: a five-network general restorer (STFT-mask denoiser + IRMAE/CFM latent flow
+        // matching + a UnivNet LVC vocoder). Random weights, denoiser off and 2 CFM steps for the fast path.
+        let resemble = NFKMLXResembleEnhanceBackend(net: NFKMLXResembleEnhanceFactory.makeNet(),
+                                                    identifier: "resemble-enhance", lambd: 0, tau: 0.5, nfe: 2)
+        XCTAssertNotNil(try resemble.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 

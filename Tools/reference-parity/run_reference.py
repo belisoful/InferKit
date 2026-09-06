@@ -5958,6 +5958,233 @@ def run_voicerestore_e2e(image, checkpoint):
     return wav[0, 0].contiguous()
 
 
+def _reenhance_src():
+    import os
+    src = os.environ.get("IK_REENHANCE_SRC", os.path.expanduser("~/.inferkit-validation/reference-sources/resemble-enhance"))
+    if src not in sys.path:
+        sys.path.insert(0, src)
+
+
+def _reenhance_hp(checkpoint=None):
+    _reenhance_src()
+    from resemble_enhance.enhancer.hparams import HParams
+    if checkpoint:
+        import os
+        run_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(checkpoint))))
+        yaml = os.path.join(run_dir, "hparams.yaml")
+        if os.path.exists(yaml):
+            return HParams.from_yaml(yaml)   # the released z_scale is 6, not the default 5
+    return HParams()
+
+
+def _reenhance_wav(seconds=0.4, sr=44100, seed=3):
+    n = int(sr * seconds)
+    ta = np.arange(n, dtype=np.float32) / sr
+    g = np.random.default_rng(seed)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 150 * (k + 1) * ta) for k in range(4))
+    wave = (0.7 * speech * (0.5 + 0.5 * np.sin(2 * np.pi * 3 * ta)) + 0.05 * g.standard_normal(n)).astype(np.float32)
+    return torch.from_numpy(wave)
+
+
+def _wn_old_to_new(state):
+    """The released checkpoint stores weight-norm as `weight_g`/`weight_v` (the old API); the current
+    source builds modules with the parametrization API, whose state keys are `parametrizations.weight.
+    original0`/`original1`. Rename so a strict load succeeds."""
+    out = {}
+    for k, v in state.items():
+        if k.endswith(".weight_g"):
+            out[k[: -len(".weight_g")] + ".parametrizations.weight.original0"] = v
+        elif k.endswith(".weight_v"):
+            out[k[: -len(".weight_v")] + ".parametrizations.weight.original1"] = v
+        else:
+            out[k] = v
+    return out
+
+
+def _reenhance_sub(checkpoint, prefix):
+    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)["module"]
+    n = len(prefix)
+    return _wn_old_to_new({k[n:]: v for k, v in sd.items() if k.startswith(prefix)})
+
+
+def run_reenhance_mel(image, checkpoint):
+    """Resemble Enhance (resemble-ai, MIT) — the MelSpectrogram front end (torchaudio magnitude mel,
+    preemphasis, amp-to-db, headroom normalize). `--checkpoint` is the enhancer_stage2 model states."""
+    _reenhance_src()
+    from resemble_enhance.melspec import MelSpectrogram
+    hp = _reenhance_hp(checkpoint)
+    mel_fn = MelSpectrogram(hp)
+    wav = _reenhance_wav()[None]
+    with torch.no_grad():
+        mel = mel_fn(wav)          # [1, 128, frames]
+    globals()["_extra"] = {"wav": wav[0].contiguous()}
+    return mel[0, :, :-1].contiguous()   # to_mel drops the last frame
+
+
+def run_reenhance_univnet(image, checkpoint):
+    """The UnivNet LVC vocoder: acoustic features [1, 160, t] + a recorded noise z → waveform."""
+    _reenhance_src()
+    from resemble_enhance.enhancer.univnet import UnivNet
+    hp = _reenhance_hp(checkpoint)
+    d_input = hp.num_mels + hp.vocoder_extra_dim
+    voc = UnivNet(hp, d_input)
+    voc.load_state_dict(_reenhance_sub(checkpoint, "vocoder."), strict=True)
+    voc.eval()
+    torch.manual_seed(2)
+    x = torch.randn(1, d_input, 16)
+    cap, orig = {}, torch.randn
+    def fake(*a, **k):
+        r = orig(*a, **k); cap["z"] = r.clone(); return r
+    torch.randn = fake
+    seams = {}
+    for j, b in enumerate(voc.blocks):
+        b.register_forward_hook(lambda m, i, o, j=j: seams.__setitem__(f"block{j}", o.detach().clone()))
+    with torch.no_grad():
+        wav = voc(x)
+    torch.randn = orig
+    globals()["_extra"] = {"x": x[0].contiguous(), "z": cap["z"][0].contiguous()}
+    for j in range(len(voc.blocks)):
+        globals()["_extra"][f"block{j}"] = seams[f"block{j}"][0].contiguous()
+    return wav[0].contiguous()
+
+
+def run_reenhance_irmae(image, checkpoint):
+    """The IRMAE autoencoder: mel [1, 128, t] → latent [1, 64, t] (encode) → [1, 160, t] (decode)."""
+    _reenhance_src()
+    from resemble_enhance.enhancer.lcfm import IRMAE
+    hp = _reenhance_hp(checkpoint)
+    ae = IRMAE(input_dim=hp.num_mels, output_dim=hp.num_mels + hp.vocoder_extra_dim, latent_dim=hp.lcfm_latent_dim)
+    ae.load_state_dict(_reenhance_sub(checkpoint, "lcfm.ae."), strict=True)
+    ae.eval()
+    torch.manual_seed(4)
+    x = torch.randn(1, hp.num_mels, 20)
+    with torch.no_grad():
+        z = ae.encode(x)
+        h = ae.decode(z)
+    globals()["_extra"] = {"x": x[0].contiguous(), "z": z[0].contiguous()}
+    return h[0].contiguous()
+
+
+def run_reenhance_cfm(image, checkpoint):
+    """The CFM velocity net (WN) + the exponential-decay midpoint sampler. Records a velocity seam at a
+    fixed (psi_t, x, t) and a full sample from a recorded psi_0, plus the solver time schedule `ts`."""
+    _reenhance_src()
+    from resemble_enhance.enhancer.lcfm import CFM
+    hp = _reenhance_hp(checkpoint)
+    cfm = CFM(cond_dim=hp.num_mels, output_dim=hp.lcfm_latent_dim, solver_nfe=hp.cfm_solver_nfe,
+              solver_method=hp.cfm_solver_method, time_mapping_divisor=hp.cfm_time_mapping_divisor)
+    cfm.load_state_dict(_reenhance_sub(checkpoint, "lcfm.cfm."), strict=True)
+    cfm.eval()
+    torch.manual_seed(6)
+    T = 20
+    psit = torch.randn(1, hp.lcfm_latent_dim, T)
+    x = torch.randn(1, hp.num_mels, T)
+    tval = torch.tensor(0.5)
+    with torch.inference_mode():
+        v = cfm._to_v(**{"ψt": psit, "t": 0.5, "x": x})
+        cfm.solver.configurate_(nfe=32, method="midpoint")
+        psi0 = torch.randn(1, hp.lcfm_latent_dim, T)
+        psi1 = cfm.sample(x, **{"ψ0": psi0})
+    ts = cfm.solver.time_mapping(np.linspace(0, 1, cfm.solver.n_steps + 1))
+    globals()["_extra"] = {"psit": psit[0].contiguous(), "x": x[0].contiguous(), "t": tval.reshape(1),
+                           "v": v[0].contiguous(), "psi0": psi0[0].contiguous(),
+                           "ts": torch.tensor(np.asarray(ts), dtype=torch.float32)}
+    return psi1[0].contiguous()
+
+
+def run_reenhance_denoiser(image, checkpoint):
+    """The stage-1 denoiser: a mixed waveform → a cleaned waveform through an STFT mask UNet."""
+    _reenhance_src()
+    from resemble_enhance.denoiser.denoiser import Denoiser
+    from resemble_enhance.denoiser.hparams import HParams as DHP
+    den = Denoiser(DHP())
+    den.load_state_dict(_reenhance_sub(checkpoint, "denoiser."), strict=True)
+    den.eval()
+    wav = _reenhance_wav()[None]
+    with torch.inference_mode():
+        x = wav / (wav.abs().max(dim=-1, keepdim=True).values + 1e-7)
+        mag, cos, sin = den._stft(x)
+        net_out = den.net(torch.stack([mag, cos, sin], dim=1))
+        o = den(wav)
+    globals()["_extra"] = {"wav": wav[0].contiguous(), "mag": mag[0].contiguous(),
+                           "net_out": net_out[0].contiguous()}
+    return o[0].contiguous()
+
+
+def run_reenhance_e2e(image, checkpoint):
+    """The full enhance path (nfe=32, lambd=0.5, tau=0.5), replicated without importing the Enhancer
+    (which pulls deepspeed). Records every seam and the recorded noises, returns the vocoder waveform."""
+    _reenhance_src()
+    import torch.nn.functional as F
+    from resemble_enhance.enhancer.lcfm import LCFM, IRMAE, CFM
+    from resemble_enhance.enhancer.univnet import UnivNet
+    from resemble_enhance.denoiser.denoiser import Denoiser
+    from resemble_enhance.denoiser.hparams import HParams as DHP
+    from resemble_enhance.melspec import MelSpectrogram
+    from resemble_enhance.common import Normalizer
+    hp = _reenhance_hp(checkpoint)
+    n_mels = hp.num_mels
+    voc_in = n_mels + hp.vocoder_extra_dim
+    ae = IRMAE(input_dim=n_mels, output_dim=voc_in, latent_dim=hp.lcfm_latent_dim)
+    cfm = CFM(cond_dim=n_mels, output_dim=hp.lcfm_latent_dim, solver_nfe=hp.cfm_solver_nfe,
+              solver_method=hp.cfm_solver_method, time_mapping_divisor=hp.cfm_time_mapping_divisor)
+    lcfm = LCFM(ae, cfm, z_scale=hp.lcfm_z_scale)
+    lcfm.set_mode_("cfm")
+    voc = UnivNet(hp, voc_in)
+    den = Denoiser(DHP())
+    norm = Normalizer()
+    mel_fn = MelSpectrogram(hp)
+
+    sd = torch.load(checkpoint, map_location="cpu", weights_only=False)["module"]
+    def sub(pfx):
+        n = len(pfx)
+        return _wn_old_to_new({k[n:]: v for k, v in sd.items() if k.startswith(pfx)})
+    lcfm.load_state_dict(sub("lcfm."), strict=True)
+    voc.load_state_dict(sub("vocoder."), strict=True)
+    den.load_state_dict(sub("denoiser."), strict=True)
+    norm.load_state_dict(sub("normalizer."), strict=True)
+    lcfm.eval(); voc.eval(); den.eval(); norm.eval()
+
+    nfe, lambd, tau = 32, 0.5, 0.5
+    cfm.solver.configurate_(nfe, "midpoint")
+    lcfm.eval_tau_(tau)
+
+    def to_mel(x):
+        return mel_fn(x)[..., :-1]
+    def norm_wav(x):
+        return x / (x.abs().max(dim=-1, keepdim=True).values + 1e-7)
+
+    wav = _reenhance_wav()[None]
+    with torch.inference_mode():
+        x = norm_wav(wav)
+        x = F.pad(x, (0, 441))          # inference_chunk npad
+        x = norm_wav(x)                 # enhancer.forward
+        x_mel_original = norm(to_mel(x), update=False)
+        den_wav = den(x)
+        x_mel_den = norm(to_mel(den_wav), update=False)
+        x_mel_denoised = lambd * x_mel_den + (1 - lambd) * x_mel_original
+        psi0_enc = lcfm._scale(lcfm.ae.encode(x_mel_original))
+        torch.manual_seed(7)
+        tau_noise = torch.randn_like(psi0_enc)
+        psi0 = tau * tau_noise + (1 - tau) * psi0_enc
+        z = lcfm._unscale(cfm.sample(x_mel_denoised, **{"ψ0": psi0}))
+        h = lcfm.ae.decode(z)
+        cap, orig = {}, torch.randn
+        def fake(*a, **k):
+            r = orig(*a, **k); cap["z"] = r.clone(); return r
+        torch.randn = fake
+        o = voc(h)
+        torch.randn = orig
+    globals()["_extra"] = {
+        "wav": wav[0].contiguous(), "x_mel_original": x_mel_original[0].contiguous(),
+        "den_wav": den_wav[0].contiguous(), "x_mel_denoised": x_mel_denoised[0].contiguous(),
+        "psi0_enc": psi0_enc[0].contiguous(), "tau_noise": tau_noise[0].contiguous(),
+        "psi0": psi0[0].contiguous(), "z": z[0].contiguous(), "h": h[0].contiguous(),
+        "voc_z": cap["z"][0].contiguous(),
+    }
+    return o[0].contiguous()
+
+
 MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
@@ -5986,7 +6213,13 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "deepfilternet": run_deepfilternet,
                      "voicerestore": run_voicerestore,
                      "bigvgan": run_bigvgan,
-                     "voicerestore_e2e": run_voicerestore_e2e}
+                     "voicerestore_e2e": run_voicerestore_e2e,
+                     "reenhance_mel": run_reenhance_mel,
+                     "reenhance_univnet": run_reenhance_univnet,
+                     "reenhance_irmae": run_reenhance_irmae,
+                     "reenhance_cfm": run_reenhance_cfm,
+                     "reenhance_denoiser": run_reenhance_denoiser,
+                     "reenhance_e2e": run_reenhance_e2e}
 
 
 def main():

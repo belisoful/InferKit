@@ -1751,6 +1751,7 @@ let regenerated = try NFKMLXStoRM.backend(weightsURL: nil)                     /
 let fullband    = try NFKMLXMossFormer2Factory.backend(weightsURL: nil)       // MossFormer2 SE: full-band 48 kHz enhancement (Kaldi-fbank mask) → NFKOutputAudio
 let deepfilter  = try NFKMLXDeepFilterNetFactory.backend(weightsURL: nil)     // DeepFilterNet3: ~2.3M-param real-time 48 kHz denoiser (ERB mask + deep filter) → NFKOutputAudio
 let voicerestore = try NFKMLXVoiceRestoreFactory.backend(weightsURL: transformerURL, vocoderURL: bigvganURL, steps: 32, cfgStrength: 0.5)  // VoiceRestore: ~301M flow-matching universal restorer (E2-TTS transformer + BigVGAN) → NFKOutputAudio
+let resemble    = try NFKMLXResembleEnhanceFactory.backend(directoryURL: enhancerStage2Dir)  // Resemble Enhance: 5-network general restorer (STFT-mask denoiser + IRMAE/CFM + UnivNet LVC vocoder) → NFKOutputAudio
 let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       // result.segments : [NFKAudioSegment]
 let sileroVAD   = try NFKMLXSileroVAD.backend(weightsURL: nil)                  // Silero v6: result.segments : [NFKAudioSegment]
 let dac         = try NFKMLXDAC.backend(weightsURL: nil)                        // neural codec: audio → codes → audio (NFKMLXDAC.encode for the tokens)

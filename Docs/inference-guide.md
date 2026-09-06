@@ -691,9 +691,13 @@ alternatives.
        CFM sampler are all at reference parity, seam by seam and end to end. It is the permissively
        licensed one-model general restorer, preferred over VoiceFixer and Resemble Enhance for the
        license and infrastructure fit.
-    8. **VoiceFixer / Resemble Enhance** (both MIT) — secondary general restorers, whichever
-       VoiceRestore does not cover. Resemble Enhance reuses the flow-matching sampler and has a
-       community MLX port to diff against.
+    8. **Resemble Enhance** (`resemble-ai/resemble-enhance`, MIT) — **SHIPPED** (`NFKMLXResembleEnhance`):
+       a five-network general restorer — a stage-1 STFT-mask 2-D UNet denoiser, a Latent Conditional Flow
+       Matching stage (an IRMAE autoencoder + a WaveNet CFM velocity net over an exponential-decay midpoint
+       ODE), and a UnivNet location-variable-convolution vocoder. All five networks plus the mel front end
+       are at reference parity on the released enhancer_stage2 weights, seam by seam and end to end. (No
+       community MLX port existed to diff against; the torch source is the only oracle.) VoiceFixer is the
+       remaining alternative, superseded by this for the flow-matching + alias-free-vocoder infrastructure fit.
     9. **CMGAN, FRCRN, MetricGAN+** — mid-tier permissive fillers (MIT, Apache, Apache). MetricGAN+ is
        a near-trivial BLSTM magnitude-mask, useful first as a plumbing smoke test. `NU-Wave 2`
        (BSD-3) and `Apollo` (CC-BY-SA, music-leaning) are the targeted bandwidth-extension and

@@ -386,6 +386,7 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | MossFormer2 SE 48K | ``NFKMLXMossFormer2SENet`` | `NFKMLXMossFormer2SENet` (FLASH + `Gated_FSMN`) over `NFKMLXKaldiFbank` | `NFKMLXMossFormer2Configuration()` (48 kHz, 24 blocks) | `mossformer2-se` | ``NFKMLXMossFormer2Backend`` |
 | DeepFilterNet3 | ``NFKMLXDeepFilterNet`` | `DfNet` (`SqueezedGRU_S` encoder / ERB decoder / DF decoder) over a libdf-reproduced DSP | `NFKMLXDeepFilterNetConfiguration()` (48 kHz, 32 ERB bands, 96 DF bins) | `deepfilternet3` | ``NFKMLXDeepFilterNetBackend`` |
 | VoiceRestore | ``NFKMLXVoiceRestore`` / ``NFKMLXBigVGAN`` | E2-TTS CFM transformer (gateloop + adaLN) + BigVGAN v2 vocoder | `NFKMLXVoiceRestoreConfiguration()` + `NFKMLXBigVGANConfiguration()` | `voicerestore` | ``NFKMLXVoiceRestoreBackend`` |
+| Resemble Enhance | ``NFKMLXResembleEnhance`` | STFT-mask 2-D UNet denoiser + IRMAE/WaveNet-CFM latent flow matching + UnivNet LVC vocoder | `NFKMLXResembleConfiguration()` | `resemble-enhance` | ``NFKMLXResembleEnhanceBackend`` |
 | HT Demucs (v4) | ``NFKMLXHTDemucs`` | ``NFKMLXHTDemucsNet`` | `NFKMLXHTDemucsConfiguration.htdemucs` | `htdemucs` | ``NFKMLXHTDemucsBackend`` |
 | Conv-TasNet | ``NFKMLXConvTasNet`` | `NFKMLXConvTasNetNet` | `NFKMLXConvTasNetConfiguration.libri2Mix16k`; `perChannelPReLU` optional | `conv-tasnet` | ``NFKMLXConvTasNetBackend`` |
 | MarbleNet VAD | ``NFKMLXVAD`` | `NFKMLXVADNet` | `NFKMLXVADConfiguration.marbleNet` | `vad-marblenet` | ``NFKMLXVADBackend`` |
@@ -412,6 +413,8 @@ let backend = try NFKMLXMossFormer2Factory.backend(weightsURL: url)
 let backend = try NFKMLXDeepFilterNetFactory.backend(weightsURL: url)
 // VoiceRestore (flow-matching universal restorer: transformer + BigVGAN)
 let backend = try NFKMLXVoiceRestoreFactory.backend(weightsURL: transformerURL, vocoderURL: bigvganURL, steps: 32, cfgStrength: 0.5)
+// Resemble Enhance (five-network general restorer: denoiser + IRMAE/CFM + UnivNet LVC vocoder)
+let backend = try NFKMLXResembleEnhanceFactory.backend(directoryURL: enhancerStage2Dir)
 // HT Demucs (v4)
 let backend = try NFKMLXHTDemucs.backend(weightsURL: url)
 // Conv-TasNet

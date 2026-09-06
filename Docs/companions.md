@@ -321,6 +321,14 @@ models.
   (BigVGAN v2, MIT, SnakeBeta + anti-aliased activations) vocodes it. At reference parity on the released
   weights, seam by seam and end to end: the transformer velocity 0.99999994, the BigVGAN waveform
   0.9999997, and the restored mel / waveform ~1.0.
+- **`NFKMLXResembleEnhance`** — Resemble Enhance (`resemble-enhance`, resemble-ai, MIT), a five-network
+  general speech restorer (noise + reverb + clipping + band-limiting). A stage-1 STFT-mask 2-D UNet
+  denoiser, a Latent Conditional Flow Matching stage (an IRMAE autoencoder compresses the mel to a
+  64-channel latent, a WaveNet CFM velocity net samples it through an exponential-decay midpoint ODE),
+  and a UnivNet location-variable-convolution vocoder. At reference parity on the released
+  enhancer_stage2 weights, seam by seam and end to end: mel 0.9999998, IRMAE encode 0.9999985 / decode
+  1.0000002, CFM velocity / sample 1.0000001, UnivNet 0.9999365, denoiser 0.9999996, and the end-to-end
+  restored waveform 0.9999971.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,

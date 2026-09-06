@@ -3393,6 +3393,57 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `transformer.*` / `proj_in` / `cond_proj` / `to_pred`, loaded through the native torch reader; the
   `abs_pos_emb` is 2000 rows) and `nvidia/bigvgan_v2_24khz_100band_256x/bigvgan_generator.pt`. No offline
   converter.
+- `NFKMLXResembleEnhance` / `NFKMLXResembleEnhanceBackend` (`@objc(NFKMLXResembleEnhance_Factory)`) —
+  **Resemble Enhance** (resemble-ai, **MIT**), a **five-network general speech restorer** (noise +
+  reverberation + clipping + band-limiting together), the eighth restoration-vein port and the largest of
+  the family. **All five networks plus the mel front end are at reference parity on the released
+  enhancer_stage2 weights, seam by seam and end to end** (`run_reference.py reenhance_*`, the
+  `reenhancevenv` oracle env — Python 3.12; the torch source is the only oracle, no community MLX port
+  existed): mel 0.9999998, IRMAE encode 0.9999985 / decode 1.0000002, CFM velocity 1.0000001 / sample
+  1.0000001, UnivNet 0.9999365, denoiser 0.9999996, and the full `enhance()` waveform 0.9999971. The
+  `enhance()` path (`resemble_enhance/enhancer/{enhancer,inference}.py`, defaults nfe 32 / lambd 0.5 /
+  tau 0.5): peak-normalize → mel → the mix mel and the denoised mel blended by `lambd` → the LCFM stage
+  samples a latent from the encoded-prior-plus-noise (`tau`) → decode to the vocoder input → the UnivNet
+  vocoder.
+  - **Mel front end** (`NFKMLXResembleMel`): `resemble_enhance.melspec.MelSpectrogram` — preemphasis
+    0.97, a torchaudio MAGNITUDE mel (Slaney scale + Slaney normalization, reusing `NFKMLXMel.melFilters`,
+    a ZERO-centered STFT `pad_mode="constant"`, n_fft 2048 / hop 420 / 128 mels), `amp_to_db`
+    (`clamp(1e-4).log10()·20`), and a headroom normalization `(s + 80) / 95`. `to_mel` drops the last
+    frame. A global scalar `Normalizer` (`(x − mean) / std`, `std = sqrt(var + 1e-9)`) loaded from the
+    checkpoint follows it.
+  - **IRMAE** (`NFKMLXResembleIRMAE`): an implicit-rank-minimizing autoencoder. The encoder (a 1024-wide
+    conv, four dilated GroupNorm/GELU ResBlocks, four bias-free 1×1 rank-minimizing convs, a Tanh)
+    compresses the 128-mel to a 64-channel latent; the decoder mirrors it to the 160-channel
+    (`num_mels + vocoder_extra_dim` 32) vocoder input. The training-only `head` and `estimator` are not
+    built. `GroupNorm(pytorchCompatible: true)`.
+  - **CFM** (`NFKMLXResembleCFM`): the flow-matching stage. The velocity net is a **WaveNet**
+    (`NFKMLXResembleWN`, a DiffWave-style stack of 30 gated dilated-conv layers, dilation cycle 5, an
+    InstanceNorm on the local condition, a `SinusodialTimeEmbedding`), NOT a transformer. The sampler is
+    the reference's **exponential-decay midpoint ODE**: `ts = h(linspace(0,1,n+1))` with
+    `h(t) = (a^t − 1)/(a − 1)`, `a` solving `h(1/4) = 0.5` (Newton, matching scipy `fsolve`); nfe 32 →
+    16 midpoint steps. Distinct from VoiceRestore's plain-linspace midpoint.
+  - **UnivNet** (`NFKMLXResembleUnivNet`): a GAN vocoder over **location-variable convolutions**. A noise
+    input through `conv_pre` (reflect-padded), four `LVCBlock`s (each: an upsampling transposed conv at
+    stride 7/5/4/3 = 420 = hop, an anti-aliased-SnakeBeta AMP block reusing the BigVGAN kaiser-sinc FIR
+    family, then four dilated conv stages whose kernels a `KernelPredictor` generates per cond segment and
+    applies through a GAU gate), then `conv_post` (LeakyReLU → conv → Tanh). The LVC (dilation 1) is a
+    per-segment im2col matmul (MLX has no unfold). The noise is non-deterministic; parity feeds a recorded
+    `z`.
+  - **Denoiser** (`NFKMLXResembleDenoiser`): the stage-1 STFT-mask model — a complex STFT (reusing
+    `NFKMLXComplexSTFT`, n_fft 1680 / hop 420), a 2-D (frequency × time) UNet predicting a magnitude mask
+    and a phase residual, and the inverse STFT.
+  **Three facts are load-bearing, all found by seam localization.** The KernelPredictor's LeakyReLU is
+  slope **0.2** (the LVCBlock overrides the KernelPredictor's own 0.1 default) — with 0.1 the vocoder
+  scores ~0.84. The LVCBlock `convt_pre` is `Sequential(LeakyReLU, ConvTranspose)`, so the activation runs
+  BEFORE the transposed conv. And the oracle MUST load the released `hparams.yaml`, because the enhancer
+  default `lcfm_z_scale` is 5 but the release is **6** — a difference cosine cannot see (it changes only
+  the encoded-prior/noise blend MAGNITUDE) and that surfaces only in the end-to-end path. The DeepSpeed
+  shard nests everything under `module`, which the native reader does not unwrap, so the loader strips
+  that prefix; it uses OLD `weight_g`/`weight_v` weight-norm (`fusedWeightNorm` handles it). `+register`
+  under `resemble-enhance`; `@objc backendWithDirectoryURL:error:` (the `enhancer_stage2` dir holding
+  `ds/G/default/mp_rank_00_model_states.pt`). Weights: `ResembleAI/resemble-enhance` (MIT). No offline
+  converter (the native torch reader loads the shard). The oracle imports the released `resemble_enhance`
+  leaf modules directly to AVOID deepspeed (which the top-level `enhancer.py` pulls in).
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3643,7 +3694,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`, `voicerestore`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`, `voicerestore`, `resemble-enhance`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`
