@@ -182,6 +182,7 @@ limits.
 - ``NFKMLXSGMSE``
 - ``NFKMLXStoRM``
 - ``NFKMLXMossFormer2SENet``
+- ``NFKMLXDeepFilterNet``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

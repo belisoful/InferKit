@@ -3309,6 +3309,44 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `~/.inferkit-validation/llmvenv` (needs `rotary_embedding_torch` + `torchinfo`); the parity test feeds
   the recorded feature to isolate the backbone from the fbank. The SR sibling (mel→mel backbone + a BigVGAN
   vocoder) is a later add. Registered under `mossformer2-se`.
+- `NFKMLXDeepFilterNet` / `NFKMLXDeepFilterNetBackend` (`@objc(NFKMLXDeepFilterNet_Factory)`) —
+  **DeepFilterNet3** (Rikorose/DeepFilterNet, dual **MIT/Apache-2.0**), a ~2.3M-parameter real-time
+  48 kHz speech denoiser, the cheap counterpart to `NFKMLXDenoiser`. The `DfNet` is a clean torch
+  `nn.Module`: an **encoder** (an ERB convolution pathway `erb_conv0..3` + a DF convolution pathway
+  `df_conv0/1`, summed — `enc_concat=False` — into a `SqueezedGRU_S` embedding), an **ERB decoder** (a
+  second `SqueezedGRU_S` and a U-net of depthwise-1x1 skips + (transposed) convolutions → a 32-band
+  sigmoid ERB mask), and a **DF decoder** (a `SqueezedGRU_S` + a grouped-linear skip → the deep-filter
+  coefficients `[B, 5, T, 96, 2]`). The enhanced spectrum is the ERB mask applied to the full spectrum,
+  with the **lowest 96 bins replaced by a 5-tap causal complex deep filter** (`MF.DF`, a per-frame
+  complex MAC over a `(dfOrder-1-lookahead, lookahead)`-padded window). The **STFT / ERB / normalization
+  DSP is Rust `libdf`** in the reference, reproduced in `NFKMLXDeepFilterNetDSP` (MLX + Swift) and each
+  step validated numerically against a libdf recording: **analysis** left-pads by `nFFT-hop`, windows
+  with the **VORBIS window** `sin(π/2·sin²(π(n+0.5)/N))`, rffts, and scales **`1/N`**; the **ERB
+  feature** is `10·log10(|spec|²·erb_fb + 1e-10)` then a per-band EMA mean-normalization `(x−s)/40`
+  (α = 0.99, `s` init `linspace(-60,-90,32)` = `MEAN_NORM_INIT`); **unit_norm** on the lowest 96 bins is
+  `x/√s`, `s` init `linspace(0.001,0.0001,96)` = `UNIT_NORM_INIT`; **synthesis** is `irfft(spec·N)` with
+  window-squared overlap-add. **Reference parity on the released DeepFilterNet3 weights, seam by seam
+  and end to end** against the `deepfilternet` pip package: every net seam exact (encoder `e0..e3` /
+  `emb` / `c0`, the ERB mask `m`, the deep-filter coefficients, `spec_e` all cosine 1.0000000), the DSP
+  features exact (spec / feat_erb / feat_spec 1.0000000), and the enhanced waveform end to end
+  **0.9999999**. `+register` under `deepfilternet3`.
+  **Seven facts are load-bearing, most found by the seam ladder.** The `Conv2dNormAct` layout is
+  **derived from the shapes**, not a per-layer flag: `groups = gcd(in, out)`, a pointwise 1x1 follows
+  only when `groups > 1` AND the kernel is not 1x1, and a causal time pad precedes the conv only when the
+  time kernel exceeds 1 — so `erb_conv0` (`gcd(1,64)=1`) is a plain conv while `conv3p` (`gcd(64,64)=64`,
+  1x1) is a **depthwise 1x1**. `SqueezedGRU_S`'s `linear_out` carries a trailing **ReLU** (missing it
+  dropped `emb` to 0.68), and its `df_gru` variant has **`output_size=None` → no `linear_out`** (an
+  Identity) while running its grouped linears at **8** groups where `emb_gru` runs 16. The DF skip fed
+  to the decoders is **`c0` (the `df_conv0` output), not `c1`**. `df_fc_a` and `pad_spec` exist in the
+  checkpoint/module but the reference `forward` never applies them (loaded, unused — there is **no alpha
+  blend**). The ERB decoder's `convt2`/`convt1` are grouped depthwise `ConvTranspose2d` (the shared
+  GTCRN per-group workaround + the `[in,out/g,kH,kW]→[out,kH,kW,in/g]` transpose, with `output_padding`).
+  **The one oracle trap:** `df_state.synthesis(as_complex(spec_e).numpy())` writes IN PLACE through the
+  view, corrupting a `spec_e` recorded afterward — snapshot it before synthesis. The oracle is
+  `run_reference.py deepfilternet --checkpoint <DeepFilterNet3 dir>` (the `dfnvenv`: `deepfilternet` +
+  `deepfilterlib` + torch, Python 3.9; `init_df` downloads the model, and `IK_DEEPFILTERNET_WEIGHTS_OUT`
+  dumps the state dict as the weights). No offline converter: the pip package ships the weights and the
+  DSP oracle.
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3559,7 +3597,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`
@@ -3764,6 +3802,40 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
 3. Add the public header to the umbrella `InferKit.h`.
 4. If the file links a new system framework, add it to `Package.swift` `linkedFramework` and the
    podspec `frameworks`.
+
+## Completing an InferKitMLX model to parity (the documentation checklist)
+
+A model is not done when its parity test passes — it is done when every listing is updated too. A
+partial update leaves the model missing from some indexes, which is the failure this checklist exists
+to prevent. Update ALL of these, in the modality's existing section, mirroring the sibling rows:
+
+- `CLAUDE.md` — a full per-model entry in the InferKitMLX model list, AND the model's registered name
+  in the `registerAll` prose list. Use the ACTUAL measured cosines, not the `> 0.999` test threshold.
+- `AGENTS.md` — one document, two names: after editing `CLAUDE.md`, run `cp CLAUDE.md AGENTS.md`.
+- `README.md` — the model's name in the modality bullet of the model list.
+- `Docs/companions.md` — the full model gallery (README links here as "the full model gallery").
+- `Docs/model-index.md` — the index row (entry class, network, configuration, registered name, the
+  Swift + Objective-C copy-and-paste, base backend).
+- `Docs/model-parity.md` — the parity row with the REAL recorded numbers (capture them by temporarily
+  printing the measured cosines in the parity test, then revert the prints).
+- `Docs/examples.md` — the modality's gallery snippet.
+- `Docs/inference-guide.md` — the Roadmap, if the model was a roadmap item (mark it SHIPPED).
+- `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/InferKitMLX.md` — the gallery Topics list.
+- `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/ModelGallery.md` — the gallery table row.
+- `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/ModelIndex.md` — the index table row AND the
+  per-section copy-and-paste code block.
+- `InferKitMLX/Examples/MLXModelGalleryExamples.swift` — the live per-model gallery example (a build +
+  representative forward). This is a compiled test, so run it (`InferKitMLXExamples` scheme).
+- `Tools/validation-assets/manifest.json` — the checkpoint/record/config entry (and an
+  `oracle_environments` note if the model needs a new interpreter or extra packages).
+
+Not a listing, so NOT required per model: `InferKitMLX/ObjCExamples/MLXObjCExample.m` is a curated
+illustrative set, not an exhaustive gallery.
+
+The code/wiring that accompanies the docs (the model file, `NFKMLXReferenceModels.registerAll`
+registration, the `run_reference.py` oracle mode, and the parity test) is covered by the shipped-model
+pattern; a converter under `Tools/<model>-to-safetensors/` is optional because the native `.pth`/`.pt`
+reader loads most released checkpoints directly.
 
 ## Safeguards (Anti-Patterns)
 

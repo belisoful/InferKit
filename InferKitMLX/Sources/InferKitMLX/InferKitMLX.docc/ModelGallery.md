@@ -173,6 +173,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXSGMSE`` | `sgmse` | score-based generative dereverberation / enhancement (SGMSE+, NCSN++) |
 | ``NFKMLXStoRM`` | `storm` | few-step stochastic regeneration (StoRM: predictor + conditioned score) |
 | ``NFKMLXMossFormer2SENet`` | `mossformer2-se` | full-band 48 kHz speech enhancement (MossFormer2 SE) |
+| ``NFKMLXDeepFilterNet`` | `deepfilternet3` | real-time 48 kHz speech denoising (DeepFilterNet3, ~2.3M params) |
 | ``NFKMLXDAC`` | `dac` | neural audio codec (Descript, 44.1 / 24 / 16 kHz) |
 | ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech) |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / small / medium / large-v3, timestamps) |

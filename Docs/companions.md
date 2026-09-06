@@ -308,6 +308,12 @@ models.
   At reference parity on the released weights (M1, float32): the fbank 1.0, the encoder and FLASH block 0
   0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998. The SR sibling
   (mel→mel backbone plus a BigVGAN vocoder) is a later add.
+- **`NFKMLXDeepFilterNet`** — DeepFilterNet3 (`deepfilternet3`, Rikorose/DeepFilterNet, dual MIT/Apache-2.0),
+  a ~2.3M-parameter real-time 48 kHz denoiser (the cheap counterpart to the Demucs speech denoiser): an
+  ERB mask over the full spectrum plus a 5-tap causal complex deep filter on the lowest 96 bins, from a
+  `SqueezedGRU_S` encoder / ERB decoder / DF decoder. Its STFT / ERB / normalization DSP (Rust `libdf` in
+  the reference) is reproduced in MLX + Swift. At reference parity on the released weights: every net seam
+  and the DSP features exact (1.0000000) and the enhanced waveform 0.9999999.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,

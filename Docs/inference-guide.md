@@ -673,9 +673,12 @@ alternatives.
        0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998. Its
        companion super-resolution checkpoint (a mel→mel backbone plus a BigVGAN vocoder) covers bandwidth
        extension under the same Apache license and is the remaining SR add.
-    6. **DeepFilterNet3** (`Rikorose/DeepFilterNet`, MIT/Apache) — a real-time denoiser beside
-       `NFKMLXDenoiser` (about 2.3M parameters, an ERB encoder plus a per-bin complex deep-filtering
-       FIR). Its dereverberation is weak, so it ships as a denoiser rather than the dereverb answer.
+    6. **DeepFilterNet3** (`Rikorose/DeepFilterNet`, MIT/Apache) — **SHIPPED** (`NFKMLXDeepFilterNet`):
+       a real-time 48 kHz denoiser beside `NFKMLXDenoiser` (about 2.3M parameters, a `SqueezedGRU_S`
+       ERB encoder / decoder plus a 5-tap per-bin complex deep-filtering FIR on the lowest 96 bins). Its
+       Rust `libdf` STFT / ERB / normalization DSP is reproduced in MLX + Swift. At reference parity on
+       the released weights: every net seam and the DSP features exact, and the enhanced waveform
+       0.9999999. Its dereverberation is weak, so it ships as a denoiser rather than the dereverb answer.
     7. **VoiceRestore** (`skirdey/voicerestore`, MIT) — a 301M flow-matching transformer over mel with
        a BigVGAN vocoder, trained to fix noise, reverberation, clipping, and band-limiting together.
        It reuses the flow-matching sampler, the transformer blocks, the mel front end, and the

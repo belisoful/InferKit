@@ -1096,6 +1096,16 @@
    "note": "MossFormer2 SE 48K full-band speech enhancement (modelscope/ClearerVoice-Studio, Apache-2.0). Weights on HF (alibabasglab/MossFormer2_SE_48K/last_best_checkpoint.pt, keyed mossformer.*, loaded directly by the native .pth reader). The model SOURCE is not on HF: the mossformer2_se package files are fetched to reference-sources/clearervoice/models/mossformer2_se (curled, not cloned, to respect the repo git-clone safeguard). Oracle: `run_reference.py mossformer2_se --checkpoint <ckpt>` with IK_MOSSFORMER2_SE_SRC=<reference-sources/clearervoice>, on ~/.inferkit-validation/llmvenv (add rotary_embedding_torch + torchinfo). The fbank front end FORCES dither=0 (the released compute_fbank uses dither=1.0, random noise that makes parity impossible). Two load-bearing facts found on the M1: num_spks=2 (the wrapper builds MossFormer_MaskNet with the default, so conv1d_out widens to dModel*2 and the net returns speaker 0 -> the port slices the first dModel channels, exact because the 1x1 gated output/decoder are per-position); and the FLASH linear-attention path divides by the ORIGINAL sequence length n=x.shape[-2], NOT the padded length (only wrong when frames are not a multiple of group 256). At reference parity on the M1 (float32): fbank+delta 1.0, encoder and FLASH block0 0.99999994, FLASH block_last and the 961-bin mask 1.0, enhanced waveform 0.9999998. Parity test feeds the recorded feature to isolate the backbone from the Kaldi fbank."
   },
   {
+   "key": "DEEPFILTERNET",
+   "directory": "raw/deepfilternet",
+   "files": [],
+   "config": {
+    "IK_VAL_DEEPFILTERNET": "raw/deepfilternet/weights.safetensors",
+    "IK_PARITY_DEEPFILTERNET": "raw/deepfilternet/record.safetensors"
+   },
+   "note": "DeepFilterNet3 real-time 48 kHz speech denoising (Rikorose/DeepFilterNet, dual MIT/Apache-2.0), the cheap counterpart to NFKMLXDenoiser (~2.3M params). NOT on HF and no offline converter: the `deepfilternet` pip package (deps `deepfilterlib` native Rust wheel + torch/torchaudio/numpy<2, Python 3.9) ships the weights and the libdf DSP. Build a dedicated venv `dfnvenv` (see oracle_environments.deepfilternet); `init_df()` downloads the DeepFilterNet3 model to ~/Library/Caches/DeepFilterNet/DeepFilterNet3 on first run. Oracle + weights in ONE command: `IK_DEEPFILTERNET_WEIGHTS_OUT=raw/deepfilternet/weights.safetensors dfnvenv/bin/python Tools/reference-parity/run_reference.py deepfilternet raw/deepfilternet/record.safetensors --checkpoint ~/Library/Caches/DeepFilterNet/DeepFilterNet3` — records the net boundary (spec/feat_erb/feat_spec in, e0..e3/emb/c0/m/df_coefs/spec_e/lsnr, the ERB banks) plus the enhance() waveform, AND dumps model.state_dict() (dropping num_batches_tracked) as the weights. The NET (DfNet) is a clean torch nn.Module validated seam by seam; the STFT/ERB/normalization DSP is Rust libdf, reproduced in NFKMLXDeepFilterNetDSP (Vorbis window sin(pi/2 sin^2(pi(n+0.5)/N)), analysis scale 1/N left-pad nFFT-hop; ERB feature 10log10(|spec|^2 erb_fb+1e-10) then EMA mean-norm (x-s)/40 init linspace(-60,-90,32); unit_norm x/sqrt(s) init linspace(0.001,0.0001,96); synthesis irfft(spec*N) window-squared OLA). ONE ORACLE TRAP: df_state.synthesis(as_complex(spec_e).numpy()) writes IN PLACE through the view, so snapshot spec_e BEFORE synthesis. At reference parity on the released DeepFilterNet3 weights: every net seam exact (1.0000000), DSP features exact (1.0000000), enhanced waveform 0.9999999."
+  },
+  {
    "key": "SGMSE",
    "git": "https://github.com/sp-uhh/sgmse",
    "directory": "raw/sgmse",
@@ -1172,6 +1182,14 @@
     "rtdetr",
     "rtdetr_real",
     "kokoro"
+   ]
+  },
+  "deepfilternet": {
+   "interpreter": "~/.inferkit-validation/dfnvenv/bin/python3",
+   "why": "DeepFilterNet3's reference is the `deepfilternet` pip package, which needs its `deepfilterlib` native Rust wheel (the libdf STFT/ERB/synthesis DSP) plus numpy<2, and pins a torch range that would fight the other oracles, so it runs under its own interpreter on the system Python 3.9 (deepfilterlib ships a cp39 macOS arm64 wheel). `init_df()` downloads the DeepFilterNet3 model on first run.",
+   "rebuild": "python3 -m venv ~/.inferkit-validation/dfnvenv && ~/.inferkit-validation/dfnvenv/bin/pip install 'numpy<2' 'torch==2.2.2' 'torchaudio==2.2.2' soundfile safetensors 'deepfilternet==0.5.6'",
+   "modes": [
+    "deepfilternet"
    ]
   },
   "nemo": {

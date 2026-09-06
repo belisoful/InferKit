@@ -5757,6 +5757,96 @@ def run_mossformer2_se(image, checkpoint):
     return wav.contiguous()                                          # [samples]
 
 
+def run_deepfilternet(image, checkpoint):
+    """DeepFilterNet3 (Rikorose/DeepFilterNet, dual MIT/Apache-2.0) real-time 48 kHz speech denoising.
+
+    `--checkpoint` is the `DeepFilterNet3` model directory (the `init_df` cache, holding
+    `checkpoints/` + `config.ini`). Needs the `deepfilternet` + `deepfilterlib` pip packages (torch,
+    torchaudio, numpy<2). Records the whole net boundary (`spec`/`feat_erb`/`feat_spec` in, the encoder
+    seams `e0..e3`/`emb`/`c0`, the ERB mask `m`, the deep-filter coefficients, `spec_e`, `lsnr`) plus the
+    libdf DSP I/O (the ERB banks and the enhanced waveform) so the MLX port validates the net seam by seam
+    and the DSP end to end. Set `IK_DEEPFILTERNET_WEIGHTS_OUT` to also dump the model's state dict as
+    `weights.safetensors` beside the record (dropping the `num_batches_tracked` counters).
+    """
+    import os
+    import numpy as np
+    import torch
+    from df.enhance import init_df, df_features, enhance
+    from df.model import ModelParams
+    from df.utils import get_norm_alpha, as_complex
+
+    model, df_state, _ = init_df(checkpoint)
+    model.eval()
+    p = ModelParams()
+    sr, nb_df = p.sr, p.nb_df
+
+    # A deterministic 0.5 s clip (the restoration-family recipe, at 48 kHz).
+    samples = sr // 2
+    t = np.arange(samples, dtype=np.float32) / sr
+    gen = np.random.default_rng(7)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 160 * (k + 1) * t) for k in range(5))
+    env = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * t)
+    wave = (0.8 * speech * env + 0.05 * gen.standard_normal(samples)).astype(np.float32)
+    audio = torch.from_numpy(wave).unsqueeze(0)
+
+    spec, erb_feat, spec_feat = df_features(audio, df_state, nb_df)
+
+    seams = {}
+    def enc_hook(_m, _i, o):
+        seams["enc"] = [x.detach().clone() for x in o]
+    handles = [model.enc.register_forward_hook(enc_hook),
+               model.enc.df_conv1.register_forward_hook(lambda _m, _i, o: seams.__setitem__("c1", o.detach().clone())),
+               model.enc.df_fc_emb.register_forward_hook(lambda _m, _i, o: seams.__setitem__("cemb", o.detach().clone())),
+               model.enc.emb_gru.register_forward_pre_hook(lambda _m, i: seams.__setitem__("emb_in", i[0].detach().clone()))]
+    with torch.no_grad():
+        spec_e, m, lsnr, df_coefs = model(spec.clone(), erb_feat, spec_feat)
+    for h in handles:
+        h.remove()
+    e0, e1, e2, e3, emb, c0, lsnr2 = seams["enc"]
+
+    spec_m = model.mask(spec.clone(), m)                               # the ERB-masked spectrum
+
+    # Snapshot BEFORE synthesis: `df_state.synthesis(as_complex(spec_e).numpy())` writes in place through
+    # the view and would corrupt the recorded `spec_e`.
+    spec_e_rec = spec_e.detach().clone()
+    spec_m_rec = spec_m.detach().clone()
+
+    # The reference `output` is the full `enhance()` path (pad to compensate the STFT delay → analysis →
+    # net → synthesis → trim `[n_fft-hop : orig+n_fft-hop]`), which is what the MLX backend reproduces.
+    df_state.reset()
+    audio_out = enhance(model, df_state, audio)
+
+    weights_out = os.environ.get("IK_DEEPFILTERNET_WEIGHTS_OUT")
+    if weights_out:
+        from safetensors.torch import save_file
+        sd = {k: v.contiguous() for k, v in model.state_dict().items()
+              if not k.endswith("num_batches_tracked")}
+        save_file(sd, weights_out)
+        print(f"wrote weights {weights_out} ({len(sd)} tensors)")
+
+    globals()["_extra"] = {
+        "waveform": audio[0].clone().contiguous(),
+        "spec": spec.squeeze(1).squeeze(0).clone().contiguous(),       # [T, F, 2] the net input
+        "feat_erb": erb_feat.squeeze(1).squeeze(0).contiguous(),       # [T, 32]
+        "feat_spec": spec_feat.squeeze(1).squeeze(0).contiguous(),     # [T, 96, 2]
+        "e0": e0[0].contiguous(), "e1": e1[0].contiguous(),
+        "e2": e2[0].contiguous(), "e3": e3[0].contiguous(),            # [C, T, F]
+        "emb": emb[0].contiguous(),                                    # [T, 512]
+        "c1": seams["c1"][0].contiguous(),                             # [C, T, 48]
+        "cemb": seams["cemb"][0].contiguous(),                         # [T, 512] df_fc_emb output
+        "emb_in": seams["emb_in"][0].contiguous(),                     # [T, 512] combined, pre emb_gru
+        "c0": c0[0].contiguous(),                                      # [C, T, 96]
+        "m": m.squeeze(1)[0].contiguous(),                             # [T, 32]
+        "df_coefs": df_coefs[0].contiguous(),                          # [O, T, 96, 2]
+        "spec_e": spec_e_rec.squeeze(1)[0].contiguous(),               # [T, F, 2]
+        "spec_m": spec_m_rec.squeeze(1)[0].contiguous(),               # [T, F, 2] the ERB-masked spectrum
+        "lsnr": lsnr[0].contiguous(),                                  # [T, 1]
+        "erb_fb": model.erb_fb.detach().contiguous(),                  # [F, 32]
+        "erb_inv_fb": model.mask.erb_inv_fb.detach().contiguous(),     # [32, F] (the enhanced waveform is `output`)
+    }
+    return (audio_out[0] if audio_out.dim() > 1 else audio_out).contiguous()
+
+
 MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
@@ -5781,7 +5871,8 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "mpsenet": run_mpsenet,
                      "gtcrn": run_gtcrn,
                      "sgmse": run_sgmse,
-                     "mossformer2_se": run_mossformer2_se}
+                     "mossformer2_se": run_mossformer2_se,
+                     "deepfilternet": run_deepfilternet}
 
 
 def main():

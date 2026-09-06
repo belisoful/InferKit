@@ -366,6 +366,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let mossformer2 = try NFKMLXMossFormer2Factory.backend(weightsURL: nil)
         XCTAssertNotNil(try mossformer2.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
+        // DeepFilterNet3: a ~2.3M-parameter real-time 48 kHz denoiser — an ERB mask plus a deep filter on
+        // the lowest bins, over a libdf-reproduced STFT/ERB/norm front end.
+        let deepfilternet = try NFKMLXDeepFilterNetFactory.backend(weightsURL: nil)
+        XCTAssertNotNil(try deepfilternet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 
