@@ -68,6 +68,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXGTCRNFactory.register()
         NFKMLXSGMSE.register()
         NFKMLXStoRM.register()
+        NFKMLXMossFormer2Factory.register()
         NFKMLXSigLIP2.register()
         NFKMLXTAESD.register()
         NFKMLXAudioTagger.register()

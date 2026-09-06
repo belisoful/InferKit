@@ -3281,6 +3281,34 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   weights into the record under `w::…`) validates the NEW two-net architecture exactly. The StoRM clone
   omits `upfirdn2d_native.py` and its op imports the fused CUDA extension, so the oracle injects an inline
   native `upfirdn2d` + a leaky-ReLU shim into `sys.modules`. Registered under `storm`.
+- `NFKMLXMossFormer2SENet` / `NFKMLXMossFormer2Factory` (`@objc(NFKMLXMossFormer2_Factory)`) — MossFormer2
+  SE 48K (modelscope/ClearerVoice-Studio, Apache-2.0), full-band speech enhancement, at **reference
+  parity** on the released `last_best_checkpoint.pt`, measured on the M1 at float32: the Kaldi fbank+Δ
+  **1.0000000**, the encoder and FLASH block 0 **0.99999994**, FLASH block last and the 961-bin mask
+  **1.0000000**, and the enhanced waveform **0.9999998**. The shared MossFormer2 backbone is a mask-predicting
+  net over a Kaldi-fbank front end: a `GroupNorm(1)` input norm, a `Conv1d` bottleneck, a scaled sinusoidal
+  positional embedding, 24 `MossformerBlock_GFSMN` layers, and a gated output to a real 961-bin mask
+  (final ReLU). Each block interleaves `FLASH_ShareA_FFConvM` (gated single-head attention: quadratic
+  ReLU-squared local attention within 256-groups + a linear global path, `to_hidden`/`to_qk` as `FFConvM`
+  norm→Linear→SiLU→depthwise-`ConvModule`, an `OffsetScale(heads=4)`, adjacent-pair rotary over the first
+  32 of the 128 qk dims, gate `(att_u·v)·sigmoid(att_v·u)`) and a `Gated_FSMN_Block` (a `UniDeepFsmn`
+  depthwise `Conv2d[39,1]` memory, the Chatterbox-S3 FSMN family). Norms are the `ScaleNorm`/`CLayerNorm`/
+  `LayerNorm(1e-6)` zoo. The front end is `NFKMLXKaldiFbank` — `torchaudio.compliance.kaldi.fbank`
+  reproduced (DC-removal, pre-emphasis 0.97, Povey/hamming, pow2-padded FFT, kaldi-mel, log) + `compute_deltas`
+  ×2 → 180-dim, with **`dither` forced to 0** (it is random noise; parity is impossible with it on). The
+  mask multiplies a hamming/`center=false` STFT (phase kept) and inverts. Two facts are load-bearing, both
+  found on the M1: **`num_spks=2`** (the wrapper builds the MaskNet with the default, so `conv1d_out`
+  widens to `dModel·2` and the net returns speaker 0 — the port slices the first `dModel` channels, exact
+  because the 1×1 gated output and decoder are per-position), and **the FLASH linear-attention path divides
+  by the ORIGINAL sequence length `n = x.shape[-2]`, not the padded length** (only wrong when the frame
+  count is not a multiple of the group size; it dragged FLASH block 0 to 0.9975, localized by the block
+  seams). `remapReferenceKey` strips the `mossformer.` wrapper prefix, drops the pos-enc/rotary buffers,
+  and translates the `FFConvM.mdl`/`ConvModule`/`Gated_FSMN_Block.conv1`/output-gate Sequential indices.
+  The oracle is `run_reference.py mossformer2_se` (dither=0; records the 180-dim feature, STFT, encoder,
+  first/last block, mask, waveform), run against the source files (`IK_MOSSFORMER2_SE_SRC`) on
+  `~/.inferkit-validation/llmvenv` (needs `rotary_embedding_torch` + `torchinfo`); the parity test feeds
+  the recorded feature to isolate the backbone from the fbank. The SR sibling (mel→mel backbone + a BigVGAN
+  vocoder) is a later add. Registered under `mossformer2-se`.
 - `NFKMLXDAC` (`@objc`) — the Descript Audio Codec, the toolkit's FIRST neural audio codec and the class a
   codec-token speech-LLM generates into. Three parts: a convolutional **encoder** (a wide first conv,
   then downsampling stages of three dilated residual units + Snake + a strided conv, doubling the width
@@ -3531,7 +3559,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime`, `depth-anything-v2-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `clip-vit-b-32`, `siglip2-base-patch16-224`, `taesd`, `robust-video-matting`, `codeformer`, `zero-dce`, `modnet`, `yolo`,
   `segformer-b0`, `swinir-x4`, `colorizer-eccv16`, `pose-simplebaseline`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `htdemucs`, `rtdetr`, `rf-detr`, `birefnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`

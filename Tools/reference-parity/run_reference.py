@@ -5684,6 +5684,79 @@ def run_storm(image):
     return ri(score_out)
 
 
+def run_mossformer2_se(image, checkpoint):
+    """MossFormer2 SE 48K (modelscope/ClearerVoice-Studio) speech enhancement, seam by seam.
+
+    Set IK_MOSSFORMER2_SE_SRC to the ClearerVoice source dir that holds `models/mossformer2_se/`
+    (e.g. `.../ClearerVoice-Studio/clearvoice/clearvoice`). `--checkpoint` is `last_best_checkpoint.pt`.
+    The fbank front end forces **dither=0** (the released `compute_fbank` uses dither=1.0, which is
+    random noise and makes parity impossible). Records the 180-dim network feature, the masking STFT,
+    the encoder output, the first and last block outputs, the 961-bin mask, and the waveform.
+    """
+    import os
+    import torchaudio
+
+    sys.path.insert(0, os.environ.get("IK_MOSSFORMER2_SE_SRC", "."))
+    from models.mossformer2_se.mossformer2 import MossFormer_MaskNet
+
+    net = MossFormer_MaskNet(in_channels=180, out_channels=512, out_channels_final=961).eval()
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = state.get("model", state) if isinstance(state, dict) else state
+    stripped = {k[len("mossformer."):]: v for k, v in state.items() if k.startswith("mossformer.")}
+    net.load_state_dict(stripped if stripped else state, strict=True)
+
+    sr, n_fft, hop, win = 48000, 1920, 384, 1920
+    samples = sr
+    t = np.arange(samples, dtype=np.float32) / sr
+    gen = np.random.default_rng(9)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 140 * (k + 1) * t) for k in range(5))
+    envelope = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * t)
+    wave = (speech * envelope + 0.05 * gen.standard_normal(samples)).astype(np.float32)
+    y = torch.from_numpy(wave).unsqueeze(0)
+
+    fbank = torchaudio.compliance.kaldi.fbank(y, dither=0.0, frame_length=40.0, frame_shift=8.0,
+                                              num_mel_bins=60, sample_frequency=sr, window_type="hamming")
+    delta = torchaudio.functional.compute_deltas(fbank.transpose(0, 1)).transpose(0, 1)
+    delta2 = torchaudio.functional.compute_deltas(
+        torchaudio.functional.compute_deltas(fbank.transpose(0, 1))).transpose(0, 1)
+    feat = torch.cat([fbank, delta, delta2], dim=1)                    # [S, 180]
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            seams[name] = o[0] if isinstance(o, tuple) else o
+        return fn
+    blocks = net.mdl.intra_mdl.mossformerM.layers
+    handles = [net.conv1d_encoder.register_forward_hook(hook("encoder")),
+               blocks[0].register_forward_hook(hook("block0")),
+               blocks[len(blocks) - 1].register_forward_hook(hook("block_last"))]
+    with torch.no_grad():
+        out = net(feat.unsqueeze(0).transpose(1, 2))                  # wrapper transposes [B,S,180]->[B,180,S]
+    mask = out[0] if isinstance(out, (list, tuple)) else out          # [B, 961, S] or [B, S, 961]
+    for handle in handles:
+        handle.remove()
+
+    window = torch.hamming_window(win, periodic=False)
+    spec = torch.stft(y, n_fft, hop, win, window, center=False, return_complex=False)   # [1, F, T, 2]
+    mask_t = mask.squeeze(0)
+    if mask_t.shape[0] != spec.shape[1]:                              # want [F, T]
+        mask_t = mask_t.transpose(0, 1)
+    masked = spec.squeeze(0) * mask_t.unsqueeze(-1)                   # [F, T, 2]
+    complex_spec = torch.complex(masked[..., 0], masked[..., 1])
+    wav = torch.istft(complex_spec, n_fft, hop, win, window, center=False, length=samples)
+
+    globals()["_extra"] = {
+        "waveform": y[0].contiguous(),
+        "feature": feat.contiguous(),                                # [S, 180] the net input
+        "spectrum": spec.squeeze(0).contiguous(),                    # [F, T, 2]
+        "encoder": seams["encoder"][0].contiguous(),
+        "block0": seams["block0"][0].contiguous(),
+        "block_last": seams["block_last"][0].contiguous(),
+        "mask": mask.squeeze(0).contiguous(),
+    }
+    return wav.contiguous()                                          # [samples]
+
+
 MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss,
@@ -5707,7 +5780,8 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "birefnet_decode": run_birefnet_decode,
                      "mpsenet": run_mpsenet,
                      "gtcrn": run_gtcrn,
-                     "sgmse": run_sgmse}
+                     "sgmse": run_sgmse,
+                     "mossformer2_se": run_mossformer2_se}
 
 
 def main():

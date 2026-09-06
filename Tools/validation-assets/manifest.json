@@ -1084,6 +1084,18 @@
    "note": "GTCRN ultra-light (~48.2K param) real-time speech enhancement (Xiaobin-Rong/gtcrn, MIT). Not on HF: git-clone the repo to reference-sources/gtcrn (checkpoints ship with it), then convert checkpoints/model_trained_on_dns3.tar with Tools/gtcrn-to-safetensors (or the native torch reader). STFT is n_fft=512/hop=256 with a SQRT-Hann window (hann_window(512).pow(0.5), from infer.py). Parity via `run_reference.py gtcrn --checkpoint <ckpt>` with IK_GTCRN_SRC=<clone>, on the source (torch only, runs on 3.9). Five load-bearing facts: erb_fc/ierb_fc are bias=False (fixed ERB filterbank); the deconv weight transpose is group-aware ([in,out/g,kH,kW] -> [out,kH,kW,in/g]); the shared NFKMLXGRUCell must add the n-gate hidden bias b_hn at step 0 (MLX's GRU omits it; PyTorch keeps it); the deconv front-pads time for BOTH conv and deconv with the ConvTranspose padding=(2*dilation,1) removing the excess (no crop); and MLX's GROUPED ConvTranspose does not match PyTorch, so a grouped deconv runs each group as its own groups=1 transpose. At reference parity: waveform cosine > 0.999, all seams (encoder/skips/dpgrnn/decoder) exact."
   },
   {
+   "key": "MOSSFORMER2_SE",
+   "hf": "alibabasglab/MossFormer2_SE_48K",
+   "files": [
+    "last_best_checkpoint.pt"
+   ],
+   "config": {
+    "IK_VAL_MOSSFORMER2_SE": "mossformer2-se/last_best_checkpoint.pt",
+    "IK_PARITY_MOSSFORMER2_SE": "records/mossformer2_se.safetensors"
+   },
+   "note": "MossFormer2 SE 48K full-band speech enhancement (modelscope/ClearerVoice-Studio, Apache-2.0). Weights on HF (alibabasglab/MossFormer2_SE_48K/last_best_checkpoint.pt, keyed mossformer.*, loaded directly by the native .pth reader). The model SOURCE is not on HF: the mossformer2_se package files are fetched to reference-sources/clearervoice/models/mossformer2_se (curled, not cloned, to respect the repo git-clone safeguard). Oracle: `run_reference.py mossformer2_se --checkpoint <ckpt>` with IK_MOSSFORMER2_SE_SRC=<reference-sources/clearervoice>, on ~/.inferkit-validation/llmvenv (add rotary_embedding_torch + torchinfo). The fbank front end FORCES dither=0 (the released compute_fbank uses dither=1.0, random noise that makes parity impossible). Two load-bearing facts found on the M1: num_spks=2 (the wrapper builds MossFormer_MaskNet with the default, so conv1d_out widens to dModel*2 and the net returns speaker 0 -> the port slices the first dModel channels, exact because the 1x1 gated output/decoder are per-position); and the FLASH linear-attention path divides by the ORIGINAL sequence length n=x.shape[-2], NOT the padded length (only wrong when frames are not a multiple of group 256). At reference parity on the M1 (float32): fbank+delta 1.0, encoder and FLASH block0 0.99999994, FLASH block_last and the 961-bin mask 1.0, enhanced waveform 0.9999998. Parity test feeds the recorded feature to isolate the backbone from the Kaldi fbank."
+  },
+  {
    "key": "SGMSE",
    "git": "https://github.com/sp-uhh/sgmse",
    "directory": "raw/sgmse",

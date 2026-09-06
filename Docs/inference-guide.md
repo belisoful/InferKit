@@ -664,11 +664,15 @@ alternatives.
        stayed at parity. Both networks are at reference parity (denoiser and score seams cosine
        1.000000000000) at a tiny random configuration — the released combined checkpoints are GDrive-only,
        and the NCSN++ backbone itself is already at released-weight parity via SGMSE+.
-    5. **MossFormer2 SE 48K** (`alibabasglab/MossFormer2_SE_48K`, Apache) — a full-band 48 kHz
-       production denoiser, the one high-fidelity denoiser in the family with redistributable weights
-       and a clean oracle (Alibaba's ClearerVoice). Its gated-attention plus FSMN-recurrent block
-       reuses the FSMN memory already built for Chatterbox's S3 tokenizer, and its companion
-       super-resolution checkpoint covers bandwidth extension under the same Apache license.
+    5. **MossFormer2 SE 48K** (`alibabasglab/MossFormer2_SE_48K`, Apache) — **SHIPPED**
+       (`NFKMLXMossFormer2SENet`): a full-band 48 kHz production denoiser, the one high-fidelity denoiser
+       in the family with redistributable weights and a clean oracle (Alibaba's ClearerVoice). The
+       mask-predicting MossFormer2 backbone (FLASH gated attention + `Gated_FSMN` — the FSMN memory
+       reused from Chatterbox's S3 tokenizer) over a Kaldi-fbank front end is at reference parity on the
+       released weights, measured on the M1 (float32): the fbank 1.0, the encoder and FLASH block 0
+       0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998. Its
+       companion super-resolution checkpoint (a mel→mel backbone plus a BigVGAN vocoder) covers bandwidth
+       extension under the same Apache license and is the remaining SR add.
     6. **DeepFilterNet3** (`Rikorose/DeepFilterNet`, MIT/Apache) — a real-time denoiser beside
        `NFKMLXDenoiser` (about 2.3M parameters, an ERB encoder plus a per-bin complex deep-filtering
        FIR). Its dereverberation is weak, so it ships as a denoiser rather than the dereverb answer.

@@ -362,6 +362,10 @@ final class MLXModelGalleryExamples: XCTestCase {
                                             config: NFKMLXStoRMConfiguration(base: stormBase, condition: .both))
         XCTAssertNotNil(try storm.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: shortClip])).output(forKey: NFKOutputAudio))
 
+        // MossFormer2 SE: full-band 48 kHz enhancement — a Kaldi-fbank mask over the MossFormer2 backbone.
+        let mossformer2 = try NFKMLXMossFormer2Factory.backend(weightsURL: nil)
+        XCTAssertNotNil(try mossformer2.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
         let vad = try NFKMLXVAD.backend(weightsURL: nil)
         XCTAssertNotNil(try vad.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).segments)
 

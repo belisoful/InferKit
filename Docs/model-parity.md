@@ -184,6 +184,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | Hybrid Transformer Demucs (v4) | `NFKMLXHTDemucs` | `demucs` 4.0.1 `load_model` | htdemucs 955717e8 | spectrogram 0.99999999999995, bottleneck in/out 0.99999999996 / 0.99999999999, freq-out 0.99999999999601, time-out 0.99999999999975; separated stems 0.99999999999955, mean abs 7.7e-8 |
 | Conv-TasNet | `NFKMLXConvTasNet` | asteroid `ConvTasNet` | Libri2Mix sep_clean 16k | per-speaker cosine 0.99999999949 / 0.99999999999975 |
 | Speech denoiser (dns48) | `NFKMLXDenoiser` | facebookresearch/denoiser | dns48 | cosine 0.99999999999992; on real speech the correlation with the clean signal rises 0.9657 → 0.9970 |
+| MossFormer2 SE 48K | `NFKMLXMossFormer2SENet` | ClearerVoice `mossformer2_se` MaskNet | alibabasglab/MossFormer2_SE_48K | Kaldi fbank+Δ 1.0, encoder & FLASH block 0 0.99999994, FLASH block last & 961-bin mask 1.0, enhanced waveform 0.9999998 |
 | MarbleNet VAD | `NFKMLXVAD` | NeMo | Frame_VAD_Multilingual_MarbleNet_v2.0 | mel 0.99999999999974, probabilities 0.99999999999983 (largest abs 3.0e-7) |
 | Silero VAD v6 | `NFKMLXSileroVAD` | snakers4 `silero_vad` 6.2.1 JIT | silero_vad.jit (16 kHz) | per-chunk cosine 0.99999999999979, max abs 6.9e-7, threshold agreement 32/32 |
 | PANNs Cnn14 tagger | `NFKMLXAudioTagger` | `audioset_tagging_cnn` | Cnn14_mAP=0.431 | mel 0.99999999, embedding 0.99999994, tags 0.99999988, same top class (513) |

@@ -181,6 +181,7 @@ limits.
 - ``NFKMLXGTCRN``
 - ``NFKMLXSGMSE``
 - ``NFKMLXStoRM``
+- ``NFKMLXMossFormer2SENet``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

@@ -383,6 +383,7 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on every stage (VoiceEncoder 3×256, S3 tokenizer 6×1280, T3 Llama 520M with llama3 rope, S3Gen flow + HiFT) | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
+| MossFormer2 SE 48K | ``NFKMLXMossFormer2SENet`` | `NFKMLXMossFormer2SENet` (FLASH + `Gated_FSMN`) over `NFKMLXKaldiFbank` | `NFKMLXMossFormer2Configuration()` (48 kHz, 24 blocks) | `mossformer2-se` | ``NFKMLXMossFormer2Backend`` |
 | HT Demucs (v4) | ``NFKMLXHTDemucs`` | ``NFKMLXHTDemucsNet`` | `NFKMLXHTDemucsConfiguration.htdemucs` | `htdemucs` | ``NFKMLXHTDemucsBackend`` |
 | Conv-TasNet | ``NFKMLXConvTasNet`` | `NFKMLXConvTasNetNet` | `NFKMLXConvTasNetConfiguration.libri2Mix16k`; `perChannelPReLU` optional | `conv-tasnet` | ``NFKMLXConvTasNetBackend`` |
 | MarbleNet VAD | ``NFKMLXVAD`` | `NFKMLXVADNet` | `NFKMLXVADConfiguration.marbleNet` | `vad-marblenet` | ``NFKMLXVADBackend`` |
@@ -403,6 +404,8 @@ let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: vo
 let backend = try NFKMLXDemucs.backend(weightsURL: url)
 // Speech denoiser
 let backend = try NFKMLXDenoiser.backend(weightsURL: url)
+// MossFormer2 SE 48K (full-band enhancement)
+let backend = try NFKMLXMossFormer2Factory.backend(weightsURL: url)
 // HT Demucs (v4)
 let backend = try NFKMLXHTDemucs.backend(weightsURL: url)
 // Conv-TasNet

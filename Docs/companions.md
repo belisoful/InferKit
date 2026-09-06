@@ -301,6 +301,13 @@ models.
   an initial estimate, then a conditioned score network regenerates from it (the reverse SDE re-centered on
   the estimate), so the diffusion needs far fewer steps. Reuses SGMSE+'s NCSN++ backbone (generalized for
   the two roles); both networks at reference parity (cosine 1.0).
+- **`NFKMLXMossFormer2SENet`** — MossFormer2 SE 48K (`mossformer2-se`, `alibabasglab/MossFormer2_SE_48K`,
+  Apache-2.0), full-band speech enhancement: a mask-predicting MossFormer2 backbone (FLASH gated attention
+  — quadratic ReLU-squared local plus a linear global path — interleaved with a `Gated_FSMN` depthwise
+  memory, over a Kaldi-fbank + Δ + ΔΔ front end) produces a 961-bin magnitude mask applied to the STFT.
+  At reference parity on the released weights (M1, float32): the fbank 1.0, the encoder and FLASH block 0
+  0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998. The SR sibling
+  (mel→mel backbone plus a BigVGAN vocoder) is a later add.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
   SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,
