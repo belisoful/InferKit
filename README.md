@@ -25,7 +25,7 @@ job.completionHandler = ^(NFKInferenceJob *done) { NSLog(@"%@", done.result.text
 ## Install
 
 ```swift
-.package(url: "https://github.com/belisoful/InferKit.git", from: "0.2.0")
+.package(url: "https://github.com/belisoful/InferKit.git", from: "0.3.0")
 ```
 
 or `pod 'InferKit'`. The optional MLX and Foundation Models companions are separate packages in this
@@ -138,7 +138,13 @@ MLX is roughly 97% — InferKitMLX and the core together are a few hundred kilob
 
 [Docs/installation.md](Docs/installation.md) carries a linking recipe for each case — Xcode app,
 framework, plug-in bundle, SwiftPM `binaryTarget`, your own static library — and the release-asset
-matrix. The artifacts are not committed; they compress to about 49 MB across three release assets.
+matrix. The artifacts are not committed; they compress to about 63 MB across three release assets.
+
+Prebuilt binaries for the latest release (v0.3.0):
+
+- [`InferKit.xcframework.zip`](https://github.com/belisoful/InferKit/releases/download/v0.3.0/InferKit.xcframework.zip) (1.3 MB) — the core alone, no MLX
+- [`InferKitMLX.xcframework.zip`](https://github.com/belisoful/InferKit/releases/download/v0.3.0/InferKitMLX.xcframework.zip) (37 MB) — static, core + MLX together, the best fit for most Objective-C apps
+- [`InferKitMLXDynamic.xcframework.zip`](https://github.com/belisoful/InferKit/releases/download/v0.3.0/InferKitMLXDynamic.xcframework.zip) (24 MB) — one shared framework across several targets or plug-ins
 
 The MLX companion's tests need the Metal library only Xcode's build system bundles, so run those
 through `xcodebuild test -destination 'platform=macOS' -skipPackagePluginValidation` with each of its

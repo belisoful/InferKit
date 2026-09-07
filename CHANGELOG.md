@@ -268,6 +268,75 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `resetMeasuredBandwidth` expose the bandwidth probe `NFKMLXModelSizing` measures, beside the other
   machine readings.
 
+#### Language models (continued)
+
+- `NFKMLXDeepSeek` runs DeepSeek V4: Multi-head Latent Attention over a mixture of experts, with a
+  learned per-head attention sink, a compressor and a sparse indexer, and Hyper-Connections that carry
+  the residual as parallel copies. The arithmetic is at reference parity against transformers' own
+  DeepSeek V4 at a tiny all-sliding configuration (every layer ≥ 0.9999995, logits 0.9999999999); the
+  released Flash and Pro checkpoints are accounted for by shape, and `NFKMLXDeepSeekQuantization`
+  decodes the release's fp8 and packed-fp4 storage exactly.
+- `NFKMLXHybridLanguage` runs the hybrid Qwen3.5 / 3.6 / 3.8 decoder: three quarters of its layers
+  replace attention with a gated delta-rule recurrence (a fixed-size state, cost linear in sequence
+  length), every fourth layer a gated full attention. At reference parity on the released Qwen3.5-4B
+  (all 33 hidden states exact, logit cosine 0.9999999999962); the 27B is accounted for by shape.
+
+#### Text-to-image and video generation
+
+- LTX-Video text-to-video, end to end: `NFKMLXLTXTransformer` (a 2B 3-D DiT), `NFKMLXLTXVideoVAE` (a
+  causal 3-D autoencoder), `NFKMLXT5Encoder` (a T5-XXL v1.1 text encoder), and a rectified-flow
+  sampler, assembled by `NFKMLXLTXPipeline`. Each stage is at reference parity against diffusers or
+  transformers (DiT velocity 0.99999999999, VAE decode 0.99999999996, T5 embedding 0.99999999998).
+- Z-Image text-to-image: `NFKMLXZImageTransformerNet`, a 6B single-stream S3-DiT over the shared
+  `NFKMLXSDAutoencoder` in a new Flux configuration, with the shipped Qwen3 decoder as its text encoder
+  (`NFKMLXZImagePipeline`). DiT velocity cosine 0.9999999999999 against diffusers.
+- SANA text-to-image: `NFKMLXSANATransformerNet`, a linear-attention DiT over the Deep-Compression
+  autoencoder `NFKMLXDCAutoencoderNet` (32× spatial), with Gemma-2 (`NFKMLXGemma2Net`) as its text
+  encoder and the released DPM-Solver++ sampler (`NFKMLXSANAPipeline`). DiT velocity 0.9999999999999,
+  DC-AE decode on the released Sana_600M VAE 0.9999999998.
+- Wan text-to-video: `NFKMLXWanTransformerNet` (a 3-D DiT), `NFKMLXWanVideoVAENet` (a stateful causal
+  3-D VAE, the 2.1 and 2.2 residual paths), the umT5 text encoder, and the released UniPC sampler
+  (`NFKMLXWanPipeline`). DiT velocity 0.9999999999999.
+- `NFKMLXTAESD` — the tiny Stable Diffusion autoencoder for an instant latent preview, at parity
+  against madebyollin's taesd (latent and decode 0.9999999999996).
+- `NFKMLXIPAdapterImageProjection` / `NFKMLXIPAdapterAttention` — IP-Adapter image conditioning,
+  threaded into the shipped `NFKMLXSDUNet` cross-attention, at reference parity against diffusers.
+- The released multistep samplers ship as value types, each verified exactly against diffusers:
+  `NFKMLXDPMSolverScheduler` (DPM-Solver++) and `NFKMLXUniPCScheduler` (UniPC).
+
+#### Speech synthesis, restoration, and enhancement
+
+- `NFKMLXKokoro` runs Kokoro-82M (StyleTTS2 / iSTFTNet), a phoneme-to-waveform voice at reference
+  parity seam by seam against the vendored `KModel`: the deterministic seams exact, the NSF vocoder
+  float-precision-limited (waveform ~0.997). It takes a phoneme string, so a caller brings the
+  grapheme-to-phoneme front end.
+- Eight speech restoration and enhancement models, each at measured reference parity on the released
+  weights and reached through an `NFKMLXSpeechBackend`: `NFKMLXMPSENet` (MP-SENet, magnitude and
+  phase), `NFKMLXGTCRN` (GTCRN, ~48K parameters, real-time), `NFKMLXSGMSE` (SGMSE+, score-based
+  generative dereverberation), `NFKMLXStoRM` (StoRM, few-step stochastic regeneration),
+  `NFKMLXMossFormer2SENet` (MossFormer2 SE 48K), `NFKMLXDeepFilterNet` (DeepFilterNet3, real-time
+  48 kHz denoising), `NFKMLXVoiceRestore` (a flow-matching universal restorer with a BigVGAN v2
+  vocoder), and `NFKMLXResembleEnhance` (a five-network general restorer). Waveform cosines run from
+  above 0.999 to 0.9999999.
+
+#### Detection, matting, depth, vision, and audio codecs
+
+- `NFKMLXRTDetr` (RT-DETR) and `NFKMLXRFDetr` (RF-DETR) — transformer object detectors under Apache
+  licenses, each at reference parity on the released weights (RT-DETR r50vd logits 0.9999999999,
+  RF-DETR base decoder 0.9999999999). Both return `NFKDetection`s with no non-max suppression.
+- `NFKMLXBiRefNet` — high-resolution background removal (MIT), at reference parity on the released
+  weights (every seam ~1e-12). Its `ASPPDeformable` decoder's deformable convolution reduces to the
+  shared bilinear-gather primitive, so no DCNv2 Metal kernel is needed.
+- `NFKMLXDepthAnything3` — Depth Anything 3 monocular depth (DA3-SMALL), at reference parity against
+  the authors' package (every backbone and head stage ≥ 0.9999999999, the exp-depth map 0.9999999999).
+- `NFKMLXSigLIP2` — SigLIP 2 image and text embeddings (base-patch16-224), at reference parity against
+  transformers (image and text embedding 0.999999999999, sigmoid logits to 1e-5).
+- `NFKMLXDAC` (Descript Audio Codec) and `NFKMLXSNAC` (multi-scale) — the first neural audio codecs,
+  each at reference parity (codes exact, reconstruction 0.99999999999).
+- `NFKMLXSileroVAD` — Silero VAD v6, a streaming STFT-plus-convolution-plus-LSTM voice-activity
+  detector, at reference parity against the released JIT (per-chunk 0.99999999999, threshold agreement
+  exact).
+
 ### Changed
 
 - `NFKFaceObservation` and `NFKMLXRetinaFaceDetector` are classes rather than structs. Reads are
