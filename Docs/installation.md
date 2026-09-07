@@ -87,7 +87,7 @@ rather than failing when a variant or the macOS slice was not built.
 | an app that wants one self-contained drop-in | `InferKitMLXDynamic.xcframework` | the Metal library rides inside it |
 | several plug-ins in one host | `InferKitMLXDynamic.xcframework` | they share one copy instead of one each |
 | anything in Swift using `MLXArray` closures | the SwiftPM package, not a binary | the closure backends expose MLX types, so you need MLX's own module interfaces |
-| the core alone, no MLX | `InferKit.xcframework` | 0.4 MB, no MLX runtime at all |
+| the core alone, no MLX | `InferKit.xcframework` | 4.7 MB, no MLX runtime at all |
 
 Both MLX artifacts are arm64 only, with macOS, iOS device, and iOS simulator slices. **Do not add
 `InferKit.xcframework` or the InferKit source package beside an MLX artifact**: the core travels inside
@@ -192,9 +192,9 @@ Three compressed assets, produced with
 
 | asset | contents | size |
 | --- | --- | --- |
-| `InferKit.xcframework.zip` | the core alone, no MLX | 0.7 MB |
-| `InferKitMLX.xcframework.zip` | static, three slices, Metal library inside each | 28 MB |
-| `InferKitMLXDynamic.xcframework.zip` | dynamic, three slices | 19 MB |
+| `InferKit.xcframework.zip` | the core alone, no MLX | 1.3 MB |
+| `InferKitMLX.xcframework.zip` | static, three slices, Metal library inside each | 37 MB |
+| `InferKitMLXDynamic.xcframework.zip` | dynamic, three slices | 24 MB |
 
 **One asset per variant, carrying every slice**, rather than splitting by platform. An iOS developer
 always needs two slices (device and simulator), so a platform split is two-way rather than three and

@@ -54,7 +54,7 @@ final class NFKMLXVoiceRestoreTests: XCTestCase {
     /// packed sequence (32 registers + mel frames), then the final velocity.
     func testTransformerParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let env = ProcessInfo.processInfo.environment
+        let env = NFKMLXValidationConfig.environment
         guard let weightsPath = env["IK_VAL_VOICERESTORE"], let recordPath = env["IK_PARITY_VOICERESTORE"] else {
             throw XCTSkip("set IK_VAL_VOICERESTORE (weights) and IK_PARITY_VOICERESTORE (oracle record)")
         }
@@ -113,7 +113,7 @@ final class NFKMLXVoiceRestoreTests: XCTestCase {
     /// anti-aliased SnakeBeta activations and the kaiser-sinc resamplings this port recomputes.
     func testBigVGANParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let env = ProcessInfo.processInfo.environment
+        let env = NFKMLXValidationConfig.environment
         guard let weightsPath = env["IK_VAL_BIGVGAN"], let recordPath = env["IK_PARITY_BIGVGAN"] else {
             throw XCTSkip("set IK_VAL_BIGVGAN (weights) and IK_PARITY_BIGVGAN (oracle record)")
         }
@@ -134,7 +134,7 @@ final class NFKMLXVoiceRestoreTests: XCTestCase {
     /// `y0`, and the vocoder — the restored mel and the restored waveform against the recorded oracle.
     func testEndToEndParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let env = ProcessInfo.processInfo.environment
+        let env = NFKMLXValidationConfig.environment
         guard let vrPath = env["IK_VAL_VOICERESTORE"], let bvPath = env["IK_VAL_BIGVGAN"],
               let recordPath = env["IK_PARITY_VOICERESTORE_E2E"] else {
             throw XCTSkip("set IK_VAL_VOICERESTORE, IK_VAL_BIGVGAN and IK_PARITY_VOICERESTORE_E2E")

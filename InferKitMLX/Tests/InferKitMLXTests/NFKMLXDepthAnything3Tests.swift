@@ -25,7 +25,7 @@ final class NFKMLXDepthAnything3Tests: XCTestCase {
     }
 
     private func envPath(_ key: String) throws -> String {
-        guard let path = ProcessInfo.processInfo.environment[key] else { throw XCTSkip("set \(key)") }
+        guard let path = NFKMLXValidationConfig.environment[key] else { throw XCTSkip("set \(key)") }
         let expanded = (path as NSString).expandingTildeInPath
         guard FileManager.default.fileExists(atPath: expanded) else { throw XCTSkip("\(key) missing: \(expanded)") }
         return expanded

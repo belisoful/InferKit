@@ -36,7 +36,7 @@ final class NFKMLXResembleEnhanceTests: XCTestCase {
 
     private func load() throws -> (NFKMLXResembleEnhance, String) {
         try requireMLXRuntime()
-        let env = ProcessInfo.processInfo.environment
+        let env = NFKMLXValidationConfig.environment
         guard let weights = env["IK_VAL_REENHANCE"], let records = env["IK_PARITY_REENHANCE"] else {
             throw XCTSkip("set IK_VAL_REENHANCE (checkpoint) and IK_PARITY_REENHANCE (records dir)")
         }

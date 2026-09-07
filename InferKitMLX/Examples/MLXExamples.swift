@@ -452,7 +452,7 @@ final class MLXExamples: XCTestCase {
         // NFKInferenceBackend *llm = [NFKMLXLanguage backendWithGGUFURL:url error:&e];  // Objective-C
         // The config reader maps GGUF metadata (architecture, block_count, embedding_length, …) onto
         // the same NFKMLXLanguageConfiguration a HF config.json produces.
-        XCTAssertTrue(NFKMLXLanguage.responds(to: Selector(("backendWithGGUFURL:error:"))))
+        XCTAssertTrue(NFKMLXLanguage.responds(to: NSSelectorFromString("backendWithGGUFURL:error:")))
     }
 
     // Docs/examples.md: The Gemma 4 decoders (E2B/E4B, the 26B-A4B mixture, the 12B unified) generate
@@ -461,7 +461,7 @@ final class MLXExamples: XCTestCase {
     func testExampleGemmaTextBackend() throws {
         // let backend = try NFKMLXGemmaLanguage.backend(directoryURL: releaseDirectory)         // Swift
         // NFKInferenceBackend *llm = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&e]; // ObjC
-        XCTAssertTrue(NFKMLXGemmaLanguage.responds(to: Selector(("gemmaBackendWithDirectoryURL:error:"))))
+        XCTAssertTrue(NFKMLXGemmaLanguage.responds(to: NSSelectorFromString("gemmaBackendWithDirectoryURL:error:")))
     }
 
     // Docs/examples.md: Gemma 4's tri-modal preprocessing. The image processor turns a CGImage into the

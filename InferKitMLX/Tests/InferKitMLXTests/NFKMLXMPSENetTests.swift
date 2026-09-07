@@ -101,7 +101,7 @@ final class NFKMLXMPSENetTests: XCTestCase {
     /// pha, and the waveform. Skips until both are set.
     func testReferenceParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_MPSENET"],
               let recordPath = environment["IK_PARITY_MPSENET"] else {
             throw XCTSkip("set IK_VAL_MPSENET (weights) and IK_PARITY_MPSENET (oracle record) to run parity")
@@ -127,7 +127,7 @@ final class NFKMLXMPSENetTests: XCTestCase {
     /// is transposed into the reference's `[C, T, F]` (or `[F, T]`) layout before the cosine.
     func testSeamsAgainstTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_MPSENET"],
               let recordPath = environment["IK_PARITY_MPSENET"] else {
             throw XCTSkip("set IK_VAL_MPSENET and IK_PARITY_MPSENET to run the seam comparison")

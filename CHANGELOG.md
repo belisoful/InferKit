@@ -7,9 +7,7 @@ All notable changes to InferKit are documented here. The format follows
 While the version is below 1.0.0, a minor bump may change public API. SwiftPM treats a 0.x minor as
 breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each minor deliberately.
 
-## [0.3.0] — unreleased
-
-`NFKInferKit.version` and `InferKit.podspec` already read `0.3.0`; the `v0.3.0` tag is the release step.
+## [0.3.0] — 2026-09-06
 
 ### InferKitMLX (companion)
 

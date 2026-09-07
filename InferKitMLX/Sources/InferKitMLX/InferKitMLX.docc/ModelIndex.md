@@ -383,6 +383,10 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on every stage (VoiceEncoder 3×256, S3 tokenizer 6×1280, T3 Llama 520M with llama3 rope, S3Gen flow + HiFT) | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
+| MP-SENet | ``NFKMLXMPSENet`` | TS-transformer (bidirectional-GRU FFN) over compressed magnitude + phase | `NFKMLXMPSENetConfiguration()` (fftSize 400, hop 100, 4 blocks) | `mpsenet`; `NFKMLXMPSENetFactory.backend(weightsURL:)` | ``NFKMLXMPSENetBackend`` |
+| GTCRN | ``NFKMLXGTCRN`` | ERB band merge/split, grouped-conv encoder/decoder, dual-path grouped RNN → complex ratio mask (~48K params) | `NFKMLXGTCRNConfiguration()` | `gtcrn`; `NFKMLXGTCRNFactory.backend(weightsURL:)` | ``NFKMLXGTCRNBackend`` |
+| SGMSE+ | ``NFKMLXSGMSE`` | `NFKMLXNCSNppNet` score network + OUVE reverse-SDE predictor-corrector sampler | `NFKMLXSGMSEConfiguration()` (`ncsnpp` / `ncsnpp_48k`) | `sgmse`; `NFKMLXSGMSE.backend(weightsURL:)` | ``NFKMLXSGMSEBackend`` |
+| StoRM | ``NFKMLXStoRM`` | discriminative predictor + `[noisy, denoised]`-conditioned NCSN++ score; SDE re-centered on the estimate | `NFKMLXStoRMConfiguration()` | `storm`; `NFKMLXStoRM.backend(weightsURL:)` | ``NFKMLXStoRMBackend`` |
 | MossFormer2 SE 48K | ``NFKMLXMossFormer2SENet`` | `NFKMLXMossFormer2SENet` (FLASH + `Gated_FSMN`) over `NFKMLXKaldiFbank` | `NFKMLXMossFormer2Configuration()` (48 kHz, 24 blocks) | `mossformer2-se` | ``NFKMLXMossFormer2Backend`` |
 | DeepFilterNet3 | ``NFKMLXDeepFilterNet`` | `DfNet` (`SqueezedGRU_S` encoder / ERB decoder / DF decoder) over a libdf-reproduced DSP | `NFKMLXDeepFilterNetConfiguration()` (48 kHz, 32 ERB bands, 96 DF bins) | `deepfilternet3` | ``NFKMLXDeepFilterNetBackend`` |
 | VoiceRestore | ``NFKMLXVoiceRestore`` / ``NFKMLXBigVGAN`` | E2-TTS CFM transformer (gateloop + adaLN) + BigVGAN v2 vocoder | `NFKMLXVoiceRestoreConfiguration()` + `NFKMLXBigVGANConfiguration()` | `voicerestore` | ``NFKMLXVoiceRestoreBackend`` |
@@ -407,6 +411,14 @@ let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: vo
 let backend = try NFKMLXDemucs.backend(weightsURL: url)
 // Speech denoiser
 let backend = try NFKMLXDenoiser.backend(weightsURL: url)
+// MP-SENet (magnitude + phase speech enhancement)
+let backend = try NFKMLXMPSENetFactory.backend(weightsURL: url)
+// GTCRN (real-time speech enhancement, ~48K params)
+let backend = try NFKMLXGTCRNFactory.backend(weightsURL: url)
+// SGMSE+ (score-based generative dereverberation / enhancement)
+let backend = try NFKMLXSGMSE.backend(weightsURL: url)
+// StoRM (few-step stochastic regeneration)
+let backend = try NFKMLXStoRM.backend(weightsURL: url)
 // MossFormer2 SE 48K (full-band enhancement)
 let backend = try NFKMLXMossFormer2Factory.backend(weightsURL: url)
 // DeepFilterNet3 (real-time 48 kHz denoiser)

@@ -2407,10 +2407,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   head (its own `head_dim`) where the sliding layers run theirs, so setting the global head width to the
   sliding one crashed the full layer's projection reshape. The mixture is read from `config.json`
   through `NFKMLXGemmaLanguage.configuration(fromHuggingFace:)` (the same entry the dense sizes use),
-  which turns on the routed branch from `enable_moe_block`. **The Gemma 4 decoder does not yet expose a
-  public `NFKInferenceBackend` factory** — a pre-existing gap for the whole family, dense sizes
-  included: it is reached through `configuration(fromHuggingFace:)` plus the internal `makeNet` /
-  `loadWeights` the parity tests use.
+  which turns on the routed branch from `enable_moe_block`. **The Gemma 4 decoders run through
+  `NFKMLXGemmaBackend`** (`NFKMLXGemmaLanguage.backend(directoryURL:)` / `@objc
+  gemmaBackendWithDirectoryURL:error:`), which reads a release directory and dispatches on its config's
+  model type; internally it builds through `configuration(fromHuggingFace:)` plus `makeNet` /
+  `loadWeights` (the path the parity tests use). See the `NFKMLXGemmaBackend` entry below.
 - `NFKMLXGemma4UnifiedNet` (`NFKMLXGemma4Unified.swift`) — the **12B `gemma4_unified_text` decoder**, a
   DIFFERENT architecture from the E-series: no per-layer input embeddings and no mixture, only the
   sandwich block with a per-layer scalar. Its attention is the same one the E-series runs — learned
@@ -3925,6 +3926,14 @@ to prevent. Update ALL of these, in the modality's existing section, mirroring t
   representative forward). This is a compiled test, so run it (`InferKitMLXExamples` scheme).
 - `Tools/validation-assets/manifest.json` — the checkpoint/record/config entry (and an
   `oracle_environments` note if the model needs a new interpreter or extra packages).
+- `~/.inferkit-validation.json` — the model's `IK_VAL_*` / `IK_PARITY_*` keys, as absolute paths into
+  the local validation store, so the full check exercises the model BY DEFAULT rather than only when
+  those keys are set in the environment. The test class must read them through
+  `NFKMLXValidationConfig.environment` (the process environment merged with that JSON), NOT
+  `ProcessInfo.processInfo.environment` directly, or the JSON keys never reach it. This file is a
+  machine's local config, not a tracked repository file, so its "update" is provisioning rather than a
+  commit — but skipping it leaves the model's parity test silently SKIPPED on a plain run (green with
+  nothing behind it), which is exactly the gap a full models test exists to catch.
 
 Not a listing, so NOT required per model: `InferKitMLX/ObjCExamples/MLXObjCExample.m` is a curated
 illustrative set, not an exhaustive gallery.

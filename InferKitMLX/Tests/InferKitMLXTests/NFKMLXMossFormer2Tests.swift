@@ -88,7 +88,7 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
     /// Kaldi-fbank front end is out of the comparison, and checks the encoder seam and the final mask.
     func testSeamsAgainstTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_MOSSFORMER2_SE"],
               let recordPath = environment["IK_PARITY_MOSSFORMER2_SE"] else {
             throw XCTSkip("set IK_VAL_MOSSFORMER2_SE (weights) and IK_PARITY_MOSSFORMER2_SE (oracle record) to run parity")
@@ -127,7 +127,7 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
     /// isolated from the backbone. This is where a divergence surfaces if the kaldi reproduction is off.
     func testKaldiFbankMatchesTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let recordPath = environment["IK_PARITY_MOSSFORMER2_SE"] else {
             throw XCTSkip("set IK_PARITY_MOSSFORMER2_SE (oracle record) to run the fbank comparison")
         }
@@ -143,7 +143,7 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
     /// (fbank → mask → masked iSTFT) against the reference's enhanced waveform.
     func testEnhancedWaveformMatchesTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_MOSSFORMER2_SE"],
               let recordPath = environment["IK_PARITY_MOSSFORMER2_SE"] else {
             throw XCTSkip("set IK_VAL_MOSSFORMER2_SE and IK_PARITY_MOSSFORMER2_SE to run the waveform comparison")

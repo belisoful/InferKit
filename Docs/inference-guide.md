@@ -734,9 +734,10 @@ alternatives.
   - `IP-Adapter` — image conditioning. **SHIPPED** (`NFKMLXIPAdapterImageProjection` /
     `NFKMLXIPAdapterAttention`): the image projection (a CLIP image embedding to a short token
     sequence) and the decoupled cross-attention (`text_attn + scale·ip_attn` through its own
-    `to_k_ip` / `to_v_ip`), at reference parity against diffusers (cosine ~1.0). Threading the ip
-    tokens and scale into the shipped `NFKMLXSDUNet` cross-attention is the remaining integration; the
-    base UNet is frozen, so an adapter is a small file over a shipped SD model.
+    `to_k_ip` / `to_v_ip`), at reference parity against diffusers (cosine ~1.0). The ip tokens and
+    scale are threaded into the shipped `NFKMLXSDUNet` cross-attention (attached per layer via
+    `attachIPAdapter`), at reference parity on the released SD 1.5 adapter weights; the base UNet is
+    frozen, so an adapter is a small file over a shipped SD model.
   - `TAESD` — **SHIPPED** (`NFKMLXTAESD`): the tiny SD autoencoder for an instant latent preview, at
     reference parity against madebyollin's own taesd (latent and decode cosine 0.9999999999, mean
     |difference| 1.9e-7). Encoder + decoder modeled as `[Module]` arrays so the numeric Sequential keys
@@ -746,7 +747,7 @@ alternatives.
     tower + sigmoid logit scale/bias, at reference parity against transformers (image and text embedding
     cosine 0.999999999999, logits to 1e-5).
 - **Vision.** Scoped by a Sept 2026 recon; the build order was Depth Anything 3, then RT-DETR, then
-  RF-DETR (all SHIPPED), then BiRefNet, with SAM 3 blocked on weight access.
+  RF-DETR, and BiRefNet (all SHIPPED), with SAM 3 blocked on weight access.
   - `Depth Anything 3` (monocular) — **SHIPPED** (`NFKMLXDepthAnything3`): DA3-SMALL, at reference
     parity on the released weights, seam by seam, against the authors' `depth_anything_3` package (the
     four hooked backbone features and every head stage ≥ 0.9999999999; the exp-depth map mean-removed
@@ -780,11 +781,11 @@ alternatives.
     global-attention re-partition shape (it reads the unpartitioned shape), and the position-embedding
     interpolation's antialiased-bicubic coefficient (torch's antialias uses the PIL a=-0.5, not the
     -0.75 of the non-antialias path).
-  - `BiRefNet` (MIT) — high-resolution matting, and portable now rather than blocked as an earlier
-    note claimed. The released weights use an `ASPPDeformable` decoder, and its deformable convolution
+  - `BiRefNet` (MIT) — high-resolution matting. **SHIPPED** (`NFKMLXBiRefNet`): at reference parity on
+    the released weights, every seam ~1e-12. The `ASPPDeformable` decoder's deformable convolution
     reduces to the same bilinear-gather (`takeAlong`) primitive used for RAFT/RIFE/RVM and RT-DETR's
-    deformable attention, so no DCNv2 Metal kernel is needed for correctness. `torchvision.ops.deform_conv2d`
-    has a CPU kernel, so the oracle runs here. The real work is the Swin-v1-L backbone. Medium.
+    deformable attention, so no DCNv2 Metal kernel was needed for correctness; the work was the
+    Swin-v1-L backbone (which reuses SwinIR's window attention).
   - `SAM 3 / 3.1` — the successor to the shipped SAM 2, and a large staged effort rather than an
     increment. The SAM 2 Hiera encoder does not transfer: SAM 3 uses a different Perception Encoder, a
     CLIP-style text encoder, and a DETR detector, and only the tracker and mask decoder reuse SAM 2.

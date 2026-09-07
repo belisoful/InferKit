@@ -72,7 +72,7 @@ final class NFKMLXGTCRNTests: XCTestCase {
     /// gtcrn`), then compare the encoder/dpgrnn/decoder seams and the waveform. Skips until both are set.
     func testReferenceParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_GTCRN"],
               let recordPath = environment["IK_PARITY_GTCRN"] else {
             throw XCTSkip("set IK_VAL_GTCRN (weights) and IK_PARITY_GTCRN (oracle record) to run parity")
@@ -98,7 +98,7 @@ final class NFKMLXGTCRNTests: XCTestCase {
     /// into the reference's NCHW `[1,C,T,F]` before the cosine.
     func testSeamsAgainstTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_GTCRN"],
               let recordPath = environment["IK_PARITY_GTCRN"] else {
             throw XCTSkip("set IK_VAL_GTCRN and IK_PARITY_GTCRN to run the seam comparison")

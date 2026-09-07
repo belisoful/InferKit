@@ -84,7 +84,7 @@ final class NFKMLXStoRMTests: XCTestCase {
     /// already at released-weight parity via SGMSE+). Skips until the record is set.
     func testReferenceSeamsAtATinyConfiguration() throws {
         try requireMLXRuntime()
-        guard let recordPath = ProcessInfo.processInfo.environment["IK_PARITY_STORM"] else {
+        guard let recordPath = NFKMLXValidationConfig.environment["IK_PARITY_STORM"] else {
             throw XCTSkip("set IK_PARITY_STORM (oracle record from run_reference.py storm) to run parity")
         }
         let record = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays

@@ -113,7 +113,7 @@ final class NFKMLXSGMSETests: XCTestCase {
     /// output (the score is `-` this) plus the input-conv seam. Skips until the weights and record are set.
     func testReferenceNetSeamOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_SGMSE"],
               let recordPath = environment["IK_PARITY_SGMSE"] else {
             throw XCTSkip("set IK_VAL_SGMSE (EMA weights) and IK_PARITY_SGMSE (oracle record) to run parity")

@@ -84,7 +84,7 @@ final class NFKMLXDeepFilterNetTests: XCTestCase {
     /// the oracle seams, transposing mine (NHWC `[1,T,F,C]`) into the reference's NCHW `[C,T,F]`.
     func testSeamsAgainstTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_DEEPFILTERNET"],
               let recordPath = environment["IK_PARITY_DEEPFILTERNET"] else {
             throw XCTSkip("set IK_VAL_DEEPFILTERNET and IK_PARITY_DEEPFILTERNET to run the seam comparison")
@@ -143,7 +143,7 @@ final class NFKMLXDeepFilterNetTests: XCTestCase {
     /// synthesis of the recorded `spec_e` against the reference's own (an internal re-run through libdf).
     func testDSPAgainstTheReference() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_DEEPFILTERNET"],
               let recordPath = environment["IK_PARITY_DEEPFILTERNET"] else {
             throw XCTSkip("set IK_VAL_DEEPFILTERNET and IK_PARITY_DEEPFILTERNET to run the DSP comparison")
@@ -166,7 +166,7 @@ final class NFKMLXDeepFilterNetTests: XCTestCase {
     /// (analysis → net → synthesis), reproducing the DSP the reference runs through Rust `libdf`.
     func testReferenceParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
-        let environment = ProcessInfo.processInfo.environment
+        let environment = NFKMLXValidationConfig.environment
         guard let weightsPath = environment["IK_VAL_DEEPFILTERNET"],
               let recordPath = environment["IK_PARITY_DEEPFILTERNET"] else {
             throw XCTSkip("set IK_VAL_DEEPFILTERNET (weights) and IK_PARITY_DEEPFILTERNET (oracle record)")

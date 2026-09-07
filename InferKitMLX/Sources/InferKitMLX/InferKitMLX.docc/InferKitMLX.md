@@ -98,6 +98,7 @@ limits.
 - ``NFKMLXU2Net``
 - ``NFKMLXRVM``
 - ``NFKMLXMODNet``
+- ``NFKMLXBiRefNet``
 - ``NFKMLXSAM``
 - ``NFKMLXSAM2``
 - ``NFKMLXCodeFormer``
