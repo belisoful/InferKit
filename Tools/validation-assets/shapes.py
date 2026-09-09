@@ -39,24 +39,34 @@ def header(url):
 
 
 def main(argv):
-    if len(argv) != 3:
+    # `shapes.py <repo> <out> [subfolder]`. A diffusers pipeline keeps a component (the transformer, the
+    # VAE) under a subfolder with a `diffusion_pytorch_model` weight name rather than `model` at the root.
+    if len(argv) not in (3, 4):
         print(__doc__)
         return 2
     repo, out = argv[1], os.path.expanduser(argv[2])
+    subfolder = argv[3] if len(argv) == 4 else ""
     os.makedirs(out, exist_ok=True)
     base = f"https://huggingface.co/{repo}/resolve/main"
+    if subfolder:
+        base = f"{base}/{subfolder}"
 
     config = _request(f"{base}/config.json")
     with open(os.path.join(out, "config.json"), "wb") as handle:
         handle.write(config)
 
-    try:
-        index = json.loads(_request(f"{base}/model.safetensors.index.json"))
-        with open(os.path.join(out, "model.safetensors.index.json"), "w") as handle:
-            json.dump(index, handle, indent=2)
-        shards = sorted(set(index["weight_map"].values()))
-    except urllib.error.HTTPError:
-        shards = ["model.safetensors"]
+    shards = None
+    for weights_name in ("model", "diffusion_pytorch_model"):
+        try:
+            index = json.loads(_request(f"{base}/{weights_name}.safetensors.index.json"))
+            with open(os.path.join(out, "model.safetensors.index.json"), "w") as handle:
+                json.dump(index, handle, indent=2)
+            shards = sorted(set(index["weight_map"].values()))
+            break
+        except urllib.error.HTTPError:
+            continue
+    if shards is None:
+        shards = ["diffusion_pytorch_model.safetensors" if subfolder else "model.safetensors"]
 
     shapes, dtypes = {}, {}
     for shard in shards:

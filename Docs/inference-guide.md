@@ -838,6 +838,19 @@ alternatives.
     → DC-AE decode; caller supplies the Gemma embedding). The released DPM-Solver sampler is now ported
     (`NFKMLXDPMSolverScheduler`, at reference parity), and the Gemma-2 text encoder is ported
     too (`NFKMLXGemma2Net`, at parity) — SANA runs end to end from a raw prompt.
+  - `Stable Diffusion 3 / 3.5` and `FLUX.1` — the leading open text-to-image families. **SHIPPED.** The
+    SD3 MMDiT (`NFKMLXSD3TransformerNet`, dual-stream joint attention, RMS q/k norm, MMDiT-X dual
+    attention, cropped sincos positions) and the FLUX transformer (`NFKMLXFluxTransformerNet`, double +
+    single stream, axial rotary, guidance embedding) are at reference parity against diffusers at a tiny
+    random configuration (SD3 velocity 0.9999999999999865, FLUX 0.9999999999998679). `NFKMLXSD3Pipeline`
+    and `NFKMLXFluxPipeline` chain each with the rectified-flow schedule and the autoencoder (SD3's VAE
+    keeps the quant convolutions, FLUX's is the `.flux` VAE); FLUX packs the latent and takes the
+    guidance embedding (`[dev]`) or none (`[schnell]`). The released sizes are held to the module by
+    shape against their transformers' own safetensors headers: SD3.5-large (1227 tensors), SD3.5-medium
+    (909, the dual-attention path), FLUX.1 [schnell] (1156), FLUX.1 [dev] (1160), each 0 missing /
+    mismatched / unaccounted. The caller supplies the text embedding (T5-XXL + CLIP, the shipped
+    encoders); the FLUX.1 [dev] weights are research-licensed and gated, so ungated mirrors provide the
+    structural headers.
   - `IP-Adapter` — image conditioning. **SHIPPED** (`NFKMLXIPAdapterImageProjection` /
     `NFKMLXIPAdapterAttention`): the image projection (a CLIP image embedding to a short token
     sequence) and the decoupled cross-attention (`text_attn + scale·ip_attn` through its own

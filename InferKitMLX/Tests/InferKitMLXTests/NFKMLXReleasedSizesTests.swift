@@ -673,6 +673,62 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         }
     }
 
+    // SD3.5-large (8B): the same MMDiT the tiny config is at parity on, read by the configuration
+    // reader and held to the released transformer's own safetensors headers. 38 layers, 38 heads, RMS
+    // qk-norm, standard MMDiT (no dual attention — that is SD3.5-medium's MMDiT-X). The patch-embed
+    // convolution is the only 4-D tensor, compared in the release's `[out, in, kH, kW]` layout.
+    func testSD35LargeMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("sd35-large")
+        let configuration = try NFKMLXSD3TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 38)
+        XCTAssertEqual(configuration.numAttentionHeads, 38)
+        XCTAssertTrue(configuration.qkNorm)
+        XCTAssertTrue(configuration.dualAttentionLayers.isEmpty)
+        let net = NFKMLXSD3TransformerNet(configuration)
+        assertStructure("sd35-large", built: inventory(net, reshape: { convLayout($1) }), released: release.shapes)
+    }
+
+    // SD3.5-medium (2.5B, MMDiT-X): the dual-attention path on the released weights — 24 layers, RMS
+    // qk-norm, dual attention (`attn2`) on the first thirteen, and the wider `pos_embed_max_size` 384.
+    // The tiny config exercises `attn2`; this holds it to the real shard headers.
+    func testSD35MediumMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("sd35-medium")
+        let configuration = try NFKMLXSD3TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 24)
+        XCTAssertEqual(configuration.posEmbedMaxSize, 384)
+        XCTAssertEqual(configuration.dualAttentionLayers, Array(0 ... 12))
+        let net = NFKMLXSD3TransformerNet(configuration)
+        assertStructure("sd35-medium", built: inventory(net, reshape: { convLayout($1) }), released: release.shapes)
+    }
+
+    // FLUX.1 [schnell] (12B): the double- and single-stream transformer the tiny config is at parity
+    // on, read by the configuration reader and held to the released transformer's headers. Every
+    // tensor is at most 2-D, so no layout change is needed. Ungated mirrors of the transformer are
+    // used because the official repositories are gated.
+    func testFluxSchnellMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux-schnell")
+        let configuration = try NFKMLXFluxTransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 19)
+        XCTAssertEqual(configuration.numSingleLayers, 38)
+        XCTAssertFalse(configuration.guidanceEmbeds, "schnell carries no guidance embedding")
+        let net = NFKMLXFluxTransformerNet(configuration)
+        assertStructure("flux-schnell", built: inventory(net), released: release.shapes)
+    }
+
+    // FLUX.1 [dev] (12B): the guidance-distilled variant, whose `time_text_embed.guidance_embedder`
+    // the schnell size lacks. Held to the released dev transformer's headers.
+    func testFluxDevMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux-dev")
+        let configuration = try NFKMLXFluxTransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertTrue(configuration.guidanceEmbeds, "dev carries a guidance embedding")
+        let net = NFKMLXFluxTransformerNet(configuration)
+        assertStructure("flux-dev", built: inventory(net), released: release.shapes)
+    }
+
     // MARK: - Weight-free structure
 
     // The windowed attention at the bottleneck: a round trip at the tiny geometry, and the reference's

@@ -774,6 +774,294 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference Wan DiT")
     }
 
+    // MARK: SD3 MMDiT
+
+    // The SD3 MMDiT at a tiny random configuration, against diffusers' SD3Transformer2DModel. The tiny
+    // config exercises the SD3.5 additions (RMS q/k norm, a dual-attention first layer) and the last
+    // block's context_pre_only path, and the latent grid is smaller than pos_embed_max_size so the
+    // center-crop of the positional table is exercised. The patch-embed seam localizes the conv +
+    // cropped-position path; the final velocity covers the dual-stream joint attention and adaptive
+    // norms. The convolution weight loads transposed to MLX's NHWC.
+    func testSD3TransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SD3"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SD3 (run_reference.py sd3)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXSD3TransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        if let reference = arrays["patch"] {
+            let mine = net.posEmbed(latent); eval(mine)
+            print("SEAM sd3 patch: cosine \(cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init), reference.reshaped([-1]).asArray(Float.self).map(Double.init)))")
+        }
+
+        let output = net(latent, encoderHidden: encoder, pooled: pooled, timestep: timestep); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY sd3: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference SD3 MMDiT")
+    }
+
+    // MARK: FLUX.1 transformer
+
+    // The FLUX transformer at a tiny random configuration, against diffusers' FluxTransformer2DModel.
+    // The tiny config is guidance-distilled (the guidance embedding is exercised) and carries both the
+    // double-stream MMDiT blocks and the single-stream parallel-attention/MLP blocks. The double-block
+    // and single-block seams localize the two block kinds; the final velocity covers the axial rotary,
+    // the [text, image] concatenation order, the joint and pre-only attention, and the adaptive norms.
+    func testFluxTransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX (run_reference.py flux)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let guidance = try XCTUnwrap(arrays["guidance"])
+        let imageIds = try XCTUnwrap(arrays["img_ids"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXFluxTransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let output = net(hidden, encoderHidden: encoder, pooled: pooled, timestep: timestep,
+                         guidance: guidance, imageIds: imageIds); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference FLUX transformer")
+    }
+
+    // MARK: SD3 ControlNet
+
+    // The SD3 (dual-stream) ControlNet end to end, against diffusers' SD3ControlNetModel and the base
+    // SD3Transformer2DModel with the ControlNet residuals injected. The ControlNet's per-block residuals
+    // are compared directly, then the base transformer is run with those residuals to cover the
+    // interval_control striding (a four-block base, two residuals). The convolutions load transposed.
+    func testSD3ControlNetMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SD3_CONTROLNET"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SD3_CONTROLNET (run_reference.py sd3_controlnet)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let latent = try XCTUnwrap(arrays["latent"])
+        let controlCond = try XCTUnwrap(arrays["control_cond"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let control = NFKMLXSD3ControlNetNet(.tiny)
+        let controlWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(controlWeights, to: control)
+
+        let residuals = control(latent, controlnetCond: controlCond, encoder: encoder, pooled: pooled,
+                                timestep: timestep, conditioningScale: 0.7)
+        for (index, residual) in residuals.enumerated() {
+            let reference = try XCTUnwrap(arrays["residual_\(index)"])
+            eval(residual)
+            let similarity = cosine(residual.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM sd3_controlnet residual \(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "ControlNet residual \(index) matches the reference")
+        }
+
+        let base = NFKMLXSD3TransformerNet(NFKMLXSD3Configuration(
+            sampleSize: 16, inChannels: 4, outChannels: 4, numLayers: 4, attentionHeadDim: 8,
+            numAttentionHeads: 2, jointAttentionDim: 24, captionProjectionDim: 16, pooledProjectionDim: 20,
+            posEmbedMaxSize: 8, dualAttentionLayers: [], qkNorm: true))
+        let baseWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("t::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(baseWeights, to: base)
+
+        let output = base(latent, encoderHidden: encoder, pooled: pooled, timestep: timestep,
+                          blockControlnetHiddenStates: residuals); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY sd3_controlnet: injected velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the ControlNet-steered velocity matches the reference")
+    }
+
+    // The Stability SD3.5-large 8B (single-stream) ControlNet residuals, against diffusers'
+    // SD3ControlNetModel with no position embedding and no context embedder. The residuals are compared
+    // directly (their injection into the base is the same rule the dual-stream test covers).
+    func testSD3ControlNetSingleMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SD3_CONTROLNET_SINGLE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SD3_CONTROLNET_SINGLE (run_reference.py sd3_controlnet_single)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden"])
+        let controlCond = try XCTUnwrap(arrays["control_cond"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+
+        let control = NFKMLXSD3ControlNetNet(.tinySingle)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: control)
+
+        let residuals = control(hidden, controlnetCond: controlCond, encoder: nil, pooled: pooled,
+                                timestep: timestep, conditioningScale: 0.8)
+        for (index, residual) in residuals.enumerated() {
+            let reference = try XCTUnwrap(arrays["residual_\(index)"])
+            eval(residual)
+            let similarity = cosine(residual.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY sd3_controlnet_single residual \(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "single-stream ControlNet residual \(index) matches")
+        }
+    }
+
+    // MARK: FLUX ControlNet
+
+    // The FLUX ControlNet end to end, against diffusers' FluxControlNetModel and the base
+    // FluxTransformer2DModel with the double- and single-block residuals injected. The residual lists are
+    // compared directly, then the base is run with them to cover the ceil-interval striding (a
+    // three-block base, two residuals of each kind).
+    func testFluxControlNetMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_CONTROLNET"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX_CONTROLNET (run_reference.py flux_controlnet)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden"])
+        let controlCond = try XCTUnwrap(arrays["control_cond"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let guidance = try XCTUnwrap(arrays["guidance"])
+        let imageIds = try XCTUnwrap(arrays["img_ids"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let control = NFKMLXFluxControlNetNet(.tiny)
+        let controlWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(controlWeights, to: control)
+
+        let (double, single) = control(hidden, controlnetCond: controlCond, encoder: encoder,
+                                       pooled: pooled, timestep: timestep, guidance: guidance,
+                                       imageIds: imageIds, conditioningScale: 0.6)
+        for (index, residual) in double.enumerated() {
+            let reference = try XCTUnwrap(arrays["double_\(index)"])
+            eval(residual)
+            let similarity = cosine(residual.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux_controlnet double \(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "double-block ControlNet residual \(index) matches")
+        }
+        for (index, residual) in single.enumerated() {
+            let reference = try XCTUnwrap(arrays["single_\(index)"])
+            eval(residual)
+            let similarity = cosine(residual.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux_controlnet single \(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "single-block ControlNet residual \(index) matches")
+        }
+
+        let base = NFKMLXFluxTransformerNet(NFKMLXFluxConfiguration(
+            inChannels: 8, outChannels: 8, numLayers: 3, numSingleLayers: 3, attentionHeadDim: 6,
+            numAttentionHeads: 2, jointAttentionDim: 24, pooledProjectionDim: 10, guidanceEmbeds: true,
+            axesDimsRope: [2, 2, 2]))
+        let baseWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("t::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(baseWeights, to: base)
+
+        let output = base(hidden, encoderHidden: encoder, pooled: pooled, timestep: timestep,
+                          guidance: guidance, imageIds: imageIds, controlnetBlockSamples: double,
+                          controlnetSingleBlockSamples: single); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux_controlnet: injected velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the ControlNet-steered velocity matches the reference")
+    }
+
+    // A FLUX ControlNet with an `input_hint_block` end to end: the full-resolution control image runs
+    // through the conditioning pyramid (three stride-2 downsamples) before the linear embed, then the
+    // residuals inject into the base transformer. The 4-D pyramid convolutions load transposed to NHWC.
+    func testFluxControlNetHintMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_CONTROLNET_HINT"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX_CONTROLNET_HINT (run_reference.py flux_controlnet_hint)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden"])
+        let controlImage = try XCTUnwrap(arrays["control_image"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let pooled = try XCTUnwrap(arrays["pooled"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let guidance = try XCTUnwrap(arrays["guidance"])
+        let imageIds = try XCTUnwrap(arrays["img_ids"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let control = NFKMLXFluxControlNetNet(.tinyHint)
+        let controlWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(controlWeights, to: control)
+
+        let (double, single) = control(hidden, controlnetCond: controlImage, encoder: encoder,
+                                       pooled: pooled, timestep: timestep, guidance: guidance,
+                                       imageIds: imageIds, conditioningScale: 0.6)
+        for (index, residual) in (double + single).enumerated() {
+            let key = index < double.count ? "double_\(index)" : "single_\(index - double.count)"
+            let reference = try XCTUnwrap(arrays[key])
+            eval(residual)
+            let similarity = cosine(residual.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux_controlnet_hint \(key): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "hint ControlNet residual \(key) matches")
+        }
+
+        let base = NFKMLXFluxTransformerNet(NFKMLXFluxConfiguration(
+            inChannels: 8, outChannels: 8, numLayers: 3, numSingleLayers: 3, attentionHeadDim: 6,
+            numAttentionHeads: 2, jointAttentionDim: 24, pooledProjectionDim: 10, guidanceEmbeds: true,
+            axesDimsRope: [2, 2, 2]))
+        let baseWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("t::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(baseWeights, to: base)
+
+        let output = base(hidden, encoderHidden: encoder, pooled: pooled, timestep: timestep,
+                          guidance: guidance, imageIds: imageIds, controlnetBlockSamples: double,
+                          controlnetSingleBlockSamples: single); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux_controlnet_hint: injected velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the hint-ControlNet-steered velocity matches the reference")
+    }
+
     // MARK: Flux autoencoder (Z-Image's VAE)
 
     // The Flux autoencoder Z-Image encodes into, at a tiny random configuration, against diffusers'

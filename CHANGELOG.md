@@ -21,6 +21,45 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Stable Diffusion 3 / 3.5 and FLUX.1
+
+- `NFKMLXSD3TransformerNet` is the Stable Diffusion 3 MMDiT (diffusers `SD3Transformer2DModel`), the
+  dual-stream multimodal diffusion transformer of the SD3 / SD3.5 text-to-image models. Image and text
+  tokens each carry their own projections, feed-forward, and adaptive-norm modulation, with attention
+  over the concatenation. The SD3.5 additions are covered: RMS query/key normalization and, on
+  SD3.5-medium (MMDiT-X), dual attention (a second image-only self-attention on the first thirteen
+  layers). At reference parity against diffusers at a tiny random configuration (velocity cosine
+  0.9999999999999865, patch-embed seam 0.9999999999999942). Presets: `.sd3Medium`, `.sd35Medium`,
+  `.sd35Large`; `configuration(fromHuggingFace:)` reads a release's `transformer/config.json`, and
+  `loadWeights(into:from:)` loads the release shards (the patch-embed convolution transposed to NHWC).
+- `NFKMLXFluxTransformerNet` is the FLUX.1 transformer (diffusers `FluxTransformer2DModel`), with the
+  double-stream MMDiT blocks and the single-stream parallel-attention/MLP blocks over an axial rotary.
+  The guidance-distilled `[dev]` and four-step `[schnell]` variants are both configured. At reference
+  parity against diffusers at a tiny random configuration (velocity cosine 0.9999999999998679). Presets
+  `.dev` / `.schnell`; a config reader and shard loader as above.
+- `NFKMLXSD3Pipeline` and `NFKMLXFluxPipeline` chain each transformer with the rectified-flow schedule
+  and the autoencoder (the shared `NFKMLXSDAutoencoder`: SD3's VAE keeps the quant convolutions, FLUX's
+  drops them). SD3 runs classifier-free guidance; FLUX takes the guidance embedding (`[dev]`) or none
+  (`[schnell]`). Each is validated by a weight-free glue test on matching tiny configurations, with the
+  FLUX latent packing (`pack` / `unpack`) round-tripped. `NFKMLXFlowMatchScheduler` gained `.sd3`,
+  `.flux`, and `.fluxSchnell` presets.
+- The released sizes are held to the module by shape against their transformers' own safetensors
+  headers: SD3.5-large (1227 tensors), SD3.5-medium (909, the dual-attention path), FLUX.1 [schnell]
+  (1156), FLUX.1 [dev] (1160), each 0 missing, 0 mismatched, 0 unaccounted.
+- `NFKMLXSD3ControlNetNet` / `NFKMLXSD3ControlNetPipeline` add the Stable Diffusion 3 ControlNet
+  (diffusers `SD3ControlNetModel`): a partial MMDiT that steers a generation with a spatial control
+  image and emits per-block residuals the base transformer injects (`blockControlnetHiddenStates`,
+  threaded into `NFKMLXSD3TransformerNet`, nil for plain text-to-image). Both released shapes are
+  configurable — the InstantX dual-stream ControlNets and Stability's official SD3.5-large 8B
+  single-stream ControlNets. At reference parity against diffusers (residuals 0.99999999999999, base
+  transformer with them injected 0.9999999999999859).
+- `NFKMLXFluxControlNetNet` / `NFKMLXFluxControlNetPipeline` add the FLUX.1 ControlNet (diffusers
+  `FluxControlNetModel`): a partial FLUX transformer emitting double- and single-block residuals the base
+  transformer injects (`controlnetBlockSamples` / `controlnetSingleBlockSamples`; the union control-type
+  embedding and the `input_hint_block` full-resolution-image pyramid both supported). At reference parity
+  against diffusers (residuals 0.99999999999999, base transformer with them injected 0.9999999999999251;
+  the hint variant 0.9999999999999771).
+
 #### Released sizes
 
 Every shipped family now covers every size its authors released, each with a configuration preset, a

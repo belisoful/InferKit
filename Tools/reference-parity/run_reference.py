@@ -3995,6 +3995,312 @@ def run_sana(image):
     return output.contiguous()                                             # [C, H, W]
 
 
+def run_sd3(image):
+    """The Stable Diffusion 3 MMDiT velocity at a tiny random configuration, from diffusers'
+    SD3Transformer2DModel, plus the patch-embed and first-block seams.
+
+    Dual-stream: the image latent and the text tokens each carry their own projections, feed-forward,
+    and adaptive-norm modulation, with attention over the concatenation (JointAttnProcessor2_0). The
+    tiny config exercises the SD3.5 additions — RMS query/key norm (`qk_norm='rms_norm'`) and a
+    dual-attention first layer (`dual_attention_layers=(0,)`, a second image-only self-attention) —
+    and the last block's `context_pre_only` path (the text stream ends after the attention). The
+    latent grid (4x4 patches) is smaller than `pos_embed_max_size` (8), so the center-crop of the
+    positional table is exercised. The caption/pooled embeddings are supplied directly (no CLIP/T5),
+    so the DiT is verified in isolation. Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import SD3Transformer2DModel
+
+    model = SD3Transformer2DModel(
+        sample_size=16, patch_size=2, in_channels=4, num_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, caption_projection_dim=16,
+        pooled_projection_dim=20, out_channels=4, pos_embed_max_size=8,
+        dual_attention_layers=(0,), qk_norm="rms_norm")
+    model = _randomized(model, seed=27)
+
+    generator = torch.Generator().manual_seed(7)
+    latent = torch.randn(2, 4, 8, 8, generator=generator)                  # [B, C, H, W] -> 16 tokens
+    encoder = torch.randn(2, 7, 24, generator=generator)                   # [B, L, joint_attention_dim]
+    pooled = torch.randn(2, 20, generator=generator)                       # [B, pooled_projection_dim]
+    t = torch.tensor([500.0, 500.0])
+
+    seams = {}
+    model.pos_embed.register_forward_hook(lambda m, i, o: seams.__setitem__("patch", o.detach()))
+    model.transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o[1].detach()))
+    with torch.no_grad():
+        output = model(hidden_states=latent, encoder_hidden_states=encoder, pooled_projections=pooled,
+                       timestep=t, return_dict=False)[0]
+
+    extra = {"latent": latent.contiguous(), "encoder": encoder.contiguous(), "pooled": pooled.contiguous(),
+             "timestep": t.contiguous(), "patch": seams["patch"].contiguous(), "block0": seams["block0"].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, C, H, W]
+
+
+def run_flux(image):
+    """The FLUX.1 transformer velocity at a tiny random configuration, from diffusers'
+    FluxTransformer2DModel, plus the double-block and single-block seams.
+
+    Two block kinds: DOUBLE-stream MMDiT joint-attention blocks (image and text streams, attention over
+    the concatenation) and SINGLE-stream blocks (the streams concatenated, a parallel attention+MLP over
+    the join). Position is an axial rotary over the token ids (text ids all zero; image ids the (0,row,
+    col) grid). The guidance-distilled variant (`guidance_embeds=True`) is exercised, so the guidance
+    embedding is covered. The text conditioning is supplied directly (no T5/CLIP), so the DiT is verified
+    in isolation. Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import FluxTransformer2DModel
+
+    model = FluxTransformer2DModel(
+        patch_size=1, in_channels=8, num_layers=2, num_single_layers=2, attention_head_dim=6,
+        num_attention_heads=2, joint_attention_dim=24, pooled_projection_dim=10, guidance_embeds=True,
+        axes_dims_rope=(2, 2, 2))
+    model = _randomized(model, seed=29)
+
+    generator = torch.Generator().manual_seed(8)
+    lh, lw = 2, 3                                                          # packed latent grid -> 6 tokens
+    hidden = torch.randn(2, lh * lw, 8, generator=generator)              # [B, img_seq, in_channels]
+    encoder = torch.randn(2, 5, 24, generator=generator)                  # [B, txt_seq, joint_attention_dim]
+    pooled = torch.randn(2, 10, generator=generator)                     # [B, pooled_projection_dim]
+    t = torch.tensor([0.5, 0.5])
+    guidance = torch.tensor([3.5, 3.5])
+    img_ids = torch.zeros(lh * lw, 3)
+    img_ids[:, 1] = torch.arange(lh).unsqueeze(1).expand(lh, lw).reshape(-1).float()
+    img_ids[:, 2] = torch.arange(lw).unsqueeze(0).expand(lh, lw).reshape(-1).float()
+    txt_ids = torch.zeros(5, 3)
+
+    seams = {}
+    model.transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("double0", o[1].detach()))
+    model.single_transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("single0", o[1].detach()))
+    with torch.no_grad():
+        output = model(hidden_states=hidden, encoder_hidden_states=encoder, pooled_projections=pooled,
+                       timestep=t, img_ids=img_ids, txt_ids=txt_ids, guidance=guidance, return_dict=False)[0]
+
+    extra = {"hidden": hidden.contiguous(), "encoder": encoder.contiguous(), "pooled": pooled.contiguous(),
+             "timestep": t.contiguous(), "guidance": guidance.contiguous(), "img_ids": img_ids.contiguous(),
+             "double0": seams["double0"].contiguous(), "single0": seams["single0"].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, img_seq, out_channels]
+
+
+def run_sd3_controlnet(image):
+    """The SD3 ControlNet (dual-stream) end to end, from diffusers' SD3ControlNetModel plus the base
+    SD3Transformer2DModel with the ControlNet residuals injected.
+
+    The ControlNet is a partial MMDiT: it runs the first N JointTransformerBlocks over the noisy latent
+    plus a control latent (added through a zero-initialized `pos_embed_input` that carries no positional
+    table), and emits one zero-initialized residual per block. The base transformer adds them into its
+    own blocks, strided over the residual list by `interval_control`. The tiny base has four layers
+    (so blocks 0-2 inject and block 3 is context_pre_only) and the ControlNet two residuals (interval
+    2.0), so both residuals and the striding are exercised. Both nets are recorded (`w::` the ControlNet,
+    `t::` the base) so the Swift side validates the residuals and the injected output. Runs under the
+    `ltx` oracle env. `image` unused.
+    """
+    from diffusers import SD3ControlNetModel, SD3Transformer2DModel
+
+    base = SD3Transformer2DModel(
+        sample_size=16, patch_size=2, in_channels=4, num_layers=4, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, caption_projection_dim=16,
+        pooled_projection_dim=20, out_channels=4, pos_embed_max_size=8, qk_norm="rms_norm")
+    control = SD3ControlNetModel(
+        sample_size=16, patch_size=2, in_channels=4, num_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, caption_projection_dim=16,
+        pooled_projection_dim=20, out_channels=4, pos_embed_max_size=8, qk_norm="rms_norm",
+        extra_conditioning_channels=0)
+    base = _randomized(base, seed=31)
+    control = _randomized(control, seed=32)
+
+    generator = torch.Generator().manual_seed(9)
+    latent = torch.randn(2, 4, 8, 8, generator=generator)
+    control_cond = torch.randn(2, 4, 8, 8, generator=generator)
+    encoder = torch.randn(2, 7, 24, generator=generator)
+    pooled = torch.randn(2, 20, generator=generator)
+    t = torch.tensor([500.0, 500.0])
+
+    with torch.no_grad():
+        residuals = control(hidden_states=latent, controlnet_cond=control_cond, conditioning_scale=0.7,
+                            encoder_hidden_states=encoder, pooled_projections=pooled, timestep=t,
+                            return_dict=False)[0]
+        output = base(hidden_states=latent, encoder_hidden_states=encoder, pooled_projections=pooled,
+                      timestep=t, block_controlnet_hidden_states=residuals, return_dict=False)[0]
+
+    extra = {"latent": latent.contiguous(), "control_cond": control_cond.contiguous(),
+             "encoder": encoder.contiguous(), "pooled": pooled.contiguous(), "timestep": t.contiguous()}
+    for i, r in enumerate(residuals):
+        extra[f"residual_{i}"] = r.contiguous()
+    for key, value in control.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    for key, value in base.state_dict().items():
+        extra[f"t::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, C, H, W]
+
+
+def run_sd3_controlnet_single(image):
+    """The Stability SD3.5-large 8B ControlNet (single-stream) residuals at a tiny random configuration,
+    from diffusers' SD3ControlNetModel with `joint_attention_dim=None` and `use_pos_embed=False`.
+
+    This variant drops the position embedding and the context embedder and runs single-stream
+    SD3SingleTransformerBlocks over the image tokens alone (the base transformer's `pos_embed` supplies
+    the 3-D `hidden_states`). `extra_conditioning_channels=1` widens `pos_embed_input` to five channels.
+    The residuals are recorded directly (their injection into the base is the same rule the dual-stream
+    mode already validates). Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import SD3ControlNetModel
+
+    control = SD3ControlNetModel(
+        sample_size=16, patch_size=2, in_channels=4, num_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=None, pooled_projection_dim=20, out_channels=4,
+        pos_embed_max_size=8, extra_conditioning_channels=1, use_pos_embed=False)
+    control = _randomized(control, seed=34)
+
+    generator = torch.Generator().manual_seed(10)
+    hidden = torch.randn(2, 16, 16, generator=generator)                   # already patch-embedded tokens
+    control_cond = torch.randn(2, 5, 8, 8, generator=generator)            # in_channels + extra = 5
+    pooled = torch.randn(2, 20, generator=generator)
+    t = torch.tensor([500.0, 500.0])
+
+    with torch.no_grad():
+        residuals = control(hidden_states=hidden, controlnet_cond=control_cond, conditioning_scale=0.8,
+                            encoder_hidden_states=None, pooled_projections=pooled, timestep=t,
+                            return_dict=False)[0]
+
+    extra = {"hidden": hidden.contiguous(), "control_cond": control_cond.contiguous(),
+             "pooled": pooled.contiguous(), "timestep": t.contiguous()}
+    for i, r in enumerate(residuals):
+        extra[f"residual_{i}"] = r.contiguous()
+    for key, value in control.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return torch.cat([r.reshape(-1) for r in residuals])                   # the residuals, flattened
+
+
+def run_flux_controlnet(image):
+    """The FLUX ControlNet end to end, from diffusers' FluxControlNetModel plus the base
+    FluxTransformer2DModel with the ControlNet residuals injected.
+
+    The ControlNet runs a few double-stream and single-stream blocks over the packed noisy latent plus a
+    packed control latent (added through the zero-initialized `controlnet_x_embedder`), and emits a
+    zero-initialized residual per block — a double-block list and a single-block list. The base
+    transformer adds each into its own block stacks, strided by the `ceil` interval. The tiny base has
+    three double and three single blocks, the ControlNet two of each (interval ceil(3/2)=2), so both
+    residuals and the striding are exercised. Both nets are recorded (`w::` the ControlNet, `t::` the
+    base). Runs under the `ltx` oracle env. `image` unused.
+    """
+    from diffusers import FluxControlNetModel, FluxTransformer2DModel
+
+    base = FluxTransformer2DModel(
+        patch_size=1, in_channels=8, num_layers=3, num_single_layers=3, attention_head_dim=6,
+        num_attention_heads=2, joint_attention_dim=24, pooled_projection_dim=10, guidance_embeds=True,
+        axes_dims_rope=(2, 2, 2))
+    control = FluxControlNetModel(
+        patch_size=1, in_channels=8, num_layers=2, num_single_layers=2, attention_head_dim=6,
+        num_attention_heads=2, joint_attention_dim=24, pooled_projection_dim=10, guidance_embeds=True,
+        axes_dims_rope=(2, 2, 2))
+    base = _randomized(base, seed=35)
+    control = _randomized(control, seed=36)
+
+    generator = torch.Generator().manual_seed(11)
+    lh, lw = 2, 3
+    hidden = torch.randn(2, lh * lw, 8, generator=generator)
+    control_cond = torch.randn(2, lh * lw, 8, generator=generator)
+    encoder = torch.randn(2, 5, 24, generator=generator)
+    pooled = torch.randn(2, 10, generator=generator)
+    t = torch.tensor([0.5, 0.5])
+    guidance = torch.tensor([3.5, 3.5])
+    img_ids = torch.zeros(lh * lw, 3)
+    img_ids[:, 1] = torch.arange(lh).unsqueeze(1).expand(lh, lw).reshape(-1).float()
+    img_ids[:, 2] = torch.arange(lw).unsqueeze(0).expand(lh, lw).reshape(-1).float()
+    txt_ids = torch.zeros(5, 3)
+
+    with torch.no_grad():
+        double, single = control(
+            hidden_states=hidden, controlnet_cond=control_cond, conditioning_scale=0.6,
+            encoder_hidden_states=encoder, pooled_projections=pooled, timestep=t, img_ids=img_ids,
+            txt_ids=txt_ids, guidance=guidance, return_dict=False)
+        output = base(hidden_states=hidden, encoder_hidden_states=encoder, pooled_projections=pooled,
+                      timestep=t, img_ids=img_ids, txt_ids=txt_ids, guidance=guidance,
+                      controlnet_block_samples=double, controlnet_single_block_samples=single,
+                      return_dict=False)[0]
+
+    extra = {"hidden": hidden.contiguous(), "control_cond": control_cond.contiguous(),
+             "encoder": encoder.contiguous(), "pooled": pooled.contiguous(), "timestep": t.contiguous(),
+             "guidance": guidance.contiguous(), "img_ids": img_ids.contiguous()}
+    for i, r in enumerate(double):
+        extra[f"double_{i}"] = r.contiguous()
+    for i, r in enumerate(single):
+        extra[f"single_{i}"] = r.contiguous()
+    for key, value in control.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    for key, value in base.state_dict().items():
+        extra[f"t::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, img_seq, out_channels]
+
+
+def run_flux_controlnet_hint(image):
+    """A FLUX ControlNet with an `input_hint_block` end to end, from diffusers' FluxControlNetModel plus
+    the base FluxTransformer2DModel with the residuals injected.
+
+    Instead of a packed VAE control latent, this shape takes a FULL-RESOLUTION control image and runs it
+    through the `ControlNetConditioningEmbedding` pyramid (a conv_in, three stride-2 downsampling stages
+    over a (16,16,16,16) channel pyramid, a zero-init conv_out, SiLU between) before the linear embed.
+    The control image is 8× the packed latent grid (16×24 → the 2×3 grid = six tokens). Runs under the
+    `ltx` oracle env. `image` unused.
+    """
+    from diffusers import FluxControlNetModel, FluxTransformer2DModel
+
+    base = FluxTransformer2DModel(
+        patch_size=1, in_channels=8, num_layers=3, num_single_layers=3, attention_head_dim=6,
+        num_attention_heads=2, joint_attention_dim=24, pooled_projection_dim=10, guidance_embeds=True,
+        axes_dims_rope=(2, 2, 2))
+    control = FluxControlNetModel(
+        patch_size=1, in_channels=8, num_layers=2, num_single_layers=2, attention_head_dim=6,
+        num_attention_heads=2, joint_attention_dim=24, pooled_projection_dim=10, guidance_embeds=True,
+        axes_dims_rope=(2, 2, 2), conditioning_embedding_channels=8)
+    base = _randomized(base, seed=37)
+    control = _randomized(control, seed=38)
+
+    generator = torch.Generator().manual_seed(12)
+    lh, lw = 2, 3
+    hidden = torch.randn(2, lh * lw, 8, generator=generator)
+    control_image = torch.randn(2, 3, lh * 8, lw * 8, generator=generator)  # full-resolution control image
+    encoder = torch.randn(2, 5, 24, generator=generator)
+    pooled = torch.randn(2, 10, generator=generator)
+    t = torch.tensor([0.5, 0.5])
+    guidance = torch.tensor([3.5, 3.5])
+    img_ids = torch.zeros(lh * lw, 3)
+    img_ids[:, 1] = torch.arange(lh).unsqueeze(1).expand(lh, lw).reshape(-1).float()
+    img_ids[:, 2] = torch.arange(lw).unsqueeze(0).expand(lh, lw).reshape(-1).float()
+    txt_ids = torch.zeros(5, 3)
+
+    with torch.no_grad():
+        double, single = control(
+            hidden_states=hidden, controlnet_cond=control_image, conditioning_scale=0.6,
+            encoder_hidden_states=encoder, pooled_projections=pooled, timestep=t, img_ids=img_ids,
+            txt_ids=txt_ids, guidance=guidance, return_dict=False)
+        output = base(hidden_states=hidden, encoder_hidden_states=encoder, pooled_projections=pooled,
+                      timestep=t, img_ids=img_ids, txt_ids=txt_ids, guidance=guidance,
+                      controlnet_block_samples=double, controlnet_single_block_samples=single,
+                      return_dict=False)[0]
+
+    extra = {"hidden": hidden.contiguous(), "control_image": control_image.contiguous(),
+             "encoder": encoder.contiguous(), "pooled": pooled.contiguous(), "timestep": t.contiguous(),
+             "guidance": guidance.contiguous(), "img_ids": img_ids.contiguous()}
+    for i, r in enumerate(double):
+        extra[f"double_{i}"] = r.contiguous()
+    for i, r in enumerate(single):
+        extra[f"single_{i}"] = r.contiguous()
+    for key, value in control.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    for key, value in base.state_dict().items():
+        extra[f"t::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, img_seq, out_channels]
+
+
 def run_wan(image):
     """The Wan text-to-video DiT velocity at a tiny random configuration, from diffusers'
     WanTransformer3DModel, plus the patch-embed and first-block seams.
@@ -7283,7 +7589,7 @@ MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,

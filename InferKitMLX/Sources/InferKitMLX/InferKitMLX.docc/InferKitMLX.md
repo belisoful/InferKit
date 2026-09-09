@@ -259,6 +259,14 @@ limits.
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``
 - ``NFKMLXWanVideoVAENet``
+- ``NFKMLXSD3Pipeline``
+- ``NFKMLXSD3TransformerNet``
+- ``NFKMLXSD3ControlNetPipeline``
+- ``NFKMLXSD3ControlNetNet``
+- ``NFKMLXFluxPipeline``
+- ``NFKMLXFluxTransformerNet``
+- ``NFKMLXFluxControlNetPipeline``
+- ``NFKMLXFluxControlNetNet``
 
 ### Bring-your-own backends
 

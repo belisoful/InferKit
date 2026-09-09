@@ -92,7 +92,7 @@ measured on float tensors sit at 1e-7.
 | Depth Anything 3 Small | `NFKMLXDepthAnything3` | authors' `depth_anything_3` package | DA3-SMALL | the four hooked backbone features and every DualDPT stage ≥ 0.9999999999; exp-depth mean-removed 0.99999999992 |
 | Depth Anything 3 Base | `NFKMLXDepthAnything3` (`.base`) | same | DA3-BASE | hooks 0.99999999999446 / 0.99999999999436 / 0.99999999999711 / 0.99999999999738; depth 0.99999999999990, mean-removed 0.99999999998975 |
 | Depth Anything 3 Large | `NFKMLXDepthAnything3` (`.large`, hooks at 11/15/19/23, the alternating attention from block 8) | same | DA3-LARGE | hooks 0.99999999999876 / 0.99999999999788 / 0.99999999999713 / 0.99999999999717; depth 0.99999999999990, mean-removed 0.99999999998452 |
-| Marigold depth | `NFKMLXMarigold` | diffusers `UNet2DConditionModel` | marigold-depth-v1-0 UNet | predicted noise cosine 0.99999999999043 |
+| Marigold depth | `NFKMLXMarigold` | diffusers `UNet2DConditionModel` | marigold-depth-v1-0 UNet | predicted noise 0.99999999999043 |
 | SegFormer B0 | `NFKMLXSegFormer` | transformers `SegformerForSemanticSegmentation` | nvidia/segformer-b0-finetuned-ade-512-512 | logit cosine 0.99999992, label agreement 0.99994 |
 | DeepLabV3 | `NFKMLXDeepLab` | torchvision `deeplabv3_resnet50` | COCO release | logit cosine 0.99999999999976, label agreement 1.0 |
 | BiSeNet V1 | `NFKMLXBiSeNet` | CoinCheung BiSeNetV1 | model_final_v1_city | logit cosine 0.99999999999886, label agreement 1.0 |
@@ -153,8 +153,8 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
-| CLIP ViT-B/32 image tower | `NFKMLXCLIP` | transformers `CLIPModel` | OpenAI ViT-B/32 | image cosine 0.9999965 |
-| CLIP ViT-B/32 text tower | `NFKMLXCLIP` | same | same | text cosine 0.99999999999876 |
+| CLIP ViT-B/32 image tower | `NFKMLXCLIP` | transformers `CLIPModel` | OpenAI ViT-B/32 | image 0.9999965 |
+| CLIP ViT-B/32 text tower | `NFKMLXCLIP` | same | same | text 0.99999999999876 |
 | CLIP ViT-B/16, ViT-L/14 | `NFKMLXCLIP` (`.vitB16`, `.vitL14`) | the released OpenAI checkpoints | ViT-B-16.pt, ViT-L-14.pt | strict load of every tensor, unit-length image embedding (0.99999994); the towers are the ViT-B/32 blocks at another width and depth, so the numeric parity above carries |
 | SigLIP 2 base-patch16-224 | `NFKMLXSigLIP2` | transformers SigLIP 2 | google/siglip2-base-patch16-224 | image 0.99999999999892, worst text 0.99999999999861, max logit diff 9.5e-6 |
 | SigLIP 2, the other fourteen releases | `NFKMLXSigLIP2` (`NFKMLXSigLIP2Variant`) | checkpoint headers | base patch16 256/384/512 and patch32 256; large patch16 256/384/512; so400m patch14 224/384 and patch16 256/384/512; giant-opt patch16 256/384 | structural: 408 / 792 / 888 / 1096 tensors consumed per family, 0 missing, 0 mismatched, 0 unaccounted |
@@ -176,7 +176,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
-| Qwen3-0.6B | `NFKMLXLanguage` | transformers `Qwen3ForCausalLM` | released | prefill logit cosine 0.99999999999433 (worst abs 8.9e-5), same argmax at every position; greedy continuation of 16 tokens exact |
+| Qwen3-0.6B | `NFKMLXLanguage` | transformers `Qwen3ForCausalLM` | released | prefill logit cosine 0.99999999999433 (max abs 8.9e-5), same argmax at every position; greedy continuation of 16 tokens exact |
 | Qwen3-1.7B | `NFKMLXLanguage` | same | released | logit cosine 0.99999999999751 |
 | Qwen3-4B | `NFKMLXLanguage` | same | released (16 GB at float32) | logit cosine 0.99999999998684 |
 | Qwen3-14B, -32B | `NFKMLXLanguage` (`.qwen3_14B`, `.qwen3_32B`) | checkpoint headers | released (shapes only) | structural: 443 / 707 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
@@ -184,17 +184,21 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | Mixtral (tiny) | `NFKMLXLanguage` | transformers `MixtralForCausalLM` | random tiny | every layer exact, logit cosine 0.99999999999999 |
 | Qwen2-MoE (tiny) | `NFKMLXLanguage` | transformers `Qwen2MoeForCausalLM` | random tiny | every hidden state exact layer by layer, logit cosine 0.9999999999999813 |
 | gpt-oss (tiny) | `NFKMLXLanguage` | transformers `GptOssForCausalLM` (eager, sliding 4 / full alternating, sinks) | random tiny | every hidden state exact layer by layer, logit cosine 0.9999999999999721 |
-| gpt-oss-20b MXFP4 experts | `NFKMLXLanguage` (`releaseWeights` + MLX `mxfp4`) | transformers `convert_moe_packed_tensors` on the released bytes | released (64 rows of layer-0 `gate_up_proj`) | worst \|difference\| 0.0 |
+| gpt-oss-20b MXFP4 experts | `NFKMLXLanguage` (`releaseWeights` + MLX `mxfp4`) | transformers `convert_moe_packed_tensors` on the released bytes | released (64 rows of layer-0 `gate_up_proj`) | max abs 0.0 |
 | gpt-oss-20b | `NFKMLXLanguage` | local shard headers; generation | released (13.8 GB, experts packed) | structural: 459 tensors consumed, 0 missing / mismatched / unaccounted; "The capital of France is" → " Paris." (assertion) |
 | Speculative decoding | `NFKMLXLanguageNet.generate(draft:)` | the target's own greedy run | Qwen3-4B bf16 ← 0.6B bf16 | 0.57× wall clock, acceptance 0.435; parts only at a top-two tie (margin 0.125) — float32 1.7B ← 0.6B is token-identical at 1.01× |
 | Qwen3-30B-A3B | `NFKMLXLanguage` | checkpoint headers | released (shapes only) | structural: 18,867 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
+| SD3.5-large (8B) | `NFKMLXSD3TransformerNet` (`.sd35Large`) | checkpoint headers | released (shapes only, ungated mirror) | structural: 1227 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
+| SD3.5-medium (2.5B, MMDiT-X) | `NFKMLXSD3TransformerNet` (`.sd35Medium`) | checkpoint headers | released (shapes only, ungated mirror) | structural, the dual-attention path: 909 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
+| FLUX.1 [schnell] (12B) | `NFKMLXFluxTransformerNet` (`.schnell`) | checkpoint headers | released (shapes only, ungated mirror) | structural: 1156 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
+| FLUX.1 [dev] (12B) | `NFKMLXFluxTransformerNet` (`.dev`) | checkpoint headers | released (shapes only, ungated mirror) | structural, with the guidance embedder: 1160 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted |
 | Qwen3.5-4B (hybrid) | `NFKMLXHybridLanguage` | transformers `Qwen3_5ForConditionalGeneration` | released | every one of 33 hidden states exact; logit cosine 0.99999999999620 |
 | Qwen3.8-27B (hybrid) | `NFKMLXHybridLanguage` | checkpoint headers | released (shapes only) | structural: 851 decoder parameters, 0 missing, 0 mismatched; 333 vision + 15 multi-token-head tensors named as out of scope |
 | Gemma 3 (tiny) | `NFKMLXGemma3Net` | transformers `Gemma3ForCausalLM` | random tiny: 4-position window, sliding/sliding/full, linear rotary scaling 8, attention soft-cap 50, final soft-cap 30 | every layer exact; logit cosine 0.99999997; the cached greedy continuation 6/6 with the reference's, worst cached step 1 − cosine 6.7e-8 against the teacher-forced pass |
 | Gemma 3 bidirectional (tiny) | `NFKMLXGemma3EncoderNet` | transformers `Gemma3TextModel` (`use_bidirectional_attention`) | random tiny, span 6 (bound 4) over 12 tokens | every layer exact; last hidden cosine 0.99999999999967 |
 | Gemma 3n (tiny) | `NFKMLXGemma3nNet` | transformers `Gemma3nForCausalLM` | random tiny: AltUp's four copies, LAuReL, per-layer embeddings, activation sparsity on two of six layers, a shared-key-value tail of one sliding and one full layer, a 4-position window over 12 tokens | every layer 1.0000000000; logit cosine 0.9999999999999682; the cached greedy continuation 6/6, worst cached step 1 − cosine 5.0e-14 |
 | Gemma 3n E2B (text) | `NFKMLXGemma3n` | transformers `Gemma3nForCausalLM` | unsloth/gemma-3n-E2B-it | every one of the 30 hidden states 1.0000000000; logit cosine 0.9999999999943566, argmax 6/6; the cached greedy continuation 11/11 token for token |
-| Gemma 3n E2B audio (tiny) | `NFKMLXGemma3nAudioNet` | transformers `Gemma3nAudioEncoder` | random tiny with a non-zero RIGHT context, which the release never exercises, and a padded tail | front end cosine 0.9999999999999905; encoded 0.9999999999999707; the reduced frame mask exact |
+| Gemma 3n E2B audio (tiny) | `NFKMLXGemma3nAudioNet` | transformers `Gemma3nAudioEncoder` | random tiny with a non-zero right context, which the release never exercises, and a padded tail | front end cosine 0.9999999999999905; encoded 0.9999999999999707; the reduced frame mask exact |
 | Gemma 3n E2B audio | `NFKMLXGemma3nAudioNet` | same | unsloth/gemma-3n-E2B-it, deterministic random mel (the encoder is a pure function of it) | front end 0.9999999999999402; first block 0.9999999999998025; encoded 0.9999999999999257 |
 | Gemma 3n E2B vision | `NFKMLXGemma3nVisionNet` | timm `MobileNetV5Encoder` (`mobilenetv5_300m_enc`) | unsloth/gemma-3n-E2B-it, deterministic random frame in 0…1 | stem 0.9999999999996717; stages 0.9999999999955526 / 0.9999999999982407 / 0.9999999999571081 / 0.999999999990077; fused grid 0.9999999999981896 |
 | Gemma 3n E2B mel | `NFKMLXGemma3nAudioFeatures` | transformers `Gemma3nAudioFeatureExtractor` | the release's own preprocessor geometry | log-mel cosine 0.999999999999857 |
@@ -217,7 +221,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | DeepSeek V4 Flash | `NFKMLXDeepSeek` | checkpoint headers | released (shapes only) | 3,975 parameters across 5 captured layers, 0 mismatched; 34,223 declared + 33,389 block scales + 4,705 named (MTP / DSpark), 0 unaccounted of 72,317 |
 | DeepSeek V4 Pro (0813) | `NFKMLXDeepSeek` | checkpoint headers | released (shapes only) | 3,540 parameters across 3 captured layers, 0 mismatched; 71,983 declared + 70,790 block scales + 7,009 named, 0 unaccounted |
 | DeepSeek fp8 / fp4 storage | `NFKMLXDeepSeekQuantization` | torch 2.13 `float8_e4m3fn` + `ml_dtypes` `float4_e2m1fn` | real checkpoint bytes | both decodes exact (assertion) |
-| SmolLM2-135M Q4_K_M (GGUF) | `NFKMLXLanguage` (`ggufURL:`) | transformers loading the same GGUF | unsloth Q4_K_M | dequantization bit-exact for F32 / Q8_0 / Q5_0 / Q4_K / Q6_K (worst diff 0.0 over 262,144 values each); logit cosine 0.99999999999708, same argmax at every prompt position, teacher-forced continuation 8/10 (two near-ties) |
+| SmolLM2-135M Q4_K_M (GGUF) | `NFKMLXLanguage` (`ggufURL:`) | transformers loading the same GGUF | unsloth Q4_K_M | dequantization bit-exact for F32 / Q8_0 / Q5_0 / Q4_K / Q6_K (max abs 0.0 over 262,144 values each); logit cosine 0.99999999999708, same argmax at every prompt position, teacher-forced continuation 8/10 (two near-ties) |
 | T5-XXL v1.1 encoder | `NFKMLXT5Encoder` | transformers `T5EncoderModel` | LTX-Video text_encoder (19 GB) | embed seam exact, block 0 0.99999999999963, text embedding 0.99999999997956 |
 | umT5 encoder (tiny) | `NFKMLXT5Encoder` (`perLayerBias`) | transformers `UMT5EncoderModel` | random tiny | text embedding 0.9999999999999984 |
 | RoPE scaling (`linear`, `yarn`) | `NFKMLXRoPEScaling` | transformers `ROPE_INIT_FUNCTIONS` | five configurations | frequencies within 1e-5 relative (assertion) |
@@ -236,7 +240,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | RAFT | `NFKMLXRAFT` | princeton-vl RAFT | raft-things | eighth-resolution flow 0.99999999999975 (mean abs 3.3e-7), full resolution 0.99999999999993 |
 | BasicVSR | `NFKMLXVideoSR` | mmediting `BasicVSRNet` | REDS4 | three-frame clip cosine 0.99999999999979, mean abs 1.1e-7 |
 | SD ×4 upscaler UNet | `NFKMLXSDUpscaler` | diffusers `UNet2DConditionModel` | stable-diffusion-x4-upscaler | predicted noise 0.99999999999730 |
-| SD ×4 upscaler VAE | `NFKMLXSDUpscaler` | diffusers `AutoencoderKL` | same | latent 0.99999999998049, decoded 0.99999999991751 |
+| SD ×4 upscaler VAE | `NFKMLXSDUpscaler` | diffusers `AutoencoderKL` | same | latent 0.99999999998049, decode 0.99999999991751 |
 
 ## Audio
 
@@ -261,7 +265,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | FRCRN SE 16K | `NFKMLXFRCRN` | ClearerVoice `DCCRN` (frcrn_se) | alibabasglab/FRCRN_SE_16K | conv-STFT spectrum 0.9999999, encoder 0 1.0, squeeze-excite 0 1.0, bottleneck FSMN 1.0, decoder 0 0.99999994, first UNet 1.0, mask 1.0, masked spectrum 1.0, enhanced waveform 1.0 |
 | NU-Wave 2 | `NFKMLXNUWave2` | maum-ai/nuwave2 `Diffusion` | the official Google Drive checkpoint | from the reference's start noise: diffusion embedding 1.0, first block residual / skip 1.0, step-0 noise prediction 1.0, DDIM steps 0–7 all 1.0, clamped output 1.0 |
 | Apollo | `NFKMLXApollo` | JusperLee/Apollo `look2hear.models.Apollo` | JusperLee/Apollo pytorch_model.bin | band features 0.9999988, band 0 bottleneck 0.9999999, band-sequence layer 0 / 5 1.0 / 1.0, band 0 head 1.0, restored waveform 0.9999973 |
-| MarbleNet VAD | `NFKMLXVAD` | NeMo | Frame_VAD_Multilingual_MarbleNet_v2.0 | mel 0.99999999999974, probabilities 0.99999999999983 (largest abs 3.0e-7) |
+| MarbleNet VAD | `NFKMLXVAD` | NeMo | Frame_VAD_Multilingual_MarbleNet_v2.0 | mel 0.99999999999974, probabilities 0.99999999999983 (max abs 3.0e-7) |
 | Silero VAD v6 | `NFKMLXSileroVAD` | snakers4 `silero_vad` 6.2.1 JIT | silero_vad.jit (16 kHz) | per-chunk cosine 0.99999999999979, max abs 6.9e-7, threshold agreement 32/32 |
 | PANNs Cnn14 tagger | `NFKMLXAudioTagger` | `audioset_tagging_cnn` | Cnn14_mAP=0.431 | mel 0.99999999, embedding 0.99999994, tags 0.99999988, same top class (513) |
 | Descript Audio Codec | `NFKMLXDAC` | `descript-audio-codec` | 44.1 kHz weights.pth | codes 783/783 exact, reconstruction 0.99999999999986 |
@@ -276,7 +280,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 
 | Stage | Class | Reference | Measured |
 | --- | --- | --- | --- |
-| Vocoder | `NFKMusic3VocoderNet` | diffusers `MiniMaxMusic3Vocoder` | cosine 0.99999999999903, worst abs 8.3e-7 |
+| Vocoder | `NFKMusic3VocoderNet` | diffusers `MiniMaxMusic3Vocoder` | cosine 0.99999999999903, max abs 8.3e-7 |
 | RVQ depth decoder | `NFKMusic3DepthDecoderNet` | diffusers `MiniMaxMusic3RVQDepthDecoder` | hidden 0.99999999999674, heads 0.99999999999611, projection 0.99999999999948, embedding 1.0 |
 | Condition encoder | `NFKMusic3ConditionEncoderNet` | diffusers `MiniMaxMusic3ConditionEncoder` | cosine 0.99999999999969 |
 | Flow-matching DiT | `NFKMusic3DiTNet` | diffusers transformer | velocity at t0 0.99999999999893, mid 0.99999999999420, late 0.99999999999749, unconditional 0.99999999999410 |
@@ -289,7 +293,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
 | SD 1.5 UNet | `NFKMLXSDUNet` | diffusers `UNet2DConditionModel` | SD-1.5-inpainting UNet | predicted noise 0.99999999999925 |
-| SD 1.5 VAE | `NFKMLXSDAutoencoder` | diffusers `AutoencoderKL` | SD 1.5 VAE | latent 0.99999999981842, decoded 0.99999999916914 |
+| SD 1.5 VAE | `NFKMLXSDAutoencoder` | diffusers `AutoencoderKL` | SD 1.5 VAE | latent 0.99999999981842, decode 0.99999999916914 |
 | SD 2.1 UNet | `NFKMLXSDUNet` | same | SD 2.1 UNet | predicted noise 0.99999999931899 |
 | SDXL UNet | `NFKMLXSDUNet` | same | sdxl-turbo UNet | predicted noise 0.99999999999555 |
 | SD 1.5 text encoder | `NFKMLXSDTextEncoder` | transformers `CLIPTextModel` | SD 1.5 | last hidden 0.99999999999856, penultimate 0.99999999999962 |
@@ -297,7 +301,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | SDXL text encoders 1 and 2 | `NFKMLXSDTextEncoder` | same | sdxl-turbo | tower 1 last hidden 0.99999999999857, penultimate 0.99999999999971; tower 2 penultimate 0.99999999989422, pooled 0.99999999998203 |
 | SD prompt tokenizer | `NFKMLXSDPromptTokenizer` | transformers `CLIPTokenizer` | SD 1.5 tokenizer | token for token over five prompts (assertion) |
 | DDIM scheduler | `NFKDDIMScheduler` | diffusers `DDIMScheduler` | — | worst per-step latent 0.99999999999999, add-noise 0.9999999999999983, visited schedule exact |
-| SD 1.5 text-to-image | `NFKMLXTextToImage` | diffusers `StableDiffusionPipeline`, from its own initial latent | SD 1.5 | image cosine 0.99999895, mean abs 0.00064 |
+| SD 1.5 text-to-image | `NFKMLXTextToImage` | diffusers `StableDiffusionPipeline`, from its own initial latent | SD 1.5 | image 0.99999895, mean abs 0.00064 |
 | SD 2.1 text-to-image (v-prediction) | `NFKMLXTextToImage` | same | SD 2.1 | context 0.99999999998, first prediction 0.99999999659, per-step latents ≥ 0.99999997561, image 0.99999861, mean abs 0.00076 |
 | SDXL-Turbo text-to-image | `NFKMLXTextToImage` | diffusers `StableDiffusionXLPipeline` (DDIM both sides) | sdxl-turbo | image 0.99999727 (one step); with guidance 0.99999898; with no negative prompt 0.99999876 |
 | Z-Image S3-DiT (tiny) | `NFKMLXZImageTransformerNet` | diffusers `ZImageTransformer2DModel` | random tiny | t-embedder seam 0.99999999999511, velocity 0.9999999999999653 |
@@ -305,7 +309,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | SANA linear-attention DiT (tiny) | `NFKMLXSANATransformerNet` | diffusers `SanaTransformer2DModel` | random tiny | embedded-timestep seam 0.99999999999999, velocity 0.9999999999999959 |
 | DC-AE (tiny) | `NFKMLXDCAutoencoderNet` | diffusers `AutoencoderDC` | random tiny | latent 0.9999999999999344, decode 0.9999999999999848 |
 | DC-AE (released) | `NFKMLXDCAutoencoderNet` | same | Sana_600M VAE (1.2 GB), 256×256 at 32× | latent 0.99999999999185, decode 0.99999999980079 |
-| DPM-Solver++ (SANA) | `NFKMLXDPMSolverScheduler` | diffusers `DPMSolverMultistepScheduler` | — | sigmas within 6e-8, timesteps exact, trajectory worst abs 1.7e-6 |
+| DPM-Solver++ (SANA) | `NFKMLXDPMSolverScheduler` | diffusers `DPMSolverMultistepScheduler` | — | sigmas within 6e-8, timesteps exact, trajectory max abs 1.7e-6 |
 | IP-Adapter | `NFKMLXIPAdapterImageProjection` / `…Attention` | diffusers `ImageProjection`, `IPAdapterAttnProcessor2_0` | random | projection 0.9999999999999964, decoupled attention 0.9999999999999997 |
 | LTX-Video VAE | `NFKMLXLTXVideoVAE` | diffusers `AutoencoderKLLTXVideo` | Lightricks/LTX-Video vae | conv_in / down 0 / mid seams ≥ 0.99999999999936; latent 0.99999999999562, decode 0.99999999996192 |
 | LTX-Video DiT (2B) | `NFKMLXLTXTransformer` | diffusers `LTXVideoTransformer3DModel` | released 7.7 GB shards | rope cos/sin 0.99999993 / 0.99999995, proj_in 0.99999999999999, block 0 0.99999999999864; 28-layer velocity 0.99999999999460 |
@@ -313,11 +317,18 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | Wan DiT (tiny) | `NFKMLXWanTransformerNet` | diffusers `WanTransformer3DModel` | random tiny | velocity 0.9999999999999767 |
 | Wan 2.2 VAE (tiny, residual) | `NFKMLXWanVideoVAENet` | diffusers `AutoencoderKLWan` | random tiny, 5 frames | six encoder / decoder seams ≥ 0.99999999999996; latent 0.9999999999999989, decode 0.99999999999989 |
 | Wan 2.1 VAE (tiny, non-residual) | `NFKMLXWanVideoVAENet` (`.wan21`) | same | random tiny | latent 0.9999999999999978, decode 0.99999999999993 |
-| UniPC (Wan) | `NFKMLXUniPCScheduler` | diffusers `UniPCMultistepScheduler` | — | sigmas within 6e-8, trajectory worst abs 1.4e-6 |
+| UniPC (Wan) | `NFKMLXUniPCScheduler` | diffusers `UniPCMultistepScheduler` | — | sigmas within 6e-8, trajectory max abs 1.4e-6 |
+| SD3 MMDiT (tiny) | `NFKMLXSD3TransformerNet` | diffusers `SD3Transformer2DModel` | random tiny (dual attention, RMS qk-norm, context_pre_only, cropped positions) | patch seam 0.9999999999999942; velocity 0.9999999999999865 |
+| FLUX DiT (tiny) | `NFKMLXFluxTransformerNet` | diffusers `FluxTransformer2DModel` | random tiny (double + single blocks, guidance, axial rope) | velocity 0.9999999999998679 |
+| SD3 ControlNet (tiny, dual-stream) | `NFKMLXSD3ControlNetNet` + `NFKMLXSD3TransformerNet` | diffusers `SD3ControlNetModel` + base injection | random tiny (four-block base, two residuals, interval striding) | residuals 0.9999999999999958 / 0.9999999999999937; injected velocity 0.9999999999999859 |
+| SD3 ControlNet (tiny, 8B single-stream) | `NFKMLXSD3ControlNetNet` | diffusers `SD3ControlNetModel` (no pos_embed, no context embedder) | random tiny (single blocks, extra conditioning channel) | residuals 0.9999999999999984 / 0.9999999999999982 |
+| FLUX ControlNet (tiny) | `NFKMLXFluxControlNetNet` + `NFKMLXFluxTransformerNet` | diffusers `FluxControlNetModel` + base injection | random tiny (three-block base, two double + two single residuals, ceil striding) | residuals 0.9999999999999967 / 0.9999999999999942; injected velocity 0.9999999999999251 |
+| FLUX ControlNet (tiny, input_hint_block) | `NFKMLXFluxControlNetNet` + `NFKMLXFluxTransformerNet` | diffusers `FluxControlNetModel` (conditioning pyramid) + base injection | random tiny (full-resolution control image through the 8× pyramid) | residuals ≥ 0.9999999999999913; injected velocity 0.9999999999999771 |
 
-A sampled image or clip from the four DiT pipelines (`NFKMLXZImagePipeline`, `NFKMLXSANAPipeline`,
-`NFKMLXLTXPipeline`, `NFKMLXWanPipeline`) is not compared bitwise; their noise streams differ from the
-reference by construction. Each pipeline is validated by a weight-free glue test on matching tiny
+A sampled image or clip from the DiT pipelines (`NFKMLXZImagePipeline`, `NFKMLXSANAPipeline`,
+`NFKMLXLTXPipeline`, `NFKMLXWanPipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`) is not compared
+bitwise; their noise streams differ from the reference by construction. Each pipeline is validated by a
+weight-free glue test on matching tiny
 configurations plus the per-stage parities above, the same treatment Music 3 gets.
 
 ## Training objectives and the checkpoint path

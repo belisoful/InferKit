@@ -318,6 +318,30 @@ models.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
+- **`NFKMLXSD3Pipeline`** — Stable Diffusion 3 / 3.5 text-to-image: the MMDiT dual-stream joint-attention
+  transformer (`NFKMLXSD3TransformerNet`, at reference parity against diffusers; the SD3.5 RMS q/k norm
+  and MMDiT-X dual attention exercised), the SD3 autoencoder (`NFKMLXSDAutoencoder`, quant convolutions
+  kept), a CLIP-L + CLIP-G + T5-XXL text context, and the rectified-flow sampler with classifier-free
+  guidance. Presets `.sd3Medium` / `.sd35Medium` / `.sd35Large`; the released sizes held to the module
+  by shape (SD3.5-large 1227, SD3.5-medium 909 tensors, 0 missing / mismatched / unaccounted).
+- **`NFKMLXFluxPipeline`** — FLUX.1 text-to-image: the double- and single-stream transformer
+  (`NFKMLXFluxTransformerNet`, at reference parity against diffusers; axial rotary, guidance embedding),
+  the FLUX autoencoder (`NFKMLXSDAutoencoder`, `.flux`), a CLIP-L pooled + T5-XXL text context, and the
+  rectified-flow sampler over a packed latent. Presets `.dev` (guidance-distilled) / `.schnell`
+  (four-step); the released sizes held to the module by shape (FLUX.1 [schnell] 1156, FLUX.1 [dev] 1160
+  tensors, 0 missing / mismatched / unaccounted).
+- **`NFKMLXSD3ControlNetPipeline`** — Stable Diffusion 3 ControlNet: a partial MMDiT
+  (`NFKMLXSD3ControlNetNet`, at reference parity against diffusers' `SD3ControlNetModel`) that steers a
+  generation with a spatial control image, emitting per-block residuals the base `NFKMLXSD3TransformerNet`
+  injects. Both released shapes are configurable: the InstantX dual-stream ControlNets (Canny, pose,
+  tile, presets `.instantXMedium`) and Stability's official SD3.5-large 8B single-stream ControlNets
+  (Blur, Canny, Depth, `.stabilitySD35Large`). The pipeline runs the ControlNet once per classifier-free
+  guidance branch.
+- **`NFKMLXFluxControlNetPipeline`** — FLUX.1 ControlNet: a partial FLUX transformer
+  (`NFKMLXFluxControlNetNet`, at reference parity against diffusers' `FluxControlNetModel`) emitting
+  double- and single-block residuals the base `NFKMLXFluxTransformerNet` injects. The union control-type
+  embedding (`.unionPro`) and the `input_hint_block` full-resolution-image pyramid are both built; a
+  single-control ControlNet is `.single`.
 - **`NFKMLXSAM2`** — SAM 2's Hiera image encoder (tiny, small, base_plus, large), prompt encoder, mask decoder,
   and the video memory encoder and memory attention, each at parity against facebookresearch's sources.
 - **`NFKMLXDemucs`** / **`NFKMLXHTDemucs`** — real four-stem music separation: the Demucs v2 time-domain
@@ -410,7 +434,7 @@ models.
   by the input's bandwidth beside a local convolution branch), sampled by the released eight-step logSNR
   DDIM from seeded noise. At reference parity on the official checkpoint from the reference's own start
   noise: every seam and every step 1.0.
-- **`NFKMLXApollo`** — Apollo (`apollo`, JusperLee, **CC-BY-SA-4.0** code and weights), music
+- **`NFKMLXApollo`** — Apollo (`apollo`, JusperLee, **CC-by-SA-4.0** code and weights), music
   restoration of lossy-codec artifacts at 44.1 kHz: an 80-band split of a 20 ms STFT, six band-sequence
   layers (a rotary transformer across the bands, a depthwise convolutional block along time), and a
   gated head per band. At reference parity on the released weights against the repository's own model:
@@ -422,14 +446,14 @@ models.
   takes text under `NFKInputPrompt`; nil voice speaks the release's built-in `conds.pt`. Every stage at
   reference parity on the released weights; the synthesized validation sentence transcribes back
   through Parakeet exactly.
-- **`NFKMLXParakeet`** — Parakeet-TDT 0.6B v2 (NVIDIA, CC-BY-4.0), a second speech recognizer beside
+- **`NFKMLXParakeet`** — Parakeet-TDT 0.6B v2 (NVIDIA, CC-by-4.0), a second speech recognizer beside
   Whisper: a FastConformer encoder and a token-and-duration transducer, greedy TDT decoding, a
   timestamp per token under `NFKOutputSegments`. `backend(directoryURL:)` reads an unpacked `.nemo`;
   at reference parity against NeMo (tokens and timestamps exact).
 - **`NFKMLXVideoBackend`** — the first backend that produces video: an `NFKVideoAsset` in, every frame
   through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
   `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.
-- **Customizing a model on device** — `NFKMLXTrainer` runs supervised and zero-reference fine-tuning
+- Customizing a model on device — `NFKMLXTrainer` runs supervised and zero-reference fine-tuning
   with clipping, checkpoints, and early stop; `NFKMLXLoRA` adapts attention blocks and merges the
   result back into plain weights; `NFKMLXCLIPProbe` trains a classifier over frozen CLIP embeddings;
   recipes ship for Zero-DCE, SegFormer's decode head, and Whisper, each with its loss at reference
@@ -440,18 +464,18 @@ models.
   text-to-image, a source latent runs image-to-image (`NFKParameterStrength`), and a source latent
   plus a mask runs inpainting. Reference pipelines register by name (upscale, depth, inpaint,
   **controlnet**); `NFKDDIMScheduler` and `NFKLCMScheduler` (few-step) ship, and `NFKDiffusionScheduler`
-  is the seam for other samplers. **ControlNet and LCM need no full SD reimplementation** — LCM is a
+  is the seam for other samplers. ControlNet and LCM need no full SD reimplementation — LCM is a
   scheduler swap, ControlNet is a `denoise` closure over a control map (`NFKInputControl` →
   `conditioning["control"]`); the UNet is supplied by your `denoise` or a dynamically linked SD engine.
 
-The image backends share `NFKMLXImageBridge`, which converts a **`CGImage` or an `MTLTexture`**
+The image backends share `NFKMLXImageBridge`, which converts a `CGImage` or an `MTLTexture`
 to and from `MLXArray` in either direction, preserving alpha — so a Metal render pipeline hands
 textures straight in and gets textures back.
 
 ### Dynamic backend discovery (optional engines)
 
-`NFKDynamicBackend` (core) activates a heavier engine **only when its classes are linked into your
-build**, with no build dependency on it. Your engine's adapter conforms to `NFKDynamicBackendProvider`
+`NFKDynamicBackend` (core) activates a heavier engine only when its classes are linked into your
+build, with no build dependency on it. Your engine's adapter conforms to `NFKDynamicBackendProvider`
 and InferKit resolves it by name at runtime (`NSClassFromString`) — absent when unlinked, with no link
 error. Built-in capabilities light up when you link a companion:
 
@@ -462,7 +486,7 @@ error. Built-in capabilities light up when you link a companion:
   on-device LLM.
 - **`controlnet`** — no shipped default; bring a ControlNet engine and register its provider.
 
-Without the companion, the capability is simply unavailable. Model **weights are downloaded at runtime**
+Without the companion, the capability is simply unavailable. Model weights are downloaded at runtime
 (not bundled at build time) and cached under Application Support (`NFKHFHub.defaultCacheDirectoryURL`, or
 a host-supplied security-scoped folder); the download blocks, so run it off the main thread or use the
 async `downloadRepo:…completionHandler:` (`try await`).

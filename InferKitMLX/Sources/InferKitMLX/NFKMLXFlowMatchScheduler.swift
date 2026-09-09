@@ -51,6 +51,21 @@ public struct NFKMLXFlowMatchConfiguration: Sendable {
     /// `UniPCMultistepScheduler`; this is the rectified-flow stand-in the pipeline glue runs.
     public static let wan = NFKMLXFlowMatchConfiguration(
         baseShift: 5.0, shiftTerminal: nil, useDynamicShifting: false)
+
+    /// Stable Diffusion 3 / 3.5's schedule: a static shift of 3.0 (the released
+    /// `FlowMatchEulerDiscreteScheduler` config, `use_dynamic_shifting=False`).
+    public static let sd3 = NFKMLXFlowMatchConfiguration(
+        baseShift: 3.0, shiftTerminal: nil, useDynamicShifting: false)
+
+    /// FLUX.1 [dev]'s schedule: resolution-dependent dynamic shifting (base 0.5, max 1.15 over the
+    /// 256…4096 sequence range), no terminal stretch.
+    public static let flux = NFKMLXFlowMatchConfiguration(
+        baseShift: 0.5, maxShift: 1.15, baseSequenceLength: 256, maxSequenceLength: 4096,
+        shiftTerminal: nil, useDynamicShifting: true)
+
+    /// FLUX.1 [schnell]'s schedule: a static shift of 1.0 (the four-step distillation's own config).
+    public static let fluxSchnell = NFKMLXFlowMatchConfiguration(
+        baseShift: 1.0, shiftTerminal: nil, useDynamicShifting: false)
 }
 
 /// A rectified-flow sampler.

@@ -53,7 +53,7 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
 
 A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
 companion packages already do: **InferKitMLX** (60-plus models across image, video, audio, and
-language — text-to-image with Stable Diffusion, Z-Image, and SANA, text-to-video with LTX-Video and Wan,
+language — text-to-image with Stable Diffusion (1.x–3.5), FLUX.1, Z-Image, and SANA, text-to-video with LTX-Video and Wan,
 on-device language models (Qwen3, Qwen3.5, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4, and any dense GGUF), text embeddings
 and reranking, vision-language, speech recognition and synthesis, neural audio codecs, and MiniMax
 Music 3 text-to-music — each validated numerically against its reference implementation) and
@@ -73,7 +73,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 - **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend
 - **[Audio](Docs/model-index.md#audio)** — Whisper (every size, tiny–large-v3-turbo), Parakeet-TDT, Demucs v2 / HT Demucs, speech denoiser, MossFormer2 SE / SR, DeepFilterNet3, VoiceRestore, Resemble Enhance, MetricGAN+, CMGAN, FRCRN, NU-Wave 2, Apollo, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC (24 kHz speech, 32 / 44.1 kHz music)
 - **[Speech & music](Docs/model-index.md#text-to-speech-and-music)** — FastSpeech2 + HiFi-GAN voice, Kokoro-82M, Chatterbox voice cloning, phonemizers, MiniMax Music 3
-- **[Text → image & video](Docs/model-index.md#text-to-image-and-video)** — Stable Diffusion 1.5 / 2.1 / SDXL-Turbo, IP-Adapter, Z-Image, SANA, LTX-Video, Wan
+- [Text → image & video](Docs/model-index.md#text-to-image-and-video) — Stable Diffusion 1.5 / 2.1 / SDXL-Turbo, Stable Diffusion 3 / 3.5, FLUX.1, SD3 & FLUX ControlNet, IP-Adapter, Z-Image, SANA, LTX-Video, Wan
 
 ## Documentation
 
@@ -82,7 +82,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 | **[Inference guide](Docs/inference-guide.md)** | Choosing a backend, running a model locally, using Apple's Foundation Models. Start here. |
 | **[Examples](Docs/examples.md)** | Complete examples across every modality, backend, and subsystem — compiled by CI in both Swift and Objective-C. |
 | **[Installation](Docs/installation.md)** | Swift Package Manager, CocoaPods, and adding a companion package. |
-| **[Core ML language models](Docs/coreml-llm.md)** | Converting a Hugging Face checkpoint and running it on device. |
+| [Core ML language models](Docs/coreml-llm.md) | Converting a Hugging Face checkpoint and running it on device. |
 | **[Companion packages](Docs/companions.md)** | InferKitMLX and InferKitFoundationModels: what each ships, and the full model gallery. |
 | **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
 | **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
@@ -97,7 +97,7 @@ API reference is DocC:
 Tools/docc/build.sh          # the core        (--preview to serve it, --all for the companions)
 ```
 
-**Do not use Xcode's Product ▸ Build Documentation for the core.** Neither `xcodebuild docbuild` nor
+Do not use Xcode's Product ▸ Build Documentation for the core. Neither `xcodebuild docbuild` nor
 the swift-docc-plugin extracts a symbol graph from a pure Objective-C SwiftPM target, so that path
 produces an archive with no symbols in it and reports every ``NFKFoo`` link as
 `'NFKFoo' doesn't exist` — 94 symbol pages become 0. `Tools/docc/build.sh` exists for exactly this

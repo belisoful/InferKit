@@ -1946,9 +1946,15 @@
         "dpm_solver",
         "unipc",
         "wan_vae_21",
-        "dc_ae_real"
+        "dc_ae_real",
+        "sd3",
+        "flux",
+        "sd3_controlnet",
+        "sd3_controlnet_single",
+        "flux_controlnet",
+        "flux_controlnet_hint"
       ],
-      "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles. diffusers 0.36 also carries ZImageTransformer2DModel, SanaTransformer2DModel, and WanTransformer3DModel (the z_image / sana / wan DiT parity oracles)."
+      "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles. diffusers 0.36 also carries ZImageTransformer2DModel, SanaTransformer2DModel, WanTransformer3DModel, SD3Transformer2DModel, and FluxTransformer2DModel (the z_image / sana / wan / sd3 / flux DiT parity oracles), plus SD3ControlNetModel and FluxControlNetModel (the sd3_controlnet / sd3_controlnet_single / flux_controlnet parity oracles). The ControlNet oracles record BOTH the ControlNet (w::) and the base transformer (t::) at tiny random configs and the base-with-residuals output, so the Swift side validates the per-block residuals AND the base injection (SD3 interval_control non-ceil, FLUX ceil). flux_controlnet_hint additionally exercises the input_hint_block (the ControlNetConditioningEmbedding pyramid over a full-resolution control image, 8x downsample to the packed grid). IK_PARITY_SD3_CONTROLNET / _SINGLE / IK_PARITY_FLUX_CONTROLNET / _HINT are records/*.safetensors, tiny-random (no download)."
     },
     "chatterbox": {
       "interpreter": "~/.inferkit-validation/chatterboxvenv/bin/python3",
@@ -2080,6 +2086,30 @@
     {
       "repo": "google/siglip2-giant-opt-patch16-384",
       "directory": "siglip2-giant-opt-patch16-384"
+    },
+    {
+      "repo": "adamo1139/stable-diffusion-3.5-large-ungated",
+      "subfolder": "transformer",
+      "directory": "sd35-large",
+      "note": "SD3.5-large (8B) transformer. The official stabilityai repo is gated; this is an ungated mirror of the same geometry. Python's urllib hangs on HF's redirect here, so capture the headers with curl range requests rather than shapes.py."
+    },
+    {
+      "repo": "adamo1139/stable-diffusion-3.5-medium-ungated",
+      "subfolder": "transformer",
+      "directory": "sd35-medium",
+      "note": "SD3.5-medium (2.5B, MMDiT-X) transformer, which exercises the dual-attention path (attn2 on the first thirteen layers). Ungated mirror."
+    },
+    {
+      "repo": "cocktailpeanut/xulf-s",
+      "subfolder": "transformer",
+      "directory": "flux-schnell",
+      "note": "FLUX.1 [schnell] (12B) transformer. Ungated mirror of the Apache release."
+    },
+    {
+      "repo": "cocktailpeanut/xulf-d",
+      "subfolder": "transformer",
+      "directory": "flux-dev",
+      "note": "FLUX.1 [dev] (12B) transformer, guidance-distilled (the guidance_embedder the schnell size lacks). The official BFL repo is gated; this is an ungated mirror."
     }
   ]
 }

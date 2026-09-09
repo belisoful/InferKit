@@ -185,7 +185,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXCMGAN`` | `cmgan` | speech enhancement (CMGAN, a conformer metric GAN with mask + complex decoders) |
 | ``NFKMLXFRCRN`` | `frcrn` | speech enhancement (FRCRN, two complex UNets with frequency-recurrent FSMNs) |
 | ``NFKMLXNUWave2`` | `nuwave2` | diffusion bandwidth extension to 48 kHz (NU-Wave 2, short-time Fourier convolutions, 8-step DDIM) |
-| ``NFKMLXApollo`` | `apollo` | music codec-artifact restoration at 44.1 kHz (Apollo, 80-band Roformer; CC-BY-SA weights) |
+| ``NFKMLXApollo`` | `apollo` | music codec-artifact restoration at 44.1 kHz (Apollo, 80-band Roformer; CC-by-SA weights) |
 | ``NFKMLXDAC`` | `dac` | neural audio codec (Descript, 44.1 / 24 / 16 kHz) |
 | ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech; 32 / 44.1 kHz music) |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / base / small / medium / large / large-v3 / large-v3-turbo, timestamps) |
@@ -218,6 +218,10 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` + Gemma 2 | SANA text-to-image |
 | ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformer`` + ``NFKMLXLTXVideoVAE`` + T5-XXL | LTX-Video text-to-video |
 | ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` + umT5 | Wan text-to-video |
+| ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP/T5 | Stable Diffusion 3 / 3.5 text-to-image |
+| ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + CLIP-L/T5 | FLUX.1 text-to-image |
+| ``NFKMLXSD3ControlNetPipeline`` | ``NFKMLXSD3ControlNetNet`` + ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` | SD3 ControlNet: a spatial control image steers generation |
+| ``NFKMLXFluxControlNetPipeline`` | ``NFKMLXFluxControlNetNet`` + ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | FLUX.1 ControlNet: a spatial control image steers generation |
 
 ## Topics
 
