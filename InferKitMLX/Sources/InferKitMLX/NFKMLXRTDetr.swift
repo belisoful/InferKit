@@ -51,6 +51,10 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
     public var inputResolution: Int = 640
     /// The minimum per-query class probability a detection is emitted at.
     public var confidenceThreshold: Float = 0.3
+    /// Whether the backbone stacks two-convolution basic blocks (`layer_type: basic`, the r18vd and
+    /// r34vd releases) rather than bottlenecks. A basic block's stage widths are the block widths
+    /// themselves; a bottleneck's are four times its reduced width.
+    public var basicBlocks: Bool = false
 
     public init(embeddingSize: Int, hiddenSizes: [Int], depths: [Int], encoderInChannels: [Int],
                 featStrides: [Int], encoderHiddenDim: Int, encoderFFNDim: Int, numAttentionHeads: Int,
@@ -99,6 +103,40 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
         positionalEncodingTemperature: 10000, hiddenExpansion: 1.0, dModel: 256,
         decoderAttentionHeads: 8, decoderFFNDim: 1024, decoderLayers: 6, decoderNPoints: 4,
         numFeatureLevels: 3, numQueries: 300, numLabels: 80, batchNormEps: 1e-5, layerNormEps: 1e-5)
+
+    /// The released `PekingU/rtdetr_r101vd` geometry: ResNet-101-vd (`[3, 4, 23, 3]`), a 384-wide
+    /// hybrid encoder with a 2048-wide feed-forward, and the same 256-wide decoder.
+    public static let r101vd: NFKMLXRTDetrConfiguration = {
+        var configuration = r50vd
+        configuration.depths = [3, 4, 23, 3]
+        configuration.encoderHiddenDim = 384
+        configuration.encoderFFNDim = 2048
+        return configuration
+    }()
+
+    /// The released `PekingU/rtdetr_r18vd` geometry: ResNet-18-vd (basic blocks, `[2, 2, 2, 2]` over
+    /// `[64, 128, 256, 512]`), the hybrid encoder's CSP layers at half expansion, and a three-layer
+    /// decoder.
+    public static let r18vd: NFKMLXRTDetrConfiguration = {
+        var configuration = NFKMLXRTDetrConfiguration(
+            embeddingSize: 64, hiddenSizes: [64, 128, 256, 512], depths: [2, 2, 2, 2],
+            encoderInChannels: [128, 256, 512], featStrides: [8, 16, 32], encoderHiddenDim: 256,
+            encoderFFNDim: 1024, numAttentionHeads: 8, encoderLayers: 1, encodeProjLayers: [2],
+            positionalEncodingTemperature: 10000, hiddenExpansion: 0.5, dModel: 256,
+            decoderAttentionHeads: 8, decoderFFNDim: 1024, decoderLayers: 3, decoderNPoints: 4,
+            numFeatureLevels: 3, numQueries: 300, numLabels: 80, batchNormEps: 1e-5, layerNormEps: 1e-5)
+        configuration.basicBlocks = true
+        return configuration
+    }()
+
+    /// The released `PekingU/rtdetr_r34vd` geometry: ResNet-34-vd (basic blocks, `[3, 4, 6, 3]`) and a
+    /// four-layer decoder, otherwise r18vd's.
+    public static let r34vd: NFKMLXRTDetrConfiguration = {
+        var configuration = r18vd
+        configuration.depths = [3, 4, 6, 3]
+        configuration.decoderLayers = 4
+        return configuration
+    }()
 }
 
 // MARK: - Backbone (ResNet-D)
@@ -180,21 +218,73 @@ final class NFKRTDetrBottleneck: Module {
     }
 }
 
-/// A ResNet-D stage: a first (possibly downsampling) bottleneck followed by `depth - 1` plain ones.
-final class NFKRTDetrResNetStage: Module {
-    @ModuleInfo(key: "layers") var layers: [NFKRTDetrBottleneck]
+/// A ResNet-D basic block (the r18vd / r34vd releases): two 3×3 convolutions, the first at the block's
+/// stride, added to a shortcut and activated. A stage's first block always projects its shortcut —
+/// through an average pool and a stride-1 1×1 when the width changes, a 1×1 alone when it does not —
+/// and the later blocks pass the residual through as they are.
+final class NFKRTDetrBasicLayer: Module {
+    @ModuleInfo(key: "layer") var layer: [NFKRTDetrResNetConvNorm]     // two convs
+    @ModuleInfo(key: "shortcut") var shortcut: [Module]               // [] identity, [ShortCut], or [marker, ShortCut]
+    let pools: Bool
 
-    init(_ inChannels: Int, _ outChannels: Int, stride: Int, depth: Int, eps: Float) {
-        var built = [NFKRTDetrBottleneck(inChannels, outChannels, stride: stride, eps: eps)]
-        for _ in 1 ..< depth {
-            built.append(NFKRTDetrBottleneck(outChannels, outChannels, stride: 1, eps: eps))
+    init(_ inChannels: Int, _ outChannels: Int, stride: Int, projects: Bool, eps: Float) {
+        _layer.wrappedValue = [
+            NFKRTDetrResNetConvNorm(inChannels, outChannels, kernel: 3, stride: stride, activate: true, eps: eps),
+            NFKRTDetrResNetConvNorm(outChannels, outChannels, kernel: 3, stride: 1, activate: false, eps: eps),
+        ]
+        pools = projects && inChannels != outChannels
+        if !projects {
+            _shortcut.wrappedValue = []
+        } else if pools {
+            _shortcut.wrappedValue = [Module(), NFKRTDetrShortCut(inChannels, outChannels, stride: 1, eps: eps)]
+        } else {
+            _shortcut.wrappedValue = [NFKRTDetrShortCut(inChannels, outChannels, stride: stride, eps: eps)]
+        }
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        var residual = x
+        var hidden = x
+        for conv in layer { hidden = conv(hidden) }
+        if pools, shortcut.count == 2 {
+            residual = (shortcut[1] as! NFKRTDetrShortCut)(NFKMLXResample.averagePooled(residual, kernel: 2, stride: 2))
+        } else if let sc = shortcut.first as? NFKRTDetrShortCut {
+            residual = sc(residual)
+        }
+        return relu(hidden + residual)
+    }
+}
+
+/// A ResNet-D stage: a first (possibly downsampling) block followed by `depth - 1` plain ones, of
+/// either block kind.
+final class NFKRTDetrResNetStage: Module {
+    @ModuleInfo(key: "layers") var layers: [Module]
+
+    init(_ inChannels: Int, _ outChannels: Int, stride: Int, depth: Int, eps: Float, basic: Bool = false) {
+        var built: [Module]
+        if basic {
+            built = [NFKRTDetrBasicLayer(inChannels, outChannels, stride: stride, projects: true, eps: eps)]
+            for _ in 1 ..< depth {
+                built.append(NFKRTDetrBasicLayer(outChannels, outChannels, stride: 1, projects: false, eps: eps))
+            }
+        } else {
+            built = [NFKRTDetrBottleneck(inChannels, outChannels, stride: stride, eps: eps)]
+            for _ in 1 ..< depth {
+                built.append(NFKRTDetrBottleneck(outChannels, outChannels, stride: 1, eps: eps))
+            }
         }
         _layers.wrappedValue = built
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var hidden = x
-        for layer in layers { hidden = layer(hidden) }
+        for layer in layers {
+            if let bottleneck = layer as? NFKRTDetrBottleneck {
+                hidden = bottleneck(hidden)
+            } else if let basic = layer as? NFKRTDetrBasicLayer {
+                hidden = basic(hidden)
+            }
+        }
         return hidden
     }
 }
@@ -227,10 +317,12 @@ final class NFKRTDetrResNetEncoder: Module {
         // out_features = stage2/stage3/stage4 -> the last three of the four stages.
         outStages = [1, 2, 3]
         var built = [NFKRTDetrResNetStage(config.embeddingSize, config.hiddenSizes[0], stride: 1,
-                                          depth: config.depths[0], eps: config.batchNormEps)]
+                                          depth: config.depths[0], eps: config.batchNormEps,
+                                          basic: config.basicBlocks)]
         for i in 1 ..< 4 {
             built.append(NFKRTDetrResNetStage(config.hiddenSizes[i - 1], config.hiddenSizes[i], stride: 2,
-                                              depth: config.depths[i], eps: config.batchNormEps))
+                                              depth: config.depths[i], eps: config.batchNormEps,
+                                              basic: config.basicBlocks))
         }
         _stages.wrappedValue = built
     }
@@ -932,22 +1024,49 @@ public final class NFKMLXRTDetrBackend: NSObject, NFKInferenceBackend {
 /// `NFKMLXRTDetrNet` is the reference detector, at reference parity against transformers'
 /// RTDetrForObjectDetection. Random weights run (proving the pipeline); the released `PekingU/rtdetr_r50vd`
 /// safetensors detects accurately. The Apache-2.0 license makes it the clean swap for the AGPL YOLO.
+/// The released RT-DETR size to build, for the Objective-C factory. A checkpoint fits only its own.
+@objc(NFKMLXRTDetrVariant)
+public enum NFKMLXRTDetrVariant: Int {
+    case r50vd
+    case r18vd
+    case r34vd
+    case r101vd
+}
+
 @objc(NFKMLXRTDetr)
 public final class NFKMLXRTDetr: NSObject {
     /// The registry name the model builds under.
     @objc public static let modelName = "rtdetr"
+
+    static func specs(for variant: NFKMLXRTDetrVariant) -> (name: String, configuration: NFKMLXRTDetrConfiguration) {
+        switch variant {
+        case .r50vd: return (modelName, .r50vd)
+        case .r18vd: return ("rtdetr-r18vd", .r18vd)
+        case .r34vd: return ("rtdetr-r34vd", .r34vd)
+        case .r101vd: return ("rtdetr-r101vd", .r101vd)
+        }
+    }
 
     /// Builds a detection backend directly from optional local weights — no registry required. A nil
     /// `weightsURL` builds random weights (`isReady` is true). `labels` names classes when available.
     /// Run inference off the render thread.
     @objc(backendWithWeightsURL:labels:error:)
     public static func backend(weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXRTDetrNet(.r50vd)
+        try backend(variant: .r50vd, weightsURL: weightsURL, labels: labels)
+    }
+
+    /// Builds one of the released sizes from optional local weights.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:labels:error:)
+    public static func backend(variant: NFKMLXRTDetrVariant, weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = NFKMLXRTDetrNet(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
         net.train(false)                                                  // BatchNorm running statistics
-        return NFKMLXRTDetrBackend(net: net, identifier: modelName, labels: labels)
+        return NFKMLXRTDetrBackend(net: net, identifier: spec.name, labels: labels)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds the backend. Blocking on the network; run
@@ -955,8 +1074,18 @@ public final class NFKMLXRTDetr: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
+        try backend(variant: .r50vd, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL, labels: labels)
+    }
+
+    /// The download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)
+    public static func backend(variant: NFKMLXRTDetrVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url, labels: labels)
+        return try backend(variant: variant, weightsURL: url, labels: labels)
     }
 
     /// The asynchronous form of the download factory.
@@ -964,16 +1093,30 @@ public final class NFKMLXRTDetr: NSObject {
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .r50vd, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, labels: labels, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:completionHandler:)
+    public static func backend(variant: NFKMLXRTDetrVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, labels: [String]?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0, labels: labels) },
+                               build: { try backend(variant: variant, weightsURL: $0, labels: labels) },
                                completionHandler: completionHandler)
     }
 
-    /// Registers RT-DETR (`rtdetr`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:labels:)`.
+    /// Registers every released size (`rtdetr` for r50vd, `rtdetr-r18vd`, `rtdetr-r34vd`,
+    /// `rtdetr-r101vd`) with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in
-            try backend(weightsURL: weightsURL, labels: nil)
+        for variant in [NFKMLXRTDetrVariant.r50vd, .r18vd, .r34vd, .r101vd] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL, labels: nil)
+            }
         }
     }
 

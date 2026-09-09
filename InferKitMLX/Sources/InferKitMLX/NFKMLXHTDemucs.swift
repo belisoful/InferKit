@@ -551,6 +551,73 @@ public struct NFKMLXHTDemucsConfiguration: Sendable {
     public init() {}
 
     public static let htdemucs = NFKMLXHTDemucsConfiguration()
+
+    /// The released `htdemucs_6s`: six stems, guitar and piano after the four the base release
+    /// separates. Its `bottom_channels` is 0, so it carries no channel samplers and runs the
+    /// cross-transformer at the deepest encoder's own width (384) with a 1536-wide feed-forward.
+    public static let htdemucs6s: NFKMLXHTDemucsConfiguration = {
+        var configuration = NFKMLXHTDemucsConfiguration()
+        configuration.sources = 6
+        configuration.bottomChannels = 0
+        configuration.transformerHidden = 1536
+        return configuration
+    }()
+
+    /// The width the cross-transformer runs at: `bottomChannels`, or the deepest encoder's width when
+    /// the release sets `bottom_channels` to 0 and builds no samplers.
+    public var transformerWidth: Int {
+        bottomChannels > 0 ? bottomChannels : channels << (depth - 1)
+    }
+
+    /// The stem names in the release's order; the four-stem releases stop at `vocals`.
+    public static let stemNames = ["drums", "bass", "other", "vocals", "guitar", "piano"]
+}
+
+/// A bag of Hybrid Transformer Demucs models, the form the fine-tuned release (`htdemucs_ft`) takes:
+/// four checkpoints of the base geometry, each fine-tuned for one stem, combined by per-source weights.
+///
+/// The reference's `BagOfModels` sums each model's estimate scaled by its weight for that source and
+/// divides by the weights' total; `htdemucs_ft` uses one-hot weights, so each stem comes from the model
+/// fine-tuned for it.
+public final class NFKMLXHTDemucsBag {
+    public let nets: [NFKMLXHTDemucsNet]
+    /// `weights[model][source]`.
+    public let weights: [[Float]]
+
+    public var configuration: NFKMLXHTDemucsConfiguration { nets[0].configuration }
+
+    /// The weights `htdemucs_ft` uses: model `i` contributes stem `i` alone.
+    public static func oneHotWeights(models: Int, sources: Int) -> [[Float]] {
+        (0 ..< models).map { model in (0 ..< sources).map { $0 == model ? 1 : 0 } }
+    }
+
+    public init(nets: [NFKMLXHTDemucsNet], weights: [[Float]]) throws {
+        guard let first = nets.first else {
+            throw NFKMLXError.unsupportedConfiguration("a bag holds at least one model")
+        }
+        guard weights.count == nets.count,
+              weights.allSatisfy({ $0.count == first.configuration.sources }) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a bag needs one weight per source for each of its \(nets.count) models")
+        }
+        self.nets = nets
+        self.weights = weights
+    }
+
+    /// Separates `samples` (`[channels, length]`) into `[sources, channels, length]`, the weighted mean
+    /// of the models' estimates.
+    public func separate(_ samples: MLXArray, padsToTrainingSegment: Bool = true) -> MLXArray {
+        let sources = configuration.sources
+        var total: MLXArray?
+        var totalWeight = [Float](repeating: 0, count: sources)
+        for (net, weight) in zip(nets, weights) {
+            let scaled = net.separate(samples, padsToTrainingSegment: padsToTrainingSegment)
+                * MLXArray(weight).reshaped([sources, 1, 1])
+            total = total.map { $0 + scaled } ?? scaled
+            for (index, value) in weight.enumerated() { totalWeight[index] += value }
+        }
+        return total! / MLXArray(totalWeight).reshaped([sources, 1, 1])
+    }
 }
 
 /// A separation together with the tensors at each stage boundary. Only the parity test reads these;
@@ -572,10 +639,10 @@ public final class NFKMLXHTDemucsNet: Module {
     @ModuleInfo(key: "tencoder") var timeEncoder: [NFKHTTimeEncoder]
     @ModuleInfo(key: "tdecoder") var timeDecoder: [NFKHTTimeDecoder]
     @ModuleInfo(key: "freq_emb") var frequencyEmbedding: Embedding
-    @ModuleInfo(key: "channel_upsampler") var channelUpsampler: Linear
-    @ModuleInfo(key: "channel_downsampler") var channelDownsampler: Linear
-    @ModuleInfo(key: "channel_upsampler_t") var timeUpsampler: Linear
-    @ModuleInfo(key: "channel_downsampler_t") var timeDownsampler: Linear
+    @ModuleInfo(key: "channel_upsampler") var channelUpsampler: Linear?
+    @ModuleInfo(key: "channel_downsampler") var channelDownsampler: Linear?
+    @ModuleInfo(key: "channel_upsampler_t") var timeUpsampler: Linear?
+    @ModuleInfo(key: "channel_downsampler_t") var timeDownsampler: Linear?
     @ModuleInfo(key: "crosstransformer") var crossTransformer: NFKHTCrossTransformer
 
     public let configuration: NFKMLXHTDemucsConfiguration
@@ -613,12 +680,14 @@ public final class NFKMLXHTDemucsNet: Module {
 
         self._frequencyEmbedding.wrappedValue = Embedding(embeddingCount: c.nFFT / 8,
                                                           dimensions: c.channels)
-        self._channelUpsampler.wrappedValue = Linear(frequencyIn, c.bottomChannels)
-        self._channelDownsampler.wrappedValue = Linear(c.bottomChannels, frequencyIn)
-        self._timeUpsampler.wrappedValue = Linear(timeIn, c.bottomChannels)
-        self._timeDownsampler.wrappedValue = Linear(c.bottomChannels, timeIn)
+        if c.bottomChannels > 0 {
+            self._channelUpsampler.wrappedValue = Linear(frequencyIn, c.bottomChannels)
+            self._channelDownsampler.wrappedValue = Linear(c.bottomChannels, frequencyIn)
+            self._timeUpsampler.wrappedValue = Linear(timeIn, c.bottomChannels)
+            self._timeDownsampler.wrappedValue = Linear(c.bottomChannels, timeIn)
+        }
         self._crossTransformer.wrappedValue = NFKHTCrossTransformer(
-            dimensions: c.bottomChannels, heads: c.transformerHeads,
+            dimensions: c.transformerWidth, heads: c.transformerHeads,
             hidden: c.transformerHidden, layers: c.transformerLayers)
     }
 
@@ -675,14 +744,24 @@ public final class NFKMLXHTDemucsNet: Module {
         let bottomFrequencies = x.shape[1], bottomFrames = x.shape[2]
         // The channel sampler is a 1×1 convolution over the flattened grid, which is frequency-major —
         // a different order from the transformer's own frame-major tokens.
-        var bottom = channelUpsampler(x.reshaped([1, bottomFrequencies * bottomFrames, x.shape[3]]))
-            .reshaped([1, bottomFrequencies, bottomFrames, c.bottomChannels])
-        var bottomTime = timeUpsampler(xt)
+        let width = c.transformerWidth
+        var bottom = x
+        var bottomTime = xt
+        if let channelUpsampler, let timeUpsampler {
+            bottom = channelUpsampler(x.reshaped([1, bottomFrequencies * bottomFrames, x.shape[3]]))
+                .reshaped([1, bottomFrequencies, bottomFrames, width])
+            bottomTime = timeUpsampler(xt)
+        }
         (bottom, bottomTime) = crossTransformer(bottom, bottomTime)
         let bottleneckOut = bottom[0]
-        x = channelDownsampler(bottom.reshaped([1, bottomFrequencies * bottomFrames, c.bottomChannels]))
-            .reshaped([1, bottomFrequencies, bottomFrames, saved[c.depth - 1].shape[3]])
-        xt = timeDownsampler(bottomTime)
+        if let channelDownsampler, let timeDownsampler {
+            x = channelDownsampler(bottom.reshaped([1, bottomFrequencies * bottomFrames, width]))
+                .reshaped([1, bottomFrequencies, bottomFrames, saved[c.depth - 1].shape[3]])
+            xt = timeDownsampler(bottomTime)
+        } else {
+            x = bottom
+            xt = bottomTime
+        }
 
         for index in 0 ..< c.depth {
             (x, _) = decoder[index](x, skip: saved.removeLast())
@@ -824,15 +903,28 @@ public extension NFKMLXHTDemucs {
 /// Reads audio under `NFKInputAudio` and returns one `NFKAudioAsset` per stem, under its name.
 public final class NFKMLXHTDemucsBackend: NSObject, NFKInferenceBackend {
 
-    private let net: NFKMLXHTDemucsNet
+    private let configuration: NFKMLXHTDemucsConfiguration
+    private let separate: (MLXArray) -> MLXArray
     private let identifier: String
     private let outputDirectory: URL
     private let stemNames: [String]
 
     init(net: NFKMLXHTDemucsNet, identifier: String = "htdemucs",
-         stemNames: [String] = ["drums", "bass", "other", "vocals"],
+         stemNames: [String] = NFKMLXHTDemucsConfiguration.stemNames,
          outputDirectory: URL = FileManager.default.temporaryDirectory) {
-        self.net = net
+        configuration = net.configuration
+        separate = { net.separate($0) }
+        self.identifier = identifier
+        self.stemNames = stemNames
+        self.outputDirectory = outputDirectory
+        super.init()
+    }
+
+    init(bag: NFKMLXHTDemucsBag, identifier: String = "htdemucs-ft",
+         stemNames: [String] = NFKMLXHTDemucsConfiguration.stemNames,
+         outputDirectory: URL = FileManager.default.temporaryDirectory) {
+        configuration = bag.configuration
+        separate = { bag.separate($0) }
         self.identifier = identifier
         self.stemNames = stemNames
         self.outputDirectory = outputDirectory
@@ -849,19 +941,19 @@ public final class NFKMLXHTDemucsBackend: NSObject, NFKInferenceBackend {
         }
         // The release is trained at 44.1 kHz; a clip at another rate puts every partial in the wrong
         // frequency bin, which separates cleanly into the wrong stems.
-        let modelRate = net.configuration.sampleRate
+        let modelRate = configuration.sampleRate
         let matched = NFKMLXAudioRate.matched(samples, from: sampleRate, to: modelRate)
-        let channels = net.configuration.audioChannels
+        let channels = configuration.audioChannels
         // `NFKMLXWaveFile` downmixes on read, so a mono clip drives both channels of a stereo model.
         let mix = (matched + matched).withUnsafeBufferPointer {
             MLXArray($0, [channels, matched.count])
         }
-        let stems = net.separate(mix)
+        let stems = separate(mix)
         eval(stems)
 
         var outputs: [String: Any] = [:]
         let length = stems.shape[2]
-        for (index, name) in stemNames.enumerated() where index < net.configuration.sources {
+        for (index, name) in stemNames.enumerated() where index < configuration.sources {
             let stem = stems[index].transposed(1, 0).reshaped([-1]).asArray(Float.self)
             let url = outputDirectory.appendingPathComponent("htdemucs-\(name)-\(UUID().uuidString).wav")
             try NFKMLXWaveFile.write(samples: stem, sampleRate: modelRate, channels: channels, to: url)
@@ -881,11 +973,27 @@ public final class NFKMLXHTDemucsBackend: NSObject, NFKInferenceBackend {
     }
 }
 
+/// The single-model Hybrid Transformer Demucs release to build, for the Objective-C factory.
+@objc(NFKMLXHTDemucsVariant)
+public enum NFKMLXHTDemucsVariant: Int {
+    /// `htdemucs`: drums, bass, other, vocals.
+    case fourStem
+    /// `htdemucs_6s`: the four stems plus guitar and piano.
+    case sixStem
+}
+
+private final class NFKMLXHTDemucsBagHolder: @unchecked Sendable {
+    let bag: NFKMLXHTDemucsBag
+    init(_ bag: NFKMLXHTDemucsBag) { self.bag = bag }
+}
+
 /// Registration, factories, and weight loading for Hybrid Transformer Demucs.
 @objc(NFKMLXHTDemucs)
 public final class NFKMLXHTDemucs: NSObject {
 
     @objc public static let modelName = "htdemucs"
+    @objc public static let sixStemModelName = "htdemucs-6s"
+    @objc public static let fineTunedModelName = "htdemucs-ft"
 
     static func makeNet(_ configuration: NFKMLXHTDemucsConfiguration = .htdemucs) -> NFKMLXHTDemucsNet {
         let net = NFKMLXHTDemucsNet(configuration: configuration)
@@ -893,17 +1001,61 @@ public final class NFKMLXHTDemucs: NSObject {
         return net
     }
 
+    static func specs(for variant: NFKMLXHTDemucsVariant) -> (name: String, configuration: NFKMLXHTDemucsConfiguration) {
+        switch variant {
+        case .fourStem: return (modelName, .htdemucs)
+        case .sixStem: return (sixStemModelName, .htdemucs6s)
+        }
+    }
+
     /// Builds a Hybrid Transformer Demucs backend from optional local weights. A nil `weightsURL`
     /// builds random weights (`isReady` is true). Run inference off the
     /// render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = makeNet()
+        try backend(variant: .fourStem, weightsURL: weightsURL)
+    }
+
+    /// Builds one of the released single-model geometries: the four-stem `htdemucs` or the six-stem
+    /// `htdemucs_6s`, whose checkpoint fits only `.sixStem`.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXHTDemucsVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = makeNet(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
         let holder = NFKMLXHTDemucsHolder(net)
-        return NFKMLXHTDemucsBackend(net: holder.net)
+        return NFKMLXHTDemucsBackend(net: holder.net, identifier: spec.name)
+    }
+
+    /// Builds the fine-tuned release (`htdemucs_ft`): four checkpoints of the four-stem geometry, in the
+    /// release's order (drums, bass, other, vocals), each contributing the stem it was fine-tuned for.
+    /// Four times the memory and the compute of one model, for the release's better separation.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithFineTunedWeightsURLs:error:)
+    public static func backend(fineTunedWeightsURLs urls: [URL]) throws -> any NFKInferenceBackend {
+        let bag = try fineTunedBag(weightsURLs: urls)
+        let holder = NFKMLXHTDemucsBagHolder(bag)
+        return NFKMLXHTDemucsBackend(bag: holder.bag, identifier: fineTunedModelName)
+    }
+
+    /// The fine-tuned bag itself, for a Swift caller who wants the stems as arrays.
+    public static func fineTunedBag(weightsURLs urls: [URL]) throws -> NFKMLXHTDemucsBag {
+        let sources = NFKMLXHTDemucsConfiguration.htdemucs.sources
+        guard urls.count == sources else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "htdemucs_ft is \(sources) checkpoints, one per stem; \(urls.count) were given")
+        }
+        let nets = try urls.map { url -> NFKMLXHTDemucsNet in
+            let net = makeNet()
+            try loadWeights(into: net, from: url)
+            return net
+        }
+        return try NFKMLXHTDemucsBag(nets: nets, weights: NFKMLXHTDemucsBag.oneHotWeights(models: sources, sources: sources))
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds. Blocking
@@ -911,24 +1063,51 @@ public final class NFKMLXHTDemucs: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: .fourStem, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL)
+    }
+
+    /// The download factory at a chosen geometry.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXHTDemucsVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
                                                 revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        return try backend(variant: variant, weightsURL: url)
     }
 
     /// The asynchronous form of the download factory.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .fourStem, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen geometry.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXHTDemucsVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0) },
+                               build: { try backend(variant: variant, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
 
-    /// Registers Hybrid Transformer Demucs (`htdemucs`) with `NFKMLXModelRegistry`.
+    /// Registers the single-model releases (`htdemucs`, `htdemucs-6s`) with `NFKMLXModelRegistry`. The
+    /// fine-tuned bag takes four files, which the one-URL registry cannot name; build it through
+    /// `backendWithFineTunedWeightsURLs:`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        for variant in [NFKMLXHTDemucsVariant.fourStem, .sixStem] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
+        }
     }
 }
 

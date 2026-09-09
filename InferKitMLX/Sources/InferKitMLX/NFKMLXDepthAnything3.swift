@@ -52,6 +52,34 @@ public struct NFKMLXDepth3Configuration: Sendable {
     /// DA3-SMALL (the default): 384-d, 12 blocks, 6 heads.
     public static var small: NFKMLXDepth3Configuration { NFKMLXDepth3Configuration() }
 
+    /// DA3-BASE (`vitb`): 768-d, 12 blocks, 12 heads, the same hooks and starts as small, a 128-wide
+    /// DualDPT reading `[96, 192, 384, 768]`.
+    public static var base: NFKMLXDepth3Configuration {
+        var configuration = NFKMLXDepth3Configuration()
+        configuration.embedDimensions = 768
+        configuration.heads = 12
+        configuration.features = 128
+        configuration.outChannels = [96, 192, 384, 768]
+        return configuration
+    }
+
+    /// DA3-LARGE (`vitl`): 1024-d, 24 blocks, 16 heads. Its rotary, query/key norm, camera token, and
+    /// local/global alternation begin at block 8 rather than 4, and its hooks sit at 11/15/19/23; the
+    /// DualDPT is 256 wide over `[256, 512, 1024, 1024]`.
+    public static var large: NFKMLXDepth3Configuration {
+        var configuration = NFKMLXDepth3Configuration()
+        configuration.embedDimensions = 1024
+        configuration.depth = 24
+        configuration.heads = 16
+        configuration.hooks = [11, 15, 19, 23]
+        configuration.altStart = 8
+        configuration.ropeStart = 8
+        configuration.qkNormStart = 8
+        configuration.features = 256
+        configuration.outChannels = [256, 512, 1024, 1024]
+        return configuration
+    }
+
     var tokenGrid: Int { inputSize / patchSize }
     /// The head reads concatenated local+global features (`cat_token`).
     var headInputDimensions: Int { embedDimensions * 2 }
@@ -558,25 +586,53 @@ enum NFKDA3Resample {
 
 // MARK: - Model + backend
 
+/// The Depth Anything 3 size to build, for the Objective-C factory. A released checkpoint fits only
+/// its own size: `DA3-SMALL` → `.small`, `DA3-BASE` → `.base`, `DA3-LARGE` → `.large`.
+@objc(NFKMLXDepth3Variant)
+public enum NFKMLXDepth3Variant: Int {
+    case small
+    case base
+    case large
+}
+
 @objc(NFKMLXDepthAnything3)
 public final class NFKMLXDepthAnything3: NSObject {
 
     @objc public static let modelName = "depth-anything-3-small"
+    @objc public static let baseModelName = "depth-anything-3-base"
+    @objc public static let largeModelName = "depth-anything-3-large"
 
     static func makeNet(_ configuration: NFKMLXDepth3Configuration = .small) -> NFKMLXDepthAnything3Net {
         NFKMLXDepthAnything3Net(configuration)
+    }
+
+    static func specs(for variant: NFKMLXDepth3Variant) -> (name: String, configuration: NFKMLXDepth3Configuration) {
+        switch variant {
+        case .small: return (modelName, .small)
+        case .base: return (baseModelName, .base)
+        case .large: return (largeModelName, .large)
+        }
     }
 
     /// Builds a Depth Anything 3 backend from optional local weights — no registry required.
     /// A nil `weightsURL` builds random weights (`isReady` is true). Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXDepthAnything3Net(.small)
+        try backend(variant: .small, weightsURL: weightsURL)
+    }
+
+    /// Builds one of the released sizes from optional local weights.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXDepth3Variant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = NFKMLXDepthAnything3Net(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
         let holder = NFKMLXDepth3Holder(net)
-        return NFKMLXModuleBackend(identifier: modelName, isReady: true) { image in holder.net.depth(image) }
+        return NFKMLXModuleBackend(identifier: spec.name, isReady: true) { image in holder.net.depth(image) }
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required. Blocking on the
@@ -584,8 +640,18 @@ public final class NFKMLXDepthAnything3: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: .small, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL)
+    }
+
+    /// The download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        return try backend(variant: variant, weightsURL: url)
     }
 
     /// The asynchronous form of the download factory.
@@ -593,14 +659,30 @@ public final class NFKMLXDepthAnything3: NSObject {
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .small, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0) },
+                               build: { try backend(variant: variant, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
 
+    /// Registers the three sizes (`depth-anything-3-small`, `-base`, `-large`) with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        for variant in [NFKMLXDepth3Variant.small, .base, .large] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
+        }
     }
 
     /// Loads a checkpoint, keeping only the monocular depth path: the backbone (`model.backbone.` →

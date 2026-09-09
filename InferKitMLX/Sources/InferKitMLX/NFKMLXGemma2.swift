@@ -51,6 +51,18 @@ public struct NFKMLXGemma2Configuration: Sendable {
 
     public static let gemma2_2B = NFKMLXGemma2Configuration()
 
+    /// The released Gemma 2 9B: 3584 wide over 42 layers of 16 heads (8 key-value) at 256, a 14336
+    /// feed-forward, the query scaled by `256^-0.5`.
+    public static let gemma2_9B = NFKMLXGemma2Configuration(
+        hiddenSize: 3584, layerCount: 42, headCount: 16, kvHeadCount: 8, headDim: 256,
+        intermediateSize: 14336, queryPreAttnScalar: 256)
+
+    /// The released Gemma 2 27B: 4608 wide over 46 layers of 32 heads (16 key-value) at 128, a 36864
+    /// feed-forward, the query scaled by `144^-0.5` — the one size whose scalar is not its head width.
+    public static let gemma2_27B = NFKMLXGemma2Configuration(
+        hiddenSize: 4608, layerCount: 46, headCount: 32, kvHeadCount: 16, headDim: 128,
+        intermediateSize: 36864, queryPreAttnScalar: 144)
+
     public static let tiny = NFKMLXGemma2Configuration(
         hiddenSize: 32, layerCount: 3, headCount: 2, kvHeadCount: 1, headDim: 8, intermediateSize: 64,
         vocabularySize: 128, queryPreAttnScalar: 8, attnLogitSoftcap: 50, slidingWindow: 3)

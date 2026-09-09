@@ -660,6 +660,158 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertLessThan(worstDifference(afterRollback, expected), 2e-3)
     }
 
+    // MARK: Keys grouped along the sequence
+
+    /// Eight bits, groups of 32 positions (the smallest MLX packs) — small enough that a short prompt
+    /// packs a group and leaves a residual, so every path (packed, skipped, residual) is reached.
+    private let perChannel = NFKMLXKeyValueCache.Quantization(bits: 8, groupSize: 32, keyAxis: .sequence)
+
+    private func cosine(_ a: [Float], _ b: [Float]) -> Double {
+        let dot = zip(a, b).map { Double($0) * Double($1) }.reduce(0, +)
+        let na = sqrt(a.map { Double($0) * Double($0) }.reduce(0, +))
+        let nb = sqrt(b.map { Double($0) * Double($0) }.reduce(0, +))
+        return dot / (na * nb)
+    }
+
+    private func stepped(_ net: NFKMLXLanguageNet, _ tokens: [Int32], cache: NFKMLXKeyValueCache) -> [Float] {
+        var last = [Float]()
+        for token in tokens {
+            let logits = net(MLXArray([token]).reshaped([1, 1]), cache: cache)
+            eval(logits)
+            last = logits[0, -1].asArray(Float.self)
+        }
+        return last
+    }
+
+    // A prompt of 50 positions packs one group of 32 and leaves 18 in the residual; the read tracks
+    // the float cache. One prefill pass packs the same group the steps did — the stored arrays are
+    // compared directly, because the logits legitimately differ: while stepping, the early positions
+    // attended to keys still in the float residual that the prefill attended to already packed.
+    func testAPerChannelKeyCacheTracksTheFloatLogits() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        let prompt = (0 ..< 50).map { Int32(($0 * 7 + 3) % 512) }
+        let float = stepped(net, prompt, cache: NFKMLXKeyValueCache(layerCount: 2))
+        let packed = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
+        let decoded = stepped(net, prompt, cache: packed)
+        XCTAssertGreaterThan(cosine(decoded, float), 0.99, "per-channel keys track the float cache")
+        XCTAssertEqual(packed.retainedLength(), 50)
+
+        let prefilled = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
+        let logits = net(MLXArray(prompt).reshaped([1, prompt.count]), cache: prefilled)
+        eval(logits)
+        XCTAssertGreaterThan(cosine(logits[0, -1].asArray(Float.self), decoded), 0.99)
+        // Layer 0's keys depend on the embeddings alone, so its packed group is the same either way;
+        // a deeper layer's keys carry the difference in what the early positions attended to.
+        let steppedArrays = packed.exportedArrays(), prefilledArrays = prefilled.exportedArrays()
+        for key in ["layer.0.key_groups", "layer.0.key_group_scales", "layer.0.key_residual"] {
+            let a = try XCTUnwrap(steppedArrays[key], key), b = try XCTUnwrap(prefilledArrays[key], key)
+            XCTAssertEqual(a.shape, b.shape, key)
+            XCTAssertLessThan(abs(a.asType(.float32) - b.asType(.float32)).max().item(Float.self), 1e-2,
+                              "\(key): prefill and stepping pack the same positions")
+        }
+        XCTAssertEqual(steppedArrays["layer.0.key_residual"]?.dim(2), 18)
+    }
+
+    // A rollback inside the residual, or of everything, is exact: re-feeding the same tokens lands
+    // where a run that never rolled back lands. A rollback that cuts INTO a packed group returns the
+    // group's surviving positions to the residual dequantized, so the re-fed tokens attend to keys
+    // the original run saw in full precision; that is lossy by construction and is held to a cosine.
+    func testAPerChannelKeyCacheRollsBackIntoAPackedGroup() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        let prompt = (0 ..< 40).map { Int32(($0 * 11 + 5) % 512) }
+        let fresh = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
+        _ = stepped(net, prompt, cache: fresh)
+        let expected = stepped(net, [60], cache: fresh)
+
+        for (count, exact) in [(5, true), (8, true), (12, false), (40, true)] {   // in the residual; exactly it; into the group; everything
+            let rolled = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
+            _ = stepped(net, prompt, cache: rolled)
+            XCTAssertTrue(rolled.rollback(by: count))
+            XCTAssertEqual(rolled.offset, 40 - count)
+            XCTAssertEqual(rolled.retainedLength(), 40 - count)
+            _ = stepped(net, Array(prompt.suffix(count)), cache: rolled)
+            let afterRollback = stepped(net, [60], cache: rolled)
+            if exact {
+                XCTAssertLessThan(worstDifference(afterRollback, expected), 2e-3, "rollback by \(count)")
+            } else {
+                XCTAssertGreaterThan(cosine(afterRollback, expected), 0.99, "rollback by \(count) into the group")
+            }
+        }
+    }
+
+    // A window drops the oldest positions from the packed groups too, part of a group included. The
+    // window here is wider than a group, so the group packs and then has its front skipped; the read
+    // tracks the float window. A rollback inside a window re-feeds tokens against a SHORTER context
+    // than the original run had (the dropped positions are gone for good), so it is compared with a
+    // float window doing the same rollback rather than with the uninterrupted run.
+    func testAPerChannelWindowedCacheTracksTheFloatWindow() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        let prompt = (0 ..< 60).map { Int32(($0 * 13 + 7) % 512) }
+        let float = stepped(net, prompt, cache: NFKMLXKeyValueCache(layerCount: 2, window: 40))
+        let windowed = NFKMLXKeyValueCache(layerCount: 2, window: 40, quantization: perChannel)
+        let decoded = stepped(net, prompt, cache: windowed)
+        XCTAssertGreaterThan(cosine(decoded, float), 0.99, "the per-channel window tracks the float window")
+        XCTAssertEqual(windowed.retainedLength(), 40)
+        let arrays = windowed.exportedArrays()
+        XCTAssertEqual(arrays["layer.0.key_group_scales"]?.dim(3), 1, "one group of 32 is packed")
+        XCTAssertEqual(arrays["layer.0.key_skip"]?.item(Int32.self), 20, "the window took 20 positions off its front")
+        XCTAssertEqual(arrays["layer.0.key_residual"]?.dim(2), 28)
+
+        func rolledBack(_ cache: NFKMLXKeyValueCache) -> [Float] {
+            _ = stepped(net, prompt, cache: cache)
+            XCTAssertTrue(cache.rollback(by: 7))
+            _ = stepped(net, Array(prompt.suffix(7)), cache: cache)
+            return stepped(net, [60], cache: cache)
+        }
+        let floatRolled = rolledBack(NFKMLXKeyValueCache(layerCount: 2, window: 40))
+        let rolled = NFKMLXKeyValueCache(layerCount: 2, window: 40, quantization: perChannel)
+        XCTAssertGreaterThan(cosine(rolledBack(rolled), floatRolled), 0.99)
+        XCTAssertFalse(rolled.rollback(by: 45), "positions the window dropped cannot be recovered")
+    }
+
+    // The per-channel layout persists and restores through the prompt cache, groups, skip, and
+    // residual alike, so a continuation from disk equals the direct run.
+    func testAPerChannelPromptCacheRoundTripsThroughDisk() throws {
+        try requireMLXRuntime()
+        let net = wideHeadNet()
+        let saved = NFKMLXPromptCache(layerCount: 2, quantization: perChannel)
+        let system = (0 ..< 40).map { Int(($0 * 3 + 1) % 512) }
+        _ = net.generate(prompt: system, options: greedy(2), promptCache: saved)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("prompt-cache-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try saved.save(to: url)
+
+        let loaded = try NFKMLXPromptCache.load(from: url)
+        XCTAssertEqual(loaded.tokens, saved.tokens)
+        XCTAssertEqual(loaded.quantization, perChannel, "the key axis survives the metadata")
+        let followUp = system + [60, 22]
+        let continued = net.generate(prompt: followUp, options: greedy(5), promptCache: loaded)
+        var options = greedy(5)
+        options.cacheQuantization = perChannel
+        XCTAssertEqual(continued, net.generate(prompt: followUp, options: options))
+    }
+
+    func testTheRequestKeySelectsPerChannelKeys() {
+        var options = NFKMLXGenerationOptions()
+        NFKMLXLanguageBackend.applyMLXParameters(
+            from: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"],
+                                      parameters: [NFKMLXGenerationParameterKey.cacheQuantizationBits: 4,
+                                                   NFKMLXGenerationParameterKey.cacheQuantizationGroupSize: 32,
+                                                   NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys: false]),
+            to: &options)
+        XCTAssertEqual(options.cacheQuantization, .init(bits: 4, groupSize: 32, keyAxis: .headDimension))
+        NFKMLXLanguageBackend.applyMLXParameters(
+            from: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"],
+                                      parameters: [NFKMLXGenerationParameterKey.cacheQuantizationBits: 8]),
+            to: &options)
+        XCTAssertEqual(options.cacheQuantization, .init(bits: 8, groupSize: 64, keyAxis: .sequence),
+                       "per-channel keys by default")
+    }
+
     // A window drops positions for good, so a rollback that would need them is refused and changes
     // nothing, which is what tells a prompt cache to rebuild instead.
     func testARollbackPastTheWindowIsRefused() throws {
@@ -903,7 +1055,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         let net = tinyMixtureNet()
         NFKMLXQuantization.quantize(module: net, bits: 8, groupSize: 32)
         XCTAssertTrue(net.model.layers[0].feedForward is NFKLMMixtureFeedForward)
-        let experts = (net.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts
+        let experts = (net.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts as! NFKLMSwitchGLU
         XCTAssertTrue(experts.gate is NFKLMQuantizedSwitchLinear)
         XCTAssertTrue(experts.down is NFKLMQuantizedSwitchLinear)
         let tokens = MLXArray([3, 17, 42, 8].map { Int32($0) }).reshaped([1, 4])
@@ -917,7 +1069,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
 
         let loaded = tinyMixtureNet()
         try NFKMLXLanguage.loadWeights(into: loaded, from: url)
-        let reloaded = (loaded.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts
+        let reloaded = (loaded.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts as! NFKLMSwitchGLU
         XCTAssertTrue(reloaded.up is NFKLMQuantizedSwitchLinear)
         let actual = loaded(tokens)
         eval(actual)
@@ -942,21 +1094,44 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     // tensor the release ships must be one this module consumes, so nothing is silently skipped.
     // MLX arrays are lazy, so a 30B module costs nothing to build until it is evaluated.
     func testEveryParameterMatchesTheReleasedQwen3MoeCheckpoint() throws {
+        try releasedMixtureStructure(shapesKey: "IK_SHAPES_QWEN3_MOE", configKey: "IK_CONFIG_QWEN3_MOE",
+                                     label: "qwen3-30B-A3B") { geometry in
+            XCTAssertEqual(geometry.expertCount, 128)
+            XCTAssertEqual(geometry.activeExpertCount, 8)
+            XCTAssertEqual(geometry.layerCount, 48)
+        }
+    }
+
+    // The released Qwen1.5-MoE-A2.7B, the same way: its shared expert and gate, its attention biases
+    // (spelled `qkv_bias` and absent from the config), and its 60 routed experts of 1408.
+    func testEveryParameterMatchesTheReleasedQwen2MoeCheckpoint() throws {
+        try releasedMixtureStructure(shapesKey: "IK_SHAPES_QWEN2_MOE", configKey: "IK_CONFIG_QWEN2_MOE",
+                                     label: "qwen1.5-MoE-A2.7B") { geometry in
+            XCTAssertEqual(geometry.expertCount, 60)
+            XCTAssertEqual(geometry.activeExpertCount, 4)
+            XCTAssertEqual(geometry.expertIntermediateSize, 1408)
+            XCTAssertEqual(geometry.sharedExpertIntermediateSize, 5632)
+            XCTAssertFalse(geometry.normalizesExpertWeights)
+            XCTAssertTrue(geometry.attentionBias)
+            XCTAssertEqual(geometry.layerCount, 24)
+        }
+    }
+
+    private func releasedMixtureStructure(shapesKey: String, configKey: String, label: String,
+                                          check: (NFKMLXLanguageConfiguration) -> Void) throws {
         var config = ProcessInfo.processInfo.environment
         let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation.json")
         if let data = try? Data(contentsOf: url),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
             json.forEach { config[$0.key] = $0.value }
         }
-        guard let shapesPath = config["IK_SHAPES_QWEN3_MOE"], let configPath = config["IK_CONFIG_QWEN3_MOE"],
+        guard let shapesPath = config[shapesKey], let configPath = config[configKey],
               let data = FileManager.default.contents(atPath: shapesPath),
               let released = try JSONSerialization.jsonObject(with: data) as? [String: [Int]]
-        else { throw XCTSkip("set IK_SHAPES_QWEN3_MOE and IK_CONFIG_QWEN3_MOE (Tools/validation-assets/shapes.py)") }
+        else { throw XCTSkip("set \(shapesKey) and \(configKey) (Tools/validation-assets/shapes.py)") }
 
         let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: URL(fileURLWithPath: configPath))
-        XCTAssertEqual(geometry.expertCount, 128)
-        XCTAssertEqual(geometry.activeExpertCount, 8)
-        XCTAssertEqual(geometry.layerCount, 48)
+        check(geometry)
         let net = NFKMLXLanguage.makeNet(geometry)
 
         var consumed = Set<String>()
@@ -983,7 +1158,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
             }
         }
         let unaccounted = released.keys.filter { !consumed.contains($0) }.sorted()
-        print("VALIDATION structure qwen3-30B-A3B: \(consumed.count) released tensors consumed, "
+        print("VALIDATION structure \(label): \(consumed.count) released tensors consumed, "
               + "\(missing.count) missing, \(mismatched.count) mismatched, \(unaccounted.count) unaccounted")
         XCTAssertTrue(mismatched.isEmpty, "shape mismatches:\n" + mismatched.prefix(8).joined(separator: "\n"))
         XCTAssertTrue(missing.isEmpty, "absent from the release:\n" + missing.prefix(8).joined(separator: "\n"))

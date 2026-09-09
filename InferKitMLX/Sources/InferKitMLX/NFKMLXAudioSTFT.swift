@@ -28,12 +28,21 @@ struct NFKMLXComplexSTFT {
     let nFFT: Int
     let hop: Int
     let window: MLXArray                        // [nFFT]
+    /// `pad_mode="constant"` (zeros at both ends) instead of the reflect padding `torch.stft` defaults
+    /// to; speechbrain's STFT is built that way, which MetricGAN+ inherits.
+    let zeroPadded: Bool
+    /// `center=false`: no padding at all, so the first frame starts at sample 0 and the inverse keeps
+    /// every synthesized sample. The convolutional STFT of FRCRN / MossFormer2 is built that way.
+    let centered: Bool
 
     /// `winLength` defaults to `nFFT`. A shorter window is zero-centered into `nFFT`, as `torch.stft`
     /// does. Pass `window` to override (already `nFFT`-wide).
-    init(nFFT: Int, hop: Int, winLength: Int? = nil, window: MLXArray? = nil) {
+    init(nFFT: Int, hop: Int, winLength: Int? = nil, window: MLXArray? = nil, zeroPadded: Bool = false,
+         centered: Bool = true) {
         self.nFFT = nFFT
         self.hop = hop
+        self.zeroPadded = zeroPadded
+        self.centered = centered
         if let window {
             self.window = window
         } else {
@@ -52,6 +61,10 @@ struct NFKMLXComplexSTFT {
     /// Reflect-pads `[1, L]` by `pad` on each side (`pad_mode="reflect"`: the edge sample is NOT
     /// repeated, so `[a, b, c]` padded by 2 is `[c, b, a, b, c, b, a]`).
     private func reflectPad(_ signal: MLXArray, pad: Int) -> MLXArray {
+        if !centered { return signal }
+        if zeroPadded {
+            return MLX.padded(signal, widths: [IntOrPair((0, 0)), IntOrPair((pad, pad))], mode: .constant)
+        }
         let l = signal.dim(1)
         var indices = [Int32]()
         for i in stride(from: pad, through: 1, by: -1) { indices.append(Int32(i)) }
@@ -96,18 +109,20 @@ struct NFKMLXComplexSTFT {
 
     /// real and imaginary parts `[1, bins, frames]` → `[1, samples]`, the complex counterpart of
     /// `inverse`, with the same window-squared overlap-add normalization.
-    func inverseComplex(real: MLXArray, imaginary: MLXArray) -> MLXArray {
+    func inverseComplex(real: MLXArray, imaginary: MLXArray, length: Int? = nil) -> MLXArray {
         let frames = real.dim(2)
         let re = real.transposed(0, 2, 1)                                 // [1, frames, bins]
         let im = imaginary.transposed(0, 2, 1)
         let complex = re.asType(.complex64) + im.asType(.complex64) * MLXArray(real: 0, imaginary: 1)
         let time = MLXFFT.irfft(complex, n: nFFT, axis: 2)               // [1, frames, nFFT] real
-        return overlapAdd(time, frames: frames)
+        return overlapAdd(time, frames: frames, length: length)
     }
 
     /// The shared window-squared overlap-add of framed time samples `[1, frames, nFFT]` → `[1, samples]`,
-    /// with the center padding removed. `torch.istft`'s normalization.
-    private func overlapAdd(_ time: MLXArray, frames: Int) -> MLXArray {
+    /// with the center padding removed. `torch.istft`'s normalization. A `length` is `torch.istft`'s
+    /// `length`: the output starts at the center pad and runs that many samples, so the last frame's
+    /// tail is kept (or the result zero-padded) rather than trimmed at the symmetric pad.
+    private func overlapAdd(_ time: MLXArray, frames: Int, length: Int? = nil) -> MLXArray {
         let windowed = time * window.reshaped([1, 1, nFFT])
         let outLength = (frames - 1) * hop + nFFT
         let framesValues = windowed[0].asArray(Float.self)
@@ -121,9 +136,9 @@ struct NFKMLXComplexSTFT {
                 normalization[start + k] += windowValues[k]
             }
         }
-        let pad = nFFT / 2
-        var result = [Float](repeating: 0, count: outLength - 2 * pad)
-        for i in 0 ..< result.count {
+        let pad = centered ? nFFT / 2 : 0
+        var result = [Float](repeating: 0, count: length ?? (outLength - 2 * pad))
+        for i in 0 ..< min(result.count, outLength - pad) {
             let norm = normalization[i + pad]
             result[i] = norm > 1e-11 ? output[i + pad] / norm : 0
         }
@@ -132,13 +147,13 @@ struct NFKMLXComplexSTFT {
 
     /// magnitude and phase `[1, bins, frames]` → `[1, samples]`, overlap-add with the window-squared
     /// normalization `torch.istft` applies, center padding removed.
-    func inverse(magnitude: MLXArray, phase: MLXArray) -> MLXArray {
+    func inverse(magnitude: MLXArray, phase: MLXArray, length: Int? = nil) -> MLXArray {
         let frames = magnitude.dim(2)
         let real = (magnitude * cos(phase)).transposed(0, 2, 1)          // [1, frames, bins]
         let imaginary = (magnitude * sin(phase)).transposed(0, 2, 1)
         let complex = real.asType(.complex64) + imaginary.asType(.complex64) * MLXArray(real: 0, imaginary: 1)
         let time = MLXFFT.irfft(complex, n: nFFT, axis: 2)               // [1, frames, nFFT] real
-        return overlapAdd(time, frames: frames)
+        return overlapAdd(time, frames: frames, length: length)
     }
 }
 

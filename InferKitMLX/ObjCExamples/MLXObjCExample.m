@@ -491,6 +491,15 @@
 	// own backend, dispatched from the release's config model type:
 	//   NFKInferenceBackend *gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error];
 	XCTAssertTrue([NFKMLXGemmaLanguage respondsToSelector:@selector(gemmaBackendWithDirectoryURL:error:)]);
+
+	// Gemma 3n is tri-modal and a separate architecture, so it has its own factory. The object form
+	// answers about a picture; the backend takes NFKInputImage or NFKInputAudio beside the text:
+	//   NFKMLXGemma3n *gemma = [NFKMLXGemma3n gemma3nWithDirectoryURL:dir error:&error];
+	//   NSString *answer = [gemma answerForImage:cgImage question:@"Describe this image." error:&error];
+	XCTAssertTrue([NFKMLXGemma3n respondsToSelector:@selector(gemma3nWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXGemma3n respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXGemma3n instancesRespondToSelector:@selector(answerForImage:question:error:)]);
+	XCTAssertTrue([NFKMLXGemma3n instancesRespondToSelector:@selector(answerForQuestion:error:)]);
 }
 
 // Docs/examples.md: A release larger than the machine is refused BEFORE any weight is read. The
@@ -645,6 +654,26 @@
 	XCTAssertNotNil(error);
 }
 
+// Docs/examples.md: Gemma 3 from Objective-C. backendWithDirectoryURL:error: builds the text backend
+// (NFKInputImage beside the text on the multimodal 4B); gemma3WithDirectoryURL:error: loads the model,
+// then answerForImage:question:error: answers about a CGImage. The full run needs the release, so this
+// pins the entry points and the Gemma dispatcher's routing.
+- (void)testObjectiveCGemma3EntryPoints
+{
+	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(gemma3WithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(answerForImage:question:error:)]);
+	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(answerForQuestion:error:)]);
+	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(submitInferenceJobForRequest:)]);
+	XCTAssertEqualObjects(NFKMLXGemma3.modelName, @"gemma3");
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend =
+		[NFKMLXGemma3 backendWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/gemma3"] error:&error];
+	XCTAssertNil(backend);
+	XCTAssertNotNil(error);
+}
+
 // Docs/examples.md: Reading a GGUF model from Objective-C. GGUFWithContentsOfURL: opens the file,
 // then metadataStringForKey: / infoForTensor: inspect it before reading a tensor.
 - (void)testObjectiveCGGUFReaderEntryPoints
@@ -766,6 +795,19 @@
 		parameters:@{ NFKMLXGenerationParameterKey.choices: @[ @"yes", @"no" ] }];
 	XCTAssertEqual([request.parameters[NFKMLXGenerationParameterKey.choices] count], 0);
 	XCTAssertEqual([pick.parameters[NFKMLXGenerationParameterKey.choices] count], 2);
+
+	// A JSON Schema guarantees the keys and types too. It is the core's own key, so the same request
+	// runs against a hosted provider or the on-device model; the reply also comes back parsed under
+	// NFKOutputStructured.
+	NFKInferenceRequest *structured = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"Describe Paris." }
+		parameters:@{ NFKParameterJSONSchema: @{
+			@"type": @"object",
+			@"properties": @{ @"city": @{ @"type": @"string" }, @"population": @{ @"type": @"integer" } },
+			@"required": @[ @"city", @"population" ],
+			@"additionalProperties": @NO,
+		} }];
+	XCTAssertEqualObjects(structured.parameters[NFKParameterJSONSchema][@"required"], (@[ @"city", @"population" ]));
 
 	// Built with a draft release beside the main one:
 	//   id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:qwen4B draftDirectoryURL:qwen06B error:&error];

@@ -27,6 +27,19 @@ public enum NFKMLXSwinIRUpsampler: Sendable {
     case classical
     /// One convolution to `3·scale²` channels and a single shuffle. The lightweight releases.
     case direct
+    /// A convolution, then nearest ×2 upsampling with a convolution after each doubling, a
+    /// high-resolution convolution, and a final convolution (the reference's `nearest+conv`). The
+    /// real-world releases, which trade the shuffle for fewer artifacts.
+    case nearestConv
+}
+
+/// The convolution that closes each residual group and the body (the reference's `resi_connection`).
+public enum NFKMLXSwinIRResidualConnection: Sendable {
+    /// One 3×3 convolution.
+    case oneConv
+    /// A 3×3 convolution to a quarter of the width, a 1×1, and a 3×3 back, with a leaky ReLU (0.2)
+    /// after the first two. The large real-world release uses it to save parameters.
+    case threeConv
 }
 
 public struct NFKMLXSwinIRConfiguration: Sendable {
@@ -42,8 +55,15 @@ public struct NFKMLXSwinIRConfiguration: Sendable {
     /// The classical models reconstruct through a convolution, one or more ×2 pixel-shuffle stages,
     /// and a final convolution. The lightweight models use the reference's `pixelshuffledirect`: ONE
     /// convolution straight to `3·scale²` channels and a single shuffle, with no surrounding
-    /// convolutions at all. A checkpoint carries weights for one or the other, never both.
+    /// convolutions at all. The real-world models upsample by nearest-neighbor doubling with a
+    /// convolution after each. A checkpoint carries weights for one of them, never two.
     public var upsampler: NFKMLXSwinIRUpsampler = .classical
+
+    /// The residual-connection convolution the release was trained with.
+    public var residualConnection: NFKMLXSwinIRResidualConnection = .oneConv
+
+    /// The width of the reconstruction tail (`num_feat`), which every release fixes at 64.
+    public var reconstructionWidth: Int = 64
 
     public init(embedDimensions: Int = 60, depths: [Int] = [6, 6, 6, 6], heads: Int = 6,
                 windowSize: Int = 8, mlpRatio: Int = 2, scale: Int = 4) {
@@ -82,6 +102,48 @@ public struct NFKMLXSwinIRConfiguration: Sendable {
         var configuration = NFKMLXSwinIRConfiguration(embedDimensions: 60, depths: [6, 6, 6, 6],
                                                       heads: 6, windowSize: 8, mlpRatio: 2, scale: 2)
         configuration.upsampler = .direct
+        return configuration
+    }()
+
+    /// The released `002_lightweightSR_DIV2K_s64w8_SwinIR-S_x3` geometry: the lightweight network
+    /// with a single ×3 direct shuffle.
+    public static let lightweightSRx3: NFKMLXSwinIRConfiguration = {
+        var configuration = lightweightSRx2
+        configuration.scale = 3
+        return configuration
+    }()
+
+    /// The released `002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4` geometry: the lightweight network
+    /// with a single ×4 direct shuffle.
+    public static let lightweightSRx4: NFKMLXSwinIRConfiguration = {
+        var configuration = lightweightSRx2
+        configuration.scale = 4
+        return configuration
+    }()
+
+    /// The released `001_classicalSR_DIV2K_s48w8_SwinIR-M_x2` geometry: the classical network with
+    /// one ×2 pixel-shuffle stage.
+    public static let classicalSRx2 = NFKMLXSwinIRConfiguration(embedDimensions: 180,
+                                                                depths: [6, 6, 6, 6, 6, 6], heads: 6,
+                                                                windowSize: 8, mlpRatio: 2, scale: 2)
+
+    /// The released `003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN` geometry: the classical width and
+    /// depth reconstructing through the nearest-neighbor tail.
+    public static let realSRx4Medium: NFKMLXSwinIRConfiguration = {
+        var configuration = classicalSRx4
+        configuration.upsampler = .nearestConv
+        return configuration
+    }()
+
+    /// The released `003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN` geometry: 240 wide, nine
+    /// residual groups of six blocks over eight heads, the three-convolution residual connection, and
+    /// the nearest-neighbor tail.
+    public static let realSRx4Large: NFKMLXSwinIRConfiguration = {
+        var configuration = NFKMLXSwinIRConfiguration(embedDimensions: 240,
+                                                      depths: [6, 6, 6, 6, 6, 6, 6, 6, 6], heads: 8,
+                                                      windowSize: 8, mlpRatio: 2, scale: 4)
+        configuration.upsampler = .nearestConv
+        configuration.residualConnection = .threeConv
         return configuration
     }()
 
@@ -136,6 +198,33 @@ enum NFKSwinOps {
     /// Undoes `roll`.
     static func unroll(_ x: MLXArray, shift: Int) -> MLXArray {
         roll(x, shift: shift == 0 ? 0 : (x.shape[1] - shift))
+    }
+
+    /// The reference's `3conv` residual connection as a five-slot Sequential: a 3×3 to a quarter of the
+    /// width, a leaky ReLU, a 1×1, a leaky ReLU, and a 3×3 back. The activations occupy slots 1 and 3
+    /// as parameter-free markers so the convolutions keep the reference's indices 0, 2, and 4.
+    static func threeConvStack(_ dimensions: Int) -> [Module] {
+        let narrow = dimensions / 4
+        return [
+            Conv2d(inputChannels: dimensions, outputChannels: narrow, kernelSize: 3, padding: 1),
+            Module(),
+            Conv2d(inputChannels: narrow, outputChannels: narrow, kernelSize: 1),
+            Module(),
+            Conv2d(inputChannels: narrow, outputChannels: dimensions, kernelSize: 3, padding: 1),
+        ]
+    }
+
+    /// Runs a `threeConvStack`.
+    static func applyThreeConv(_ stack: [Module], _ x: MLXArray) -> MLXArray {
+        var out = x
+        for (index, module) in stack.enumerated() {
+            guard let conv = module as? Conv2d else { continue }
+            out = conv(out)
+            if index < 4 {
+                out = leakyRelu(out, negativeSlope: 0.2)
+            }
+        }
+        return out
     }
 
     /// The relative-position index for a window: `[ws·ws · ws·ws]` into a `(2ws−1)²` bias table.
@@ -277,14 +366,25 @@ final class NFKSwinLayer: Module {
 /// A residual Swin Transformer block: a run of Swin layers, a convolution, and a residual connection.
 final class NFKSwinRSTB: Module {
     @ModuleInfo(key: "blocks") var blocks: [NFKSwinLayer]
-    @ModuleInfo(key: "conv") var conv: Conv2d
+    @ModuleInfo(key: "conv") var conv: Conv2d?
+    /// The three-convolution residual connection, held under its own key (the reference's `conv.0`,
+    /// `conv.2`, `conv.4`, which the loader renames) because one key cannot be both a module and a list.
+    @ModuleInfo(key: "conv3") var conv3: [Module]?
 
-    init(dimensions: Int, depth: Int, heads: Int, windowSize: Int, mlpRatio: Int) {
+    init(dimensions: Int, depth: Int, heads: Int, windowSize: Int, mlpRatio: Int,
+         residualConnection: NFKMLXSwinIRResidualConnection = .oneConv) {
         _blocks.wrappedValue = (0 ..< depth).map { i in
             NFKSwinLayer(dimensions: dimensions, heads: heads, windowSize: windowSize,
                          shift: i % 2 == 0 ? 0 : windowSize / 2, mlpRatio: mlpRatio)
         }
-        _conv.wrappedValue = Conv2d(inputChannels: dimensions, outputChannels: dimensions, kernelSize: 3, padding: 1)
+        switch residualConnection {
+        case .oneConv:
+            _conv.wrappedValue = Conv2d(inputChannels: dimensions, outputChannels: dimensions, kernelSize: 3, padding: 1)
+            _conv3.wrappedValue = nil
+        case .threeConv:
+            _conv.wrappedValue = nil
+            _conv3.wrappedValue = NFKSwinOps.threeConvStack(dimensions)
+        }
     }
 
     func callAsFunction(_ x: MLXArray, height h: Int, width w: Int) -> MLXArray {
@@ -293,7 +393,8 @@ final class NFKSwinRSTB: Module {
         for block in blocks {
             tokens = block(tokens, height: h, width: w)
         }
-        let spatial = conv(tokens.reshaped([1, h, w, dimensions]))
+        let grid = tokens.reshaped([1, h, w, dimensions])
+        let spatial = conv.map { $0(grid) } ?? NFKSwinOps.applyThreeConv(conv3 ?? [], grid)
         return x + spatial.reshaped([1, h * w, dimensions])
     }
 }
@@ -302,9 +403,13 @@ final class NFKSwinRSTB: Module {
 final class NFKMLXSwinIRNet: Module {
     @ModuleInfo(key: "conv_first") var convFirst: Conv2d
     @ModuleInfo(key: "layers") var layers: [NFKSwinRSTB]
-    @ModuleInfo(key: "conv_after_body") var convAfterBody: Conv2d
+    @ModuleInfo(key: "conv_after_body") var convAfterBody: Conv2d?
+    @ModuleInfo(key: "conv_after_body_3conv") var convAfterBody3: [Module]?
     @ModuleInfo(key: "conv_before_upsample") var convBeforeUpsample: Conv2d?
     @ModuleInfo(key: "upsample") var upsample: [Conv2d]
+    @ModuleInfo(key: "conv_up1") var convUp1: Conv2d?
+    @ModuleInfo(key: "conv_up2") var convUp2: Conv2d?
+    @ModuleInfo(key: "conv_hr") var convHr: Conv2d?
     @ModuleInfo(key: "conv_last") var convLast: Conv2d?
     @ModuleInfo(key: "norm") var norm: LayerNorm
     @ModuleInfo(key: "patch_embed_norm") var patchEmbedNorm: LayerNorm
@@ -314,29 +419,50 @@ final class NFKMLXSwinIRNet: Module {
     init(_ c: NFKMLXSwinIRConfiguration) {
         configuration = c
         let dim = c.embedDimensions
+        let feat = c.reconstructionWidth
         _convFirst.wrappedValue = Conv2d(inputChannels: 3, outputChannels: dim, kernelSize: 3, padding: 1)
-        _layers.wrappedValue = c.depths.map { NFKSwinRSTB(dimensions: dim, depth: $0, heads: c.heads, windowSize: c.windowSize, mlpRatio: c.mlpRatio) }
+        _layers.wrappedValue = c.depths.map {
+            NFKSwinRSTB(dimensions: dim, depth: $0, heads: c.heads, windowSize: c.windowSize,
+                        mlpRatio: c.mlpRatio, residualConnection: c.residualConnection)
+        }
         // `forward_features` normalizes the token sequence after the residual groups, and `PatchEmbed`
         // normalizes it before them (`patch_norm=True`).
         _norm.wrappedValue = LayerNorm(dimensions: dim)
         _patchEmbedNorm.wrappedValue = LayerNorm(dimensions: dim)
-        _convAfterBody.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, padding: 1)
-        let direct = c.upsampler == .direct
-        // A direct upsampler has neither surrounding convolution; building them would leave weights
-        // the checkpoint does not carry, which a strict load would then reject.
-        _convBeforeUpsample.wrappedValue = direct
-            ? nil : Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, padding: 1)
-        // The reference `Upsample` builds a power-of-two scale as repeated ×2 stages and a scale of
-        // three as ONE ×3 stage, because a factor-3 shuffle cannot be composed from factor-2 ones.
-        // Those are the only scales it accepts, and a released checkpoint exists for each.
-        _upsample.wrappedValue = direct
-            ? [Conv2d(inputChannels: dim, outputChannels: 3 * c.scale * c.scale, kernelSize: 3, padding: 1)]
-            : (0 ..< c.upsampleStages).map { _ in
-                Conv2d(inputChannels: dim, outputChannels: dim * c.shuffleFactor * c.shuffleFactor,
+        switch c.residualConnection {
+        case .oneConv:
+            _convAfterBody.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, padding: 1)
+            _convAfterBody3.wrappedValue = nil
+        case .threeConv:
+            _convAfterBody.wrappedValue = nil
+            _convAfterBody3.wrappedValue = NFKSwinOps.threeConvStack(dim)
+        }
+        // Each tail builds only its own convolutions: an unused one would leave weights the checkpoint
+        // does not carry, which a strict load would then reject.
+        _convBeforeUpsample.wrappedValue = c.upsampler == .direct
+            ? nil : Conv2d(inputChannels: dim, outputChannels: feat, kernelSize: 3, padding: 1)
+        switch c.upsampler {
+        case .classical:
+            // The reference `Upsample` builds a power-of-two scale as repeated ×2 stages and a scale
+            // of three as ONE ×3 stage, because a factor-3 shuffle cannot be composed from factor-2
+            // ones. Those are the only scales it accepts, and a released checkpoint exists for each.
+            _upsample.wrappedValue = (0 ..< c.upsampleStages).map { _ in
+                Conv2d(inputChannels: feat, outputChannels: feat * c.shuffleFactor * c.shuffleFactor,
                        kernelSize: 3, padding: 1)
             }
-        _convLast.wrappedValue = direct
-            ? nil : Conv2d(inputChannels: dim, outputChannels: 3, kernelSize: 3, padding: 1)
+        case .direct:
+            _upsample.wrappedValue = [Conv2d(inputChannels: dim, outputChannels: 3 * c.scale * c.scale,
+                                             kernelSize: 3, padding: 1)]
+        case .nearestConv:
+            _upsample.wrappedValue = []
+            _convUp1.wrappedValue = Conv2d(inputChannels: feat, outputChannels: feat, kernelSize: 3, padding: 1)
+            // The reference doubles twice at ×4 and once at ×2; no other scale was released.
+            _convUp2.wrappedValue = c.scale == 4
+                ? Conv2d(inputChannels: feat, outputChannels: feat, kernelSize: 3, padding: 1) : nil
+            _convHr.wrappedValue = Conv2d(inputChannels: feat, outputChannels: feat, kernelSize: 3, padding: 1)
+        }
+        _convLast.wrappedValue = c.upsampler == .direct
+            ? nil : Conv2d(inputChannels: feat, outputChannels: 3, kernelSize: 3, padding: 1)
     }
 
     /// Upscales a bridged image `[H, W, 3]` (`0...1`) to `[scale·H, scale·W, 3]`.
@@ -353,19 +479,30 @@ final class NFKMLXSwinIRNet: Module {
             tokens = layer(tokens, height: height, width: width)
         }
         tokens = norm(tokens)
-        let body = convAfterBody(tokens.reshaped([1, height, width, configuration.embedDimensions])) + first
+        let grid = tokens.reshaped([1, height, width, configuration.embedDimensions])
+        let body = (convAfterBody.map { $0(grid) } ?? NFKSwinOps.applyThreeConv(convAfterBody3 ?? [], grid)) + first
 
         var reconstructed: MLXArray
-        if let convBeforeUpsample, let convLast {
-            var feature = relu(convBeforeUpsample(body))
+        switch configuration.upsampler {
+        case .classical:
+            // `conv_before_upsample` is followed by the reference's `nn.LeakyReLU()` at its default
+            // slope of 0.01, not a plain ReLU.
+            var feature = leakyRelu(convBeforeUpsample!(body), negativeSlope: 0.01)
             for stage in upsample {
                 feature = NFKMLXPixelShuffle.apply(stage(feature), factor: configuration.shuffleFactor)
             }
-            reconstructed = convLast(feature)
-        } else {
+            reconstructed = convLast!(feature)
+        case .direct:
             // The direct upsampler reconstructs in one step: the shuffle's output already has three
             // channels, so there is nothing to project afterwards.
             reconstructed = NFKMLXPixelShuffle.apply(upsample[0](body), factor: configuration.scale)
+        case .nearestConv:
+            var feature = leakyRelu(convBeforeUpsample!(body), negativeSlope: 0.01)
+            feature = leakyRelu(convUp1!(NFKMLXResample.upsampleNearest(feature, scale: 2)), negativeSlope: 0.2)
+            if let convUp2 {
+                feature = leakyRelu(convUp2(NFKMLXResample.upsampleNearest(feature, scale: 2)), negativeSlope: 0.2)
+            }
+            reconstructed = convLast!(leakyRelu(convHr!(feature), negativeSlope: 0.2))
         }
         // Restore the centering before clamping, so the result is back in the plate's own range.
         let output = clip(reconstructed + mean, min: 0, max: 1)
@@ -397,6 +534,11 @@ public enum NFKMLXSwinIRVariant: Int {
     case classicalX4        // 001_classicalSR_DIV2K_s48w8_SwinIR-M_x4
     case classicalX8        // 001_classicalSR_DIV2K_s48w8_SwinIR-M_x8
     case lightweightSRX2    // 002_lightweightSR_DIV2K_s64w8_SwinIR-S_x2
+    case classicalX2        // 001_classicalSR_DIV2K_s48w8_SwinIR-M_x2
+    case lightweightSRX3    // 002_lightweightSR_DIV2K_s64w8_SwinIR-S_x3
+    case lightweightSRX4    // 002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4
+    case realWorldX4Medium  // 003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN
+    case realWorldX4Large   // 003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN
 }
 
 @objc(NFKMLXSwinIR)
@@ -412,6 +554,11 @@ public final class NFKMLXSwinIR: NSObject {
         case .classicalX4:   return .classicalSRx4
         case .classicalX8:   return .classicalSRx8
         case .lightweightSRX2: return .lightweightSRx2
+        case .classicalX2:   return .classicalSRx2
+        case .lightweightSRX3: return .lightweightSRx3
+        case .lightweightSRX4: return .lightweightSRx4
+        case .realWorldX4Medium: return .realSRx4Medium
+        case .realWorldX4Large: return .realSRx4Large
         }
     }
 
@@ -513,6 +660,15 @@ public final class NFKMLXSwinIR: NSObject {
         if name.hasPrefix("upsample.") {
             for stage in 0 ..< 8 {
                 name = name.replacingOccurrences(of: "upsample.\(stage * 2).", with: "upsample.\(stage).")
+            }
+        }
+        // The three-convolution residual connection is a Sequential in the reference (`conv.0`,
+        // `conv.2`, `conv.4`); the module keeps it under `conv3` so the one-convolution form can keep
+        // `conv` as a plain module.
+        for slot in [0, 2, 4] {
+            name = name.replacingOccurrences(of: "conv_after_body.\(slot).", with: "conv_after_body_3conv.\(slot).")
+            if let range = name.range(of: ".conv.\(slot).") {
+                name = name.replacingCharacters(in: range, with: ".conv3.\(slot).")
             }
         }
         return name

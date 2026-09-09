@@ -142,6 +142,11 @@
 
 #pragma mark Local
 
+// @todo an option is needed that checks all the local ports and then selects the provide based
+//		on first.  another method is needed that simply does the check and returns which are available.
+//      the main method -for this- uses that "another method" to select which of the following
+//		NFKRemoteProvider "Local" providers to return.
+
 + (NFKRemoteProvider *)ollama
 {
 	return [self providerWithIdentifier:@"ollama" displayName:@"Ollama"

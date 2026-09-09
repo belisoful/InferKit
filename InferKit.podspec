@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
     value types, a thread-safe async job handle, and shipped backends (passthrough mock,
     in-process Core ML, an OpenAI-compatible remote client, and a submit-poll-fetch generation
     base). It adds an RGBA-interleaved to planar CHW/HWC tensor conversion, an MLMultiArray
-    bridge, and a Hugging Face model-download layer. It has no FxPlug or host-framework
+    bridge, and a Hugging Face model-download layer. It has no host-framework
     dependency, so any Metal/Apple app can use it. A consumer brings a heavier runtime (MLX, a
     C or Rust engine) by adopting the backend protocol.
   DESC

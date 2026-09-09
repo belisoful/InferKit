@@ -49,19 +49,52 @@ weights:
   inputs in, several outputs out (a compositing model reading a foreground and a background, a model
   returning both an image and a mask). Each port binds an InferKit key to a tensor name.
 - **`NFKMLXLanguageBackend`** — on-device text generation from a released Hugging Face directory.
-  The dense decoder Qwen3 and Llama share, with the Qwen3-MoE and Mixtral mixtures of experts through
-  a routed feed-forward; Gemma 4 (including its 26B-A4B mixture, a routed branch beside each layer's
+  The dense decoder Qwen3 and Llama share, with the Qwen3-MoE, Qwen2-MoE (a shared expert beside the
+  routed ones), Mixtral, and gpt-oss (sliding layers, attention sinks, clamped fused MXFP4 experts) mixtures
+  of experts through a routed feed-forward; Gemma 4 (including its 26B-A4B mixture, a routed branch beside each layer's
   dense feed-forward) and the Qwen3.5 hybrid have their own classes. A key-value cache
   that bounds, quantizes, rolls back, and persists between turns; speculative decoding from a draft
   release; ChatML rendering, or the release's own Jinja `chat_template` through
-  `NFKMLXChatTemplateRenderer`; and grammar-constrained output (JSON, or a fixed set of choices). Each
+  `NFKMLXChatTemplateRenderer`; and grammar-constrained output (JSON, a JSON Schema, or a fixed set of
+  choices). Each
   family is measured against `transformers`' own implementation, and every option reaches
   Objective-C as a request parameter.
 - **`NFKMLXGemmaBackend`** — text generation for the Gemma 4 decoders (`NFKMLXGemmaLanguage.backend(directoryURL:)`
   / `gemmaBackendWithDirectoryURL:error:`), dispatching on a release's config model type across the
   E-series, the 26B-A4B mixture, and the 12B unified decoder. Gemma runs prefill-only, so generation
   re-runs the growing sequence each step; the tokenizer is Gemma's byte-fallback BPE, and a message
-  list is rendered into Gemma's turn format. Measured end to end on the released E2B.
+  list is rendered into Gemma's turn format. Measured end to end on the released E2B. A Gemma 3
+  release handed to the same factory is routed to `NFKMLXGemma3`.
+- **`NFKMLXGemma3`** — the Gemma 3 line, end to end: the text decoder (`NFKMLXGemma3Net`: `(1 + w)`
+  RMS norms, sandwich blocks, five sliding-window layers to one full layer at a local and a global
+  rotary base, the larger sizes' 8× linear rotary scaling on the full layers, per-head QK norm, GeGLU,
+  a tied head) for 270M, 1B, and 4B, generating through a hybrid key-value cache (unbounded for the
+  full layers, bounded to the window for the sliding ones) with streaming and cancellation, the
+  release's own Jinja chat template rendered by `NFKMLXChatTemplateRenderer`, and for the multimodal
+  4B the SigLIP so400m vision tower at 896×896, the projector (a 4×4 average pool to 256 soft tokens,
+  a Gemma norm, one matrix), the processor's `\n\n<start_of_image> … <end_of_image>\n\n` prompt
+  expansion, and the bidirectional attention among an image's tokens. `NFKMLXGemma3Backend` takes
+  `NFKInputImage` beside the text; `answer(image:question:)` / `answerForImage:question:error:` is
+  the object path. Reference parity on the released weights against transformers' own Gemma 3 for
+  every size and every stage (see [model parity](model-parity.md)). The gated `google/gemma-3-*`
+  are mirrored ungated at `unsloth/gemma-3-*-it`. The same decoder blocks now serve EmbeddingGemma's
+  encoder, whose bidirectional window bound is the reference's `span / 2 + 1`.
+- **`NFKMLXGemma3n`** — Gemma 3n, tri-modal and end to end, and a distinct architecture rather than a
+  Gemma 3 variant. The decoder (`NFKMLXGemma3nNet`) carries four mechanisms none of the other Gemmas
+  has: **AltUp**, which makes the residual stream four parallel copies with a learned per-token map
+  predicting them before each block and correcting them after; **LAuReL**, a rank-64 detour beside the
+  attention residual; **per-layer embeddings**, a second wide table giving every layer its own slice;
+  and **activation sparsity**, which holds the first ten layers' feed-forward gates at zero below a
+  per-token Gaussian cutoff. Attention runs at scale 1.0, the values carry an unweighted normalization,
+  and the last `num_kv_shared_layers` compute no keys or values at all, reusing the last non-shared
+  layer of their own kind. The audio encoder (`NFKMLXGemma3nAudioNet`) is a Universal Speech Model
+  Conformer over a cumulative group normalization; the vision tower (`NFKMLXGemma3nVisionNet`) is
+  **MobileNetV5-300M**, a convolutional encoder with multi-query attention over the feature map, which
+  the release reaches through `timm`. `NFKMLXGemma3nBackend` takes `NFKInputImage` and `NFKInputAudio`
+  beside the text; `answer(image:question:)` / `answerForImage:question:error:` is the object path.
+  Reference parity on the released E2B weights for every stage — the decoder layer by layer, both
+  towers, the mel front end, and the whole fused chain (see [model parity](model-parity.md)). The gated
+  `google/gemma-3n-*` are mirrored ungated at `unsloth/gemma-3n-*-it`.
 - **`NFKMLXChatTemplateRenderer`** — renders the Jinja `chat_template` an instruct release ships, so the
   language backend reproduces the model's trained input rather than the ChatML approximation. A compact
   Jinja interpreter (for / if / set, `namespace`, slicing, the `loop` variable, `is` tests, string
@@ -135,17 +168,20 @@ models.
 - **`NFKMLXDepthAnything`** — a real single-forward depth model: the Depth Anything V2 DINOv2 + DPT
   network in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). Register and build by
   name; a self-validating converter turns the release into a safetensors checkpoint.
-- **`NFKMLXDepthAnything3`** — Depth Anything 3 monocular depth (DA3-SMALL): a DINOv2 ViT variant
+- **`NFKMLXDepthAnything3`** — Depth Anything 3 monocular depth (DA3-SMALL, -BASE, and -LARGE): a DINOv2 ViT variant
   (2D rotary, query/key norm, a camera token, and `cat_token` local/global hooking from block 4) plus
   the DualDPT depth branch, in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). At
   reference parity against the authors' `depth_anything_3` package; the released safetensors loads
-  directly (`depth-anything-3-small`).
+  directly (`depth-anything-3-small` / `-base` / `-large`, `NFKMLXDepth3Variant`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXSAM`** — real promptable segmentation (Segment Anything): a ViT encoder, prompt encoder, and
   two-way-transformer mask decoder in MLXNN, run through the matting backend (plate + point → mask).
+  Every released encoder: ViT-B, ViT-L, and ViT-H (`NFKMLXSAMVariant`).
 - **`NFKMLXNAFNet`** — a real single-forward restoration network (denoise / deblur): a U-shaped stack
-  of NAFBlocks in MLXNN, run through the module backend (degraded image → restored image).
+  of NAFBlocks in MLXNN, run through the module backend (degraded image → restored image). All five
+  releases are presets (`NFKMLXNAFNetVariant`): SIDD and GoPro at width 32, REDS, and SIDD and GoPro at
+  width 64.
 - **`NFKMLXRIFE`** / **`NFKMLXRIFEv4`** — real frame interpolation: the RIFE HDv3 and v4 IFNets in
   MLXNN with a flow-based warp (v4 adds an arbitrary-timestep midpoint), run
   through the tensor backend (two frames → the interpolated middle frame) for slow-motion / retiming.
@@ -165,10 +201,10 @@ models.
   diffusion backend: Marigold depth (image → depth) and the SD ×4 latent upscaler (image → ×4 image).
 - **`NFKMLXStyleTransfer`** — real fast neural style transfer: Johnson et al.'s `TransformerNet` in
   MLXNN, run through the module backend (image → stylized image). The style is baked into the weights.
-- **`NFKMLXCLIP`** — real image+text embeddings (CLIP ViT-B/32): a ViT image tower and a text
+- **`NFKMLXCLIP`** — real image+text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336; `NFKMLXCLIPVariant`): a ViT image tower and a text
   transformer projected into a shared space. `NFKMLXCLIPBackend` returns an embedding under
   `NFKOutputEmbedding` for semantic search, tagging, and diffusion guidance.
-- **`NFKMLXRVM`** — real video matting (Robust Video Matting): an encoder, LR-ASPP, and a **recurrent
+- **`NFKMLXRVM`** — real video matting (Robust Video Matting, both released encoders — MobileNetV3 and ResNet-50): an encoder, LR-ASPP, and a **recurrent
   ConvGRU decoder** that carries state across frames, run through the matting backend (single frame) or
   `NFKMLXRVMNet.forward` (video, state threaded) for background removal without a green screen.
 - **`NFKMLXCodeFormer`** — real face restoration: a VQGAN encoder/generator with a Transformer that
@@ -183,7 +219,9 @@ models.
 - **`NFKMLXSegFormer`** — real semantic segmentation: the SegFormer MiT transformer + all-MLP head,
   run through the module backend, emitting a grayscale class-label map under `NFKOutputImage`.
 - **`NFKMLXSwinIR`** — real transformer super-resolution: SwinIR with true shifted-window attention
-  and pixel-shuffle upsampling, run through the module backend (low-res → high-res image).
+  and pixel-shuffle upsampling, run through the module backend (low-res → high-res image). Every
+  released SR checkpoint has a variant: classical ×2/×3/×4/×8, lightweight ×2/×3/×4, and the two
+  real-world ×4 models (nearest-neighbor tail; the large one with the three-convolution residual).
 - **`NFKMLXColorizer`** / **`NFKMLXSiggraphColorizer`** — real colorization (ECCV-16 and
   SIGGRAPH-17): predict ab chroma from the L channel in CIELAB space and recombine with the original
   luminance, run through the module backend (grayscale photo → color photo); the SIGGRAPH model also
@@ -236,22 +274,23 @@ models.
   rebuilding the embedded tokenizer; at parity against transformers loading the same file.
 - **Generation runtime** — a prompt cache kept between turns (`NFKMLXPromptCache`, persistable),
   speculative decoding with a draft model (`backend(directoryURL:draftDirectoryURL:)`, greedy-exact),
-  key-value cache quantization and a bounded context window, chunked prefill, JSON and fixed-choice
-  constrained decoding (`NFKMLXJSONConstraint`, `NFKMLXChoiceConstraint`), Qwen3-MoE and Mixtral
+  key-value cache quantization and a bounded context window, chunked prefill, JSON, JSON-Schema, and
+  fixed-choice constrained decoding (`NFKMLXJSONConstraint`, `NFKMLXJSONSchemaConstraint`,
+  `NFKMLXChoiceConstraint`), Qwen3-MoE, Qwen2-MoE, Mixtral, and gpt-oss
   mixtures, runtime 4- / 8-bit quantization with a checkpoint contract that reloads packed weights onto
   matching structure, and `NFKMLXModelSizing`, which answers whether a release fits the machine — and
   at what context window — before any weight loads. Every option reaches Objective-C through
   `NFKMLXGenerationParameterKey`.
 - **`NFKMLXT5Encoder`** / **`NFKMLXGemma2Net`** — the text encoders the diffusion pipelines condition on:
   T5 v1.1 and umT5 (`perLayerBias`) for LTX and Wan, Gemma 2 for SANA. Each at reference parity.
-- **`NFKMLXSigLIP2`** — real image + text embeddings (SigLIP 2, base-patch16-224): the SigLIP encoder
+- **`NFKMLXSigLIP2`** — real image + text embeddings (SigLIP 2, base-patch16-224 at parity, and every other fixed-resolution release — base / large / so400m / giant-opt — held to its safetensors headers; `NFKMLXSigLIP2Variant`): the SigLIP encoder
   with an attention-pooling head and a 256k-vocabulary multilingual text tower, sigmoid similarity.
   `siglip2-base-patch16-224`; parity ~1e-12 on both towers.
-- **`NFKMLXRTDetr`** — real object detection under Apache-2.0 (RT-DETR r50vd): a ResNet-D backbone, a
+- **`NFKMLXRTDetr`** — real object detection under Apache-2.0 (RT-DETR r18vd / r34vd / r50vd / r101vd, `NFKMLXRTDetrVariant`): a ResNet-D backbone (basic blocks below r50), a
   hybrid encoder, query selection, and a deformable-attention decoder with box refinement; no non-max
   suppression, since the one-to-one training makes the queries distinct. `rtdetr`; at parity on the
   released weights end to end.
-- **`NFKMLXRFDetr`** — real object detection under Apache-2.0 (RF-DETR base, Roboflow): a windowed
+- **`NFKMLXRFDetr`** — real object detection under Apache-2.0 (RF-DETR nano / small / medium / base / large, Roboflow; `NFKMLXRFDetrVariant`): a windowed
   DINOv2 backbone, a C2f / RepVGG projector, two-stage Group-DETR query selection, and an LW-DETR
   deformable decoder; no non-max suppression. `rf-detr`; at parity on the released weights end to end.
   `loadWeights` converts the original Roboflow naming on device (and splits the fused self-attention
@@ -279,12 +318,13 @@ models.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
-- **`NFKMLXSAM2`** — SAM 2's Hiera image encoder (tiny, base_plus, large), prompt encoder, mask decoder,
+- **`NFKMLXSAM2`** — SAM 2's Hiera image encoder (tiny, small, base_plus, large), prompt encoder, mask decoder,
   and the video memory encoder and memory attention, each at parity against facebookresearch's sources.
 - **`NFKMLXDemucs`** / **`NFKMLXHTDemucs`** — real four-stem music separation: the Demucs v2 time-domain
-  U-Net (`demucs`) and the v4 Hybrid Transformer Demucs (`htdemucs`), a spectrogram branch and a
-  waveform branch joined by a cross-transformer; both at parity on the released weights.
-- **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder (tiny, small, medium, large-v3)
+  U-Net (`demucs`) and the v4 Hybrid Transformer Demucs (`htdemucs`; the six-stem `htdemucs-6s`; the
+  fine-tuned four-checkpoint bag through `backend(fineTunedWeightsURLs:)`), a spectrogram branch and a
+  waveform branch joined by a cross-transformer; all at parity on the released weights.
+- **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder at every released size (tiny, base, small, medium, large-v1/v2, large-v3, large-v3-turbo)
   with the reference's suppression rules and timestamped decoding (`emitsTimestamps` → segments);
   `whisper-tiny`; exact token matches against openai-whisper. Also the core's `transcription`
   capability through `NFKMLXWhisperProvider`.
@@ -306,8 +346,13 @@ models.
   — quadratic ReLU-squared local plus a linear global path — interleaved with a `Gated_FSMN` depthwise
   memory, over a Kaldi-fbank + Δ + ΔΔ front end) produces a 961-bin magnitude mask applied to the STFT.
   At reference parity on the released weights (M1, float32): the fbank 1.0, the encoder and FLASH block 0
-  0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998. The SR sibling
-  (mel→mel backbone plus a BigVGAN vocoder) is a later add.
+  0.99999994, FLASH block last and the mask 1.0, and the enhanced waveform 0.9999998.
+- **`NFKMLXMossFormer2SRNet`** — MossFormer2 SR 48K (`mossformer2-sr`, `alibabasglab/MossFormer2_SR_48K`,
+  Apache-2.0), speech super-resolution: the HiFi-GAN log-mel, the same MossFormer2 backbone as a
+  mel-to-mel restorer, a Snake HiFi-GAN generator, and the reference decode path's bandwidth
+  substitution (the input kept below its detected bandwidth through a Butterworth low-pass, the
+  generated band added above it, a 100 ms crossfade). At reference parity on the released weights:
+  mel 1.0, backbone 1.0, generator 0.9999999999987, substitution 1.0, end to end 0.9999999999992.
 - **`NFKMLXDeepFilterNet`** — DeepFilterNet3 (`deepfilternet3`, Rikorose/DeepFilterNet, dual MIT/Apache-2.0),
   a ~2.3M-parameter real-time 48 kHz denoiser (the cheap counterpart to the Demucs speech denoiser): an
   ERB mask over the full spectrum plus a 5-tap causal complex deep filter on the lowest 96 bins, from a
@@ -331,7 +376,8 @@ models.
   restored waveform 0.9999971.
 - **`NFKMLXDAC`** / **`NFKMLXSNAC`** — neural audio codecs, the classes a codec-token speech model
   generates into: the Descript Audio Codec (`dac`, 44.1 / 24 / 16 kHz, residual vector quantization) and
-  SNAC (`snac`, 24 kHz, multi-scale codebooks at different rates). `encode` returns the tokens,
+  SNAC (`snac`, 24 kHz speech; `snac-32khz` / `snac-44khz` music, four codebooks and bottleneck
+  attention; multi-scale codebooks at different rates). `encode` returns the tokens,
   `decode` reconstructs; both match the reference's codes exactly.
 - **`NFKMLXVoice`** / **`NFKMLXFastSpeech2`** / **`NFKMLXHiFiGAN`** — a complete text-to-speech voice:
   the espnet FastSpeech2 conformer on the released LJSpeech weights (durations exact frame for frame)
@@ -342,6 +388,33 @@ models.
   phoneme encoder, duration / F0 / energy predictors, and an iSTFTNet decoder with a harmonic sine
   source. `backend(directoryURL:voiceName:)` takes a phoneme string under `NFKInputPrompt`; every
   deterministic seam at parity, the waveform at 0.997.
+- **`NFKMLXMetricGANPlus`** — MetricGAN+ (`metricgan-plus`, speechbrain/metricgan-plus-voicebank,
+  Apache-2.0), the smallest restoration model: a two-layer bidirectional LSTM magnitude mask over
+  `log1p(|X|)` frames of a 512-point zero-padded Hamming STFT, with a per-bin learnable sigmoid, the
+  noisy phase, and a peak normalization. At reference parity on the released weights against
+  speechbrain's own `SpectralMaskEnhancement`: features 1.0, mask 1.0000001, enhanced waveform
+  1.0000001. The shared complex STFT gained speechbrain's zero padding and `torch.istft`'s `length` for it.
+- **`NFKMLXCMGAN`** — CMGAN (`cmgan`, ruizhecao96/CMGAN, MIT), a 1.83M-parameter conformer metric GAN:
+  a dense encoder, four two-stage (time, frequency) conformer blocks with Shaw's relative position
+  embedding, and magnitude-mask + complex-residual decoders over a power-compressed spectrogram, reusing
+  the MP-SENet dense and sub-pixel blocks. At reference parity on the released weights against the
+  repository's own generator: every seam ≥ 0.9999998 and the enhanced waveform 0.99999994.
+- **`NFKMLXFRCRN`** — FRCRN SE 16K (`frcrn`, alibabasglab/FRCRN_SE_16K, Apache-2.0), a
+  frequency-recurrent complex CRN: two complex UNets over a conv-STFT with a frequency-recurrent FSMN
+  memory before each encoder, a complex squeeze-excite after each, and a time FSMN at the bottleneck;
+  the mask `tanh(unet2) + tanh(unet1)` is a complex product with the spectrum. At reference parity on
+  the released weights against ClearerVoice's own DCCRN: every seam ≥ 0.99999994 and the enhanced
+  waveform 1.0, through the reference decode path's own padding rule.
+- **`NFKMLXNUWave2`** — NU-Wave 2 (`nuwave2`, maum-ai, BSD-3), diffusion bandwidth extension: a
+  noise predictor of short-time Fourier convolutions (an STFT-domain 1×1 convolution modulated per bin
+  by the input's bandwidth beside a local convolution branch), sampled by the released eight-step logSNR
+  DDIM from seeded noise. At reference parity on the official checkpoint from the reference's own start
+  noise: every seam and every step 1.0.
+- **`NFKMLXApollo`** — Apollo (`apollo`, JusperLee, **CC-BY-SA-4.0** code and weights), music
+  restoration of lossy-codec artifacts at 44.1 kHz: an 80-band split of a 20 ms STFT, six band-sequence
+  layers (a rotary transformer across the bands, a depthwise convolutional block along time), and a
+  gated head per band. At reference parity on the released weights against the repository's own model:
+  band features 0.9999988, every band-sequence layer 1.0, the restored waveform 0.9999973.
 - **`NFKMLXChatterbox`** — Chatterbox (Resemble AI, MIT), zero-shot voice cloning: a VoiceEncoder speaker
   embedding and the S3 speech tokenizer read a reference voice, a T3 Llama (llama3 rope scaling, a
   Perceiver-resampled prompt) samples speech codes for the text, and S3Gen renders them through a

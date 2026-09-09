@@ -26,9 +26,13 @@ public struct NFKMLXSigLIP2TextConfiguration: Sendable {
     public var vocabularySize: Int
     public var maxPositions: Int
     public var layerNormEpsilon: Float
+    /// The width the `head` projects the last token to (`projection_size`): the hidden width in every
+    /// release but giant-opt, whose 1152-wide text tower projects to its 1536-wide image embedding.
+    public var projectionSize: Int
 
     public init(hiddenSize: Int = 768, layerCount: Int = 12, headCount: Int = 12, intermediateSize: Int = 3072,
-                vocabularySize: Int = 256000, maxPositions: Int = 64, layerNormEpsilon: Float = 1e-6) {
+                vocabularySize: Int = 256000, maxPositions: Int = 64, layerNormEpsilon: Float = 1e-6,
+                projectionSize: Int? = nil) {
         self.hiddenSize = hiddenSize
         self.layerCount = layerCount
         self.headCount = headCount
@@ -36,6 +40,7 @@ public struct NFKMLXSigLIP2TextConfiguration: Sendable {
         self.vocabularySize = vocabularySize
         self.maxPositions = maxPositions
         self.layerNormEpsilon = layerNormEpsilon
+        self.projectionSize = projectionSize ?? hiddenSize
     }
 
     /// The `NFKMLXSigLIPConfiguration` the shared encoder layers take (the text tower has no patches).
@@ -43,6 +48,11 @@ public struct NFKMLXSigLIP2TextConfiguration: Sendable {
         NFKMLXSigLIPConfiguration(hiddenSize: hiddenSize, layerCount: layerCount, headCount: headCount,
                                   intermediateSize: intermediateSize, layerNormEpsilon: layerNormEpsilon)
     }
+}
+
+/// The tower geometry a SigLIP 2 release is built from.
+public enum NFKMLXSigLIP2Family: Sendable {
+    case base, large, so400m, giantOpt
 }
 
 /// SigLIP 2 geometry: the vision configuration, the text configuration, and the image resolution.
@@ -58,6 +68,51 @@ public struct NFKMLXSigLIP2Configuration: Sendable {
 
     /// The released `siglip2-base-patch16-224`.
     public static let base = NFKMLXSigLIP2Configuration()
+
+    /// The three tower geometries the releases are built from; each release pairs one with a patch
+    /// size and a resolution. The text tower matches the vision tower in every family but giant-opt,
+    /// which keeps the so400m text tower and projects it to the giant image width.
+    static func towers(_ family: NFKMLXSigLIP2Family, patchSize: Int, imageSize: Int) -> NFKMLXSigLIP2Configuration {
+        switch family {
+        case .base:
+            return NFKMLXSigLIP2Configuration(
+                vision: NFKMLXSigLIPConfiguration(patchSize: patchSize, imageSize: imageSize),
+                text: NFKMLXSigLIP2TextConfiguration())
+        case .large:
+            return NFKMLXSigLIP2Configuration(
+                vision: NFKMLXSigLIPConfiguration(hiddenSize: 1024, layerCount: 24, headCount: 16,
+                                                  intermediateSize: 4096, patchSize: patchSize, imageSize: imageSize),
+                text: NFKMLXSigLIP2TextConfiguration(hiddenSize: 1024, layerCount: 24, headCount: 16,
+                                                     intermediateSize: 4096))
+        case .so400m:
+            return NFKMLXSigLIP2Configuration(
+                vision: NFKMLXSigLIPConfiguration(hiddenSize: 1152, layerCount: 27, headCount: 16,
+                                                  intermediateSize: 4304, patchSize: patchSize, imageSize: imageSize),
+                text: NFKMLXSigLIP2TextConfiguration(hiddenSize: 1152, layerCount: 27, headCount: 16,
+                                                     intermediateSize: 4304))
+        case .giantOpt:
+            return NFKMLXSigLIP2Configuration(
+                vision: NFKMLXSigLIPConfiguration(hiddenSize: 1536, layerCount: 40, headCount: 16,
+                                                  intermediateSize: 6144, patchSize: patchSize, imageSize: imageSize),
+                text: NFKMLXSigLIP2TextConfiguration(hiddenSize: 1152, layerCount: 27, headCount: 16,
+                                                     intermediateSize: 4304, projectionSize: 1536))
+        }
+    }
+
+    public static let basePatch16At256 = towers(.base, patchSize: 16, imageSize: 256)
+    public static let basePatch16At384 = towers(.base, patchSize: 16, imageSize: 384)
+    public static let basePatch16At512 = towers(.base, patchSize: 16, imageSize: 512)
+    public static let basePatch32At256 = towers(.base, patchSize: 32, imageSize: 256)
+    public static let largePatch16At256 = towers(.large, patchSize: 16, imageSize: 256)
+    public static let largePatch16At384 = towers(.large, patchSize: 16, imageSize: 384)
+    public static let largePatch16At512 = towers(.large, patchSize: 16, imageSize: 512)
+    public static let so400mPatch14At224 = towers(.so400m, patchSize: 14, imageSize: 224)
+    public static let so400mPatch14At384 = towers(.so400m, patchSize: 14, imageSize: 384)
+    public static let so400mPatch16At256 = towers(.so400m, patchSize: 16, imageSize: 256)
+    public static let so400mPatch16At384 = towers(.so400m, patchSize: 16, imageSize: 384)
+    public static let so400mPatch16At512 = towers(.so400m, patchSize: 16, imageSize: 512)
+    public static let giantOptPatch16At256 = towers(.giantOpt, patchSize: 16, imageSize: 256)
+    public static let giantOptPatch16At384 = towers(.giantOpt, patchSize: 16, imageSize: 384)
 
     /// A small configuration for weight-free tests.
     public static let tiny = NFKMLXSigLIP2Configuration(
@@ -184,7 +239,7 @@ final class NFKSigLIP2TextNet: Module {
         _embeddings.wrappedValue = NFKSigLIP2TextEmbeddings(c)
         _encoder.wrappedValue = NFKSigLIPEncoder(c.encoderConfiguration)
         _finalLayerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
-        _head.wrappedValue = Linear(c.hiddenSize, c.hiddenSize, bias: true)
+        _head.wrappedValue = Linear(c.hiddenSize, c.projectionSize, bias: true)
     }
 
     /// Token ids `[B, T]` → the text embedding `[B, hidden]`. SigLIP pools the LAST position.
@@ -298,11 +353,92 @@ public final class NFKMLXSigLIP2Backend: NSObject, NFKInferenceBackend {
 }
 
 /// Registration, embeddings, and weight loading for SigLIP 2.
+/// The released SigLIP 2 size to build, for the Objective-C factory. A checkpoint fits only its own.
+/// The NaFlex releases (`siglip2-*-naflex`, dynamic resolution) are a different input path and are not
+/// read.
+@objc(NFKMLXSigLIP2Variant)
+public enum NFKMLXSigLIP2Variant: Int {
+    case basePatch16At224
+    case basePatch16At256
+    case basePatch16At384
+    case basePatch16At512
+    case basePatch32At256
+    case largePatch16At256
+    case largePatch16At384
+    case largePatch16At512
+    case so400mPatch14At224
+    case so400mPatch14At384
+    case so400mPatch16At256
+    case so400mPatch16At384
+    case so400mPatch16At512
+    case giantOptPatch16At256
+    case giantOptPatch16At384
+}
+
 @objc(NFKMLXSigLIP2)
 public final class NFKMLXSigLIP2: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "siglip2-base-patch16-224"
+
+    static func specs(for variant: NFKMLXSigLIP2Variant) -> (name: String, configuration: NFKMLXSigLIP2Configuration) {
+        switch variant {
+        case .basePatch16At224: return (modelName, .base)
+        case .basePatch16At256: return ("siglip2-base-patch16-256", .basePatch16At256)
+        case .basePatch16At384: return ("siglip2-base-patch16-384", .basePatch16At384)
+        case .basePatch16At512: return ("siglip2-base-patch16-512", .basePatch16At512)
+        case .basePatch32At256: return ("siglip2-base-patch32-256", .basePatch32At256)
+        case .largePatch16At256: return ("siglip2-large-patch16-256", .largePatch16At256)
+        case .largePatch16At384: return ("siglip2-large-patch16-384", .largePatch16At384)
+        case .largePatch16At512: return ("siglip2-large-patch16-512", .largePatch16At512)
+        case .so400mPatch14At224: return ("siglip2-so400m-patch14-224", .so400mPatch14At224)
+        case .so400mPatch14At384: return ("siglip2-so400m-patch14-384", .so400mPatch14At384)
+        case .so400mPatch16At256: return ("siglip2-so400m-patch16-256", .so400mPatch16At256)
+        case .so400mPatch16At384: return ("siglip2-so400m-patch16-384", .so400mPatch16At384)
+        case .so400mPatch16At512: return ("siglip2-so400m-patch16-512", .so400mPatch16At512)
+        case .giantOptPatch16At256: return ("siglip2-giant-opt-patch16-256", .giantOptPatch16At256)
+        case .giantOptPatch16At384: return ("siglip2-giant-opt-patch16-384", .giantOptPatch16At384)
+        }
+    }
+
+    static let allVariants: [NFKMLXSigLIP2Variant] = [
+        .basePatch16At224, .basePatch16At256, .basePatch16At384, .basePatch16At512, .basePatch32At256,
+        .largePatch16At256, .largePatch16At384, .largePatch16At512,
+        .so400mPatch14At224, .so400mPatch14At384, .so400mPatch16At256, .so400mPatch16At384, .so400mPatch16At512,
+        .giantOptPatch16At256, .giantOptPatch16At384,
+    ]
+
+    /// Builds one of the released sizes from optional local weights.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXSigLIP2Variant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        return NFKMLXSigLIP2Backend(net: try loadedNet(spec.configuration, weightsURL: weightsURL), identifier: spec.name)
+    }
+
+    /// The download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
 
     private let holder: NFKSigLIP2Holder
 
@@ -375,9 +511,14 @@ public final class NFKMLXSigLIP2: NSObject {
                                completionHandler: completionHandler)
     }
 
-    /// Registers SigLIP 2 with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
+    /// Registers every released size with `NFKMLXModelRegistry`, each under its release name
+    /// (`siglip2-base-patch16-224`, `siglip2-so400m-patch14-384`, …).
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        for variant in allVariants {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
+        }
     }
 
     /// Loads a checkpoint, transposing 4-D Conv2d weights `[out, in, kH, kW]` → MLX's `[out, kH, kW, in]`

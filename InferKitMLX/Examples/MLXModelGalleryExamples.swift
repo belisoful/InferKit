@@ -42,6 +42,16 @@ final class MLXModelGalleryExamples: XCTestCase {
             XCTAssertTrue(backend.isReady)
         }
 
+        // Every released SwinIR and NAFNet fits its own variant: the lightweight ×3 / ×4, the classical
+        // ×2, the real-world ×4 (nearest-neighbor tail; the large one with the 3-conv residual), and
+        // NAFNet's width-64 SIDD and GoPro.
+        let lightX3 = try NFKMLXSwinIR.backend(variant: .lightweightSRX3, weightsURL: nil)
+        let realWorld = try NFKMLXSwinIR.backend(variant: .realWorldX4Medium, weightsURL: nil)
+        let wide = try NFKMLXNAFNet.backend(variant: .siddWidth64, weightsURL: nil)
+        for backend in [lightX3, realWorld, wide] {
+            XCTAssertTrue(backend.isReady)
+        }
+
         // Representative run: Zero-DCE brightens a dark frame to a same-size image.
         let result = try zeroDCE.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32, value: 40)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage))
@@ -60,6 +70,10 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(depth3.backendIdentifier, "depth-anything-3-small")
         let result3 = try depth3.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
         XCTAssertNotNil(result3.output(forKey: NFKOutputImage), "grayscale depth map (DA3)")
+
+        // DA3-BASE and DA3-LARGE are the same network at their own widths, through the variant factory.
+        let depth3Base = try NFKMLXDepthAnything3.backend(variant: .base, weightsURL: nil)
+        XCTAssertEqual(depth3Base.backendIdentifier, "depth-anything-3-base")
     }
 
     // MARK: Matting (plate → foreground + alpha, matting backend)
@@ -68,10 +82,13 @@ final class MLXModelGalleryExamples: XCTestCase {
         try requireMLXRuntime()
         let u2net = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)
         let rvm = try NFKMLXRVM.backend(weightsURL: nil)
+        // RVM's heavier release swaps MobileNetV3 for a ResNet-50 encoder under the same contract.
+        let rvmResNet = try NFKMLXRVM.backend(variant: .resNet50, weightsURL: nil)
+        XCTAssertEqual(rvmResNet.backendIdentifier, "robust-video-matting-resnet50")
         let modnet = try NFKMLXMODNet.backend(weightsURL: nil)
         // BiRefNet: high-resolution background removal (MIT), the same foreground + alpha contract.
         let birefnet = try NFKMLXBiRefNet.backend(weightsURL: nil)
-        for backend in [u2net, rvm, modnet, birefnet] {
+        for backend in [u2net, rvm, rvmResNet, modnet, birefnet] {
             XCTAssertTrue(backend.isReady)
         }
         // Representative run: MODNet portrait matte → foreground image + a separate matte.
@@ -114,6 +131,13 @@ final class MLXModelGalleryExamples: XCTestCase {
         let rfDetected = try rfdetr.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
         XCTAssertNotNil(rfDetected.detections, "detections (possibly empty)")
 
+        // Every released size of both detectors has a variant: RT-DETR's basic-block r18vd / r34vd and
+        // r101vd, RF-DETR's nano / small / medium / large.
+        let rtdetrSmall = try NFKMLXRTDetr.backend(variant: .r18vd, weightsURL: nil, labels: nil)
+        XCTAssertEqual(rtdetrSmall.backendIdentifier, "rtdetr-r18vd")
+        let rfdetrNano = try NFKMLXRFDetr.backend(variant: .nano, weightsURL: nil, labels: nil)
+        XCTAssertEqual(rfdetrNano.backendIdentifier, "rf-detr-nano")
+
         // Pose returns NFKKeypoint joints under NFKOutputPose; positions are normalized 0…1.
         let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: nil)
         let estimated = try pose.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(48)]))
@@ -128,6 +152,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         let result = try clip.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32)]))
         let embedding = try XCTUnwrap(result.embedding, "an L2-normalized image embedding")
         XCTAssertEqual(embedding.count, 512, "ViT-B/32 embedding width")
+
+        // The other vision-transformer releases fit their own variants: ViT-B/16, ViT-L/14, and
+        // ViT-L/14@336px, the last two embedding at 768.
+        let clipL14 = try NFKMLXCLIP.backend(variant: .vitL14, weightsURL: nil)
+        XCTAssertEqual(clipL14.backendIdentifier, "clip-vit-l-14")
 
         // SigLIP 2: the CLIP upgrade — image embedding via the attention-pooling head.
         let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)
@@ -170,6 +199,52 @@ final class MLXModelGalleryExamples: XCTestCase {
         let (pixels, rows, cols) = NFKMLXSmolVLMImageProcessor.process(Self.solid(300))
         XCTAssertEqual([rows, cols], [4, 4])
         XCTAssertEqual(pixels.shape, [17, 3, 512, 512])
+    }
+
+    func testGemma3() throws {
+        try requireMLXRuntime()
+        // The released Gemma 3 loads from its directory: NFKMLXGemma3.backend(directoryURL:) for text
+        // (NFKInputPrompt / NFKInputMessages, an NFKInputImage beside them on the multimodal 4B), or
+        // NFKMLXGemma3.load(directoryURL:) then answer(image:question:). Here the tiny decoder decodes
+        // through its hybrid cache and the tiny vision tower and projector produce soft tokens, so the
+        // pipeline runs without a download.
+        NFKMLXRandom.seed(2)
+        let decoder = NFKMLXGemma3Net(.tiny)
+        let cache = NFKMLXGemma3Cache(layerCount: 3, slidingWindow: 4)
+        let prefill = decoder(MLXArray([Int32(3), 17, 42, 99, 7]).reshaped([1, 5]), cache: cache)
+        let step = decoder(MLXArray([Int32(61)]).reshaped([1, 1]), cache: cache)
+        XCTAssertEqual(prefill.shape, [1, 5, 131])
+        XCTAssertEqual(step.shape, [1, 1, 131], "a cached step reads one token")
+        XCTAssertEqual(cache.offset, 6)
+
+        let tower = NFKMLXGemma3VisionNet(.tiny)                                  // 64-pixel image, 16 patches
+        let projector = NFKMLXGemma3MultimodalProjector(visionHidden: 32, textHidden: 64, patchesPerSide: 4, tokensPerImage: 4)
+        let soft = projector(tower(MLXRandom.uniform(low: -1, high: 1, [1, 64, 64, 3])))
+        XCTAssertEqual(soft.shape, [1, 4, 64], "16 patches pool to 4 soft tokens at the decoder width")
+    }
+
+    func testGemma3n() throws {
+        try requireMLXRuntime()
+        // The released Gemma 3n loads from its directory: NFKMLXGemma3n.backend(directoryURL:) for
+        // text (NFKInputPrompt / NFKInputMessages, with NFKInputImage or NFKInputAudio beside them),
+        // or NFKMLXGemma3n.load(directoryURL:) then answer(image:question:). Here the tiny decoder
+        // and the tiny audio encoder run without a download.
+        NFKMLXRandom.seed(3)
+        let decoder = NFKMLXGemma3nNet(.tiny)
+        let tokens = MLXArray([Int32(3), 17, 42, 99, 7]).reshaped([1, 5])
+        let cache = NFKMLXGemma3nCache(layerCount: NFKMLXGemma3nConfiguration.tiny.layerCount)
+        let prefill = decoder(tokens, cache: cache)
+        let step = decoder(MLXArray([Int32(61)]).reshaped([1, 1]), cache: cache)
+        XCTAssertEqual(prefill.shape, [1, 5, 140])
+        XCTAssertEqual(step.shape, [1, 1, 140], "a cached step reads one token")
+
+        // AltUp holds the residual stream as four parallel copies, which the per-layer states report
+        // one of; the last entry is the merged, normalized output.
+        XCTAssertEqual(decoder.layerStates(tokens).count, NFKMLXGemma3nConfiguration.tiny.layerCount + 1)
+
+        let audio = NFKMLXGemma3nAudioNet(.tiny)
+        let (encoded, _) = audio(MLXRandom.normal([1, 26, 16]))
+        XCTAssertEqual(encoded.shape, [1, 4, 32], "26 mel frames subsample by 4 and reduce by 2")
     }
 
     func testQwen3VLVisionTower() throws {
@@ -269,6 +344,8 @@ final class MLXModelGalleryExamples: XCTestCase {
         try requireMLXRuntime()
         let sam = try NFKMLXSAM.backend(weightsURL: nil)
         XCTAssertEqual(sam.backendIdentifier, "sam")                      // plate + point under NFKSAMPointKey → mask
+        // The released encoders are `.vitB`, `.vitL`, and `.vitH` (`NFKMLXSAMVariant`); a checkpoint
+        // fits only its own size, and each is built the same way with its weights URL.
     }
 
     // MARK: Video (clip → clip)
@@ -322,6 +399,10 @@ final class MLXModelGalleryExamples: XCTestCase {
 
         let whisper = try NFKMLXWhisper.backend(weightsURL: nil)
         XCTAssertEqual(whisper.backendIdentifier, "whisper-tiny")
+        // Every released size is a variant — tiny, base, small, medium, large (v1/v2), large-v3, and
+        // large-v3-turbo, whose decoder is four layers deep.
+        let whisperBase = try NFKMLXWhisper.backend(variant: .base, weightsURL: nil)
+        XCTAssertTrue(whisperBase.isReady)
 
         // Asking for timestamps gives the spans as well as the words, as NFKAudioSegments beside the
         // transcript. It is a different decode, so it is asked for rather than always produced.
@@ -346,6 +427,32 @@ final class MLXModelGalleryExamples: XCTestCase {
         // GTCRN: an ultra-light grouped TCRN for real-time speech enhancement.
         let gtcrn = try NFKMLXGTCRNFactory.backend(weightsURL: nil)
         XCTAssertNotNil(try gtcrn.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // MetricGAN+: a two-layer BLSTM magnitude mask over log1p(|X|) frames, the family's smallest.
+        let metricgan = try NFKMLXMetricGANPlus.backend(weightsURL: nil)
+        XCTAssertNotNil(try metricgan.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // CMGAN: a dense encoder, four two-stage conformer blocks, and mask + complex decoders over a
+        // power-compressed spectrogram.
+        let cmgan = try NFKMLXCMGAN.backend(weightsURL: nil)
+        XCTAssertNotNil(try cmgan.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // FRCRN: two complex UNets with frequency-recurrent FSMN memories over a conv-STFT.
+        let frcrn = try NFKMLXFRCRN.backend(weightsURL: nil)
+        XCTAssertNotNil(try frcrn.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // MossFormer2 SR: a mel-to-mel MossFormer2 backbone and a Snake HiFi-GAN generator, the input's
+        // own band kept and the generated band above it added.
+        let superResolution = try NFKMLXMossFormer2SRFactory.backend(directoryURL: nil)
+        XCTAssertNotNil(try superResolution.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // NU-Wave 2: diffusion bandwidth extension (short-time Fourier convolutions, an 8-step logSNR DDIM).
+        let nuwave = try NFKMLXNUWave2.backend(weightsURL: nil)
+        XCTAssertNotNil(try nuwave.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // Apollo: music codec-artifact restoration (an 80-band split, band Roformer + time convolution layers).
+        let apollo = try NFKMLXApollo.backend(weightsURL: nil)
+        XCTAssertNotNil(try apollo.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
 
         // SGMSE+: score-based generative dereverberation, a reverse-SDE sampler over an NCSN++ score net.
         // The released net is large and the sampler multi-step; this exercises the pipeline with a small,
@@ -399,6 +506,9 @@ final class MLXModelGalleryExamples: XCTestCase {
         // SNAC: a multi-scale codec — its codebooks emit token streams at different temporal rates.
         let snac = try NFKMLXSNAC.backend(weightsURL: nil)
         XCTAssertNotNil(try snac.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+        // The music codecs (32 kHz, 44.1 kHz) add a fourth codebook and windowed attention at the bottleneck.
+        let snacMusic = try NFKMLXSNAC.backend(variant: .music32kHz, weightsURL: nil)
+        XCTAssertEqual(snacMusic.backendIdentifier, "snac-32khz")
 
         let tagger = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)
         XCTAssertNotNil(try tagger.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).classifications)
@@ -409,6 +519,10 @@ final class MLXModelGalleryExamples: XCTestCase {
         // Demucs v4: parallel spectrogram and waveform branches joined by a cross-transformer.
         let htdemucs = try NFKMLXHTDemucs.backend(weightsURL: nil)
         XCTAssertEqual(htdemucs.backendIdentifier, "htdemucs")
+        // The six-stem release adds guitar and piano; the fine-tuned release is four checkpoints
+        // combined by `backendWithFineTunedWeightsURLs:`.
+        let sixStem = try NFKMLXHTDemucs.backend(variant: .sixStem, weightsURL: nil)
+        XCTAssertEqual(sixStem.backendIdentifier, "htdemucs-6s")
 
         // Full text-to-speech chain: phonemizer → acoustic (FastSpeech2-style) → vocoder (HiFi-GAN).
         let tts = NFKMLXTTS(phonemizer: NFKMLXNeuralG2P(), symbols: (0 ..< 40).map { "p\($0)" })

@@ -397,7 +397,7 @@ public final class NFKMLXJSONConstraint: NFKMLXByteConstraint<NFKMLXJSONState>, 
         return s
     }
 
-    private static func advanceNumber(_ phase: NFKMLXJSONState.NumberPhase,
+    static func advanceNumber(_ phase: NFKMLXJSONState.NumberPhase,
                                       byte: UInt8) -> NFKMLXJSONState.NumberPhase? {
         let digit = isDigit(byte)
         switch phase {
@@ -424,14 +424,14 @@ public final class NFKMLXJSONConstraint: NFKMLXByteConstraint<NFKMLXJSONState>, 
         }
     }
 
-    private static func isTerminal(_ phase: NFKMLXJSONState.NumberPhase) -> Bool {
+    static func isTerminal(_ phase: NFKMLXJSONState.NumberPhase) -> Bool {
         switch phase {
         case .zero, .integer, .fraction, .exponentDigits: return true
         default: return false
         }
     }
 
-    private static func word(_ literal: NFKMLXJSONState.Literal) -> [UInt8] {
+    static func word(_ literal: NFKMLXJSONState.Literal) -> [UInt8] {
         switch literal {
         case .true: return Array("true".utf8)
         case .false: return Array("false".utf8)
@@ -439,12 +439,12 @@ public final class NFKMLXJSONConstraint: NFKMLXByteConstraint<NFKMLXJSONState>, 
         }
     }
 
-    private static func isWhitespace(_ byte: UInt8) -> Bool {
+    static func isWhitespace(_ byte: UInt8) -> Bool {
         byte == 0x20 || byte == 0x0A || byte == 0x0D || byte == 0x09
     }
-    private static func isDigit(_ byte: UInt8) -> Bool { (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains(byte) }
-    private static func isExponent(_ byte: UInt8) -> Bool { byte == UInt8(ascii: "e") || byte == UInt8(ascii: "E") }
-    private static func isHexDigit(_ byte: UInt8) -> Bool {
+    static func isDigit(_ byte: UInt8) -> Bool { (UInt8(ascii: "0") ... UInt8(ascii: "9")).contains(byte) }
+    static func isExponent(_ byte: UInt8) -> Bool { byte == UInt8(ascii: "e") || byte == UInt8(ascii: "E") }
+    static func isHexDigit(_ byte: UInt8) -> Bool {
         isDigit(byte) || (UInt8(ascii: "a") ... UInt8(ascii: "f")).contains(byte)
             || (UInt8(ascii: "A") ... UInt8(ascii: "F")).contains(byte)
     }

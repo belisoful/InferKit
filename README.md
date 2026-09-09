@@ -5,7 +5,7 @@ A small, cross-platform (macOS / iOS / tvOS) inference toolkit for Objective-C, 
 One protocol — `NFKInferenceBackend` — covers every engine, so the same request and result types drive
 a Core ML model, an OpenAI-compatible or Anthropic endpoint (hosted, or a local runner such as Ollama),
 Apple's on-device Foundation Models, or an MLX model.
-There is no FxPlug or host-framework dependency, so any Metal or Apple app can use it.
+There is no host-framework dependency, so any Metal or Apple app can use it.
 
 ```objc
 id<NFKInferenceBackend> backend = [NFKRemoteBackend backendWithEndpointURL:endpoint];
@@ -54,7 +54,7 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
 A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
 companion packages already do: **InferKitMLX** (60-plus models across image, video, audio, and
 language — text-to-image with Stable Diffusion, Z-Image, and SANA, text-to-video with LTX-Video and Wan,
-on-device language models (Qwen3, Qwen3.5, Gemma 4, DeepSeek V4, and any dense GGUF), text embeddings
+on-device language models (Qwen3, Qwen3.5, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4, and any dense GGUF), text embeddings
 and reranking, vision-language, speech recognition and synthesis, neural audio codecs, and MiniMax
 Music 3 text-to-music — each validated numerically against its reference implementation) and
 **InferKitFoundationModels** (Apple's on-device model, with tool calling and structured output).
@@ -64,14 +64,14 @@ Music 3 text-to-music — each validated numerically against its reference imple
 Every row links to its class, configuration, and factory in the [model index](Docs/model-index.md);
 the measured parity of each is in [model parity](Docs/model-parity.md).
 
-- **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN, SwinIR, NAFNet, Zero-DCE, fast style transfer, colorizers (ECCV-16, SIGGRAPH-17), LaMa, CodeFormer, TAESD, SD inpainting
+- **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN, SwinIR (every released SR checkpoint), NAFNet (all five), Zero-DCE, fast style transfer, colorizers (ECCV-16, SIGGRAPH-17), LaMa, CodeFormer, TAESD, SD inpainting
 - **[Image → map](Docs/model-index.md#image-to-map)** — Depth Anything V2, Marigold, SegFormer, DeepLabV3, BiSeNet V1 / V2
-- **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, Robust Video Matting, MODNet, SAM, SAM 2, RetinaFace, face alignment
-- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR, RF-DETR, SimpleBaseline pose
-- **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP, SigLIP 2, Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Qwen3-VL, Gemma 4 vision / audio
-- **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Mixtral, GGUF, Qwen3.5 / 3.8, Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
+- **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, Robust Video Matting (MobileNetV3 / ResNet-50), MODNet, SAM (ViT-B/L/H), SAM 2 (all four Hiera sizes), RetinaFace, face alignment
+- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR (r18–r101), RF-DETR (nano–large), SimpleBaseline pose
+- **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP (ViT-B/32, B/16, L/14, L/14@336), SigLIP 2 (all fourteen fixed-resolution sizes), Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Gemma 3 (4B, image + text), Gemma 3n (image + audio + text), Qwen3-VL, Gemma 4 vision / audio
+- **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Qwen2-MoE, Mixtral, gpt-oss (MXFP4), GGUF, Qwen3.5 / 3.8, Gemma 3 (270M, 1B, 4B), Gemma 3n (E2B, E4B), Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
 - **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend
-- **[Audio](Docs/model-index.md#audio)** — Whisper (tiny–large-v3), Parakeet-TDT, Demucs v2 / HT Demucs, speech denoiser, MossFormer2 SE, DeepFilterNet3, VoiceRestore, Resemble Enhance, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC
+- **[Audio](Docs/model-index.md#audio)** — Whisper (every size, tiny–large-v3-turbo), Parakeet-TDT, Demucs v2 / HT Demucs, speech denoiser, MossFormer2 SE / SR, DeepFilterNet3, VoiceRestore, Resemble Enhance, MetricGAN+, CMGAN, FRCRN, NU-Wave 2, Apollo, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC (24 kHz speech, 32 / 44.1 kHz music)
 - **[Speech & music](Docs/model-index.md#text-to-speech-and-music)** — FastSpeech2 + HiFi-GAN voice, Kokoro-82M, Chatterbox voice cloning, phonemizers, MiniMax Music 3
 - **[Text → image & video](Docs/model-index.md#text-to-image-and-video)** — Stable Diffusion 1.5 / 2.1 / SDXL-Turbo, IP-Adapter, Z-Image, SANA, LTX-Video, Wan
 

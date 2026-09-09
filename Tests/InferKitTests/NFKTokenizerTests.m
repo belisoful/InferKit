@@ -155,6 +155,40 @@
 	XCTAssertEqualObjects([gpt2 encode:@"a-b12"], expectedGPT2);
 }
 
+// o200k (OpenAI's o200k_base / o200k_harmony, which gpt-oss ships) splits digits in runs of at most
+// THREE and splits a word wherever its case pattern turns over — "aB" is two pretokens, a lower-led
+// word and then a capital-led one — where GPT-2 takes the whole digit run and the whole letter run.
+- (void)testTheO200kPretokenizationChangesTheMerges
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{
+		@"1": @0, @"2": @1, @"3": @2, @"4": @3, @"12": @4, @"123": @5, @"1234": @6,
+		@"a": @7, @"B": @8, @"aB": @9,
+	};
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"o200k-vocab.json"] atomically:YES];
+	NSString *merges = @"#version: 0.2\n1 2\n12 3\n123 4\na B\n";
+	[merges writeToURL:[_directory URLByAppendingPathComponent:@"o200k-merges.txt"]
+			atomically:YES
+			  encoding:NSUTF8StringEncoding
+				 error:NULL];
+
+	NSError *error = nil;
+	NFKTokenizer *o200k = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"o200k-vocab.json", @"merges": @"o200k-merges.txt",
+		@"pretokenizer": @"o200k",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(o200k, @"%@", error);
+	NFKTokenizer *gpt2 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"o200k-vocab.json", @"merges": @"o200k-merges.txt",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(gpt2, @"%@", error);
+
+	NSArray *expectedO200k = @[@5, @3, @7, @8];
+	NSArray *expectedGPT2 = @[@6, @9];
+	XCTAssertEqualObjects([o200k encode:@"1234aB"], expectedO200k);
+	XCTAssertEqualObjects([gpt2 encode:@"1234aB"], expectedGPT2);
+}
+
 - (void)testAnUnknownPretokenizationIsRejected
 {
 	NSError *error = nil;

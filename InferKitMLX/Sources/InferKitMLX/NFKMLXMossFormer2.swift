@@ -45,6 +45,16 @@ public struct NFKMLXMossFormer2Configuration: Sendable {
 
     public var bins: Int { fftLen / 2 + 1 }
 
+    /// The MossFormer2 SR 48K backbone: the same MaskNet reading an 80-band log-mel and emitting an
+    /// 80-band one, with a single speaker (`conv1d_out` stays `dModel` wide).
+    public static var superResolution: NFKMLXMossFormer2Configuration {
+        var c = NFKMLXMossFormer2Configuration()
+        c.inChannels = 80
+        c.outChannelsFinal = 80
+        c.numSpks = 1
+        return c
+    }
+
     public init(sampleRate: Int = 48000, fftLen: Int = 1920, winLen: Int = 1920, winInc: Int = 384,
                 numMels: Int = 60, dModel: Int = 512, numBlocks: Int = 24, groupSize: Int = 256,
                 queryKeyDim: Int = 128, expansionFactor: Float = 4, fsmnLorder: Int = 20,

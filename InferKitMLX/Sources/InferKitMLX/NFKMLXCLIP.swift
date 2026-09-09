@@ -54,6 +54,20 @@ public struct NFKMLXCLIPConfiguration: Sendable {
     /// ViT-B/32, the common base model.
     public static let base = NFKMLXCLIPConfiguration()
 
+    /// ViT-B/16: the base towers over 16-pixel patches, so four times the patches at 224.
+    public static let vitB16 = NFKMLXCLIPConfiguration(patchSize: 16)
+
+    /// ViT-L/14: a 1024-wide, 24-layer, 16-head image tower over 14-pixel patches and a 768-wide,
+    /// 12-layer, 12-head text tower, meeting in a 768-wide embedding.
+    public static let vitL14 = NFKMLXCLIPConfiguration(
+        patchSize: 14, visionWidth: 1024, visionLayers: 24, visionHeads: 16, embedDimensions: 768,
+        textWidth: 768, textLayers: 12, textHeads: 12)
+
+    /// ViT-L/14@336px: the ViT-L/14 towers fine-tuned at 336 pixels (576 patches).
+    public static let vitL14At336 = NFKMLXCLIPConfiguration(
+        imageResolution: 336, patchSize: 14, visionWidth: 1024, visionLayers: 24, visionHeads: 16,
+        embedDimensions: 768, textWidth: 768, textLayers: 12, textHeads: 12)
+
     /// A small configuration for offline structure and round-trip tests.
     public static let tiny = NFKMLXCLIPConfiguration(imageResolution: 16, patchSize: 8, visionWidth: 16,
                                                      visionLayers: 1, visionHeads: 2, embedDimensions: 8,
@@ -389,11 +403,31 @@ public final class NFKMLXCLIPBackend: NSObject, NFKInferenceBackend {
 /// parameter names match the reference OpenAI CLIP (`visual.conv1.weight`, `visual.transformer.resblocks.N.*`,
 /// `token_embedding.weight`, `text_projection`); the loader transposes the 4-D patch-embedding
 /// convolution weight `[out, in, kH, kW]` to MLX's `[out, kH, kW, in]`.
+/// The released OpenAI CLIP vision-transformer size to build, for the Objective-C factory. A checkpoint
+/// fits only its own; the ResNet releases (RN50, RN101, RN50x4/16/64) are a different image tower and
+/// are not read.
+@objc(NFKMLXCLIPVariant)
+public enum NFKMLXCLIPVariant: Int {
+    case vitB32
+    case vitB16
+    case vitL14
+    case vitL14At336
+}
+
 @objc(NFKMLXCLIP)
 public final class NFKMLXCLIP: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "clip-vit-b-32"
+
+    static func specs(for variant: NFKMLXCLIPVariant) -> (name: String, configuration: NFKMLXCLIPConfiguration) {
+        switch variant {
+        case .vitB32: return (modelName, .base)
+        case .vitB16: return ("clip-vit-b-16", .vitB16)
+        case .vitL14: return ("clip-vit-l-14", .vitL14)
+        case .vitL14At336: return ("clip-vit-l-14-336", .vitL14At336)
+        }
+    }
 
     /// Builds a CLIP image-embedding backend directly from optional local weights — no registry
     /// required. A nil `weightsURL` builds random weights (`isReady` is true). The text path needs a
@@ -401,19 +435,38 @@ public final class NFKMLXCLIP: NSObject {
     /// `NFKMLXCLIPBackend`. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXCLIPNet(.base)
+        try backend(variant: .vitB32, weightsURL: weightsURL)
+    }
+
+    /// Builds one of the released vision-transformer sizes from optional local weights.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXCLIPVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = NFKMLXCLIPNet(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
-        return NFKMLXCLIPBackend(net: net, identifier: modelName)
+        return NFKMLXCLIPBackend(net: net, identifier: spec.name)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds the backend — no registry required.
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: .vitB32, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL)
+    }
+
+    /// The download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXCLIPVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        return try backend(variant: variant, weightsURL: url)
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and
@@ -421,16 +474,30 @@ public final class NFKMLXCLIP: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .vitB32, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXCLIPVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0) },
+                               build: { try backend(variant: variant, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
 
-    /// Registers CLIP (`clip-vit-b-32`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
+    /// Registers every vision-transformer size (`clip-vit-b-32`, `clip-vit-b-16`, `clip-vit-l-14`,
+    /// `clip-vit-l-14-336`) with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in
-            try backend(weightsURL: weightsURL)
+        for variant in [NFKMLXCLIPVariant.vitB32, .vitB16, .vitL14, .vitL14At336] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
         }
     }
 

@@ -18,13 +18,23 @@ static NSString * const kNFKBPEPattern =
 static NSString * const kNFKQwen2BPEPattern =
 	@"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
+// o200k pre-tokenization (OpenAI's o200k_base / o200k_harmony, from the released tokenizer.json): a
+// word is a run of letters and marks whose case pattern is either lower-led or one-capital-led, each
+// optionally led by ONE non-letter/digit character and optionally followed by a case-insensitive
+// contraction; digits split in runs of at most THREE; a punctuation run may absorb trailing newlines
+// or slashes; whitespace runs ending in a newline hold together.
+static NSString * const kNFKO200kBPEPattern =
+	@"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?"
+	@"|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?"
+	@"|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
 @implementation NFKByteLevelBPETokenizer
 {
 	NSDictionary<NSString *, NSNumber *> *_encoder;			// token string -> id
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
-	NSString *_pretokenization;								// "gpt2" (nil) or "qwen2"
+	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", or "o200k"
 	NSRegularExpression *_pattern;
 	unichar _byteToUnicode[256];
 	NSDictionary<NSNumber *, NSNumber *> *_unicodeToByte;	// unichar value -> byte
@@ -59,7 +69,8 @@ static NSString * const kNFKQwen2BPEPattern =
 		return nil;
 	}
 	if (pretokenization != nil
-		&& ![pretokenization isEqualToString:@"gpt2"] && ![pretokenization isEqualToString:@"qwen2"]) {
+		&& ![pretokenization isEqualToString:@"gpt2"] && ![pretokenization isEqualToString:@"qwen2"]
+		&& ![pretokenization isEqualToString:@"o200k"]) {
 		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
 						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
 		return nil;
@@ -167,6 +178,9 @@ static NSString * const kNFKQwen2BPEPattern =
 {
 	if ([_pretokenization isEqualToString:@"qwen2"]) {
 		return kNFKQwen2BPEPattern;
+	}
+	if ([_pretokenization isEqualToString:@"o200k"]) {
+		return kNFKO200kBPEPattern;
 	}
 	return kNFKBPEPattern;
 }

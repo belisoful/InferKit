@@ -105,6 +105,7 @@ public final class NFKMLXPromptCache {
         if let window { metadata["window"] = String(window) }
         if let quantization {
             metadata["quantization"] = "\(quantization.bits):\(quantization.groupSize)"
+                + (quantization.groupsKeysAlongTheSequence ? ":sequence" : "")
         }
         var arrays = cache.exportedArrays()
         // A safetensors file needs at least one tensor; an empty cache writes its token count.
@@ -133,8 +134,10 @@ public final class NFKMLXPromptCache {
         }
         let window = metadata["window"].flatMap(Int.init)
         let quantization = metadata["quantization"].flatMap { text -> NFKMLXKeyValueCache.Quantization? in
-            let parts = text.split(separator: ":").compactMap { Int($0) }
-            return parts.count == 2 ? .init(bits: parts[0], groupSize: parts[1]) : nil
+            let parts = text.split(separator: ":")
+            guard parts.count >= 2, let bits = Int(parts[0]), let groupSize = Int(parts[1]) else { return nil }
+            return .init(bits: bits, groupSize: groupSize,
+                         keyAxis: parts.count > 2 && parts[2] == "sequence" ? .sequence : .headDimension)
         }
         let tokens = (metadata["tokens"] ?? "").split(separator: ",").compactMap { Int($0) }
         let restored = NFKMLXPromptCache(layerCount: layerCount, window: window, quantization: quantization)

@@ -118,6 +118,40 @@ public struct NFKMLXQwen3VLVisionConfiguration: Sendable {
 
     public static let qwen3VL2B = NFKMLXQwen3VLVisionConfiguration()
 
+    /// Reads a release's `vision_config` from its `config.json`. The 2B and 4B share one tower; the 8B,
+    /// 32B, and 30B-A3B run a deeper, wider one (27 blocks of 1152, hooked at 8/16/24), and every size
+    /// projects to its own decoder width.
+    public static func configuration(fromHuggingFace url: URL) throws -> NFKMLXQwen3VLVisionConfiguration {
+        let data = try Data(contentsOf: url)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
+        }
+        return try configuration(fromJSON: json)
+    }
+
+    static func configuration(fromJSON json: [String: Any]) throws -> NFKMLXQwen3VLVisionConfiguration {
+        guard let vision = json["vision_config"] as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("the config carries no vision_config")
+        }
+        let kind = (vision["model_type"] as? String) ?? ""
+        guard kind == "qwen3_vl" || kind == "qwen3_vl_moe" else {
+            throw NFKMLXError.unsupportedConfiguration("this reads a Qwen3-VL vision tower, not \(kind)")
+        }
+        func integer(_ key: String, _ fallback: Int) -> Int { (vision[key] as? NSNumber)?.intValue ?? fallback }
+        let positions = integer("num_position_embeddings", 2304)
+        let side = Int(Double(positions).squareRoot().rounded())
+        guard side * side == positions else {
+            throw NFKMLXError.unsupportedConfiguration("num_position_embeddings \(positions) is not a square grid")
+        }
+        let deepstack = (vision["deepstack_visual_indexes"] as? [NSNumber])?.map(\.intValue) ?? [5, 11, 17]
+        return NFKMLXQwen3VLVisionConfiguration(
+            hiddenSize: integer("hidden_size", 1024), depth: integer("depth", 24),
+            headCount: integer("num_heads", 16), intermediateSize: integer("intermediate_size", 4096),
+            patchSize: integer("patch_size", 16), temporalPatchSize: integer("temporal_patch_size", 2),
+            spatialMergeSize: integer("spatial_merge_size", 2), outHiddenSize: integer("out_hidden_size", 2048),
+            positionGridSide: side, deepstackLayers: deepstack)
+    }
+
     var headDimensions: Int { hiddenSize / headCount }
     var patchInputSize: Int { 3 * temporalPatchSize * patchSize * patchSize }
     var mergedSize: Int { hiddenSize * spatialMergeSize * spatialMergeSize }
@@ -418,29 +452,55 @@ public final class NFKMLXQwen3VL: NSObject {
         return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }
 
-    /// Builds the vision tower from a downloaded release directory.
+    /// Builds the vision tower from a downloaded release directory, at the geometry its `config.json`
+    /// describes.
     public static func visionNet(directoryURL: URL) throws -> NFKMLXQwen3VLVisionNet {
-        let net = NFKMLXQwen3VLVisionNet(.qwen3VL2B)
+        let configuration = try NFKMLXQwen3VLVisionConfiguration.configuration(
+            fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
+        let net = NFKMLXQwen3VLVisionNet(configuration)
         try loadVisionWeights(into: net, directoryURL: directoryURL)
         return net
     }
 
-    /// Loads the `model.visual.` subtree. The patch-embedding convolution weight is stored 5-D
-    /// (`[out, channels, temporal, patch, patch]`) and flattens to a linear weight `[out, patchInput]`.
+    /// Loads the `model.visual.` subtree, single-file or sharded. The patch-embedding convolution weight
+    /// is stored 5-D (`[out, channels, temporal, patch, patch]`) and flattens to a linear weight
+    /// `[out, patchInput]`.
     static func loadVisionWeights(into net: NFKMLXQwen3VLVisionNet, directoryURL: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(
-            url: directoryURL.appendingPathComponent("model.safetensors"))
-        let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
-            guard key.hasPrefix("model.visual.") else { return nil }
-            let stripped = String(key.dropFirst("model.visual.".count))
-            var array = value
-            if stripped == "patch_embed.proj.weight", value.ndim == 5 {
-                array = value.reshaped([value.dim(0), -1])
-            }
-            let keeps = array.dtype != .float16 && array.dtype != .bfloat16
-            return (stripped, keeps ? array : array.asType(.float32))
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+            key.hasPrefix("model.visual.") ? String(key.dropFirst("model.visual.".count)) : nil
+        }
+        let mapped = arrays.map { key, value -> (String, MLXArray) in
+            key == "patch_embed.proj.weight" && value.ndim == 5 ? (key, value.reshaped([value.dim(0), -1])) : (key, value)
         }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
+    }
+
+    /// The decoder configuration a release's `config.json` describes: its `text_config` read through the
+    /// dense reader (`qwen3_vl_text`, or `qwen3_vl_moe_text` for the 30B-A3B, whose routed experts the
+    /// same stack runs). Whether the head is tied is settled by the weights rather than the config,
+    /// which the 8B and 32B leave unstated: a release that ships `lm_head.weight` is untied.
+    public static func decoderConfiguration(directoryURL: URL) throws -> NFKMLXLanguageConfiguration {
+        let data = try Data(contentsOf: directoryURL.appendingPathComponent("config.json"))
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = json["text_config"] as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("the config carries no text_config")
+        }
+        var configuration = try NFKMLXLanguage.configuration(fromJSON: text)
+        configuration.tiesWordEmbeddings = !(try releaseShipsHead(directoryURL: directoryURL))
+        return configuration
+    }
+
+    /// Whether the release's weight files carry `lm_head.weight`, read from the shard index or the
+    /// single file's header without materializing anything.
+    static func releaseShipsHead(directoryURL: URL) throws -> Bool {
+        let index = directoryURL.appendingPathComponent("model.safetensors.index.json")
+        if let data = try? Data(contentsOf: index),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let map = json["weight_map"] as? [String: String] {
+            return map["lm_head.weight"] != nil
+        }
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: directoryURL.appendingPathComponent("model.safetensors"))
+        return checkpoint.arrays["lm_head.weight"] != nil
     }
 
     // The token ids and geometry the decoder integration needs. The text decoder is the Qwen3 1.7B
@@ -460,21 +520,43 @@ public final class NFKMLXQwen3VL: NSObject {
         return configuration
     }()
 
-    /// Builds the text decoder and loads the `model.language_model.` subtree, which is the Qwen3 dense
-    /// stack under a different prefix.
+    /// Builds the text decoder at the release's own geometry and loads the `model.language_model.`
+    /// subtree, which is the Qwen3 dense stack under a different prefix — single-file or sharded, plus
+    /// the top-level `lm_head.weight` an untied release ships.
+    ///
+    /// The 30B-A3B stores each layer's experts FUSED, as the `x @ W` layouts `gate_up_proj`
+    /// `[experts, hidden, 2·width]` (the gate half first, then the up half) and `down_proj`
+    /// `[experts, width, hidden]`; those split and transpose into the stacked `[experts, out, in]`
+    /// projections the routed feed-forward holds.
     public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
-        let net = NFKMLXLanguageNet(decoderConfiguration)
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(
-            url: directoryURL.appendingPathComponent("model.safetensors"))
+        let configuration = try decoderConfiguration(directoryURL: directoryURL)
+        let net = NFKMLXLanguageNet(configuration)
         let prefix = "model.language_model."
-        let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
-            guard key.hasPrefix(prefix) else { return nil }
-            let stripped = "model." + String(key.dropFirst(prefix.count))
-            let keeps = value.dtype != .float16 && value.dtype != .bfloat16
-            return (stripped, keeps ? value : value.asType(.float32))
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+            if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
+            return key == "lm_head.weight" && !configuration.tiesWordEmbeddings ? key : nil
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
         return net
+    }
+
+    /// Splits fused expert tensors into the module's stacked projections; every other pair passes through.
+    static func releaseExperts(_ pairs: [(String, MLXArray)]) -> [(String, MLXArray)] {
+        var mapped = [(String, MLXArray)]()
+        mapped.reserveCapacity(pairs.count)
+        for (key, value) in pairs {
+            if key.hasSuffix(".mlp.experts.gate_up_proj"), value.ndim == 3 {
+                let base = String(key.dropLast("gate_up_proj".count))
+                let width = value.dim(2) / 2
+                mapped.append((base + "gate_proj.weight", value[0..., 0..., 0 ..< width].swappedAxes(1, 2)))
+                mapped.append((base + "up_proj.weight", value[0..., 0..., width...].swappedAxes(1, 2)))
+            } else if key.hasSuffix(".mlp.experts.down_proj"), value.ndim == 3 {
+                mapped.append((key + ".weight", value.swappedAxes(1, 2)))
+            } else {
+                mapped.append((key, value))
+            }
+        }
+        return mapped
     }
 
     /// The 3-D M-RoPE positions `[3][sequence]` (temporal, height, width), the reference's

@@ -9,6 +9,7 @@
 #import "NFKInferenceResult.h"
 #import "NFKInferenceKeys.h"
 #import "NFKErrors.h"
+#import "NFKTokenConstraint.h"
 #import <CoreML/CoreML.h>
 
 #pragma mark Sampling primitives
@@ -87,6 +88,7 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	NSString *_positionFeatureName;
 	NSDictionary *_chatTemplate;
 	NSInteger _contextLength;
+	BOOL _replyIsJSON;
 }
 
 @synthesize modelDirectoryURL = _modelDirectoryURL;
@@ -339,6 +341,14 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 		}
 	}
 	uint64_t rng = (uint64_t)[self integerParameter:NFKParameterSeed default:0 request:request];
+	// A grammar mask over the logits: built lazily on the first sample, once the logit width is known.
+	NFKTokenConstraintCursor *cursor = nil;
+	NSString *outputFormat = [request.parameters[NFKParameterOutputFormat] isKindOfClass:NSString.class]
+		? request.parameters[NFKParameterOutputFormat] : nil;
+	NSArray *choices = [request.parameters[NFKParameterChoices] isKindOfClass:NSArray.class]
+		? request.parameters[NFKParameterChoices] : nil;
+	BOOL constrained = outputFormat != nil || choices.count > 0;
+	_replyIsJSON = outputFormat != nil;
 
 	MLState *state = [_model newState];
 	NSInteger cachePosition = 0;
@@ -377,12 +387,16 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 			return nil;
 		}
 
+		if (constrained && cursor == nil) {
+			cursor = [[self constraintForOutputFormat:outputFormat choices:choices logits:logits] makeCursor];
+		}
 		NSInteger next = [self sampleFromLogits:logits
 									temperature:temperature
 										   topK:topK
 										   topP:topP
 							  repetitionPenalty:repetitionPenalty
 									  penalized:penalized
+										 cursor:cursor
 											rng:&rng];
 		if (next < 0) {
 			break;
@@ -393,6 +407,7 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 
 		[generated addObject:@(next)];
 		[penalized addObject:@(next)];
+		[cursor acceptToken:next];
 		[text setString:[_tokenizer decode:generated]];
 
 		NSString *trimmed = [self textTrimmedAtStop:text stops:stops];
@@ -415,8 +430,35 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	return [self resultForText:text];
 }
 
+/*! The grammar a request asks for, over the tokenizer's bytes at the model's logit width. */
+- (NFKTokenConstraint *)constraintForOutputFormat:(nullable NSString *)outputFormat
+										   choices:(nullable NSArray *)choices
+											logits:(MLMultiArray *)logits
+{
+	NSUInteger vocab = 0;
+	float *scores = [self lastStepLogitsFrom:logits count:&vocab];
+	free(scores);
+	NFKTokenVocabulary *vocabulary = [[NFKTokenVocabulary alloc] initWithTokenizer:_tokenizer size:vocab];
+	if (outputFormat != nil) {
+		NSString *format = outputFormat.lowercaseString;
+		NFKJSONRoot root = [format isEqualToString:@"json-object"] ? NFKJSONRootObject
+			: [format isEqualToString:@"json-array"] ? NFKJSONRootArray : NFKJSONRootContainer;
+		return [[NFKJSONConstraint alloc] initWithVocabulary:vocabulary root:root];
+	}
+	return [[NFKChoiceConstraint alloc] initWithChoices:choices vocabulary:vocabulary];
+}
+
+// JSON that was asked for comes back parsed too, as the remote backends return it; JSON-looking text
+// that was not asked for is not guessed at.
 - (NFKInferenceResult *)resultForText:(NSString *)text
 {
+	if (_replyIsJSON) {
+		id parsed = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding]
+													options:NSJSONReadingFragmentsAllowed error:NULL];
+		if (parsed != nil) {
+			return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: text, NFKOutputStructured: parsed }];
+		}
+	}
 	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: text }];
 }
 
@@ -500,6 +542,7 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 						 topP:(double)topP
 			repetitionPenalty:(double)repetitionPenalty
 					penalized:(NSSet<NSNumber *> *)penalized
+					   cursor:(nullable NFKTokenConstraintCursor *)cursor
 						  rng:(uint64_t *)rng
 {
 	NSUInteger vocab = 0;
@@ -508,6 +551,8 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 		free(scores);
 		return -1;
 	}
+	// The mask goes on BEFORE temperature and nucleus filtering, so sampling stays inside the grammar.
+	[cursor maskScores:scores count:vocab];
 
 	if (repetitionPenalty != 1.0) {
 		for (NSNumber *token in penalized) {

@@ -10,18 +10,23 @@
 //  The backbone is Gemma 3 (`gemma3_text`), NOT the causal Gemma 4 (`gemma4_text`) `NFKMLXGemmaLanguage`
 //  implements. The two are different: Gemma 3 normalizes with `x · (1 + w)` where Gemma 4 uses `x · w`,
 //  Gemma 3 turns a full-attention head's whole width where Gemma 4 turns a fraction, and Gemma 3 carries
-//  no per-layer input embeddings. This encoder is therefore its own implementation, focused on the
-//  embedding path: bidirectional attention, no key-value cache, no logit head.
+//  no per-layer input embeddings. The blocks are the Gemma 3 decoder's (`NFKMLXGemma3.swift`); this
+//  encoder runs them bidirectionally, with no key-value cache and no logit head.
 //
 
 import Foundation
 import InferKit
 import MLX
-import MLXFast
 import MLXNN
 import MLXRandom
 
 /// The geometry of the Gemma 3 text encoder EmbeddingGemma is built on.
+///
+/// @discussion The encoder is the Gemma 3 decoder (``NFKMLXGemma3Configuration``) read bidirectionally,
+/// so this is a thin view over that configuration. `slidingWindow` is stated as the release states it,
+/// the full span; the reference turns it into the exclusive bound `span / 2 + 1` on `|q - k|`, and
+/// so does ``geometry``. EmbeddingGemma's parity query is far shorter than either number, which is
+/// why the earlier reading of the span as the bound went unmeasured.
 public struct NFKMLXGemma3EncoderConfiguration: Sendable {
     public var hiddenSize: Int
     public var layerCount: Int
@@ -34,6 +39,7 @@ public struct NFKMLXGemma3EncoderConfiguration: Sendable {
     public var ropeTheta: Float
     /// Rotary base for the sliding-window layers, which the config states separately.
     public var ropeLocalTheta: Float
+    /// The bidirectional span a sliding layer sees, as the release's `sliding_window` states it.
     public var slidingWindow: Int
     /// How the layers alternate. Every `slidingWindowPattern`th layer is full attention; the rest are
     /// sliding-window. EmbeddingGemma is bidirectional, so a sliding layer sees a symmetric window and a
@@ -75,169 +81,48 @@ public struct NFKMLXGemma3EncoderConfiguration: Sendable {
 
     /// Whether the layer at `index` is full attention (every `slidingWindowPattern`th, counting from 1).
     func isFullAttention(layer index: Int) -> Bool { (index + 1) % slidingWindowPattern == 0 }
-}
 
-/// Gemma 3's normalization: `x · (1 + w)`, the weight initialized to zero. This is the difference from
-/// Gemma 4's `x · w` that first broke a Gemma port here, so it is written out rather than shared.
-final class NFKGemma3Norm: Module {
-    @ParameterInfo(key: "weight") var weight: MLXArray
-    let epsilon: Float
-
-    init(dimensions: Int, eps: Float) {
-        _weight.wrappedValue = MLXArray.zeros([dimensions])
-        epsilon = eps
-        super.init()
-    }
-
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon)
-        return normalized * (1 + weight)
-    }
-}
-
-/// The rotary embedding at a layer's own base. A full-attention layer turns the entire head; Gemma 3
-/// carries no partial rotary factor.
-struct NFKGemma3Rotary {
-    let dimensions: Int
-    let base: Float
-
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        MLXFast.RoPE(x, dimensions: dimensions, traditional: false, base: base, scale: 1, offset: 0)
-    }
-}
-
-/// Gemma 3 attention: grouped queries, per-head query and key normalization before the rotary, and a
-/// window that most layers use. Bidirectional here, so nothing is masked by causality.
-final class NFKGemma3Attention: Module {
-    @ModuleInfo(key: "q_proj") var queryProjection: Linear
-    @ModuleInfo(key: "k_proj") var keyProjection: Linear
-    @ModuleInfo(key: "v_proj") var valueProjection: Linear
-    @ModuleInfo(key: "o_proj") var outputProjection: Linear
-    @ModuleInfo(key: "q_norm") var queryNorm: NFKGemma3Norm
-    @ModuleInfo(key: "k_norm") var keyNorm: NFKGemma3Norm
-
-    let heads: Int
-    let keyValueHeads: Int
-    let headDimensions: Int
-    let scale: Float
-    let rope: NFKGemma3Rotary
-
-    init(_ c: NFKMLXGemma3EncoderConfiguration, fullAttention: Bool) {
-        heads = c.headCount
-        keyValueHeads = c.keyValueHeadCount
-        headDimensions = c.headDimensions
-        scale = pow(c.queryPreAttnScalar, -0.5)
-        rope = NFKGemma3Rotary(dimensions: c.headDimensions,
-                               base: fullAttention ? c.ropeTheta : c.ropeLocalTheta)
-
-        _queryProjection.wrappedValue = Linear(c.hiddenSize, c.headCount * c.headDimensions, bias: false)
-        _keyProjection.wrappedValue = Linear(c.hiddenSize, c.keyValueHeadCount * c.headDimensions, bias: false)
-        _valueProjection.wrappedValue = Linear(c.hiddenSize, c.keyValueHeadCount * c.headDimensions, bias: false)
-        _outputProjection.wrappedValue = Linear(c.headCount * c.headDimensions, c.hiddenSize, bias: false)
-        _queryNorm.wrappedValue = NFKGemma3Norm(dimensions: c.headDimensions, eps: c.rmsEpsilon)
-        _keyNorm.wrappedValue = NFKGemma3Norm(dimensions: c.headDimensions, eps: c.rmsEpsilon)
-        super.init()
-    }
-
-    func callAsFunction(_ x: MLXArray, mask: MLXArray?) -> MLXArray {
-        let (batch, length) = (x.shape[0], x.shape[1])
-
-        var queries = queryProjection(x).reshaped([batch, length, heads, headDimensions])
-        var keys = keyProjection(x).reshaped([batch, length, keyValueHeads, headDimensions])
-        var values = valueProjection(x).reshaped([batch, length, keyValueHeads, headDimensions])
-
-        // Gemma 3 normalizes each head BEFORE the rotary, over the head width.
-        queries = queryNorm(queries)
-        keys = keyNorm(keys)
-
-        queries = queries.transposed(0, 2, 1, 3)
-        keys = keys.transposed(0, 2, 1, 3)
-        values = values.transposed(0, 2, 1, 3)
-
-        queries = rope(queries)
-        keys = rope(keys)
-
-        let attention = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: scale,
-            mask: mask.map { $0.asType(queries.dtype) })
-        return outputProjection(attention.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
-    }
-}
-
-/// Gemma 3's GeGLU feed-forward: a gate through the tanh-approximate GELU, an up projection, their
-/// product projected back down.
-final class NFKGemma3FeedForward: Module {
-    @ModuleInfo(key: "gate_proj") var gate: Linear
-    @ModuleInfo(key: "up_proj") var up: Linear
-    @ModuleInfo(key: "down_proj") var down: Linear
-
-    init(_ c: NFKMLXGemma3EncoderConfiguration) {
-        _gate.wrappedValue = Linear(c.hiddenSize, c.intermediateSize, bias: false)
-        _up.wrappedValue = Linear(c.hiddenSize, c.intermediateSize, bias: false)
-        _down.wrappedValue = Linear(c.intermediateSize, c.hiddenSize, bias: false)
-        super.init()
-    }
-
-    func callAsFunction(_ x: MLXArray) -> MLXArray { down(geluApproximate(gate(x)) * up(x)) }
-}
-
-/// One Gemma 3 block: the sandwich normalization, a norm before AND after each of attention and the
-/// feed-forward, each pair added back to the block's input.
-final class NFKGemma3Block: Module {
-    @ModuleInfo(key: "self_attn") var attention: NFKGemma3Attention
-    @ModuleInfo(key: "mlp") var feedForward: NFKGemma3FeedForward
-    @ModuleInfo(key: "input_layernorm") var inputNorm: NFKGemma3Norm
-    @ModuleInfo(key: "post_attention_layernorm") var postAttentionNorm: NFKGemma3Norm
-    @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedForwardNorm: NFKGemma3Norm
-    @ModuleInfo(key: "post_feedforward_layernorm") var postFeedForwardNorm: NFKGemma3Norm
-
-    let fullAttention: Bool
-
-    init(_ c: NFKMLXGemma3EncoderConfiguration, fullAttention: Bool) {
-        self.fullAttention = fullAttention
-        _attention.wrappedValue = NFKGemma3Attention(c, fullAttention: fullAttention)
-        _feedForward.wrappedValue = NFKGemma3FeedForward(c)
-        _inputNorm.wrappedValue = NFKGemma3Norm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _postAttentionNorm.wrappedValue = NFKGemma3Norm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _preFeedForwardNorm.wrappedValue = NFKGemma3Norm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _postFeedForwardNorm.wrappedValue = NFKGemma3Norm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        super.init()
-    }
-
-    func callAsFunction(_ x: MLXArray, slidingMask: MLXArray?) -> MLXArray {
-        let mask = fullAttention ? nil : slidingMask
-        let attended = x + postAttentionNorm(attention(inputNorm(x), mask: mask))
-        return attended + postFeedForwardNorm(feedForward(preFeedForwardNorm(attended)))
+    /// The decoder configuration this encoder is built from: the same geometry, bidirectional, with
+    /// the window turned into the reference's exclusive bound.
+    public var geometry: NFKMLXGemma3Configuration {
+        NFKMLXGemma3Configuration(
+            hiddenSize: hiddenSize, layerCount: layerCount, headCount: headCount,
+            keyValueHeadCount: keyValueHeadCount, headDimensions: headDimensions,
+            intermediateSize: intermediateSize, vocabularySize: vocabularySize, ropeTheta: ropeTheta,
+            ropeLocalTheta: ropeLocalTheta, slidingWindow: slidingWindow / 2 + 1,
+            slidingWindowPattern: slidingWindowPattern, queryPreAttnScalar: queryPreAttnScalar,
+            rmsEpsilon: rmsEpsilon, isBidirectional: true)
     }
 }
 
 /// The Gemma 3 text encoder: a scaled token embedding, the sandwich-normalized blocks, and a final
-/// normalization. Bidirectional, so a forward reads the whole sequence at once with no cache.
+/// normalization. Bidirectional, so a forward reads the whole sequence at once with no cache. The
+/// blocks are the decoder's (`NFKGemma3Block`); only the masks differ.
 public final class NFKMLXGemma3EncoderNet: Module {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
     @ModuleInfo(key: "layers") var layers: [NFKGemma3Block]
     @ModuleInfo(key: "norm") var norm: NFKGemma3Norm
 
     let configuration: NFKMLXGemma3EncoderConfiguration
+    private let geometry: NFKMLXGemma3Configuration
     private let embeddingScale: Float
 
     init(_ c: NFKMLXGemma3EncoderConfiguration) {
         configuration = c
+        let geometry = c.geometry
+        self.geometry = geometry
         embeddingScale = sqrt(Float(c.hiddenSize))
         _embedTokens.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.hiddenSize)
-        _layers.wrappedValue = (0 ..< c.layerCount).map { NFKGemma3Block(c, fullAttention: c.isFullAttention(layer: $0)) }
+        _layers.wrappedValue = (0 ..< c.layerCount).map {
+            NFKGemma3Block(geometry, fullAttention: c.isFullAttention(layer: $0))
+        }
         _norm.wrappedValue = NFKGemma3Norm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         super.init()
     }
 
     /// The token hidden states `[1, length, hidden]`, post-final-norm.
     func callAsFunction(_ tokens: MLXArray) -> MLXArray {
-        var hidden = embedTokens(tokens) * embeddingScale
-        let mask = slidingMask(length: tokens.shape[1])
-        for layer in layers {
-            hidden = layer(hidden, slidingMask: mask)
-        }
-        return norm(hidden)
+        layerStates(tokens).last!
     }
 
     /// The state entering the stack and the state each layer produces, the final norm applied to the
@@ -245,24 +130,15 @@ public final class NFKMLXGemma3EncoderNet: Module {
     func layerStates(_ tokens: MLXArray) -> [MLXArray] {
         var hidden = embedTokens(tokens) * embeddingScale
         var states = [hidden]
-        let mask = slidingMask(length: tokens.shape[1])
-        for layer in layers {
-            hidden = layer(hidden, slidingMask: mask)
+        let masks = NFKMLXGemma3Masks.make(length: tokens.shape[1], offset: 0, window: geometry.slidingWindow,
+                                           blockIds: nil, bidirectional: true)
+        for (index, layer) in layers.enumerated() {
+            hidden = layer(hidden, mask: configuration.isFullAttention(layer: index) ? nil : masks.sliding,
+                           cache: nil, layer: index)
             states.append(hidden)
         }
         states[states.count - 1] = norm(hidden)
         return states
-    }
-
-    /// The bidirectional sliding-window mask, or nil when the sequence fits inside the window (which is
-    /// the common case for an embedding input, and makes every layer full attention in practice). A
-    /// token attends to any other within `slidingWindow` positions in either direction.
-    private func slidingMask(length: Int) -> MLXArray? {
-        guard length > configuration.slidingWindow else { return nil }
-        let rows = MLXArray(0 ..< length).reshaped([length, 1])
-        let columns = MLXArray(0 ..< length).reshaped([1, length])
-        let within = abs(rows - columns) .< configuration.slidingWindow
-        return MLX.where(within, MLXArray(Float(0)), MLXArray(Float(-1e9)))
     }
 }
 
@@ -428,27 +304,36 @@ public final class NFKMLXEmbeddingGemma: NSObject {
 /// neither the byte-level BPE the GPT-2/Qwen path uses (which maps bytes into a printable alphabet) nor
 /// the unigram Viterbi `NFKUnigramTokenizer` runs (Gemma's `tokenizer.model` scores are merge ranks, so
 /// a max-score path picks the wrong pieces), so it is its own reader. No offline conversion is needed;
-/// the release's `tokenizer.json` is read as it ships.
+/// the release's `tokenizer.json` is read as it ships. The file's `added_tokens` (`<bos>`,
+/// `<start_of_turn>`, `<start_of_image>`, `<image_soft_token>`, …) are matched as literals before the
+/// merge, as the reference matches them, so a rendered chat template or an image placeholder run
+/// encodes to its ids rather than being spelled out in pieces.
 final class NFKMLXGemmaTokenizer {
     private let vocabulary: [String: Int]
-    /// The id-to-piece reverse table, for decoding.
+    /// The id-to-piece reverse table, for decoding; the added tokens are in it too.
     private let pieces: [Int: String]
     /// A merge `"left\u{0}right"` mapped to its rank; a lower rank is a higher merge priority.
     private let ranks: [String: Int]
     private let unknownId: Int
+    /// The added tokens, matched as literals in the text before the merge.
+    private let addedTokens: [String: Int]
+    /// The ids of the added tokens flagged `special`, which a decode for display leaves out.
+    let specialIds: Set<Int>
 
     /// The metaspace SentencePiece renders a space as.
     private static let metaspace = "\u{2581}"
 
-    /// The id of a special token literal (`<bos>`, `<start_of_turn>`), or nil when the vocabulary has
-    /// no such piece.
-    func id(forToken content: String) -> Int? { vocabulary[content] }
+    /// The id of a special token literal (`<bos>`, `<start_of_turn>`, `<image_soft_token>`), or nil
+    /// when neither the vocabulary nor the added tokens carry it.
+    func id(forToken content: String) -> Int? { addedTokens[content] ?? vocabulary[content] }
 
     /// The text a token-id sequence decodes to: each id's piece, with the metaspace turned back into a
-    /// space and byte-fallback pieces (`<0xHH>`) reassembled into their bytes.
-    func decode(_ ids: [Int]) -> String {
+    /// space and byte-fallback pieces (`<0xHH>`) reassembled into their bytes. `skipSpecial` leaves the
+    /// special markers (`<eos>`, `<start_of_turn>`, …) out, which is what a displayed reply wants.
+    func decode(_ ids: [Int], skipSpecial: Bool = false) -> String {
         var bytes = [UInt8]()
         for id in ids {
+            if skipSpecial, specialIds.contains(id) { continue }
             guard let piece = pieces[id] else { continue }
             if piece.count == 6, piece.hasPrefix("<0x"), piece.hasSuffix(">"),
                let byte = UInt8(piece.dropFirst(3).dropLast(), radix: 16) {
@@ -473,7 +358,17 @@ final class NFKMLXGemmaTokenizer {
         self.vocabulary = vocabulary
         var pieces = [Int: String](minimumCapacity: vocabulary.count)
         for (piece, id) in vocabulary { pieces[id] = piece }
+        var added = [String: Int]()
+        var specials = Set<Int>()
+        for entry in (json["added_tokens"] as? [[String: Any]]) ?? [] {
+            guard let content = entry["content"] as? String, let id = (entry["id"] as? NSNumber)?.intValue else { continue }
+            added[content] = id
+            pieces[id] = content
+            if (entry["special"] as? NSNumber)?.boolValue ?? false { specials.insert(id) }
+        }
         self.pieces = pieces
+        addedTokens = added
+        specialIds = specials
         var ranks = [String: Int](minimumCapacity: merges.count)
         for (index, entry) in merges.enumerated() {
             // A merge is `["left", "right"]` in a recent tokenizer.json and `"left right"` in an older one.
@@ -487,8 +382,47 @@ final class NFKMLXGemmaTokenizer {
         unknownId = (model["unk_token"] as? String).flatMap { vocabulary[$0] } ?? 3
     }
 
-    /// The token ids for `text`, with no special markers (the embedder wraps them in BOS and EOS).
+    /// The token ids for `text`, with no markers added (the embedder wraps them in BOS and EOS, the
+    /// generation backend prepends BOS). An added token written literally in the text encodes to its id.
     func encode(_ text: String) -> [Int] {
+        var ids = [Int]()
+        for segment in segments(of: text) {
+            switch segment {
+            case .special(let id): ids.append(id)
+            case .text(let plain): ids += encodePlain(plain)
+            }
+        }
+        return ids
+    }
+
+    private enum Segment {
+        case special(Int)
+        case text(String)
+    }
+
+    /// Splits the text at every added token written literally in it. Every added token is spelled
+    /// `<…>`, so a candidate runs from a `<` to the next `>`, which keeps the scan linear.
+    private func segments(of text: String) -> [Segment] {
+        guard !addedTokens.isEmpty, text.contains("<") else { return [.text(text)] }
+        var result = [Segment]()
+        var plain = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index] == "<", let close = text[index...].firstIndex(of: ">"),
+               let id = addedTokens[String(text[index ... close])] {
+                if !plain.isEmpty { result.append(.text(plain)); plain = "" }
+                result.append(.special(id))
+                index = text.index(after: close)
+            } else {
+                plain.append(text[index])
+                index = text.index(after: index)
+            }
+        }
+        if !plain.isEmpty { result.append(.text(plain)) }
+        return result
+    }
+
+    private func encodePlain(_ text: String) -> [Int] {
         let normalized = text.replacingOccurrences(of: " ", with: Self.metaspace)
         // The space split the pre-tokenizer would do is a no-op after normalization, so the whole
         // string is one pre-token. Each character stands alone, or falls back to its UTF-8 bytes.

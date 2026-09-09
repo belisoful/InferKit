@@ -38,3 +38,13 @@ backend prefills a prompt in chunks and finishes the remainder token by token, w
 ~400-token prompt in ~0.3 s instead of ~3.7 s on a 0.5B model. Throughput is set by `computeUnits`
 (default `MLComputeUnitsAll`, the fastest); `MLComputeUnitsCPUAndNeuralEngine` can fail to load a
 stateful model because the KV-cache scatter does not compile for the Neural Engine.
+
+## Constraining the output
+
+A request that carries `NFKParameterOutputFormat` (`"json"`, `"json-object"`, or `"json-array"`) or
+`NFKParameterChoices` (an array of strings) is decoded under a grammar mask: before each sample the
+backend sets every token the grammar cannot accept next to `-inf`, so greedy and sampled decoding alike
+stay inside well-formed JSON or one of the choices, and the run ends at the end-of-sequence token once
+the document closes. JSON that was asked for comes back parsed under `NFKOutputStructured` beside the
+text. The grammars are `NFKJSONConstraint` and `NFKChoiceConstraint`, built over an `NFKTokenVocabulary`
+read from the tokenizer at the model's logit width. The MLX language backend honors the same keys.

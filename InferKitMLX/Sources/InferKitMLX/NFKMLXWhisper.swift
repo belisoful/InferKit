@@ -76,11 +76,21 @@ public struct NFKMLXWhisperConfiguration: Sendable {
     /// The released `tiny` model, and this type's defaults.
     public static let tiny = NFKMLXWhisperConfiguration()
 
+    /// The released `base` model.
+    public static let base = NFKMLXWhisperConfiguration(state: 512, heads: 8, layers: 6)
+
     /// The released `small` model.
     public static let small = NFKMLXWhisperConfiguration(state: 768, heads: 12, layers: 12)
 
     /// The released `medium` model.
     public static let medium = NFKMLXWhisperConfiguration(state: 1024, heads: 16, layers: 24)
+
+    /// The released `large-v1` and `large-v2` models.
+    ///
+    /// Both are the 1280-wide, 32-layer geometry `large-v3` also has, with the 80-band front end and
+    /// the 51865-token vocabulary every size before v3 shares. The two releases differ only in their
+    /// training, so one configuration fits either checkpoint.
+    public static let large = NFKMLXWhisperConfiguration(state: 1280, heads: 20, layers: 32)
 
     /// The released `large-v3` model.
     ///
@@ -97,8 +107,20 @@ public struct NFKMLXWhisperConfiguration: Sendable {
         return configuration
     }()
 
+    /// The released `large-v3-turbo` model.
+    ///
+    /// The `large-v3` encoder over a decoder pruned to **four** layers, which is where the speed comes
+    /// from: decoding runs the decoder once per token and the encoder once per window. It is the one
+    /// released size whose encoder and decoder differ in depth, so it is built from `largeV3` rather
+    /// than from the shared-depth initializer.
+    public static let largeV3Turbo: NFKMLXWhisperConfiguration = {
+        var configuration = NFKMLXWhisperConfiguration.largeV3
+        configuration.nTextLayer = 4
+        return configuration
+    }()
+
     /// A size where the encoder and decoder share their width, head count, and depth, which every
-    /// released Whisper does.
+    /// released Whisper but `large-v3-turbo` does.
     init(state: Int, heads: Int, layers: Int) {
         self.init()
         nAudioState = state
@@ -111,12 +133,19 @@ public struct NFKMLXWhisperConfiguration: Sendable {
 }
 
 /// The Whisper size to build, for the Objective-C factory.
+///
+/// The cases are every released multilingual size: `tiny`, `base`, `small`, `medium`, `large`
+/// (`large-v1` and `large-v2`, one geometry), `largeV3`, and `largeV3Turbo`. The English-only
+/// `.en` releases share each size's geometry and differ in the tokenizer; they load under the same case.
 @objc(NFKMLXWhisperVariant)
 public enum NFKMLXWhisperVariant: Int {
     case tiny
     case small
     case medium
     case largeV3
+    case base
+    case large
+    case largeV3Turbo
 }
 
 /// The reference decoder's non-speech suppression set.
@@ -710,9 +739,12 @@ public final class NFKMLXWhisper: NSObject {
     static func configuration(for variant: NFKMLXWhisperVariant) -> NFKMLXWhisperConfiguration {
         switch variant {
         case .tiny: return .tiny
+        case .base: return .base
         case .small: return .small
         case .medium: return .medium
+        case .large: return .large
         case .largeV3: return .largeV3
+        case .largeV3Turbo: return .largeV3Turbo
         }
     }
 

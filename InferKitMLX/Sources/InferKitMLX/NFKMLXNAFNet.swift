@@ -45,6 +45,16 @@ public struct NFKMLXNAFNetConfiguration: Sendable {
         return configuration
     }
 
+    /// The released width-64 SIDD denoiser: the SIDD block distribution at twice the width.
+    public static var siddWidth64: NFKMLXNAFNetConfiguration {
+        var configuration = NFKMLXNAFNetConfiguration.sidd
+        configuration.width = 64
+        return configuration
+    }
+
+    /// The released width-64 GoPro deblurrer, which is the REDS geometry trained on GoPro.
+    public static var goProWidth64: NFKMLXNAFNetConfiguration { reds }
+
     var levels: Int { encoderBlocks.count }
 }
 
@@ -185,6 +195,10 @@ public enum NFKMLXNAFNetVariant: Int {
     case goPro
     /// The REDS model: the GoPro distribution at twice the width.
     case reds
+    /// The width-64 SIDD denoiser.
+    case siddWidth64
+    /// The width-64 GoPro deblurrer (the REDS geometry, trained on GoPro).
+    case goProWidth64
 }
 
 @objc(NFKMLXNAFNet)
@@ -213,6 +227,8 @@ public final class NFKMLXNAFNet: NSObject {
         case .sidd: geometry = .sidd
         case .goPro: geometry = .goPro
         case .reds: geometry = .reds
+        case .siddWidth64: geometry = .siddWidth64
+        case .goProWidth64: geometry = .goProWidth64
         }
         let net = NFKMLXNAFNetNet(geometry)
         if let weightsURL {

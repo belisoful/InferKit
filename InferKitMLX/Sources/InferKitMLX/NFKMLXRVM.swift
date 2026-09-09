@@ -46,6 +46,19 @@ public struct NFKMLXRVMConfiguration: Sendable {
     /// Decoder stage widths, coarse to fine: `[decode3, decode2, decode1, decode0]`.
     var decoderChannels: [Int]
     var refinerHiddenChannels: Int
+    /// Set for the ResNet-50 release, whose encoder is torchvision's bottleneck backbone (the last
+    /// stage dilated) in place of MobileNetV3; `blocks` and `captures` are then unused.
+    var resNet: NFKMLXResNetConfiguration? = nil
+
+    /// The released `rvm_resnet50` geometry: a ResNet-50 encoder tapped at the stem (64), stage one
+    /// (256), and stage two (512), LR-ASPP at 256 over the 2048-wide dilated last stage, and a wider
+    /// decoder. Unlike the MobileNetV3 encoder, the reference's ResNet encoder applies no ImageNet
+    /// normalization to its input.
+    public static let resNet50 = NFKMLXRVMConfiguration(
+        stemChannels: 64, lastChannels: 2048, asppChannels: 256, blocks: [], captures: [],
+        decoderChannels: [128, 64, 32, 16], refinerHiddenChannels: 16,
+        resNet: NFKMLXResNetConfiguration(blocks: [3, 4, 6, 3], width: 64,
+                                          replaceStrideWithDilation: [false, false, true]))
 
     /// The released MobileNetV3-Large geometry (RVM passes torchvision the dilated large config).
     public static let large = NFKMLXRVMConfiguration(
@@ -85,7 +98,13 @@ public struct NFKMLXRVMConfiguration: Sendable {
         decoderChannels: [8, 6, 4, 4],
         refinerHiddenChannels: 4)
 
-    var featureChannels: [Int] { captures.map { blocks[$0].output } }
+    var featureChannels: [Int] {
+        if let resNet {
+            let expansion = NFKResNetBottleneck.expansion
+            return [resNet.width, resNet.width * expansion, resNet.width * 2 * expansion]
+        }
+        return captures.map { blocks[$0].output }
+    }
 }
 
 private func nfkHardsigmoid(_ x: MLXArray) -> MLXArray {
@@ -480,15 +499,23 @@ final class NFKRVMRefiner: Module {
 /// The Robust Video Matting network: encoder, LR-ASPP, recurrent decoder, output projections, and the
 /// deep-guided-filter refiner.
 final class NFKMLXRVMNet: Module {
-    @ModuleInfo(key: "backbone") var backbone: NFKRVMBackbone
+    /// `NFKRVMBackbone` (MobileNetV3) or `NFKMLXResNetBackbone` (ResNet-50), by the configuration.
+    @ModuleInfo(key: "backbone") var backbone: Module
     @ModuleInfo(key: "aspp") var aspp: NFKRVMReferenceLRASPP
     @ModuleInfo(key: "decoder") var decoder: NFKRVMDecoder
     @ModuleInfo(key: "project_mat") var projectMat: NFKRVMProjection
     @ModuleInfo(key: "project_seg") var projectSeg: NFKRVMProjection
     @ModuleInfo(key: "refiner") var refiner: NFKRVMRefiner
 
+    let configuration: NFKMLXRVMConfiguration
+
     init(_ configuration: NFKMLXRVMConfiguration = .large) {
-        _backbone.wrappedValue = NFKRVMBackbone(configuration)
+        self.configuration = configuration
+        if let resNet = configuration.resNet {
+            _backbone.wrappedValue = NFKMLXResNetBackbone(resNet)
+        } else {
+            _backbone.wrappedValue = NFKRVMBackbone(configuration)
+        }
         _aspp.wrappedValue = NFKRVMReferenceLRASPP(inChannels: configuration.lastChannels,
                                                    outChannels: configuration.asppChannels)
         _decoder.wrappedValue = NFKRVMDecoder(featureChannels: configuration.featureChannels,
@@ -521,7 +548,7 @@ final class NFKMLXRVMNet: Module {
             base = source
         }
 
-        let (f1, f2, f3, encoded) = backbone(base)
+        let (f1, f2, f3, encoded) = encode(base)
         let f4 = aspp(encoded)
         let (hidden, nextState) = decoder(base, f1, f2, f3, f4, state: state)
 
@@ -535,6 +562,15 @@ final class NFKMLXRVMNet: Module {
         }
         let foreground = clip(foregroundResidual + source, min: 0, max: 1)
         return (foreground, clip(alpha, min: 0, max: 1), nextState.map { Optional($0) })
+    }
+
+    /// The encoder's three skip features and its final feature map. The MobileNetV3 encoder
+    /// normalizes its input to ImageNet statistics inside; the reference's ResNet-50 encoder does not.
+    func encode(_ base: MLXArray) -> (MLXArray, MLXArray, MLXArray, MLXArray) {
+        if let resNet = backbone as? NFKMLXResNetBackbone {
+            return resNet.taps(base)
+        }
+        return (backbone as! NFKRVMBackbone)(base)
     }
 
     /// Mattes a single bridged image `[H, W, 3]` with no temporal context, returning straight
@@ -597,18 +633,45 @@ private final class NFKRVMHolder: @unchecked Sendable {
 /// pipeline); the released `rvm_mobilenetv3` checkpoint, converted to **safetensors**, makes the matte
 /// accurate. The matting backend mattes a single image (no temporal state); a video consumer threads
 /// the recurrent state frame by frame through `NFKMLXRVMNet.forward`.
+/// The released Robust Video Matting encoder to build, for the Objective-C factory.
+@objc(NFKMLXRVMVariant)
+public enum NFKMLXRVMVariant: Int {
+    /// `rvm_mobilenetv3`, the light default.
+    case mobileNetV3
+    /// `rvm_resnet50`, the heavier and more accurate release.
+    case resNet50
+}
+
 @objc(NFKMLXRVM)
 public final class NFKMLXRVM: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "robust-video-matting"
+    @objc public static let resNet50ModelName = "robust-video-matting-resnet50"
+
+    static func specs(for variant: NFKMLXRVMVariant) -> (name: String, configuration: NFKMLXRVMConfiguration) {
+        switch variant {
+        case .mobileNetV3: return (modelName, .large)
+        case .resNet50: return (resNet50ModelName, .resNet50)
+        }
+    }
 
     /// Builds a matting backend directly from optional local weights — no registry required. A nil
     /// `weightsURL` builds random weights (`isReady` is true). Run
     /// inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXRVMNet()
+        try backend(variant: .mobileNetV3, weightsURL: weightsURL)
+    }
+
+    /// Builds one of the two released encoders. A checkpoint fits only its own: `rvm_mobilenetv3` →
+    /// `.mobileNetV3`, `rvm_resnet50` → `.resNet50`.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXRVMVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = NFKMLXRVMNet(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
@@ -616,7 +679,7 @@ public final class NFKMLXRVM: NSObject {
         let holder = NFKRVMHolder(net)
         var configuration = NFKMattingConfiguration()
         configuration.emitsMatte = true
-        return NFKMLXMattingBackend(identifier: modelName, configuration: configuration) { plate, _ in
+        return NFKMLXMattingBackend(identifier: spec.name, configuration: configuration) { plate, _ in
             holder.net.matte(plate)
         }
     }
@@ -625,8 +688,18 @@ public final class NFKMLXRVM: NSObject {
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: .mobileNetV3, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL)
+    }
+
+    /// The download factory at a chosen encoder.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXRVMVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        return try backend(variant: variant, weightsURL: url)
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and
@@ -634,17 +707,30 @@ public final class NFKMLXRVM: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .mobileNetV3, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen encoder.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXRVMVariant, repo: String, weightsPath: String,
+                               revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0) },
+                               build: { try backend(variant: variant, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
 
-    /// Registers Robust Video Matting (`robust-video-matting`) with `NFKMLXModelRegistry`, delegating
-    /// to `backend(weightsURL:)`.
+    /// Registers both encoders (`robust-video-matting`, `robust-video-matting-resnet50`) with
+    /// `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in
-            try backend(weightsURL: weightsURL)
+        for variant in [NFKMLXRVMVariant.mobileNetV3, .resNet50] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
         }
     }
 
@@ -713,11 +799,20 @@ public final class NFKMLXRVM: NSObject {
     /// and transposing 4-D convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's
     /// channels-last `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXRVMNet, from url: URL,
-                            blocks: [NFKRVMBlockSpec] = NFKMLXRVMConfiguration.large.blocks) throws {
+                            blocks: [NFKRVMBlockSpec]? = nil) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
-            (remapReferenceKey(key, blocks: blocks), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        let mobileBlocks = blocks ?? net.configuration.blocks
+        let mapped = raw.compactMap { key, value -> (String, MLXArray)? in
+            let name: String
+            if net.configuration.resNet != nil, key.hasPrefix("backbone.") {
+                // torchvision's ResNet keys, with the projection shortcut's Sequential named.
+                name = NFKMLXResNetBackbone.remapReferenceKey(key)
+            } else {
+                name = remapReferenceKey(key, blocks: mobileBlocks)
+            }
+            if name.hasSuffix("num_batches_tracked") { return nil }
+            return (name, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }

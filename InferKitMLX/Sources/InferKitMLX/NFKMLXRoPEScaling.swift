@@ -66,6 +66,8 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
 
     /// The rotation count marking the end of the extrapolation band. The paper's default is 32.
     public var betaFast: Float
+    /// Whether YaRN's correction band snaps to whole channels (`truncate`, transformers' default).
+    public var truncatesCorrectionRange: Bool = true
 
     /// The rotation count marking the start of the interpolation band. The paper's default is 1.
     public var betaSlow: Float
@@ -86,12 +88,14 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
                 betaSlow: Float = 1,
                 declaredAttentionFactor: Float? = nil,
                 lowFrequencyFactor: Float = 1,
-                highFrequencyFactor: Float = 4) {
+                highFrequencyFactor: Float = 4,
+                truncatesCorrectionRange: Bool = true) {
         self.kind = kind
         self.factor = factor
         self.originalMaxPositionEmbeddings = originalMaxPositionEmbeddings
         self.betaFast = betaFast
         self.betaSlow = betaSlow
+        self.truncatesCorrectionRange = truncatesCorrectionRange
         self.declaredAttentionFactor = declaredAttentionFactor
         self.lowFrequencyFactor = lowFrequencyFactor
         self.highFrequencyFactor = highFrequencyFactor
@@ -135,8 +139,10 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
                 Float(dimensions) * log(Float(originalMaxPositionEmbeddings)
                                         / (rotations * 2 * Float.pi)) / (2 * log(base))
             }
-            let low = max(floor(correctionDimension(betaFast)), 0)
-            var high = min(ceil(correctionDimension(betaSlow)), Float(dimensions - 1))
+            // `truncate` (the default) snaps the band to whole channels; gpt-oss leaves it fractional.
+            let low = max(truncatesCorrectionRange ? floor(correctionDimension(betaFast)) : correctionDimension(betaFast), 0)
+            var high = min(truncatesCorrectionRange ? ceil(correctionDimension(betaSlow)) : correctionDimension(betaSlow),
+                           Float(dimensions - 1))
             // A zero-width band would divide by zero; the reference opens it by a hair instead.
             if low == high { high += 0.001 }
 
@@ -208,6 +214,7 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
             betaSlow: real("beta_slow", 1),
             declaredAttentionFactor: (scaling["attention_factor"] as? NSNumber)?.floatValue,
             lowFrequencyFactor: real("low_freq_factor", 1),
-            highFrequencyFactor: real("high_freq_factor", 4))
+            highFrequencyFactor: real("high_freq_factor", 4),
+            truncatesCorrectionRange: (scaling["truncate"] as? NSNumber)?.boolValue ?? true)
     }
 }

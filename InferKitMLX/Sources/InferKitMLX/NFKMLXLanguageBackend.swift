@@ -26,6 +26,10 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"
     /// The cache quantization group size (`NSNumber`, default 64), which must divide the head dimension.
     @objc public static let cacheQuantizationGroupSize = "NFKMLXParameterCacheQuantizationGroupSize"
+    /// Whether the cache groups each KEY channel along the sequence (`NSNumber` boolean, default
+    /// true, the measured better layout) rather than each position along the head dimension. See
+    /// ``NFKMLXKeyValueCache/Quantization/KeyAxis``.
+    @objc public static let cacheQuantizationPerChannelKeys = "NFKMLXParameterCacheQuantizationPerChannelKeys"
     /// The most prompt tokens to run per prefill pass, as an `NSNumber`. See ``NFKMLXGenerationOptions/prefillChunkSize``.
     @objc public static let prefillChunkSize = "NFKMLXParameterPrefillChunkSize"
     /// The chat template, as an `NSString`: `"chatml"` applies the ChatML template, a string carrying
@@ -107,7 +111,9 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// float, so a long conversation reaches much further before the cache, rather than the weights,
     /// becomes the memory ceiling. It is lossy — a step reads the dequantized span — so it is off by
     /// default; 8-bit tracks full precision closely while halving or better the cache's footprint. The
-    /// group size must divide the model's head dimension (64 or 128 divide by the default 64).
+    /// group size must divide the model's head dimension (64 or 128 divide by the default 64). The
+    /// keys are grouped per channel along the sequence by default, which is what holds their
+    /// precision at 4 bits and makes 8 bits near-lossless; see ``NFKMLXKeyValueCache/Quantization/KeyAxis``.
     public var cacheQuantization: NFKMLXKeyValueCache.Quantization?
 
     /// Runs the prompt through the cache in slices of at most this many tokens, or `nil` for one pass.
@@ -151,6 +157,15 @@ public struct NFKMLXGenerationOptions: Sendable {
 
     /// Strings the output must be one of, or nil. See ``NFKMLXChoiceConstraint``.
     public var choices: [String]?
+
+    /// A schema the JSON output must conform to, or nil. See ``NFKMLXJSONSchemaConstraint``.
+    ///
+    /// @discussion Where ``jsonOutput`` guarantees the syntax, a schema guarantees the keys, the
+    /// types, the enumerations, and the array bounds as well. The backend fills it from the core's
+    /// `NFKParameterJSONSchema` request parameter, the same key the remote backends read, so a
+    /// caller's structured-output request is engine-agnostic; a schema the grammar cannot enforce is
+    /// reported as an error rather than ignored.
+    public var jsonSchema: NFKMLXJSONSchema?
 
     public init() {}
 }
@@ -331,25 +346,38 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.seed = value.uint64Value
         }
         Self.applyMLXParameters(from: request, to: &options)
+        if let schema = request.parameter(forKey: NFKParameterJSONSchema) {
+            guard let dictionary = schema as? [String: Any] else {
+                throw NFKMLXError.unsupportedConfiguration("NFKParameterJSONSchema is a JSON Schema object")
+            }
+            options.jsonSchema = try NFKMLXJSONSchema(json: dictionary)
+        }
 
         guard let text = Self.prompt(from: request, template: options.chatTemplate) else {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
         let produced = generate(tokens, options: options)
-        return NFKInferenceResult(outputs: [NFKOutputText: tokenizer.decode(produced.map {
-            NSNumber(value: $0)
-        })])
+        let reply = tokenizer.decode(produced.map { NSNumber(value: $0) })
+        var outputs: [String: Any] = [NFKOutputText: reply]
+        // JSON that was asked for comes back parsed too, as the remote backends return it; JSON-looking
+        // text that was not asked for is not guessed at.
+        if options.jsonSchema != nil || options.jsonOutput,
+           let parsed = try? JSONSerialization.jsonObject(with: Data(reply.utf8), options: [.fragmentsAllowed]) {
+            outputs[NFKOutputStructured] = parsed
+        }
+        return NFKInferenceResult(outputs: outputs)
     }
 
     /// The vocabulary's bytes, read from the tokenizer once and kept for every constrained request.
     private var vocabulary: NFKMLXVocabulary?
 
-    /// The constraint a request asks for, if any: a custom one wins, then JSON, then the choices.
+    /// The constraint a request asks for, if any: a custom one wins, then a schema, then JSON, then
+    /// the choices.
     private func constraint(for options: NFKMLXGenerationOptions,
                             tokenizer: NFKTokenizer) -> (any NFKMLXTokenConstraint)? {
         if let custom = options.constraint { return custom }
-        guard options.jsonOutput || options.choices != nil else { return nil }
+        guard options.jsonSchema != nil || options.jsonOutput || options.choices != nil else { return nil }
         let vocabulary: NFKMLXVocabulary
         if let kept = self.vocabulary {
             vocabulary = kept
@@ -357,6 +385,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             vocabulary = NFKMLXVocabulary(tokenizer: tokenizer, size: holder.net.configuration.vocabularySize)
             self.vocabulary = vocabulary
         }
+        if let schema = options.jsonSchema { return NFKMLXJSONSchemaConstraint(schema: schema, vocabulary: vocabulary) }
         if options.jsonOutput { return NFKMLXJSONConstraint(vocabulary: vocabulary, root: options.jsonRoot) }
         return NFKMLXChoiceConstraint(choices: options.choices ?? [], vocabulary: vocabulary)
     }
@@ -405,7 +434,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         if let bits = request.parameter(forKey: NFKMLXGenerationParameterKey.cacheQuantizationBits) as? NSNumber {
             let groupSize = (request.parameter(forKey: NFKMLXGenerationParameterKey.cacheQuantizationGroupSize) as? NSNumber)?.intValue ?? 64
-            options.cacheQuantization = .init(bits: bits.intValue, groupSize: groupSize)
+            let perChannel = (request.parameter(forKey: NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys) as? NSNumber)?.boolValue ?? true
+            options.cacheQuantization = .init(bits: bits.intValue, groupSize: groupSize,
+                                              keyAxis: perChannel ? .sequence : .headDimension)
         }
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) as? String {
             // A string carrying Jinja delimiters is the release's own template; render it faithfully.
@@ -421,7 +452,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber {
             options.reusesPromptCache = value.boolValue
         }
-        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.outputFormat) as? String {
+        if let value = (request.parameter(forKey: NFKMLXGenerationParameterKey.outputFormat)
+                        ?? request.parameter(forKey: NFKParameterOutputFormat)) as? String {
             switch value.lowercased() {
             case "json": options.jsonOutput = true; options.jsonRoot = .container
             case "json-object": options.jsonOutput = true; options.jsonRoot = .object
@@ -429,7 +461,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             default: options.jsonOutput = false
             }
         }
-        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.choices) as? [String], !value.isEmpty {
+        if let value = (request.parameter(forKey: NFKMLXGenerationParameterKey.choices)
+                        ?? request.parameter(forKey: NFKParameterChoices)) as? [String], !value.isEmpty {
             options.choices = value
         }
     }
@@ -491,6 +524,12 @@ public final class NFKMLXLanguage: NSObject {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
         }
+        return try configuration(fromJSON: json)
+    }
+
+    /// The configuration a parsed `config.json` object describes. A multimodal release's `text_config`
+    /// reads through here too (Qwen3-VL's decoder is this stack under `qwen3_vl_text`).
+    public static func configuration(fromJSON json: [String: Any]) throws -> NFKMLXLanguageConfiguration {
         if let architectures = json["architectures"] as? [String],
            let name = architectures.first,
            !(name.hasSuffix("ForCausalLM")) {
@@ -498,17 +537,19 @@ public final class NFKMLXLanguage: NSObject {
                 "\(name) is not a dense causal language model; this network implements the dense "
                 + "decoder only")
         }
-        // Newer transformers writes `layer_types` even for a homogeneous dense stack (the MiniMax
-        // Music 3 language model lists 36 × "full_attention"), so only a MIXED stack is rejected.
-        let layerTypes = (json["layer_types"] as? [String]) ?? []
-        if layerTypes.contains(where: { $0 != "full_attention" }) {
-            throw NFKMLXError.unsupportedConfiguration(
-                "the config describes a hybrid-attention model, which this network does not implement")
-        }
-
         func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
         func real(_ key: String, _ fallback: Float) -> Float { (json[key] as? NSNumber)?.floatValue ?? fallback }
         let modelType = (json["model_type"] as? String) ?? ""
+        // Newer transformers writes `layer_types` even for a homogeneous dense stack (the MiniMax
+        // Music 3 language model lists 36 × "full_attention"), so only a MIXED stack is rejected —
+        // except gpt-oss, whose alternation of sliding-window and full layers this network implements.
+        let layerTypes = (json["layer_types"] as? [String]) ?? []
+        let slidingAllowed = Set(["full_attention", "sliding_attention"])
+        if layerTypes.contains(where: { !slidingAllowed.contains($0) })
+            || (modelType != "gpt_oss" && layerTypes.contains("sliding_attention")) {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the config describes a hybrid-attention model, which this network does not implement")
+        }
         let experts = try expertConfiguration(json, modelType: modelType)
 
         let hidden = integer("hidden_size", 1024)
@@ -526,7 +567,10 @@ public final class NFKMLXLanguage: NSObject {
                 .floatValue ?? real("rope_theta", 1_000_000),
             rmsEpsilon: real("rms_norm_eps", 1e-6),
             tiesWordEmbeddings: (json["tie_word_embeddings"] as? NSNumber)?.boolValue ?? false,
-            attentionBias: (json["attention_bias"] as? NSNumber)?.boolValue ?? false)
+            // Qwen2 and Qwen2-MoE carry query/key/value biases and spell the flag `qkv_bias`, absent
+            // from their released configs because true is its default; Qwen3 and Llama carry none.
+            attentionBias: ((json["attention_bias"] ?? json["qkv_bias"]) as? NSNumber)?.boolValue
+                ?? (modelType == "qwen2" || modelType == "qwen2_moe"))
         // Qwen3 normalizes queries and keys per head; Qwen2 and Llama do not. The model type is what
         // says so — the config carries no flag for it.
         configuration.normalizesQueryAndKey = modelType.hasPrefix("qwen3")
@@ -540,6 +584,16 @@ public final class NFKMLXLanguage: NSObject {
             configuration.activeExpertCount = experts.active
             configuration.expertIntermediateSize = experts.width
             configuration.normalizesExpertWeights = experts.normalizes
+            configuration.sharedExpertIntermediateSize = experts.shared
+        }
+        if modelType == "gpt_oss" {
+            // The release spells each of these out; the defaults are the values it ships with.
+            let window = integer("sliding_window", 128)
+            configuration.slidingWindows = layerTypes.map { $0 == "sliding_attention" ? window : nil }
+            configuration.attentionSinks = true
+            configuration.outputProjectionBias = configuration.attentionBias
+            configuration.routerBias = true
+            configuration.clampedSwiGLU = NFKMLXClampedSwiGLU(limit: real("swiglu_limit", 7))
         }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.
@@ -551,53 +605,131 @@ public final class NFKMLXLanguage: NSObject {
 
     /// The expert geometry a config describes, or nil for a dense feed-forward.
     ///
-    /// @discussion Two families are read. `qwen3_moe` names its experts under `num_experts` and
+    /// @discussion Three families are read. `qwen3_moe` names its experts under `num_experts` and
     /// their width under `moe_intermediate_size`, and renormalizes the selected routing weights when
     /// `norm_topk_prob` says so; a release that interleaves dense layers (`mlp_only_layers`, a
-    /// `decoder_sparse_step` above one) is refused, since this stack routes every layer. `mixtral`
-    /// names them `num_local_experts` at `intermediate_size` and always renormalizes; a release with
-    /// a sliding window is refused, since the attention here is full. Any other config that names
-    /// experts (`qwen2_moe` with its shared expert, DeepSeek, gpt-oss) is refused by name.
+    /// `decoder_sparse_step` above one) is refused, since this stack routes every layer. `qwen2_moe`
+    /// reads the same fields, defaults `norm_topk_prob` to false as its releases do, and adds the
+    /// shared expert's width (`shared_expert_intermediate_size`); one asking for a sliding window is
+    /// refused. `mixtral` names them `num_local_experts` at `intermediate_size` and always
+    /// renormalizes; a release with a sliding window is refused, since the attention here is full.
+    /// Any other config that names experts (DeepSeek, gpt-oss) is refused by name.
     static func expertConfiguration(_ json: [String: Any], modelType: String) throws
-        -> (count: Int, active: Int, width: Int, normalizes: Bool)? {
+        -> (count: Int, active: Int, width: Int, normalizes: Bool, shared: Int)? {
         func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
-        switch modelType {
-        case "qwen3_moe":
+        func refuseInterleavedDenseLayers() throws {
             let denseLayers = (json["mlp_only_layers"] as? [Any]) ?? []
             guard denseLayers.isEmpty, integer("decoder_sparse_step", 1) == 1 else {
                 throw NFKMLXError.unsupportedConfiguration(
                     "the config interleaves dense layers among the expert layers, which this network "
                     + "does not implement")
             }
+        }
+        switch modelType {
+        case "qwen3_moe", "qwen3_vl_moe_text":
+            try refuseInterleavedDenseLayers()
             return (integer("num_experts", 0), integer("num_experts_per_tok", 0),
                     integer("moe_intermediate_size", 0),
-                    (json["norm_topk_prob"] as? NSNumber)?.boolValue ?? true)
+                    (json["norm_topk_prob"] as? NSNumber)?.boolValue ?? true, 0)
+        case "qwen2_moe":
+            try refuseInterleavedDenseLayers()
+            if (json["use_sliding_window"] as? NSNumber)?.boolValue == true {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config asks for sliding-window attention, which this network does not implement")
+            }
+            return (integer("num_experts", 0), integer("num_experts_per_tok", 0),
+                    integer("moe_intermediate_size", 0),
+                    (json["norm_topk_prob"] as? NSNumber)?.boolValue ?? false,
+                    integer("shared_expert_intermediate_size", 0))
         case "mixtral":
             if let window = json["sliding_window"] as? NSNumber, window.intValue > 0 {
                 throw NFKMLXError.unsupportedConfiguration(
                     "the config asks for sliding-window attention, which this network does not implement")
             }
             return (integer("num_local_experts", 0), integer("num_experts_per_tok", 0),
-                    integer("intermediate_size", 0), true)
+                    integer("intermediate_size", 0), true, 0)
+        case "gpt_oss":
+            // The router takes the softmax over the selected logits, which is the renormalized form.
+            return (integer("num_local_experts", 0), integer("num_experts_per_tok", 0),
+                    integer("intermediate_size", 0), true, 0)
         default:
             if json["num_experts"] != nil || json["num_local_experts"] != nil || json["n_routed_experts"] != nil {
                 throw NFKMLXError.unsupportedConfiguration(
                     "the config describes a mixture-of-experts family (\(modelType)) this network does "
-                    + "not implement; qwen3_moe and mixtral are the families it reads")
+                    + "not implement; qwen3_moe, qwen2_moe, mixtral, and gpt_oss are the families it reads")
             }
             return nil
         }
     }
 
     /// The module key a release's tensor name maps to: Mixtral's `block_sparse_moe` spelling becomes
-    /// the `mlp` layout Qwen3-MoE and this module share, and every other name passes through.
+    /// the `mlp` layout Qwen3-MoE and this module share, gpt-oss's `router` is the module's `gate` and
+    /// its fused expert tensors gain the `.weight` the module's layers carry, and every other name
+    /// passes through.
     static func moduleKey(forRelease key: String) -> String {
+        if key.contains(".mlp.router.") {
+            return key.replacingOccurrences(of: ".mlp.router.", with: ".mlp.gate.")
+        }
+        if key.hasSuffix(".mlp.experts.gate_up_proj") || key.hasSuffix(".mlp.experts.down_proj") {
+            return key + ".weight"
+        }
+        // The MXFP4 release: packed words and their block scales, under the layer's own keys.
+        if key.hasSuffix("_proj_blocks"), key.contains(".mlp.experts.") {
+            return String(key.dropLast("_blocks".count)) + ".weight"
+        }
+        if key.hasSuffix("_proj_scales"), key.contains(".mlp.experts.") {
+            return String(key.dropLast("_scales".count)) + ".scales"
+        }
         guard key.contains(".block_sparse_moe.") else { return key }
         return key.replacingOccurrences(of: ".block_sparse_moe.gate.", with: ".mlp.gate.")
             .replacingOccurrences(of: ".block_sparse_moe.experts.", with: ".mlp.experts.")
             .replacingOccurrences(of: ".w1.weight", with: ".gate_proj.weight")
             .replacingOccurrences(of: ".w3.weight", with: ".up_proj.weight")
             .replacingOccurrences(of: ".w2.weight", with: ".down_proj.weight")
+    }
+
+    /// A release's tensors in the module's names and layouts: gpt-oss stores its fused expert
+    /// projections as `[experts, in, out]` (an `x @ W` layout) where the switch linear holds
+    /// `[experts, out, in]`, so those two are transposed; per-expert tensors are stacked.
+    static func releaseWeights(_ pairs: [(String, MLXArray)]) -> [(String, MLXArray)] {
+        let mapped = pairs.map { key, value -> (String, MLXArray) in
+            let transposed = key.hasSuffix(".mlp.experts.gate_up_proj") || key.hasSuffix(".mlp.experts.down_proj")
+            if transposed { return (moduleKey(forRelease: key), value.swappedAxes(-1, -2)) }
+            // MXFP4 blocks are `[experts, out, groups, 16]` bytes: sixteen bytes hold a group of 32
+            // nibbles, and viewed as little-endian uint32 they ARE MLX's mxfp4 words in its own
+            // element order (measured against transformers' decode of the released bytes).
+            if key.hasSuffix("_proj_blocks"), key.contains(".mlp.experts."), value.dtype == .uint8 {
+                let words = value.view(dtype: .uint32)
+                return (moduleKey(forRelease: key), words.reshaped([words.dim(0), words.dim(1), -1]))
+            }
+            return (moduleKey(forRelease: key), value)
+        }
+        return stackingExperts(mapped)
+    }
+
+    /// The block geometry gpt-oss's MXFP4 experts are stored in.
+    static let mxfp4Quantization = NFKMLXWeights.Quantization(bits: 4, groupSize: 32, mode: .mxfp4)
+
+    /// Replaces each fused expert projection with a layer holding the release's packed words and
+    /// scales, wherever `pairs` carry them, so the strict apply that follows lands the packed arrays
+    /// on matching structure rather than adopting them into a float layer.
+    static func installPackedExperts(into net: NFKMLXLanguageNet, from pairs: [(String, MLXArray)]) throws {
+        let byKey = Dictionary(pairs, uniquingKeysWith: { first, _ in first })
+        for (index, block) in net.model.layers.enumerated() {
+            guard let mixture = block.feedForward as? NFKLMMixtureFeedForward,
+                  let fused = mixture.experts as? NFKLMFusedSwitchGLU else { continue }
+            for projection in ["gate_up_proj", "down_proj"] {
+                let base = "model.layers.\(index).mlp.experts.\(projection)"
+                // MXFP4 scales are e8m0 bytes; an affine-quantized save carries float scales and is
+                // rebuilt by `matchStructure` instead.
+                guard let packed = byKey[base + ".weight"], packed.dtype == .uint32,
+                      let scales = byKey[base + ".scales"], scales.dtype == .uint8 else { continue }
+                let layer = NFKLMQuantizedSwitchLinear(packed: packed, scales: scales, biases: byKey[base + ".biases"],
+                                                       groupSize: mxfp4Quantization.groupSize,
+                                                       bits: mxfp4Quantization.bits, mode: mxfp4Quantization.mode)
+                try fused.update(modules: ModuleChildren.unflattened([(projection, layer)]), verify: .noUnusedKeys)
+            }
+        }
     }
 
     private static let expertPattern = try! NSRegularExpression(
@@ -645,9 +777,11 @@ public final class NFKMLXLanguage: NSObject {
             // dropped rather than loaded into a projection the tied model does not have.
             if tied && key.hasPrefix("lm_head.") { return nil }
             let keeps = keepStored || (value.dtype != .float16 && value.dtype != .bfloat16)
-            return (moduleKey(forRelease: key), keeps ? value : value.asType(.float32))
+            return (key, keeps ? value : value.asType(.float32))
         }
-        try NFKMLXWeights.apply(stackingExperts(mapped), to: net, verifyShapes: true)
+        let prepared = releaseWeights(mapped)
+        try installPackedExperts(into: net, from: prepared)
+        try NFKMLXWeights.apply(prepared, to: net, verifyShapes: true)
     }
 
     /// Builds a text-generation backend from local weights and a tokenizer.
@@ -690,9 +824,21 @@ public final class NFKMLXLanguage: NSObject {
         // module has no projection to put it in.
         let tied = net.lmHead == nil
         let merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
-            tied && $0.hasPrefix("lm_head.") ? nil : moduleKey(forRelease: $0)
+            tied && $0.hasPrefix("lm_head.") ? nil : $0
         }
-        try NFKMLXWeights.apply(stackingExperts(merged), to: net, verifyShapes: true)
+        let prepared = releaseWeights(merged)
+        try installPackedExperts(into: net, from: prepared)
+        try NFKMLXWeights.apply(prepared, to: net, verifyShapes: true)
+    }
+
+    /// Whether a release stores its experts MXFP4 (`quantization_config.quant_method`), in which case
+    /// it loads at `.checkpoint` precision: the packed experts stay packed, the bf16 attention stays
+    /// bf16, and the fit check counts the bytes that will actually be resident.
+    static func storesExpertsMXFP4(configURL: URL) -> Bool {
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let quantization = json["quantization_config"] as? [String: Any] else { return false }
+        return (quantization["quant_method"] as? String) == "mxfp4"
     }
 
     /// Builds from a downloaded release directory holding the weights, `config.json`, and the
@@ -738,7 +884,8 @@ public final class NFKMLXLanguage: NSObject {
         // chat template's markers would encode as ordinary text.
         let tokenizer = releaseTokenizer(inDirectory: directoryURL)
         let net = makeNet(configuration)
-        try loadWeights(into: net, fromDirectory: directoryURL)
+        let packed = storesExpertsMXFP4(configURL: directoryURL.appendingPathComponent("config.json"))
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: packed ? .checkpoint : .float32)
         return (net, tokenizer)
     }
 
@@ -750,10 +897,65 @@ public final class NFKMLXLanguage: NSObject {
     /// or an embedder's markers resolve rather than encoding as ordinary text.
     static func releaseTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
         let (specials, endToken) = specialTokens(inDirectory: directory)
-        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "qwen2",
+        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel",
+                                                     "pretokenizer": pretokenizationName(inDirectory: directory),
                                                      "specialTokens": specials]]
         if let endToken { manifest["eosTokenId"] = endToken }
-        return try? NFKTokenizer(forManifest: manifest, directory: directory)
+        // A release that ships only tokenizer.json (gpt-oss) has its vocabulary and merges extracted
+        // into the vocab.json / merges.txt pair the core reader takes.
+        var files = directory
+        if !FileManager.default.fileExists(atPath: directory.appendingPathComponent("vocab.json").path) {
+            guard let extracted = byteLevelFiles(fromTokenizerJSON: directory.appendingPathComponent("tokenizer.json")) else {
+                return nil
+            }
+            files = extracted
+        }
+        return try? NFKTokenizer(forManifest: manifest, directory: files)
+    }
+
+    /// The pre-tokenization a release's tokenizer.json declares, read from its `Split` regex: the
+    /// o200k pattern (gpt-oss) matches words by their case pattern, spelled with the `\p{Lu}\p{Lt}…`
+    /// classes no other family uses; everything else here is Qwen's, the previous default.
+    static func pretokenizationName(inDirectory directory: URL) -> String {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let preTokenizer = json["pre_tokenizer"] as? [String: Any] else { return "qwen2" }
+        // A `Sequence` of pre-tokenizers or a single `Split`; the regex is the one that names the family.
+        let steps = (preTokenizer["pretokenizers"] as? [[String: Any]]) ?? [preTokenizer]
+        for step in steps where step["type"] as? String == "Split" {
+            if let pattern = step["pattern"] as? [String: Any], let regex = pattern["Regex"] as? String,
+               regex.contains("\\p{Lu}\\p{Lt}") {
+                return "o200k"
+            }
+        }
+        return "qwen2"
+    }
+
+    /// Writes a tokenizer.json's byte-level BPE vocabulary and merges as the `vocab.json` and
+    /// `merges.txt` pair the core reader takes, into a scratch directory, and returns it.
+    static func byteLevelFiles(fromTokenizerJSON url: URL) -> URL? {
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let model = json["model"] as? [String: Any],
+              let vocabulary = model["vocab"] as? [String: Int],
+              let merges = model["merges"] as? [Any] else { return nil }
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil,
+              let vocabularyData = try? JSONSerialization.data(withJSONObject: vocabulary),
+              (try? vocabularyData.write(to: scratch.appendingPathComponent("vocab.json"))) != nil else {
+            return nil
+        }
+        var mergesText = "#version: 0.2\n"
+        for entry in merges {
+            if let pair = entry as? [String], pair.count == 2 {
+                mergesText += pair[0] + " " + pair[1] + "\n"
+            } else if let text = entry as? String {
+                mergesText += text + "\n"
+            }
+        }
+        guard (try? mergesText.write(to: scratch.appendingPathComponent("merges.txt"),
+                                     atomically: true, encoding: .utf8)) != nil else { return nil }
+        return scratch
     }
 
     /// The special-token literals a release declares (`added_tokens_decoder` in

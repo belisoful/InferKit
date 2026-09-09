@@ -81,6 +81,14 @@ extern NSString * const NFKParameterTools;
 	in the provider's way and returns the parsed reply under NFKOutputStructured. Introduced in
 	InferKit 0.3.0. */
 extern NSString * const NFKParameterJSONSchema;
+/*! The shape a text reply must take (NSString): "json" constrains sampling to well-formed JSON with
+	an object or array root, "json-object" to an object, "json-array" to an array. An on-device
+	backend enforces it through a grammar mask (NFKJSONConstraint); the parsed reply rides under
+	NFKOutputStructured. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterOutputFormat;
+/*! The strings a text reply must be exactly one of (NSArray of NSString), enforced through a grammar
+	mask on device (NFKChoiceConstraint). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterChoices;
 /*! How many frames a chat backend samples from NFKInputVideo, evenly spaced, to show a vision model
 	(NSNumber; default 8). Introduced in InferKit 0.3.0. */
 extern NSString * const NFKParameterVideoFrameCount;

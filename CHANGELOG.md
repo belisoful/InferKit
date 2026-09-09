@@ -7,6 +7,276 @@ All notable changes to InferKit are documented here. The format follows
 While the version is below 1.0.0, a minor bump may change public API. SwiftPM treats a 0.x minor as
 breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each minor deliberately.
 
+## [Unreleased]
+
+### Core (`InferKit`)
+
+- Grammar-constrained sampling for the Core ML language backend: `NFKTokenVocabulary`,
+  `NFKJSONConstraint` (well-formed JSON with a chosen root), and `NFKChoiceConstraint` (exactly one of a
+  fixed set) mask the sampler's logit buffer through an `NFKTokenConstraintCursor`, so sampling and
+  greedy decoding alike stay inside the grammar. `NFKCoreMLLanguageBackend` reads the new
+  `NFKParameterOutputFormat` and `NFKParameterChoices` request parameters and returns JSON it was asked
+  for parsed under `NFKOutputStructured`; the MLX language backend honors the same keys.
+- `NFKByteLevelBPETokenizer` reads the `o200k` pre-tokenization (see the gpt-oss entry below).
+
+### InferKitMLX (companion)
+
+#### Released sizes
+
+Every shipped family now covers every size its authors released, each with a configuration preset, a
+case on the family's `@objc` variant enum, the full factory set, and a registered name. A size whose
+checkpoint is a modest download is measured at reference parity; a size too large to run here is held to
+the module by shape against its released safetensors headers (`Tools/validation-assets/shapes.py`,
+`NFKMLXReleasedSizesTests`). The measured numbers are in `Docs/model-parity.md`.
+
+- Whisper `base`, `large` (fits large-v1 and large-v2), and `largeV3Turbo` (large-v3's encoder over a
+  4-layer decoder), each at an exact greedy token match.
+- SAM `vitL` and `vitH` (encoder cosine 0.9999980 and 0.9999967, binary mask agreement 1.0); SAM 2
+  Hiera `small` (FPN levels 0.9999999999996 / 0.999999999998), so all four Hiera sizes are at parity.
+- Depth Anything 3 `base` and `large` (`NFKMLXDepth3Variant`, registered as `depth-anything-3-base` /
+  `-large`; every hooked feature ≥ 0.99999999999, the depth mean-removed 0.99999999999 / 0.99999999998).
+- NAFNet `siddWidth64` and `goProWidth64` (the REDS geometry trained on GoPro), 0.99999986 and
+  0.9999999966.
+- SwinIR `classicalX2`, `lightweightSRX3`, `lightweightSRX4`, and the two real-world ×4 releases,
+  `realWorldX4Medium` (the reference's `nearest+conv` upsampler) and `realWorldX4Large` (240 wide, nine
+  six-block groups, the `3conv` residual connection), every one ≥ 0.9999999999993.
+- Robust Video Matting `resNet50` (`NFKMLXRVMVariant`, `robust-video-matting-resnet50`): the
+  torchvision bottleneck backbone with its last stage dilated, tapped through
+  `NFKMLXResNetBackbone.taps`, LR-ASPP 2048 → 256, and no ImageNet normalization on this encoder, as
+  the reference; alpha 0.99999999995, foreground 0.9999999999997.
+- RT-DETR `r18vd`, `r34vd`, `r101vd` (`NFKMLXRTDetrVariant`; the two smaller run basic blocks and
+  fewer decoder layers, the 101 a 384-wide encoder), logits ≥ 0.99999999998 over the reference's
+  selection.
+- RF-DETR `nano`, `small`, `medium`, `large` (`NFKMLXRFDetrVariant`; the later releases run a patch-16
+  DINOv2 at 384 / 512 / 576 / 704 with two windows), logits ≥ 0.99999999988.
+- SNAC `music32kHz` and `music44kHz`: four codebooks at strides 8/4/2/1 and a 32-frame windowed
+  attention at the bottleneck (`NFKSNACLocalAttention`, rotary over the window positions), which the
+  24 kHz speech model omits; codes 60/60 exact, reconstruction ≥ 0.9999999999998.
+- Hybrid Transformer Demucs `sixStem` (`htdemucs_6s`: guitar and piano after the four base stems; the
+  release sets `bottom_channels` to 0, so it carries no channel samplers and runs its cross-transformer
+  at the encoder's own width) and `NFKMLXHTDemucsBag` for the fine-tuned `htdemucs_ft` release (four
+  checkpoints combined by per-source weights, `backendWithFineTunedWeightsURLs:error:`); both
+  0.99999999999995.
+- CLIP `vitB16`, `vitL14`, `vitL14At336` (`NFKMLXCLIPVariant`), and every SigLIP 2 release
+  (`NFKMLXSigLIP2Variant`: base at patch 16 / 32, large, so400m at patch 14 / 16, giant-opt, each at its
+  released resolutions; the giant-opt text tower projects 1152 → 1536), registered under their release
+  names.
+- Language presets `qwen3_14B`, `qwen3_32B`, `gemma2_9B`, `gemma2_27B`; `NFKMLXLanguage.configuration(fromJSON:)`
+  reads a config already parsed, which is what a multimodal release's `text_config` needs.
+  `NFKMLXQwen3VL` gained `visionNet(directoryURL:)`, `decoderConfiguration(directoryURL:)`, and
+  `decoder(directoryURL:)`, reading the release's own `config.json` and sharded weights (the 30B-A3B's
+  fused experts split into the module's gate and up projections). Structurally verified: Qwen3 14B /
+  32B, Qwen3-Embedding 4B / 8B, Qwen3-VL 4B / 8B / 32B / 30B-A3B, Gemma 3 12B / 27B, Gemma 2 9B / 27B,
+  SigLIP 2 ×14, Gemma 3n E4B, each with 0 missing, 0 mismatched, 0 unaccounted.
+- Gemma 3n E4B measured at bf16 on both sides (logit cosine 0.99989, argmax 5/6); the E2B, exact at
+  float32, reads the same 0.99989 at bf16, which is the rounding floor the E4B is held to.
+- Fixed: SwinIR's classical reconstruction tail activated with a plain ReLU where the reference's
+  `conv_before_upsample` uses a leaky ReLU at 0.01. On the released classical ×4 through the 8-bit
+  backend bridge the mean pixel difference falls from 0.0037 to 0.00136 (×3 from 0.0036 to 0.00119, ×8
+  from 0.0035 to 0.00095); the lightweight release has no such tail and is unchanged.
+
+#### Gemma 3n
+
+- `NFKMLXGemma3n` runs Gemma 3n tri-modally from a release directory, at reference parity on the
+  released E2B weights for every stage. It is a distinct architecture rather than a Gemma 3 variant:
+  the decoder (`NFKMLXGemma3nNet`) carries **AltUp**, which makes the residual stream four parallel
+  copies with a learned per-token map predicting them before each block and correcting them after;
+  **LAuReL**, a rank-64 detour beside the attention residual; **per-layer embeddings**, a second wide
+  table giving every layer its own slice, gated into the inactive copies; and **activation sparsity**,
+  which holds the first ten layers' feed-forward gates at zero below a per-token Gaussian cutoff.
+  Attention runs at scale 1.0, the values carry an unweighted normalization, and the trailing
+  `num_kv_shared_layers` compute no keys or values at all, reusing the last non-shared layer of their
+  own kind. Measured: every one of the 30 hidden states 1.0000000000, logit cosine 0.9999999999943566,
+  and the cached greedy continuation 11/11 token for token; a tiny record additionally pins every
+  mechanism and both attention kinds.
+- `NFKMLXGemma3nAudioNet` is the Universal Speech Model Conformer: two strided convolutions under a
+  **cumulative group normalization**, then twelve blocks of feed-forward, chunked attention with a
+  Transformer-XL relative-position shift, a causal depthwise convolution, and a second feed-forward,
+  with the activation clamp applied at inference. Released-weight parity: front end
+  0.9999999999999402, first block 0.9999999999998025, encoded 0.9999999999999257.
+- `NFKMLXGemma3nVisionNet` is **MobileNetV5-300M**, a convolutional encoder the release reaches
+  through `timm`: edge residuals, universal inverted residuals, and multi-query attention over the
+  feature map, joined by a multi-scale fusion adapter. Padding is TensorFlow's `SAME`, asymmetric at
+  stride two. Released-weight parity: stem 0.9999999999996717, every stage ≥ 0.9999999999571081,
+  fused grid 0.9999999999981896.
+- `NFKMLXGemma3nModel` splices the towers into the prompt in two stages — a hard per-modality
+  embedding of the placeholder ids, then the soft tokens over them. End to end on the released E2B the
+  prompt reproduces the release processor's 272 ids exactly, the argmax matches at **272/272** fused
+  positions, the last-16 logit cosine is 0.9999999999785188, and the cached greedy continuation
+  reproduces the reference's caption token for token.
+- `NFKMLXGemma3nBackend` reads `NFKInputPrompt` / `NFKInputMessages` with `NFKInputImage` or
+  `NFKInputAudio` beside them, honors temperature / top-p / max-tokens / seed, and streams through a
+  submitted job. `NFKMLXGemma3nAudioFeatures` is the mel front end (HTK's mel scale with no area
+  normalization, frames cut one sample longer than the window, the transform at twice its length),
+  measured at 0.999999999999857. From Objective-C: `[NFKMLXGemma3n backendWithDirectoryURL:error:]`,
+  `gemma3nWithDirectoryURL:error:`, `answerForImage:question:error:`, `answerForQuestion:error:`.
+- `NFKMLXGemma3Language.configuration(fromHuggingFace:)` still refuses a `gemma3n` config, which now
+  names the reader that takes it rather than only saying no.
+
+#### Gemma 3
+
+- `NFKMLXGemma3` runs the Gemma 3 line end to end from a release directory. The text decoder
+  (`NFKMLXGemma3Net`: `(1 + w)` RMS norms, sandwich blocks, five sliding-window layers to one
+  full-attention layer at a local and a global rotary base, the 4B's 8× linear rotary scaling on the
+  full layers, per-head QK norm, GeGLU, a tied head) is at reference parity on the released 270M, 1B,
+  and 4B against transformers' own Gemma 3 (every hidden state exact; logit cosine 0.99999999999368,
+  0.99999999999821, and 0.99999999999735; the greedy continuation through the cache token for token). A
+  tiny record pins the 4-position sliding window, the linear rotary scaling, both soft-caps, and the
+  cached step-by-step decode against a teacher-forced pass (worst step 1 − cosine 6.7e-8).
+- `NFKMLXGemma3Backend` generates through a hybrid key-value cache (`NFKMLXGemma3Cache`: unbounded for
+  the full layers, bounded to the window for the sliding ones), streams each token through a submitted
+  job, honors cancellation between tokens, renders `NFKInputMessages` through the release's own Jinja
+  chat template (token-exact against `apply_chat_template`), and takes `NFKInputImage` beside the text
+  on the multimodal 4B. `NFKMLXGemmaLanguage.backend(directoryURL:)` routes a `gemma3` / `gemma3_text`
+  release here. Objective-C: `backendWithDirectoryURL:error:`, `gemma3WithDirectoryURL:error:`,
+  `answerForImage:question:error:`, `answerForQuestion:error:`.
+- The multimodal 4B: `NFKMLXGemma3VisionNet` (SigLIP so400m at 896×896, reusing the shared SigLIP
+  encoder with row-major positions), `NFKMLXGemma3MultimodalProjector` (a 4×4 average pool of the 64×64
+  patch grid to 256 soft tokens, a Gemma norm, one `[1152, 2560]` matrix), the processor's
+  `\n\n<start_of_image>` + 256 soft tokens + `<end_of_image>\n\n` expansion done in the text before
+  tokenizing (the newlines merge with their neighbours' into one token), and the reference's
+  bidirectional attention among an image's tokens (`NFKMLXGemma3Masks`) — the full
+  `Gemma3ForConditionalGeneration` chain at reference parity on the released weights (vision tower
+  0.99999999875, soft tokens 0.99999999971, the fused decoder's argmax 275/275 with every layer
+  ≥ 0.99999995, the greedy continuation token for token; see `Docs/model-parity.md`).
+- The loader reads both checkpoint layouts: the released files' transformers 4.x naming
+  (`language_model.model.`, `vision_tower.vision_model.`, `multi_modal_projector.`) and the 5.x
+  `model.`-nested one.
+- `NFKMLXGemmaTokenizer` matches a release's `added_tokens` (`<bos>`, `<start_of_turn>`,
+  `<start_of_image>`, `<image_soft_token>`, …) as literals before the merge, as the reference does, and
+  `decode(_:skipSpecial:)` leaves the markers out; `specialIds` lists them.
+- `NFKMLXGemma3EncoderNet` (EmbeddingGemma's backbone) is now built on the decoder's blocks, and its
+  bidirectional window is the reference's exclusive bound `span / 2 + 1` (257 for the released 512),
+  where it had used the span itself — measured at a tiny configuration whose sequence exceeds the
+  window (last hidden cosine 0.99999999999967); no EmbeddingGemma input had reached either number.
+
+#### MetricGAN+
+
+- `NFKMLXMetricGANPlus` runs MetricGAN+ (speechbrain, Apache-2.0), a two-layer bidirectional LSTM
+  magnitude mask over `log1p(|X|)` frames with a per-bin learnable sigmoid, at reference parity on the
+  released weights against speechbrain's own `SpectralMaskEnhancement` (features 1.0, mask 1.0000001,
+  enhanced waveform 1.0000001). Registered under `metricgan-plus`.
+- `NFKMLXComplexSTFT` gained `zeroPadded` (speechbrain's `pad_mode="constant"`, where `torch.stft`
+  reflects) and a `length` on both inverses (`torch.istft`'s `length`, which keeps the last frame's
+  tail past the center trim); the default behavior is unchanged.
+
+#### CMGAN
+
+- `NFKMLXCMGAN` runs CMGAN (ruizhecao96/CMGAN, MIT), a conformer metric GAN's generator: a dense
+  encoder, four two-stage (time, frequency) conformer blocks with Shaw's relative position embedding,
+  and magnitude-mask + complex-residual decoders over a `mag^0.3` compressed spectrogram, at reference
+  parity on the released checkpoint (every seam ≥ 0.9999998, enhanced waveform 0.99999994). Registered
+  under `cmgan`.
+
+#### FRCRN
+
+- `NFKMLXFRCRN` runs FRCRN SE 16K (ClearerVoice, Apache-2.0), a frequency-recurrent complex CRN: two
+  complex UNets over a conv-STFT with frequency-recurrent FSMN memories, complex squeeze-excites, and
+  a time FSMN bottleneck, the mask `tanh(unet2) + tanh(unet1)` as a complex product, at reference
+  parity on the released weights (every seam ≥ 0.99999994, enhanced waveform 1.0). The backend
+  reproduces the reference decode path's zero-padding grid. Registered under `frcrn`.
+- `NFKMLXComplexSTFT` gained `centered: false` (a convolutional STFT with no padding); the default
+  behavior is unchanged.
+
+#### MossFormer2 SR
+
+- `NFKMLXMossFormer2SRNet` runs MossFormer2 SR 48K (ClearerVoice, Apache-2.0), speech
+  super-resolution: the HiFi-GAN log-mel, the shipped MossFormer2 backbone as a mel-to-mel restorer,
+  a Snake HiFi-GAN generator, and the decode path's `bandwidth_sub` post-process (Butterworth
+  low-pass / high-pass under `filtfilt`, ported in double precision), at reference parity on the
+  released weights (mel 1.0, backbone 1.0, generator 0.9999999999987, substitution 1.0, end to end
+  0.9999999999992). Registered under `mossformer2-sr`; `backendWithDirectoryURL:error:`.
+- `NFKMLXMossFormer2Configuration.superResolution` configures the SE MaskNet as the SR backbone, and
+  the BigVGAN mel front end takes its geometry as parameters.
+
+#### NU-Wave 2
+
+- `NFKMLXNUWave2` runs NU-Wave 2 (maum-ai, BSD-3), diffusion bandwidth extension to 48 kHz: a noise
+  predictor of short-time Fourier convolutions with BSFT band modulation, sampled by the released
+  eight-step logSNR DDIM from seeded noise (`NFKParameterSeed`), at reference parity on the official
+  checkpoint from the reference's own start noise (every seam and every step 1.0). Registered under
+  `nuwave2`.
+
+#### Apollo
+
+- `NFKMLXApollo` runs Apollo (JusperLee, CC-BY-SA-4.0 code and weights), music restoration of
+  lossy-codec artifacts at 44.1 kHz: an 80-band split of a 20 ms STFT, six band-sequence layers (a
+  rotary transformer across the bands, a depthwise convolutional block along time), and GLU band
+  heads, at reference parity on the released weights (band features 0.9999988, every band-sequence
+  layer 1.0, restored waveform 0.9999973). Registered under `apollo`.
+
+#### Schema-constrained decoding
+
+- `NFKMLXJSONSchemaConstraint` constrains generation to a JSON Schema, so the keys, the types, the
+  enumerations, and the array bounds are guaranteed as well as the syntax. `NFKMLXJSONSchema` compiles
+  the schema (`type` as a name or a list, `properties` / `required` / `additionalProperties`, `items` /
+  `minItems` / `maxItems`, `enum` / `const`, `anyOf` / `oneOf`, `$ref` into `$defs` or `definitions`
+  with recursion; an empty schema admits any value) into nodes the byte-level engine walks. An `anyOf`
+  keeps every alternative alive until the bytes decide; keys are written in any order and an object
+  closes only once its required keys are present. A keyword the grammar cannot enforce byte by byte is
+  ignored when it only narrows content (`pattern`, `minimum`, `minLength`) and refused at compile time
+  when it changes what is admissible (`allOf`, `not`, `if`).
+- `NFKMLXGenerationOptions.jsonSchema` carries it, and `NFKMLXLanguageBackend` fills it from the
+  core's `NFKParameterJSONSchema` request parameter — the key the remote backends read — so a
+  structured-output request is engine-agnostic. A schema the grammar cannot enforce is an error rather
+  than a silently unconstrained run.
+- JSON that was asked for (a schema or `outputFormat`) now comes back parsed under `NFKOutputStructured`
+  beside `NFKOutputText`, as the remote backends return it.
+
+#### Qwen2-MoE
+
+- The dense decoder reads `qwen2_moe` (Qwen1.5-MoE-A2.7B, Qwen2-57B-A14B): the routed feed-forward plus
+  a shared expert every token runs, gated by `sigmoid(shared_expert_gate(x))` and summed with the routed
+  output. Its releases leave the routing weights unnormalized, which the reader defaults for this type,
+  and carry query/key/value biases (`qkv_bias`, true by default and absent from the released config).
+  Reference parity against transformers' own `Qwen2MoeForCausalLM` at a tiny configuration: every hidden
+  state exact, logit cosine 0.9999999999999813.
+- Dense Qwen2 releases load: their config carries no `attention_bias`, and the reader now defaults the
+  bias to true for `qwen2` as the architecture does, where the previous default refused their bias
+  tensors at load.
+
+#### gpt-oss
+
+- The dense decoder reads `gpt_oss` (gpt-oss-20b, Apache-2.0): layers alternating a sliding window with
+  full attention, a learned attention sink per head (the softmax is written out for it), biases on every
+  attention projection and the router, fused interleaved experts with biases and the clamped SwiGLU,
+  and YaRN whose correction band is left fractional (`NFKMLXRoPEScaling.truncatesCorrectionRange`).
+  Reference parity against transformers' own `GptOssForCausalLM` at a tiny configuration: every hidden
+  state exact, logit cosine 0.9999999999999721.
+- The released MXFP4 experts stay packed: the `_blocks` bytes viewed as `uint32` are MLX's `mxfp4`
+  words as stored, measured against MLX's own decode and against transformers' decode of the real
+  released bytes (worst difference 0.0), and `gatherQuantizedMM` runs them in `mxfp4` mode. A release
+  declaring `quant_method: mxfp4` loads at `.checkpoint` precision, so the 20B is 13.8 GB resident.
+  `NFKLMQuantizedSwitchLinear` carries its mode; a saved checkpoint records `bits:groupSize[:mode]`.
+- `NFKByteLevelBPETokenizer` gains the `o200k` pre-tokenization (digit runs of at most three, words
+  split by their case pattern, case-insensitive contractions), and the language backend's release
+  tokenizer reads a `tokenizer.json`-only release, choosing the pattern from its `Split` regex. Token-exact
+  against the `tokenizers` library on gpt-oss's o200k_harmony.
+
+#### Measurements
+
+- Speculative decoding on a bandwidth-bound target (Qwen3-4B at bf16 drafted by the 0.6B) runs at 0.57×
+  the plain wall clock with 0.435 acceptance, so it stays off by default; at bf16 the speculative and
+  plain greedy runs can part at a near-tie (the target's own top two, margin 0.125), where at float32
+  they are identical.
+
+#### Key-value cache: keys grouped per channel
+
+- `NFKMLXKeyValueCache.Quantization` gains `keyAxis`. `.sequence`, now the default, groups each key
+  channel over `groupSize` consecutive positions (KIVI's axis) and holds the positions of the unfinished
+  group in full precision; `.headDimension` is the previous per-position layout. Values stay per
+  position. The window and rollback work over groups, a rollback that cuts into a packed group returns
+  its surviving positions to the residual, and a saved prompt cache records the axis (an older file
+  loads as the layout it was written with). From Objective-C, `cacheQuantizationPerChannelKeys`
+  (default true) selects it.
+- Measured on the released Qwen3-0.6B. Per position, 8-bit tracked the reference record on a short
+  prompt (cosine 0.99956, continuation 16/16) but 4-bit collapsed (0.577 at group 64, 0.928 at group
+  32), and the keys' 4-bit reconstruction error was 0.133 per position against 0.045 per channel while
+  the values barely differed by axis. Over a 132-token prompt against the float cache, 8-bit per-channel
+  keys reproduce it (last-logit cosine 0.99997, the 24-token greedy continuation exact) where 8-bit
+  per-position read 0.994; 4-bit per-channel reads 0.994 (group 64) and 0.997 (group 32) where
+  per-position read 0.68 and 0.97.
+
 ## [0.3.0] — 2026-09-06
 
 ### InferKitMLX (companion)

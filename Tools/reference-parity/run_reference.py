@@ -158,8 +158,23 @@ def run_depth3(image, checkpoint):
     from depth_anything_3.model.dualdpt import DualDPT
 
     size = image.shape[0]
-    net = DinoV2(name="vits", out_layers=[5, 7, 9, 11], alt_start=4, qknorm_start=4, rope_start=4, cat_token=True)
-    head = DualDPT(dim_in=768, output_dim=2, features=64, out_channels=[48, 96, 192, 384], head_names=("depth", "ray"))
+    # IK_DEPTH3_VARIANT selects the released size; each one's numbers come from its own config.json
+    # (`depth-anything/DA3-<SIZE>`): large hooks later blocks and starts its rotary/qknorm/camera
+    # alternation at block 8, and every size widens the DualDPT with the backbone.
+    variant = os.environ.get("IK_DEPTH3_VARIANT", "small")
+    geometry = {
+        "small": dict(name="vits", out_layers=[5, 7, 9, 11], start=4, dim_in=768, features=64,
+                      out_channels=[48, 96, 192, 384]),
+        "base": dict(name="vitb", out_layers=[5, 7, 9, 11], start=4, dim_in=1536, features=128,
+                     out_channels=[96, 192, 384, 768]),
+        "large": dict(name="vitl", out_layers=[11, 15, 19, 23], start=8, dim_in=2048, features=256,
+                      out_channels=[256, 512, 1024, 1024]),
+    }[variant]
+    hooks = geometry["out_layers"]
+    net = DinoV2(name=geometry["name"], out_layers=hooks, alt_start=geometry["start"],
+                 qknorm_start=geometry["start"], rope_start=geometry["start"], cat_token=True)
+    head = DualDPT(dim_in=geometry["dim_in"], output_dim=2, features=geometry["features"],
+                   out_channels=geometry["out_channels"], head_names=("depth", "ray"))
     state = load_file(checkpoint) if checkpoint.endswith(".safetensors") else torch.load(checkpoint, map_location="cpu")
     net.load_state_dict({k[len("model.backbone."):]: v for k, v in state.items() if k.startswith("model.backbone.")}, strict=False)
     head.load_state_dict({k[len("model.head."):]: v for k, v in state.items() if k.startswith("model.head.")}, strict=False)
@@ -169,7 +184,7 @@ def run_depth3(image, checkpoint):
     img = torch.from_numpy(image).permute(2, 0, 1)[None, None].float()   # [1, 1, 3, H, W]
     extra = {}
     with torch.no_grad():
-        feats, _ = net.pretrained.get_intermediate_layers(img, [5, 7, 9, 11], cam_token=None)
+        feats, _ = net.pretrained.get_intermediate_layers(img, hooks, cam_token=None)
         for i, (ft, _) in enumerate(feats):
             extra[f"hook{i}"] = ft[0, 0].contiguous()
         # The head's depth branch, step by step (see NFKMLXDepthAnything3.NFKDA3Head.seams).
@@ -233,7 +248,19 @@ def run_swinir(image, checkpoint):
     # IK_SWINIR_LIGHT selects the lightweight release, which is narrower, shallower, and reconstructs
     # through `pixelshuffledirect` — one convolution and one shuffle, with no surrounding convolutions.
     light = os.environ.get("IK_SWINIR_LIGHT", "") == "1"
-    if light:
+    # IK_SWINIR_REAL selects a real-world release: `m` is the classical geometry with the
+    # `nearest+conv` tail, `l` is wider (240), deeper (nine groups), eight heads, and the `3conv`
+    # residual connection.
+    real = os.environ.get("IK_SWINIR_REAL", "")
+    if real == "m":
+        model = SwinIR(upscale=scale, in_chans=3, img_size=64, window_size=8, img_range=1.0,
+                       depths=[6, 6, 6, 6, 6, 6], embed_dim=180, num_heads=[6, 6, 6, 6, 6, 6],
+                       mlp_ratio=2, upsampler="nearest+conv", resi_connection="1conv").eval()
+    elif real == "l":
+        model = SwinIR(upscale=scale, in_chans=3, img_size=64, window_size=8, img_range=1.0,
+                       depths=[6, 6, 6, 6, 6, 6, 6, 6, 6], embed_dim=240, num_heads=[8, 8, 8, 8, 8, 8, 8, 8, 8],
+                       mlp_ratio=2, upsampler="nearest+conv", resi_connection="3conv").eval()
+    elif light:
         model = SwinIR(upscale=scale, in_chans=3, img_size=64, window_size=8, img_range=1.0,
                        depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
                        mlp_ratio=2, upsampler="pixelshuffledirect", resi_connection="1conv").eval()
@@ -364,6 +391,49 @@ def run_demucs(image, checkpoint):
     globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
                            "waveform": torch.from_numpy(wave).contiguous()}
     return _center_trim(estimates, length)[0].contiguous()      # [stems, channels, samples]
+
+
+def run_htdemucs_bag(image, checkpoint):
+    """The fine-tuned Hybrid Transformer Demucs release (`htdemucs_ft`): four checkpoints of the base
+    geometry, each contributing the stem it was fine-tuned for. `checkpoint` is a directory holding
+    the four released files; they are read in the release's own order (drums, bass, other, vocals)
+    and combined as `demucs.apply.BagOfModels` with its one-hot weights does — each stem is the
+    weighted mean of the models' estimates, and the weights select one model per stem.
+    """
+    import functools
+
+    torch.load = functools.partial(torch.load, weights_only=False)
+    import demucs.states
+
+    names = ["f7e0c4bc-ba3fe64a.th", "d12395a8-e57c48e6.th", "92cfc3b6-ef3bcb9c.th", "04573f0d-f3cf25b2.th"]
+    models = []
+    for name in names:
+        model = demucs.states.load_model(os.path.join(checkpoint, name)).eval()
+        model.use_train_segment = False
+        models.append(model)
+
+    samples = 44100
+    time = np.arange(samples, dtype=np.float32) / 44100.0
+    generator = np.random.default_rng(11)
+    left = (0.3 * np.sin(2 * np.pi * 110 * time) + 0.2 * np.sin(2 * np.pi * 330 * time)
+            + 0.2 * np.sin(2 * np.pi * 440 * time))
+    right = (0.3 * np.sin(2 * np.pi * 110 * time + 0.4) + 0.25 * np.sin(2 * np.pi * 554 * time))
+    click = ((np.arange(samples) % 5512) < 40).astype(np.float32) * 0.3
+    wave = np.stack([left + click, right + click]).astype(np.float32)
+    wave += 0.01 * generator.standard_normal(wave.shape).astype(np.float32)
+    mix = torch.from_numpy(wave)[None]
+
+    sources = len(models[0].sources)
+    weights = torch.eye(sources)                                        # model i -> stem i
+    estimate = torch.zeros(1, sources, 2, samples)
+    totals = torch.zeros(sources)
+    with torch.no_grad():
+        for model, weight in zip(models, weights):
+            estimate += model(mix) * weight.view(1, sources, 1, 1)
+            totals += weight
+    estimate /= totals.view(1, sources, 1, 1)
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous()}
+    return estimate[0].contiguous()                                     # [sources, channels, samples]
 
 
 def run_htdemucs(image, checkpoint):
@@ -951,7 +1021,8 @@ def run_rvm(image, checkpoint):
     module = _import_reference(os.path.join(_reference_source(), "rvm"), "rvm_ref", "model",
                                siblings=["mobilenetv3", "resnet", "lraspp", "decoder",
                                          "fast_guided_filter", "deep_guided_filter"])
-    model = module.MattingNetwork("mobilenetv3").eval()
+    # IK_RVM_VARIANT selects the released encoder (mobilenetv3 by default, or resnet50).
+    model = module.MattingNetwork(os.environ.get("IK_RVM_VARIANT", "mobilenetv3")).eval()
     model.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True), strict=True)
 
     src = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
@@ -1155,6 +1226,8 @@ def run_nafnet(image, checkpoint):
         "SIDD": {"width": 32, "middle_blk_num": 12, "enc_blk_nums": [2, 2, 4, 8], "dec_blk_nums": [2, 2, 2, 2]},
         "GoPro": {"width": 32, "middle_blk_num": 1, "enc_blk_nums": [1, 1, 1, 28], "dec_blk_nums": [1, 1, 1, 1]},
         "REDS": {"width": 64, "middle_blk_num": 1, "enc_blk_nums": [1, 1, 1, 28], "dec_blk_nums": [1, 1, 1, 1]},
+        "SIDD64": {"width": 64, "middle_blk_num": 12, "enc_blk_nums": [2, 2, 4, 8], "dec_blk_nums": [2, 2, 2, 2]},
+        "GoPro64": {"width": 64, "middle_blk_num": 1, "enc_blk_nums": [1, 1, 1, 28], "dec_blk_nums": [1, 1, 1, 1]},
     }
     model = module.NAFNet(img_channel=3, **geometries[os.environ.get("IK_NAFNET_VARIANT", "SIDD")]).eval()
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
@@ -1851,6 +1924,58 @@ def run_mixtral(image, checkpoint):
     return _tiny_decoder_record(model, tokens)
 
 
+def run_qwen2_moe(image, checkpoint):
+    """The Qwen2-MoE decoder's arithmetic, from transformers' own Qwen2MoeForCausalLM, at a tiny
+    random configuration.
+
+    Qwen2-MoE (Qwen1.5-MoE-A2.7B, Qwen2-57B-A14B) is the routed feed-forward with a SHARED expert
+    beside it: every token also runs one dense SwiGLU of `shared_expert_intermediate_size`, gated by
+    `sigmoid(shared_expert_gate(x))`, and the two sums add. Its router leaves the selected weights
+    UNnormalized by default (`norm_topk_prob` false), which this record keeps so it differs from the
+    Qwen3-MoE record on that axis too, and its attention projections carry biases (`qkv_bias`). Every
+    hidden state is recorded so a divergence is located to a layer. `checkpoint` is unused.
+    """
+    from transformers import Qwen2MoeConfig, Qwen2MoeForCausalLM
+
+    config = Qwen2MoeConfig(
+        hidden_size=64, num_hidden_layers=3, vocab_size=128, num_attention_heads=4,
+        num_key_value_heads=2, intermediate_size=96, moe_intermediate_size=32,
+        shared_expert_intermediate_size=48, num_experts=8, num_experts_per_tok=2, norm_topk_prob=False,
+        decoder_sparse_step=1, mlp_only_layers=[], rms_norm_eps=1e-6, rope_theta=10000.0,
+        tie_word_embeddings=False, max_position_embeddings=64, use_sliding_window=False, qkv_bias=True)
+    model = _randomized(Qwen2MoeForCausalLM(config), seed=17)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_gpt_oss(image, checkpoint):
+    """The gpt-oss decoder's arithmetic, from transformers' own GptOssForCausalLM, at a tiny random
+    configuration.
+
+    gpt-oss differs from the other mixtures in four places, each exercised here: the layers ALTERNATE
+    sliding-window and full attention (a window of 4 over 8 tokens, so the sliding layers see less
+    than the full ones); every head carries a learned attention SINK, an extra softmax logit that
+    drains mass without a value; the router takes the softmax over the SELECTED top-k logits, with a
+    bias; and the experts run a clamped SwiGLU over an interleaved fused `gate_up_proj` with biases
+    (`gate` the even columns, `up` the odd, `gate` clamped above at 7, `up` clamped to ±7,
+    `(up + 1) · gate · sigmoid(1.702 · gate)`), with biases on `down_proj` too. The rotary is YaRN with
+    `truncate: false`, the release's own, and the attention projections all carry biases, the output
+    projection included. Eager attention is forced, since the fused kernels take no sink. Every hidden
+    state is recorded so a divergence is located to a layer. `checkpoint` is unused.
+    """
+    from transformers import GptOssConfig, GptOssForCausalLM
+
+    config = GptOssConfig(
+        num_hidden_layers=4, num_local_experts=4, vocab_size=128, hidden_size=64, intermediate_size=32,
+        head_dim=16, num_attention_heads=4, num_key_value_heads=2, sliding_window=4,
+        rope_theta=150000.0, max_position_embeddings=131072, rms_norm_eps=1e-5, num_experts_per_tok=2,
+        tie_word_embeddings=False)
+    config._attn_implementation = "eager"
+    model = _randomized(GptOssForCausalLM(config), seed=19)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
 def run_gemma4(image, checkpoint):
     """Gemma 4 text-decoder logits, from transformers' own Gemma4 implementation.
 
@@ -1889,6 +2014,588 @@ def run_gemma4(image, checkpoint):
     globals()["_extra"] = extra
     return logits.float().contiguous()
 
+
+
+def _gemma3n_audio_tiny_config(**overrides):
+    from transformers import Gemma3nAudioConfig
+    settings = dict(
+        hidden_size=32, conf_num_hidden_layers=2, conf_num_attention_heads=2, input_feat_size=16,
+        sscp_conv_channel_size=[8, 4], conf_attention_chunk_size=4, conf_attention_context_left=3,
+        conf_attention_context_right=1, conf_conv_kernel_size=3, gradient_clipping=10.0,
+        conf_reduction_factor=2, conf_residual_weight=0.5, conf_attention_logit_cap=50.0,
+        rms_norm_eps=1e-6, sscp_conv_group_norm_eps=1e-3, vocab_size=16)
+    settings.update(overrides)
+    return Gemma3nAudioConfig(**settings)
+
+
+def run_gemma3n_audio(image):
+    """The Gemma 3n audio encoder at a tiny random configuration, from transformers' own
+    Gemma3nAudioEncoder.
+
+    The released encoder reads NO future context (`conf_attention_context_right` is 0), so this
+    configuration sets it to 1: the chunked attention's right reach, the relative-position shift over
+    a span that is not purely causal, and the block mask's upper bound are all exercised here and
+    nowhere else. The activation clamp is set low enough to bite, so the forward pass actually runs
+    through it rather than past it. A padded tail marks the frame-validity path.
+
+    Records the encoded sequence, the sub-sampled front end's output, the weights under the release
+    naming, the mel, and the frame mask. `image` unused.
+    """
+    from transformers.models.gemma3n.modeling_gemma3n import Gemma3nAudioEncoder
+
+    config = _gemma3n_audio_tiny_config()
+    model = _randomized(Gemma3nAudioEncoder(config), seed=53)
+    torch.manual_seed(7)
+    frames = 26
+    mel = torch.randn(1, frames, config.input_feat_size)
+    # True marks a PADDED frame in this reference; the tail is padding.
+    mask = torch.zeros(1, frames, dtype=torch.bool)
+    mask[:, -5:] = True
+
+    with torch.no_grad():
+        subsampled = model.subsample_conv_projection(mel)
+        out = model(audio_mel=mel, audio_mel_mask=mask)
+
+    extra = {"mel": mel[0].float().contiguous(),
+             "mel_mask": mask[0].to(torch.int32).contiguous(),
+             "subsampled": subsampled[0].float().contiguous(),
+             "out_mask": out.audio_mel_mask[0].to(torch.int32).contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].float().contiguous()
+
+
+def run_gemma3n_mel(image, checkpoint):
+    """Gemma 3n's audio front end, from transformers' own Gemma3nAudioFeatureExtractor.
+
+    `--checkpoint` is the release directory, whose `preprocessor_config.json` states the geometry. A
+    deterministic random waveform measures it exactly. `image` unused.
+    """
+    from transformers import AutoFeatureExtractor
+
+    extractor = AutoFeatureExtractor.from_pretrained(checkpoint)
+    print("frame", extractor.frame_length, "hop", extractor.hop_length, "fft", extractor.fft_length,
+          "mels", extractor.feature_size)
+
+    torch.manual_seed(23)
+    waveform = torch.randn(16_000).numpy()
+    features = extractor([waveform], sampling_rate=extractor.sampling_rate, return_tensors="pt")
+
+    globals()["_extra"] = {"waveform": torch.tensor(waveform).float().contiguous(),
+                           "mask": features["input_features_mask"][0].to(torch.int32).contiguous()}
+    return features["input_features"][0].float().contiguous()
+
+
+def run_gemma3n_audio_real(image, checkpoint):
+    """The Gemma 3n audio encoder on the RELEASED weights, loaded on its own out of the tri-modal
+    checkpoint (the decoder and the vision tower stay on disk).
+
+    The encoder is a pure function of its mel, so a deterministic random mel measures it exactly; no
+    audio file is needed. `--checkpoint` is the release directory. `image` unused.
+    """
+    import glob
+    import os
+    from safetensors.torch import load_file
+    from transformers import AutoConfig
+    from transformers.models.gemma3n.modeling_gemma3n import Gemma3nAudioEncoder
+
+    config = AutoConfig.from_pretrained(checkpoint).audio_config
+    model = Gemma3nAudioEncoder(config).eval().float()
+
+    prefix = "model.audio_tower."
+    collected = {}
+    for shard in sorted(glob.glob(os.path.join(checkpoint, "*.safetensors"))):
+        for key, value in load_file(shard).items():
+            if key.startswith(prefix):
+                collected[key[len(prefix):]] = value.float()
+    missing, unexpected = model.load_state_dict(collected, strict=False)
+    print(f"audio tower: loaded {len(collected)}, missing {len(missing)}, unexpected {len(unexpected)}")
+    if missing or unexpected:
+        raise SystemExit(f"audio tower did not load strictly: missing {missing[:5]} unexpected {unexpected[:5]}")
+
+    torch.manual_seed(11)
+    frames = 300
+    mel = torch.randn(1, frames, config.input_feat_size)
+    mask = torch.zeros(1, frames, dtype=torch.bool)
+
+    block = model.conformer[0]
+    with torch.no_grad():
+        subsampled = model.subsample_conv_projection(mel)
+        sub_mask = torch.zeros(1, subsampled.shape[1], dtype=torch.bool)
+        # The block's own seams, so a divergence lands on a branch rather than on "the block".
+        after_ffw_start = block.ffw_layer_start(subsampled)
+        after_attention = block.attention(after_ffw_start, sub_mask)
+        after_lconv = block.lconv1d(after_attention * (~sub_mask).unsqueeze(-1).to(after_attention.dtype))
+        after_ffw_end = block.ffw_layer_end(after_lconv)
+        first = block(subsampled, sub_mask)
+        out = model(audio_mel=mel, audio_mel_mask=mask)
+
+    globals()["_extra"] = {"mel": mel[0].float().contiguous(),
+                           "subsampled": subsampled[0].float().contiguous(),
+                           "ffw_start": after_ffw_start[0].float().contiguous(),
+                           "attention": after_attention[0].float().contiguous(),
+                           "lconv": after_lconv[0].float().contiguous(),
+                           "ffw_end": after_ffw_end[0].float().contiguous(),
+                           "first_block": first[0].float().contiguous()}
+    return out.last_hidden_state[0].float().contiguous()
+
+
+def run_gemma3n(image, checkpoint):
+    """Gemma 3n text-decoder logits on the RELEASED weights, from transformers' own Gemma3n.
+
+    `--checkpoint` is a released model DIRECTORY (the tri-modal E2B / E4B releases; the decoder is
+    loaded on its own, so the vision and audio towers stay on disk). Runs under the gemma oracle
+    interpreter. `IK_GEMMA_DTYPE=bfloat16` runs both sides at the checkpoint's own precision, which is
+    what the larger sizes need to fit.
+
+    Records the token ids both sides read, the decoder's logits for the whole prompt, every hidden
+    state for the per-layer isolation, and the greedy continuation. `image` unused.
+    """
+    import os
+    import torch
+    from transformers import AutoConfig, AutoTokenizer, Gemma3nForCausalLM
+
+    dtype = torch.bfloat16 if os.environ.get("IK_GEMMA_DTYPE") == "bfloat16" else torch.float32
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    config = AutoConfig.from_pretrained(checkpoint)
+    text_config = getattr(config, "text_config", config)
+    model = Gemma3nForCausalLM.from_pretrained(checkpoint, config=text_config, dtype=dtype).eval()
+
+    prompt = "The capital of France is"
+    ids = tokenizer(prompt, return_tensors="pt").input_ids
+
+    with torch.no_grad():
+        out = model(ids, output_hidden_states=True)
+        logits = out.logits[0]
+        generated = model.generate(ids, max_new_tokens=12, do_sample=False,
+                                   pad_token_id=tokenizer.eos_token_id)
+    continuation = generated[0, ids.shape[1]:]
+    print("continuation:", tokenizer.decode(continuation))
+
+    extra = {"tokens": ids[0].to(torch.int32).contiguous(),
+             "continuation": continuation.to(torch.int32).contiguous()}
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits.float().contiguous()
+
+
+def run_gemma3n_vision_real(image, checkpoint):
+    """The Gemma 3n vision tower on the RELEASED weights: timm's own MobileNetV5-300M encoder, loaded
+    out of the tri-modal checkpoint, plus the multimodal embedder that turns its grid into soft tokens.
+
+    The tower is a pure function of its pixels, so a deterministic random frame in `0...1` measures it
+    exactly and takes the release's own resize out of the comparison (that resize is CoreGraphics on
+    the Swift side and PIL here, a documented approximation). Records the stem, each of the four
+    stages, the fused grid, and the projected soft tokens. `image` unused.
+    """
+    import glob
+    import os
+    import timm
+    from safetensors.torch import load_file
+    from transformers import AutoConfig
+    from transformers.models.gemma3n.modeling_gemma3n import Gemma3nMultimodalEmbedder
+
+    config = AutoConfig.from_pretrained(checkpoint)
+    tower = timm.create_model("mobilenetv5_300m_enc", pretrained=False, num_classes=0).eval().float()
+    embedder = Gemma3nMultimodalEmbedder(config.vision_config, config.text_config).eval().float()
+
+    tower_prefix = "model.vision_tower.timm_model."
+    embed_prefix = "model.embed_vision."
+    tower_state, embed_state = {}, {}
+    for shard in sorted(glob.glob(os.path.join(checkpoint, "*.safetensors"))):
+        for key, value in load_file(shard).items():
+            if key.startswith(tower_prefix):
+                tower_state[key[len(tower_prefix):]] = value.float()
+            elif key.startswith(embed_prefix):
+                embed_state[key[len(embed_prefix):]] = value.float()
+    missing, unexpected = tower.load_state_dict(tower_state, strict=False)
+    print(f"vision tower: loaded {len(tower_state)}, missing {len(missing)}, unexpected {len(unexpected)}")
+    if missing or unexpected:
+        raise SystemExit(f"vision tower did not load strictly: missing {missing[:5]} unexpected {unexpected[:5]}")
+    missing, unexpected = embedder.load_state_dict(embed_state, strict=False)
+    print(f"embed_vision: loaded {len(embed_state)}, missing {len(missing)}, unexpected {len(unexpected)}")
+
+    torch.manual_seed(19)
+    size = config.vision_config.image_size if hasattr(config.vision_config, "image_size") else 768
+    pixels = torch.rand(1, 3, size, size)
+
+    stages = {}
+    with torch.no_grad():
+        x = tower.conv_stem(pixels)
+        stages["stem"] = x.clone()
+        captured = []
+        for index, block in enumerate(tower.blocks):
+            x = block(x)
+            stages[f"stage{index}"] = x.clone()
+            if (index + 1) in tower.msfa_indices:
+                captured.append(x)
+        fused = tower.msfa(captured)
+        whole = tower.forward_features(pixels)
+        tokens = fused.reshape(1, config.vision_config.hidden_size,
+                               config.vision_soft_tokens_per_image).permute(0, 2, 1)
+        tokens = tokens * (config.vision_config.hidden_size ** 0.5)
+        projected = embedder(inputs_embeds=tokens)
+
+    extra = {"pixels": pixels[0].permute(1, 2, 0).float().contiguous(),
+             "fused": fused[0].permute(1, 2, 0).float().contiguous(),
+             "whole": whole[0].permute(1, 2, 0).float().contiguous(),
+             "projected": projected[0].float().contiguous()}
+    for name, value in stages.items():
+        extra[name] = value[0].permute(1, 2, 0).float().contiguous()
+    for key, value in embedder.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return fused[0].permute(1, 2, 0).float().contiguous()
+
+
+def run_gemma3n_conditional_real(image, checkpoint):
+    """The WHOLE Gemma 3n on the released weights: the vision tower, the multimodal embedder, the
+    two-stage splice into the prompt, and the decoder over the fused sequence.
+
+    Runs the release's own processor so the prompt's token layout — the markers around the 256 image
+    placeholders — is the release's rather than this port's guess, and records the processor's pixel
+    values so both sides read identical pixels (the resize is PIL here and CoreGraphics on the Swift
+    side, a documented approximation that would otherwise sit inside the comparison).
+
+    Records the token ids, the pixel values, the fused input embeddings, the per-position argmax, the
+    logits of the last positions (the whole matrix is a quarter of a gigabyte), and the greedy
+    continuation.
+    """
+    import numpy as np
+    from PIL import Image
+    from transformers import AutoProcessor, Gemma3nForConditionalGeneration
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    model = Gemma3nForConditionalGeneration.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    # The ungated mirror ships no chat template, so the turn is written out with the release's own
+    # markers and the processor expands the image placeholder into its soft-token run.
+    prompt = (f"<start_of_turn>user\n{processor.image_token}Describe this image."
+              f"<end_of_turn>\n<start_of_turn>model\n")
+    inputs = processor(text=[prompt], images=[pil], return_tensors="pt")
+    ids = inputs["input_ids"]
+    pixels = inputs["pixel_values"]
+    print("prompt tokens:", ids.shape, "image placeholders:",
+          int((ids == model.config.image_token_id).sum()))
+
+    with torch.no_grad():
+        fused = model.model.get_input_embeddings()(ids)
+        out = model(input_ids=ids, pixel_values=pixels)
+        logits = out.logits[0]
+        generated = model.generate(**inputs, max_new_tokens=8, do_sample=False)
+    continuation = generated[0, ids.shape[1]:]
+    print("continuation:", processor.decode(continuation))
+
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "pixels": pixels[0].permute(1, 2, 0).float().contiguous(),
+        "text_embeddings": fused[0].float().contiguous(),
+        "argmax": logits.argmax(-1).to(torch.int32).contiguous(),
+        "last_logits": logits[-16:].float().clone().contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    return logits[-1].float().clone().contiguous()   # `last_logits` aliases it otherwise
+
+
+def run_gemma3(image, checkpoint):
+    """Gemma 3 text-decoder logits, from transformers' own Gemma3 implementation.
+
+    `--checkpoint` is a released model DIRECTORY: a text-only size (`gemma3_text`: 270M, 1B) loads as
+    `Gemma3ForCausalLM`, a multimodal one (`gemma3`: 4B and up) as `Gemma3ForConditionalGeneration`
+    driven text-only. Runs under the gemma oracle interpreter.
+
+    The record carries the token ids both sides read, the decoder's logits for the whole prompt, the
+    greedy continuation (which the reference decodes through its hybrid cache, so the Swift cache is
+    measured by it), every hidden state for the per-layer isolation harness, the chat-templated ids of
+    a one-turn conversation, and the ids of a few tokenizer probe strings.
+    """
+    import json
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    if config.get("model_type") == "gemma3":
+        model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    else:
+        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+
+    prompt = "The capital of France is"
+    ids = tokenizer(prompt, return_tensors="pt").input_ids
+    with torch.no_grad():
+        out = model(input_ids=ids, output_hidden_states=True)
+        logits = out.logits[0]
+        generated = model.generate(input_ids=ids, max_new_tokens=12, do_sample=False,
+                                   pad_token_id=tokenizer.pad_token_id)
+    continuation = generated[0, ids.shape[1]:]
+
+    # The rendered template already spells `<bos>`, so it is tokenized without a second one.
+    chat = tokenizer.apply_chat_template(
+        [{"role": "user", "content": "Describe the sky in one sentence."}], add_generation_prompt=True,
+        tokenize=False)
+    extra = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        "chat_tokens": torch.tensor(tokenizer(chat, add_special_tokens=False).input_ids, dtype=torch.int32),
+    }
+    for index, probe in enumerate(_GEMMA3_TOKENIZER_PROBES):
+        extra[f"probe.{index}"] = torch.tensor(tokenizer(probe, add_special_tokens=False).input_ids, dtype=torch.int32)
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits.float().contiguous()
+
+
+# Strings the Swift tokenizer is held to the reference on: runs of spaces, multi-byte text, newlines
+# around a marker (the double newline merges with a neighbouring one), and a chat turn with its markers.
+_GEMMA3_TOKENIZER_PROBES = [
+    "The capital of France is", "  two  spaces ", "na\u00efve caf\u00e9 \u2615 \u4f60\u597d", "a\nb\n\nc",
+    "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n",
+    "user\n\n\n<start_of_image><image_soft_token><image_soft_token><end_of_image>\n\nDescribe this.",
+]
+
+
+def _gemma3_tiny_config(**overrides):
+    from transformers import Gemma3TextConfig
+    settings = dict(
+        hidden_size=64, num_hidden_layers=3, num_attention_heads=4, num_key_value_heads=2, head_dim=16,
+        intermediate_size=96, vocab_size=131, query_pre_attn_scalar=16, sliding_window=4,
+        sliding_window_pattern=3, rope_theta=1000000.0, rope_local_base_freq=10000.0,
+        rope_scaling={"rope_type": "linear", "factor": 8.0}, attn_logit_softcapping=50.0,
+        final_logit_softcapping=30.0, max_position_embeddings=64)
+    settings.update(overrides)
+    return Gemma3TextConfig(**settings)
+
+
+def run_gemma3_tiny(image):
+    """The Gemma 3 decoder's arithmetic at a tiny random configuration, from transformers' own
+    Gemma3ForCausalLM: a 4-position sliding window over a sliding/sliding/full pattern with a
+    12-token prompt (so the sliding layers see less than the full one), a linear rotary scaling on
+    the full layer, an attention soft-cap, and a final logit soft-cap. Records the logits, every
+    hidden state, the weights under the release naming, the greedy continuation the reference decodes
+    through its cache, and the teacher-forced logits over prompt + continuation (what a cached
+    step-by-step decode must reproduce). `image` unused.
+    """
+    from transformers import Gemma3ForCausalLM
+
+    config = _gemma3_tiny_config()
+    print("layer_types:", config.layer_types, "rope:", config.rope_parameters)
+    model = _randomized(Gemma3ForCausalLM(config), seed=41)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5, 88, 30, 44, 120]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+        generated = model.generate(tokens, max_new_tokens=6, do_sample=False, pad_token_id=0)
+        full = model(generated).logits[0]
+    continuation = generated[0, tokens.shape[1]:]
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous(),
+             "continuation": continuation.to(torch.int32).contiguous(),
+             "full_logits": full.float().contiguous()}
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        if key == "lm_head.weight":                                 # tied to the embedding; safetensors refuses the alias
+            continue
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def run_gemma3_bidirectional_tiny(image):
+    """The Gemma 3 encoder read bidirectionally (`use_bidirectional_attention`, EmbeddingGemma's
+    backbone) at a tiny random configuration with a window the 12-token sequence exceeds, from
+    transformers' own Gemma3TextModel. The release states the window as its full span and the
+    reference turns it into the exclusive bound `span // 2 + 1` on `|q - k|` — which a short input
+    never reaches, so this is where that rule is measured. Records the last hidden state, every hidden
+    state, and the weights. `image` unused.
+    """
+    from transformers import Gemma3TextModel
+
+    config = _gemma3_tiny_config(use_bidirectional_attention=True, sliding_window=6,
+                                 rope_scaling=None, attn_logit_softcapping=None,
+                                 final_logit_softcapping=None)
+    print("effective sliding_window:", config.sliding_window)
+    model = _randomized(Gemma3TextModel(config), seed=43)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5, 88, 30, 44, 120]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].float().clone().contiguous()   # `hidden.N` aliases it otherwise
+
+
+def _gemma3n_tiny_config(**overrides):
+    from transformers import Gemma3nTextConfig
+    layers = 6
+    settings = dict(
+        hidden_size=64, num_hidden_layers=layers, num_attention_heads=4, num_key_value_heads=2,
+        head_dim=16, intermediate_size=[96] * layers, vocab_size=140,
+        vocab_size_per_layer_input=128, hidden_size_per_layer_input=8,
+        altup_num_inputs=4, altup_active_idx=0, altup_correct_scale=True, laurel_rank=8,
+        num_kv_shared_layers=2, sliding_window=4,
+        layer_types=["sliding_attention", "sliding_attention", "full_attention",
+                     "sliding_attention", "sliding_attention", "full_attention"],
+        activation_sparsity_pattern=[0.95, 0.95, 0.0, 0.0, 0.0, 0.0],
+        rope_theta=1000000.0, rope_local_base_freq=10000.0,
+        final_logit_softcapping=30.0, max_position_embeddings=64)
+    settings.update(overrides)
+    return Gemma3nTextConfig(**settings)
+
+
+def run_gemma3n_tiny(image):
+    """The Gemma 3n decoder's arithmetic at a tiny random configuration, from transformers' own
+    Gemma3nForCausalLM.
+
+    Gemma 3n is a distinct architecture rather than a Gemma 3 variant, and this exercises every part
+    of it that a shape cannot show: AltUp's four parallel residual copies with their per-token
+    prediction and correction maps, the LAuReL low-rank detour, the per-layer input embeddings gated
+    into the inactive copies, the Gaussian activation sparsity on the first two layers' feed-forward
+    gates (the last four are dense, so both paths are covered), and the trailing two layers that
+    compute no keys or values and reuse an earlier layer's — one sliding, one full, so the rule that
+    a layer reuses the last non-shared layer OF ITS OWN KIND is measured rather than assumed. The
+    12-token prompt exceeds the 4-position window, so the sliding layers see less than the full ones.
+
+    Records the logits, every hidden state (so a divergence is located to a layer), the weights under
+    the release naming, the greedy continuation the reference decodes through its cache, and the
+    teacher-forced logits over prompt + continuation, which a cached step-by-step decode must
+    reproduce. `image` unused.
+    """
+    from transformers import Gemma3nForCausalLM
+
+    config = _gemma3n_tiny_config()
+    print("layer_types:", config.layer_types, "| kv shared:", config.num_kv_shared_layers,
+          "| sparsity:", config.activation_sparsity_pattern)
+    model = _randomized(Gemma3nForCausalLM(config), seed=47)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5, 88, 30, 44, 120]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+        generated = model.generate(tokens, max_new_tokens=6, do_sample=False, pad_token_id=0)
+        full = model(generated).logits[0]
+    continuation = generated[0, tokens.shape[1]:]
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous(),
+             "continuation": continuation.to(torch.int32).contiguous(),
+             "full_logits": full.float().contiguous()}
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    for key, value in model.state_dict().items():
+        if key == "lm_head.weight":                                 # tied to the embedding; safetensors refuses the alias
+            continue
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def _gemma3_pixel_values(image, checkpoint):
+    """The plate through the release's own image processor: `[1, 3, 896, 896]` in -1...1."""
+    from PIL import Image
+    from transformers import AutoImageProcessor
+
+    processor = AutoImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    return processor(images=[pil], return_tensors="pt")["pixel_values"]
+
+
+def run_gemma3_vision_real(image, checkpoint):
+    """The Gemma 3 vision path on the RELEASED weights: the SigLIP tower and the multimodal projector,
+    loaded selectively from the multimodal checkpoint (the decoder's 15 GB stays on disk). The plate
+    goes through the release's own image processor, so the record carries the reference's pixel
+    values and the Swift side measures the network rather than the resize. Records the patch
+    embeddings, encoder layer 0, the tower's last hidden state, and the 256 projected soft tokens.
+    `--checkpoint` is the release directory.
+    """
+    import json
+    from safetensors import safe_open
+    from transformers import Gemma3Config, SiglipVisionConfig, SiglipVisionModel
+    from transformers.models.gemma3.modeling_gemma3 import Gemma3MultiModalProjector
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    vision = SiglipVisionModel(SiglipVisionConfig(**config["vision_config"])).eval()
+    projector = Gemma3MultiModalProjector(Gemma3Config(**config)).eval()
+
+    vision_state, projector_state = {}, {}
+    index = json.load(open(os.path.join(checkpoint, "model.safetensors.index.json")))["weight_map"]
+    for shard in sorted(set(index.values())):
+        with safe_open(os.path.join(checkpoint, shard), framework="pt") as handle:
+            for key in handle.keys():
+                # The released file is in the transformers 4.x layout (`vision_tower.vision_model.`);
+                # a 5.x-written one nests the same under `model.`.
+                name = key[len("model."):] if key.startswith("model.") else key
+                if name.startswith("vision_tower.vision_model."):
+                    vision_state[name[len("vision_tower.vision_model."):]] = handle.get_tensor(key).float()
+                elif name.startswith("multi_modal_projector."):
+                    projector_state[name[len("multi_modal_projector."):]] = handle.get_tensor(key).float()
+    vision.load_state_dict(vision_state, strict=True)
+    projector.load_state_dict(projector_state, strict=True)
+
+    pixel_values = _gemma3_pixel_values(image, checkpoint)
+    # transformers 5 flattened SiglipVisionModel (no `vision_model` child); 4.x keeps it.
+    tower = getattr(vision, "vision_model", vision)
+    with torch.no_grad():
+        embeddings = tower.embeddings(pixel_values)
+        layer0 = tower.encoder.layers[0](embeddings, attention_mask=None)
+        layer0 = layer0[0] if isinstance(layer0, tuple) else layer0
+        hidden = vision(pixel_values=pixel_values).last_hidden_state
+        projected = projector(hidden)
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values[0].float().contiguous(),
+        "vision_embeddings": embeddings[0].float().contiguous(),
+        "vision_layer0": layer0[0].float().contiguous(),
+        "vision_hidden": hidden[0].float().contiguous(),
+    }
+    return projected[0].float().contiguous()                        # [256, text hidden]
+
+
+def run_gemma3_conditional_real(image, checkpoint):
+    """The FULL Gemma3ForConditionalGeneration on the released multimodal weights: the plate and a
+    question through the processor (the chat template with an image item, expanded to the
+    `\n\n<start_of_image>` + 256 soft tokens + `<end_of_image>\n\n` sequence), the vision tower, the
+    projector, the splice, and the decoder end to end — with the bidirectional attention among the
+    image tokens the processor's `token_type_ids` turn on. `--checkpoint` is the release directory.
+
+    Records the input ids, the token types, the reference's pixel values, the argmax at every
+    position, the logits at the last 16 positions (the whole matrix is 290 MB), every hidden state,
+    and the greedy continuation.
+    """
+    from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    messages = [{"role": "user", "content": [{"type": "image"},
+                                             {"type": "text", "text": "Describe this image in one sentence."}]}]
+    # The rendered template already spells `<bos>`; the processor expands `<start_of_image>` into the
+    # full image sequence and marks the soft tokens in `token_type_ids`.
+    text = processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    inputs = processor(text=text, images=[pil], add_special_tokens=False, return_tensors="pt")
+    with torch.no_grad():
+        out = model(input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"],
+                    token_type_ids=inputs["token_type_ids"], output_hidden_states=True)
+        logits = out.logits[0]
+        generated = model.generate(**inputs, max_new_tokens=12, do_sample=False)
+    continuation = generated[0, inputs["input_ids"].shape[1]:]
+
+    extra = {
+        "tokens": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "token_types": inputs["token_type_ids"][0].to(torch.int32).contiguous(),
+        "pixel_values": inputs["pixel_values"][0].float().contiguous(),
+        "argmax": logits.argmax(dim=-1).to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits[-16:].float().contiguous()
 
 
 def run_gemma4_moe(image, checkpoint):
@@ -2313,7 +3020,7 @@ def run_gemma4_audio(image, checkpoint):
             continue
         extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
     globals()["_extra"] = extra
-    return out.last_hidden_state[0].float().contiguous()
+    return out.last_hidden_state[0].float().clone().contiguous()   # `hidden.N` aliases it otherwise
 
 
 def run_qwen3_5(image, checkpoint):
@@ -2519,6 +3226,9 @@ def run_sam2_encoder(image, checkpoint):
         "tiny":      dict(embed_dim=96,  num_heads=1, stages=(1, 2, 7, 2),
                           global_att_blocks=(5, 7, 9), window_spec=(8, 4, 14, 7),
                           window_pos_embed_bkg_spatial_size=(7, 7)),
+        "small":     dict(embed_dim=96,  num_heads=1, stages=(1, 2, 11, 2),
+                          global_att_blocks=(7, 10, 13), window_spec=(8, 4, 14, 7),
+                          window_pos_embed_bkg_spatial_size=(7, 7)),
         "base_plus": dict(embed_dim=112, num_heads=2, stages=(2, 3, 16, 3),
                           global_att_blocks=(12, 16, 20), window_spec=(8, 4, 14, 7),
                           window_pos_embed_bkg_spatial_size=(14, 14)),
@@ -2526,7 +3236,7 @@ def run_sam2_encoder(image, checkpoint):
                           global_att_blocks=(23, 33, 43), window_spec=(8, 4, 16, 8),
                           window_pos_embed_bkg_spatial_size=(7, 7)),
     }[variant]
-    channels = {"tiny": [768, 384, 192, 96], "base_plus": [896, 448, 224, 112],
+    channels = {"tiny": [768, 384, 192, 96], "small": [768, 384, 192, 96], "base_plus": [896, 448, 224, 112],
                 "large": [1152, 576, 288, 144]}[variant]
     trunk = Hiera(**geometry)
     neck = FpnNeck(position_encoding=PositionEmbeddingSine(num_pos_feats=256), d_model=256,
@@ -2583,6 +3293,9 @@ def run_sam2_decoder(image, checkpoint):
         "tiny":      dict(embed_dim=96,  num_heads=1, stages=(1, 2, 7, 2),
                           global_att_blocks=(5, 7, 9), window_spec=(8, 4, 14, 7),
                           window_pos_embed_bkg_spatial_size=(7, 7)),
+        "small":     dict(embed_dim=96,  num_heads=1, stages=(1, 2, 11, 2),
+                          global_att_blocks=(7, 10, 13), window_spec=(8, 4, 14, 7),
+                          window_pos_embed_bkg_spatial_size=(7, 7)),
         "base_plus": dict(embed_dim=112, num_heads=2, stages=(2, 3, 16, 3),
                           global_att_blocks=(12, 16, 20), window_spec=(8, 4, 14, 7),
                           window_pos_embed_bkg_spatial_size=(14, 14)),
@@ -2590,7 +3303,7 @@ def run_sam2_decoder(image, checkpoint):
                           global_att_blocks=(23, 33, 43), window_spec=(8, 4, 16, 8),
                           window_pos_embed_bkg_spatial_size=(7, 7)),
     }[variant]
-    channels = {"tiny": [768, 384, 192, 96], "base_plus": [896, 448, 224, 112],
+    channels = {"tiny": [768, 384, 192, 96], "small": [768, 384, 192, 96], "base_plus": [896, 448, 224, 112],
                 "large": [1152, 576, 288, 144]}[variant]
     trunk = Hiera(**geometry)
     neck = FpnNeck(position_encoding=PositionEmbeddingSine(num_pos_feats=256), d_model=256,
@@ -3019,7 +3732,9 @@ def run_snac(image):
     from snac import SNAC
 
     layers.NoiseBlock.forward = lambda self, x: x                      # deterministic decode
-    model = SNAC.from_pretrained("hubertsiuzdak/snac_24khz").eval()
+    # IK_SNAC_MODEL selects the release (24khz speech by default; 32khz / 44khz are the music
+    # codecs, with four codebooks and bottleneck attention).
+    model = SNAC.from_pretrained(os.environ.get("IK_SNAC_MODEL", "hubertsiuzdak/snac_24khz")).eval()
     hop = int(np.prod(model.encoder_rates)) if hasattr(model, "encoder_rates") else 512
     frames = 24
     samples = frames * hop
@@ -3679,7 +4394,7 @@ def run_sam_encoder(image, checkpoint):
     """
     from segment_anything import sam_model_registry, SamPredictor
 
-    predictor = SamPredictor(sam_model_registry["vit_b"](checkpoint=checkpoint).eval())
+    predictor = SamPredictor(sam_model_registry[os.environ.get("IK_SAM_VARIANT", "vit_b")](checkpoint=checkpoint).eval())
     predictor.set_image((image * 255).astype(np.uint8))
     features = predictor.features[0]                            # [256, 64, 64]
     return features.permute(1, 2, 0).contiguous()               # [64, 64, 256], matching MLX's NHWC
@@ -3689,7 +4404,7 @@ def run_sam(image, checkpoint):
     """The official SAM mask from a single positive point at (w/2, h/3), as probabilities in 0...1."""
     from segment_anything import sam_model_registry, SamPredictor
 
-    predictor = SamPredictor(sam_model_registry["vit_b"](checkpoint=checkpoint).eval())
+    predictor = SamPredictor(sam_model_registry[os.environ.get("IK_SAM_VARIANT", "vit_b")](checkpoint=checkpoint).eval())
     predictor.set_image((image * 255).astype(np.uint8))
     height, width = image.shape[:2]
     point = np.array([[width / 2.0, height / 3.0]])
@@ -3708,7 +4423,7 @@ def run_sam_decoder(image, checkpoint):
     """
     from segment_anything import sam_model_registry, SamPredictor
 
-    sam = sam_model_registry["vit_b"](checkpoint=checkpoint).eval()
+    sam = sam_model_registry[os.environ.get("IK_SAM_VARIANT", "vit_b")](checkpoint=checkpoint).eval()
     predictor = SamPredictor(sam)
     predictor.set_image((image * 255).astype(np.uint8))
     height, width = image.shape[:2]
@@ -4332,6 +5047,384 @@ def run_deepseek_quant(image, checkpoint):
     globals()["_extra"] = extra
     return fp8_expected
 
+
+
+def run_gpt_oss_quant(image, checkpoint):
+    """The MXFP4 decode of a real gpt-oss expert tensor, from transformers' own converter.
+
+    `--checkpoint` is the safetensors SHARD URL holding layer 0's experts. Only the first 64 rows of
+    the first expert's `gate_up_proj_blocks` and their scales are fetched, through HTTP range requests
+    on the safetensors header and data, so the record costs about 100 KB rather than the shard's
+    5 GB. The expectation is `transformers.integrations.mxfp4.convert_moe_packed_tensors`, the code
+    the library itself dequantizes the release with: a byte holds the earlier value in its low nibble,
+    the sixteen e2m1 values are looked up, and each group of 32 is scaled by two to the power of its
+    e8m0 byte less 127.
+    """
+    import json, struct, subprocess
+    from transformers.integrations.mxfp4 import convert_moe_packed_tensors
+
+    def fetch(rng):
+        done = subprocess.run(["curl", "-sSL", "--fail", "-m", "600", "-A", "InferKit/0.1",
+                               "-H", f"Range: bytes={rng}", checkpoint], capture_output=True)
+        if done.returncode != 0:
+            raise SystemExit(f"range request failed: {done.stderr.decode()[:200]}")
+        return done.stdout
+    length = struct.unpack("<Q", fetch("0-7"))[0]
+    header = json.loads(fetch(f"8-{8 + length - 1}"))
+    base = 8 + length
+    rows = 64
+    blocks_meta = header["model.layers.0.mlp.experts.gate_up_proj_blocks"]
+    scales_meta = header["model.layers.0.mlp.experts.gate_up_proj_scales"]
+    _, out_rows, groups, bytes_per_group = blocks_meta["shape"]
+    assert scales_meta["shape"][1:] == [out_rows, groups] and blocks_meta["dtype"] == "U8"
+    block_bytes = rows * groups * bytes_per_group
+    scale_bytes = rows * groups
+    blocks_start = base + blocks_meta["data_offsets"][0]
+    scales_start = base + scales_meta["data_offsets"][0]
+    blocks = torch.frombuffer(bytearray(fetch(f"{blocks_start}-{blocks_start + block_bytes - 1}")),
+                              dtype=torch.uint8).view(1, rows, groups, bytes_per_group)
+    scales = torch.frombuffer(bytearray(fetch(f"{scales_start}-{scales_start + scale_bytes - 1}")),
+                              dtype=torch.uint8).view(1, rows, groups)
+    # The converter returns the x @ W layout [experts, in, out]; the row-major [out, in] is what the
+    # packed bytes describe, and what the Swift side compares.
+    expected = convert_moe_packed_tensors(blocks, scales, dtype=torch.float32).transpose(1, 2)[0].contiguous()
+    globals()["_extra"] = {"mxfp4_bytes": blocks[0].clone(), "mxfp4_scale_bytes": scales[0].clone(),
+                           "geometry": torch.tensor([out_rows, groups, bytes_per_group], dtype=torch.int32)}
+    return expected
+
+
+def run_cmgan(image, checkpoint):
+    """CMGAN (ruizhecao96/CMGAN, MIT) through the released `TSCNet` generator, seam by seam, on one of
+    the repository's own noisy VCTK-DEMAND clips.
+
+    `--checkpoint` is a directory holding the released `ckpt` (a plain state dict) and the noisy clip
+    `p232_052_noisy.wav`; `IK_CMGAN_SRC` is the cloned `src/` directory (`models/`, `utils.py`). The
+    record reproduces `evaluation.enhance_one_track`: the RMS normalization `c`, the circular pad to a
+    multiple of the hop, a 400-point periodic-Hamming STFT at hop 100 (center, reflect), the 0.3 power
+    compression, the generator, decompression, the inverse STFT, `/ c`, and the trim to the input
+    length. Seams: the compressed spectrum, the dense encoder, every TSCB output, the mask, the
+    complex residual, and the final real / imaginary parts.
+    """
+    import sys
+    import torchaudio
+    sys.path.insert(0, os.environ["IK_CMGAN_SRC"])
+    from models import generator
+    from utils import power_compress, power_uncompress
+
+    n_fft, hop = 400, 100
+    model = generator.TSCNet(num_channel=64, num_features=n_fft // 2 + 1)
+    model.load_state_dict(torch.load(os.path.join(checkpoint, "ckpt"), map_location="cpu"))
+    model.eval()
+    waveform, rate = torchaudio.load(os.path.join(checkpoint, "p232_052_noisy.wav"))
+    assert rate == 16000, rate
+    noisy = waveform[:1]
+    with torch.no_grad():
+        c = torch.sqrt(noisy.size(-1) / torch.sum(noisy ** 2.0, dim=-1))
+        scaled = noisy * c
+        length = scaled.size(-1)
+        padded_len = int(np.ceil(length / hop)) * hop
+        padded = torch.cat([scaled, scaled[:, : padded_len - length]], dim=-1)
+        window = torch.hamming_window(n_fft)
+        spec = torch.view_as_real(torch.stft(padded, n_fft, hop, window=window, onesided=True,
+                                             return_complex=True))
+        compressed = power_compress(spec).permute(0, 1, 3, 2)          # [1, 2, T, F]
+        mag = torch.sqrt(compressed[:, 0] ** 2 + compressed[:, 1] ** 2).unsqueeze(1)
+        phase = torch.angle(torch.complex(compressed[:, 0], compressed[:, 1])).unsqueeze(1)
+        out_1 = model.dense_encoder(torch.cat([mag, compressed], dim=1))
+        out_2 = model.TSCB_1(out_1)
+        out_3 = model.TSCB_2(out_2)
+        out_4 = model.TSCB_3(out_3)
+        out_5 = model.TSCB_4(out_4)
+        mask = model.mask_decoder(out_5)
+        complex_out = model.complex_decoder(out_5)
+        est_real, est_imag = model(compressed)
+        uncompressed = power_uncompress(est_real.permute(0, 1, 3, 2), est_imag.permute(0, 1, 3, 2)).squeeze(1)
+        est_audio = torch.istft(torch.view_as_complex(uncompressed.contiguous()), n_fft, hop, window=window,
+                                onesided=True)
+        est_audio = (est_audio / c).flatten()[:length]
+    extra = {"waveform": noisy[0].contiguous(), "scale": c.reshape(1).contiguous(),
+             "padded": padded[0].contiguous(), "compressed": compressed[0].contiguous(),
+             "encoder": out_1[0].contiguous(), "tscb1": out_2[0].contiguous(), "tscb2": out_3[0].contiguous(),
+             "tscb3": out_4[0].contiguous(), "tscb4": out_5[0].contiguous(), "mask": mask[0].contiguous(),
+             "complex": complex_out[0].contiguous(), "final_real": est_real[0].contiguous(),
+             "final_imag": est_imag[0].contiguous()}
+    globals()["_extra"] = extra
+    return est_audio.contiguous()
+
+
+def run_frcrn(image, checkpoint):
+    """FRCRN SE 16K (modelscope/ClearerVoice-Studio, Apache-2.0) through the released `DCCRN`
+    (two complex UNets over a conv-STFT), seam by seam.
+
+    `--checkpoint` is the released `last_best_checkpoint.pt`; `IK_FRCRN_SRC` is the ClearerVoice source
+    dir holding `models/frcrn_se/`; `IK_FRCRN_CLIP` a 16 kHz WAV (defaults to the CMGAN noisy sample).
+    The clip is zero-padded the way `decode_one_audio_frcrn_se_16k` pads (a 1 s window, a 0.75 s
+    stride), then `model.inference` runs it whole. Seams (batch dropped, `[C, D, T, 2]`): the conv-STFT
+    spectrum, encoder 0 before and after its squeeze-excite, the bottleneck FSMN, decoder 0, the first
+    UNet's output, the combined mask, the masked spectrum, and the waveform.
+    """
+    import sys
+    import torchaudio
+    sys.path.insert(0, os.environ["IK_FRCRN_SRC"])
+    from models.frcrn_se.frcrn import DCCRN
+
+    model = DCCRN(complex=True, model_complexity=45, model_depth=14, log_amp=False, padding_mode="zeros",
+                  win_len=640, win_inc=320, fft_len=640, win_type="hanning")
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    model.load_state_dict(state["model"], strict=True)
+    model.eval()
+    clip = os.environ.get("IK_FRCRN_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_noisy.wav"))
+    waveform, rate = torchaudio.load(clip)
+    assert rate == 16000, rate
+    noisy = waveform[:1]
+    t = noisy.shape[1]
+    window, stride = 16000, 12000
+    if t < window:
+        pad = window - t
+    elif t < window + stride:
+        pad = window + stride - t
+    else:
+        pad = (t - (t - window) // stride * stride) if (t - window) % stride != 0 else 0
+    padded = torch.cat([noisy, torch.zeros(1, pad)], dim=1)
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            seams[name] = o
+        return fn
+    unet = model.unet
+    handles = [unet.encoder0.register_forward_hook(hook("encoder0")),
+               unet.se_layer_enc0.register_forward_hook(hook("se0")),
+               unet.fsmn.register_forward_hook(hook("bottleneck")),
+               unet.decoder0.register_forward_hook(hook("decoder0")),
+               unet.linear.register_forward_hook(hook("unet1"))]
+    with torch.no_grad():
+        cmp_spec = model.stft(padded).unsqueeze(1)
+        cmp_spec = torch.cat([cmp_spec[:, :, :model.feat_dim, :], cmp_spec[:, :, model.feat_dim:, :]], 1)
+        cmp_spec = torch.transpose(torch.unsqueeze(cmp_spec, 4), 1, 4)     # [1, 1, D, T, 2]
+        unet1_out = model.unet(cmp_spec)
+        mask = torch.tanh(model.unet2(unet1_out)) + torch.tanh(unet1_out)
+        est_spec, est_wav, _ = model.apply_mask(cmp_spec, mask)
+        reference = model.inference(padded)
+    for h in handles:
+        h.remove()
+    assert torch.allclose(reference, est_wav[0]), "the staged path must reproduce inference()"
+    extra = {"waveform": noisy[0].contiguous(), "padded": padded[0].contiguous(),
+             "spec": cmp_spec[0].contiguous(), "unet1": unet1_out[0].contiguous(), "mask": mask[0].contiguous(),
+             "est_spec": est_spec[0].contiguous()}
+    for name, value in seams.items():
+        extra[name] = value[0].contiguous()
+    globals()["_extra"] = extra
+    return reference.contiguous()
+
+
+def run_mossformer2_sr(image, checkpoint):
+    """MossFormer2 SR 48K (modelscope/ClearerVoice-Studio, Apache-2.0) speech super-resolution, seam by
+    seam: the HiFi-GAN log-mel, the mel-to-mel MossFormer2 backbone, the Snake HiFi-GAN generator, and
+    the scipy `bandwidth_sub` post-process of `decode_one_audio_mossformer2_sr_48k`.
+
+    `--checkpoint` is the release DIRECTORY holding `last_best_checkpoint_m.pt` and
+    `last_best_checkpoint_g.pt`; `IK_MOSSFORMER2_SR_SRC` is the ClearerVoice source dir (with
+    `models/mossformer2_sr/`, `dataloader/meldataset.py`, `bandwidth_sub.py`, and
+    `MossFormer2_SR_48K.json`). The input is a 16 kHz clip (`IK_MOSSFORMER2_SR_CLIP`, default the CMGAN
+    clean sample) resampled to 48 kHz by torchaudio and recorded, so both sides read one waveform.
+    """
+    import json
+    import sys
+    import torchaudio
+    src = os.environ["IK_MOSSFORMER2_SR_SRC"]
+    sys.path.insert(0, src)
+    from models.mossformer2_sr.generator import Mossformer, Generator
+    from models.mossformer2_sr.env import AttrDict
+    from dataloader.meldataset import mel_spectrogram
+    from bandwidth_sub import bandwidth_sub, detect_bandwidth
+
+    with open(os.path.join(src, "MossFormer2_SR_48K.json")) as f:
+        h = AttrDict(json.load(f))
+    model_m = Mossformer()
+    model_m.load_state_dict(torch.load(os.path.join(checkpoint, "last_best_checkpoint_m.pt"),
+                                       map_location="cpu", weights_only=False)["mossformer"], strict=True)
+    model_g = Generator(h)
+    model_g.load_state_dict(torch.load(os.path.join(checkpoint, "last_best_checkpoint_g.pt"),
+                                       map_location="cpu", weights_only=False)["generator"], strict=True)
+    model_m.eval()
+    model_g.eval()
+    clip = os.environ.get("IK_MOSSFORMER2_SR_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_clean.wav"))
+    waveform, rate = torchaudio.load(clip)
+    audio = torchaudio.functional.resample(waveform[:1], rate, 48000)[0].contiguous()
+    with torch.no_grad():
+        mel = mel_spectrogram(audio.unsqueeze(0), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size, h.fmin, h.fmax)
+        restored_mel = model_m(mel)
+        generated = model_g(restored_mel).squeeze()
+    inputs = audio.numpy()
+    f_low, f_high = detect_bandwidth(inputs, 48000)
+    output = bandwidth_sub(inputs, generated.numpy())
+    extra = {"waveform": audio, "mel": mel[0].contiguous(), "restored_mel": restored_mel[0].contiguous(),
+             "generated": generated.contiguous(), "f_high": torch.tensor([float(f_high)])}
+    globals()["_extra"] = extra
+    return torch.from_numpy(np.asarray(output, dtype=np.float32)).contiguous()
+
+
+def run_nuwave2(image, checkpoint):
+    """NU-Wave 2 (maum-ai/nuwave2, BSD-3) diffusion bandwidth extension through the released
+    `Diffusion` wrapper, seam by seam and step by step.
+
+    `--checkpoint` is the official Lightning checkpoint (`nuwave2_official.ckpt`); `IK_NUWAVE2_SRC` is
+    the cloned repository (`model.py`, `diffusion.py`, `hparameter.yaml`); `IK_NUWAVE2_CLIP` a 16 kHz
+    WAV (default the CMGAN clean sample). The input follows `inference.py`'s non-ground-truth path: the
+    clip peak-normalized, `resample_poly` to 48 kHz, trimmed to a multiple of the hop, the band one-hot
+    over the first `int(hi · 513)` bins. The eight-step schedule runs from a seeded standard-normal start
+    (recorded), and the record carries the start, every step's signal, and step 0's diffusion
+    embedding, first residual block, and noise prediction.
+    """
+    import sys
+    import types
+    import librosa
+    from scipy.signal import resample_poly
+    from omegaconf import OmegaConf
+    src = os.environ["IK_NUWAVE2_SRC"]
+    sys.path.insert(0, src)
+
+    class _Stub:
+        def __init__(self, *a, **k): pass
+        def __setstate__(self, state): pass
+    def _stub_attribute(attr):
+        if attr.startswith("__"):
+            raise AttributeError(attr)
+        return _Stub
+    for name in ["pytorch_lightning", "pytorch_lightning.callbacks", "pytorch_lightning.callbacks.model_checkpoint",
+                 "pytorch_lightning.callbacks.early_stopping", "pytorch_lightning.trainer", "pytorch_lightning.utilities"]:
+        module = types.ModuleType(name)
+        module.__getattr__ = _stub_attribute
+        sys.modules[name] = module
+    from diffusion import Diffusion
+
+    # The repository predates torch 2.x: its istft is handed the real (…, 2) view torch.stft returned,
+    # which a current torch refuses; the complex view is the same numbers.
+    original_istft = torch.istft
+    def istft_accepting_real(spec, *args, **kwargs):
+        if not spec.is_complex():
+            spec = torch.view_as_complex(spec.contiguous())
+        return original_istft(spec, *args, **kwargs)
+    torch.istft = istft_accepting_real
+
+    hparams = OmegaConf.load(os.path.join(src, "hparameter.yaml"))
+    diffusion = Diffusion(hparams)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)["state_dict"]
+    diffusion.load_state_dict({k[len("model."):]: v for k, v in state.items()}, strict=True)
+    diffusion.eval()
+
+    clip = os.environ.get("IK_NUWAVE2_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_clean.wav"))
+    wav, sr = librosa.load(clip, sr=None, mono=True)
+    wav = wav / np.max(np.abs(wav))
+    hop = hparams.audio.hop_length
+    wav_l = resample_poly(wav, hparams.audio.sampling_rate, sr)
+    wav_l = wav_l[: len(wav_l) - len(wav_l) % hop]
+    fft_size = hparams.audio.filter_length // 2 + 1
+    hi = (sr // 2) / (0.5 * hparams.audio.sampling_rate)
+    band = torch.zeros(fft_size, dtype=torch.int64)
+    band[: int(hi * fft_size)] = 1
+    wav_l = torch.from_numpy(wav_l.copy()).float().unsqueeze(0)
+    band = band.unsqueeze(0)
+    schedule = eval(hparams.dpm.infer_schedule)
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            if name not in seams:
+                seams[name] = o
+        return fn
+    net = diffusion.model
+    handles = [net.diffusion_embedding.register_forward_hook(hook("emb0")),
+               net.residual_layers[0].register_forward_hook(hook("layer0"))]
+    torch.manual_seed(0)
+    signal = torch.randn(wav_l.shape)
+    extra = {"waveform_low": wav_l[0].contiguous(), "band": band[0].contiguous(), "noise": signal[0].contiguous(),
+             "source": torch.from_numpy(wav.astype(np.float32)), "source_rate": torch.tensor([float(sr)])}
+    with torch.no_grad():
+        first_level = (hparams.logsnr.logsnr_max - schedule[0]) / (hparams.logsnr.logsnr_max - hparams.logsnr.logsnr_min)
+        extra["eps0"] = net(signal, wav_l, band, first_level * torch.ones(1))[0].contiguous()
+        for i, logsnr_t in enumerate(schedule):
+            logsnr_s = torch.tensor(hparams.logsnr.logsnr_max) if i == len(schedule) - 1 else schedule[i + 1]
+            signal, _ = diffusion.denoise_ddim(signal, wav_l, band, logsnr_t * torch.ones(1), logsnr_s * torch.ones(1))
+            extra["step_%d" % i] = signal[0].contiguous()
+        recon = torch.clamp(signal, min=-1, max=1 - torch.finfo(torch.float16).eps)
+    for h in handles:
+        h.remove()
+    extra["emb0"] = seams["emb0"][0].contiguous()
+    extra["layer0_x"] = seams["layer0"][0][0].contiguous()
+    extra["layer0_skip"] = seams["layer0"][1][0].contiguous()
+    globals()["_extra"] = extra
+    return recon[0].contiguous()
+
+
+def run_apollo(image, checkpoint):
+    """Apollo (JusperLee/Apollo, CC-BY-SA-4.0) music restoration through the released `Apollo` model,
+    seam by seam, on channel 0 of the repository's own sample clip (`asserts/input_wav.wav`, 44.1 kHz).
+
+    `--checkpoint` is the Hugging Face `pytorch_model.bin`; `IK_APOLLO_SRC` is the cloned repository
+    (its `look2hear` package). Records the 2-second mono input, the band features, the first and last
+    BSNet outputs, band 0's bottleneck and head, and the restored waveform.
+    """
+    import sys
+    import soundfile as sf
+    src = os.environ["IK_APOLLO_SRC"]
+    sys.path.insert(0, src)
+    import look2hear.models
+
+    model = look2hear.models.BaseModel.from_pretrain(checkpoint, sr=44100, win=20, feature_dim=256, layer=6).eval()
+    clip = os.environ.get("IK_APOLLO_CLIP", os.path.expanduser("~/.inferkit-validation/apollo/input_wav.wav"))
+    audio, rate = sf.read(clip, dtype="float32", always_2d=True)
+    assert rate == 44100, rate
+    mono = torch.from_numpy(np.ascontiguousarray(audio[: 2 * rate, 0])).reshape(1, 1, -1)
+
+    seams = {}
+    def hook(name):
+        def fn(_m, _i, o):
+            seams[name] = o
+        return fn
+    handles = [model.BN[0].register_forward_hook(hook("bn0")), model.net[0].register_forward_hook(hook("net0")),
+               model.net.register_forward_hook(hook("net_final")), model.output[0].register_forward_hook(hook("head0"))]
+    with torch.no_grad():
+        features = model.feature_extractor(mono)
+        output = model(mono)
+    for h in handles:
+        h.remove()
+    extra = {"waveform": mono[0, 0].contiguous(), "features": features[0].contiguous(),
+             "bn0": seams["bn0"][0].contiguous(), "net0": seams["net0"][0].contiguous(),
+             "net_final": seams["net_final"][0].contiguous(), "head0": seams["head0"][0].contiguous()}
+    globals()["_extra"] = extra
+    return output[0, 0].contiguous()
+
+
+def run_metricgan(image, checkpoint):
+    """MetricGAN+ (speechbrain/metricgan-plus-voicebank) through speechbrain's own
+    SpectralMaskEnhancement, seam by seam, on the noisy clip the model card ships.
+
+    `--checkpoint` is the release DIRECTORY (hyperparams.yaml + enhance_model.ckpt + example.wav). The
+    record carries the 16 kHz waveform both sides read, the log1p-magnitude features (a 512-point
+    Hamming STFT at hop 256, zero-padded and centered), the BLSTM mask `1.2 * sigmoid(slope * x)`,
+    and the enhanced waveform (expm1 of the masked features under the noisy phase, inverse STFT,
+    peak-normalized). The generator's state dict rides along under the release's own names.
+    """
+    import torchaudio
+    from speechbrain.inference.enhancement import SpectralMaskEnhancement
+
+    enhancer = SpectralMaskEnhancement.from_hparams(source=checkpoint, savedir=checkpoint,
+                                                    run_opts={"device": "cpu"})
+    waveform, rate = torchaudio.load(os.path.join(checkpoint, "example.wav"))
+    assert rate == 16000, rate
+    noisy = waveform[:1, : 16000 * 3]                       # mono, first three seconds
+    with torch.no_grad():
+        features = enhancer.compute_features(noisy)
+        mask = enhancer.mods.enhance_model(features, lengths=torch.tensor([1.0]))
+        enhanced = enhancer.enhance_batch(noisy, lengths=torch.tensor([1.0]))
+    extra = {"waveform": noisy[0].contiguous(), "features": features[0].contiguous(),
+             "mask": mask[0].contiguous()}
+    for key, value in enhancer.mods.enhance_model.state_dict().items():
+        extra["w::" + key] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return enhanced[0].contiguous()
 
 
 def run_rope_scaling(image):
@@ -6190,14 +7283,14 @@ MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
-                     "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "denoiser": run_denoiser,
+                     "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "gemma4": run_gemma4, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet,
                      "chatterbox_voice": run_chatterbox_voice,

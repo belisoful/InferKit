@@ -129,13 +129,22 @@ final class NFKMLXResNetBackbone: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var out = NFKMLXResample.maxPooled(relu(bn1(conv1(x))), kernel: 3, stride: 2, padding: 1)
-        for stage in [layer1, layer2, layer3, layer4] {
-            for block in stage {
-                out = block(out)
-            }
-        }
-        return out
+        taps(x).3
+    }
+
+    /// The four features an encoder taps: the stem after its activation (1/2), and the outputs of
+    /// stages one (1/4), two (1/8), and four — at 1/16 when the last two stages are dilated as RVM's
+    /// backbone is, 1/32 otherwise.
+    func taps(_ x: MLXArray) -> (MLXArray, MLXArray, MLXArray, MLXArray) {
+        let stem = relu(bn1(conv1(x)))
+        var out = NFKMLXResample.maxPooled(stem, kernel: 3, stride: 2, padding: 1)
+        for block in layer1 { out = block(out) }
+        let first = out
+        for block in layer2 { out = block(out) }
+        let second = out
+        for block in layer3 { out = block(out) }
+        for block in layer4 { out = block(out) }
+        return (stem, first, second, out)
     }
 
     /// The reference nests a block's projection shortcut in a two-entry `Sequential`, so its keys are

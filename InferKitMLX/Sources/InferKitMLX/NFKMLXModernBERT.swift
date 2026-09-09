@@ -396,29 +396,10 @@ public final class NFKMLXModernBERTReranker: NSObject {
     /// `NFKByteLevelBPETokenizer` reads. The release ships only `tokenizer.json`, so its vocabulary and
     /// merges are extracted into the `vocab.json`/`merges.txt` the core reader takes.
     static func byteLevelTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
-        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = json["model"] as? [String: Any],
-              let vocabulary = model["vocab"] as? [String: Int],
-              let merges = model["merges"] as? [Any] else { return nil }
-
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil,
-              let vocabularyData = try? JSONSerialization.data(withJSONObject: vocabulary),
-              (try? vocabularyData.write(to: scratch.appendingPathComponent("vocab.json"))) != nil else {
+        guard let files = NFKMLXLanguage.byteLevelFiles(fromTokenizerJSON: directory.appendingPathComponent("tokenizer.json")) else {
             return nil
         }
-        var mergesText = "#version: 0.2\n"
-        for entry in merges {
-            if let pair = entry as? [String], pair.count == 2 {
-                mergesText += pair[0] + " " + pair[1] + "\n"
-            } else if let text = entry as? String {
-                mergesText += text + "\n"
-            }
-        }
-        guard (try? mergesText.write(to: scratch.appendingPathComponent("merges.txt"),
-                                     atomically: true, encoding: .utf8)) != nil else { return nil }
         let manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "gpt2"]]
-        return try? NFKTokenizer(forManifest: manifest, directory: scratch)
+        return try? NFKTokenizer(forManifest: manifest, directory: files)
     }
 }

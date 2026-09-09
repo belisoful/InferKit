@@ -4605,9 +4605,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         let net = NFKMLXLanguage.makeNet(geometry)
         let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
-            key.hasPrefix("w::") ? (NFKMLXLanguage.moduleKey(forRelease: String(key.dropFirst(3))), value) : nil
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
         }
-        try NFKMLXWeights.apply(NFKMLXLanguage.stackingExperts(weights), to: net, verifyShapes: true)
+        try NFKMLXWeights.apply(NFKMLXLanguage.releaseWeights(weights), to: net, verifyShapes: true)
 
         let input = MLXArray(tokens).reshaped([1, tokens.count])
         let states = net.layerStates(input)
@@ -4659,6 +4659,47 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         geometry.normalizesExpertWeights = true
         try mixtureParity(recordKey: "IK_PARITY_QWEN3_MOE_TINY", mode: "qwen3_moe",
                           label: "qwen3-moe-tiny", geometry: geometry)
+    }
+
+    // Qwen2-MoE adds a shared expert gated by a sigmoid beside the routed ones, leaves the routing
+    // weights unnormalized, and carries attention biases.
+    func testQwen2MoeTinyMatchesTheReferenceLayerByLayer() throws {
+        var geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 3, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 96, vocabularySize: 128, ropeTheta: 10_000, rmsEpsilon: 1e-6,
+            tiesWordEmbeddings: false, normalizesQueryAndKey: false, attentionBias: true)
+        geometry.expertCount = 8
+        geometry.activeExpertCount = 2
+        geometry.expertIntermediateSize = 32
+        geometry.normalizesExpertWeights = false
+        geometry.sharedExpertIntermediateSize = 48
+        try mixtureParity(recordKey: "IK_PARITY_QWEN2_MOE_TINY", mode: "qwen2_moe",
+                          label: "qwen2-moe-tiny", geometry: geometry)
+    }
+
+    // gpt-oss: sliding-window and full layers alternating, a learned sink logit per head, biases on
+    // every attention projection and on the router, fused interleaved experts with biases and the
+    // clamped SwiGLU, and YaRN with the correction band left fractional.
+    func testGPTOSSTinyMatchesTheReferenceLayerByLayer() throws {
+        var geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 4, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 32, vocabularySize: 128, ropeTheta: 150_000, rmsEpsilon: 1e-5,
+            tiesWordEmbeddings: false, normalizesQueryAndKey: false, attentionBias: true)
+        geometry.expertCount = 4
+        geometry.activeExpertCount = 2
+        geometry.expertIntermediateSize = 32
+        geometry.normalizesExpertWeights = true
+        geometry.slidingWindows = [4, nil, 4, nil]
+        geometry.attentionSinks = true
+        geometry.outputProjectionBias = true
+        geometry.routerBias = true
+        geometry.clampedSwiGLU = NFKMLXClampedSwiGLU()
+        geometry.ropeScaling = try NFKMLXRoPEScaling.read(
+            ["rope_type": "yarn", "factor": 32.0, "beta_fast": 32.0, "beta_slow": 1.0, "truncate": false,
+             "original_max_position_embeddings": 4096],
+            maximumPositions: 131_072)
+        try mixtureParity(recordKey: "IK_PARITY_GPT_OSS_TINY", mode: "gpt_oss",
+                          label: "gpt-oss-tiny", geometry: geometry)
     }
 
     func testMixtralTinyMatchesTheReferenceLayerByLayer() throws {
@@ -4717,6 +4758,42 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertFalse(object.isEmpty, "the object carries fields")
     }
 
+    // Schema-constrained generation on released weights: the keys, the types, and the parsed
+    // NFKOutputStructured come back exactly as the schema asks, from the core's own request key.
+    func testASchemaConstrainedRequestOnQwen3ConformsAndReturnsStructuredOutput() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let backend = try NFKMLXLanguage.backend(directoryURL: URL(fileURLWithPath: directory))
+        let prompt = NFKMLXLanguageBackend.chatMLPrompt(from: [
+            ["role": "user", "content": "Describe Paris as a JSON object with the keys city, country, and population."],
+        ]) + "<think>\n\n</think>\n\n"
+        let schema: [String: Any] = [
+            "type": "object",
+            "properties": ["city": ["type": "string"], "country": ["type": "string"],
+                           "population": ["type": "integer"], "landlocked": ["type": "boolean"]],
+            "required": ["city", "country", "population"],
+            "additionalProperties": false,
+        ]
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: prompt],
+            parameters: [NFKParameterMaxTokens: 96, NFKParameterTemperature: 0, NFKParameterJSONSchema: schema])
+        let result = try backend.runInference(for: request)
+        let text = try XCTUnwrap(result.text)
+        print("VALIDATION schema-constrained qwen3-0.6B: \(text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        let object = try XCTUnwrap(result.structured, "the parsed document rides under NFKOutputStructured")
+        XCTAssertTrue(Set(object.keys).isSubset(of: ["city", "country", "population", "landlocked"]))
+        XCTAssertTrue(Set(object.keys).isSuperset(of: ["city", "country", "population"]))
+        XCTAssertTrue(object["city"] is String)
+        XCTAssertTrue(object["country"] is String)
+        let population = try XCTUnwrap(object["population"] as? NSNumber)
+        XCTAssertEqual(population.doubleValue, population.doubleValue.rounded(), "population is an integer")
+
+        // A schema the grammar cannot enforce is an error, not a silently unconstrained run.
+        let refused = NFKInferenceRequest(inputs: [NFKInputPrompt: prompt],
+                                          parameters: [NFKParameterJSONSchema: ["allOf": [[String: Any]()]]])
+        XCTAssertThrowsError(try backend.runInference(for: refused))
+    }
+
     // Speculative decoding on released weights: a 0.6B draft proposing for the 1.7B target must
     // reproduce the target's own greedy continuation token for token — that is the whole contract —
     // and the acceptance rate and wall-clock ratio are what say whether it was worth it.
@@ -4749,6 +4826,82 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                      plainElapsed / speculativeElapsed))
         XCTAssertEqual(speculative, plain, "the speculative run is the target's own greedy run")
         XCTAssertGreaterThan(report.acceptanceRate, 0.5, "a same-family draft agrees most of the time")
+    }
+
+    // Whether speculation PAYS, measured where it can: a target whose step is bound by memory traffic
+    // rather than kernel launches — Qwen3-4B at its released bf16, 8 GB read per token — drafted by
+    // the 0.6B. Both sides warm up first (the first generation compiles kernels and materializes lazy
+    // weights, which is what made an earlier reading a warm-up artifact), then each is timed twice and
+    // the better run is kept. The output is the target's own greedy run either way.
+    func testSpeculativeDecodingPaysOnABandwidthBoundTarget() throws {
+        try requireMLXRuntime()
+        guard let targetDirectory = config["IK_VAL_QWEN3_4B"], let draftDirectory = config["IK_VAL_QWEN3"] else {
+            throw XCTSkip("set IK_VAL_QWEN3_4B and IK_VAL_QWEN3")
+        }
+        func loaded(_ path: String) throws -> NFKMLXLanguageNet {
+            let release = URL(fileURLWithPath: path)
+            let net = NFKMLXLanguage.makeNet(try NFKMLXLanguage.configuration(
+                fromHuggingFace: release.appendingPathComponent("config.json")))
+            try NFKMLXLanguage.loadWeights(into: net, fromDirectory: release, precision: .checkpoint)
+            return net
+        }
+        let target = try loaded(targetDirectory)
+        let draft = try loaded(draftDirectory)
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: URL(fileURLWithPath: targetDirectory)))
+        let prompt = tokenizer.encode("The history of the Roman Empire begins with").map(\.intValue)
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 64
+        options.draftTokens = 4
+
+        var warm = options
+        warm.maxTokens = 4
+        _ = target.generate(prompt: prompt, options: warm)
+        _ = target.generate(prompt: prompt, options: warm, draft: draft)
+
+        func timed(_ body: () -> [Int]) -> ([Int], Double) {
+            let started = Date()
+            let result = body()
+            return (result, Date().timeIntervalSince(started))
+        }
+        var plainBest = Double.infinity, speculativeBest = Double.infinity
+        var plain = [Int](), speculative = [Int]()
+        var report = NFKMLXSpeculativeReport()
+        for _ in 0 ..< 2 {
+            let (p, plainSeconds) = timed { target.generate(prompt: prompt, options: options) }
+            plain = p
+            plainBest = Swift.min(plainBest, plainSeconds)
+            var round = NFKMLXSpeculativeReport()
+            let (s, speculativeSeconds) = timed { target.generate(prompt: prompt, options: options, draft: draft, report: &round) }
+            speculative = s
+            speculativeBest = Swift.min(speculativeBest, speculativeSeconds)
+            report = round
+        }
+        print(String(format: "VALIDATION speculative qwen3-4B(bf16)←0.6B(bf16): %d tokens, %d rounds, acceptance %.3f, "
+                     + "plain %.2f s (%.1f tok/s), speculative %.2f s (%.1f tok/s), ratio %.2fx",
+                     plain.count, report.rounds, report.acceptanceRate, plainBest, Double(plain.count) / plainBest,
+                     speculativeBest, Double(speculative.count) / speculativeBest, plainBest / speculativeBest))
+
+        // At bf16 the batched verification pass and the single-token pass round differently, so the
+        // two runs can part at a NEAR-TIE. Where they part, the two tokens must be the target's own
+        // top two at that position, separated by a small margin — anything else is a real defect.
+        let shared = zip(speculative, plain).prefix { $0 == $1 }.count
+        if shared < Swift.min(speculative.count, plain.count) {
+            let prefix = (prompt + plain.prefix(shared)).map { Int32($0) }
+            let logits = target(MLXArray(prefix).reshaped([1, prefix.count]))
+            eval(logits)
+            let row = logits[0, -1].asType(.float32).asArray(Float.self)
+            let ranked = row.indices.sorted { row[$0] > row[$1] }
+            let margin = row[ranked[0]] - row[ranked[1]]
+            print("VALIDATION speculative bf16 divergence at token \(shared): plain \(plain[shared]) vs speculative "
+                  + "\(speculative[shared]); the target's top two there are \(ranked[0]) and \(ranked[1]) with margin \(margin)")
+            XCTAssertEqual(Set([plain[shared], speculative[shared]]), Set(ranked.prefix(2)),
+                           "the runs part only at the target's own top-two tie")
+            XCTAssertLessThan(margin, 0.5, "a near-tie, not a wrong token")
+            XCTAssertGreaterThan(shared, 16, "the runs agree well past the prompt before any tie")
+        }
+        XCTAssertGreaterThan(report.acceptanceRate, 0.3)
+        NFKMLXGPU.clearCache()
     }
 
     // Follow-on to the music embedding win: the SMALLER Qwen3 releases are TIED, so their input
@@ -4845,6 +4998,194 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         print("VALIDATION PARITY qwen3: continuation \(produced) vs reference \(reference)")
         XCTAssertEqual(produced, reference, "greedy decoding reproduces the reference's tokens")
+    }
+
+    // The 8-bit key-value cache was first measured on a tiny random net. This measures every shipped bit
+    // width on the RELEASED Qwen3-0.6B against the reference record, so the 4-bit question is answered
+    // by a number rather than left open. Two readings per setting: the last-position logits after a
+    // token-by-token decode through the packed cache (every key and value is read back from its packed
+    // form, the harshest path), and the greedy continuation against the reference's own.
+    func testTheCacheQuantizationBitWidthsAgainstTheQwen3Record() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN3"], let directory = config["IK_VAL_QWEN3"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3 and IK_VAL_QWEN3")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let referenceContinuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self).map(Int.init)
+        let lastRow = referenceLogits[referenceLogits.shape[0] - 1].asArray(Float.self).map(Double.init)
+        let theirBest = lastRow.indices.max { lastRow[$0] < lastRow[$1] }
+
+        let release = URL(fileURLWithPath: directory)
+        let configuration = try NFKMLXLanguage.configuration(
+            fromHuggingFace: release.appendingPathComponent("config.json"))
+        let net = NFKMLXLanguage.makeNet(configuration)
+        try NFKMLXLanguage.loadWeights(into: net,
+                                       from: release.appendingPathComponent("model.safetensors"))
+
+        struct Reading { let label: String; let logitCosine: Double; let sameArgmax: Bool; let agreeing: Int }
+        let settings: [(String, NFKMLXKeyValueCache.Quantization?)] = [
+            ("float", nil),
+            ("8-bit/64 per-position", .init(bits: 8, groupSize: 64, keyAxis: .headDimension)),
+            ("4-bit/64 per-position", .init(bits: 4, groupSize: 64, keyAxis: .headDimension)),
+            ("4-bit/32 per-position", .init(bits: 4, groupSize: 32, keyAxis: .headDimension)),
+        ]
+        var readings: [Reading] = []
+        for (label, quantization) in settings {
+            let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount, quantization: quantization)
+            var last: [Double] = []
+            for token in tokens {
+                let logits = net(MLXArray([Int32(token)]).reshaped([1, 1]), cache: cache)
+                eval(logits)
+                last = logits[0, -1].asArray(Float.self).map(Double.init)
+            }
+            let ourBest = last.indices.max { last[$0] < last[$1] }
+
+            var options = NFKMLXGenerationOptions()
+            options.temperature = 0
+            options.maxTokens = referenceContinuation.count
+            options.cacheQuantization = quantization
+            let produced = net.generate(prompt: tokens, options: options)
+            let agreeing = zip(produced, referenceContinuation).prefix { $0 == $1 }.count
+            readings.append(Reading(label: label, logitCosine: cosine(last, lastRow),
+                                    sameArgmax: ourBest == theirBest, agreeing: agreeing))
+            NFKMLXGPU.clearCache()
+        }
+        for reading in readings {
+            print("VALIDATION kv-cache qwen3-0.6B \(reading.label): last-logit cosine \(reading.logitCosine), "
+                  + "argmax \(reading.sameArgmax ? "same" : "DIFFERENT"), "
+                  + "continuation \(reading.agreeing)/\(referenceContinuation.count) with the reference")
+        }
+        XCTAssertGreaterThan(readings[0].logitCosine, 0.9999, "the float cache reproduces the record")
+        XCTAssertEqual(readings[0].agreeing, referenceContinuation.count, "the float cache reproduces the continuation")
+        XCTAssertGreaterThan(readings[1].logitCosine, 0.99, "8-bit tracks the full-precision logits")
+        XCTAssertTrue(readings[1].sameArgmax, "8-bit predicts the same next token")
+    }
+
+    // Which AXIS a 4-bit cache should quantize along, measured on the released Qwen3-0.6B's own keys
+    // and values over a prompt long enough to fill per-channel groups. The shipped cache groups each
+    // position along the head dimension (per token); KIVI's observation is that keys carry per-channel
+    // outliers, so grouping a channel along the sequence (per channel) keeps their precision. This
+    // reports the relative reconstruction error of every layer's K and V under each axis at 4 bits,
+    // which is what decides whether a per-channel key layout is worth building into the cache.
+    /// A 132-token paragraph, long enough to fill two 64-position key groups.
+    private static let longPrompt = "The quick brown fox jumps over the lazy dog while the orchestra tunes in the hall below. "
+            + "Autumn light falls across the harbor, where fishing boats unload crates of silver mackerel "
+            + "and the market opens its shutters one by one. A librarian catalogues the day's returns, a "
+            + "baker scores the crust of a sourdough loaf, and two children argue about whether the moon "
+            + "follows the car or the car follows the moon. The train from the capital arrives eleven "
+            + "minutes late, as it does on most Tuesdays, and the station clock is corrected by hand. "
+            + "By evening the rain has come, soft and persistent, and every window in the town is lit."
+
+    func testTheKeyValueQuantizationAxisDiagnostic() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let release = URL(fileURLWithPath: directory)
+        let (net, tokenizer) = try NFKMLXLanguage.loadedRelease(at: release)
+        let tokens = try XCTUnwrap(tokenizer).encode(Self.longPrompt).map { Int32($0.intValue) }
+        XCTAssertGreaterThan(tokens.count, 128, "the prompt fills at least two 64-position groups")
+
+        let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]), cache: cache)
+        eval(logits)
+        let arrays = cache.exportedArrays()
+
+        func relativeError(_ x: MLXArray, groupSize: Int, bits: Int) -> Double {
+            let (packed, scales, biases) = MLX.quantized(x, groupSize: groupSize, bits: bits)
+            let back = MLX.dequantized(packed, scales: scales, biases: biases, groupSize: groupSize, bits: bits)
+            let error = sqrt(((back - x) * (back - x)).sum()) / sqrt((x * x).sum())
+            eval(error)
+            return Double(error.item(Float.self))
+        }
+        struct Row { var perToken64 = 0.0, perToken32 = 0.0, perChannel64 = 0.0, perChannel32 = 0.0 }
+        var keyRows = [Row](), valueRows = [Row]()
+        for layer in 0 ..< net.configuration.layerCount {
+            guard let keys = arrays["layer.\(layer).keys"], let values = arrays["layer.\(layer).values"] else { continue }
+            // Per channel: the sequence axis becomes the last axis, trimmed to whole groups.
+            let length = keys.dim(2), whole = length - length % 64
+            for (source, isKey) in [(keys, true), (values, false)] {
+                var row = Row()
+                row.perToken64 = relativeError(source, groupSize: 64, bits: 4)
+                row.perToken32 = relativeError(source, groupSize: 32, bits: 4)
+                let alongSequence = source[0..., 0..., 0 ..< whole, 0...].transposed(0, 1, 3, 2)
+                row.perChannel64 = relativeError(alongSequence, groupSize: 64, bits: 4)
+                row.perChannel32 = relativeError(alongSequence, groupSize: 32, bits: 4)
+                if isKey { keyRows.append(row) } else { valueRows.append(row) }
+            }
+        }
+        func mean(_ rows: [Row], _ pick: (Row) -> Double) -> Double { rows.map(pick).reduce(0, +) / Double(rows.count) }
+        func report(_ label: String, _ rows: [Row]) {
+            print(String(format: "VALIDATION kv-axis qwen3-0.6B %@ 4-bit mean relative error: per-token g64 %.4f, g32 %.4f; "
+                         + "per-channel g64 %.4f, g32 %.4f (over %d layers, %d positions)",
+                         label, mean(rows, \.perToken64), mean(rows, \.perToken32), mean(rows, \.perChannel64),
+                         mean(rows, \.perChannel32), rows.count, tokens.count))
+            let worst = rows.enumerated().max { $0.element.perToken64 < $1.element.perToken64 }!
+            print(String(format: "VALIDATION kv-axis qwen3-0.6B %@ worst layer %d: per-token g64 %.4f, per-channel g64 %.4f",
+                         label, worst.offset, worst.element.perToken64, worst.element.perChannel64))
+        }
+        report("keys", keyRows)
+        report("values", valueRows)
+        NFKMLXGPU.clearCache()
+    }
+
+    // The per-channel key layout measured end to end on the released Qwen3-0.6B over the same long
+    // prompt the diagnostic used, beside the per-position layout that collapsed at 4 bits. One prefill
+    // packs the prompt (two full groups of 64 and a residual), then a greedy continuation runs through
+    // the packed cache; both are scored against the float cache.
+    func testThePerChannelKeyCacheOnQwen3() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let (net, tokenizer) = try NFKMLXLanguage.loadedRelease(at: URL(fileURLWithPath: directory))
+        let tokens = try XCTUnwrap(tokenizer).encode(Self.longPrompt).map(\.intValue)
+        XCTAssertGreaterThan(tokens.count, 128)
+
+        struct Reading { let label: String; let logitCosine: Double; let sameArgmax: Bool; let agreeing: Int }
+        let settings: [(String, NFKMLXKeyValueCache.Quantization?)] = [
+            ("float", nil),
+            ("8-bit/64 per-position", .init(bits: 8, groupSize: 64, keyAxis: .headDimension)),
+            ("4-bit/64 per-position", .init(bits: 4, groupSize: 64, keyAxis: .headDimension)),
+            ("4-bit/32 per-position", .init(bits: 4, groupSize: 32, keyAxis: .headDimension)),
+            ("4-bit/64 per-channel", .init(bits: 4, groupSize: 64, keyAxis: .sequence)),
+            ("4-bit/32 per-channel", .init(bits: 4, groupSize: 32, keyAxis: .sequence)),
+            ("8-bit/64 per-channel", .init(bits: 8, groupSize: 64, keyAxis: .sequence)),
+        ]
+        var floatLast = [Double]()
+        var floatContinuation = [Int]()
+        var readings = [Reading]()
+        for (label, quantization) in settings {
+            let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, quantization: quantization)
+            let logits = net(MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count]), cache: cache)
+            eval(logits)
+            let last = logits[0, -1].asArray(Float.self).map(Double.init)
+            var options = NFKMLXGenerationOptions()
+            options.temperature = 0
+            options.maxTokens = 24
+            options.cacheQuantization = quantization
+            let continuation = net.generate(prompt: tokens, options: options)
+            if quantization == nil {
+                floatLast = last
+                floatContinuation = continuation
+            }
+            let ours = last.indices.max { last[$0] < last[$1] }
+            let theirs = floatLast.indices.max { floatLast[$0] < floatLast[$1] }
+            readings.append(Reading(label: label, logitCosine: cosine(last, floatLast), sameArgmax: ours == theirs,
+                                    agreeing: zip(continuation, floatContinuation).prefix { $0 == $1 }.count))
+            NFKMLXGPU.clearCache()
+        }
+        for reading in readings {
+            print("VALIDATION kv-cache long-prompt qwen3-0.6B \(reading.label): last-logit cosine \(reading.logitCosine), "
+                  + "argmax \(reading.sameArgmax ? "same" : "DIFFERENT"), "
+                  + "continuation \(reading.agreeing)/\(floatContinuation.count) with the float cache")
+        }
+        let byLabel = Dictionary(uniqueKeysWithValues: readings.map { ($0.label, $0) })
+        XCTAssertGreaterThan(byLabel["8-bit/64 per-position"]!.logitCosine, 0.99)
+        XCTAssertGreaterThan(byLabel["4-bit/64 per-channel"]!.logitCosine, byLabel["4-bit/64 per-position"]!.logitCosine,
+                             "grouping the keys per channel is what 4 bits needs")
+        XCTAssertGreaterThan(byLabel["4-bit/32 per-channel"]!.logitCosine, byLabel["4-bit/32 per-position"]!.logitCosine)
+        XCTAssertGreaterThan(byLabel["8-bit/64 per-channel"]!.logitCosine, 0.9999,
+                             "8-bit per-channel keys reproduce the float cache")
+        XCTAssertGreaterThan(byLabel["8-bit/64 per-channel"]!.logitCosine, byLabel["8-bit/64 per-position"]!.logitCosine)
     }
 
     // The same decoder at a larger size, from a SHARDED release. Every Qwen3 above 0.6B splits its
@@ -5204,6 +5545,797 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         print("VALIDATION gemma backend generated: \(text.debugDescription)")
         XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        "the backend produces non-empty text")
+    }
+
+    // MARK: Gemma 3
+
+    /// Loads a tiny record's `w::model.*` weights into a Gemma 3 net (the release naming, which the
+    /// module's keys match once `model.` is stripped) and walks its hidden states against the record.
+    private func gemma3Isolation(_ states: [MLXArray], arrays: [String: MLXArray], name: String) -> Int? {
+        var firstBad: Int?
+        var report = [String]()
+        for index in 0 ..< states.count {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = states[index].reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            guard mine.count == theirs.count else {
+                report.append("\(index): shape \(states[index].shape) vs \(reference.shape)")
+                firstBad = firstBad ?? index
+                break
+            }
+            let similarity = cosine(mine, theirs)
+            let label = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (label as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation \(name):\n" + report.joined(separator: "\n"))
+        return firstBad
+    }
+
+    /// The per-position argmax agreement between two `[positions, vocabulary]` logit matrices.
+    private func argmaxAgreement(_ mine: [Double], _ theirs: [Double], vocabulary: Int) -> Int {
+        var agreements = 0
+        for position in 0 ..< (mine.count / vocabulary) {
+            let base = position * vocabulary
+            let ourBest = (0 ..< vocabulary).max { mine[base + $0] < mine[base + $1] }
+            let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
+            if ourBest == theirBest { agreements += 1 }
+        }
+        return agreements
+    }
+
+    // The Gemma 3 decoder's arithmetic at a tiny random configuration against transformers' own
+    // Gemma3ForCausalLM: a 4-position window over a sliding/sliding/full pattern (the 12-token prompt
+    // makes the sliding layers see less than the full one), a linear rotary scaling on the full layer,
+    // an attention soft-cap, and a final logit soft-cap. Then the cache: the reference decodes its
+    // greedy continuation through a hybrid cache, and this side's cached step-by-step decode must
+    // reproduce it token for token AND read the logits a full teacher-forced pass reads.
+    func testGemma3TinyMatchesTheReferenceLayerByLayerAndThroughTheCache() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3_TINY"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_TINY (run_reference.py gemma3_tiny)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let fullLogits = try XCTUnwrap(arrays["full_logits"])
+
+        var configuration = NFKMLXGemma3Configuration.tiny
+        configuration.finalLogitSoftcap = 30
+        let net = NFKMLXGemma3Net(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let states = net.layerStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(states)
+        let firstBad = gemma3Isolation(states, arrays: arrays, name: "gemma3-tiny")
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma3-tiny: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the decoder's arithmetic matches the reference")
+
+        // The cached decode: prefill the prompt, then feed each greedy token back through the cache.
+        let cache = NFKMLXGemma3Cache(layerCount: configuration.layerCount, slidingWindow: configuration.slidingWindow)
+        var last = net(MLXArray(tokens).reshaped([1, tokens.count]), cache: cache)[0, -1]
+        var produced = [Int32]()
+        var worstStep = 0.0
+        for step in 0 ..< continuation.count {
+            // The step's logits are what the full pass reads at the same position.
+            let reference = fullLogits[tokens.count - 1 + step].asArray(Float.self).map(Double.init)
+            worstStep = max(worstStep, 1 - cosine(last.asArray(Float.self).map(Double.init), reference))
+            let next = Int32(last.argMax().item(Int.self))
+            produced.append(next)
+            last = net(MLXArray([next]).reshaped([1, 1]), cache: cache)[0, -1]
+        }
+        print("VALIDATION PARITY gemma3-tiny: cached continuation \(produced) vs \(Array(continuation)), worst step 1 - cosine \(worstStep)")
+        XCTAssertEqual(produced, Array(continuation), "the cached greedy decode reproduces the reference's")
+        XCTAssertLessThan(worstStep, 1e-6, "every cached step reads the logits a full pass reads")
+    }
+
+    // Gemma 3n at a tiny configuration that carries every mechanism the family adds: AltUp's four
+    // residual copies, the LAuReL detour, the per-layer input embeddings, the Gaussian activation
+    // sparsity on the first two layers, and a shared-key-value tail holding one layer of each
+    // attention kind.
+    func testGemma3nTinyMatchesTheReferenceLayerByLayerAndThroughTheCache() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3N_TINY"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3N_TINY (run_reference.py gemma3n_tiny)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let fullLogits = try XCTUnwrap(arrays["full_logits"])
+
+        let configuration = NFKMLXGemma3nConfiguration.tiny
+        let net = NFKMLXGemma3nNet(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let prompt = MLXArray(tokens).reshaped([1, tokens.count])
+        let states = net.layerStates(prompt)
+        eval(states)
+        let firstBad = gemma3Isolation(states, arrays: arrays, name: "gemma3n-tiny")
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(prompt)
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma3n-tiny: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the decoder's arithmetic matches the reference")
+
+        // The cached decode: prefill the prompt, then feed each greedy token back through the cache.
+        // Key-value SHARING is what this measures beyond the full pass — a shared layer reads the
+        // donor's keys including the cache's history, not just the step's own.
+        let cache = NFKMLXGemma3nCache(layerCount: configuration.layerCount)
+        var last = net(prompt, cache: cache)[0, -1]
+        var produced = [Int32]()
+        var worstStep = 0.0
+        for step in 0 ..< continuation.count {
+            let reference = fullLogits[tokens.count - 1 + step].asArray(Float.self).map(Double.init)
+            worstStep = max(worstStep, 1 - cosine(last.asArray(Float.self).map(Double.init), reference))
+            let next = Int32(last.argMax().item(Int.self))
+            produced.append(next)
+            last = net(MLXArray([next]).reshaped([1, 1]), cache: cache)[0, -1]
+        }
+        print("VALIDATION PARITY gemma3n-tiny: cached continuation \(produced) vs \(Array(continuation)), worst step 1 - cosine \(worstStep)")
+        XCTAssertEqual(produced, Array(continuation), "the cached greedy decode reproduces the reference's")
+        XCTAssertLessThan(worstStep, 1e-6, "every cached step reads the logits a full pass reads")
+    }
+
+    // The released E2B decoder, which is what the tiny configuration stands in for. The per-layer
+    // isolation runs here too, because a defect that only appears at the released geometry — a
+    // per-layer feed-forward width, the real shared-key-value tail — shows up as one layer's number.
+    func testGemma3nMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let release = config["IK_VAL_GEMMA3N_E2B"], let record = config["IK_PARITY_GEMMA3N_E2B"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3N_E2B and IK_PARITY_GEMMA3N_E2B (run_reference.py gemma3n)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: record))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXGemma3nLanguage.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXGemma3nNet(configuration)
+        try NFKMLXGemma3nLanguage.loadWeights(into: net, fromDirectory: directory)
+
+        let prompt = MLXArray(tokens).reshaped([1, tokens.count])
+        let states = net.layerStates(prompt)
+        eval(states)
+        let firstBad = gemma3Isolation(states, arrays: arrays, name: "gemma3n-e2b")
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(prompt)
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let agreement = argmaxAgreement(mine, theirs, vocabulary: configuration.vocabularySize)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma3n-e2b: logit cosine \(similarity), argmax \(agreement)/\(tokens.count)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the released decoder matches the reference")
+        XCTAssertEqual(agreement, tokens.count, "every position predicts the reference's token")
+
+        // The greedy continuation through the cache, which is what the sharing layers' donor keys and
+        // the rotary offsets are measured by.
+        let cache = NFKMLXGemma3nCache(layerCount: configuration.layerCount)
+        var last = net(prompt, cache: cache)[0, -1]
+        var produced = [Int32]()
+        for _ in 0 ..< continuation.count {
+            let next = Int32(last.argMax().item(Int.self))
+            produced.append(next)
+            last = net(MLXArray([next]).reshaped([1, 1]), cache: cache)[0, -1]
+        }
+        print("VALIDATION PARITY gemma3n-e2b: continuation \(produced) vs \(Array(continuation))")
+        XCTAssertEqual(produced, Array(continuation), "the cached greedy decode reproduces the reference's")
+    }
+
+    // The audio encoder at a tiny configuration. The released encoder reads no future context, so the
+    // chunked attention's right reach and the relative-position shift over a span that is not purely
+    // causal are measured here and nowhere else.
+    func testGemma3nAudioTinyMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3N_AUDIO"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3N_AUDIO (run_reference.py gemma3n_audio)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXGemma3nAudioNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, NFKMLXGemma3nAudio.converted(name, value))
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let mel = try XCTUnwrap(arrays["mel"]).expandedDimensions(axis: 0)
+        // The reference marks PADDED frames; this port marks valid ones.
+        let valid = (try XCTUnwrap(arrays["mel_mask"]).expandedDimensions(axis: 0) .== Int32(0))
+
+        let subsampled = net.subsample(mel)
+        eval(subsampled)
+        let frontEnd = cosine(subsampled.reshaped([-1]).asArray(Float.self).map(Double.init),
+                              try XCTUnwrap(arrays["subsampled"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3n-audio-tiny: front end cosine \(frontEnd)")
+        XCTAssertGreaterThan(frontEnd, 0.9999, "the cumulative group norm and the strided convolutions match")
+
+        let (encoded, mask) = net(mel, valid: valid)
+        eval(encoded)
+        let similarity = cosine(encoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3n-audio-tiny: encoded cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the Conformer matches the reference")
+
+        let referenceMask = try XCTUnwrap(arrays["out_mask"]).asArray(Int32.self).map { $0 == 0 }
+        let mine = try XCTUnwrap(mask)[0].asArray(Bool.self)
+        XCTAssertEqual(mine, referenceMask, "the frame mask is reduced the way the reference reduces it")
+    }
+
+    // The audio encoder on the released weights. It is a pure function of its mel, so a deterministic
+    // random mel measures it exactly and no audio file is needed.
+    func testGemma3nAudioMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let release = config["IK_VAL_GEMMA3N_E2B"], let record = config["IK_PARITY_GEMMA3N_AUDIO_REAL"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3N_E2B and IK_PARITY_GEMMA3N_AUDIO_REAL (run_reference.py gemma3n_audio_real)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: record))
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXGemma3nAudio.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXGemma3nAudioNet(configuration)
+        try NFKMLXGemma3nAudio.loadWeights(into: net, fromDirectory: directory)
+
+        let mel = try XCTUnwrap(arrays["mel"]).expandedDimensions(axis: 0)
+        let subsampled = net.subsample(mel)
+        eval(subsampled)
+        let frontEnd = cosine(subsampled.reshaped([-1]).asArray(Float.self).map(Double.init),
+                              try XCTUnwrap(arrays["subsampled"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        // The block's own seams, so a divergence lands on a branch rather than on "the block".
+        let block = net.conformer[0]
+        func seam(_ name: String, _ mine: MLXArray) -> Double {
+            eval(mine)
+            guard let reference = arrays[name] else { return .nan }
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+        let afterStart = block.feedForwardStart(subsampled)
+        let afterAttention = block.attention(afterStart, valid: nil)
+        let afterConvolution = block.convolution(afterAttention)
+        let afterEnd = block.feedForwardEnd(afterConvolution)
+        print("VALIDATION isolation gemma3n-audio-real: ffw_start \(seam("ffw_start", afterStart)), "
+              + "attention \(seam("attention", afterAttention)), lconv \(seam("lconv", afterConvolution)), "
+              + "ffw_end \(seam("ffw_end", afterEnd))")
+
+        let first = net.conformer[0](subsampled, valid: nil)
+        eval(first)
+        let firstBlock = cosine(first.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                try XCTUnwrap(arrays["first_block"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        let (encoded, _) = net(mel, valid: nil)
+        eval(encoded)
+        let similarity = cosine(encoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3n-audio-real: front end \(frontEnd), first block \(firstBlock), encoded \(similarity)")
+        XCTAssertGreaterThan(frontEnd, 0.9999, "the released front end matches")
+        XCTAssertGreaterThan(firstBlock, 0.9999, "the released Conformer block matches")
+        XCTAssertGreaterThan(similarity, 0.9999, "the released audio encoder matches the reference")
+    }
+
+    // The vision tower on the released weights, stage by stage. MobileNetV5 is a convolutional
+    // encoder rather than the SigLIP transformer every other vision model here carries, and its
+    // asymmetric SAME padding is the kind of defect a shape check cannot see, so the isolation runs
+    // over every stage rather than only over the fused grid.
+    func testGemma3nVisionMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let release = config["IK_VAL_GEMMA3N_E2B"], let record = config["IK_PARITY_GEMMA3N_VISION_REAL"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3N_E2B and IK_PARITY_GEMMA3N_VISION_REAL (run_reference.py gemma3n_vision_real)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: record))
+        let net = NFKMLXGemma3nVisionNet()
+        try NFKMLXGemma3nVision.loadWeights(into: net, fromDirectory: URL(fileURLWithPath: release))
+
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+        func seam(_ name: String, _ mine: MLXArray) throws -> Double {
+            eval(mine)
+            let reference = try XCTUnwrap(arrays[name])
+            XCTAssertEqual(Array(mine.shape.dropFirst()), reference.shape, "\(name) shape")
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        var hidden = net.stem(pixels)
+        var report = ["  stem               cosine \(try seam("stem", hidden))"]
+        var captured = [MLXArray]()
+        for (index, stage) in net.blocks.enumerated() {
+            for block in stage { hidden = block(hidden) }
+            report.append("  stage \(index)            cosine \(try seam("stage\(index)", hidden))")
+            if index >= net.blocks.count - 2 { captured.append(hidden) }
+        }
+        let fused = net.fusion(captured)
+        let fusedSimilarity = try seam("fused", fused)
+        report.append("  fused              cosine \(fusedSimilarity)")
+        print("VALIDATION isolation gemma3n-vision:\n" + report.joined(separator: "\n"))
+
+        let whole = net(pixels)
+        let wholeSimilarity = try seam("whole", whole)
+        print("VALIDATION PARITY gemma3n-vision: fused \(fusedSimilarity), whole \(wholeSimilarity)")
+        XCTAssertGreaterThan(fusedSimilarity, 0.9999, "the fusion adapter matches the reference")
+        XCTAssertGreaterThan(wholeSimilarity, 0.9999, "the whole tower matches the reference")
+    }
+
+    // The WHOLE tri-modal model on the released weights: the vision tower, the embedder, the
+    // two-stage splice, and the decoder over the fused sequence. The prompt comes from the record so
+    // the token layout is the release processor's, and the pixels come from the record so the resize
+    // — CoreGraphics here, PIL there — stays out of the comparison.
+    func testGemma3nConditionalGenerationMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let release = config["IK_VAL_GEMMA3N_E2B"],
+              let record = config["IK_PARITY_GEMMA3N_CONDITIONAL_REAL"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3N_E2B and IK_PARITY_GEMMA3N_CONDITIONAL_REAL (run_reference.py gemma3n_conditional_real)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: record))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+
+        let directory = URL(fileURLWithPath: release)
+        let gemma = try NFKMLXGemma3n.load(directoryURL: directory)
+
+        // The prompt this port builds must be the ids the release's own processor produced.
+        let built = gemma.promptTokens("Describe this image.", withImage: true)
+        XCTAssertEqual(built.map(Int32.init), Array(tokens), "the prompt reproduces the processor's ids")
+
+        let ids = MLXArray(tokens).reshaped([1, tokens.count])
+        let logits = try gemma.model(ids, image: pixels)
+        eval(logits)
+
+        let referenceArgmax = try XCTUnwrap(arrays["argmax"]).asArray(Int32.self)
+        let mineArgmax = logits[0].argMax(axis: -1).asArray(Int32.self)
+        let agreement = zip(mineArgmax, referenceArgmax).filter { $0 == $1 }.count
+        let lastReference = try XCTUnwrap(arrays["last_logits"])
+        let lastMine = logits[0, (tokens.count - 16)...]
+        let similarity = cosine(lastMine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                lastReference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3n-conditional: argmax \(agreement)/\(tokens.count), last-16 logit cosine \(similarity)")
+        XCTAssertEqual(agreement, tokens.count, "every fused position predicts the reference's token")
+        XCTAssertGreaterThan(similarity, 0.9999, "the fused logits match the reference")
+
+        // The greedy continuation through the cache, from the same picture — which is what the
+        // sharing layers' donor keys and the spliced soft tokens are measured by past the first step.
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let cache = NFKMLXGemma3nCache(layerCount: gemma.model.decoder.configuration.layerCount)
+        var last = try gemma.model(ids, image: pixels, cache: cache)[0, -1]
+        var produced = [Int32]()
+        for _ in 0 ..< continuation.count {
+            let next = Int32(last.argMax().item(Int.self))
+            produced.append(next)
+            last = try gemma.model(MLXArray([next]).reshaped([1, 1]), cache: cache)[0, -1]
+        }
+        print("VALIDATION PARITY gemma3n-conditional: continuation \(gemma.decode(produced.map(Int.init)))")
+        XCTAssertEqual(produced, Array(continuation), "the cached greedy decode reproduces the reference's")
+    }
+
+    // Gemma 3n's audio front end, which pairs HTK's mel scale with Slaney's normalization and cuts
+    // its frames one sample longer than the window so the HTK pre-emphasis has a predecessor.
+    func testGemma3nMelMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3N_MEL"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3N_MEL (run_reference.py gemma3n_mel)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"])
+        let reference = try XCTUnwrap(arrays["output"])
+
+        let mine = NFKMLXGemma3nAudioFeatures()(waveform)
+        eval(mine)
+        XCTAssertEqual(Array(mine.shape.dropFirst()), reference.shape, "the frame count and band count match")
+        let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3n-mel: log-mel cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the audio front end matches the reference")
+    }
+
+    // MatFormer: E2B is NESTED inside E4B, so slicing the larger release at the smaller one's geometry
+    // must reproduce the released E2B exactly. There is no reference implementation of this anywhere —
+    // transformers does not implement MatFormer — so the released E2B is the byte oracle, which is the
+    // standing the offline converters have for the native checkpoint reader. Both sides are read at
+    // the checkpoint's own precision, so the comparison is byte equality rather than a cosine.
+    func testGemma3nMatFormerExtractsTheReleasedE2B() throws {
+        try requireMLXRuntime()
+        guard let small = config["IK_VAL_GEMMA3N_E2B"], let large = config["IK_VAL_GEMMA3N_E4B"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3N_E2B and IK_VAL_GEMMA3N_E4B")
+        }
+        let largeURL = URL(fileURLWithPath: large)
+        let base = try NFKMLXGemma3nLanguage.configuration(
+            fromHuggingFace: largeURL.appendingPathComponent("config.json"))
+        let slice = NFKMLXGemma3nSlice.e2bFromE4B
+
+        // The derived configuration must equal the one the released E2B states.
+        let derived = try NFKMLXGemma3n.configuration(slicing: base, by: slice)
+        let released = try NFKMLXGemma3nLanguage.configuration(
+            fromHuggingFace: URL(fileURLWithPath: small).appendingPathComponent("config.json"))
+        XCTAssertEqual(derived.layerCount, released.layerCount)
+        XCTAssertEqual(derived.intermediateSizes, released.intermediateSizes)
+        XCTAssertEqual(derived.sharedKeyValueLayers, released.sharedKeyValueLayers,
+                       "the shared-key-value count is recomputed from the kept layers")
+        XCTAssertEqual(derived.layerTypes.map(\.rawValue), released.layerTypes.map(\.rawValue))
+        XCTAssertEqual(derived.activationSparsity, released.activationSparsity)
+
+        let sliced = try NFKMLXGemma3n.slicedDecoderWeights(inDirectory: largeURL, slice: slice,
+                                                            base: base, precision: .checkpoint)
+        let reference = try NFKMLXReleaseWeights.arrays(
+            inDirectory: URL(fileURLWithPath: small), precision: .checkpoint,
+            remap: { NFKMLXGemma3nLanguage.decoderName(of: $0, configuration: released) })
+
+        let mine = Dictionary(uniqueKeysWithValues: sliced)
+        let theirs = Dictionary(uniqueKeysWithValues: reference)
+        XCTAssertEqual(Set(mine.keys), Set(theirs.keys), "the slice produces the released tensor set")
+
+        var mismatched = [String]()
+        var shapeWrong = [String]()
+        for key in theirs.keys.sorted() {
+            guard let a = mine[key], let b = theirs[key] else { continue }
+            if a.shape != b.shape { shapeWrong.append("\(key) \(a.shape) vs \(b.shape)"); continue }
+            if !(a .== b).all().item(Bool.self) { mismatched.append(key) }
+        }
+        print("VALIDATION PARITY gemma3n-matformer: \(theirs.count) tensors compared, "
+              + "\(shapeWrong.count) wrong shape, \(mismatched.count) not byte-identical")
+        XCTAssertEqual(shapeWrong, [], "every sliced tensor has the released shape")
+        XCTAssertEqual(mismatched, [], "every sliced tensor is byte-identical to the released E2B")
+    }
+
+    // A slice that drops a layer computing its own keys and values is refused: some later layer shares
+    // that layer's keys, and dropping it would silently re-point the sharing at a different donor.
+    func testGemma3nMatFormerRefusesASliceThatWouldMoveAKeyValueDonor() throws {
+        let base = NFKMLXGemma3nConfiguration.tiny                       // 6 layers, the last 2 shared
+        let safe = NFKMLXGemma3nSlice(keptLayers: [0, 1, 2, 3, 5], intermediateSize: 96)
+        XCTAssertNoThrow(try NFKMLXGemma3n.configuration(slicing: base, by: safe),
+                         "dropping from the shared region is allowed")
+
+        let unsafe = NFKMLXGemma3nSlice(keptLayers: [0, 1, 3, 4, 5], intermediateSize: 96)
+        XCTAssertThrowsError(try NFKMLXGemma3n.configuration(slicing: base, by: unsafe))
+
+        let tooWide = NFKMLXGemma3nSlice(keptLayers: Array(0 ..< 6), intermediateSize: 200)
+        XCTAssertThrowsError(try NFKMLXGemma3n.configuration(slicing: base, by: tooWide),
+                             "a slice cannot widen the feed-forward")
+    }
+
+    // The bidirectional read of the same decoder (EmbeddingGemma's backbone) at a tiny configuration
+    // whose window the sequence exceeds — the case that measures the reference's `span / 2 + 1`
+    // bound, which no EmbeddingGemma input had reached.
+    func testGemma3BidirectionalTinyMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3_BIDIRECTIONAL_TINY"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_BIDIRECTIONAL_TINY (run_reference.py gemma3_bidirectional_tiny)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let reference = try XCTUnwrap(arrays["output"])
+
+        // The release states the span (6); the geometry turns it into the bound (4).
+        let configuration = NFKMLXGemma3EncoderConfiguration(
+            hiddenSize: 64, layerCount: 3, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 96, vocabularySize: 131, slidingWindow: 6, slidingWindowPattern: 3,
+            queryPreAttnScalar: 16)
+        XCTAssertEqual(configuration.geometry.slidingWindow, 4)
+        let net = NFKMLXGemma3EncoderNet(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            return (String(key.dropFirst("w::".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let states = net.layerStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(states)
+        let firstBad = gemma3Isolation(states, arrays: arrays, name: "gemma3-bidirectional-tiny")
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+        let similarity = cosine(states.last!.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3-bidirectional-tiny: last hidden cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the bidirectional window matches the reference's bound")
+    }
+
+    /// A released Gemma 3 decoder against its record: every hidden state, the logits, the argmax at
+    /// every position, and the greedy continuation through the cache.
+    private func gemma3Parity(name: String, recordKey: String, directoryKey: String,
+                              precision: NFKMLXWeightPrecision = .float32,
+                              logitThreshold: Double = 0.999) throws {
+        try requireMLXRuntime()
+        guard let path = config[recordKey], let directory = config[directoryKey] else {
+            throw XCTSkip("set \(recordKey) and \(directoryKey)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+
+        let release = URL(fileURLWithPath: directory)
+        let geometry = try NFKMLXGemma3Language.configuration(fromHuggingFace: release.appendingPathComponent("config.json"))
+        let net = NFKMLXGemma3Language.makeNet(geometry)
+        try NFKMLXGemma3Language.loadWeights(into: net, fromDirectory: release, precision: precision)
+
+        let states = net.layerStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(states)
+        let firstBad = gemma3Isolation(states, arrays: arrays, name: name)
+        if precision == .float32 {
+            XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+        }
+
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        XCTAssertEqual(logits.shape, [1, referenceLogits.shape[0], referenceLogits.shape[1]])
+        let mine = logits[0].reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        let agreements = argmaxAgreement(mine, theirs, vocabulary: referenceLogits.shape[1])
+        print("VALIDATION PARITY \(name): logit cosine \(similarity), argmax \(agreements)/\(referenceLogits.shape[0])")
+        XCTAssertGreaterThan(similarity, logitThreshold, "the decoder matches the reference implementation")
+        XCTAssertEqual(agreements, referenceLogits.shape[0], "every position predicts the same token")
+
+        // The greedy continuation through the hybrid cache, which the reference decoded through its own.
+        let cache = NFKMLXGemma3Cache(layerCount: geometry.layerCount, slidingWindow: geometry.slidingWindow)
+        var last = net(MLXArray(tokens).reshaped([1, tokens.count]), cache: cache)[0, -1]
+        var produced = [Int32]()
+        for _ in 0 ..< continuation.count {
+            let next = Int32(last.argMax().item(Int.self))
+            produced.append(next)
+            last = net(MLXArray([next]).reshaped([1, 1]), cache: cache)[0, -1]
+        }
+        let shared = zip(produced, continuation).prefix { $0 == $1 }.count
+        print("VALIDATION PARITY \(name): continuation \(produced) vs \(Array(continuation)) (\(shared)/\(continuation.count) shared)")
+        if precision == .float32 {
+            XCTAssertEqual(produced, Array(continuation), "the cached greedy decode reproduces the reference's continuation")
+        } else {
+            XCTAssertGreaterThanOrEqual(shared, continuation.count / 2,
+                                        "at half precision the continuation follows the reference until a near-tie")
+        }
+    }
+
+    // The released Gemma 3 text decoders, each against transformers' own implementation on the same
+    // prompt: every hidden state exact, the logits, the argmax at every position, and the greedy
+    // continuation through the hybrid cache token for token.
+    func testGemma3_270MMatchesTheReference() throws {
+        try gemma3Parity(name: "gemma3-270m", recordKey: "IK_PARITY_GEMMA3_270M", directoryKey: "IK_VAL_GEMMA3_270M")
+    }
+
+    func testGemma3_1BMatchesTheReference() throws {
+        try gemma3Parity(name: "gemma3-1b", recordKey: "IK_PARITY_GEMMA3_1B", directoryKey: "IK_VAL_GEMMA3_1B")
+    }
+
+    // The 4B is the multimodal release driven text-only: the decoder from the `model.language_model.`
+    // subtree, with its 8× linear rotary scaling on the full layers and a 1024-position window.
+    func testGemma3_4BMatchesTheReference() throws {
+        try gemma3Parity(name: "gemma3-4b", recordKey: "IK_PARITY_GEMMA3_4B", directoryKey: "IK_VAL_GEMMA3_4B")
+    }
+
+    // Token-for-token agreement with the reference tokenizer on the probe strings (runs of spaces,
+    // multi-byte text, newlines beside a marker, a chat turn with its markers, an image sequence),
+    // and the chat template rendered and tokenized to the reference's ids.
+    func testGemma3TokenizerAndChatTemplateMatchTheReference() throws {
+        guard let path = config["IK_PARITY_GEMMA3_270M"], let directory = config["IK_VAL_GEMMA3_270M"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_270M and IK_VAL_GEMMA3_270M")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        let tokenizer = try XCTUnwrap(NFKMLXGemmaTokenizer(directoryURL: release))
+        let probes = ["The capital of France is", "  two  spaces ", "naïve café ☕ 你好", "a\nb\n\nc",
+                      "<start_of_turn>user\nHi<end_of_turn>\n<start_of_turn>model\n",
+                      "user\n\n\n<start_of_image><image_soft_token><image_soft_token><end_of_image>\n\nDescribe this."]
+        for (index, probe) in probes.enumerated() {
+            let reference = try XCTUnwrap(arrays["probe.\(index)"]).asArray(Int32.self).map(Int.init)
+            XCTAssertEqual(tokenizer.encode(probe), reference, "probe \(index) tokenizes to the reference's ids")
+        }
+        XCTAssertEqual([2] + tokenizer.encode("The capital of France is"),
+                       try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init))
+
+        // The chat template, through the same renderer and tokenizer the backend uses.
+        let model = NFKMLXGemma3Model(decoder: NFKMLXGemma3Net(.tiny), vision: nil, projector: nil,
+                                      tokenizer: tokenizer, tokens: NFKMLXGemma3Tokens(),
+                                      chatTemplate: NFKMLXGemma3.chatTemplate(inDirectory: release))
+        XCTAssertNotNil(model.chatTemplate, "the release ships its template")
+        let chat = model.chatTokens(messages: [["role": "user", "content": "Describe the sky in one sentence."]])
+        XCTAssertEqual(chat, try XCTUnwrap(arrays["chat_tokens"]).asArray(Int32.self).map(Int.init),
+                       "the rendered chat tokenizes to the reference's ids")
+    }
+
+    // The Gemma text backend end to end on the released 270M: the tokenizer, the template, the cache,
+    // and the sampler, producing coherent text for a raw prompt and for a chat.
+    func testGemma3BackendGeneratesText() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_GEMMA3_270M"] else { throw XCTSkip("set IK_VAL_GEMMA3_270M") }
+        // The Gemma dispatcher routes a gemma3 release to the Gemma 3 backend.
+        let backend = try NFKMLXGemmaLanguage.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertTrue(backend is NFKMLXGemma3Backend)
+        XCTAssertTrue(backend.isReady)
+        let raw = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "The capital of France is"],
+            parameters: [NFKParameterMaxTokens: 8, NFKParameterTemperature: 0]))
+        let text = try XCTUnwrap(raw.output(forKey: NFKOutputText) as? String)
+        print("VALIDATION gemma3 backend generated: \(text.debugDescription)")
+        XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        let chat = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputMessages: [["role": "user", "content": "Name one colour of the rainbow."]]],
+            parameters: [NFKParameterMaxTokens: 12, NFKParameterTemperature: 0]))
+        let reply = try XCTUnwrap(chat.output(forKey: NFKOutputText) as? String)
+        print("VALIDATION gemma3 backend chat reply: \(reply.debugDescription)")
+        XCTAssertFalse(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+        // A submitted job streams partial results and finishes with the same text.
+        let job = (backend as! NFKMLXGemma3Backend).submitInferenceJob(for: NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "The capital of France is"],
+            parameters: [NFKParameterMaxTokens: 8, NFKParameterTemperature: 0]))
+        let done = expectation(description: "generation finishes")
+        var partials = 0
+        job.progressHandler = { (_: NFKInferenceJob) in partials += 1 }
+        job.completionHandler = { (_: NFKInferenceJob) in done.fulfill() }
+        wait(for: [done], timeout: 120)
+        XCTAssertEqual(job.result?.output(forKey: NFKOutputText) as? String, text)
+        XCTAssertGreaterThan(partials, 1, "the job reported partial results")
+    }
+
+    // The Gemma 3 vision path on the RELEASED 4B weights: the SigLIP tower and the projector, fed the
+    // reference's own pixel values so the network is measured rather than the resize — the patch
+    // embeddings, encoder layer 0, the tower's last hidden state, and the 256 projected soft tokens.
+    func testGemma3VisionPathOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3_VISION_REAL"], let directory = config["IK_VAL_GEMMA3_4B"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_VISION_REAL and IK_VAL_GEMMA3_4B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])                 // [3, 896, 896]
+        let (vision, projector) = try NFKMLXGemma3.visionParts(directoryURL: URL(fileURLWithPath: directory))
+
+        let pixels = pixelValues.expandedDimensions(axis: 0).transposed(0, 2, 3, 1)
+        let embeddings = vision.embeddings(pixels)
+        let layer0 = vision.encoder.layers[0](embeddings)
+        let hidden = vision(pixels)
+        let projected = projector(hidden)
+        eval(embeddings, layer0, hidden, projected)
+
+        func report(_ label: String, _ mine: MLXArray, _ key: String) -> Double {
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    arrays[key]!.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY gemma3-vision-real: \(label) cosine \(similarity)")
+            return similarity
+        }
+        XCTAssertGreaterThan(report("patch embeddings", embeddings[0], "vision_embeddings"), 0.9999)
+        XCTAssertGreaterThan(report("layer 0", layer0[0], "vision_layer0"), 0.9999)
+        XCTAssertGreaterThan(report("vision hidden", hidden[0], "vision_hidden"), 0.9999)
+        XCTAssertEqual(projected.shape, [1, 256, 2560])
+        XCTAssertGreaterThan(report("projected soft tokens", projected[0], "output"), 0.9999)
+    }
+
+    // The FULL Gemma3ForConditionalGeneration on the released 4B: the processor's prompt (reproduced
+    // by the chat template and the image expansion), the reference's pixel values through the tower
+    // and projector, the splice, and the decoder with the bidirectional attention among the image
+    // tokens — the argmax at every position, the logits at the last positions, every hidden state, and
+    // the greedy continuation through the cache.
+    func testGemma3ConditionalGenerationOnTheReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3_CONDITIONAL_REAL"], let directory = config["IK_VAL_GEMMA3_4B"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_CONDITIONAL_REAL and IK_VAL_GEMMA3_4B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let tokenTypes = try XCTUnwrap(arrays["token_types"]).asArray(Int32.self)
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let referenceArgmax = try XCTUnwrap(arrays["argmax"]).asArray(Int32.self).map(Int.init)
+        let referenceTail = try XCTUnwrap(arrays["output"])                      // the last 16 positions
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self).map(Int.init)
+
+        let model = try NFKMLXGemma3.model(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertTrue(model.acceptsImages)
+
+        // The prompt the processor built, reproduced from the chat template and the image expansion.
+        let prompt = model.chatTokens(messages: [["role": "user", "content": "Describe this image in one sentence."]],
+                                      withImage: true)
+        XCTAssertEqual(prompt, tokens, "the chat template and the image expansion reproduce the processor's ids")
+        let blocks = try XCTUnwrap(model.blockIds(for: tokens))
+        XCTAssertEqual(blocks.map { $0 >= 0 ? Int32(1) : 0 }, tokenTypes, "the image block is where the processor marks it")
+
+        let vision = try XCTUnwrap(model.vision), projector = try XCTUnwrap(model.projector)
+        let soft = projector(vision(pixelValues.expandedDimensions(axis: 0).transposed(0, 2, 3, 1)))
+        let hidden = model.decoder.hiddenStates(fromEmbeddings: model.fusedEmbeddings(tokens: tokens, softTokens: soft),
+                                                blockIds: blocks)
+        let logits = model.decoder.logits(fromHidden: hidden)
+        eval(logits)
+
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let vocabulary = logits.shape[2]
+        var agreements = 0
+        for position in 0 ..< tokens.count {
+            let base = position * vocabulary
+            let best = (0 ..< vocabulary).max { mine[base + $0] < mine[base + $1] }
+            if best == referenceArgmax[position] { agreements += 1 }
+        }
+        let tail = logits[0, (tokens.count - referenceTail.shape[0])...].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(tail, referenceTail.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY gemma3-conditional-real: last-\(referenceTail.shape[0]) logit cosine \(similarity), argmax \(agreements)/\(tokens.count)")
+        XCTAssertGreaterThan(similarity, 0.999, "the full conditional model matches the reference")
+        XCTAssertEqual(agreements, tokens.count, "every position predicts the same token")
+
+        // The isolation harness over the fused sequence, so a divergence lands on a layer.
+        var states = [MLXArray]()
+        if arrays["hidden.0"] != nil {
+            // Recompute through the traced forward: the same fused embeddings, layer by layer.
+            let embeddings = model.fusedEmbeddings(tokens: tokens, softTokens: soft)
+            var trace = embeddings
+            states.append(trace)
+            let masks = NFKMLXGemma3Masks.make(length: tokens.count, offset: 0,
+                                               window: model.decoder.configuration.slidingWindow,
+                                               blockIds: blocks, bidirectional: false)
+            for (index, layer) in model.decoder.layers.enumerated() {
+                let kind = model.decoder.configuration.layerTypes[index]
+                trace = layer(trace, mask: kind == .full ? masks.full : masks.sliding, cache: nil, layer: index)
+                states.append(trace)
+            }
+            states[states.count - 1] = model.decoder.norm(trace)
+            eval(states)
+            let firstBad = gemma3Isolation(states, arrays: arrays, name: "gemma3-conditional-real")
+            XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+        }
+
+        // The greedy continuation through the cache, from the same soft tokens.
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = continuation.count
+        options.stopTokens = [-1]                                                // run the full length
+        let cache = NFKMLXGemma3Cache(layerCount: model.decoder.configuration.layerCount,
+                                      slidingWindow: model.decoder.configuration.slidingWindow)
+        var last = model.decoder.hiddenStates(fromEmbeddings: model.fusedEmbeddings(tokens: tokens, softTokens: soft),
+                                              cache: cache, blockIds: blocks)
+        var produced = [Int]()
+        for _ in 0 ..< continuation.count {
+            let next = model.decoder.logits(fromHidden: last[0..., (last.dim(1) - 1)...]).reshaped([-1]).argMax().item(Int.self)
+            produced.append(next)
+            last = model.decoder.hiddenStates(fromEmbeddings: model.decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])),
+                                              cache: cache)
+        }
+        print("VALIDATION PARITY gemma3-conditional-real: continuation \(model.decode(produced).debugDescription) vs \(model.decode(continuation).debugDescription)")
+        XCTAssertEqual(produced, continuation, "the cached greedy decode reproduces the reference's answer")
+    }
+
+    // The whole consumer path on a real photograph: the CoreGraphics image processor, the chat
+    // template with the image expansion, and greedy generation through the cache produce a coherent
+    // description. The resize is not the reference's PIL bilinear, so this checks the answer is real
+    // language about the picture rather than a token-identical match.
+    func testGemma3AnswersAboutARealImage() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_GEMMA3_4B"], let imagePath = config["IK_VAL_IMAGE"] else {
+            throw XCTSkip("set IK_VAL_GEMMA3_4B and IK_VAL_IMAGE")
+        }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: imagePath) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            throw XCTSkip("could not read the validation image")
+        }
+        let gemma = try NFKMLXGemma3.load(directoryURL: URL(fileURLWithPath: directory))
+        let answer = try gemma.answer(image: image, question: "Describe this image in one sentence.")
+        print("VALIDATION gemma3 answer: \(answer)")
+        XCTAssertGreaterThan(answer.split(separator: " ").count, 3, "the answer is a multi-word description")
+
+        // The same picture through the backend's `NFKInputImage` path.
+        let backend = try NFKMLXGemma3.backend(directoryURL: URL(fileURLWithPath: directory))
+        let result = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputImage: image, NFKInputMessages: [["role": "user", "content": "What is the main subject?"]]],
+            parameters: [NFKParameterMaxTokens: 24, NFKParameterTemperature: 0]))
+        let reply = try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        print("VALIDATION gemma3 backend image reply: \(reply)")
+        XCTAssertFalse(reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     // MARK: Gemma 4 unified text decoder (the 12B)

@@ -233,6 +233,12 @@ public struct NFKMLXSAM2Configuration: Sendable {
     /// The released `sam2_hiera_tiny` geometry.
     public static let tiny = NFKMLXSAM2Configuration()
 
+    /// The released `sam2_hiera_small` geometry: tiny's width and head count over a deeper third stage,
+    /// with global attention at three later blocks.
+    public static let small = NFKMLXSAM2Configuration(
+        embedDimensions: 96, heads: 1, stages: [1, 2, 11, 2],
+        windowSpec: [8, 4, 14, 7], globalAttentionBlocks: [7, 10, 13], backgroundWindow: 7)
+
     /// The released `sam2_hiera_base_plus` geometry.
     ///
     /// Its config sets only the width and head count, so the stage depths, window sizes, and global

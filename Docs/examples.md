@@ -133,6 +133,30 @@ NSString *reply = [backend runInferenceForRequest:request error:&error].text;
 // "One color is blue."
 ```
 
+**Constraining its output.** The core carries the byte-level JSON and fixed-choice grammars
+(`NFKJSONConstraint`, `NFKChoiceConstraint` over an `NFKTokenVocabulary`), and the backend masks its
+logits with one before sampling when a request asks: `NFKParameterOutputFormat` (`"json"`,
+`"json-object"`, `"json-array"`) or `NFKParameterChoices`. JSON that was asked for comes back parsed under
+`NFKOutputStructured` beside the text. The same keys are honored by the MLX backend, so the request is
+engine-agnostic; the schema grammar (`NFKMLXJSONSchemaConstraint`) is MLX-only.
+
+```objc
+NFKInferenceRequest *request =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Describe Paris as JSON." }
+                                parameters:@{ NFKParameterOutputFormat: @"json-object",
+                                              NFKParameterMaxTokens: @96, NFKParameterTemperature: @0 }
+                            outputModality:NFKModalityText];
+NSDictionary *object = [backend runInferenceForRequest:request error:&error].structured;
+
+// A classification: the answer is exactly one of the choices.
+parameters:@{ NFKParameterChoices: @[ @"yes", @"no" ] }
+
+// The grammar can be inspected on its own, over any byte-level vocabulary:
+NFKJSONConstraint *json = [[NFKJSONConstraint alloc] initWithVocabulary:vocabulary root:NFKJSONRootObject];
+[json acceptsText:@"{\"city\": \"Par"];                     // YES: a prefix the grammar can complete
+[json isCompleteText:@"{\"city\": \"Paris\"}"];             // YES
+```
+
 ### Local, on device through MLX (`NFKMLXLanguageBackend`, Swift)
 
 The dense decoder — Qwen3 and Llama are the same structure at different settings — reading a released
@@ -291,11 +315,13 @@ let tokens = target.generate(prompt: prompt, options: options, draft: draft, rep
 print(report.acceptanceRate)
 ```
 
-**A mixture of experts.** Qwen3-MoE and Mixtral are this decoder with a routed feed-forward, and the
-same factory reads them: the config names the family, the loader stacks the released per-expert
-tensors into one `[experts, out, in]` tensor per projection, and a step runs one gathered matrix
-multiplication over the experts each token chose. Both families match `transformers`' arithmetic
-layer by layer at a tiny configuration, and every one of Qwen3-30B-A3B's 18,867 released tensors is
+**A mixture of experts.** Qwen3-MoE, Qwen2-MoE, Mixtral, and gpt-oss are this decoder with a routed
+feed-forward, and the same factory reads them: the config names the family, the loader stacks the
+released per-expert tensors into one `[experts, out, in]` tensor per projection, and a step runs one
+gathered matrix multiplication over the experts each token chose. Qwen2-MoE adds a shared expert every
+token runs beside the routed ones, gated by a sigmoid; gpt-oss alternates sliding-window and full
+attention, carries a learned sink per head, and runs fused clamped experts whose released MXFP4 blocks
+stay packed. All four families match `transformers`' arithmetic layer by layer at a tiny configuration, and every one of Qwen3-30B-A3B's 18,867 released tensors is
 accounted for by shape. Quantizing packs the stacked experts too. The released sizes need quantized
 weights to fit a 32 GB machine.
 
@@ -316,6 +342,53 @@ let gemma = try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL)   
 gemma.isMixtureOfExperts                 // true for the 26B-A4B, false for the dense E-series
 ```
 
+**Gemma 3.** `NFKMLXGemma3` runs the Gemma 3 releases (270M, 1B, 4B) from their directories: the
+decoder generates through a hybrid key-value cache (the full-attention layers keep everything, the
+sliding-window layers keep the window), a message list is rendered through the release's own chat
+template, a submitted job streams each token, and the multimodal 4B takes an image beside the text.
+The same factory sits behind `NFKMLXGemmaLanguage.backend(directoryURL:)`, which reads the model
+type and routes a Gemma 3 release here.
+
+```swift
+let backend = try NFKMLXGemma3.backend(directoryURL: releaseDirectory)      // unsloth/gemma-3-1b-it
+let request = NFKInferenceRequest(inputs: [NFKInputMessages: [["role": "user", "content": "Name one colour of the rainbow."]]],
+                                  parameters: [NFKParameterMaxTokens: 32, NFKParameterTemperature: 0])
+let reply = try backend.runInference(for: request).text
+```
+
+```objc
+id<NFKInferenceBackend> backend = [NFKMLXGemma3 backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceRequest *request =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)cgImage,       // the 4B only
+                                              NFKInputMessages: @[ @{ @"role": @"user", @"content": @"Describe this image." } ] }
+                                parameters:@{ NFKParameterMaxTokens: @64 }
+                            outputModality:NFKModalityText];
+NSString *answer = [backend runInferenceForRequest:request error:&error].text;
+```
+
+**Gemma 3n.** `NFKMLXGemma3n` runs the tri-modal E2B and E4B releases: a picture through
+MobileNetV5-300M, a clip through the Universal Speech Model Conformer, and the decoder over the fused
+prompt. It is a separate architecture from Gemma 3 — AltUp's four parallel residual copies, the LAuReL
+detour, per-layer embeddings, activation sparsity, and a trailing run of layers that computes no keys
+or values — so it has its own factory rather than being routed through `NFKMLXGemmaLanguage`.
+
+```swift
+let gemma = try NFKMLXGemma3n.load(directoryURL: releaseDirectory)   // unsloth/gemma-3n-E2B-it
+let answer = try gemma.answer(image: cgImage, question: "Describe this image.")
+
+// Or through the contract, which also takes audio:
+let backend = try NFKMLXGemma3n.backend(directoryURL: releaseDirectory)
+let request = NFKInferenceRequest(inputs: [NFKInputAudio: clip,
+                                           NFKInputPrompt: "Transcribe this."],
+                                  parameters: [NFKParameterMaxTokens: 64])
+let reply = try backend.runInference(for: request).text
+```
+
+```objc
+NFKMLXGemma3n *gemma = [NFKMLXGemma3n gemma3nWithDirectoryURL:releaseDirectory error:&error];
+NSString *answer = [gemma answerForImage:cgImage question:@"Describe this image." error:&error];
+```
+
 **Constraining the output.** A grammar mask over the logits admits only the tokens that keep the
 output inside the grammar, so structured output needs no model change and no retry. JSON syntax and
 a fixed set of choices ship; a custom constraint adopts `NFKMLXTokenConstraint`. The mask is applied
@@ -327,10 +400,23 @@ options.jsonOutput = true                              // well-formed JSON, ende
 options.jsonRoot = .object                             // an object rather than an array
 // options.choices = ["yes", "no", "unsure"]           // exactly one of these
 
+// A JSON Schema guarantees the keys, the types, the enumerations, and the array bounds as well:
+options.jsonSchema = try NFKMLXJSONSchema(jsonText: """
+    {"type": "object",
+     "properties": {"city": {"type": "string"}, "population": {"type": "integer"},
+                    "mood": {"enum": ["sunny", "rainy"]}},
+     "required": ["city", "population"], "additionalProperties": false}
+    """)
+
 // Or build one against the release's own token bytes:
 let vocabulary = NFKMLXVocabulary(tokenizer: tokenizer, size: configuration.vocabularySize)
 options.constraint = NFKMLXJSONConstraint(vocabulary: vocabulary, root: .object)
 ```
+
+Through a request, the schema is the core's own `NFKParameterJSONSchema` (a dictionary, the key the
+remote backends read too), so the same request runs against a hosted provider or the on-device model;
+the reply comes back parsed under `NFKOutputStructured` beside the text. A schema the grammar cannot
+enforce (`allOf`, `not`, a `required` name not under `properties`) is an error, not an unconstrained run.
 
 Two things the grammar cannot do for the model. JSON admits unbounded whitespace, and a model whose
 preferred next token is forbidden takes the whitespace it is offered indefinitely, so the grammar
@@ -428,6 +514,24 @@ processor, and the network is at reference parity against transformers'
 `SmolVLMForConditionalGeneration`: the vision encoder, the connector, and the fused decoder logits are
 exact, and the greedy continuation matches token for token. The image processor is CoreGraphics-based, so
 a caption is not token-identical to the reference's PIL pipeline; it is coherent and accurate.
+
+### Vision-language (`NFKMLXGemma3`, the 4B)
+
+Gemma 3 4B answers a question about an image. The SigLIP so400m tower reads the picture at 896×896, the
+projector average-pools its 4096 patch features to 256 soft tokens, and the decoder reads them in front
+of the question with the image's tokens attending to each other in both directions.
+
+```objc
+NFKMLXGemma3 *gemma = [NFKMLXGemma3 gemma3WithDirectoryURL:releaseDirectory error:&error];   // unsloth/gemma-3-4b-it
+NSString *answer = [gemma answerForImage:cgImage question:@"Describe this image in one sentence." error:&error];
+```
+
+The prompt (the release's chat template, then the processor's `\n\n<start_of_image>` + 256 soft tokens +
+`<end_of_image>\n\n` expansion) is token-exact against the processor, and the network is at reference
+parity against transformers' `Gemma3ForConditionalGeneration` on the released weights: the vision tower,
+the projector, the fused decoder's argmax at every position, and the greedy continuation. The image
+processor is CoreGraphics-based, so an answer to a real photograph is not token-identical to the
+reference's PIL pipeline; it is coherent and accurate.
 
 ### Remote, OpenAI-compatible (`NFKRemoteBackend`)
 
@@ -1708,8 +1812,9 @@ The compiled `MLXModelGalleryExamples` builds and runs each of these. Grouped by
 ```swift
 // Upscaling & restoration (image → image)
 let upscaler   = try NFKMLXRealESRGAN.backend(variant: .x4, weightsURL: nil)   // "real-esrgan-x4"
-let swinIR     = try NFKMLXSwinIR.backend(weightsURL: nil)                      // "swinir-x4"
-let denoiser   = try NFKMLXNAFNet.backend(weightsURL: nil)                      // "nafnet"
+let swinIR     = try NFKMLXSwinIR.backend(weightsURL: nil)                      // "swinir-x4"; every release: .classicalX2…X8, .lightweightSRX2…X4, .realWorldX4Medium/Large
+let realWorld  = try NFKMLXSwinIR.backend(variant: .realWorldX4Large, weightsURL: nil)
+let denoiser   = try NFKMLXNAFNet.backend(weightsURL: nil)                      // "nafnet"; .sidd/.goPro/.reds/.siddWidth64/.goProWidth64
 let lowLight   = try NFKMLXZeroDCE.backend(weightsURL: nil)                     // "zero-dce"
 let stylizer   = try NFKMLXStyleTransfer.backend(weightsURL: nil)              // "fast-style-transfer"
 let colorizer  = try NFKMLXColorizer.backend(weightsURL: nil)                  // "colorizer-eccv16"
@@ -1720,7 +1825,7 @@ let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  /
 
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"
-let videoKey = try NFKMLXRVM.backend(weightsURL: nil)                          // "robust-video-matting"
+let videoKey = try NFKMLXRVM.backend(weightsURL: nil)                          // "robust-video-matting" (MobileNetV3); .resNet50 is the heavier release
 let portrait = try NFKMLXMODNet.backend(weightsURL: nil)                       // "modnet"
 
 // Semantic segmentation (image → grayscale label map; index = round(gray·(classCount−1)))
@@ -1733,14 +1838,14 @@ let yolo = try NFKMLXYOLO.backend(weightsURL: nil, labels: cocoLabels)         /
 let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: cocoJoints)     // result.pose : [NFKKeypoint]
 
 // Embeddings, video, promptable segmentation
-let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]
-let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text)
+let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]; .vitB16 / .vitL14 / .vitL14At336 too
+let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text); every release under NFKMLXSigLIP2Variant
 let taesd   = try NFKMLXTAESD.backend(weightsURL: nil)                         // tiny AE: image → latent → image (NFKMLXTAESD.encode/decode for previews)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"
-let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey
+let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey; .vitB / .vitL / .vitH
 
 // Audio
-let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText
+let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText; .tiny … .largeV3Turbo
 let stems       = try NFKMLXDemucs.backend(weightsURL: nil)                    // audio → "drums"/"bass"/"other"/"vocals"
 let speakers    = try NFKMLXConvTasNet.backend(weightsURL: nil)               // audio → "speaker-1"/"speaker-2"
 let clean       = try NFKMLXDenoiser.backend(weightsURL: nil)                  // audio → NFKOutputAudio
@@ -1749,13 +1854,19 @@ let realtime    = try NFKMLXGTCRNFactory.backend(weightsURL: nil)             //
 let dereverbed  = try NFKMLXSGMSE.backend(weightsURL: nil)                     // SGMSE+: score-based generative dereverb (reverse-SDE sampler) → NFKOutputAudio
 let regenerated = try NFKMLXStoRM.backend(weightsURL: nil)                     // StoRM: few-step stochastic regeneration (predictor + conditioned score) → NFKOutputAudio
 let fullband    = try NFKMLXMossFormer2Factory.backend(weightsURL: nil)       // MossFormer2 SE: full-band 48 kHz enhancement (Kaldi-fbank mask) → NFKOutputAudio
+let bandwidth   = try NFKMLXMossFormer2SRFactory.backend(directoryURL: nil)   // MossFormer2 SR: mel→mel backbone + Snake HiFi-GAN + bandwidth substitution → 48 kHz NFKOutputAudio
 let deepfilter  = try NFKMLXDeepFilterNetFactory.backend(weightsURL: nil)     // DeepFilterNet3: ~2.3M-param real-time 48 kHz denoiser (ERB mask + deep filter) → NFKOutputAudio
 let voicerestore = try NFKMLXVoiceRestoreFactory.backend(weightsURL: transformerURL, vocoderURL: bigvganURL, steps: 32, cfgStrength: 0.5)  // VoiceRestore: ~301M flow-matching universal restorer (E2-TTS transformer + BigVGAN) → NFKOutputAudio
 let resemble    = try NFKMLXResembleEnhanceFactory.backend(directoryURL: enhancerStage2Dir)  // Resemble Enhance: 5-network general restorer (STFT-mask denoiser + IRMAE/CFM + UnivNet LVC vocoder) → NFKOutputAudio
+let metricgan   = try NFKMLXMetricGANPlus.backend(weightsURL: nil)             // MetricGAN+: 2-layer BLSTM magnitude mask over log1p(|X|) → NFKOutputAudio
+let cmgan       = try NFKMLXCMGAN.backend(weightsURL: nil)                     // CMGAN: conformer metric GAN (mask + complex residual) → NFKOutputAudio
+let frcrn       = try NFKMLXFRCRN.backend(weightsURL: nil)                     // FRCRN: two complex UNets with frequency-recurrent FSMNs → NFKOutputAudio
+let nuwave      = try NFKMLXNUWave2.backend(weightsURL: nil)                   // NU-Wave 2: diffusion bandwidth extension (8-step DDIM) → 48 kHz NFKOutputAudio
+let apollo      = try NFKMLXApollo.backend(weightsURL: nil)                    // Apollo: music codec-artifact restoration (80-band Roformer) → 44.1 kHz NFKOutputAudio
 let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       // result.segments : [NFKAudioSegment]
 let sileroVAD   = try NFKMLXSileroVAD.backend(weightsURL: nil)                  // Silero v6: result.segments : [NFKAudioSegment]
 let dac         = try NFKMLXDAC.backend(weightsURL: nil)                        // neural codec: audio → codes → audio (NFKMLXDAC.encode for the tokens)
-let snac        = try NFKMLXSNAC.backend(weightsURL: nil)                       // multi-scale codec (NFKMLXSNAC.encode → per-codebook streams at different rates)
+let snac        = try NFKMLXSNAC.backend(weightsURL: nil)                       // multi-scale codec (NFKMLXSNAC.encode → per-codebook streams at different rates); .music32kHz / .music44kHz
 let tagger      = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)  // result.classifications : [NFKClassification]
 
 // Music generation (MiniMax Music 3): a description under NFKInputPrompt and lyrics under

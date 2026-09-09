@@ -161,6 +161,30 @@ public struct NFKMLXRFDetrConfiguration: Sendable {
         decoderSelfAttentionHeads: 8, decoderCrossAttentionHeads: 16, decoderNPoints: 2, decoderFFNDim: 2048,
         numFeatureLevels: 1, numQueries: 300, groupDetr: 13, numLabels: 91, layerNormEps: 1e-5,
         inputResolution: 560)
+
+    /// The four later Roboflow releases share one recipe that differs from `base`: a 16-pixel patch
+    /// backbone trained at the run resolution (so the position embedding needs no resampling), two
+    /// windows a side, stages 3/6/9/12 selected, and a decoder whose depth grows with the size.
+    /// Only the resolution and the decoder depth separate them.
+    static func laterRelease(resolution: Int, decoderLayers: Int) -> NFKMLXRFDetrConfiguration {
+        var configuration = base
+        configuration.patchSize = 16
+        configuration.backboneImageSize = resolution
+        configuration.numWindows = 2
+        configuration.outIndices = [3, 6, 9, 12]
+        configuration.decoderLayers = decoderLayers
+        configuration.inputResolution = resolution
+        return configuration
+    }
+
+    /// The released `Roboflow/rf-detr-nano`: 384 pixels, a two-layer decoder.
+    public static let nano = laterRelease(resolution: 384, decoderLayers: 2)
+    /// The released `Roboflow/rf-detr-small`: 512 pixels, a three-layer decoder.
+    public static let small = laterRelease(resolution: 512, decoderLayers: 3)
+    /// The released `Roboflow/rf-detr-medium`: 576 pixels, a four-layer decoder.
+    public static let medium = laterRelease(resolution: 576, decoderLayers: 4)
+    /// The released `Roboflow/rf-detr-large`: 704 pixels, a four-layer decoder.
+    public static let large = laterRelease(resolution: 704, decoderLayers: 4)
 }
 
 // MARK: - DINOv2 windowed backbone
@@ -1145,19 +1169,48 @@ public final class NFKMLXRFDetrBackend: NSObject, NFKInferenceBackend {
 /// the module names on device, so no offline conversion is needed — the same conversion transformers'
 /// `_checkpoint_conversion_prefix_free` does at load, derived here by tensor-identity matching against
 /// the converted state_dict.
+/// The released RF-DETR size to build, for the Objective-C factory. A checkpoint fits only its own.
+@objc(NFKMLXRFDetrVariant)
+public enum NFKMLXRFDetrVariant: Int {
+    case base
+    case nano
+    case small
+    case medium
+    case large
+}
+
 @objc(NFKMLXRFDetr)
 public final class NFKMLXRFDetr: NSObject {
     /// The registry name the model builds under.
     @objc public static let modelName = "rf-detr"
 
+    static func specs(for variant: NFKMLXRFDetrVariant) -> (name: String, configuration: NFKMLXRFDetrConfiguration) {
+        switch variant {
+        case .base: return (modelName, .base)
+        case .nano: return ("rf-detr-nano", .nano)
+        case .small: return ("rf-detr-small", .small)
+        case .medium: return ("rf-detr-medium", .medium)
+        case .large: return ("rf-detr-large", .large)
+        }
+    }
+
     /// Builds a detection backend directly from optional local weights. A nil `weightsURL` builds random
     /// weights (`isReady` is true). Run inference off the render thread.
     @objc(backendWithWeightsURL:labels:error:)
     public static func backend(weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXRFDetrNet(.base)
+        try backend(variant: .base, weightsURL: weightsURL, labels: labels)
+    }
+
+    /// Builds one of the released sizes from optional local weights.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:labels:error:)
+    public static func backend(variant: NFKMLXRFDetrVariant, weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        let net = NFKMLXRFDetrNet(spec.configuration)
         if let weightsURL { try loadWeights(into: net, from: weightsURL) }
         net.train(false)
-        return NFKMLXRFDetrBackend(net: net, identifier: modelName, labels: labels)
+        return NFKMLXRFDetrBackend(net: net, identifier: spec.name, labels: labels)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds the backend. Blocking on the network; run
@@ -1165,8 +1218,18 @@ public final class NFKMLXRFDetr: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
+        try backend(variant: .base, repo: repo, weightsPath: weightsPath, revision: revision,
+                    cacheDirectoryURL: cacheDirectoryURL, labels: labels)
+    }
+
+    /// The download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)
+    public static func backend(variant: NFKMLXRFDetrVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url, labels: labels)
+        return try backend(variant: variant, weightsURL: url, labels: labels)
     }
 
     /// The asynchronous form of the download factory.
@@ -1174,16 +1237,30 @@ public final class NFKMLXRFDetr: NSObject {
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(variant: .base, repo: repo, weightsPath: weightsPath, revision: revision,
+                cacheDirectoryURL: cacheDirectoryURL, labels: labels, completionHandler: completionHandler)
+    }
+
+    /// The asynchronous download factory at a chosen size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:completionHandler:)
+    public static func backend(variant: NFKMLXRFDetrVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, labels: [String]?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
                                cacheDirectoryURL: cacheDirectoryURL,
-                               build: { try backend(weightsURL: $0, labels: labels) },
+                               build: { try backend(variant: variant, weightsURL: $0, labels: labels) },
                                completionHandler: completionHandler)
     }
 
-    /// Registers RF-DETR (`rf-detr`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:labels:)`.
+    /// Registers every released size (`rf-detr` for base, `rf-detr-nano`, `-small`, `-medium`, `-large`)
+    /// with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in
-            try backend(weightsURL: weightsURL, labels: nil)
+        for variant in [NFKMLXRFDetrVariant.base, .nano, .small, .medium, .large] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL, labels: nil)
+            }
         }
     }
 

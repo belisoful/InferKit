@@ -4,7 +4,7 @@
 //
 //  A cross-platform inference toolkit: a swappable backend protocol, request/result value
 //  types, the shipped passthrough / Core ML / remote backends, the texture-tensor conversion,
-//  and the Hugging Face access layer. No FxPlug or host-framework dependency.
+//  and the Hugging Face access layer. No host-framework dependency.
 //
 
 #ifndef InferKit_h
@@ -52,6 +52,7 @@
 #import <InferKit/NFKTensorConversion.h>
 #import <InferKit/NFKMLMultiArray.h>
 #import <InferKit/NFKTokenizer.h>
+#import <InferKit/NFKTokenConstraint.h>
 #import <InferKit/NFKHFHub.h>
 
 #endif /* InferKit_h */

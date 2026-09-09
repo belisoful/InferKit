@@ -35,8 +35,8 @@ configuration preset behind each registered name, and a construction line to cop
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXRealESRGAN`` | `real-esrgan-x4` · `-anime` · `-x2` | ×4 / ×2 super-resolution |
-| ``NFKMLXSwinIR`` | `swinir-x4` | transformer super-resolution (×2 / ×3 / ×4 / ×8, lightweight) |
-| ``NFKMLXNAFNet`` | `nafnet` | denoise / deblur (SIDD, GoPro, REDS) |
+| ``NFKMLXSwinIR`` | `swinir-x4` | transformer super-resolution — every released checkpoint: classical ×2 / ×3 / ×4 / ×8, lightweight ×2 / ×3 / ×4, real-world ×4 medium and large |
+| ``NFKMLXNAFNet`` | `nafnet` | denoise / deblur (SIDD and GoPro at widths 32 and 64, REDS) |
 | ``NFKMLXZeroDCE`` | `zero-dce` | low-light enhancement |
 | ``NFKMLXStyleTransfer`` | `fast-style-transfer` | one baked style per checkpoint |
 | ``NFKMLXColorizer`` | `colorizer-eccv16` | grayscale → color |
@@ -74,11 +74,11 @@ alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NF
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXU2Net`` | `u2net` · `u2netp` | salient-object matting |
-| ``NFKMLXRVM`` | `robust-video-matting` | recurrent video matting |
+| ``NFKMLXRVM`` | `robust-video-matting` | recurrent video matting (MobileNetV3, or ResNet-50 as `robust-video-matting-resnet50`) |
 | ``NFKMLXMODNet`` | `modnet` | trimap-free portrait matting |
 | ``NFKMLXBiRefNet`` | `birefnet` | high-resolution background removal, MIT (Swin-v1-L + ASPPDeformable) |
-| ``NFKMLXSAM`` | `sam` | promptable segmentation |
-| ``NFKMLXSAM2`` | — | SAM 2: Hiera encoder, prompt encoder, mask decoder, and the video memory path |
+| ``NFKMLXSAM`` | `sam` | promptable segmentation (ViT-B, ViT-L, ViT-H) |
+| ``NFKMLXSAM2`` | — | SAM 2: Hiera encoder (tiny, small, base_plus, large), prompt encoder, mask decoder, and the video memory path |
 | ``NFKMLXRetinaFace`` | `retinaface-mobile025` | face detection with landmarks |
 | ``NFKMLXFaceAlignment`` | — | five-point alignment to the CodeFormer template (RetinaFace or Vision) |
 
@@ -90,8 +90,8 @@ alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NF
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXYOLO`` | `yolo` | object detection (YOLOv8 n / s / m / l / x) |
-| ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR r50vd; no NMS) |
-| ``NFKMLXRFDetr`` | `rf-detr` | object detection, Apache-2.0 (RF-DETR base, Roboflow; no NMS) |
+| ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR r18vd / r34vd / r50vd / r101vd; no NMS) |
+| ``NFKMLXRFDetr`` | `rf-detr` | object detection, Apache-2.0 (RF-DETR nano / small / medium / base / large, Roboflow; no NMS) |
 | ``NFKMLXPose`` | `pose-simplebaseline` | top-down pose |
 
 ### Embeddings & reranking
@@ -103,8 +103,8 @@ a backend.
 
 | Model | Name | Task |
 | --- | --- | --- |
-| ``NFKMLXCLIP`` | `clip-vit-b-32` | image + text embeddings (CLIP) |
-| ``NFKMLXSigLIP2`` | `siglip2-base-patch16-224` | image + text embeddings (SigLIP 2, multilingual) |
+| ``NFKMLXCLIP`` | `clip-vit-b-32` | image + text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336) |
+| ``NFKMLXSigLIP2`` | `siglip2-base-patch16-224` | image + text embeddings (SigLIP 2, multilingual; every fixed-resolution release from base to giant-opt) |
 | ``NFKMLXQwen3Embedding`` | — | text embeddings (Qwen3-Embedding-0.6B, Matryoshka) |
 | ``NFKMLXEmbeddingGemma`` | — | text embeddings (EmbeddingGemma-300M, bidirectional) |
 | ``NFKMLXModernBERTReranker`` | — | cross-encoder reranking (gte-reranker-modernbert-base) |
@@ -116,7 +116,7 @@ a backend.
 `NFKInputPrompt` or `NFKInputMessages` in, `NFKOutputText` out, with the release's own chat template
 rendered by ``NFKMLXChatTemplateRenderer``. It streams through the job, and takes a context window,
 key-value cache quantization, chunked prefill, a prompt cache, a draft model for speculative decoding,
-and JSON or fixed-choice constrained decoding — each also settable from Objective-C through
+and JSON, JSON-Schema, or fixed-choice constrained decoding — each also settable from Objective-C through
 ``NFKMLXGenerationParameterKey``.
 
 | Model | Factory | Architecture |
@@ -124,7 +124,9 @@ and JSON or fixed-choice constrained decoding — each also settable from Object
 | ``NFKMLXLanguage`` | `backend(directoryURL:)` | dense decoders (Qwen3, Qwen2, Llama) and the Qwen3-MoE / Mixtral mixtures |
 | ``NFKMLXLanguage`` | `backend(ggufURL:)` | any dense `llama` / `qwen2` / `qwen3` GGUF (Q4_0 / Q5_0 / Q8_0 / Q4_K / Q6_K) |
 | ``NFKMLXHybridLanguage`` | — | Qwen3.5 / 3.6 / 3.8: gated delta-rule recurrence with full attention every fourth layer |
-| ``NFKMLXGemmaLanguage`` | `backend(directoryURL:)` | Gemma 4 (E-series, 26B-A4B mixture, 12B unified) through ``NFKMLXGemmaBackend`` |
+| ``NFKMLXGemma3`` | `backend(directoryURL:)` | Gemma 3 (270M, 1B, 4B): sliding/full attention, a hybrid key-value cache, the release's chat template, through ``NFKMLXGemma3Backend`` |
+| ``NFKMLXGemma3n`` | `backend(directoryURL:)` | Gemma 3n (E2B, E4B): AltUp's four residual copies, LAuReL, per-layer embeddings, activation sparsity, key-value sharing, through ``NFKMLXGemma3nBackend`` |
+| ``NFKMLXGemmaLanguage`` | `backend(directoryURL:)` | Gemma 4 (E-series, 26B-A4B mixture, 12B unified) through ``NFKMLXGemmaBackend``; a Gemma 3 release is routed to ``NFKMLXGemma3`` |
 | ``NFKMLXDeepSeek`` | — | DeepSeek V4: multi-head latent attention over a mixture of experts (the arithmetic is measured; the released weights exceed a workstation) |
 | ``NFKMLXGemma2Net`` | — | Gemma 2, the SANA text encoder |
 | ``NFKMLXT5Encoder`` | `encoder(configuration:directory:)` | T5 v1.1 and umT5 encoders, the LTX and Wan text conditioning |
@@ -136,6 +138,8 @@ and JSON or fixed-choice constrained decoding — each also settable from Object
 | Model | Factory | Task |
 | --- | --- | --- |
 | ``NFKMLXSmolVLM`` | `smolVLM(directoryURL:)` | an image and a question → an answer (SmolVLM2-500M) |
+| ``NFKMLXGemma3`` | `load(directoryURL:)` | an image and a question → an answer (Gemma 3 4B: SigLIP so400m at 896, 256 soft tokens, bidirectional attention among them) |
+| ``NFKMLXGemma3n`` | `load(directoryURL:)` | an image or a clip and a question → an answer (MobileNetV5-300M at 768 → 256 soft tokens; a USM Conformer → 188) |
 | ``NFKMLXQwen3VL`` | — | the Qwen3-VL-2B vision tower (2-D rotary ViT, deepstack) |
 | ``NFKMLXGemma4ConditionalGeneration`` | — | the tri-modal Gemma 4 chain: image and audio towers fused into the decoder |
 
@@ -165,7 +169,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXDemucs`` | `demucs` | 4-stem music separation (Demucs v2) |
-| ``NFKMLXHTDemucs`` | `htdemucs` | 4-stem music separation (Hybrid Transformer Demucs v4) |
+| ``NFKMLXHTDemucs`` | `htdemucs` | 4- or 6-stem music separation (Hybrid Transformer Demucs v4; `htdemucs-6s`, and the fine-tuned bag) |
 | ``NFKMLXConvTasNet`` | `conv-tasnet` | speech separation |
 | ``NFKMLXDenoiser`` | `denoiser` | speech noise suppression |
 | ``NFKMLXMPSENet`` | `mpsenet` | speech enhancement (MP-SENet, magnitude + phase) |
@@ -173,12 +177,18 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXSGMSE`` | `sgmse` | score-based generative dereverberation / enhancement (SGMSE+, NCSN++) |
 | ``NFKMLXStoRM`` | `storm` | few-step stochastic regeneration (StoRM: predictor + conditioned score) |
 | ``NFKMLXMossFormer2SENet`` | `mossformer2-se` | full-band 48 kHz speech enhancement (MossFormer2 SE) |
+| ``NFKMLXMossFormer2SRNet`` | `mossformer2-sr` | 48 kHz speech super-resolution (MossFormer2 SR: mel-to-mel backbone + Snake HiFi-GAN + bandwidth substitution) |
 | ``NFKMLXDeepFilterNet`` | `deepfilternet3` | real-time 48 kHz speech denoising (DeepFilterNet3, ~2.3M params) |
 | ``NFKMLXVoiceRestore`` | `voicerestore` | flow-matching universal speech restoration (VoiceRestore + BigVGAN, ~301M) |
 | ``NFKMLXResembleEnhance`` | `resemble-enhance` | five-network general speech restoration (STFT-mask denoiser + IRMAE/CFM latent flow matching + UnivNet LVC vocoder) |
+| ``NFKMLXMetricGANPlus`` | `metricgan-plus` | speech enhancement (MetricGAN+, a two-layer BLSTM magnitude mask) |
+| ``NFKMLXCMGAN`` | `cmgan` | speech enhancement (CMGAN, a conformer metric GAN with mask + complex decoders) |
+| ``NFKMLXFRCRN`` | `frcrn` | speech enhancement (FRCRN, two complex UNets with frequency-recurrent FSMNs) |
+| ``NFKMLXNUWave2`` | `nuwave2` | diffusion bandwidth extension to 48 kHz (NU-Wave 2, short-time Fourier convolutions, 8-step DDIM) |
+| ``NFKMLXApollo`` | `apollo` | music codec-artifact restoration at 44.1 kHz (Apollo, 80-band Roformer; CC-BY-SA weights) |
 | ``NFKMLXDAC`` | `dac` | neural audio codec (Descript, 44.1 / 24 / 16 kHz) |
-| ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech) |
-| ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / small / medium / large-v3, timestamps) |
+| ``NFKMLXSNAC`` | `snac` | multi-scale neural audio codec (24 kHz speech; 32 / 44.1 kHz music) |
+| ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / base / small / medium / large / large-v3 / large-v3-turbo, timestamps) |
 | ``NFKMLXParakeet`` | `parakeet-tdt` | speech → text (Parakeet-TDT 0.6B v2, FastConformer + token-and-duration transducer; per-token timestamps) |
 | ``NFKMLXVAD`` | `vad-marblenet` | voice-activity detection (MarbleNet) |
 | ``NFKMLXSileroVAD`` | `silero-vad` | voice-activity detection (Silero v6, streaming) |

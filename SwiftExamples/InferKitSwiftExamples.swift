@@ -148,6 +148,25 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertFalse(backend.isReady)                       // not ready until prepared
     }
 
+    // Docs/examples.md: Constraining the Core ML backend's output. The same core keys serve the MLX backend.
+    func testExampleConstrainingTheLocalLanguageBackend() {
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Describe Paris as JSON."],
+                                          parameters: [NFKParameterOutputFormat: "json-object",
+                                                       NFKParameterMaxTokens: 96, NFKParameterTemperature: 0])
+        XCTAssertEqual(request.parameters[NFKParameterOutputFormat] as? String, "json-object")
+        let pick = NFKInferenceRequest(inputs: [NFKInputPrompt: "Is the sky blue? Answer yes or no."],
+                                       parameters: [NFKParameterChoices: ["yes", "no"]])
+        XCTAssertEqual((pick.parameters[NFKParameterChoices] as? [String])?.count, 2)
+
+        var tokens = (0 ..< 256).map { Data([UInt8($0)]) }
+        tokens.append(Data())                                          // the end token has no bytes
+        let vocabulary = NFKTokenVocabulary(tokens: tokens, endToken: 256)
+        let json = NFKJSONConstraint(vocabulary: vocabulary, root: .object)
+        XCTAssertTrue(json.acceptsText("{\"city\": \"Par"))
+        XCTAssertTrue(json.isCompleteText("{\"city\": \"Paris\"}"))
+        XCTAssertFalse(json.acceptsText("[1, 2]"))
+    }
+
     func testExampleRemoteBackendContract() {
         let backend = NFKRemoteBackend(endpointURL: URL(string: "http://localhost:11434/v1/chat/completions"))
         backend.modelName = "llama3.2"

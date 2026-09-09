@@ -188,6 +188,37 @@
 	}
 }
 
+// Docs/examples.md: Constraining the Core ML backend's output. The grammar mask lives in the core, so
+// a request carrying the core keys is served on device and by the MLX backend alike; the grammar itself
+// can be inspected against any byte-level vocabulary.
+- (void)testExampleConstrainingTheLocalLanguageBackend
+{
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Describe Paris as JSON." }
+									parameters:@{ NFKParameterOutputFormat: @"json-object",   // or "json" / "json-array"
+												  NFKParameterMaxTokens: @96, NFKParameterTemperature: @0 }
+								outputModality:NFKModalityText];
+	XCTAssertEqualObjects(request.parameters[NFKParameterOutputFormat], @"json-object");
+	NFKInferenceRequest *pick =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Is the sky blue? Answer yes or no." }
+									parameters:@{ NFKParameterChoices: @[ @"yes", @"no" ] }
+								outputModality:NFKModalityText];
+	XCTAssertEqual([pick.parameters[NFKParameterChoices] count], 2u);
+
+	// The grammar over a toy byte-level vocabulary: single bytes at their own ids, the end token last.
+	NSMutableArray<NSData *> *tokens = [NSMutableArray array];
+	for (NSUInteger byte = 0; byte < 256; byte++) {
+		uint8_t value = (uint8_t)byte;
+		[tokens addObject:[NSData dataWithBytes:&value length:1]];
+	}
+	[tokens addObject:[NSData data]];
+	NFKTokenVocabulary *vocabulary = [[NFKTokenVocabulary alloc] initWithTokens:tokens endToken:256];
+	NFKJSONConstraint *json = [[NFKJSONConstraint alloc] initWithVocabulary:vocabulary root:NFKJSONRootObject];
+	XCTAssertTrue([json acceptsText:@"{\"city\": \"Par"]);      // a prefix the grammar can complete
+	XCTAssertTrue([json isCompleteText:@"{\"city\": \"Paris\"}"]);
+	XCTAssertFalse([json acceptsText:@"[1, 2]"]);                 // an array, with an object root
+}
+
 - (void)testExampleRemoteBackendContract
 {
 	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:[NSURL URLWithString:@"http://localhost:11434/v1/chat/completions"]];

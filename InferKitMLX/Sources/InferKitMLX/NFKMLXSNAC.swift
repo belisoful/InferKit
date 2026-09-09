@@ -36,11 +36,15 @@ public struct NFKMLXSNACConfiguration: Sendable {
     public var codebookDim: Int
     public var vqStrides: [Int]
     public var noise: Bool
+    /// The window of the bottleneck's local attention (`attn_window_size`), or nil for none. The music
+    /// releases attend over 32 latent frames at the end of the encoder and the start of the decoder;
+    /// the speech release has no attention.
+    public var attentionWindow: Int?
 
     public init(sampleRate: Int = 24000, encoderDim: Int = 48, encoderRates: [Int] = [2, 4, 8, 8],
                 latentDim: Int? = nil, decoderDim: Int = 1024, decoderRates: [Int] = [8, 8, 4, 2],
                 codebookSize: Int = 4096, codebookDim: Int = 8, vqStrides: [Int] = [4, 2, 1],
-                noise: Bool = true) {
+                noise: Bool = true, attentionWindow: Int? = nil) {
         self.sampleRate = sampleRate
         self.encoderDim = encoderDim
         self.encoderRates = encoderRates
@@ -51,19 +55,111 @@ public struct NFKMLXSNACConfiguration: Sendable {
         self.codebookDim = codebookDim
         self.vqStrides = vqStrides
         self.noise = noise
+        self.attentionWindow = attentionWindow
     }
 
     /// The released 24 kHz speech model (3 codebooks, hop 512).
     public static let snac24kHz = NFKMLXSNACConfiguration()
+
+    /// The released 32 kHz music model: wider, four codebooks at strides `[8, 4, 2, 1]`, and local
+    /// attention over 32 frames at the bottleneck. Hop 384.
+    public static let snac32kHz = NFKMLXSNACConfiguration(
+        sampleRate: 32000, encoderDim: 64, encoderRates: [2, 3, 8, 8], decoderDim: 1536,
+        decoderRates: [8, 8, 3, 2], vqStrides: [8, 4, 2, 1], attentionWindow: 32)
+
+    /// The released 44.1 kHz music model: the 32 kHz geometry at the higher rate.
+    public static let snac44kHz = NFKMLXSNACConfiguration(
+        sampleRate: 44100, encoderDim: 64, encoderRates: [2, 3, 8, 8], decoderDim: 1536,
+        decoderRates: [8, 8, 3, 2], vqStrides: [8, 4, 2, 1], attentionWindow: 32)
 
     /// A small configuration for weight-free tests.
     public static let tiny = NFKMLXSNACConfiguration(sampleRate: 24000, encoderDim: 8, encoderRates: [2, 4],
                                                      decoderDim: 16, decoderRates: [4, 2], codebookSize: 16,
                                                      codebookDim: 4, vqStrides: [2, 1])
 
+    /// The tiny geometry with the bottleneck attention, for the weight-free attention test.
+    public static let tinyAttention: NFKMLXSNACConfiguration = {
+        var configuration = tiny
+        configuration.attentionWindow = 4
+        return configuration
+    }()
+
     var hopLength: Int { encoderRates.reduce(1, *) }
-    /// The waveform is padded to a multiple of this so every codebook's pooling divides evenly.
-    var padMultiple: Int { hopLength * (vqStrides.max() ?? 1) }
+    /// The waveform is padded to a multiple of this so every codebook's pooling divides evenly and the
+    /// attention windows tile the latent (the reference's `hop · lcm(vq_strides[0], attn_window_size)`).
+    var padMultiple: Int {
+        let stride = vqStrides.first ?? 1
+        let window = attentionWindow ?? 1
+        return hopLength * (stride * window / NFKMLXSNACConfiguration.gcd(stride, window))
+    }
+
+    static func gcd(_ a: Int, _ b: Int) -> Int { b == 0 ? a : gcd(b, a % b) }
+}
+
+/// The reference's `LocalMHA`: a LayerNorm over channels, a bias-free fused QKV projection, attention
+/// inside non-overlapping windows of `window` frames with a rotary embedding over the position within
+/// the window (rotate-half, base 10000, over the whole 64-wide head), and a bias-free output
+/// projection, added back to the input.
+final class NFKSNACLocalAttention: Module {
+    @ModuleInfo(key: "norm") var norm: LayerNorm
+    @ModuleInfo(key: "to_qkv") var toQKV: Linear
+    @ModuleInfo(key: "to_out") var toOut: Linear
+
+    let heads: Int
+    /// The reference's `dim_head` of 64; a test geometry narrower than that runs one head of its width.
+    let headDim: Int
+    let window: Int
+
+    init(dim: Int, window: Int) {
+        headDim = min(64, dim)
+        heads = dim / headDim
+        self.window = window
+        _norm.wrappedValue = LayerNorm(dimensions: dim)
+        _toQKV.wrappedValue = Linear(dim, dim * 3, bias: false)
+        _toOut.wrappedValue = Linear(dim, dim, bias: false)
+    }
+
+    /// `[B, T, C]` with `T` a multiple of `window`.
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let (b, t, c) = (x.shape[0], x.shape[1], x.shape[2])
+        let windows = t / window
+        let qkv = toQKV(norm(x)).reshaped([b, windows, window, 3, heads, headDim])
+            .transposed(3, 0, 4, 1, 2, 5)                         // [3, B, H, windows, n, d]
+        var q = qkv[0], k = qkv[1]
+        let v = qkv[2]
+        let (cosTable, sinTable) = rotary()
+        q = q * cosTable + Self.rotateHalf(q) * sinTable
+        k = k * cosTable + Self.rotateHalf(k) * sinTable
+        let attended = MLXFast.scaledDotProductAttention(
+            queries: q.reshaped([b, heads, windows * window, headDim]).reshaped([b * heads, windows, window, headDim]),
+            keys: k.reshaped([b * heads, windows, window, headDim]),
+            values: v.reshaped([b * heads, windows, window, headDim]),
+            scale: 1 / sqrt(Float(headDim)), mask: nil)               // [B·H, windows, n, d]
+        let merged = attended.reshaped([b, heads, windows * window, headDim])
+            .transposed(0, 2, 1, 3).reshaped([b, t, c])
+        return toOut(merged) + x
+    }
+
+    /// The `(cos, sin)` tables `[1, 1, 1, window, headDim]` for positions `0 ..< window`, the
+    /// reference's `SinusoidalEmbeddings` with the frequencies repeated across the two halves.
+    private func rotary() -> (MLXArray, MLXArray) {
+        let half = headDim / 2
+        var angles = [Float]()
+        for position in 0 ..< window {
+            let row = (0 ..< half).map { Float(position) / powf(10_000, Float(2 * $0) / Float(headDim)) }
+            angles += row + row
+        }
+        let table = MLXArray(angles).reshaped([1, 1, 1, window, headDim])
+        return (cos(table), sin(table))
+    }
+
+    /// `(x1, x2) → (-x2, x1)` over the two halves of the last axis.
+    private static func rotateHalf(_ x: MLXArray) -> MLXArray {
+        let half = x.shape[x.ndim - 1] / 2
+        let first = x[.ellipsis, 0 ..< half]
+        let second = x[.ellipsis, half...]
+        return concatenated([-second, first], axis: -1)
+    }
 }
 
 /// A depthwise-separable residual unit: snake → depthwise dilated conv → snake → pointwise 1×1 conv,
@@ -114,6 +210,7 @@ final class NFKSNACEncoderBlock: Module {
 final class NFKSNACEncoderNet: Module {
     @ModuleInfo(key: "conv_in") var convIn: Conv1d
     @ModuleInfo(key: "blocks") var blocks: [NFKSNACEncoderBlock]
+    @ModuleInfo(key: "attention") var attention: NFKSNACLocalAttention?
     @ModuleInfo(key: "conv_out") var convOut: Conv1d
 
     init(_ c: NFKMLXSNACConfiguration) {
@@ -124,12 +221,14 @@ final class NFKSNACEncoderNet: Module {
             dim *= 2
             return NFKSNACEncoderBlock(inputDim: input, outputDim: dim, stride: stride, depthwise: true)
         }
+        _attention.wrappedValue = c.attentionWindow.map { NFKSNACLocalAttention(dim: dim, window: $0) }
         _convOut.wrappedValue = Conv1d(inputChannels: dim, outputChannels: dim, kernelSize: 7, padding: 3, groups: dim)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var out = convIn(x)
         for block in blocks { out = block(out) }
+        if let attention { out = attention(out) }
         return convOut(out)
     }
 }
@@ -182,6 +281,7 @@ final class NFKSNACDecoderBlock: Module {
 final class NFKSNACDecoderNet: Module {
     @ModuleInfo(key: "conv_in_dw") var convInDW: Conv1d
     @ModuleInfo(key: "conv_in_pw") var convInPW: Conv1d
+    @ModuleInfo(key: "attention") var attention: NFKSNACLocalAttention?
     @ModuleInfo(key: "blocks") var blocks: [NFKSNACDecoderBlock]
     let snake: NFKMusic3Snake
     @ModuleInfo(key: "conv_out") var convOut: Conv1d
@@ -190,6 +290,7 @@ final class NFKSNACDecoderNet: Module {
         _convInDW.wrappedValue = Conv1d(inputChannels: c.latentDim, outputChannels: c.latentDim,
                                         kernelSize: 7, padding: 3, groups: c.latentDim)
         _convInPW.wrappedValue = Conv1d(inputChannels: c.latentDim, outputChannels: c.decoderDim, kernelSize: 1)
+        _attention.wrappedValue = c.attentionWindow.map { NFKSNACLocalAttention(dim: c.decoderDim, window: $0) }
         _blocks.wrappedValue = c.decoderRates.enumerated().map { index, stride in
             NFKSNACDecoderBlock(inputDim: c.decoderDim >> index, outputDim: c.decoderDim >> (index + 1),
                                 stride: stride, noise: c.noise, depthwise: true)
@@ -201,6 +302,7 @@ final class NFKSNACDecoderNet: Module {
 
     func callAsFunction(_ z: MLXArray, deterministic: Bool) -> MLXArray {
         var out = convInPW(convInDW(z))
+        if let attention { out = attention(out) }
         for block in blocks { out = block(out, deterministic: deterministic) }
         return tanh(convOut(snake(out)))
     }
@@ -380,12 +482,25 @@ public final class NFKMLXSNACBackend: NSObject, NFKInferenceBackend {
     }
 }
 
+/// The released SNAC codec to build, for the Objective-C factory.
+@objc(NFKMLXSNACVariant)
+public enum NFKMLXSNACVariant: Int {
+    /// `snac_24khz`, the speech codec (three codebooks, no attention).
+    case speech24kHz
+    /// `snac_32khz`, a music codec (four codebooks, bottleneck attention).
+    case music32kHz
+    /// `snac_44khz`, a music codec at 44.1 kHz.
+    case music44kHz
+}
+
 /// Registration, encode/decode, and weight loading for SNAC.
 @objc(NFKMLXSNAC)
 public final class NFKMLXSNAC: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "snac"
+    @objc public static let music32kHzModelName = "snac-32khz"
+    @objc public static let music44kHzModelName = "snac-44khz"
 
     private let holder: NFKSNACHolder
 
@@ -393,6 +508,47 @@ public final class NFKMLXSNAC: NSObject {
 
     static func makeNet(_ configuration: NFKMLXSNACConfiguration = .snac24kHz) -> NFKMLXSNACNet {
         NFKMLXSNACNet(configuration)
+    }
+
+    static func specs(for variant: NFKMLXSNACVariant) -> (name: String, configuration: NFKMLXSNACConfiguration) {
+        switch variant {
+        case .speech24kHz: return (modelName, .snac24kHz)
+        case .music32kHz: return (music32kHzModelName, .snac32kHz)
+        case .music44kHz: return (music44kHzModelName, .snac44kHz)
+        }
+    }
+
+    /// Builds one of the released codecs from optional local weights. A checkpoint fits only its own
+    /// size.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:weightsURL:error:)
+    public static func backend(variant: NFKMLXSNACVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let spec = specs(for: variant)
+        return NFKMLXSNACBackend(net: try loadedNet(spec.configuration, weightsURL: weightsURL), identifier: spec.name)
+    }
+
+    /// The download factory at a chosen codec.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(variant: NFKMLXSNACVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous download factory at a chosen codec.
+    ///
+    /// - Since: InferKit 0.3.1
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(variant: NFKMLXSNACVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0) },
+                               completionHandler: completionHandler)
     }
 
     /// Encodes a mono waveform to its multi-scale codebook token streams. `codes[c]` is codebook `c`'s
@@ -456,9 +612,13 @@ public final class NFKMLXSNAC: NSObject {
                                completionHandler: completionHandler)
     }
 
-    /// Registers SNAC (`snac`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
+    /// Registers the three released codecs (`snac`, `snac-32khz`, `snac-44khz`) with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        for variant in [NFKMLXSNACVariant.speech24kHz, .music32kHz, .music44kHz] {
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
+                try backend(variant: variant, weightsURL: weightsURL)
+            }
+        }
     }
 
     /// Loads a checkpoint, fusing the parametrization-form weight norm (`g·v/‖v‖`) and transposing to
@@ -528,10 +688,15 @@ public final class NFKMLXSNAC: NSObject {
             return ([name] + tail[2...]).joined(separator: ".")
         }
 
+        // The attention, when the release has one, takes a Sequential slot of its own: after the
+        // encoder's last block and after the decoder's projection, so everything past it shifts by one.
+        let attentionSlots = c.attentionWindow == nil ? 0 : 1
+
         if parts.first == "encoder", parts.count >= 4, parts[1] == "block", let n = Int(parts[2]) {
             let blocks = c.encoderRates.count
             if n == 0 { return "encoder.conv_in." + parts[3...].joined(separator: ".") }
-            if n == blocks + 1 { return "encoder.conv_out." + parts[3...].joined(separator: ".") }
+            if attentionSlots == 1, n == blocks + 1 { return "encoder.attention." + parts[3...].joined(separator: ".") }
+            if n == blocks + 1 + attentionSlots { return "encoder.conv_out." + parts[3...].joined(separator: ".") }
             guard parts.count >= 5, parts[3] == "block", let m = Int(parts[4]) else { return key }
             let prefix = "encoder.blocks.\(n - 1)"
             if m <= 2 { return "\(prefix).res_unit\(m + 1)." + residualUnit(Array(parts[5...])) }
@@ -543,10 +708,11 @@ public final class NFKMLXSNAC: NSObject {
             let blocks = c.decoderRates.count
             if n == 0 { return "decoder.conv_in_dw." + parts[3...].joined(separator: ".") }
             if n == 1 { return "decoder.conv_in_pw." + parts[3...].joined(separator: ".") }
-            if n == blocks + 2 { return "decoder.snake." + parts[3...].joined(separator: ".") }
-            if n == blocks + 3 { return "decoder.conv_out." + parts[3...].joined(separator: ".") }
+            if attentionSlots == 1, n == 2 { return "decoder.attention." + parts[3...].joined(separator: ".") }
+            if n == blocks + 2 + attentionSlots { return "decoder.snake." + parts[3...].joined(separator: ".") }
+            if n == blocks + 3 + attentionSlots { return "decoder.conv_out." + parts[3...].joined(separator: ".") }
             guard parts.count >= 5, parts[3] == "block", let m = Int(parts[4]) else { return key }
-            let prefix = "decoder.blocks.\(n - 2)"
+            let prefix = "decoder.blocks.\(n - 2 - attentionSlots)"
             if m == 0 { return "\(prefix).snake1." + parts[5...].joined(separator: ".") }
             if m == 1 { return "\(prefix).conv_t1.conv." + parts[5...].joined(separator: ".") }
             if m == 2 { return "\(prefix).noise." + parts[5...].joined(separator: ".") }

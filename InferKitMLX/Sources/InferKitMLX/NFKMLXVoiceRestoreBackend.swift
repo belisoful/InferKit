@@ -13,15 +13,21 @@ import MLXNN
 
 /// The BigVGAN log-mel front end (`meldataset.mel_spectrogram`), reusing the shared Slaney filterbank.
 struct NFKMLXVoiceRestoreMel {
-    let nFFT = 1024, hop = 256, sampleRate = 24000, numMels = 100
-    let fMax: Float = 12000
+    let nFFT: Int, hop: Int, sampleRate: Int, numMels: Int
+    let fMax: Float
     let window: [Float]
     let filters: MLXArray                                              // [bins, numMels]
 
-    init() {
-        let n = 1024
+    /// The BigVGAN 24 kHz geometry by default; MossFormer2 SR reads it at 48 kHz over 80 bands to 8 kHz.
+    init(sampleRate: Int = 24000, nFFT: Int = 1024, hop: Int = 256, numMels: Int = 100, fMax: Float = 12000) {
+        self.sampleRate = sampleRate
+        self.nFFT = nFFT
+        self.hop = hop
+        self.numMels = numMels
+        self.fMax = fMax
+        let n = nFFT
         window = (0 ..< n).map { 0.5 - 0.5 * cosf(2 * .pi * Float($0) / Float(n)) }   // periodic Hann
-        filters = NFKMLXMel.melFilters(sampleRate: 24000, bins: n / 2 + 1, nMels: 100, fMinimum: 0, fMaximum: 12000)
+        filters = NFKMLXMel.melFilters(sampleRate: sampleRate, bins: n / 2 + 1, nMels: numMels, fMinimum: 0, fMaximum: fMax)
     }
 
     /// `samples` → `[1, frames, numMels]` log-mel.

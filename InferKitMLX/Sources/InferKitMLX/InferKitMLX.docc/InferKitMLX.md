@@ -21,7 +21,7 @@ Three ways to use it:
   <doc:ModelGallery> for what each does and <doc:ModelIndex> for the class, configuration, and a
   construction line to copy.
 - **Generative pipelines** — Stable Diffusion, Z-Image, and SANA text-to-image; LTX-Video and Wan
-  text-to-video; on-device language models (Qwen3, Qwen3.5, Gemma 4, DeepSeek V4, any dense GGUF); and
+  text-to-video; on-device language models (Qwen3, Qwen3.5, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4, any dense GGUF); and
   MiniMax Music 3 text-to-music. See <doc:DiffusionAndSchedulers> and ``NFKMLXLanguageBackend``.
 - **Bring your own** — supply an MLX forward closure and let a base backend handle the InferKit contract
   and the image/audio bridge. See <doc:BringYourOwnBackends>.
@@ -134,9 +134,18 @@ limits.
 - ``NFKMLXPromptCache``
 - ``NFKMLXSpeculativeReport``
 - ``NFKMLXJSONConstraint``
+- ``NFKMLXJSONSchemaConstraint``
+- ``NFKMLXJSONSchema``
 - ``NFKMLXChoiceConstraint``
 - ``NFKMLXVocabulary``
 - ``NFKMLXHybridLanguage``
+- ``NFKMLXGemma3``
+- ``NFKMLXGemma3n``
+- ``NFKMLXGemma3Backend``
+- ``NFKMLXGemma3Language``
+- ``NFKMLXGemma3Net``
+- ``NFKMLXGemma3Configuration``
+- ``NFKMLXGemma3Cache``
 - ``NFKMLXGemmaLanguage``
 - ``NFKMLXGemmaBackend``
 - ``NFKMLXDeepSeek``
@@ -151,6 +160,11 @@ limits.
 - ``NFKMLXSmolVLM``
 - ``NFKMLXSigLIPNet``
 - ``NFKMLXSmolVLMConnector``
+- ``NFKMLXGemma3Model``
+- ``NFKMLXGemma3VisionNet``
+- ``NFKMLXGemma3MultimodalProjector``
+- ``NFKMLXGemma3ImageProcessor``
+- ``NFKMLXGemma3Tokens``
 - ``NFKMLXQwen3VL``
 - ``NFKMLXQwen3VLVisionNet``
 - ``NFKMLXGemma4VisionNet``
@@ -183,9 +197,15 @@ limits.
 - ``NFKMLXSGMSE``
 - ``NFKMLXStoRM``
 - ``NFKMLXMossFormer2SENet``
+- ``NFKMLXMossFormer2SRNet``
 - ``NFKMLXDeepFilterNet``
 - ``NFKMLXVoiceRestore``
 - ``NFKMLXResembleEnhance``
+- ``NFKMLXMetricGANPlus``
+- ``NFKMLXCMGAN``
+- ``NFKMLXFRCRN``
+- ``NFKMLXNUWave2``
+- ``NFKMLXApollo``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
 

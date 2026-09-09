@@ -124,12 +124,17 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 /// Building a text-generation backend from a Gemma 4 release directory.
 public extension NFKMLXGemmaLanguage {
 
-    /// Builds a text-generation backend from a released Gemma 4 directory, reading its `config.json`,
-    /// weights, and tokenizer. The E-series, the 26B-A4B mixture, and the 12B unified decoder are all
-    /// dispatched from the config's model type. Run inference off the render thread.
+    /// Builds a text-generation backend from a released Gemma directory, reading its `config.json`,
+    /// weights, and tokenizer. The Gemma 4 E-series, the 26B-A4B mixture, and the 12B unified decoder
+    /// are all dispatched from the config's model type, and a Gemma 3 release goes to
+    /// ``NFKMLXGemma3``'s backend. Run inference off the render thread.
     static func backend(directoryURL: URL,
                         precision: NFKMLXWeightPrecision = .float32) throws -> any NFKInferenceBackend {
         let configURL = directoryURL.appendingPathComponent("config.json")
+        // A Gemma 3 release (`gemma3` / `gemma3_text`) has its own decoder and a cached generation loop.
+        if NFKMLXGemma3.isGemma3(configURL: configURL) {
+            return try NFKMLXGemma3.backend(directoryURL: directoryURL, precision: precision)
+        }
         guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
         }

@@ -45,6 +45,28 @@ public struct NFKMLXSAMConfiguration: Sendable {
         configuration.encoderHeads = 12
         return configuration
     }
+
+    /// The released `sam_vit_l` geometry: a 1024-wide, 24-block encoder with global attention every
+    /// sixth block. The prompt encoder and mask decoder are the same in every size.
+    public static var vitL: NFKMLXSAMConfiguration {
+        var configuration = vitB
+        configuration.encoderEmbed = 1024
+        configuration.encoderDepth = 24
+        configuration.encoderHeads = 16
+        configuration.globalAttnIndexes = [5, 11, 17, 23]
+        return configuration
+    }
+
+    /// The released `sam_vit_h` geometry, the original release's default: a 1280-wide, 32-block
+    /// encoder with global attention every eighth block.
+    public static var vitH: NFKMLXSAMConfiguration {
+        var configuration = vitB
+        configuration.encoderEmbed = 1280
+        configuration.encoderDepth = 32
+        configuration.encoderHeads = 16
+        configuration.globalAttnIndexes = [7, 15, 23, 31]
+        return configuration
+    }
 }
 
 /// Random Fourier positional encoding of 2-D coordinates in `0...1`.
@@ -471,12 +493,14 @@ final class NFKMLXSAMNet: Module {
 /// The point-prompt parameter key: `[x, y]` in pixels.
 public let NFKSAMPointKey = "samPoint"
 
-/// The SAM geometry to build. `compact` is the small default that runs with random weights; `vitB`
-/// matches the released `sam_vit_b` checkpoint.
+/// The SAM geometry to build. `compact` is the small default that runs with random weights; `vitB`,
+/// `vitL`, and `vitH` match the released `sam_vit_b`, `sam_vit_l`, and `sam_vit_h` checkpoints.
 @objc(NFKMLXSAMVariant)
 public enum NFKMLXSAMVariant: Int {
     case compact
     case vitB
+    case vitL
+    case vitH
 }
 
 /// Segment Anything as an InferKit backend, and its registration.
@@ -494,10 +518,13 @@ public final class NFKMLXSAM: NSObject {
         switch variant {
         case .compact: return NFKMLXSAMConfiguration()
         case .vitB: return .vitB
+        case .vitL: return .vitL
+        case .vitH: return .vitH
         }
     }
 
-    /// Builds a SAM backend at a chosen geometry. The released `sam_vit_b` checkpoint only fits `.vitB`;
+    /// Builds a SAM backend at a chosen geometry. A released checkpoint fits only its own size
+    /// (`sam_vit_b` → `.vitB`, `sam_vit_l` → `.vitL`, `sam_vit_h` → `.vitH`);
     /// `.compact` is the small default that runs with random weights.
     @objc(backendWithVariant:weightsURL:error:)
     public static func backend(variant: NFKMLXSAMVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
@@ -524,7 +551,7 @@ public final class NFKMLXSAM: NSObject {
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds at a chosen geometry — no registry
-    /// required. The released `sam_vit_b` checkpoint needs `.vitB`.
+    /// required. A released checkpoint needs its own size (`.vitB`, `.vitL`, or `.vitH`).
     /// Blocking on the network; run off the render thread.
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXSAMVariant, repo: String, weightsPath: String,

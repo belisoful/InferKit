@@ -79,7 +79,9 @@ enum NFKMLXQuantization {
     /// as `uint32` where an unquantized one is a float. This keeps a checkpoint self-describing, so a
     /// file saved before embeddings were quantizable still loads.
     static func matchStructure(of checkpoint: NFKMLXWeights.Checkpoint, on module: Module) {
-        guard let quantization = checkpoint.quantization else { return }
+        // An MXFP4 record describes packed experts alone, which the language loader installs from the
+        // arrays' own dtypes; there is no affine structure to rebuild for it.
+        guard let quantization = checkpoint.quantization, quantization.mode == .affine else { return }
         let embeddingsPacked = module.leafModules().flattened().contains { path, layer in
             guard layer is Embedding, !(layer is QuantizedEmbedding) else { return false }
             return checkpoint.arrays[path + ".weight"]?.dtype == .uint32
@@ -108,10 +110,16 @@ enum NFKMLXWeights {
     /// as "bits:groupSize". Written automatically when the saved module holds quantized layers.
     private static let quantizationKey = "inferkit.quantization"
 
-    /// The MLX affine quantization a checkpoint was stored under.
+    /// The MLX quantization a checkpoint was stored under.
     struct Quantization: Sendable, Equatable {
         let bits: Int
         let groupSize: Int
+        let mode: QuantizationMode
+        init(bits: Int, groupSize: Int, mode: QuantizationMode = .affine) {
+            self.bits = bits
+            self.groupSize = groupSize
+            self.mode = mode
+        }
     }
 
     /// A checkpoint's arrays together with the layout its convolution weights are stored in.
@@ -167,13 +175,15 @@ enum NFKMLXWeights {
         let (arrays, metadata) = try loadArraysAndMetadata(url: url)
         var quantization: Quantization?
         if let recorded = metadata[quantizationKey] {
-            let parts = recorded.split(separator: ":").compactMap { Int($0) }
-            guard parts.count == 2 else {
+            let fields = recorded.split(separator: ":")
+            let parts = fields.prefix(2).compactMap { Int($0) }
+            let mode = fields.count > 2 ? QuantizationMode(rawValue: String(fields[2])) : .affine
+            guard parts.count == 2, (2 ... 3).contains(fields.count), let mode else {
                 throw NFKMLXError.unsupportedConfiguration(
                     "\(url.lastPathComponent) records quantization \"\(recorded)\", which is not "
-                    + "the bits:groupSize form this loader reads")
+                    + "the bits:groupSize[:mode] form this loader reads")
             }
-            quantization = Quantization(bits: parts[0], groupSize: parts[1])
+            quantization = Quantization(bits: parts[0], groupSize: parts[1], mode: mode)
         }
         return Checkpoint(arrays: arrays, needsConvTranspose: metadata[layoutKey] != mlxLayout,
                           quantization: quantization)
@@ -214,9 +224,12 @@ enum NFKMLXWeights {
         // into an unquantized structure by mistake. Quantization here is uniform (one bits/groupSize
         // per module), which is what the single metadata entry can say.
         var metadata = [layoutKey: mlxLayout]
-        if let quantized = module.leafModules().flattened()
-            .compactMap({ $0.1 as? Quantized }).first {
+        // A module mixing affine layers with MXFP4 experts records the affine geometry, which is what
+        // `matchStructure` rebuilds; the packed experts are recognized by their own dtypes on load.
+        let quantizedLeaves = module.leafModules().flattened().compactMap { $0.1 as? Quantized }
+        if let quantized = quantizedLeaves.first(where: { $0.mode == .affine }) ?? quantizedLeaves.first {
             metadata[quantizationKey] = "\(quantized.bits):\(quantized.groupSize)"
+                + (quantized.mode == .affine ? "" : ":\(quantized.mode.rawValue)")
         }
         try MLX.save(arrays: arrays, metadata: metadata, url: scratch)
         do {

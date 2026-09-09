@@ -522,6 +522,23 @@ final class MLXExamples: XCTestCase {
         options.constraint = NFKMLXChoiceConstraint(choices: ["yes", "no"], vocabulary: vocabulary)
         let answer = model.generate(prompt: [3, 17], options: options)
         XCTAssertTrue(["yes", "no"].contains(String(decoding: answer.flatMap { vocabulary.tokens[$0] }, as: UTF8.self)))
+
+        // A JSON Schema guarantees the keys and types as well as the syntax. Through a request the
+        // schema is the core's NFKParameterJSONSchema dictionary; here it is built directly.
+        let schema = try NFKMLXJSONSchema(jsonText: """
+            {"type": "object", "properties": {"answer": {"enum": ["yes", "no"]}, "count": {"type": "integer"}},
+             "required": ["answer"], "additionalProperties": false}
+            """)
+        let constraint = NFKMLXJSONSchemaConstraint(schema: schema, vocabulary: vocabulary)
+        options.constraint = constraint
+        options.maxTokens = 60
+        let structured = String(decoding: model.generate(prompt: [3, 17], options: options).flatMap { vocabulary.tokens[$0] },
+                                as: UTF8.self)
+        XCTAssertTrue(constraint.accepts(structured), structured)
+        if constraint.isComplete(structured) {
+            let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(structured.utf8)) as? [String: Any])
+            XCTAssertTrue(["yes", "no"].contains(object["answer"] as? String ?? ""), structured)
+        }
     }
 
     // Docs/examples.md: Text embeddings — the decoder read one layer earlier, pooled and normalized to
