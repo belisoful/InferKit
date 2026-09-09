@@ -16,8 +16,8 @@ import MLXNN
 final class NFKMLXLanguageModelTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func tinyNet() -> NFKMLXLanguageNet { NFKMLXLanguage.makeNet(.tiny) }
@@ -35,7 +35,8 @@ final class NFKMLXLanguageModelTests: XCTestCase {
 
     // A tied model has no `lm_head`: the embedding matrix is the output projection. Building one
     // anyway would leave it randomly initialized while a strict load still passed.
-    func testTiedEmbeddingsCarryNoOutputProjection() {
+    func testTiedEmbeddingsCarryNoOutputProjection() throws {
+        try requireMLXRuntime()
         var tied = NFKMLXLanguageConfiguration.tiny
         tied.tiesWordEmbeddings = true
         XCTAssertNil(NFKMLXLanguage.makeNet(tied).lmHead)
@@ -47,7 +48,8 @@ final class NFKMLXLanguageModelTests: XCTestCase {
 
     // Query and key normalization is Qwen3's; a Llama-shaped config carries no such weights, and
     // building them would make a strict load of a Llama checkpoint fail.
-    func testQueryKeyNormalizationFollowsTheConfiguration() {
+    func testQueryKeyNormalizationFollowsTheConfiguration() throws {
+        try requireMLXRuntime()
         var qwen = NFKMLXLanguageConfiguration.tiny
         qwen.normalizesQueryAndKey = true
         let withNorm = NFKMLXLanguage.makeNet(qwen).parameters().flattened().map(\.0)
@@ -97,7 +99,8 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertTrue(logits.asType(.float32).sum().item(Float.self).isFinite)
     }
 
-    func testTheCausalMaskForbidsAttendingForward() {
+    func testTheCausalMaskForbidsAttendingForward() throws {
+        try requireMLXRuntime()
         let mask = NFKMLXLanguageNet.causalMask(4, offset: 0)
         eval(mask)
         let values = mask.asArray(Float.self)
@@ -114,7 +117,8 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     }
 
     // With a cache, a step's row covers the whole prefix, so the mask widens by the offset.
-    func testTheMaskWidensWithTheCacheOffset() {
+    func testTheMaskWidensWithTheCacheOffset() throws {
+        try requireMLXRuntime()
         let mask = NFKMLXLanguageNet.causalMask(2, offset: 3)
         XCTAssertEqual(mask.shape, [2, 5])
         eval(mask)
@@ -1119,6 +1123,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
 
     private func releasedMixtureStructure(shapesKey: String, configKey: String, label: String,
                                           check: (NFKMLXLanguageConfiguration) -> Void) throws {
+        try requireMLXRuntime()       // building the module initializes MLX
         var config = ProcessInfo.processInfo.environment
         let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation.json")
         if let data = try? Data(contentsOf: url),

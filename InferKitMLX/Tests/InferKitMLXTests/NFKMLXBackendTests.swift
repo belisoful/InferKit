@@ -67,8 +67,8 @@ final class NFKMLXBackendTests: XCTestCase {
     // The model's own job carries the per-step progress and takes the cancellation. Wrapping it
     // without forwarding both would leave a caller watching a job that never moves.
     func testTheBackendForwardsTheModelsProgressAndResult() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let backend = NFKMLXBackend(model: .stableDiffusion15,
                                     loaded: NFKMLXTextToImage.backend(configuration: .tiny))
         XCTAssertTrue(backend.isReady)

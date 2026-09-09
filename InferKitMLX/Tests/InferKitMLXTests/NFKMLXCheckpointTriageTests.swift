@@ -29,8 +29,8 @@ final class NFKMLXCheckpointTriageTests: XCTestCase {
     }()
 
     func testTriageEveryUnverifiedCheckpoint() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
 
         let models: [(String, (URL) throws -> any NFKInferenceBackend)] = [
             ("YOLO",        { try NFKMLXYOLO.backend(weightsURL: $0, labels: nil) }),

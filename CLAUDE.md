@@ -28,8 +28,10 @@ xcodebuild build -scheme InferKit -destination 'generic/platform=iOS'
 # tvOS goes through the SDK, not a destination — see the Full Check note.
 xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos26.5 -arch arm64
 
-# The MLX companion (Apple Silicon, macOS 14 / iOS 17) is a separate package
-cd InferKitMLX && swift build && swift test
+# The MLX companion (Apple Silicon, macOS 14 / iOS 17) is a separate package. SwiftPM cannot
+# compile Metal shaders, so place MLX's Metal library beside the test binary first or the
+# MLX-dependent tests skip.
+cd InferKitMLX && swift build --build-tests && ../Tools/mlx-metallib.sh && swift test
 
 # The Foundation Models companion (macOS 26 / iOS 26) is a separate package
 cd InferKitFoundationModels && swift build && swift test
@@ -59,17 +61,47 @@ step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints 
    through the workspace.
 2b. `xcodebuild analyze -scheme InferKit -derivedDataPath <FRESH DIR>` — **0 analyzer issues**. Use a
    fresh derived-data path: the analyzer is cached, and reusing one silently reports nothing.
-3. `InferKitMLX/` `swift build` + `swift test` when a change touches the MLX companion. MLX cannot
-   evaluate under `swift test`, so the real run goes through xcodebuild — and the package has **three**
-   test targets, each with its own shared scheme in `.swiftpm/xcode/xcshareddata/xcschemes/`. Run all
-   three (`-destination 'platform=macOS' -skipPackagePluginValidation` throughout):
+3. `InferKitMLX/` `swift build` + `swift test` when a change touches the MLX companion. SwiftPM
+   cannot compile Metal shaders, so a plain build carries no `default.metallib` and MLX aborts the
+   PROCESS at the first array it has to evaluate, with "0 failures" still printed for the classes
+   that ran before it, so a crash there is a truncated run rather than a red one. **Run
+   `Tools/mlx-metallib.sh` first**: it compiles mlx-swift's nine kernels with `xcrun metal` (the same
+   sources Xcode's build system compiles) and places `mlx.metallib` beside the SwiftPM test binary,
+   which is the FIRST place MLX's loader looks, before any bundle. `swift test` then runs every test
+   in all three test targets (measured 2026-09-09: 1192 run, 6 skipped — all opt-in probes — 0
+   failures, 20 minutes with the real-weight parity tests; the file survives a relink).
+   Re-run the script after `swift package clean` or an mlx-swift bump. The package has **three**
+   test targets, each with its own shared scheme in `.swiftpm/xcode/xcshareddata/xcschemes/`, and
+   xcodebuild covers them without the script because Xcode compiles the shaders into
+   `mlx-swift_Cmlx.bundle` inside each test bundle. Run all three (`-destination 'platform=macOS'
+   -skipPackagePluginValidation` throughout):
 
    ```
    xcodebuild test -scheme InferKitMLXTests        …    # the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  48 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #  30 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXExamples     …    #  61 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #  36 — the Objective-C ones
    ```
 
+   **Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
+   skipped** (2026-09-08: 1192 run, 891 skipped, 301 pure-Foundation tests actually executed —
+   pickle, zip, GGUF parsing, chat templates, flow schedulers, configuration readers, remaps). The
+   guard is `NFKMLXGPU.metalLibraryURL`, which mirrors the loader's own search (colocated
+   `mlx.metallib`, the `mlx-swift_Cmlx.bundle` beside the main bundle, in any loaded bundle, or as a
+   framework, then `Resources/default.metallib`) and is nil exactly when the first evaluation would
+   abort. It is deliberately NOT a check on the build directory: a `swift test` with the library
+   placed runs everything, and an xcodebuild run never skips. The convention that keeps the leg
+   green: every test method that reaches MLX — constructing a module (a `Linear` is enough), seeding
+   (`NFKMLXRandom.seed`), clearing the cache (`NFKMLXGPU.clearCache`), reading a memory counter or
+   the device, `loadArrays` on a record, `eval` — calls the class's private `requireMLXRuntime()`
+   (an `XCTSkipIf` on that URL being nil) FIRST; a shared helper that constructs a net
+   (`tinyModel()`) carries the call so every caller skips; `setUp` seeds and `tearDown` cache clears
+   are wrapped in the same check, because they run for a skipped method too; and a class whose every
+   test needs MLX (`NFKMLXReferenceParityTests`) skips once in `setUpWithError`. A skip on a missing
+   validation key is NOT a runtime guard — `testCLIPTokenizerMatchesTheReferenceIds` had one and
+   still crashed on `loadArrays`. To find the offender when this leg breaks, run each class alone
+   (`swift test --filter '\.NFKMLXFooTests/'`, ~6 s each) and take the last `started` case with no
+   `passed`/`skipped` line; XCTest's lines are unbuffered while `print` output flushes at the abort,
+   so the printed lines beside the crash belong to earlier tests.
    **`-scheme InferKitMLX` is the LIBRARY scheme and runs only the first testable**, which is the
    collapse the core's workspace note above describes: it executed the `InferKitMLXTests` methods
    and silently ran neither examples target, so the 78 example tests went unclaimed while the command

@@ -15,8 +15,8 @@ import MLX
 final class NFKMLXTextToImageTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: The model input a prompt becomes

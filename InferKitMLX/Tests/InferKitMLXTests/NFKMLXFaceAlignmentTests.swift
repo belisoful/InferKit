@@ -194,8 +194,8 @@ final class NFKMLXFaceAlignmentTests: XCTestCase {
     // and measuring that disagreement is the point: it is the cost of the zero-download path, stated
     // as a number rather than a caveat.
     func testRetinaFaceAndVisionAgreeOnTheFace() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         guard let weights = config["IK_VAL_RETINAFACE"] else { throw XCTSkip("set IK_VAL_RETINAFACE") }
         let image = try validationImage()
 

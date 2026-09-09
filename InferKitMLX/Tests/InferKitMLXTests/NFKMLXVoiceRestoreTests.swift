@@ -2,10 +2,10 @@
 //  NFKMLXVoiceRestoreTests.swift
 //  InferKitMLXTests
 //
-//  VoiceRestore (skirdey/voicerestore, MIT) flow-matching universal speech restorer. The module forward
-//  evaluates MLX arrays, so it skips under `swift test` and runs under `xcodebuild test`. The parity test
-//  is gated on the released weights + the recorded oracle (`IK_VAL_VOICERESTORE` + `IK_PARITY_VOICERESTORE`,
-//  from `run_reference.py voicerestore`).
+//  VoiceRestore (skirdey/voicerestore, MIT) flow-matching universal speech restorer. The module
+//  forward evaluates MLX arrays, so it skips without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh). The parity test is gated on the released weights + the recorded oracle
+//  (`IK_VAL_VOICERESTORE` + `IK_PARITY_VOICERESTORE`, from `run_reference.py voicerestore`).
 //
 
 import XCTest
@@ -17,8 +17,8 @@ import MLXNN
 final class NFKMLXVoiceRestoreTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {

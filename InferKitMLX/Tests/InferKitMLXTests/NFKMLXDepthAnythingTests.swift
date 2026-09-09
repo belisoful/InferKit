@@ -3,7 +3,8 @@
 //  InferKitMLXTests
 //
 //  DINOv2 + DPT is large; these use a tiny configuration so the forward and weight round-trip run
-//  quickly. They evaluate MLX arrays, so they skip under `swift test` and run under `xcodebuild test`.
+//  quickly. They evaluate MLX arrays, so they skip without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +16,8 @@ import MLX
 final class NFKMLXDepthAnythingTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // A small ViT + DPT: 4 blocks, 2 heads, 42×42 input (3×3 patches of 14), so the forward is cheap.

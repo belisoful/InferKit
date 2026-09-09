@@ -70,6 +70,25 @@ the module by shape against its released safetensors headers (`Tools/validation-
   SigLIP 2 ×14, Gemma 3n E4B, each with 0 missing, 0 mismatched, 0 unaccounted.
 - Gemma 3n E4B measured at bf16 on both sides (logit cosine 0.99989, argmax 5/6); the E2B, exact at
   float32, reads the same 0.99989 at bf16, which is the rounding floor the E4B is held to.
+- Added `NFKMLXGPU.metalLibraryURL`: the Metal library MLX will load at its first evaluation, found
+  the way its own loader looks (colocated `mlx.metallib`, the `mlx-swift_Cmlx.bundle` beside the main
+  bundle, in any loaded bundle, or as a framework, then `Resources/default.metallib`), or nil when
+  none is there. MLX needs the library whether or not anything runs on the GPU and a missing one
+  surfaces only at the first evaluation, so this is the check to run before the first array is
+  touched. Objective-C reads the same class property.
+- Added `Tools/mlx-metallib.sh`: SwiftPM cannot compile Metal shaders, so the script compiles
+  mlx-swift's kernels with `xcrun metal` and places `mlx.metallib` beside the SwiftPM test binary,
+  the first place MLX's loader looks. `swift test` on the InferKitMLX package then runs every test in
+  all three test targets instead of only the pure-Foundation ones (measured: 1192 run, 6 opt-in
+  probes skipped, 0 failures).
+- Fixed: `swift test` on the InferKitMLX package aborted at the first test that reached MLX without a
+  Metal library, truncating the run with "0 failures" printed for what had run. Every test, setup,
+  teardown, and shared helper that constructs a module, seeds, clears the cache, reads the device, or
+  loads a record now skips when `NFKMLXGPU.metalLibraryURL` is nil, so without the script the leg
+  exits 0 with the MLX-dependent tests reported as skipped and the pure-Foundation tests (pickle,
+  zip, GGUF, chat templates, schedulers, configuration readers) still executed. The guard reads the
+  library's presence, not the build directory, so the xcodebuild schemes run exactly what they ran
+  before and a `swift test` with the library placed runs everything.
 - Fixed: SwinIR's classical reconstruction tail activated with a plain ReLU where the reference's
   `conv_before_upsample` uses a leaky ReLU at 0.01. On the released classical ×4 through the 8-bit
   backend bridge the mean pixel difference falls from 0.0037 to 0.00136 (×3 from 0.0036 to 0.00119, ×8

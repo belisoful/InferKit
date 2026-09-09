@@ -2,9 +2,9 @@
 //  NFKMLXWhisperProviderTests.swift
 //  InferKitMLXTests
 //
-//  With InferKitMLX linked, the core's transcription capability resolves to the bundled Whisper backend
-//  through the dynamically discovered provider. Discovery is pure runtime lookup (no MLX); building the
-//  backend constructs MLXNN layers, so that check runs under xcodebuild.
+//  With InferKitMLX linked, the core's transcription capability resolves to the bundled Whisper
+//  backend through the dynamically discovered provider. Discovery is pure runtime lookup (no MLX);
+//  building the backend constructs MLXNN layers, so that check runs where MLX has a Metal library.
 //
 
 import XCTest
@@ -21,8 +21,8 @@ final class NFKMLXWhisperProviderTests: XCTestCase {
     }
 
     func testTheProviderBuildsAWhisperBackend() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building the Whisper net constructs MLXNN layers; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "builds MLXNN layers; run Tools/mlx-metallib.sh or xcodebuild")
         let backend = try XCTUnwrap(NFKMLXWhisperProvider.makeInferenceBackend())
         XCTAssertEqual(backend.backendIdentifier, "whisper-tiny")
 

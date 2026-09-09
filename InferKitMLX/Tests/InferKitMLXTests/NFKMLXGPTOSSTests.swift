@@ -15,8 +15,8 @@ import MLXNN
 final class NFKMLXGPTOSSTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     /// The sixteen e2m1 values, in nibble order: sign bit high, then two exponent bits, one mantissa bit.
@@ -123,6 +123,7 @@ final class NFKMLXGPTOSSTests: XCTestCase {
     // fused expert projection `[experts, out, in]` as `_blocks` `[experts, out, in / 32, 16]` and
     // `_scales` `[experts, out, in / 32]` — and every released tensor is one the module consumes.
     func testEveryParameterMatchesTheReleasedGPTOSSCheckpoint() throws {
+        try requireMLXRuntime()
         guard let directory = config["IK_VAL_GPT_OSS"] else { throw XCTSkip("set IK_VAL_GPT_OSS") }
         let release = URL(fileURLWithPath: directory)
         let released = try releasedShapes(inDirectory: release)

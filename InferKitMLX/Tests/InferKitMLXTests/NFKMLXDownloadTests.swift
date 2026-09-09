@@ -4,10 +4,11 @@
 //
 //  The download-and-build path (NFKMLXHub + the per-model factories), covered two ways:
 //
-//  1. Hermetically, with no network: a real safetensors is placed at the exact cache location the hub
-//     resolves, so NFKHFHub cache-hits and returns it without a fetch. This proves the hub → registry
-//     → factory → loadWeights chain end to end (sync and async) and that the downloaded file reaches
-//     the loader, deterministically. It builds and evaluates MLX, so it runs under `xcodebuild test`.
+//  1. Hermetically, with no network: a real safetensors is placed at the exact cache location the
+//  hub resolves, so NFKHFHub cache-hits and returns it without a fetch. This proves the hub →
+//  registry → factory → loadWeights chain end to end (sync and async) and that the downloaded file
+//  reaches the loader, deterministically. It builds and evaluates MLX, so it runs where MLX has a
+//  Metal library (see Tools/mlx-metallib.sh).
 //
 //  2. Live, gated behind environment variables (INFERKIT_LIVE_*): a real Hugging Face download through
 //     the hub. Skipped unless the caller supplies a repo + weights path for a registered model, so CI
@@ -30,8 +31,8 @@ private final class TestNetHolder: @unchecked Sendable {
 final class NFKMLXDownloadTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // A model registered around a small RRDBNet whose factory loads the weights URL — the same shape as

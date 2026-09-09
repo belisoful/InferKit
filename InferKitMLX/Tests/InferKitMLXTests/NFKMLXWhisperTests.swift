@@ -2,8 +2,9 @@
 //  NFKMLXWhisperTests.swift
 //  InferKitMLXTests
 //
-//  Encoder-decoder transformer + log-mel. The WAV read/write round-trip needs no GPU; the model path
-//  evaluates MLX arrays, so it skips under `swift test` and runs under `xcodebuild test`.
+//  Encoder-decoder transformer + log-mel. The WAV read/write round-trip needs no GPU; the model
+//  path evaluates MLX arrays, so it skips without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -25,8 +26,8 @@ final class NFKMLXWhisperTests: XCTestCase {
 
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func tinyConfiguration() -> NFKMLXWhisperConfiguration {

@@ -17,12 +17,15 @@ import MLXRandom
 final class NFKMLXGemma3Tests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     override func tearDown() {
-        NFKMLXGPU.clearCache()
+        // Clearing the cache reaches MLX's runtime, which needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
         super.tearDown()
     }
 
@@ -243,7 +246,8 @@ final class NFKMLXGemma3Tests: XCTestCase {
     }
 
     private func tinyModel() throws -> NFKMLXGemma3Model {
-        NFKMLXGemma3Model(decoder: NFKMLXGemma3Net(.tiny), vision: nil, projector: nil,
+        try requireMLXRuntime()       // constructing the decoder initializes MLX
+        return NFKMLXGemma3Model(decoder: NFKMLXGemma3Net(.tiny), vision: nil, projector: nil,
                           tokenizer: try tinyTokenizer(),
                           tokens: NFKMLXGemma3Tokens(tokensPerImage: 3), chatTemplate: nil)
     }

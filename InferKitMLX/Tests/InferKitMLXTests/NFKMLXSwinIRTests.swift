@@ -2,8 +2,9 @@
 //  NFKMLXSwinIRTests.swift
 //  InferKitMLXTests
 //
-//  The Swin Transformer SR network. Window partition/reverse and the relative-position index are pure
-//  Swift; the forward and weight round-trip evaluate MLX arrays and run under `xcodebuild test`.
+//  The Swin Transformer SR network. Window partition/reverse and the relative-position index are
+//  pure Swift; the forward and weight round-trip evaluate MLX arrays and run where MLX has a Metal
+//  library (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +16,8 @@ import MLX
 final class NFKMLXSwinIRTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func tinyNet() -> NFKMLXSwinIRNet {
@@ -64,8 +65,9 @@ final class NFKMLXSwinIRTests: XCTestCase {
         XCTAssertEqual(output.shape, [side * 3, side * 3, 3])
     }
 
-    // A ×3 upsampler packs `9·C` channels into one stage; a ×4 packs `4·C` into each of two. Loading
-    // one into the other would mis-shape, so the parameter tree has to say which it is.
+    // A ×3 upsampler packs `9·F` channels into one stage; a ×4 packs `4·F` into each of two, where F
+    // is the reference's 64-wide reconstruction width, not the embedding width. Loading one into the
+    // other would mis-shape, so the parameter tree has to say which it is.
     func testTheScaleThreeUpsamplerHasOneStageOfNineChannels() throws {
         try requireMLXRuntime()
         var configuration = NFKMLXSwinIRConfiguration.tiny
@@ -76,7 +78,7 @@ final class NFKMLXSwinIRTests: XCTestCase {
 
         let weight = try XCTUnwrap(try NFKMLXSwinIR.makeNet(configuration).parameters().flattened()
             .first { $0.0 == "upsample.0.weight" }?.1)
-        XCTAssertEqual(weight.shape[0], configuration.embedDimensions * 9, "one stage packs 9·C channels")
+        XCTAssertEqual(weight.shape[0], configuration.reconstructionWidth * 9, "one stage packs 9·F channels")
     }
 
     // MARK: Pure-Swift window helpers (no GPU)

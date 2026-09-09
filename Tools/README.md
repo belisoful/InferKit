@@ -35,13 +35,15 @@ fetches every real checkpoint the parity suites load into `~/.inferkit-validatio
 over its safetensors headers, for the structural checks against releases too large to run. This ground truth
 is **irreducibly Python**: a Swift port cannot be validated against another Swift port.
 
-### Build and packaging — `xcframework/`, `docc/`, `ane-placement/`, `espeak/`, `build-all.sh`
+### Build and packaging — `xcframework/`, `docc/`, `ane-placement/`, `espeak/`, `build-all.sh`, `mlx-metallib.sh`
 
 XCFramework packaging (`xcframework/build*.sh`, `verify-mlx.sh`), the DocC catalog builder
 (`docc/build.sh`), the Core ML ANE-placement measurement (`ane-placement/`), the optional system
-espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), and the all-packages build/test driver
-(`build-all.sh`). Also `inferkit-convert/`, the offline HF-causal-LM → Core ML model-directory
-exporter.
+espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), the all-packages build/test driver
+(`build-all.sh`), and `mlx-metallib.sh`, which compiles mlx-swift's Metal kernels with `xcrun metal`
+and places the library beside the InferKitMLX SwiftPM test binary, so `swift test` runs the
+MLX-dependent tests SwiftPM's own build cannot (it compiles no shaders). Also `inferkit-convert/`,
+the offline HF-causal-LM → Core ML model-directory exporter.
 
 ## Requirements
 

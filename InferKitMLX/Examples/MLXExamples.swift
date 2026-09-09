@@ -84,12 +84,13 @@ final class MLXExamples: XCTestCase {
     }
 
     // Docs/examples.md: Real-ESRGAN upscaling — a real single-forward MLX model, built by name.
-    // Building the generator constructs MLXNN layers (initializes MLX), so this runs under xcodebuild.
+    // Building the generator constructs MLXNN layers (initializes MLX), so this runs where MLX has
+    // a Metal library.
     func testExampleRealESRGANRegistersAndBuilds() throws {
         NFKMLXRealESRGAN.register()
         XCTAssertTrue(NFKMLXModelRegistry.registeredModelNames.contains(NFKMLXRealESRGAN.modelName))
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building the RRDBNet initializes MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "building the RRDBNet initializes MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let upscaler = try NFKMLXModelRegistry.backend(named: NFKMLXRealESRGAN.modelName, weightsURL: nil)
         XCTAssertEqual(upscaler.backendIdentifier, "real-esrgan-x4")
     }
@@ -98,8 +99,8 @@ final class MLXExamples: XCTestCase {
     func testExampleDepthAnythingRegistersAndBuilds() throws {
         NFKMLXDepthAnything.register()
         XCTAssertTrue(NFKMLXModelRegistry.registeredModelNames.contains(NFKMLXDepthAnything.modelName))
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building the DINOv2/DPT net initializes MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "building the DINOv2/DPT net initializes MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let depth = try NFKMLXModelRegistry.backend(named: NFKMLXDepthAnything.modelName, weightsURL: nil)
         XCTAssertEqual(depth.backendIdentifier, "depth-anything-v2-small")
     }
@@ -108,8 +109,8 @@ final class MLXExamples: XCTestCase {
     func testExampleLaMaRegistersAndBuilds() throws {
         NFKMLXLaMa.register()
         XCTAssertTrue(NFKMLXModelRegistry.registeredModelNames.contains(NFKMLXLaMa.modelName))
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building the FFC net initializes MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "building the FFC net initializes MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let inpainter = try NFKMLXModelRegistry.backend(named: NFKMLXLaMa.modelName, weightsURL: nil)
         XCTAssertEqual(inpainter.backendIdentifier, "lama-inpaint")
     }
@@ -118,8 +119,8 @@ final class MLXExamples: XCTestCase {
     func testExampleSDInpaintRegistersAndBuilds() throws {
         NFKMLXStableDiffusionInpaint.register()
         XCTAssertTrue(NFKMLXModelRegistry.registeredModelNames.contains(NFKMLXStableDiffusionInpaint.modelName))
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building the VAE/UNet initializes MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "building the VAE/UNet initializes MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let inpaint = try NFKMLXModelRegistry.backend(named: NFKMLXStableDiffusionInpaint.modelName, weightsURL: nil)
         XCTAssertEqual(inpaint.backendIdentifier, "sd-inpaint")
     }
@@ -161,11 +162,11 @@ final class MLXExamples: XCTestCase {
         wait(for: [done], timeout: 5)
     }
 
-    // End to end: register -> build by name -> run. Needs MLX; runs under xcodebuild, skips under
-    // `swift test` (no bundled metallib). Green keys out (alpha low); red is kept (alpha high).
+    // End to end: register -> build by name -> run. Needs MLX, so it skips without a Metal library
+    // (see Tools/mlx-metallib.sh). Green keys out (alpha low); red is kept (alpha high).
     func testExampleReferenceKeyerRunsThroughTheRegistry() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         NFKMLXReferenceModels.registerGreenScreenKeyer()
         let backend = try NFKMLXModelRegistry.backend(named: "green-screen-keyer", weightsURL: nil)
 
@@ -187,8 +188,8 @@ final class MLXExamples: XCTestCase {
 
     // Docs/examples.md: Customizing a model on a consumer's own data
     func testExampleFineTuningRoundTripsThroughTheShippedFactory() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let tuned = FileManager.default.temporaryDirectory
             .appendingPathComponent("zerodce-example-\(UUID().uuidString).safetensors")
         defer { try? FileManager.default.removeItem(at: tuned) }
@@ -213,8 +214,8 @@ final class MLXExamples: XCTestCase {
 
     // Docs/examples.md: Retargeting a segmentation model to your own classes
     func testExampleSegmentationDataAndSamplerFeedTheTrainer() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let myFrames = [Self.gray(8, level: 60), Self.gray(8, level: 200)]
         let myMasks = [Self.gray(8, level: 0), Self.gray(8, level: 255)]
         let sampler = NFKMLXBatchSampler(count: myFrames.count, seed: 7)
@@ -230,8 +231,8 @@ final class MLXExamples: XCTestCase {
 
     // Docs/examples.md: LoRA, for models with no small head to train
     func testExampleLoRAAdaptsMergesAndLeavesAnOrdinaryCheckpoint() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         let net = NFKMLXZeroDCENet(filters: 4)
         let adapted = try NFKMLXLoRA.apply(to: net, rank: 8, alpha: 16) { path, _ in
             path.hasSuffix("q") || path.hasSuffix("v")
@@ -244,8 +245,8 @@ final class MLXExamples: XCTestCase {
 
     // Docs/examples.md: A custom image classifier from a handful of photos
     func testExampleCLIPProbeClassifiesThroughABackend() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
         var configuration = NFKMLXCLIPConfiguration()
         configuration.imageResolution = 32
         configuration.patchSize = 16
@@ -301,8 +302,8 @@ final class MLXExamples: XCTestCase {
     // Docs/examples.md: A live preview of each step. The map is a 1×1 convolution over the channel
     // axis, reported as the job's partialResult — the mechanism a streaming text backend uses.
     func testExampleADiffusionRunPreviewsEveryStep() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "the sampler evaluates MLX arrays; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "the sampler evaluates MLX arrays; run Tools/mlx-metallib.sh or xcodebuild")
         var configuration = NFKDiffusionConfiguration(steps: 4, latentChannels: 3, plateChannels: 3)
         configuration.latentPreview = .passthrough      // .stableDiffusion / .stableDiffusionXL for a VAE latent
         configuration.previewEverySteps = 1
@@ -333,8 +334,8 @@ final class MLXExamples: XCTestCase {
 
     // A map for a model with no published factors is derived from its own decoder by least squares.
     func testExampleAPreviewMapIsFittedToADecoder() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "the fit evaluates MLX arrays; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "the fit evaluates MLX arrays; run Tools/mlx-metallib.sh or xcodebuild")
         let map = try XCTUnwrap(NFKDiffusionLatentPreview.fitted(
             latentChannels: 4,
             decode: { latent in
@@ -353,8 +354,8 @@ final class MLXExamples: XCTestCase {
     // Docs/examples.md: Local, on device through MLX. The cache bound and the rotary scaling are the
     // two knobs that decide whether a long conversation survives.
     func testExampleAContextWindowBoundsTheCache() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         var options = NFKMLXGenerationOptions()
         options.maxTokens = 4
         // Retain at most this many positions; the oldest are dropped as new ones arrive.
@@ -373,8 +374,8 @@ final class MLXExamples: XCTestCase {
     // and the output is the model's own greedy run. Tiny random nets here; a Qwen3-0.6B drafting for
     // a Qwen3-1.7B is the released pairing.
     func testExampleSpeculativeDecodingReproducesThePlainRun() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         let model = NFKMLXLanguage.makeNet(.tiny)
         let draft = NFKMLXLanguage.makeNet(.tiny)         // any model sharing the vocabulary
         var options = NFKMLXGenerationOptions()
@@ -388,8 +389,8 @@ final class MLXExamples: XCTestCase {
 
     // Docs/examples.md: A prompt cache — the next turn of a conversation prefills only what is new.
     func testExampleAPromptCacheContinuesAConversation() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         let model = NFKMLXLanguage.makeNet(.tiny)
         let cache = NFKMLXPromptCache(layerCount: model.configuration.layerCount)
         var options = NFKMLXGenerationOptions()
@@ -411,8 +412,8 @@ final class MLXExamples: XCTestCase {
     // Docs/examples.md: A mixture-of-experts release reads through the same factory; the config
     // says it is one, and the loader stacks the released per-expert tensors.
     func testExampleAMixtureOfExpertsConfiguration() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -434,8 +435,8 @@ final class MLXExamples: XCTestCase {
     // dense feed-forward. A released directory whose config.json sets `enable_moe_block` turns it on
     // through the same @objc directory factory; a tiny random geometry exercises the path here.
     func testExampleGemma4MixtureConfiguration() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         XCTAssertTrue(NFKMLXGemmaConfiguration.tinyMixture.isMixtureOfExperts)
         XCTAssertFalse(NFKMLXGemmaConfiguration.e2b.isMixtureOfExperts)   // the dense E-series
         let net = NFKMLXGemmaLanguage.makeNet(.tinyMixture)
@@ -469,8 +470,8 @@ final class MLXExamples: XCTestCase {
     // the log-mel features the audio tower reads; the multimodal embedder projects a tower's soft tokens
     // into the decoder's space, and the fusion splices them at the placeholder positions.
     func testExampleGemma4TriModalPreprocessing() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "builds MLX arrays; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "builds MLX arrays; run Tools/mlx-metallib.sh or xcodebuild")
         // A tiny 48×48 image → 3×3 patches with a 1×1-pooling processor.
         var bytes = [UInt8](repeating: 255, count: 48 * 48 * 4)
         for i in stride(from: 0, to: bytes.count, by: 4) { bytes[i] = 120 }
@@ -501,8 +502,8 @@ final class MLXExamples: XCTestCase {
     // one of a fixed set of answers. The vocabulary's bytes come from the release's tokenizer; a
     // hand-built one stands in here.
     func testExampleConstrainedDecoding() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         NFKMLXRandom.seed(0)          // random weights: pin the RNG so the outcome is suite-order independent
         let size = NFKMLXLanguageConfiguration.tiny.vocabularySize
         var tokens = (0 ..< 256).map { [UInt8($0)] } + ["{\"", "\":", "yes", "no", "}", "42"].map { Array($0.utf8) }
@@ -546,8 +547,8 @@ final class MLXExamples: XCTestCase {
     // from its directory (NFKMLXQwen3Embedding.backend(directoryURL:)); a tiny random backbone here
     // exercises the path. A query is embedded with a task instruction, a document without one.
     func testExampleTextEmbeddingSimilarity() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the embedder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the embedder; run Tools/mlx-metallib.sh or xcodebuild")
         let backend = try NFKMLXQwen3Embedding.backend(weightsURL: nil, tokenizer: nil,
                                                        configuration: .tiny) as! NFKMLXTextEmbeddingBackend
 
@@ -575,8 +576,8 @@ final class MLXExamples: XCTestCase {
     // prompt to bound the prefill peak, and apply a chat template so an instruct release is prompted
     // in its trained format. All three are off by default.
     func testExampleGenerationOptionsForMemoryAndInstructModels() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "runs the decoder; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "runs the decoder; run Tools/mlx-metallib.sh or xcodebuild")
         var options = NFKMLXGenerationOptions()
         options.maxTokens = 4
         options.cacheQuantization = .init(bits: 8, groupSize: 64)   // 8-bit KV; groupSize divides the head dim
@@ -713,8 +714,8 @@ final class MLXExamples: XCTestCase {
     // tensor descriptors, and dequantizes a tensor to an MLXArray. A tiny F32 file stands in for a real
     // quantized model here; the released Q4_K_M dequantizes bit-exactly against the gguf package.
     func testExampleReadsAGGUFModelWithNoPython() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "reads an MLXArray; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "reads an MLXArray; run Tools/mlx-metallib.sh or xcodebuild")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".gguf")
         defer { try? FileManager.default.removeItem(at: url) }
         try Data(MLXExamples.minimalGGUF()).write(to: url)

@@ -2,8 +2,8 @@
 //  NFKMLXTTSTests.swift
 //  InferKitMLXTests
 //
-//  Acoustic model + HiFi-GAN vocoder + the full text→speech chain. These evaluate MLX arrays, so they
-//  skip under `swift test` and run under `xcodebuild test`.
+//  Acoustic model + HiFi-GAN vocoder + the full text→speech chain. These evaluate MLX arrays, so
+//  they skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -14,8 +14,8 @@ import MLX
 final class NFKMLXTTSTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private let symbols = (0 ..< 40).map { "p\($0)" }

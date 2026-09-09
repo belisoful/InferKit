@@ -2,9 +2,10 @@
 //  NFKMLXFactoriesTests.swift
 //  InferKitMLXTests
 //
-//  The direct @objc factories (build from local weights, or download-and-build) for the shipped real
-//  models. Building a net initializes MLX, so those checks run under `xcodebuild test`; the
-//  download-failure check fails before any net is built, so it needs no GPU.
+//  The direct @objc factories (build from local weights, or download-and-build) for the shipped
+//  real models. Building a net initializes MLX, so those checks run where MLX has a Metal library
+//  (see Tools/mlx-metallib.sh); the download-failure check fails before any net is built, so it
+//  needs no GPU.
 //
 
 import XCTest
@@ -14,8 +15,8 @@ import InferKit
 final class NFKMLXFactoriesTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     func testLocalFactoriesBuildBackendsWithTheExpectedIdentifiers() throws {

@@ -25,15 +25,18 @@ import MLXNN
 final class NFKMLXReleasedSizesTests: XCTestCase {
 
     override func tearDown() {
-        NFKMLXGPU.clearCache()
+        // Clearing the cache reaches MLX's runtime, which needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
         super.tearDown()
     }
 
     private var config: [String: String] { NFKMLXValidationConfig.environment }
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func path(_ key: String) throws -> String {
@@ -118,6 +121,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // generic one every Qwen3 release loads through, so the check is that a 14B and a 32B config
     // build the module the release was saved from — head count 40 and 64, untied heads.
     func testQwen3LargerDenseSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for (name, layers, heads) in [("qwen3-14b", 40, 40), ("qwen3-32b", 64, 64)] {
             let release = try shapes(name)
             let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: release.config)
@@ -133,6 +137,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // prefix and no head — so the module's names shed the prefix and the head; the 8B says it is
     // untied, which for an embedder is moot, since the head is never built or read.
     func testQwen3EmbeddingLargerSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for name in ["qwen3-embedding-4b", "qwen3-embedding-8b"] {
             let release = try shapes(name)
             var configuration = try NFKMLXLanguage.configuration(fromHuggingFace: release.config)
@@ -147,6 +152,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // Gemma 3's 12B and 27B: the same architecture the 4B is at parity on, read by the same
     // configuration reader, with the so400m vision tower and a projector at the wider text width.
     func testGemma3LargerSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for (name, layers) in [("gemma-3-12b", 48), ("gemma-3-27b", 62)] {
             let release = try shapes(name)
             let configuration = try NFKMLXGemma3Language.configuration(fromHuggingFace: release.config)
@@ -179,6 +185,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
 
     // Gemma 2's 9B and 27B, the sizes SANA's text encoder was not ported at.
     func testGemma2LargerSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for (name, configuration) in [("gemma-2-9b", NFKMLXGemma2Configuration.gemma2_9B),
                                       ("gemma-2-27b", NFKMLXGemma2Configuration.gemma2_27B)] {
             let release = try shapes(name)
@@ -192,6 +199,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // sharing keys and values, at the same widths. The vision and audio towers and their embedders are
     // the E2B's and are named rather than read here; the decoder's own set is what the check covers.
     func testGemma3nE4BDecoderMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
         let release = try shapes("gemma-3n-e4b")
         let configuration = try NFKMLXGemma3nLanguage.configuration(fromHuggingFace: release.config)
         XCTAssertEqual(configuration.layerCount, 35)
@@ -278,6 +286,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // Qwen3-VL's other sizes. The 4B keeps the 2B's vision tower; the 8B, 32B, and 30B-A3B run the
     // deeper 27-block one, and the 30B-A3B's decoder routes fused experts, which the loader splits.
     func testQwen3VLLargerSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for (name, depth) in [("qwen3-vl-4b", 24), ("qwen3-vl-8b", 27), ("qwen3-vl-32b", 27), ("qwen3-vl-30b-a3b", 27)] {
             let release = try shapes(name)
             let visionConfiguration = try NFKMLXQwen3VLVisionConfiguration.configuration(fromHuggingFace: release.config)
@@ -319,6 +328,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // Every SigLIP 2 release beyond base-patch16-224: three tower geometries at five patch/resolution
     // pairings, plus giant-opt's text projection to the wider image width.
     func testSigLIP2SizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
         for variant in NFKMLXSigLIP2.allVariants where variant != .basePatch16At224 {
             let spec = NFKMLXSigLIP2.specs(for: variant)
             let release = try shapes(spec.name)

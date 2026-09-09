@@ -2,10 +2,11 @@
 //  NFKMLXStoRMTests.swift
 //  InferKitMLXTests
 //
-//  StoRM stochastic-regeneration speech enhancement / dereverberation (a few-step follow-on on SGMSE+).
-//  The nets evaluate MLX arrays, so they run under `xcodebuild test`. The reference-parity test is gated
-//  on the released EMA weights and the recorded oracle seams (IK_VAL_STORM + IK_PARITY_STORM, from
-//  `run_reference.py storm`) and skips until both are present.
+//  StoRM stochastic-regeneration speech enhancement / dereverberation (a few-step follow-on on
+//  SGMSE+). The nets evaluate MLX arrays, so they run where MLX has a Metal library (see
+//  Tools/mlx-metallib.sh). The reference-parity test is gated on the released EMA weights and the
+//  recorded oracle seams (IK_VAL_STORM + IK_PARITY_STORM, from `run_reference.py storm`) and skips
+//  until both are present.
 //
 
 import XCTest
@@ -18,8 +19,8 @@ import MLXRandom
 final class NFKMLXStoRMTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private static func smallConfig(condition: NFKMLXStoRMCondition = .both) -> NFKMLXStoRMConfiguration {

@@ -33,8 +33,8 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
 
     /// Every case in the record, against the frequencies transformers computes for the same config.
     func testTheScaledFrequenciesMatchTransformers() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "reads a safetensors record through MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "reads a record through MLX; run Tools/mlx-metallib.sh or xcodebuild")
         guard let path = config["IK_PARITY_ROPE_SCALING"] else {
             throw XCTSkip("set IK_PARITY_ROPE_SCALING in ~/.inferkit-validation.json")
         }
@@ -198,8 +198,8 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
     /// A configuration with no scaling must produce exactly what it produced before this existed, or
     /// every parity record in the package is invalidated.
     func testAnUnscaledConfigurationRotatesExactlyAsBefore() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "evaluates MLX arrays; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "evaluates MLX arrays; run Tools/mlx-metallib.sh or xcodebuild")
         let dimensions = 16
         let base: Float = 10_000
         let plain = NFKLMRotary(dimensions: dimensions, base: base, scaling: nil)
@@ -216,8 +216,8 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
 
     /// A scaled rotary differs from an unscaled one — the change actually reaches the tensor.
     func testAScaledRotaryChangesTheResult() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "evaluates MLX arrays; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "evaluates MLX arrays; run Tools/mlx-metallib.sh or xcodebuild")
         let dimensions = 16
         let scaling = NFKMLXRoPEScaling(kind: .yarn, factor: 8,
                                         originalMaxPositionEmbeddings: 512)

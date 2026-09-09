@@ -2,9 +2,10 @@
 //  NFKMLXLTXPipelineTests.swift
 //  InferKitMLXTests
 //
-//  The LTX text-to-video pipeline glue (T5 → DiT + flow loop → VAE), on matching tiny configurations so
-//  the chaining — latent packing, the guided sampling loop, unpacking, decode — is exercised with random
-//  weights. Runs under `xcodebuild test`.
+//  The LTX text-to-video pipeline glue (T5 → DiT + flow loop → VAE), on matching tiny
+//  configurations so the chaining — latent packing, the guided sampling loop, unpacking, decode —
+//  is exercised with random weights. Runs where MLX has a Metal library (see
+//  Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +17,8 @@ import MLXRandom
 final class NFKMLXLTXPipelineTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func pipeline() -> NFKMLXLTXPipeline {

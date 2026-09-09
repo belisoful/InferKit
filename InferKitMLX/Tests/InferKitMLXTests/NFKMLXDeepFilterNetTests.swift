@@ -2,10 +2,11 @@
 //  NFKMLXDeepFilterNetTests.swift
 //  InferKitMLXTests
 //
-//  DeepFilterNet3 (Rikorose/DeepFilterNet, dual MIT/Apache-2.0) real-time speech denoising. The module
-//  forward evaluates MLX arrays, so it skips under `swift test` and runs under `xcodebuild test`. The
-//  reference-parity test is gated on the released weights and the recorded oracle output
-//  (`IK_VAL_DEEPFILTERNET` + `IK_PARITY_DEEPFILTERNET`), from `run_reference.py deepfilternet`.
+//  DeepFilterNet3 (Rikorose/DeepFilterNet, dual MIT/Apache-2.0) real-time speech denoising. The
+//  module forward evaluates MLX arrays, so it skips without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh). The reference-parity test is gated on the released weights and the
+//  recorded oracle output (`IK_VAL_DEEPFILTERNET` + `IK_PARITY_DEEPFILTERNET`), from
+//  `run_reference.py deepfilternet`.
 //
 
 import XCTest
@@ -17,8 +18,8 @@ import MLXNN
 final class NFKMLXDeepFilterNetTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private static func tone(samples: Int, hz: Float = 220, sampleRate: Float = 48000) -> [Float] {

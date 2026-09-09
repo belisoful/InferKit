@@ -29,6 +29,46 @@ public final class NFKMLXRandom: NSObject {
 @objc(NFKMLXGPU)
 public final class NFKMLXGPU: NSObject {
 
+    /// The Metal library MLX loads at its first evaluation, or nil when none is where the loader looks.
+    ///
+    /// Mirrors MLX's own search order: `mlx.metallib` beside the binary MLX is linked into, then under
+    /// that binary's `Resources`, then `default.metallib` inside a `mlx-swift_Cmlx.bundle` beside the
+    /// main bundle, in any loaded bundle's resources, or in a framework with that identifier, then
+    /// `Resources/default.metallib` beside the binary, then the working directory. MLX needs the
+    /// library whether or not anything runs on the GPU, and a missing one surfaces only at the first
+    /// evaluation (as an abort in a test process), so this is the check to run before the first array
+    /// is touched. `Tools/mlx-metallib.sh` places one for a SwiftPM test run. Objective-C:
+    /// `NFKMLXGPU.metalLibraryURL`.
+    @objc public static var metalLibraryURL: URL? {
+        let manager = FileManager.default
+        func existing(_ url: URL?) -> URL? {
+            guard let url, manager.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+        func inBundle(_ url: URL) -> URL? {
+            guard existing(url) != nil, let resources = Bundle(url: url)?.resourceURL else { return nil }
+            return existing(resources.appendingPathComponent("default.metallib"))
+        }
+
+        let binaryDirectory = Bundle(for: MLXArray.self).executableURL?.deletingLastPathComponent()
+        if let url = existing(binaryDirectory?.appendingPathComponent("mlx.metallib")) { return url }
+        if let url = existing(binaryDirectory?.appendingPathComponent("Resources/mlx.metallib")) { return url }
+
+        let bundleName = "mlx-swift_Cmlx"
+        if let url = inBundle(Bundle.main.bundleURL.appendingPathComponent("\(bundleName).bundle")) { return url }
+        for bundle in Bundle.allBundles {
+            guard let resources = bundle.resourceURL else { continue }
+            if let url = inBundle(resources.appendingPathComponent("\(bundleName).bundle")) { return url }
+        }
+        for framework in Bundle.allFrameworks where framework.bundleIdentifier == bundleName {
+            guard let resources = framework.resourceURL else { continue }
+            if let url = existing(resources.appendingPathComponent("default.metallib")) { return url }
+        }
+
+        if let url = existing(binaryDirectory?.appendingPathComponent("Resources/default.metallib")) { return url }
+        return existing(URL(fileURLWithPath: "default.metallib"))
+    }
+
     /// Bytes currently allocated to live arrays.
     @objc public static var activeMemory: Int { MLX.Memory.activeMemory }
 

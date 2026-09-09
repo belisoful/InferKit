@@ -2,10 +2,10 @@
 //  NFKMLXSAM2Tests.swift
 //  InferKitMLXTests
 //
-//  SAM 2's Hiera encoder, mask decoder, and video memory path at sizes a test can run, plus the pure
-//  key remaps and the bicubic resampler. The parity records prove the numbers; these prove the
+//  SAM 2's Hiera encoder, mask decoder, and video memory path at sizes a test can run, plus the
+//  pure key remaps and the bicubic resampler. The parity records prove the numbers; these prove the
 //  geometry and the remaps with no external files, so a clean checkout still exercises the module.
-//  The MLX forwards skip under `swift test` and run under `xcodebuild test`.
+//  The MLX forwards skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +16,8 @@ import MLX
 final class NFKMLXSAM2Tests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: Remaps (pure)

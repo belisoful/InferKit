@@ -3,9 +3,9 @@
 //  InferKitMLXTests
 //
 //  The native torch reader against the offline converters' own output: for a passthrough model the
-//  raw checkpoint and the converted safetensors must agree key for key and value for value once both
-//  are MLX arrays, and a model's loader must produce identical parameters from either file. These
-//  evaluate arrays, so they run under xcodebuild (`swift test` has no metallib).
+//  raw checkpoint and the converted safetensors must agree key for key and value for value once
+//  both are MLX arrays, and a model's loader must produce identical parameters from either file.
+//  These evaluate arrays, so they run where MLX has a Metal library (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +16,8 @@ import MLXNN
 final class NFKMLXTorchParityTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private lazy var config: [String: String] = {

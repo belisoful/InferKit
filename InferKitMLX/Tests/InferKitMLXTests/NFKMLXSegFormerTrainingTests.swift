@@ -17,12 +17,15 @@ import MLXOptimizers
 final class NFKMLXSegFormerTrainingTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     override func setUp() {
         super.setUp()
+        // Seeding initializes MLX's runtime, which needs a Metal library it can find; the methods
+        // skip without one.
+        guard NFKMLXGPU.metalLibraryURL != nil else { return }
         NFKMLXRandom.seed(20_260_814)
     }
 

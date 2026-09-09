@@ -4,7 +4,8 @@
 //
 //  The Z-Image text-to-image pipeline glue (S3-DiT + flow loop → Flux VAE), on matching tiny
 //  configurations so the chaining — the guided sampling loop, the timestep/latent conventions, the
-//  centered-latent decode — is exercised with random weights. Runs under `xcodebuild test`.
+//  centered-latent decode — is exercised with random weights. Runs where MLX has a Metal library
+//  (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +17,8 @@ import MLXRandom
 final class NFKMLXZImagePipelineTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func pipeline() -> NFKMLXZImagePipeline {

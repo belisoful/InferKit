@@ -2,9 +2,8 @@
 //  NFKMLXMattingBackendTests.swift
 //  InferKitMLXTests
 //
-//  Contract and byte-level tiling/matte tests need no GPU. The full round-trip evaluates MLX arrays,
-//  which needs the MLX Metal library — the Xcode build system bundles it, a plain `swift test` does
-//  not — so those tests skip under `swift test` and run under `xcodebuild test`.
+//  Contract and byte-level tiling/matte tests need no GPU. The full round-trip evaluates MLX
+//  arrays, so those tests skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,11 +15,10 @@ import MLX
 final class NFKMLXMattingBackendTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        // MLX needs its Metal library, which the Xcode build system bundles (in mlx-swift_Cmlx.bundle)
-        // but a plain `swift test` does not, so evaluating there aborts. Detect the SwiftPM CLI build
-        // (the test bundle sits under .build) and skip; under xcodebuild these run.
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        // Evaluating with no Metal library aborts the process rather than failing, so skip instead;
+        // Tools/mlx-metallib.sh places one for a SwiftPM build.
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: Contract (no MLX)

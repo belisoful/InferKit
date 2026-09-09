@@ -2,11 +2,11 @@
 //  NFKMLXSGMSETests.swift
 //  InferKitMLXTests
 //
-//  SGMSE+ score-based speech dereverberation / enhancement. The OUVE scheduler is a value type and its
-//  closed forms run under `swift test`; the NCSN++ net and the sampler evaluate MLX arrays, so they run
-//  under `xcodebuild test`. The reference-parity test is gated on the released EMA weights and the
-//  recorded oracle seam (`IK_VAL_SGMSE` + `IK_PARITY_SGMSE`, from `run_reference.py sgmse`) and skips
-//  until both are present. Finalize on the M1 Max.
+//  SGMSE+ score-based speech dereverberation / enhancement. The OUVE scheduler is a value type and
+//  its closed forms run under `swift test`; the NCSN++ net and the sampler evaluate MLX arrays, so
+//  they run where MLX has a Metal library. The reference-parity test is gated on the released EMA
+//  weights and the recorded oracle seam (`IK_VAL_SGMSE` + `IK_PARITY_SGMSE`, from `run_reference.py
+//  sgmse`) and skips until both are present. Finalize on the M1 Max.
 //
 
 import XCTest
@@ -19,8 +19,8 @@ import MLXRandom
 final class NFKMLXSGMSETests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: OUVE scheduler (pure value type, no MLX)

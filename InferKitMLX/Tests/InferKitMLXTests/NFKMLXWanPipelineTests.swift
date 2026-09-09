@@ -3,8 +3,9 @@
 //  InferKitMLXTests
 //
 //  The Wan text-to-video pipeline glue (DiT + flow loop → 3D causal VAE), on matching tiny
-//  configurations so the chaining — the guided sampling loop, the DiT↔VAE bridge, the streaming decode —
-//  is exercised with random weights. Runs under `xcodebuild test`.
+//  configurations so the chaining — the guided sampling loop, the DiT↔VAE bridge, the streaming
+//  decode — is exercised with random weights. Runs where MLX has a Metal library (see
+//  Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +17,8 @@ import MLXRandom
 final class NFKMLXWanPipelineTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func pipeline() -> NFKMLXWanPipeline {

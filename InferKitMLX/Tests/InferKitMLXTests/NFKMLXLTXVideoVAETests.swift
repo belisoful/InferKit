@@ -2,8 +2,8 @@
 //  NFKMLXLTXVideoVAETests.swift
 //  InferKitMLXTests
 //
-//  The LTX-Video causal 3D VAE. Encode/decode evaluate MLX arrays, so they skip under `swift test` and
-//  run under `xcodebuild test`.
+//  The LTX-Video causal 3D VAE. Encode/decode evaluate MLX arrays, so they skip without a Metal
+//  library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +15,8 @@ import MLXRandom
 final class NFKMLXLTXVideoVAETests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     func testParameterNamesFollowTheReferenceLayout() throws {

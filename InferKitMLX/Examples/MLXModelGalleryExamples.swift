@@ -4,10 +4,10 @@
 //
 //  A live example of every shipped MLX model, built through its public `@objc` factory (the primary
 //  Objective-C path — no registry). Each group mirrors a "Model gallery" entry in Docs/examples.md.
-//  Constructing a real model builds MLXNN layers (initializes MLX) and running evaluates arrays, so the
-//  build/run checks skip under `swift test` and run under `xcodebuild test`. Exhaustive per-model
-//  forwards live in the individual NFKMLX*Tests; these show the consumer-facing factory call and a
-//  representative run per modality.
+//  Constructing a real model builds MLXNN layers (initializes MLX) and running evaluates arrays, so
+//  the build/run checks skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
+//  Exhaustive per-model forwards live in the individual NFKMLX*Tests; these show the
+//  consumer-facing factory call and a representative run per modality.
 //
 
 import XCTest
@@ -19,8 +19,8 @@ import MLX
 final class MLXModelGalleryExamples: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "building a real model initializes MLX; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "building a real model initializes MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: Upscaling & restoration (image → image, module backend)

@@ -28,8 +28,8 @@ final class NFKMLXHybridLanguageTests: XCTestCase {
     }()
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     /// A configuration small enough to build and run, keeping every structural ratio of the release.

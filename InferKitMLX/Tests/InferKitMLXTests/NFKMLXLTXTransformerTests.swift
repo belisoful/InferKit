@@ -2,8 +2,8 @@
 //  NFKMLXLTXTransformerTests.swift
 //  InferKitMLXTests
 //
-//  The LTX-Video DiT. The forward evaluates MLX arrays, so it skips under `swift test` and runs under
-//  `xcodebuild test`.
+//  The LTX-Video DiT. The forward evaluates MLX arrays, so it skips without a Metal library for MLX
+//  (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +15,8 @@ import MLXRandom
 final class NFKMLXLTXTransformerTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     func testParameterNamesFollowTheReferenceLayout() throws {

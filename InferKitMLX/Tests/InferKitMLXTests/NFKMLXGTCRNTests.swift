@@ -2,10 +2,11 @@
 //  NFKMLXGTCRNTests.swift
 //  InferKitMLXTests
 //
-//  GTCRN real-time speech enhancement (SCAFFOLD). The module layout and forward evaluate MLX arrays, so
-//  they skip under `swift test` and run under `xcodebuild test`. The reference-parity test is gated on
-//  the released weights and the recorded oracle output; it skips until those are present
-//  (`IK_PARITY_GTCRN` + `IK_VAL_GTCRN`). Finalize it on the M1 Max against `run_reference.py gtcrn`.
+//  GTCRN real-time speech enhancement (SCAFFOLD). The module layout and forward evaluate MLX
+//  arrays, so they skip without a Metal library for MLX (see Tools/mlx-metallib.sh). The
+//  reference-parity test is gated on the released weights and the recorded oracle output; it skips
+//  until those are present (`IK_PARITY_GTCRN` + `IK_VAL_GTCRN`). Finalize it on the M1 Max against
+//  `run_reference.py gtcrn`.
 //
 
 import XCTest
@@ -16,8 +17,8 @@ import MLX
 final class NFKMLXGTCRNTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private static func tone(samples: Int, hz: Float = 220, sampleRate: Float = 16000) -> [Float] {

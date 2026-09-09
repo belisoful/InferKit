@@ -2,11 +2,11 @@
 //  NFKMLXResembleEnhanceTests.swift
 //  InferKitMLXTests
 //
-//  Resemble Enhance (resemble-ai, MIT) general speech restorer. The five networks evaluate MLX arrays, so
-//  these tests skip under `swift test` and run under `xcodebuild test`. Parity is gated on the released
-//  enhancer_stage2 checkpoint + the recorded oracles: set IK_VAL_REENHANCE to the checkpoint
-//  (`mp_rank_00_model_states.pt`) and IK_PARITY_REENHANCE to the directory holding the
-//  `reenhance_*.safetensors` records (`run_reference.py reenhance_*`).
+//  Resemble Enhance (resemble-ai, MIT) general speech restorer. The five networks evaluate MLX
+//  arrays, so these tests skip without a Metal library for MLX (see Tools/mlx-metallib.sh). Parity
+//  is gated on the released enhancer_stage2 checkpoint + the recorded oracles: set IK_VAL_REENHANCE
+//  to the checkpoint (`mp_rank_00_model_states.pt`) and IK_PARITY_REENHANCE to the directory
+//  holding the `reenhance_*.safetensors` records (`run_reference.py reenhance_*`).
 //
 
 import XCTest
@@ -18,8 +18,8 @@ import MLXNN
 final class NFKMLXResembleEnhanceTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {

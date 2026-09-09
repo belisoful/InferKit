@@ -22,8 +22,8 @@ import MLXNN
 final class NFKMLXRuntimeHazardTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // xcodebuild sanitizes the environment for the test runner, and these probes only run under
@@ -41,7 +41,10 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
     }()
 
     override func tearDown() {
-        NFKMLXGPU.clearCache()
+        // Clearing the cache reaches MLX's runtime, which needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
         super.tearDown()
     }
 

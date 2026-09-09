@@ -3,7 +3,7 @@
 //  InferKitMLXTests
 //
 //  The eccv16 colorizer and its Lab color math. Everything evaluates MLX arrays, so the tests skip
-//  under `swift test` and run under `xcodebuild test`.
+//  without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +15,8 @@ import MLX
 final class NFKMLXColorizerTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func tinyNet() -> NFKMLXColorizerNet {

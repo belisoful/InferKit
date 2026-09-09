@@ -11,8 +11,8 @@ import MLX
 final class NFKMLXNUWave2Tests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func cosine(_ a: MLXArray, _ b: MLXArray) -> Double {
@@ -35,7 +35,8 @@ final class NFKMLXNUWave2Tests: XCTestCase {
     }
 
     // The band marks the bins below the source's Nyquist with the reference's float arithmetic.
-    func testTheBandFollowsTheSourceRate() {
+    func testTheBandFollowsTheSourceRate() throws {
+        try requireMLXRuntime()
         let c = NFKMLXNUWave2Configuration()
         let (narrowband, band) = NFKMLXNUWave2Backend.prepared([Float](repeating: 0.5, count: 16_000), sampleRate: 16_000, configuration: c)
         XCTAssertEqual(narrowband.count % 256, 0)

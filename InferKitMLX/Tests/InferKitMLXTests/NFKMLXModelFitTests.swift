@@ -17,12 +17,15 @@ import MLXNN
 final class NFKMLXModelFitTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "builds MLX modules; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "builds MLX modules; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     override func tearDown() {
-        NFKMLXGPU.clearCache()
+        // Clearing the cache reaches MLX's runtime, which needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
         super.tearDown()
     }
 

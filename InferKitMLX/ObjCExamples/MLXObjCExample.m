@@ -41,9 +41,9 @@
 	[NFKMLXRealESRGAN register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"real-esrgan-x4"]);
 
-	// Building the generator constructs MLXNN layers, which initializes MLX; that needs the bundled
-	// metallib the Xcode build system provides but a plain `swift test` does not.
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	// Building the generator constructs MLXNN layers, which initializes MLX; that needs a Metal library
+	// MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 
@@ -61,8 +61,9 @@
 {
 	[NFKMLXDepthAnything register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"depth-anything-v2-small"]);
-	// Building the DINOv2/DPT net initializes MLX (needs the bundled metallib), so build only under xcodebuild.
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	// Building the DINOv2/DPT net initializes MLX (needs a Metal library it can find), so build only
+	// where one is.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -75,7 +76,7 @@
 {
 	[NFKMLXSAM register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sam"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -89,7 +90,7 @@
 	[NFKMLXU2Net register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"u2net"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"u2netp"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -102,7 +103,7 @@
 {
 	[NFKMLXNAFNet register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"nafnet"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -115,7 +116,7 @@
 {
 	[NFKMLXRIFE register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"rife"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -128,7 +129,7 @@
 {
 	[NFKMLXRAFT register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"raft"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -141,7 +142,7 @@
 {
 	[NFKMLXLaMa register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"lama-inpaint"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -156,7 +157,7 @@
 	[NFKMLXSDUpscaler register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"marigold-depth"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sd-x4-upscaler"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -181,7 +182,7 @@
 {
 	[NFKMLXStableDiffusionInpaint register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"sd-inpaint"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -206,7 +207,7 @@
 {
 	[NFKMLXWhisper register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"whisper-tiny"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -217,7 +218,7 @@
 
 - (void)testObjectiveCAsksWhisperForSegmentTimes
 {
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -237,7 +238,7 @@
 {
 	[NFKMLXDemucs register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"demucs"]);
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -273,8 +274,8 @@
 - (void)testObjectiveCBuildsShippedModelsViaDirectFactories
 {
 	// The primary path for shipped models: build directly, no register-then-lookup. Building a net
-	// initializes MLX, so this runs under xcodebuild (the bundled metallib) and returns early otherwise.
-	if ([[NSBundle bundleForClass:self.class].bundlePath containsString:@"/.build/"]) {
+	// initializes MLX, so this returns early when MLX has no Metal library to load.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
 		return;
 	}
 	NSError *error = nil;
@@ -357,9 +358,18 @@
 
 - (void)testObjectiveCReachesTheMLXRuntimeKnobs
 {
+	// The knobs reach MLX's runtime, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	// The Swift-only MLX globals (free-function seed, the GPU enum) are reachable from Objective-C
 	// through the NFKMLXRandom / NFKMLXGPU wrappers.
 	[NFKMLXRandom seed:42];
+
+	// Where MLX loads its Metal library from, found the way its loader looks; nil means the first
+	// evaluation aborts, which is why the guard above reads it.
+	XCTAssertNotNil(NFKMLXGPU.metalLibraryURL);
 
 	[NFKMLXGPU setCacheLimit:48 * 1024 * 1024];
 	XCTAssertEqual(NFKMLXGPU.cacheLimit, 48 * 1024 * 1024, @"the cache limit round-trips");
@@ -371,6 +381,11 @@
 
 - (void)testObjectiveCSelectsTheComputeDevice
 {
+	// Reading the default device initializes MLX's runtime, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	// MLX models the device as a Swift struct and a scoped function, so NFKMLXDevice is what an
 	// Objective-C caller has. The selection covers the work the block does on this thread, which is
 	// where a synchronous inference runs.
@@ -395,6 +410,12 @@
 // an app sets once at startup instead of remembering clearCache at every model boundary.
 - (void)testExampleGPUMemoryReportingAndStandingLimits
 {
+	// Reading MLX's memory counters initializes its Metal device, which needs a Metal library MLX can
+	// find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	// The recommended working set is Metal's own budget and is well below the physical total, so it
 	// is what a model should be sized against.
 	XCTAssertGreaterThan(NFKMLXGPU.physicalMemory, 0);
@@ -508,6 +529,11 @@
 // and is never opened.
 - (void)testObjectiveCAReleaseLargerThanMemoryIsRefusedBeforeLoading
 {
+	// The working-set reading initializes MLX's device, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	NSURL *release = [self makeTemporaryDirectory];
 	[[self tinyConfigJSON] writeToURL:[release URLByAppendingPathComponent:@"config.json"] atomically:YES];
 	NSURL *weights = [release URLByAppendingPathComponent:@"model.safetensors"];
@@ -534,6 +560,11 @@
 // caps how many positions the key-value cache retains while the run proceeds exactly as before.
 - (void)testObjectiveCAContextWindowBoundsTheCache
 {
+	// Generation evaluates MLX arrays, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	NSURL *release = [self makeTemporaryDirectory];
 	[self writeTinyReleaseTo:release];
 
@@ -570,6 +601,11 @@
 // embeds to one L2-normalized vector under NFKOutputEmbedding, and outputDimensions truncates it.
 - (void)testObjectiveCEmbedsTextThroughTheDirectoryFactory
 {
+	// Embedding evaluates MLX arrays, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	NSURL *release = [self makeTemporaryDirectory];
 	[self writeTinyReleaseTo:release];
 
@@ -604,6 +640,12 @@
 // Objective-C entry points and the prompt format the model is trained on.
 - (void)testObjectiveCEmbeddingGemmaEntryPoints
 {
+	// The directory factory initializes MLX before it reports the missing release, which needs a Metal
+	// library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	XCTAssertTrue([NFKMLXEmbeddingGemma respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXEmbeddingGemma respondsToSelector:@selector(backendWithDirectoryURL:outputDimensions:error:)]);
 	XCTAssertEqualObjects([NFKMLXEmbeddingGemma query:@"What is the capital of France?"],
@@ -625,6 +667,12 @@
 // the release directory (weights + tokenizer.json), so this pins the entry points.
 - (void)testObjectiveCModernBERTRerankerEntryPoints
 {
+	// The directory factory initializes MLX before it reports the missing release, which needs a Metal
+	// library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	XCTAssertTrue([NFKMLXModernBERTReranker respondsToSelector:@selector(rerankerWithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXModernBERTReranker instancesRespondToSelector:@selector(scoreForQuery:document:)]);
 	XCTAssertTrue([NFKMLXModernBERTReranker instancesRespondToSelector:@selector(scoresForQuery:documents:)]);
@@ -643,6 +691,12 @@
 // pins the entry points.
 - (void)testObjectiveCSmolVLMEntryPoints
 {
+	// The directory factory initializes MLX before it reports the missing release, which needs a Metal
+	// library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	XCTAssertTrue([NFKMLXSmolVLM respondsToSelector:@selector(smolVLMWithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXSmolVLM instancesRespondToSelector:@selector(answerForImage:question:)]);
 	XCTAssertTrue([NFKMLXSmolVLM instancesRespondToSelector:@selector(answerForImage:question:maxTokens:)]);
@@ -660,6 +714,12 @@
 // pins the entry points and the Gemma dispatcher's routing.
 - (void)testObjectiveCGemma3EntryPoints
 {
+	// The directory factory initializes MLX before it reports the missing release, which needs a Metal
+	// library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(gemma3WithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(answerForImage:question:error:)]);
@@ -822,6 +882,11 @@
 // and face landmarks all reach Objective-C.
 - (void)testObjectiveCReachesTheParityAuditFactories
 {
+	// The factories construct MLXNN layers, which needs a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
 	NSError *error = nil;
 
 	// Whisper builds every released size from ObjC, not only tiny.

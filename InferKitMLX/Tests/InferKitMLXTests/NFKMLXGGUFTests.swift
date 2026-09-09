@@ -14,8 +14,8 @@ import XCTest
 final class NFKMLXGGUFTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "reads an MLXArray; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "reads an MLXArray; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     /// Builds a tiny GGUF: two F32 tensors (a vector and a 2×3 matrix) and one tensor of an unsupported

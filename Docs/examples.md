@@ -1376,6 +1376,10 @@ CPU where a graphics device is contended.
 ```objc
 [NFKMLXRandom seed:42];                       // reproducible init/sampling
 
+// Where MLX loads its Metal library from, found the way its loader looks. nil means the first
+// evaluation fails, so check it at launch rather than at the first inference.
+NSURL *metalLibrary = NFKMLXGPU.metalLibraryURL;
+
 [NFKMLXGPU setCacheLimit:48 * 1024 * 1024];   // bound the buffer cache (bytes)
 NSInteger active = NFKMLXGPU.activeMemory;    // live bytes; also cacheMemory / peakMemory
 [NFKMLXGPU clearCache];                        // return the cache to the system

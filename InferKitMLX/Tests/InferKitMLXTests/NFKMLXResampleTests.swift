@@ -2,8 +2,8 @@
 //  NFKMLXResampleTests.swift
 //  InferKitMLXTests
 //
-//  The shared resampling and pooling helpers. They evaluate MLX arrays, so these tests skip under
-//  `swift test` and run under `xcodebuild test`.
+//  The shared resampling and pooling helpers. They evaluate MLX arrays, so these tests skip without
+//  a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -14,8 +14,8 @@ import MLXNN
 final class NFKMLXResampleTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func ramp(_ height: Int, _ width: Int, channels: Int = 1) -> MLXArray {

@@ -3,7 +3,7 @@
 //  InferKitMLXTests
 //
 //  Grapheme mapping and espeak availability need no GPU. The neural G2P model evaluates MLX arrays,
-//  so those skip under `swift test` and run under `xcodebuild test`.
+//  so those skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -14,8 +14,8 @@ import MLX
 final class NFKMLXPhonemizerTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func tinyConfiguration() -> NFKMLXG2PConfiguration {

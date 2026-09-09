@@ -26,8 +26,8 @@ final class NFKMLXGemmaTests: XCTestCase {
     }()
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private func released() throws -> (NFKMLXGemmaConfiguration, [String: [Int]]) {
@@ -159,7 +159,8 @@ final class NFKMLXGemmaTests: XCTestCase {
         XCTAssertEqual(Double(out[0, 7].item(Float.self)), Double(expected), accuracy: 1e-4)
     }
 
-    func testTheWindowMaskForbidsOlderPositions() {
+    func testTheWindowMaskForbidsOlderPositions() throws {
+        try requireMLXRuntime()
         let mask = NFKMLXGemmaLanguage.windowMask(6, window: 3)
         eval(mask)
         let values = mask.asArray(Float.self)

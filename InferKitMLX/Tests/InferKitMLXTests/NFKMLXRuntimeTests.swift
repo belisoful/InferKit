@@ -2,9 +2,9 @@
 //  NFKMLXRuntimeTests.swift
 //  InferKitMLXTests
 //
-//  The Objective-C-facing MLX runtime wrappers: reproducible seeding, GPU memory management, and the
-//  compute-device selection. These
-//  evaluate MLX, so they skip under `swift test` and run under `xcodebuild test`.
+//  The Objective-C-facing MLX runtime wrappers: reproducible seeding, GPU memory management, and
+//  the compute-device selection. These evaluate MLX, so they skip without a Metal library for MLX
+//  (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -15,8 +15,8 @@ import MLXNN
 final class NFKMLXRuntimeTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     func testSeedMakesWeightInitializationReproducible() throws {

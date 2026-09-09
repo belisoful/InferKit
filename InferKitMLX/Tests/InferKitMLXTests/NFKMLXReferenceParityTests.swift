@@ -31,8 +31,16 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // largest float32 forward (Gemma E2B, ~20 GB) into a Metal command-buffer TIMEOUT — a process
     // kill, not a failure — once enough tests run before it. Measured: the same test passes in 25 s
     // alone and dies mid-suite. Clearing between tests keeps every test's footprint its own.
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try requireMLXRuntime()       // every test here evaluates MLX arrays
+    }
+
     override func tearDown() {
-        NFKMLXGPU.clearCache()
+        // Clearing the cache reaches MLX's runtime, which needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
         super.tearDown()
     }
 
@@ -47,8 +55,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     }()
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test`; run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     /// Loads a reference record, returning the shared plate and the reference result.

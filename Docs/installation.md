@@ -98,6 +98,8 @@ makes fail `isKindOfClass:` against each other.
 
 MLX loads `default.metallib` at the first array evaluation, not at link time, so a mistake here builds
 and links cleanly and then throws `Failed to load the default metallib` on first inference.
+`NFKMLXGPU.metalLibraryURL` reports the library MLX will load, found the way its loader looks, or nil
+when none is there, so a launch can check before the first evaluation.
 
 The static xcframework carries the library inside each slice, so it arrives with the artifact and there
 is one thing to download. Placing it is still yours to do: an xcframework is a build-time container that

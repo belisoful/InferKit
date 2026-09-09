@@ -2,8 +2,8 @@
 //  NFKMLXSpeechBackendTests.swift
 //  InferKitMLXTests
 //
-//  The WAV encoder and the backend contract need no GPU. The end-to-end synth evaluates an MLXArray,
-//  so it skips under `swift test` and runs under `xcodebuild test`.
+//  The WAV encoder and the backend contract need no GPU. The end-to-end synth evaluates an
+//  MLXArray, so it skips without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -14,8 +14,8 @@ import MLX
 final class NFKMLXSpeechBackendTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: WAV encoder (no MLX)

@@ -3,10 +3,11 @@
 //  InferKitMLXTests
 //
 //  MP-SENet speech enhancement (SCAFFOLD). The complex-STFT primitive, the module layout, and the
-//  forward evaluate MLX arrays, so they skip under `swift test` and run under `xcodebuild test`.
-//  The reference-parity test is gated on the released weights and the recorded oracle output; it
-//  skips until those are present (`IK_PARITY_MPSENET` + `IK_VAL_MPSENET`), the way every audio parity
-//  test does. Finalize it on the M1 Max against `run_reference.py mpsenet`.
+//  forward evaluate MLX arrays, so they skip without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh). The reference-parity test is gated on the released weights and the
+//  recorded oracle output; it skips until those are present (`IK_PARITY_MPSENET` +
+//  `IK_VAL_MPSENET`), the way every audio parity test does. Finalize it on the M1 Max against
+//  `run_reference.py mpsenet`.
 //
 
 import XCTest
@@ -17,8 +18,8 @@ import MLX
 final class NFKMLXMPSENetTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private static func tone(samples: Int, hz: Float = 220, sampleRate: Float = 16000) -> [Float] {

@@ -2,13 +2,13 @@
 //  NFKMLXMossFormer2Tests.swift
 //  InferKitMLXTests
 //
-//  MossFormer2 SE 48K speech enhancement (SCAFFOLD). The module layout, the Kaldi-fbank front end, and
-//  the forward evaluate MLX arrays, so they skip under `swift test` and run under `xcodebuild test`.
-//  The reference-parity tests are gated on the released weights and the recorded oracle output; they
-//  skip until `IK_VAL_MOSSFORMER2_SE` (weights) and `IK_PARITY_MOSSFORMER2_SE` (the record from
-//  `run_reference.py mossformer2_se`, dither=0) are set. Feeding the recorded 180-dim feature isolates
-//  the backbone from the Kaldi-fbank sub-port; the fbank is validated separately against the record's
-//  `feature`. Finalize on the M1 Max.
+//  MossFormer2 SE 48K speech enhancement (SCAFFOLD). The module layout, the Kaldi-fbank front end,
+//  and the forward evaluate MLX arrays, so they skip without a Metal library for MLX (see
+//  Tools/mlx-metallib.sh). The reference-parity tests are gated on the released weights and the
+//  recorded oracle output; they skip until `IK_VAL_MOSSFORMER2_SE` (weights) and
+//  `IK_PARITY_MOSSFORMER2_SE` (the record from `run_reference.py mossformer2_se`, dither=0) are
+//  set. Feeding the recorded 180-dim feature isolates the backbone from the Kaldi-fbank sub-port;
+//  the fbank is validated separately against the record's `feature`. Finalize on the M1 Max.
 //
 
 import XCTest
@@ -19,8 +19,8 @@ import MLX
 final class NFKMLXMossFormer2Tests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     private static func tone(samples: Int, hz: Float = 220, sampleRate: Float = 48000) -> [Float] {

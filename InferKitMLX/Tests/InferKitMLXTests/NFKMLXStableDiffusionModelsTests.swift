@@ -4,8 +4,8 @@
 //
 //  The shared Stable Diffusion UNet and autoencoder at sizes a test can run, plus the pure key
 //  remaps. The parity records prove the numbers against diffusers; these prove the geometry, the
-//  remaps, and the configuration switches with no external files. The MLX forwards skip under
-//  `swift test` and run under `xcodebuild test`.
+//  remaps, and the configuration switches with no external files. The MLX forwards skip without a
+//  Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 
 import XCTest
@@ -16,8 +16,8 @@ import MLX
 final class NFKMLXStableDiffusionModelsTests: XCTestCase {
 
     private func requireMLXRuntime() throws {
-        try XCTSkipIf(Bundle(for: type(of: self)).bundlePath.contains("/.build/"),
-                      "MLX cannot evaluate under `swift test` (no bundled metallib); run via xcodebuild")
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
     // MARK: Remaps (pure)
