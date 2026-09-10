@@ -52,6 +52,28 @@ public struct NFKMLXSigLIPConfiguration: Sendable {
     var grid: Int { imageSize / patchSize }
     var positionCount: Int { grid * grid }
     var headDimensions: Int { hiddenSize / headCount }
+
+    /// Reads a SmolVLM release's `vision_config`.
+    ///
+    /// The released sizes differ in every axis: the 256M keeps the 500M's tower, and the 2.2B runs 27
+    /// layers of 1152 at patch 14 over a 384 tile. A value the release leaves out falls back to the
+    /// reference's own default rather than to another size's.
+    ///
+    /// - Since: InferKit 0.4.0
+    static func configuration(fromJSON json: [String: Any]) -> NFKMLXSigLIPConfiguration {
+        let vision = (json["vision_config"] as? [String: Any]) ?? [:]
+        func integer(_ key: String, _ fallback: Int) -> Int {
+            (vision[key] as? NSNumber)?.intValue ?? fallback
+        }
+        return NFKMLXSigLIPConfiguration(
+            hiddenSize: integer("hidden_size", 1152),
+            layerCount: integer("num_hidden_layers", 12),
+            headCount: integer("num_attention_heads", 16),
+            intermediateSize: integer("intermediate_size", 3072),
+            patchSize: integer("patch_size", 32),
+            imageSize: integer("image_size", 224),
+            layerNormEpsilon: (vision["layer_norm_eps"] as? NSNumber)?.floatValue ?? 1e-6)
+    }
 }
 
 /// SigLIP's patch embedding: a convolution over 16×16 patches plus a learned position embedding. There
@@ -350,11 +372,21 @@ public final class NFKMLXSmolVLMNet {
 /// values. The image's longest edge is scaled to 2048, split into `⌈h/512⌉ × ⌈w/512⌉` sub-tiles, and the
 /// whole image is resized to one 512×512 global tile appended last.
 public enum NFKMLXSmolVLMImageProcessor {
+    /// The 500M and 256M releases tile at 512 inside a 2048 frame; the 2.2B tiles at 384 inside 1536.
+    /// A release states both in its `preprocessor_config.json` (`max_image_size` and `size`).
     static let tileSize = 512
     static let longestEdge = 2048
 
-    /// The pixel values `[tiles, 3, 512, 512]` and the tile grid for one image.
+    /// The pixel values `[tiles, 3, tile, tile]` and the tile grid for one image.
     public static func process(_ image: CGImage) -> (pixelValues: MLXArray, rows: Int, cols: Int) {
+        process(image, tileSize: tileSize, longestEdge: longestEdge)
+    }
+
+    /// The same at a release's own tiling.
+    ///
+    /// - Since: InferKit 0.4.0
+    public static func process(_ image: CGImage, tileSize: Int,
+                               longestEdge: Int) -> (pixelValues: MLXArray, rows: Int, cols: Int) {
         let scale = Double(longestEdge) / Double(max(image.width, image.height))
         let resizedWidth = Swift.max(tileSize, Int((Double(image.width) * scale).rounded()))
         let resizedHeight = Swift.max(tileSize, Int((Double(image.height) * scale).rounded()))
@@ -366,11 +398,13 @@ public enum NFKMLXSmolVLMImageProcessor {
         for row in 0 ..< rows {
             for column in 0 ..< cols {
                 appendNormalizedTile(from: grid.bytes, gridWidth: cols * tileSize,
-                                     originX: column * tileSize, originY: row * tileSize, into: &tiles)
+                                     originX: column * tileSize, originY: row * tileSize,
+                                     tileSize: tileSize, into: &tiles)
             }
         }
         let global = resample(image, width: tileSize, height: tileSize)
-        appendNormalizedTile(from: global.bytes, gridWidth: tileSize, originX: 0, originY: 0, into: &tiles)
+        appendNormalizedTile(from: global.bytes, gridWidth: tileSize, originX: 0, originY: 0,
+                             tileSize: tileSize, into: &tiles)
 
         let count = rows * cols + 1
         return (MLXArray(tiles).reshaped([count, 3, tileSize, tileSize]), rows, cols)
@@ -387,10 +421,10 @@ public enum NFKMLXSmolVLMImageProcessor {
         return (bytes, width, height)
     }
 
-    /// Appends one 512×512 tile at `(originX, originY)` of an RGBA buffer as planar `[3, 512, 512]`
+    /// Appends one tile at `(originX, originY)` of an RGBA buffer as planar `[3, tile, tile]`
     /// normalized to `-1 … 1`.
     private static func appendNormalizedTile(from bytes: [UInt8], gridWidth: Int, originX: Int, originY: Int,
-                                             into tiles: inout [Float]) {
+                                             tileSize: Int, into tiles: inout [Float]) {
         for channel in 0 ..< 3 {
             for y in 0 ..< tileSize {
                 for x in 0 ..< tileSize {
@@ -426,8 +460,10 @@ public final class NFKMLXSmolVLM: NSObject {
 
     private let holder: NFKSmolVLMHolder
     private let endToken: Int
+    private let release: Release
 
-    init(net: NFKMLXSmolVLMNet, tokenizer: NFKTokenizer?, endToken: Int) {
+    init(net: NFKMLXSmolVLMNet, tokenizer: NFKTokenizer?, endToken: Int, release: Release) {
+        self.release = release
         holder = NFKSmolVLMHolder(net, tokenizer)
         self.endToken = endToken
         super.init()
@@ -436,18 +472,21 @@ public final class NFKMLXSmolVLM: NSObject {
     /// Builds the model from a downloaded release directory, ready to answer questions about an image.
     @objc(smolVLMWithDirectoryURL:error:)
     public static func load(directoryURL: URL) throws -> NFKMLXSmolVLM {
+        let release = try release(directoryURL: directoryURL)
         let net = try model(directoryURL: directoryURL)
         let tokenizer = tokenizer(inDirectory: directoryURL)
         let end = specialToken("<end_of_utterance>", inDirectory: directoryURL) ?? 49_279
-        return NFKMLXSmolVLM(net: net, tokenizer: tokenizer, endToken: end)
+        return NFKMLXSmolVLM(net: net, tokenizer: tokenizer, endToken: end, release: release)
     }
 
     /// Answers `question` about `image`, greedily decoding up to `maxTokens` tokens.
     @objc(answerForImage:question:maxTokens:)
     public func answer(image: CGImage, question: String, maxTokens: Int) -> String {
         guard let tokenizer = holder.tokenizer else { return "" }
-        let (pixelValues, rows, cols) = NFKMLXSmolVLMImageProcessor.process(image)
-        let prompt = NFKMLXSmolVLM.prompt(rows: rows, cols: cols, question: question)
+        let (pixelValues, rows, cols) = NFKMLXSmolVLMImageProcessor.process(
+            image, tileSize: release.tileSize, longestEdge: release.longestEdge)
+        let prompt = NFKMLXSmolVLM.prompt(rows: rows, cols: cols, question: question,
+                                          tokensPerTile: release.tokensPerTile)
         let ids = tokenizer.encode(prompt).map(\.intValue)
         let produced = holder.net.generate(inputIds: ids, pixelValues: pixelValues,
                                             maxTokens: maxTokens, endTokens: [endToken])
@@ -470,21 +509,79 @@ public final class NFKMLXSmolVLM: NSObject {
         return nil
     }
 
+    /// The geometry a release states, which is what a size other than the 500M needs.
+    ///
+    /// - Since: InferKit 0.4.0
+    public struct Release {
+        public var vision: NFKMLXSigLIPConfiguration
+        public var decoder: NFKMLXLanguageConfiguration
+        public var scaleFactor: Int
+        public var imageTokenId: Int
+        /// The tile the image processor cuts, and the frame it scales the longest edge to.
+        public var tileSize: Int
+        public var longestEdge: Int
+        /// The `<image>` tokens one tile expands to.
+        public var tokensPerTile: Int { NFKMLXSmolVLM.tokensPerTile(vision: vision, scaleFactor: scaleFactor) }
+    }
+
+    /// Reads a release directory's own geometry.
+    ///
+    /// Every axis is read rather than assumed: the 256M keeps the 500M's vision tower under a narrower
+    /// decoder, and the 2.2B changes the tower, the decoder, the pixel-shuffle factor, and the tiling
+    /// together. Whether the head is tied is settled by the weights, not the config, as the Qwen3-VL
+    /// reader does — a release that ships `lm_head.weight` is untied.
+    ///
+    /// - Since: InferKit 0.4.0
+    public static func release(directoryURL: URL) throws -> Release {
+        let configURL = directoryURL.appendingPathComponent("config.json")
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("config.json is not a JSON object")
+        }
+        guard let text = json["text_config"] as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("the config carries no text_config")
+        }
+        var decoder = try NFKMLXLanguage.configuration(fromJSON: text)
+        decoder.tiesWordEmbeddings = !(try shipsHead(directoryURL: directoryURL))
+
+        // `max_image_size.longest_edge` is the tile; `size.longest_edge` the frame it tiles.
+        let processor = (try? JSONSerialization.jsonObject(
+            with: Data(contentsOf: directoryURL.appendingPathComponent("preprocessor_config.json")))
+            as? [String: Any]) ?? [:]
+        func edge(_ key: String, _ fallback: Int) -> Int {
+            ((processor[key] as? [String: Any])?["longest_edge"] as? NSNumber)?.intValue ?? fallback
+        }
+        return Release(vision: NFKMLXSigLIPConfiguration.configuration(fromJSON: json),
+                       decoder: decoder,
+                       scaleFactor: (json["scale_factor"] as? NSNumber)?.intValue ?? 4,
+                       imageTokenId: (json["image_token_id"] as? NSNumber)?.intValue ?? 49_190,
+                       tileSize: edge("max_image_size", 512),
+                       longestEdge: edge("size", 2048))
+    }
+
+    /// A release that ships an output projection is untied.
+    static func shipsHead(directoryURL: URL) throws -> Bool {
+        let index = directoryURL.appendingPathComponent("model.safetensors.index.json")
+        if let data = try? Data(contentsOf: index),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let map = json["weight_map"] as? [String: String] {
+            return map["lm_head.weight"] != nil
+        }
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(
+            url: directoryURL.appendingPathComponent("model.safetensors"))
+        return checkpoint.arrays["lm_head.weight"] != nil
+    }
+
     /// Builds the network from a downloaded release directory. Run inference off the render thread.
     public static func model(directoryURL: URL) throws -> NFKMLXSmolVLMNet {
-        let configURL = directoryURL.appendingPathComponent("config.json")
-        let json = (try? JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any]) ?? [:]
-        let imageTokenId = (json["image_token_id"] as? NSNumber)?.intValue ?? 49_190
-        let scaleFactor = (json["scale_factor"] as? NSNumber)?.intValue ?? 4
-
-        let vision = NFKMLXSigLIPNet(.smolVLM)
-        let connector = NFKMLXSmolVLMConnector(visionHidden: NFKMLXSigLIPConfiguration.smolVLM.hiddenSize,
-                                               decoderHidden: NFKMLXLanguageConfiguration.smolVLM2Decoder.hiddenSize,
-                                               scaleFactor: scaleFactor)
-        let decoder = NFKMLXLanguage.makeNet(.smolVLM2Decoder)
+        let release = try release(directoryURL: directoryURL)
+        let vision = NFKMLXSigLIPNet(release.vision)
+        let connector = NFKMLXSmolVLMConnector(visionHidden: release.vision.hiddenSize,
+                                               decoderHidden: release.decoder.hiddenSize,
+                                               scaleFactor: release.scaleFactor)
+        let decoder = NFKMLXLanguage.makeNet(release.decoder)
         try loadWeights(vision: vision, connector: connector, decoder: decoder, directoryURL: directoryURL)
         return NFKMLXSmolVLMNet(vision: vision, connector: connector, decoder: decoder,
-                                imageTokenId: imageTokenId)
+                                imageTokenId: release.imageTokenId)
     }
 
     /// Partitions the single checkpoint by prefix into the three networks: `model.vision_model.` (the
@@ -492,24 +589,23 @@ public final class NFKMLXSmolVLM: NSObject {
     /// `model.text_model.` (remapped onto the decoder's `model.` layout, its tied `lm_head` dropped).
     static func loadWeights(vision: NFKMLXSigLIPNet, connector: NFKMLXSmolVLMConnector,
                             decoder: NFKMLXLanguageNet, directoryURL: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(
-            url: directoryURL.appendingPathComponent("model.safetensors"))
-        let transpose = checkpoint.needsConvTranspose
+        // The 2.2B is sharded, so this reads through the shard-index-aware reader rather than one file.
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { $0 }
 
-        let visionWeights = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
+        let visionWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
             guard key.hasPrefix("model.vision_model.") else { return nil }
             let stripped = String(key.dropFirst("model.vision_model.".count))
-            return (stripped, transpose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+            return (stripped, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        let connectorWeights = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
+        let connectorWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
             key.hasPrefix("model.connector.")
                 ? (String(key.dropFirst("model.connector.".count)), value) : nil
         }
-        let decoderWeights = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
+        let decoderWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
             if key.hasPrefix("model.text_model.") {
                 return ("model." + key.dropFirst("model.text_model.".count), value)
             }
-            // The output projection lives at the top level and is not tied to the embedding here.
+            // The output projection lives at the top level, and the 500M's is not tied to the embedding.
             return key == "lm_head.weight" ? (key, value) : nil
         }
         try NFKMLXWeights.apply(visionWeights, to: vision, verifyShapes: true)
@@ -520,11 +616,26 @@ public final class NFKMLXSmolVLM: NSObject {
     /// The number of `<image>` tokens each tile expands to (64 = 1024 patches shuffled by 4×4).
     static let tokensPerTile = 64
 
+    /// The `<image>` tokens one tile expands to at a release's own geometry: the patches the tile
+    /// carries, folded by the connector's pixel shuffle.
+    ///
+    /// - Since: InferKit 0.4.0
+    static func tokensPerTile(vision: NFKMLXSigLIPConfiguration, scaleFactor: Int) -> Int {
+        (vision.grid * vision.grid) / (scaleFactor * scaleFactor)
+    }
+
     /// The full expanded prompt string for a `rows × cols` tiling of one image and a question, ready for
     /// the byte-level BPE tokenizer to turn into ids. It reproduces the processor's structure: each
     /// sub-tile carries a `<row_r_col_c>` marker and `<image>` tokens, a row ends with a newline, and a
     /// global thumbnail tile follows before the text.
     static func prompt(rows: Int, cols: Int, question: String) -> String {
+        prompt(rows: rows, cols: cols, question: question, tokensPerTile: tokensPerTile)
+    }
+
+    /// The same at a release's own token count.
+    ///
+    /// - Since: InferKit 0.4.0
+    static func prompt(rows: Int, cols: Int, question: String, tokensPerTile: Int) -> String {
         let images = String(repeating: "<image>", count: tokensPerTile)
         var structure = ""
         for row in 1 ... rows {

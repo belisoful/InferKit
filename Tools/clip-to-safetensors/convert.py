@@ -53,7 +53,9 @@ def load_checkpoint(path):
     try:
         return torch.load(path, map_location="cpu", weights_only=True)
     except Exception:
-        return torch.load(path, map_location="cpu")
+        # A training checkpoint carries more than tensors (an optimizer, a scaler, numpy scalars),
+        # which torch 2.6's default restricted unpickler refuses. Only the `state_dict` is read.
+        return torch.load(path, map_location="cpu", weights_only=False)
 
 
 def main():

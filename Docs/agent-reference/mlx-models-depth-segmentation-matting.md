@@ -22,43 +22,96 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (`IK_DEPTH_VARIANT` picks the encoder config); it drove `transformers` until that package dropped the
   `depth_anything` model type, and the parity test kept passing throughout because it compares against a
   stored record, not a live oracle.
-- `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth (DA3-SMALL). Reference parity
-  against the authors' `depth_anything_3` package on the released weights: the four hooked backbone
-  features and every DualDPT head stage ≥ 0.9999999999, the exp-depth map mean-removed 0.99999999992
-  (max relative difference 5.5e-7). The backbone is a DINOv2 ViT variant rather than a reuse of the V2
+- `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL).
+  The whole released model is built: the DINOv2 ViT backbone, both branches of the DualDPT head, the
+  camera decoder, and the camera encoder. Every released tensor loads, on all three sizes (437 for Small
+  and Base, 637 for Large). Reference parity against the authors' `depth_anything_3` package on the
+  released weights: the four hooked backbone features ≥ 0.9999999999962167, the exp-depth map
+  0.9999999999999011 (mean-removed 0.9999999999101674), the ray map 0.9999999999998513 and its
+  confidence 0.9999999999995774, the four camera tokens ≥ 0.9999999999950343, the predicted pose
+  encoding 0.9999999999992621, and the camera encoder's pose encoding 0.9999999999998606 and tokens
+  0.9999999999999734. The backbone is a DINOv2 ViT variant rather than a reuse of the V2
   encoder: from block 4 it adds a 2-D rotary embedding, per-head query/key normalization, a learned
   camera token injected into the class-token slot, and alternating local/global attention whose
   cross-view "global" blocks collapse to query/key-normalized self-attention for a single image (their
   uniform rotary positions cancel in the score). Each hooked feature concatenates the preceding local
   block's output with the current global block's (`cat_token`), the final norm applied to the global
-  half only, so the `DualDPT` head reads twice the embedding width (`dim_in` 768). Only the depth branch
-  of the DualDPT is built; the ray branch, the camera decoder/encoder, and the aux heads are named as
-  deliberately unimplemented (269 tensors loaded, 168 dropped, 0 unaccounted). The head adds a UV
+  half only, so the `DualDPT` head reads twice the embedding width (`dim_in` 768). The head adds a UV
   positional embedding and upsamples bilinear with align_corners, and the output convention is exp-depth
-  (`exp(logits)`), not V2's relative disparity. `loadWeights` reads the released safetensors directly
-  (`model.backbone.pretrained.*` + `model.head.*`); the two `resize_layers` take the transposed-conv
-  axis order `(1,2,3,0)` (the same load-bearing detail as the V2 port). `depth()` applies the pipeline's
-  ImageNet normalization. `+register` under `depth-anything-3-small`. The oracle is reproducible in-repo
+  (`exp(logits)`), not V2's relative disparity.
+  The main branch of the head predicts depth. The aux branch runs its own four fusion blocks
+  (`refinenet1_aux` … `refinenet4_aux`) over the same reassembled pyramid, then a per-level neck
+  (`output_conv1_aux`: five 3×3 convolutions alternating between the feature width and half of it, with
+  no activation between them) and a per-level head (`output_conv2_aux`: a convolution, a channel
+  LayerNorm, a ReLU, and a 1×1 to seven channels). Inference reads the finest level only. The ray map is
+  six Plücker channels plus a confidence channel, and it stays at the finest fusion resolution rather
+  than being interpolated to the image size, which is the reference's own convention.
+  The aux head carries a **shared module instance**: the reference builds its `ln_seq` list once and
+  splices that same list into all four `output_conv2_aux` Sequentials, so a single `nn.LayerNorm`
+  instance serves the four levels. PyTorch deduplicates a shared module in a state dict and saves it
+  once, under `output_conv2_aux.0.2`. Reading that absence as "unlearned, left at the `nn.LayerNorm`
+  init" is wrong and quiet: the ray head is level 3, and the identity affine scored its ray logits at
+  0.9991 against the reference's 0.9999999999. The loader copies level 0's parameters onto the other
+  three.
+  The camera decoder (`cam_dec`) runs two hidden layers over the last hook's camera token, then heads for
+  the translation (3), the rotation quaternion (4, scalar-last `xyzw`), and the field of view (2, ReLU).
+  The camera token is the concatenated local and global halves taken before the final LayerNorm. The
+  camera encoder (`cam_enc`) is the conditioning path in the other direction: a pose branch MLP
+  (9 → dim/2 → dim), a token norm, a four-block trunk, and a trunk norm turn a known camera into the
+  token the backbone reads in place of its learned one.
+  The reference carries **two Block implementations with different LayerNorm epsilons**. The backbone's
+  (`dinov2/layers/block.py`) defaults `ln_eps` to 1e-6; the camera encoder's (`utils/block.py`) takes a
+  plain `nn.LayerNorm`, so torch's 1e-5. The epsilon is a parameter here because both are built.
+  `loadWeights` reads the released safetensors directly
+  (`model.backbone.pretrained.*`, `model.head.*`, `model.cam_dec.*`, `model.cam_enc.*`); the two
+  `resize_layers` take the transposed-conv axis order `(1,2,3,0)` (the same load-bearing detail as the V2
+  port). `depth()` applies the pipeline's ImageNet normalization. `+register` under
+  `depth-anything-3-small`. `NFKMLXDepth3Estimator` (`@objc`) carries what a single-image backend
+  cannot: `estimatorWithVariant:weightsURL:error:` and its
+  `estimatorWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:` peer build it,
+  `cameraForImage:error:` returns an `@objc` `NFKMLXDepth3Camera` (translation, row-major rotation, focal
+  lengths in pixels at the image's own size, fields of view), and
+  `cameraForImage:knownRotation:translation:focalLengthX:focalLengthY:error:` runs the camera-encoder
+  conditioning path. `rays(for:)` returns the ray map and its confidence as `MLXArray`s, so it is
+  Swift-only under the parity rule. The depth path is unchanged
+  (`NFKMLXDepthAnything3.backend(variant:weightsURL:)`). The oracle is reproducible in-repo
   (`run_reference.py depth3`, the `da3` oracle env, `IK_REF_SRC` = the unpacked `depth_anything_3`
   wheel), recording the input, the four hooks, the four head stages, the fused map, the pre-exp logits,
-  and the depth; the parity test compares every seam by cosine plus mean-removed correlation (raw cosine
-  on the near-constant ~1.0 depth is misleading), and a coverage test asserts every released tensor is
-  loaded or named as dropped. Weights: `depth-anything/DA3-SMALL` (Apache-2.0, ~80M). Base and Large are
-  also at reference parity (`NFKMLXDepth3Configuration.base` / `.large`, `NFKMLXDepth3Variant`,
-  registered as `depth-anything-3-base` / `-large`): Base is the same recipe at ViT-B (768 wide, 12
-  heads, DPT features 128); Large is ViT-L (1024 wide, 24 blocks, 16 heads) hooked at blocks 11/15/19/23
-  with the query/key norms starting at block 8 rather than 4, and DPT features 256. Base: hooks
-  ≥ 0.99999999999436, depth mean-removed 0.99999999998975; Large: hooks ≥ 0.99999999999713, mean-removed
-  0.99999999998452. `DA3-LARGE` is CC-by-NC.
+  the depth, the aux pyramid, the ray map and its confidence, the four camera tokens, the pose encoding,
+  and the camera encoder's input and tokens; the parity test compares every seam by cosine plus
+  mean-removed correlation (raw cosine on the near-constant ~1.0 depth is misleading), and a coverage
+  test asserts every released tensor is loaded. Weights: `depth-anything/DA3-SMALL` (Apache-2.0, ~80M).
+  Base and Large are also at reference parity (`NFKMLXDepth3Configuration.base` / `.large`,
+  `NFKMLXDepth3Variant`, registered as `depth-anything-3-base` / `-large`): Base is the same recipe at
+  ViT-B (768 wide, 12 heads, DPT features 128); Large is ViT-L (1024 wide, 24 blocks, 16 heads) hooked at
+  blocks 11/15/19/23 with the query/key norms starting at block 8 rather than 4, and DPT features 256.
+  Base: hooks ≥ 0.999999999994421, depth 0.9999999999999064 (mean-removed 0.999999999990152), ray
+  0.9999999999998437 with confidence 0.9999999999985674, pose encoding 0.9999999999995328, camera encoder
+  0.9999999999999702. Large: hooks ≥ 0.999999999997466, depth 0.9999999999998904 (mean-removed
+  0.9999999999835174), ray 0.999999999999276 with confidence 0.9999999999926193, pose encoding
+  0.9999999999993067, camera encoder 0.9999999999999863. `DA3-LARGE` is CC-by-NC.
 - `NFKMLXU2Net` (`@objc`) — a real single-forward background remover: the U²-Net nested-U saliency
   network (Residual U-blocks) in `MLXNN`, run through `NFKMLXMattingBackend` (plate → straight
   foreground + saliency alpha, matte under `NFKOutputMask`). `+register` adds full `u2net` and light
   `u2netp`. Stage/side/`outconv` names match the reference; the RSU-internal convs are `enc`/`dec`
   arrays, and `Tools/u2net-to-safetensors/convert.py` renames `rebnconvN` → `enc`/`dec` so the file
   loads directly. Forward + matting round-trip tested under xcodebuild with the light config.
-  Reference parity against U²-Net's own network on both releases (the full network 0.9992, `u2netp`
-  0.9998); the light model is a separate class in the reference rather than a configuration of the full
-  one.
+  Reference parity against U²-Net's own network on both releases (the full network 0.9999992900356037
+  with mean absolute difference 7.263675130994506e-05, `u2netp` 0.9999997057950919); the light model is
+  a separate class in the reference rather than a configuration of the full one. The loader calls
+  `train(false)` after applying the weights: MLXNN modules start in training mode, and a `BatchNorm`
+  left there normalizes over the plate instead of reading its released running statistics, which cost
+  three digits of parity before it was fixed.
+- `NFKMLXISNet` (`@objc`) — the IS-Net dichotomous segmentation network (`ISNetDIS`, the DIS project),
+  U²-Net's successor by the same authors, run through `NFKMLXMattingBackend` and registered as `isnet`.
+  The Residual U-blocks are U²-Net's, so `NFKU2NetRSU` and `NFKMLXU2Net.remapReferenceKey` carry over
+  unchanged and a released `.pth` loads directly. Three things differ: a stride-2 `conv_in` stem with no
+  norm and no activation halves the plate before stage 1, the stages are wider (32/32/64/128/256/256 mid
+  channels over 64/128/256/512/512/512 out), and the six side maps stay separate with no fusion
+  `outconv`, so the prediction is the first side map. The reference resizes to 1024x1024, scales to
+  `0...1`, normalizes with mean 0.5 and unit standard deviation, and min-max stretches the returned map.
+  Reference parity against the DIS `isnet.py` on `isnet-general-use.pth`: stem 0.9999999999990618,
+  stage 1 0.9999999999987647, stage 6 0.9999999999996586, and every side map ≥ 0.9999999999999148.
 - `NFKMLXSAM` (`@objc`) — real promptable segmentation (Segment Anything): a ViT image encoder, a prompt
   encoder (point → sparse tokens via a random-Fourier positional encoding), and a two-way-transformer
   mask decoder with a hypernetwork mask head, in `MLXNN`. Run through `NFKMLXMattingBackend` (plate +

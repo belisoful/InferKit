@@ -23,7 +23,8 @@ Pure Apple frameworks, always available:
   system prompt. ``NFKRemoteProvider`` names the services
   it is pointed at (hosted APIs and the local runners Ollama, LM Studio, llama.cpp, and vLLM), and
   ``NFKRemoteModelCatalog`` lists the models a provider serves so a caller chooses one from the
-  server's own list. A local runner's native API — what is installed and loaded, and Ollama's
+  server's own list. Discovery probes the local ports and answers which runner is up, so calling code
+  names none. A local runner's native API — what is installed and loaded, and Ollama's
   download and delete — is reached through ``NFKLocalModelRunner``. Both chat clients stream through
   the job form, cancel the request when the job is cancelled, take tools and a JSON Schema, and retry
   a rate limit through ``NFKRemoteTransport``.

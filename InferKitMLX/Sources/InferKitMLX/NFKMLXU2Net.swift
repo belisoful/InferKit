@@ -243,6 +243,7 @@ public final class NFKMLXU2Net: NSObject {
              checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
+        net.train(false)                                       // BatchNorm running statistics
     }
 
     /// The RSU height per stage, which is what turns a reference convolution index into the module's

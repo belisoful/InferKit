@@ -121,6 +121,13 @@ Standing rules for the package:
 - A model is done only when every listing is updated: follow
   `Docs/agent-reference/mlx-parity-checklist.md`, which names each file and the house style its entry
   keeps, including the `~/.inferkit-validation.json` keys that make the parity test run by default.
+- Customization is part of parity. A model whose customization path can be implemented is not at
+  parity until that path ships end to end: a public network builder, a freezing policy, an objective
+  measured against the reference training code, a `fineTune` recipe, and a train → save → reload
+  round trip through the model's own factory, all reachable by a consumer without `@testable`. Where
+  the path cannot be implemented (offline-only, or untrainable), the model's entry names why. A
+  numeric parity figure alone is the inference half of done. The levels, the minimum shipped set, and
+  the tests that prove it: `Docs/agent-reference/mlx-training.md` ("Customization is part of parity").
 - Every `Task.detached` passes `priority: .userInitiated`; every test that reaches MLX calls its class's
   `requireMLXRuntime()` first; a test that loads many models clears the cache in `tearDown`.
 

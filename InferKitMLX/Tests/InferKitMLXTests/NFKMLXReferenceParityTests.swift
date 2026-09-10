@@ -1371,6 +1371,289 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(boxSimilarity, 0.97, "the end-to-end boxes match up to the top-k selection tie")
     }
 
+    // Real-ESRGAN's later COMPACT releases, which run `SRVGGNetCompact` rather than the RRDBNet the
+    // earlier releases use, against the reference architecture on the released weights.
+    func testRealESRGANCompactMatchesTheReference() throws {
+        try requireMLXRuntime()
+        for (name, weightsKey, parityKey, variant) in [
+            ("general-x4v3", "IK_VAL_REALESRGAN_GENERAL_V3", "IK_PARITY_REALESRGAN_GENERAL_V3",
+             NFKMLXRealESRGANVariant.generalX4V3),
+            ("animevideov3", "IK_VAL_REALESRGAN_ANIME_V3", "IK_PARITY_REALESRGAN_ANIME_V3", .animeVideoV3),
+        ] {
+            guard let parityPath = config[parityKey], let weightsPath = config[weightsKey],
+                  FileManager.default.fileExists(atPath: parityPath) else {
+                print("SKIP real-esrgan-\(name): no \(parityKey)")
+                continue
+            }
+            let arrays = try loadArrays(url: URL(fileURLWithPath: parityPath))
+            // The two releases differ only in their body length, which the record carries and the
+            // variant states; the port is wrong about the release if the two disagree.
+            let convolutions = Int(try XCTUnwrap(arrays["num_conv"]).item(Int32.self))
+            XCTAssertEqual(convolutions, NFKMLXRealESRGAN.bodyConvolutions(for: variant),
+                           "\(name): the variant states the release's body length")
+            let net = NFKRealESRGANCompactNet(features: 64, convolutions: convolutions, scale: 4)
+            try NFKMLXRealESRGAN.loadCompactWeights(into: net, from: URL(fileURLWithPath: weightsPath))
+
+            let input = try XCTUnwrap(arrays["input_image"])
+            let upscaled = net(input.reshaped([1, input.dim(0), input.dim(1), 3]))
+            eval(upscaled)
+            let similarity = cosine(
+                upscaled[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY real-esrgan-\(name): cosine \(similarity) (\(convolutions) body convolutions)")
+            XCTAssertEqual(upscaled[0].shape, try XCTUnwrap(arrays["output"]).shape)
+            XCTAssertGreaterThan(similarity, 0.9999, "\(name) matches the reference compact generator")
+        }
+    }
+
+    // Zero-DCE++ against the authors' own `enhance_net_nopool` on the released weights: the shared
+    // curve map, then the enhanced image.
+    func testZeroDCEPlusMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let parityPath = config["IK_PARITY_ZERO_DCE_PLUS"],
+              let weightsPath = config["IK_VAL_ZERO_DCE_PLUS"],
+              FileManager.default.fileExists(atPath: parityPath) else {
+            throw XCTSkip("set IK_PARITY_ZERO_DCE_PLUS + IK_VAL_ZERO_DCE_PLUS (run_reference.py zero_dce_plus)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: parityPath))
+        let scale = Int(try XCTUnwrap(arrays["scale_factor"]).item(Int32.self))
+        let net = NFKMLXZeroDCEPlus.makeNet(scaleFactor: scale)
+        try NFKMLXZeroDCEPlus.loadWeights(into: net, from: URL(fileURLWithPath: weightsPath))
+
+        let input = try XCTUnwrap(arrays["input_image"])
+        let batch = input.reshaped([1, input.dim(0), input.dim(1), 3])
+
+        // The curve map at full resolution, which is where a wrong upsample shows first.
+        let reduced = NFKMLXResample.resizeBilinear(batch, height: batch.dim(1) / scale,
+                                                    width: batch.dim(2) / scale)
+        let curve = NFKMLXResample.resizeBilinearAlignCorners(net.curveMap(reduced),
+                                                              height: batch.dim(1), width: batch.dim(2))
+        eval(curve)
+        let curveSimilarity = cosine(
+            curve[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["curve"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY zero-dce-plus: curve cosine \(curveSimilarity)")
+        XCTAssertGreaterThan(curveSimilarity, 0.9999, "the shared curve map matches the reference")
+
+        let enhanced = net(batch)
+        eval(enhanced)
+        let similarity = cosine(
+            enhanced[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY zero-dce-plus: enhanced cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the enhanced image matches the reference")
+    }
+
+    // DDColor against the authors' own architecture on the released modelscope weights, seam by seam:
+    // the four hooked ConvNeXt features, the three U-Net stage outputs, the pixel embedding, the color
+    // attention maps, and the two chroma channels.
+    func testDDColorMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DDCOLOR"], let weightsPath = config["IK_VAL_DDCOLOR"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DDCOLOR + IK_VAL_DDCOLOR (run_reference.py ddcolor)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXDDColor.makeNet(.large)
+        try NFKMLXDDColor.loadWeights(into: net, from: URL(fileURLWithPath: weightsPath))
+        net.train(false)
+
+        func similarity(_ mine: MLXArray, _ key: String) throws -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          try XCTUnwrap(arrays[key]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        // The oracle records the gray pixels it prepared, before the model's own normalization.
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+        let prepared = NFKMLXDDColorNet.normalized(pixels)
+
+        let hooks = net.encoder.arch.hookedFeatures(prepared)
+        eval(hooks)
+        for index in 0 ..< 4 {
+            let value = try similarity(hooks[index], "hook\(index)")
+            print("VALIDATION PARITY ddcolor: hook\(index) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "hook\(index) matches the reference encoder feature")
+        }
+
+        let out0 = net.decoder.layers[0](hooks[3], skip: hooks[2])
+        let out1 = net.decoder.layers[1](out0, skip: hooks[1])
+        let out2 = net.decoder.layers[2](out1, skip: hooks[0])
+        let embedding = net.decoder.lastShuffle(out2)
+        for (name, value) in [("out0", out0), ("out1", out1), ("out2", out2),
+                              ("pixels_embed", embedding)] {
+            let score = try similarity(value, name)
+            print("VALIDATION PARITY ddcolor: \(name) cosine \(score)")
+            XCTAssertGreaterThan(score, 0.9999, "\(name) matches the reference decoder stage")
+        }
+
+        let maps = net.decoder.colorDecoder(scales: [out0, out1, out2], pixels: embedding)
+        let mapScore = try similarity(maps, "color_maps")
+        print("VALIDATION PARITY ddcolor: color_maps cosine \(mapScore)")
+        XCTAssertGreaterThan(mapScore, 0.9999, "the color attention maps match the reference")
+
+        let chroma = net(pixels)
+        let chromaScore = try similarity(chroma, "output")
+        print("VALIDATION PARITY ddcolor: chroma cosine \(chromaScore)")
+        XCTAssertGreaterThan(chromaScore, 0.9999, "the predicted chroma matches the reference")
+    }
+
+    // ViTPose against transformers' own VitPoseForPoseEstimation on a released checkpoint: the
+    // backbone's feature map, the heatmaps, and the DARK-refined keypoints the release's own decode
+    // produces. One test covers both released decoders; the geometry comes from each release's config.
+    func testVitPoseMatchesTheReference() throws {
+        try requireMLXRuntime()
+        for (name, directoryKey, parityKey) in [
+            ("base-simple", "IK_VAL_VITPOSE", "IK_PARITY_VITPOSE"),
+            ("base", "IK_VAL_VITPOSE_BASE", "IK_PARITY_VITPOSE_BASE"),
+        ] {
+            guard let path = config[parityKey], let directory = config[directoryKey],
+                  FileManager.default.fileExists(atPath: path) else {
+                print("SKIP vitpose-\(name): no \(parityKey)")
+                continue
+            }
+            let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+            let directoryURL = URL(fileURLWithPath: directory)
+            let configuration = try NFKMLXVitPoseConfiguration.configuration(
+                fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
+            let net = NFKMLXVitPose.makeNet(configuration)
+            try NFKMLXVitPose.loadWeights(into: net, from: directoryURL.appendingPathComponent("model.safetensors"))
+            net.train(false)
+
+            // The oracle records the pixels it prepared, so the comparison isolates the network from
+            // the resize.
+            let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+            let features = net.backbone(pixels)
+            eval(features)
+            let featureSimilarity = cosine(
+                features[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["features"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY vitpose-\(name): features cosine \(featureSimilarity)")
+            XCTAssertGreaterThan(featureSimilarity, 0.9999, "\(name): the backbone feature map matches")
+
+            let heatmaps = net.heatmaps(pixels)
+            eval(heatmaps)
+            let heatmapSimilarity = cosine(
+                heatmaps[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY vitpose-\(name): heatmaps cosine \(heatmapSimilarity)")
+            XCTAssertEqual(heatmaps[0].shape, try XCTUnwrap(arrays["output"]).shape)
+            XCTAssertGreaterThan(heatmapSimilarity, 0.9999, "\(name): the heatmaps match the reference")
+
+            // The DARK decode: the integer peak, then the Newton refinement. The reference reports its
+            // keypoints in heatmap cells, so the normalized positions scale back by the map's size.
+            let keypoints = NFKVitPoseDecoding.keypoints(from: heatmaps, jointNames: nil)
+            let refined = try XCTUnwrap(arrays["refined"]).asArray(Float.self)
+            let peaks = try XCTUnwrap(arrays["coords"]).asArray(Float.self)
+            let (mapHeight, mapWidth) = (heatmaps.shape[1], heatmaps.shape[2])
+            var worstPeak = 0.0, worstRefined = 0.0
+            for (index, keypoint) in keypoints.enumerated() {
+                let x = Double(keypoint.position.x) * Double(mapWidth)
+                let y = Double(keypoint.position.y) * Double(mapHeight)
+                worstRefined = max(worstRefined, abs(x - Double(refined[index * 2])))
+                worstRefined = max(worstRefined, abs(y - Double(refined[index * 2 + 1])))
+            }
+            // The integer peak the refinement starts from, which the reference records separately.
+            for (index, peak) in NFKVitPoseDecoding.peaks(from: heatmaps).enumerated() {
+                worstPeak = max(worstPeak, abs(Double(peak.column) - Double(peaks[index * 2])))
+                worstPeak = max(worstPeak, abs(Double(peak.row) - Double(peaks[index * 2 + 1])))
+            }
+            print("VALIDATION PARITY vitpose-\(name): peak cells \(worstPeak), refined cells \(worstRefined)")
+            XCTAssertEqual(worstPeak, 0, "\(name): every integer peak matches the reference")
+            XCTAssertLessThan(worstRefined, 0.02, "\(name): the DARK refinement matches the reference")
+        }
+    }
+
+    // RT-DETRv2 at a tiny random configuration, against transformers' own RTDetrV2ForObjectDetection.
+    // The oracle deliberately sets what no released v2 configuration does — `decoder_method: discrete`
+    // and an offset scale of 0.35 — because that is the only way v2's additions are measured rather
+    // than merely present. The released settings are covered on real weights below.
+    func testRTDetrV2MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR_V2"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR_V2 (run_reference.py rtdetr_v2)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+        let referenceBoxes = try XCTUnwrap(arrays["pred_boxes"])
+
+        var configuration = NFKMLXRTDetrConfiguration.tiny
+        configuration.decoderMethod = .discrete
+        configuration.decoderOffsetScale = 0.35
+        let net = NFKMLXRTDetrNet(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            let name = String(key.dropFirst("w::model.".count))
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        net.train(false)
+
+        func similarity(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        let detection = net(pixels)
+        for (label, mine) in [("enc_class", detection.encClass), ("enc_coord", detection.encCoord)] {
+            let value = similarity(mine, try XCTUnwrap(arrays[label]))
+            print("VALIDATION PARITY rtdetr-v2: \(label) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the query-selection \(label) matches the reference")
+        }
+
+        let refTopk = try XCTUnwrap(arrays["topk_ind"])
+        let (decLogits, decBoxes) = net.decode(indices: refTopk, detection: detection)
+        let logitSimilarity = similarity(decLogits, referenceLogits)
+        let boxSimilarity = similarity(decBoxes, referenceBoxes)
+        print("VALIDATION PARITY rtdetr-v2 (reference selection): logits cosine \(logitSimilarity), "
+              + "boxes cosine \(boxSimilarity)")
+        XCTAssertGreaterThan(logitSimilarity, 0.9999, "the discrete-sampling decoder logits match the reference")
+        XCTAssertGreaterThan(boxSimilarity, 0.9999, "the discrete-sampling decoder boxes match the reference")
+    }
+
+    // RT-DETRv2 on the ACTUAL released PekingU/rtdetr_v2_* weights, against transformers' own
+    // RTDetrV2ForObjectDetection. Every released v2 configuration repeats its RT-DETR namesake's
+    // geometry and states the RT-DETR sampling settings, so this measures the released weights through
+    // the shared presets. Runs on the reference's own preprocessed pixels and its query selection.
+    func testRTDetrV2MatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        for (name, directoryKey, parityKey, variant) in [
+            ("r18vd", "IK_VAL_RTDETR_V2_R18VD", "IK_PARITY_RTDETR_V2_R18VD", NFKMLXRTDetrVariant.v2R18VD),
+            ("r34vd", "IK_VAL_RTDETR_V2_R34VD", "IK_PARITY_RTDETR_V2_R34VD", .v2R34VD),
+            ("r50vd", "IK_VAL_RTDETR_V2_R50VD", "IK_PARITY_RTDETR_V2_R50VD", .v2R50VD),
+            ("r101vd", "IK_VAL_RTDETR_V2_R101VD", "IK_PARITY_RTDETR_V2_R101VD", .v2R101VD),
+        ] {
+            guard let path = config[parityKey], let directory = config[directoryKey],
+                  FileManager.default.fileExists(atPath: path) else {
+                print("SKIP rtdetr-v2-\(name): no \(parityKey)")
+                continue
+            }
+            let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+            let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+            let net = NFKMLXRTDetrNet(NFKMLXRTDetr.specs(for: variant).configuration)
+            try NFKMLXRTDetr.loadWeights(
+                into: net, from: URL(fileURLWithPath: directory).appendingPathComponent("model.safetensors"))
+            net.train(false)
+
+            let detection = net(pixels)
+            let (decLogits, decBoxes) = net.decode(indices: try XCTUnwrap(arrays["topk_ind"]),
+                                                   detection: detection)
+            eval(decLogits, decBoxes)
+            let logitSimilarity = cosine(
+                decLogits.reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            let boxSimilarity = cosine(
+                decBoxes.reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["pred_boxes"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY rtdetr-v2-\(name): logits cosine \(logitSimilarity), "
+                  + "boxes cosine \(boxSimilarity)")
+            XCTAssertGreaterThan(logitSimilarity, 0.9999, "\(name): the decoder logits match the reference")
+            XCTAssertGreaterThan(boxSimilarity, 0.9999, "\(name): the decoder boxes match the reference")
+        }
+    }
+
     // RT-DETR on the ACTUAL released PekingU/rtdetr_r50vd weights, against transformers' own
     // RTDetrForObjectDetection — a real-weights end-to-end validation of the r50vd geometry, the
     // released checkpoint, and the loader (including the stage-1 stride-1 shortcut the tiny config does
@@ -2334,8 +2617,182 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let similarity = cosine(matte, reference)
         let meanAbsolute = zip(matte, reference).reduce(0.0) { $0 + abs($1.0 - $1.1) } / Double(matte.count)
         print("VALIDATION PARITY u2net: cosine \(similarity), mean |difference| \(meanAbsolute)")
-        XCTAssertGreaterThan(similarity, 0.99, "the saliency matte matches the reference implementation")
-        XCTAssertLessThan(meanAbsolute, 0.02, "and agrees pixelwise")
+        XCTAssertGreaterThan(similarity, 0.9999, "the saliency matte matches the reference implementation")
+        XCTAssertLessThan(meanAbsolute, 0.001, "and agrees pixelwise")
+    }
+
+    // HAT is SwinIR's successor: the same window self-attention with a channel-attention convolution
+    // branch inside every block and an overlapping cross-attention block closing every group. The
+    // record carries the two precomputed relative-position index tables, the first block, the first
+    // group's overlapping attention, the first group, and the deep-feature trunk, so a mismatch says
+    // which of the two attentions is wrong. The overlapping index is the one that can go wrong
+    // silently: the reference's own arithmetic leaves negative entries that PyTorch reads from the end
+    // of the table.
+    func testHATMatchesTheReference() throws {
+        try requireMLXRuntime()
+        for (name, variant, weightsKey, parityKey) in [
+            ("hat-l-x4", NFKMLXHATVariant.large, "IK_VAL_HAT_L", "IK_PARITY_HAT_L"),
+            ("real-hat-gan-x4", .realWorld, "IK_VAL_REAL_HAT_GAN", "IK_PARITY_REAL_HAT_GAN"),
+        ] {
+            try checkHAT(name: name, variant: variant, weightsKey: weightsKey, parityKey: parityKey)
+        }
+    }
+
+    private func checkHAT(name: String, variant: NFKMLXHATVariant,
+                          weightsKey: String, parityKey: String) throws {
+        guard let path = config[parityKey], FileManager.default.fileExists(atPath: path),
+              let weightsPath = config[weightsKey], FileManager.default.fileExists(atPath: weightsPath) else {
+            print("SKIP \(name): no \(parityKey)")
+            return
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXHAT.makeNet(NFKMLXHAT.specs(for: variant).configuration)
+        try NFKMLXHAT.loadWeights(into: net, from: URL(fileURLWithPath: weightsPath))
+
+        // The index tables are recomputed here rather than loaded, so they are compared exactly.
+        let group = net.layers[0]
+        let selfIndex = group.residualGroup.blocks[0].attn.index.asArray(Int32.self)
+        XCTAssertEqual(selfIndex, try XCTUnwrap(arrays["rpi_sa"]).reshaped([-1]).asArray(Int32.self),
+                       "the window relative-position index matches the reference buffer")
+        let overlapIndex = group.residualGroup.overlapAttention.index.asArray(Int32.self)
+        let referenceOverlap = try XCTUnwrap(arrays["rpi_oca"]).reshaped([-1]).asArray(Int32.self)
+        let table: Int32 = 39 * 39                              // (window 16 + overlap window 24 − 1)²
+        let wrapped: [Int32] = referenceOverlap.map { entry in
+            let remainder: Int32 = entry % table
+            return remainder < 0 ? remainder + table : remainder
+        }
+        XCTAssertEqual(overlapIndex, wrapped,
+                       "the overlapping relative-position index matches the reference buffer's wraparound")
+
+        let plate = try XCTUnwrap(arrays["input_image"]).expandedDimensions(axis: 0).asType(.float32)
+        let side = plate.dim(1)
+        let geometry = net.configuration
+        let window = geometry.windowSize
+        let shallow = net.convFirst(plate - MLXArray([Float(0.4488), 0.4371, 0.4040]))
+        let mask = NFKSwinOps.shiftMask(height: side, width: side, windowSize: window, shift: window / 2)
+        let embedded = net.patchEmbed(shallow.reshaped([1, side * side, geometry.dimensions]))
+        let block0 = group.residualGroup.blocks[0](embedded, height: side, width: side, mask: mask)
+        var deep = block0
+        for block in group.residualGroup.blocks.dropFirst() {
+            deep = block(deep, height: side, width: side, mask: mask)
+        }
+        let ocab0 = group.residualGroup.overlapAttention(deep, height: side, width: side)
+        let group0 = group(embedded, height: side, width: side, mask: mask)
+        let features = net.features(shallow)
+        let upscaled = net.upscale(plate)
+        eval(shallow, block0, ocab0, group0, features, upscaled)
+
+        for (seam, produced) in [("shallow", shallow), ("block0", block0), ("ocab0", ocab0),
+                                 ("group0", group0), ("features", features), ("output", upscaled)] {
+            let value = cosine(produced.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               try XCTUnwrap(arrays[seam]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY \(name): \(seam) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "\(name): the \(seam) seam matches the reference")
+        }
+    }
+
+    // AdaIN is arbitrary style transfer: the normalized VGG encoder, the adaptive instance
+    // normalization between the two feature maps, and the mirrored decoder. The record carries both
+    // feature maps and the normalized features, so a mismatch says which of the three is wrong. The
+    // unbiased variance in the reference's `calc_mean_std` is the seam that shows in `normalized`
+    // while both feature maps still match.
+    func testAdaINMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ADAIN"], FileManager.default.fileExists(atPath: path),
+              let encoderPath = config["IK_VAL_ADAIN_VGG"], let decoderPath = config["IK_VAL_ADAIN_DECODER"],
+              FileManager.default.fileExists(atPath: encoderPath) else {
+            throw XCTSkip("set IK_PARITY_ADAIN (run_reference.py adain), IK_VAL_ADAIN_VGG and IK_VAL_ADAIN_DECODER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let content = try XCTUnwrap(arrays["input_image"]).expandedDimensions(axis: 0).asType(.float32)
+        let style = try XCTUnwrap(arrays["style_image"]).expandedDimensions(axis: 0).asType(.float32)
+
+        let net = NFKMLXAdaIN.makeNet()
+        try NFKMLXAdaIN.loadEncoderWeights(into: net.encoder, from: URL(fileURLWithPath: encoderPath))
+        try NFKMLXAdaIN.loadDecoderWeights(into: net.decoder, from: URL(fileURLWithPath: decoderPath))
+
+        let contentFeatures = net.encoder.features(content)
+        let styleFeatures = net.encoder.features(style)
+        let normalized = NFKMLXAdaINNet.adaptiveInstanceNormalization(content: contentFeatures, style: styleFeatures)
+        let decoded = net.decoder(normalized)
+        eval(contentFeatures, styleFeatures, normalized, decoded)
+
+        for (name, produced) in [("content_features", contentFeatures), ("style_features", styleFeatures),
+                                 ("normalized", normalized), ("output", decoded)] {
+            let value = cosine(produced.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               try XCTUnwrap(arrays[name]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY adain: \(name) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the \(name) seam matches the reference")
+        }
+    }
+
+    // MetaCLIP is CLIP's architecture on a re-curated training set, which is what makes it a weights
+    // change rather than a port: the released tower loads through the same ViT-B/32 configuration and
+    // the same key names. The reference is the same transformers `CLIPModel` path, pointed at
+    // `facebook/metaclip-b32-400m`, whose tensors are bitwise the authors' own release.
+    func testMetaCLIPMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_METACLIP_B32"], FileManager.default.fileExists(atPath: path),
+              let weightsPath = config["IK_VAL_METACLIP_B32"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_METACLIP_B32 (run_reference.py clip with IK_CLIP_REPO) and IK_VAL_METACLIP_B32")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let plate = try XCTUnwrap(arrays["input_image"])
+        // Through the public factory, so the port's own preprocessing is inside the comparison.
+        let backend = try NFKMLXCLIP.backend(variant: .vitB32, weightsURL: URL(fileURLWithPath: weightsPath))
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: try image(from: plate)]))
+        let ours = try XCTUnwrap(result.embedding).map(\.doubleValue)
+        let reference = try XCTUnwrap(arrays["output"]).asArray(Float.self).map(Double.init)
+
+        XCTAssertEqual(ours.count, reference.count, "same embedding width as the reference")
+        let value = cosine(ours, reference)
+        print("VALIDATION PARITY metaclip-b32-400m: image embedding cosine \(value)")
+        XCTAssertGreaterThan(value, 0.99, "the MetaCLIP tower matches the reference embedding")
+    }
+
+    // IS-Net (DIS) is U²-Net's successor by the same authors: the same Residual U-blocks behind a
+    // stride-2 stem, wider stages, and six separate side maps with no fusion convolution. The record
+    // carries the stem and the deepest encoder stage beside the five coarser side maps, so a mismatch
+    // localizes to the stem, the encoder, or the decoder rather than to "the network".
+    func testISNetMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ISNET"], FileManager.default.fileExists(atPath: path),
+              let weightsPath = config["IK_VAL_ISNET"], FileManager.default.fileExists(atPath: weightsPath) else {
+            throw XCTSkip("set IK_PARITY_ISNET (run_reference.py isnet --checkpoint isnet-general-use.pth) and IK_VAL_ISNET")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let plate = try XCTUnwrap(arrays["input_image"]).expandedDimensions(axis: 0).asType(.float32)
+
+        let net = NFKMLXISNet.makeNet()
+        try NFKMLXISNet.loadWeights(into: net, from: URL(fileURLWithPath: weightsPath))
+
+        // The reference normalizes with mean 0.5 and unit standard deviation.
+        let normalized = plate - 0.5
+        let pool = MaxPool2d(kernelSize: 2, stride: 2)
+        let stem = net.convIn(normalized)
+        let stage1 = net.stage1(stem)
+        var deep = stage1
+        for stage in [net.stage2, net.stage3, net.stage4, net.stage5, net.stage6] {
+            deep = stage(pool(deep))
+        }
+        let sides = net.sides(normalized)
+        eval(stem, stage1, deep)
+        eval(sides)
+
+        for (name, produced) in [("stem", stem), ("stage1", stage1), ("stage6", deep)] {
+            let value = cosine(produced.reshaped([-1]).asArray(Float.self).map(Double.init),
+                               try XCTUnwrap(arrays[name]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY isnet: \(name) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "the \(name) seam matches the reference")
+        }
+
+        for index in 0 ..< 6 {
+            let key = index == 0 ? "output" : "side\(index + 1)"
+            let value = cosine(sides[index].reshaped([-1]).asArray(Float.self).map(Double.init),
+                               try XCTUnwrap(arrays[key]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY isnet: side\(index + 1) cosine \(value)")
+            XCTAssertGreaterThan(value, 0.9999, "side map \(index + 1) matches the reference")
+        }
     }
 
     // The colorized image goes through two stages that can each be wrong on their own: the network's ab
@@ -2789,7 +3246,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(ours.count, reference.count, "same saliency map size as the reference")
         let similarity = cosine(ours, reference)
         print("VALIDATION PARITY u2netp: cosine \(similarity)")
-        XCTAssertGreaterThan(similarity, 0.99, "the light network matches the reference implementation")
+        XCTAssertGreaterThan(similarity, 0.9999, "the light network matches the reference implementation")
     }
 
     // MARK: HiFi-GAN vocoder

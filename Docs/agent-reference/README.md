@@ -40,7 +40,8 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   library, `Pool` padding, numeric keys, duplicate keys, subnormals, cache clearing, shape checks).
 - [mlx-weights-and-formats.md](mlx-weights-and-formats.md) — runtime quantization, the release
   reader, and the native GGUF and PyTorch checkpoint readers.
-- [mlx-training.md](mlx-training.md) — the trainer, training data, LoRA, and the fine-tuning recipes.
+- [mlx-training.md](mlx-training.md) — the trainer, training data, LoRA, and the fine-tuning recipes;
+  the "Customization is part of parity" rule (levels, minimum shipped set, tests, measured gaps).
 
 ### Model classes
 

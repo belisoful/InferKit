@@ -12,7 +12,7 @@ the same model:
   init). A download companion, `SomeModel.backend(…repo:weightsPath:revision:cacheDirectoryURL:)`,
   fetches the checkpoint from Hugging Face first. Variant models take an `@objc` enum
   (``NFKMLXRealESRGANVariant``, ``NFKMLXDepthVariant``, ``NFKMLXU2NetVariant``, ``NFKMLXYOLOVariant``,
-  ``NFKMLXNAFNetVariant``, ``NFKMLXSwinIRVariant``, ``NFKMLXSAMVariant``, ``NFKMLXWhisperVariant``).
+  ``NFKMLXNAFNetVariant``, ``NFKMLXSwinIRVariant``, ``NFKMLXHATVariant``, ``NFKMLXSAMVariant``, ``NFKMLXWhisperVariant``).
   A model whose geometry lives in a release's `config.json` takes `backend(directoryURL:)` instead
   and reads the whole downloaded release.
 - **By name** — ``NFKMLXReferenceModels/registerAll()`` registers every model, then
@@ -34,13 +34,17 @@ configuration preset behind each registered name, and a construction line to cop
 
 | Model | Name | Task |
 | --- | --- | --- |
-| ``NFKMLXRealESRGAN`` | `real-esrgan-x4` · `-anime` · `-x2` | ×4 / ×2 super-resolution |
+| ``NFKMLXRealESRGAN`` | `real-esrgan-x4` · `-anime` · `-x2` · `real-esrgan-general-x4v3` · `real-esrgan-anime-video-x4v3` | ×4 / ×2 super-resolution, RRDBNet and the later compact generator |
 | ``NFKMLXSwinIR`` | `swinir-x4` | transformer super-resolution — every released checkpoint: classical ×2 / ×3 / ×4 / ×8, lightweight ×2 / ×3 / ×4, real-world ×4 medium and large |
+| ``NFKMLXHAT`` | `hat-x4` · `hat-l-x4` · `real-hat-gan-x4` | hybrid attention super-resolution: window attention plus a channel-attention branch and overlapping cross-attention |
 | ``NFKMLXNAFNet`` | `nafnet` | denoise / deblur (SIDD and GoPro at widths 32 and 64, REDS) |
 | ``NFKMLXZeroDCE`` | `zero-dce` | low-light enhancement |
+| ``NFKMLXZeroDCEPlus`` | `zero-dce-plus` | low-light enhancement with depthwise-separable convolutions and one shared curve |
 | ``NFKMLXStyleTransfer`` | `fast-style-transfer` | one baked style per checkpoint |
+| ``NFKMLXAdaIN`` | `adain` | arbitrary style transfer: any style image, no per-style checkpoint |
 | ``NFKMLXColorizer`` | `colorizer-eccv16` | grayscale → color |
 | ``NFKMLXSiggraphColorizer`` | `colorizer-siggraph17` | colorization with optional user hints |
+| ``NFKMLXDDColor`` | `ddcolor` · `-paper` · `-artistic` | modern automatic colorization (learned color queries) |
 | ``NFKMLXLaMa`` | `lama-inpaint` | mask-guided inpainting |
 | ``NFKMLXStableDiffusionInpaint`` | `sd-inpaint` | latent-diffusion inpainting |
 | ``NFKMLXCodeFormer`` | `codeformer` | face restoration; ``NFKMLXPhotoFaceBackend`` restores every face in a photograph |
@@ -51,14 +55,15 @@ Each writes its result under `NFKOutputImage`.
 
 ### Image → map
 
-`NFKMLXDepthAnything` and `NFKMLXMarigold` emit a grayscale depth map; the segmenters
+`NFKMLXDepthAnything`, `NFKMLXDepthAnything3`, and `NFKMLXMarigold` emit a grayscale depth map, and
+`NFKMLXDepth3Estimator` reads Depth Anything 3's camera and ray map beside that depth; the segmenters
 (`NFKMLXSegFormer`, `NFKMLXDeepLab`, `NFKMLXBiSeNet`, `NFKMLXBiSeNetV2`) emit a grayscale class-label
 map under `NFKOutputImage` — recover the class index as `round(gray · (classCount − 1))`.
 
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXDepthAnything`` | `depth-anything-v2-small` · `-base` · `-large` | monocular depth |
-| ``NFKMLXDepthAnything3`` | `depth-anything-3-small` | monocular depth (DA3) |
+| ``NFKMLXDepthAnything3`` | `depth-anything-3-small` · `-base` · `-large` | monocular depth, rays, and camera (DA3) |
 | ``NFKMLXMarigold`` | `marigold-depth` | diffusion depth |
 | ``NFKMLXSegFormer`` | `segformer-b0` | transformer segmentation |
 | ``NFKMLXDeepLab`` | `deeplabv3` | CNN segmentation |
@@ -74,6 +79,7 @@ alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NF
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXU2Net`` | `u2net` · `u2netp` | salient-object matting |
+| ``NFKMLXISNet`` | `isnet` | dichotomous segmentation, U²-Net's successor |
 | ``NFKMLXRVM`` | `robust-video-matting` | recurrent video matting (MobileNetV3, or ResNet-50 as `robust-video-matting-resnet50`) |
 | ``NFKMLXMODNet`` | `modnet` | trimap-free portrait matting |
 | ``NFKMLXBiRefNet`` | `birefnet` | high-resolution background removal, MIT (Swin-v1-L + ASPPDeformable) |
@@ -85,14 +91,16 @@ alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NF
 ### Detection & pose
 
 `NFKMLXYOLO`, `NFKMLXRTDetr`, and `NFKMLXRFDetr` return `[NFKDetection]` under `NFKOutputDetections`;
-`NFKMLXPose` returns `[NFKKeypoint]` under `NFKOutputPose`.
+`NFKMLXPose` and `NFKMLXVitPose` return `[NFKKeypoint]` under `NFKOutputPose`.
 
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXYOLO`` | `yolo` | object detection (YOLOv8 n / s / m / l / x) |
-| ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR r18vd / r34vd / r50vd / r101vd; no NMS) |
+| ``NFKMLXYOLOGenerations`` | `yolov9t` … `yolo26x` | YOLOv9, YOLOv10, YOLO11, YOLOv12 and YOLO26 — every released size; v10 and 26 need no suppression |
+| ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR and RT-DETRv2, r18vd / r34vd / r50vd / r101vd; no NMS) |
 | ``NFKMLXRFDetr`` | `rf-detr` | object detection, Apache-2.0 (RF-DETR nano / small / medium / base / large, Roboflow; no NMS) |
 | ``NFKMLXPose`` | `pose-simplebaseline` | top-down pose |
+| ``NFKMLXVitPose`` | `vitpose-base-simple` | top-down pose, Apache-2.0 (ViTPose base with the simple decoder, or the classic decoder as `vitpose-base`; DARK-refined keypoints) |
 
 ### Embeddings & reranking
 
@@ -103,7 +111,7 @@ a backend.
 
 | Model | Name | Task |
 | --- | --- | --- |
-| ``NFKMLXCLIP`` | `clip-vit-b-32` | image + text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336) |
+| ``NFKMLXCLIP`` | `clip-vit-b-32` | image + text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336, and MetaCLIP weights) |
 | ``NFKMLXSigLIP2`` | `siglip2-base-patch16-224` | image + text embeddings (SigLIP 2, multilingual; every fixed-resolution release from base to giant-opt) |
 | ``NFKMLXQwen3Embedding`` | — | text embeddings (Qwen3-Embedding-0.6B, Matryoshka) |
 | ``NFKMLXEmbeddingGemma`` | — | text embeddings (EmbeddingGemma-300M, bidirectional) |
@@ -137,7 +145,7 @@ and JSON, JSON-Schema, or fixed-choice constrained decoding — each also settab
 
 | Model | Factory | Task |
 | --- | --- | --- |
-| ``NFKMLXSmolVLM`` | `smolVLM(directoryURL:)` | an image and a question → an answer (SmolVLM2-500M) |
+| ``NFKMLXSmolVLM`` | `smolVLM(directoryURL:)` | an image and a question → an answer (SmolVLM2 256M, 500M, 2.2B) |
 | ``NFKMLXGemma3`` | `load(directoryURL:)` | an image and a question → an answer (Gemma 3 4B: SigLIP so400m at 896, 256 soft tokens, bidirectional attention among them) |
 | ``NFKMLXGemma3n`` | `load(directoryURL:)` | an image or a clip and a question → an answer (MobileNetV5-300M at 768 → 256 soft tokens; a USM Conformer → 188) |
 | ``NFKMLXQwen3VL`` | — | the Qwen3-VL-2B vision tower (2-D rotary ViT, deepstack) |

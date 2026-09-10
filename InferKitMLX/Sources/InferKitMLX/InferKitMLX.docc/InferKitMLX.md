@@ -74,11 +74,16 @@ limits.
 
 - ``NFKMLXRealESRGAN``
 - ``NFKMLXSwinIR``
+- ``NFKMLXHAT``
 - ``NFKMLXNAFNet``
 - ``NFKMLXZeroDCE``
+- ``NFKMLXZeroDCEPlus``
 - ``NFKMLXStyleTransfer``
+- ``NFKMLXAdaIN``
 - ``NFKMLXColorizer``
 - ``NFKMLXSiggraphColorizer``
+- ``NFKMLXDDColor``
+- ``NFKMLXDDColorVariant``
 - ``NFKMLXLaMa``
 - ``NFKMLXStableDiffusionInpaint``
 - ``NFKMLXTAESD``
@@ -87,6 +92,8 @@ limits.
 
 - ``NFKMLXDepthAnything``
 - ``NFKMLXDepthAnything3``
+- ``NFKMLXDepth3Estimator``
+- ``NFKMLXDepth3Camera``
 - ``NFKMLXMarigold``
 - ``NFKMLXSegFormer``
 - ``NFKMLXDeepLab``
@@ -96,6 +103,7 @@ limits.
 ### Matting, segmentation & faces
 
 - ``NFKMLXU2Net``
+- ``NFKMLXISNet``
 - ``NFKMLXRVM``
 - ``NFKMLXMODNet``
 - ``NFKMLXBiRefNet``
@@ -111,9 +119,16 @@ limits.
 ### Detection & pose
 
 - ``NFKMLXYOLO``
+- ``NFKMLXYOLOGenerations``
+- ``NFKMLXYOLOGenerationBackend``
 - ``NFKMLXRTDetr``
+- ``NFKMLXRTDetrSamplingMethod``
 - ``NFKMLXRFDetr``
 - ``NFKMLXPose``
+- ``NFKMLXVitPose``
+- ``NFKMLXVitPoseBackend``
+- ``NFKMLXVitPoseVariant``
+- ``NFKMLXVitPoseDecoder``
 
 ### Embeddings & reranking
 

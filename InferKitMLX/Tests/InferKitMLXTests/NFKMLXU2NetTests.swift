@@ -46,6 +46,9 @@ final class NFKMLXU2NetTests: XCTestCase {
     func testACheckpointRoundTripReproducesTheForward() throws {
         try requireMLXRuntime()
         let trained = NFKMLXU2Net.makeNet(light: true)
+        // `loadWeights` leaves the net in evaluation mode, so the batch norms read their running
+        // statistics. The source net has to be in the same mode or the round trip measures the mode.
+        trained.train(false)
         let pytorchLayout = Dictionary(uniqueKeysWithValues: trained.parameters().flattened().map { key, value in
             (key, value.ndim == 4 ? value.transposed(0, 3, 1, 2) : value)
         })
@@ -56,11 +59,28 @@ final class NFKMLXU2NetTests: XCTestCase {
         let loaded = NFKMLXU2Net.makeNet(light: true)
         try NFKMLXU2Net.loadWeights(into: loaded, from: url)
 
+        // The exact claim is that the load transposes back to what the save transposed, so every
+        // parameter returns bitwise. That holds for the running statistics too, which is what a
+        // parameter-count check alone would miss.
+        let source = loaded.parameters().flattened().reduce(into: [String: MLXArray]()) { $0[$1.0] = $1.1 }
+        XCTAssertEqual(source.count, trained.parameters().flattened().count, "every parameter round-trips")
+        for (key, value) in trained.parameters().flattened() {
+            let reloaded = try XCTUnwrap(source[key], "\(key) survived the round trip")
+            XCTAssertEqual(value.asArray(Float.self), reloaded.asArray(Float.self), "\(key) is bitwise equal")
+        }
+
+        // The forward is the end-to-end probe, and it holds only loosely: the two forwards are
+        // separate graphs over arrays of different provenance, so MLX may accumulate a convolution in
+        // a different order, and these weights are random, so the batch norms read untrained running
+        // statistics that renormalize nothing. A 1e-7 disagreement at the stem then amplifies through
+        // sixty layers, by a factor that changes with the initialization. A weight that failed to load
+        // moves the map far further than this bound.
         let input = Self.tensor(height: 16, width: 16)
         let expected = trained.saliency(input)
         let actual = loaded.saliency(input)
         eval(expected, actual)
-        XCTAssertEqual(expected.asArray(Float.self), actual.asArray(Float.self))
+        let difference = Double((abs(expected - actual)).max().item(Float.self))
+        XCTAssertLessThan(difference, 0.05, "the round trip reproduces the saliency map")
     }
 
     static func tensor(height: Int, width: Int) -> MLXArray {

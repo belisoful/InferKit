@@ -10,6 +10,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class NFKRemoteModel;
 
+/*! The timeout the discovery calls give each probe when a caller names none: two seconds, which a
+	server on this machine answers well inside. Introduced in InferKit 0.4.0. */
+extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
+
 /*!
 	@enum       NFKRemoteAPIStyle
 	@abstract   The wire protocol a provider speaks.
@@ -65,6 +69,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 - (instancetype)init NS_UNAVAILABLE;
 
+/*! Two providers are equal when their identifier, base, protocol, and key requirement match. Each
+	preset getter builds a new instance and a discovered provider is a fresh one, so equality is by
+	value rather than by identity. Introduced in InferKit 0.4.0. */
+- (BOOL)isEqual:(nullable id)object;
+
 /*!
 	@method     URLForPath:
 	@abstract   The base with a path appended, for an operation this class does not name.
@@ -89,6 +98,90 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 /*! The preset with this identifier, or nil. */
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier;
+
+/*! Every local-server preset, in the order the discovery calls probe them: ollama, lmstudio,
+	llamacpp, vllm. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, copy, readonly) NSArray<NFKRemoteProvider *> *localProviders;
+
+/*!
+	@method     isReachableWithAPIKey:timeout:error:
+	@abstract   Whether a server answers at this provider's address now.
+	@discussion Reads modelsURL through NFKRemoteModelCatalog and counts any HTTP reply, a rejected
+				key included: the question is whether a server is there, which for a local runner is
+				whether the app is running. Returns NO with kNFKError_RemoteUnreachable when nothing
+				answered. Blocks for at most the timeout; run it off the render thread.
+
+				This is the seam every discovery call goes through, so a subclass that overrides it
+				decides what "available" means. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)isReachableWithAPIKey:(nullable NSString *)apiKey
+					  timeout:(NSTimeInterval)timeout
+						error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     availableProvidersAmong:timeout:
+	@abstract   The providers in the list that answer, in the list's own order.
+	@discussion The probes run concurrently, so the call costs one timeout rather than one per
+				provider, and no key is sent. A hosted provider answers 401 without one, which still
+				counts as reachable, so this is aimed at the local servers, where nothing listening
+				on the port is the answer that matters. Blocks. Introduced in InferKit 0.4.0.
+*/
++ (NSArray<NFKRemoteProvider *> *)availableProvidersAmong:(NSArray<NFKRemoteProvider *> *)providers
+												  timeout:(NSTimeInterval)timeout
+	NS_SWIFT_NAME(availableProviders(among:timeout:));
+
+/*!
+	@method     firstAvailableProviderAmong:timeout:
+	@abstract   The first provider in the list that answers, or nil when none does.
+	@discussion Probes in the list's order and stops at the first reply, so a running server on the
+				first address costs one probe. Blocks. Introduced in InferKit 0.4.0.
+*/
++ (nullable NFKRemoteProvider *)firstAvailableProviderAmong:(NSArray<NFKRemoteProvider *> *)providers
+													timeout:(NSTimeInterval)timeout
+	NS_SWIFT_NAME(firstAvailableProvider(among:timeout:));
+
+/*!
+	@method     availableLocalProviders
+	@abstract   The local servers running on this machine right now, in localProviders order.
+	@discussion localProviders probed at NFKRemoteProviderProbeTimeout, which is what fills a picker
+				of the runners a user can pick from. Blocks; run it off the render thread, or use the
+				completion-handler form. Introduced in InferKit 0.4.0.
+*/
++ (NSArray<NFKRemoteProvider *> *)availableLocalProviders;
+
+/*!
+	@method     firstAvailableLocalProvider
+	@abstract   The first local server that answers, or nil when none is running.
+	@discussion The call that removes the choice from the calling code: rather than naming Ollama or
+				LM Studio, ask which one is up and use it. The order is localProviders order, so the
+				answer is the same for the same machine. Blocks. Introduced in InferKit 0.4.0.
+*/
++ (nullable NFKRemoteProvider *)firstAvailableLocalProvider NS_SWIFT_NAME(firstAvailableLocalProvider());
+
+/*! The asynchronous form of availableLocalProviders. The handler runs on a background queue at
+	user-initiated quality of service. Swift's async import of a completion handler drops the
+	handler from the name, which would take the blocking call's name and leave it unreachable, so
+	the awaited form is named probeAvailableLocalProviders(). Introduced in InferKit 0.4.0. */
++ (void)availableLocalProvidersWithCompletionHandler:(void (^)(NSArray<NFKRemoteProvider *> *providers))completionHandler
+	NS_SWIFT_ASYNC_NAME(probeAvailableLocalProviders());
+
+/*! The asynchronous form of firstAvailableLocalProvider, named probeFirstAvailableLocalProvider()
+	in Swift for the reason above. The handler runs on a background queue at user-initiated quality
+	of service. Introduced in InferKit 0.4.0. */
++ (void)firstAvailableLocalProviderWithCompletionHandler:(void (^)(NFKRemoteProvider * _Nullable provider))completionHandler
+	NS_SWIFT_ASYNC_NAME(probeFirstAvailableLocalProvider());
+
+/*!
+	@method     backendForFirstAvailableLocalProviderWithModelName:
+	@abstract   A backend on the first local server that answers, or nil when none is running.
+	@discussion firstAvailableLocalProvider followed by backendForProvider:apiKey:modelName:, for
+				code that wants a local backend without naming the app behind it. The model name is
+				the caller's, since the runners name their models differently; llama.cpp serves
+				whatever it has loaded, so nil is a working argument there. A caller that needs to
+				know which runner it got asks firstAvailableLocalProvider instead and builds the
+				backend from it. Blocks. Introduced in InferKit 0.4.0.
+*/
++ (nullable id<NFKInferenceBackend>)backendForFirstAvailableLocalProviderWithModelName:(nullable NSString *)modelName;
 
 /*!
 	@method     backendForProvider:apiKey:modelName:

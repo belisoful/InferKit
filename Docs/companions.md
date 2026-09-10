@@ -131,8 +131,9 @@ weights:
   out. A SigLIP vision encoder turns each image tile into patch features, a pixel-shuffle connector
   projects them to the decoder width, and a Llama decoder (the dense stack the language model runs)
   reads the text with the projected vision tokens spliced in at the image-token positions.
-  `answerForImage:question:` captions or answers about a `CGImage`. Reference parity against
-  transformers' own SmolVLMForConditionalGeneration (the vision encoder, the connector, and the fused
+  `answerForImage:question:` captions or answers about a `CGImage`. The geometry comes from the
+  release's own `config.json`, so all three sizes run the same code (256M, 500M, 2.2B). Reference parity
+  against transformers' own SmolVLMForConditionalGeneration (the vision encoder, the connector, and the fused
   decoder logits exact, the greedy continuation token for token); the prompt expansion is token-exact
   and the image processor is CoreGraphics-based (a slight approximation of the reference's PIL resize).
 - **`NFKMLXQwen3VLVisionNet`** — the vision tower of a second VLM, Qwen3-VL-2B: a 2D-rotary ViT (patches
@@ -164,17 +165,28 @@ models.
 
 - **`NFKMLXRealESRGAN`** — a real, shipped single-forward model: the Real-ESRGAN generator (RRDBNet)
   in MLXNN, run through `NFKMLXModuleBackend` for ×4 upscaling. Build directly from Objective-C via
-  `backendWithVariant:weightsURL:error:`, or download and build via the `repo:` factory.
+  `backendWithVariant:weightsURL:error:`, or download and build via the `repo:` factory. The two later
+  releases run the compact generator instead (`SRVGGNetCompact`: a flat body of convolutions with
+  per-channel PReLU, one pixel shuffle, and a nearest-neighbor residual), reached through the same
+  variant enum as `.generalX4V3` and `.animeVideoV3`.
 - **`NFKMLXDepthAnything`** — a real single-forward depth model: the Depth Anything V2 DINOv2 + DPT
   network in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). Register and build by
   name; a self-validating converter turns the release into a safetensors checkpoint.
-- **`NFKMLXDepthAnything3`** — Depth Anything 3 monocular depth (DA3-SMALL, -BASE, and -LARGE): a DINOv2 ViT variant
-  (2D rotary, query/key norm, a camera token, and `cat_token` local/global hooking from block 4) plus
-  the DualDPT depth branch, in MLXNN, run through `NFKMLXModuleBackend` (image → grayscale depth). At
-  reference parity against the authors' `depth_anything_3` package; the released safetensors loads
-  directly (`depth-anything-3-small` / `-base` / `-large`, `NFKMLXDepth3Variant`).
+- **`NFKMLXDepthAnything3`** — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL, -BASE,
+  and -LARGE): a DINOv2 ViT variant (2D rotary, query/key norm, a camera token, and `cat_token`
+  local/global hooking from block 4) plus both branches of the DualDPT head, the camera decoder, and the
+  camera encoder, in MLXNN. The depth branch runs through `NFKMLXModuleBackend` (image → grayscale
+  depth); `NFKMLXDepth3Estimator` returns the predicted camera as an `NFKMLXDepth3Camera` (translation,
+  rotation, focal lengths, fields of view), takes a known camera through the camera encoder instead, and
+  hands Swift callers the six-channel Plücker ray map beside its confidence. At reference parity against
+  the authors' `depth_anything_3` package, with every released tensor loaded; the released safetensors
+  loads directly (`depth-anything-3-small` / `-base` / `-large`, `NFKMLXDepth3Variant`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
+- **`NFKMLXISNet`** — IS-Net, the dichotomous segmentation network the U²-Net authors published next:
+  the same Residual U-blocks behind a stride-2 stem, wider stages, and six separate side maps with no
+  fusion convolution, run through the matting backend (plate → foreground + alpha cutout) at
+  reference parity against the DIS `isnet.py`.
 - **`NFKMLXSAM`** — real promptable segmentation (Segment Anything): a ViT encoder, prompt encoder, and
   two-way-transformer mask decoder in MLXNN, run through the matting backend (plate + point → mask).
   Every released encoder: ViT-B, ViT-L, and ViT-H (`NFKMLXSAMVariant`).
@@ -201,9 +213,17 @@ models.
   diffusion backend: Marigold depth (image → depth) and the SD ×4 latent upscaler (image → ×4 image).
 - **`NFKMLXStyleTransfer`** — real fast neural style transfer: Johnson et al.'s `TransformerNet` in
   MLXNN, run through the module backend (image → stylized image). The style is baked into the weights.
+- **`NFKMLXAdaIN`** — arbitrary style transfer: a normalized VGG-19 encodes the content and the style
+  image, adaptive instance normalization moves the content features onto the style's per-channel
+  statistics, and a mirrored decoder inverts the result. One pair of networks handles any style, where
+  fast style transfer bakes one style per checkpoint. The content image is `NFKInputImage`, the style
+  image is `NFKInputControl`, and `NFKParameterStrength` blends the two. At reference parity against
+  naoto0804's `pytorch-AdaIN`.
 - **`NFKMLXCLIP`** — real image+text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336; `NFKMLXCLIPVariant`): a ViT image tower and a text
   transformer projected into a shared space. `NFKMLXCLIPBackend` returns an embedding under
-  `NFKOutputEmbedding` for semantic search, tagging, and diffusion guidance.
+  `NFKOutputEmbedding` for semantic search, tagging, and diffusion guidance. MetaCLIP is the same
+  architecture on a re-curated training set, and its released towers load through the same variants at
+  reference parity.
 - **`NFKMLXRVM`** — real video matting (Robust Video Matting, both released encoders — MobileNetV3 and ResNet-50): an encoder, LR-ASPP, and a **recurrent
   ConvGRU decoder** that carries state across frames, run through the matting backend (single frame) or
   `NFKMLXRVMNet.forward` (video, state threaded) for background removal without a green screen.
@@ -211,24 +231,51 @@ models.
   predicts codebook indices, run through the module backend (aligned face → restored face).
 - **`NFKMLXZeroDCE`** — real low-light enhancement: the Zero-DCE DCE-Net estimates pixel-wise tone
   curves and iteratively brightens, run through the module backend (dark image → brightened image).
+- **`NFKMLXZeroDCEPlus`** — Zero-DCE++, the authors' own successor: depthwise-separable convolutions,
+  one shared curve reused across all eight iterations, and an estimator that runs at a twelfth of the
+  resolution and lifts its curve map back. At reference parity against the released weights.
 - **`NFKMLXMODNet`** — real trimap-free portrait matting: the three-branch (semantic / detail /
   fusion) MODNet, run through the matting backend (portrait → foreground + alpha).
 - **`NFKMLXYOLO`** — real object detection: an anchor-free YOLO with box decode and non-max
   suppression, returning `NFKDetection`s (label, confidence, normalized box) under
-  `NFKOutputDetections`. Build with class names via the `backendWith…labels:` factory.
+  `NFKOutputDetections`. Build with class names via the `backendWith…labels:` factory. This is
+  YOLOv8.
+- **`NFKMLXYOLOGenerations`** — the generations after v8, under the same detection contract: YOLOv9,
+  YOLOv10, YOLO11, YOLOv12 and YOLO26, every released size of each. One graph interpreter builds them
+  all from the reference's own layer rows, so a release is a `NFKMLXYOLORelease` case rather than a
+  separate port. YOLOv10 and YOLO26 predict from a one-to-one branch and need no suppression. At
+  reference parity against ultralytics on all twenty-six released checkpoints. The licence is
+  ultralytics' AGPL-3.0; `NFKMLXRTDetr` and `NFKMLXRFDetr` are the licence-clean detectors.
 - **`NFKMLXSegFormer`** — real semantic segmentation: the SegFormer MiT transformer + all-MLP head,
   run through the module backend, emitting a grayscale class-label map under `NFKOutputImage`.
 - **`NFKMLXSwinIR`** — real transformer super-resolution: SwinIR with true shifted-window attention
   and pixel-shuffle upsampling, run through the module backend (low-res → high-res image). Every
   released SR checkpoint has a variant: classical ×2/×3/×4/×8, lightweight ×2/×3/×4, and the two
   real-world ×4 models (nearest-neighbor tail; the large one with the three-convolution residual).
+- **`NFKMLXHAT`** — HAT, the Hybrid Attention Transformer, SwinIR's successor for super-resolution:
+  the same shifted-window attention with a channel-attention convolution branch inside every block and
+  an overlapping cross-attention block closing every group, whose keys and values reach a wider window
+  than the queries. Run through the module backend (low-res → ×4 image). HAT-L and Real-HAT-GAN are
+  presets (`NFKMLXHATVariant`), both at reference parity against XPixelGroup's own `hat_arch.py`.
 - **`NFKMLXColorizer`** / **`NFKMLXSiggraphColorizer`** — real colorization (ECCV-16 and
   SIGGRAPH-17): predict ab chroma from the L channel in CIELAB space and recombine with the original
   luminance, run through the module backend (grayscale photo → color photo); the SIGGRAPH model also
   takes user color hints. The converter loads the reference releases directly.
+- **`NFKMLXDDColor`** — modern automatic colorization (DDColor): a ConvNeXt-L encoder, a
+  spectral-normalized U-Net decoder, and 100 learned color queries whose attention maps become the two
+  chroma channels, run through the module backend (grayscale photo → color photo). The three released
+  checkpoints each have a variant (`.modelscope`, `.paper`, `.artistic`), at reference parity against
+  the authors' own DDColor. The caller's lightness is kept at full resolution, so luminance is
+  preserved exactly.
 - **`NFKMLXPose`** — real top-down pose estimation (SimpleBaseline): a residual backbone and a
   deconvolution head produce joint heatmaps, decoded to `NFKKeypoint`s (name, normalized position,
   confidence) under `NFKOutputPose`. Build with joint names via the `backendWith…jointNames:` factory.
+- **`NFKMLXVitPose`** — real top-down pose estimation (ViTPose, Apache-2.0): a plain ViT backbone and a
+  small decoding head produce joint heatmaps, refined by the DARK distribution-aware decode into
+  `NFKKeypoint`s under `NFKOutputPose`. Both released decoders are built (`.baseSimple` upsamples and
+  convolves once; `.base` carries SimpleBaseline's transposed-convolution head), at reference parity
+  against transformers' `VitPoseForPoseEstimation`. Build with joint names via the
+  `backendWith…jointNames:` factory, or from a release directory, which reads its own `config.json`.
 - **`NFKMLXDeepLab`** — real semantic segmentation (DeepLabV3): a residual backbone and an ASPP head,
   run through the module backend, emitting a grayscale class-label map (a CNN counterpart to SegFormer).
 - **`NFKMLXConvTasNet`** — real time-domain speech separation: a convolutional encoder, a masking
@@ -289,7 +336,12 @@ models.
 - **`NFKMLXRTDetr`** — real object detection under Apache-2.0 (RT-DETR r18vd / r34vd / r50vd / r101vd, `NFKMLXRTDetrVariant`): a ResNet-D backbone (basic blocks below r50), a
   hybrid encoder, query selection, and a deformable-attention decoder with box refinement; no non-max
   suppression, since the one-to-one training makes the queries distinct. `rtdetr`; at parity on the
-  released weights end to end.
+  released weights end to end. The same port runs RT-DETRv2 (`rtdetr-v2-r18vd` / `-r34vd` / `-r50vd` /
+  `-r101vd`), which changes only the decoder's deformable sampling: `decoderOffsetScale` scales the
+  learned offsets and `NFKMLXRTDetrSamplingMethod` chooses bilinear or nearest-cell gathering. Every
+  released v2 configuration repeats its RT-DETR namesake's geometry and its sampling settings, so the four
+  v2 presets are their v1 counterparts and the releases differ only in their trained weights, each at
+  reference parity against transformers' `RTDetrV2ForObjectDetection`.
 - **`NFKMLXRFDetr`** — real object detection under Apache-2.0 (RF-DETR nano / small / medium / base / large, Roboflow; `NFKMLXRFDetrVariant`): a windowed
   DINOv2 backbone, a C2f / RepVGG projector, two-stage Group-DETR query selection, and an LW-DETR
   deformable decoder; no non-max suppression. `rf-detr`; at parity on the released weights end to end.

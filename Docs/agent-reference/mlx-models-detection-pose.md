@@ -64,6 +64,32 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   their C2f stages repeat `[3, 6, 6, 3]`, and x is wider again. The records must be made at
   `--size 640`, where the reference's letterboxing is an identity — generating one at another size
   produces a different anchor count and looks like a model failure.
+- `NFKMLXYOLOGenerations` (`@objc`) — YOLOv9, YOLOv10, YOLO11, YOLOv12 and YOLO26, the generations
+  after the shipped v8, as one graph interpreter rather than five ports. The reference states each
+  release as a YAML list of `(from, repeats, module, args)` rows that `parse_model` scales by the
+  size letter; `NFKYOLONode` carries those rows and `NFKMLXYOLOGenerationNet` builds them into one
+  `[Module]` array, so a checkpoint's `model.<N>.…` keys land on array index N and only the head needs
+  a remap. Twenty-six released checkpoints load and run: v9 t/s/m/c/e, v10 n/s/m/b/l/x, and 11 / 12 /
+  26 at n/s/m/l/x. The new blocks are v9's GELAN set (`RepNCSPELAN4`, `ELAN1`, `RepCSP`, `RepConv`,
+  `SPPELAN`, `AConv`, `ADown`), v10's `SCDown` / `PSA` / `C2fCIB` / `CIB` / `RepVGGDW`, YOLO11's `C3k2`
+  / `C3k` / `C2PSA`, and YOLOv12's `A2C2f` area attention. Four facts are load-bearing, and three of
+  them are visible only in the released checkpoints rather than in the current reference source.
+  **YOLOv12's positional-encoding convolution carries a bias** beside its batch norm, which no other
+  generation's does. **YOLO26's `SPPF` differs from every earlier one**: its narrowing convolution has
+  no activation and the fused result adds the input, so the shipped `NFKYOLOSPPF` covers v9 through v12
+  and `NFKYOLOSPPFShortcut` covers 26. **The end-to-end heads select over anchor-and-CLASS pairs**: the
+  reference's `postprocess` flattens the scores before its top-k, so one anchor is reported twice when
+  two classes clear the threshold, and taking the best class per anchor drops the second — which is
+  exactly what the YOLOv10 consumer comparison caught. **YOLOv9e keeps its programmable-gradient branch
+  at inference** (`CBLinear` splits a stage into per-level taps, `CBFuse` sums the matching tap back
+  into the main path), so a graph row holds a list of tensors rather than one. `NFKYOLOGraphs` states
+  which stages each YOLOv10 size runs as `C2fCIB` and which of those take the large-kernel branch,
+  because the released configs differ stage by stage rather than by a rule. Reference parity against
+  ultralytics' own model on every one of the twenty-six released checkpoints, over the full
+  pre-suppression tensor (box cosines 0.99999945 to 1.0, class cosines 0.99993 to 0.9999993), plus the
+  consumer path on a non-square frame for YOLO11, YOLOv10 and YOLO26 (same detection counts, same
+  classes, worst box IoU 0.9993941187858582). The licence is ultralytics' AGPL-3.0, the same as the
+  shipped v8; `NFKMLXRTDetr` and `NFKMLXRFDetr` remain the licence-clean detectors.
 - `NFKMLXRTDetr` (`@objc`) — real object detection, the license-clean (Apache-2.0) alternative to the
   AGPL YOLO: RT-DETR (`RTDetrForObjectDetection`, PekingU/lyuwenyu) in `MLXNN` — a **ResNet-D**
   backbone (deep 3-conv stem, avgpool-in-shortcut bottleneck), a **hybrid encoder** (an AIFI transformer
@@ -109,7 +135,33 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   narrower stage widths, and three or four decoder layers; r101vd is the bottleneck backbone at depths
   `[3, 4, 23, 3]` with a 384-wide encoder and 2048 FFN. Over the reference's selection: logits
   0.99999999999881 / 0.99999999999911 / 0.99999999997880, boxes 0.99999999999285 / 0.99999999999693 /
-  0.99999999979751. RT-DETR-v2 (a v2 deformable-attention variant) is the remaining RT-DETR candidate.
+  0.99999999979751.
+  RT-DETRv2 (`RTDetrV2ForObjectDetection`, PekingU/lyuwenyu, Apache-2.0) runs through this same port. v2
+  changes the deformable decoder's sampling and nothing else: the class inventory of transformers' v1 and
+  v2 modeling files is identical but for the attention class. `NFKMLXRTDetrConfiguration` carries the two
+  knobs that difference needs. `decoderOffsetScale` scales the learned sampling offsets, which RT-DETR
+  fixes at 0.5 and v2 reads from `decoder_offset_scale`. `decoderMethod` selects the sampling through the
+  `@objc` `NFKMLXRTDetrSamplingMethod`: `.bilinear` is v2's `decoder_method: "default"` and RT-DETR's only
+  mode, and `.discrete` is v2's nearest-cell alternative, which scales the normalized location by the
+  level's size, adds half a cell, truncates toward zero, and clamps each axis independently. The discrete
+  path has no blend and no zero padding, so a location outside the map reads the nearest edge cell where
+  the bilinear path reads nothing. v2's `n_points_scale` is `1 / n_points` when every level samples the
+  same number of points, which every released configuration does, so it is the division RT-DETR already
+  performs. Every released v2 configuration repeats its RT-DETR namesake's geometry and states the RT-DETR
+  sampling settings (`decoder_method: default`, `decoder_offset_scale: 0.5`), so the four v2 presets
+  (`.v2R18VD` / `.v2R34VD` / `.v2R50VD` / `.v2R101VD`) each return their v1 counterpart and the releases
+  differ only in their trained weights. A consumer's own v2 configuration that sets either knob runs
+  through the same code. `NFKMLXRTDetrVariant` gained the four cases, registered as `rtdetr-v2-r18vd` /
+  `-r34vd` / `-r50vd` / `-r101vd`, and every existing `@objc` factory takes them. At reference parity on a
+  tiny configuration that deliberately sets what no release does (`decoder_method: "discrete"`, an offset
+  scale of 0.35), the only setting that exercises the discrete path: query-selection scores (`enc_class`)
+  0.999999999999993 and boxes (`enc_coord`) 0.9999999999999999, with the decoder over the reference's own
+  selection at logits 0.9999999999999964 and boxes 0.9999999999999982. All four released checkpoints are
+  at parity too, over the reference's selection (r18vd / r34vd / r50vd / r101vd):
+  logits 0.999999999996304 / 0.9999999999910995 / 0.9999999999202086 / 0.9999999999796655 and boxes
+  0.9999999999901055 / 0.999999999885731 / 0.9999999990654127 / 0.9999999997898816. Oracle:
+  `run_reference.py rtdetr_v2` for the tiny configuration and `rtdetr_v2_real` for a released checkpoint
+  directory, both under the `llm` env, with the one real mode serving all four sizes.
 - `NFKMLXRFDetr` (`@objc`) — real object detection under Apache-2.0 (RF-DETR base, Roboflow), a two-stage
   Group-DETR detector ported from transformers' `RfDetrForObjectDetection`, at reference parity on
   both a tiny random config and the released weights (`testRFDetrMatchesTheReference` /
@@ -165,3 +217,54 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   release — whose keys are the reference's under a `backbone.`/`head.` prefix, so a strict load of the
   reference doubles as proof the two architectures are one. `remapReferenceKey` maps that prefix and the
   head's positional `deconv_layers.{0,3,6}`/`{1,4,7}` Sequential.
+- `NFKMLXVitPose` (`@objc`) — modern top-down pose estimation (`VitPoseForPoseEstimation`,
+  ViTAE-Transformer / usyd-community, Apache-2.0), a plain ViT backbone under a small decoding head,
+  beside the SimpleBaseline port. The backbone is a patch embedding, 12 pre-norm transformer blocks
+  (separate query/key/value projections with bias, an exact error-function GELU), a final LayerNorm, and
+  the token sequence reshaped to a feature map. Its `layer_norm_eps` is 1e-12, not a ViT's usual 1e-6.
+  Two facts about that backbone are load-bearing. The patch-embedding convolution **pads by two**: at the
+  trained geometry (256×192 at patch 16) the padding leaves the patch count alone, 16×12 either way, so a
+  plain non-overlapping patchify loads cleanly and samples every window two pixels early, which scored the
+  backbone at 0.998 against the reference's 0.9999999999. The position table carries a **class-token row**
+  the sequence does not: the reference adds the patch rows and that row to every patch
+  (`pos[:, 1:] + pos[:, :1]`), so the class position acts as a constant bias instead of a token.
+  Both decoders are built, selected by the release's `use_simple_decoder`: the simple one is a ReLU, a
+  bilinear upsample by `scale_factor`, and one 3×3 convolution; the classic one is two
+  transposed-convolution blocks (no bias, each followed by a BatchNorm and a ReLU) and a 1×1 convolution,
+  which is the head SimpleBaseline uses.
+  Decoding is what most distinguishes ViTPose from SimpleBaseline, and it is ported in full.
+  `NFKVitPoseDecoding` implements **DARK** (`post_dark_unbiased_data_processing`): SimpleBaseline nudges
+  the peak a quarter of a cell toward its larger neighbor, while ViTPose blurs the heatmap, takes its
+  logarithm, and refines the peak by one Newton step against the local derivative and Hessian, which
+  places a keypoint between cells instead of on a quarter grid (Zhang et al., *Distribution-Aware
+  Coordinate Representation for Human Pose Estimation*, and Huang et al., *The Devil is in the Details*,
+  both CVPR 2020).
+  `VitPoseImageProcessor.keypoints_from_heatmaps` defaults its `kernel` to **11**, so the Gaussian radius
+  is 5, while `post_dark_unbiased_data_processing`'s own signature defaults to 3; reading the callee's
+  signature instead of the caller's gives a three-tap blur and a decode that is close but wrong. scipy's
+  default `reflect` mode is symmetric (it repeats the edge sample) where its `mirror` mode does not, and
+  MLX pads with a constant or the edge value only, so the border is built by gathering reflected indices.
+  And the refinement is faithful, so a flat neighborhood can move a peak past its own heatmap: clamping
+  the shift to one cell disagreed with the reference by 1.04 cells on the classic-decoder release, so the
+  decode does not clamp and `NFKMLXVitPoseNet.estimate` clamps the final normalized position, because
+  `NFKKeypoint` promises one.
+  `vitpose-plus-*` releases route their feed-forward through per-dataset experts (`num_experts` above
+  one, `part_features` splitting the hidden width) and need a dataset index at inference.
+  `NFKMLXVitPoseConfiguration.configuration(fromHuggingFace:)` refuses them instead of loading them into
+  a dense stack.
+  `NFKMLXVitPoseBackend` reads `NFKInputImage` → `NSArray<NFKKeypoint *>` under `NFKOutputPose`. The
+  `@objc` enums are `NFKMLXVitPoseVariant` (`.baseSimple`, `.base`) and `NFKMLXVitPoseDecoder`
+  (`.simple`, `.classic`); the factories are `+backendWithWeightsURL:jointNames:error:`,
+  `+backendWithVariant:weightsURL:jointNames:error:`, `+backendWithDirectoryURL:jointNames:error:` (which
+  reads the release's own `config.json`), the two download peers, and the two asynchronous peers.
+  `+register` under `vitpose-base-simple` and `vitpose-base`.
+  At reference parity on both released checkpoints. `usyd-community/vitpose-base-simple`: backbone
+  feature map 0.9999999999995017, heatmaps 0.9999999999966225, every integer peak exact, the DARK
+  refinement within 8.80751758813858e-05 of a cell. `usyd-community/vitpose-base` (the classic decoder):
+  feature map 0.9999999999931072, heatmaps 0.9999999999953517, every integer peak exact, refinement
+  within 4.622340202331543e-05 of a cell. Oracle: `run_reference.py vitpose --checkpoint <release
+  directory>` under the `llm` env, one mode serving both decoders. It resizes and normalizes the image
+  itself instead of using the release's image processor, because that processor warps a person's box
+  through an affine transform and a whole-image caller has no box (the Swift backend resizes for the same
+  reason), and it records the prepared pixels, the backbone feature map, the heatmaps, the integer peaks,
+  the DARK-refined keypoints, and the scores.

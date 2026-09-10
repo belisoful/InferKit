@@ -304,6 +304,34 @@
 	XCTAssertEqualObjects(model.ownedBy, @"library");
 }
 
+- (void)testExampleFindingWhicheverLocalRunnerIsRunning
+{
+	// The four local presets, in the order discovery probes them. A caller that wants a different
+	// set (another port, another machine) passes its own list to availableProvidersAmong:timeout:.
+	NSArray<NFKRemoteProvider *> *local = NFKRemoteProvider.localProviders;
+	XCTAssertEqualObjects([local valueForKey:@"identifier"], (@[ @"ollama", @"lmstudio", @"llamacpp", @"vllm" ]));
+
+	// One call instead of a choice the app cannot make: whichever runner is up answers, and nil
+	// means none of them is. Blocks, so run it off the render thread.
+	NFKRemoteProvider *running = NFKRemoteProvider.firstAvailableLocalProvider;
+	id<NFKInferenceBackend> backend =
+		[NFKRemoteProvider backendForFirstAvailableLocalProviderWithModelName:@"llama3.2"];
+	XCTAssertTrue(running == nil || backend != nil);
+
+	// The whole list, for a picker of the runners this machine has up right now.
+	for (NFKRemoteProvider *provider in NFKRemoteProvider.availableLocalProviders) {
+		XCTAssertFalse(provider.requiresAPIKey);   // NSLog(@"%@ is running", provider.displayName);
+	}
+
+	// One address on its own: any HTTP reply counts, so a rejected key is still a server that is
+	// there. Nothing listens on the discard port, which is the unreachable answer.
+	NFKRemoteProvider *stopped = [NFKRemoteProvider.ollama providerWithBaseURL:
+								  [NSURL URLWithString:@"http://127.0.0.1:9/v1"]];
+	NSError *error = nil;
+	XCTAssertFalse([stopped isReachableWithAPIKey:nil timeout:2.0 error:&error]);
+	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+}
+
 - (void)testExampleRemoteEmbeddingsAndLocalRunners
 {
 	// Embeddings are the same shape everywhere, and the vector comes back under the core key the

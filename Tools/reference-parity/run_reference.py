@@ -29,6 +29,7 @@ Requires: torch, safetensors, transformers.
 """
 
 import argparse
+import math
 import os
 import sys
 
@@ -70,11 +71,17 @@ def subject_image(height=320, width=320, seed=7):
 
 
 def run_clip(image):
-    """OpenAI CLIP ViT-B/32 image embedding, L2-normalized, through transformers."""
+    """OpenAI CLIP ViT-B/32 image embedding, L2-normalized, through transformers.
+
+    IK_CLIP_REPO names a different tower of the same architecture — MetaCLIP publishes its towers as
+    `CLIPModel` repositories (`facebook/metaclip-b32-400m`), which is what makes them a weights change
+    rather than a port.
+    """
     from transformers import CLIPModel, CLIPImageProcessor
 
-    model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").eval()
-    processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    repo = os.environ.get("IK_CLIP_REPO", "openai/clip-vit-base-patch32")
+    model = CLIPModel.from_pretrained(repo).eval()
+    processor = CLIPImageProcessor.from_pretrained(repo)
     # The processor expects HWC uint8-like input; hand it the raw plate and let it normalize.
     inputs = processor(images=(image * 255).astype(np.uint8), return_tensors="pt")
     with torch.no_grad():
@@ -144,18 +151,20 @@ def run_depth3(image, checkpoint):
     """Depth Anything 3 (DA3-SMALL) monocular depth, seam by seam.
 
     The `depth_anything_3` package is not in transformers; IK_REF_SRC holds it (the pip wheel's own
-    `depth_anything_3/` importable directory). Only the backbone (DinoV2 vits) and the DualDPT depth
-    branch are built — the camera decoder/encoder and the aux/ray branch are not needed for depth, so
-    this drops them the way the InferKitMLX port does. The image is fed to the backbone directly (no
-    ImageNet normalization), so the Swift parity test feeds the same `input_image` tensor and the
-    comparison isolates the network. The seams (the four hooked features, the head's four resized
-    stage features, the fused map, and the pre-exp logits) are recorded in `_extra` for localization;
-    the returned `output` is the exp-depth map.
+    `depth_anything_3/` importable directory). Every released tensor is built and loaded strictly: the
+    backbone (DinoV2), both DualDPT branches, the camera decoder, and the camera encoder. The image is
+    fed to the backbone directly (no ImageNet normalization), so the Swift parity test feeds the same
+    `input_image` tensor and the comparison isolates the network. The seams (the four hooked features,
+    the head's four resized stage features, the fused map, the pre-exp logits, the four aux pyramid
+    levels, the ray logits, the camera token, the pose encoding, and the camera encoder's tokens) are
+    recorded in `_extra` for localization; the returned `output` is the exp-depth map.
     """
     sys.path.insert(0, _reference_source())
     from safetensors.torch import load_file
     from depth_anything_3.model.dinov2.dinov2 import DinoV2
     from depth_anything_3.model.dualdpt import DualDPT
+    from depth_anything_3.model.cam_dec import CameraDec
+    from depth_anything_3.model.cam_enc import CameraEnc
 
     size = image.shape[0]
     # IK_DEPTH3_VARIANT selects the released size; each one's numbers come from its own config.json
@@ -175,18 +184,38 @@ def run_depth3(image, checkpoint):
                  qknorm_start=geometry["start"], rope_start=geometry["start"], cat_token=True)
     head = DualDPT(dim_in=geometry["dim_in"], output_dim=2, features=geometry["features"],
                    out_channels=geometry["out_channels"], head_names=("depth", "ray"))
+    # dim_in is the concatenated camera token, dim_out the backbone width; both come from config.json.
+    cam_dec = CameraDec(dim_in=geometry["dim_in"])
+    cam_enc = CameraEnc(dim_out=geometry["dim_in"] // 2)
     state = load_file(checkpoint) if checkpoint.endswith(".safetensors") else torch.load(checkpoint, map_location="cpu")
-    net.load_state_dict({k[len("model.backbone."):]: v for k, v in state.items() if k.startswith("model.backbone.")}, strict=False)
-    head.load_state_dict({k[len("model.head."):]: v for k, v in state.items() if k.startswith("model.head.")}, strict=False)
+
+    def subtree(prefix):
+        return {k[len(prefix):]: v for k, v in state.items() if k.startswith(prefix)}
+
+    # Strict where the release is complete, so a tensor with no counterpart fails here rather than
+    # silently. The head is the exception: the release carries `output_conv2_aux.0.2` (the aux head's
+    # channel LayerNorm) and no such tensor for levels 1-3, and the reference's own loader
+    # (`utils/model_loading.py`) loads `strict=False`, so those three run at the `nn.LayerNorm` init of
+    # weight 1 and bias 0. Inference reads level 3, so the ray head's normalization is unweighted.
+    net.load_state_dict(subtree("model.backbone."), strict=True)
+    missing, unexpected = head.load_state_dict(subtree("model.head."), strict=False)
+    expected_missing = {f"scratch.output_conv2_aux.{i}.2.{p}" for i in (1, 2, 3) for p in ("weight", "bias")}
+    assert set(missing) == expected_missing, sorted(set(missing) ^ expected_missing)
+    assert not unexpected, unexpected
+    cam_dec.load_state_dict(subtree("model.cam_dec."), strict=True)
+    cam_enc.load_state_dict(subtree("model.cam_enc."), strict=True)
     net.eval()
     head.eval()
+    cam_dec.eval()
+    cam_enc.eval()
 
     img = torch.from_numpy(image).permute(2, 0, 1)[None, None].float()   # [1, 1, 3, H, W]
     extra = {}
     with torch.no_grad():
         feats, _ = net.pretrained.get_intermediate_layers(img, hooks, cam_token=None)
-        for i, (ft, _) in enumerate(feats):
+        for i, (ft, cam) in enumerate(feats):
             extra[f"hook{i}"] = ft[0, 0].contiguous()
+            extra[f"camera_token{i}"] = cam[0, 0].contiguous()
         # The head's depth branch, step by step (see NFKMLXDepthAnything3.NFKDA3Head.seams).
         from depth_anything_3.model.utils.head_utils import custom_interpolate
         ph = pw = size // 14
@@ -210,6 +239,62 @@ def run_depth3(image, checkpoint):
         logits = sc.output_conv2(o)
         extra["logits"] = logits[0].contiguous()
         depth = torch.exp(logits[0, 0])
+
+        # The aux (ray) branch: its own fusion chain over the same reassembled pyramid, then the
+        # per-level neck, then the final level's head. Only the finest level is returned, and it is
+        # never interpolated to the image size.
+        a = sc.refinenet4_aux(sc.layer4_rn(resized[3]), size=sc.layer3_rn(resized[2]).shape[2:])
+        aux_list = [a]
+        a = sc.refinenet3_aux(a, sc.layer3_rn(resized[2]), size=sc.layer2_rn(resized[1]).shape[2:])
+        aux_list.append(a)
+        a = sc.refinenet2_aux(a, sc.layer2_rn(resized[1]), size=sc.layer1_rn(resized[0]).shape[2:])
+        aux_list.append(a)
+        a = sc.refinenet1_aux(a, sc.layer1_rn(resized[0]))
+        aux_list.append(a)
+        aux_list = [sc.output_conv1_aux[i](x) for i, x in enumerate(aux_list)]
+        for i, x in enumerate(aux_list):
+            extra[f"aux{i}"] = x[0].contiguous()
+        last_aux = head._add_pos_embed(aux_list[-1], size, size)
+        extra["aux_pos"] = last_aux[0].contiguous()
+        stack = sc.output_conv2_aux[-1]
+        step = stack[0](last_aux)
+        extra["aux_conv0"] = step[0].contiguous()
+        step = stack[2](stack[1](step))
+        extra["aux_norm"] = step.permute(0, 3, 1, 2)[0].contiguous()
+        ray_logits = sc.output_conv2_aux[-1](last_aux)
+        extra["ray_logits"] = ray_logits[0].contiguous()
+        fmap = ray_logits.permute(0, 2, 3, 1)
+        extra["ray"] = fmap[0, ..., :-1].contiguous()
+        extra["ray_conf"] = (torch.exp(fmap[0, ..., -1]) + 1).contiguous()
+
+        # The camera decoder reads the last hook's camera token.
+        pose_enc = cam_dec(feats[-1][1])
+        extra["pose_enc"] = pose_enc[0].contiguous()
+
+        # The camera encoder turns a known pose into the token the backbone reads in its place. A
+        # deterministic rotation about the y axis with a translation and a plain pinhole intrinsic is
+        # enough to exercise the whole path.
+        from depth_anything_3.model.utils.transform import extri_intri_to_pose_encoding
+        from depth_anything_3.utils.geometry import affine_inverse
+        angle = 0.3
+        rotation = torch.tensor([[math.cos(angle), 0.0, math.sin(angle)],
+                                 [0.0, 1.0, 0.0],
+                                 [-math.sin(angle), 0.0, math.cos(angle)]], dtype=torch.float32)
+        translation = torch.tensor([0.2, -0.1, 1.5], dtype=torch.float32)
+        ext = torch.eye(4, dtype=torch.float32)[None, None].clone()
+        ext[0, 0, :3, :3] = rotation
+        ext[0, 0, :3, 3] = translation
+        ixt = torch.eye(3, dtype=torch.float32)[None, None].clone()
+        ixt[0, 0, 0, 0] = 320.0
+        ixt[0, 0, 1, 1] = 300.0
+        ixt[0, 0, 0, 2] = size / 2
+        ixt[0, 0, 1, 2] = size / 2
+        c2ws = affine_inverse(ext)
+        pose_encoding = extri_intri_to_pose_encoding(c2ws, ixt, (size, size))
+        extra["cam_enc_extrinsic"] = ext[0, 0].contiguous()
+        extra["cam_enc_intrinsic"] = ixt[0, 0].contiguous()
+        extra["cam_enc_pose_encoding"] = pose_encoding[0, 0].contiguous()
+        extra["cam_enc_tokens"] = cam_enc(ext, ixt, (size, size))[0, 0].contiguous()
 
     globals()["_extra"] = extra
     return depth.contiguous()
@@ -888,6 +973,165 @@ def run_u2net(image, checkpoint):
     return saliency[0, 0].contiguous()                          # [H, W]
 
 
+def run_isnet(image, checkpoint):
+    """IS-Net (DIS) dichotomous segmentation on a released checkpoint, from the DIS `models/isnet.py`.
+
+    The successor to U²-Net by the same authors: the same Residual U-blocks behind a stride-2 stem,
+    wider stages, and six separate side maps with no fusion convolution. The reference inference
+    resizes to 1024x1024, scales to [0,1], and normalizes with mean 0.5 and unit standard deviation;
+    feeding a 1024x1024 plate makes the resize an identity, so only the network is compared.
+
+    IK_REF_SRC holds a `dis/` directory with `isnet.py`. The record carries the stem and the deepest
+    encoder stage beside the five coarser side maps, which is what separates a stem mistake from a
+    decoder one.
+    """
+    module = _import_reference(os.path.join(_reference_source(), "dis"), "isnet_ref", "isnet")
+    model = module.ISNetDIS(3, 1).eval()
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    model.load_state_dict(state, strict=True)
+
+    seams = {}
+    handles = [
+        model.conv_in.register_forward_hook(lambda m, i, o: seams.__setitem__("stem", o)),
+        model.stage1.register_forward_hook(lambda m, i, o: seams.__setitem__("stage1", o)),
+        model.stage6.register_forward_hook(lambda m, i, o: seams.__setitem__("stage6", o)),
+    ]
+
+    # The reference scales by 255 and then normalizes with mean 0.5, standard deviation 1.0.
+    tensor = torch.from_numpy(image - 0.5).permute(2, 0, 1)[None].float()
+    with torch.no_grad():
+        sides, _ = model(tensor)
+    for handle in handles:
+        handle.remove()
+
+    extra = {"stem": seams["stem"][0].permute(1, 2, 0).contiguous(),
+             "stage1": seams["stage1"][0].permute(1, 2, 0).contiguous(),
+             "stage6": seams["stage6"][0].permute(1, 2, 0).contiguous()}
+    for index in range(1, 6):
+        extra[f"side{index + 1}"] = sides[index][0, 0].contiguous()
+    globals()["_extra"] = extra
+    return sides[0][0, 0].contiguous()                          # [H, W]
+
+
+def run_adain(image, checkpoint):
+    """AdaIN arbitrary style transfer, from naoto0804's `net.py` and `function.py`.
+
+    `--checkpoint` is the released decoder; IK_ADAIN_VGG names the released normalized VGG beside it.
+    IK_REF_SRC holds an `adain/` directory with `net.py` and `function.py` (they import each other
+    flatly, so the directory itself goes on the path). Both images reach the encoder unnormalized: the
+    released VGG's first 1x1 convolution carries the normalization.
+
+    The style plate is a rolled and channel-rotated copy of the content, which gives the transfer real
+    statistics to move while keeping both sides reading identical pixels. The record carries the two
+    feature maps and the normalized features beside the decoded image, so a mismatch says whether the
+    encoder, the normalization, or the decoder is wrong.
+    """
+    sys.path.insert(0, os.path.join(_reference_source(), "adain"))
+    import net as adain_net
+    from function import adaptive_instance_normalization
+
+    vgg = adain_net.vgg
+    vgg.load_state_dict(torch.load(os.environ["IK_ADAIN_VGG"], map_location="cpu", weights_only=True))
+    vgg = torch.nn.Sequential(*list(vgg.children())[:31]).eval()
+    decoder = adain_net.decoder
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    # A decoder trained through a wrapper module carries its attribute name on every key.
+    state = {k[len("net."):] if k.startswith("net.") else k: v for k, v in state.items()}
+    decoder.load_state_dict(state)
+    decoder = decoder.eval()
+
+    style_plate = np.ascontiguousarray(np.roll(image, 11, axis=1)[..., ::-1])
+    content = torch.from_numpy(image.transpose(2, 0, 1)).unsqueeze(0)
+    style = torch.from_numpy(style_plate.transpose(2, 0, 1)).unsqueeze(0)
+    with torch.no_grad():
+        content_features = vgg(content)
+        style_features = vgg(style)
+        normalized = adaptive_instance_normalization(content_features, style_features)
+        decoded = decoder(normalized)
+
+    globals()["_extra"] = {
+        "style_image": torch.from_numpy(style_plate).contiguous(),
+        "content_features": content_features[0].permute(1, 2, 0).contiguous(),
+        "style_features": style_features[0].permute(1, 2, 0).contiguous(),
+        "normalized": normalized[0].permute(1, 2, 0).contiguous(),
+    }
+    return decoded[0].permute(1, 2, 0).contiguous()
+
+
+def run_hat(image, checkpoint):
+    """HAT super-resolution on a released checkpoint, from XPixelGroup's own `hat_arch.py`.
+
+    IK_REF_SRC holds a `hat/` directory with `hat_arch.py`. The file imports basicsr for a registry
+    decorator and two initializer helpers, none of which affect a loaded model, so they are shimmed
+    rather than installing the training framework. IK_HAT_GROUPS and IK_HAT_DIM name the release's
+    geometry (HAT-L is 12 groups at 180 channels).
+
+    The record carries the first block, the first group's overlapping cross-attention, the first
+    group, and the whole deep-feature trunk beside the upscaled image, which separates the window
+    attention from the overlapping attention from the reconstruction.
+    """
+    import types
+
+    registry = types.ModuleType("basicsr.utils.registry")
+
+    class _Registry:
+        def register(self, *args, **kwargs):
+            def identity(cls):
+                return cls
+            return identity(args[0]) if args and callable(args[0]) else identity
+
+    registry.ARCH_REGISTRY = _Registry()
+    arch_util = types.ModuleType("basicsr.archs.arch_util")
+    arch_util.to_2tuple = lambda value: value if isinstance(value, tuple) else (value, value)
+    arch_util.trunc_normal_ = lambda tensor, **kwargs: tensor
+    for name, module in [("basicsr", types.ModuleType("basicsr")),
+                         ("basicsr.utils", types.ModuleType("basicsr.utils")),
+                         ("basicsr.utils.registry", registry),
+                         ("basicsr.archs", types.ModuleType("basicsr.archs")),
+                         ("basicsr.archs.arch_util", arch_util)]:
+        sys.modules.setdefault(name, module)
+
+    module = _import_reference(os.path.join(_reference_source(), "hat"), "hat_ref", "hat_arch")
+    groups = int(os.environ.get("IK_HAT_GROUPS", "12"))
+    dimensions = int(os.environ.get("IK_HAT_DIM", "180"))
+    model = module.HAT(img_size=64, patch_size=1, in_chans=3, embed_dim=dimensions,
+                       depths=(6,) * groups, num_heads=(6,) * groups, window_size=16,
+                       compress_ratio=3, squeeze_factor=30, conv_scale=0.01, overlap_ratio=0.5,
+                       mlp_ratio=2., upsampler="pixelshuffle", resi_connection="1conv",
+                       upscale=4, img_range=1.).eval()
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    state = state.get("params_ema", state.get("params", state))
+    model.load_state_dict(state, strict=True)
+
+    seams = {}
+    group = model.layers[0]
+    handles = [
+        model.conv_first.register_forward_hook(lambda m, i, o: seams.__setitem__("shallow", o)),
+        group.residual_group.blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o)),
+        group.residual_group.overlap_attn.register_forward_hook(lambda m, i, o: seams.__setitem__("ocab0", o)),
+        group.register_forward_hook(lambda m, i, o: seams.__setitem__("group0", o)),
+    ]
+
+    tensor = torch.from_numpy(image.transpose(2, 0, 1)).unsqueeze(0)
+    with torch.no_grad():
+        features = model.forward_features(model.conv_first(tensor - model.mean.type_as(tensor)))
+        upscaled = model(tensor)
+    for handle in handles:
+        handle.remove()
+
+    tokens = dimensions
+    globals()["_extra"] = {
+        "shallow": seams["shallow"][0].permute(1, 2, 0).contiguous(),
+        "block0": seams["block0"][0].reshape(64, 64, tokens).contiguous(),
+        "ocab0": seams["ocab0"][0].reshape(64, 64, tokens).contiguous(),
+        "group0": seams["group0"][0].reshape(64, 64, tokens).contiguous(),
+        "features": features[0].permute(1, 2, 0).contiguous(),
+        "rpi_oca": model.relative_position_index_OCA.to(torch.int32).contiguous(),
+        "rpi_sa": model.relative_position_index_SA.to(torch.int32).contiguous(),
+    }
+    return upscaled[0].permute(1, 2, 0).contiguous()
+
+
 def run_raft(image, checkpoint):
     """RAFT optical flow between a plate and a shifted copy of it, from princeton-vl's own `core/`.
 
@@ -1051,6 +1295,51 @@ def run_yolo(image, checkpoint):
     with torch.no_grad():
         predictions = net(tensor)
     decoded = predictions[0] if isinstance(predictions, (list, tuple)) else predictions
+    return decoded[0].transpose(0, 1).contiguous()              # [anchors, 4 + classes]
+
+
+def run_yolo_generation(image, checkpoint):
+    """The pre-suppression predictions of a YOLOv9 / v10 / 11 / v12 / YOLO26 release, from ultralytics.
+
+    `run_yolo` reads the model's own return value, which the end-to-end generations already reduce to
+    300 rows. This mode takes the seam one step earlier instead: the head's inputs are captured, the
+    branch it predicts from is re-run, and the decoded `[anchors, 4 + classes]` tensor is recorded. That
+    is the same seam for every generation, so one comparison covers them all, and it keeps a wrong
+    distribution-focal decode or anchor grid from hiding behind a top-k selection.
+
+    The record also carries three backbone stage outputs, so a mismatch localizes to a stage rather
+    than to "the network". Runs on the interpreter that has ultralytics installed.
+    """
+    from ultralytics import YOLO
+
+    model = YOLO(checkpoint)
+    net = model.model.float().eval()
+    head = net.model[-1]
+
+    captured = {}
+    handle = head.register_forward_pre_hook(lambda module, args: captured.__setitem__("feats", args[0]))
+    stages = {}
+    watched = [index for index in (2, 4, 9) if index < len(net.model) - 1]
+    handles = [handle] + [
+        net.model[index].register_forward_hook(
+            lambda m, i, o, index=index: stages.__setitem__(f"stage{index}", o))
+        for index in watched
+    ]
+
+    tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0)
+    with torch.no_grad():
+        net(tensor)
+        feats = list(captured["feats"])
+        branch = head.one2one if getattr(head, "end2end", False) else head.one2many
+        decoded = head._inference(head.forward_head(feats, **branch))
+
+    for handle in handles:
+        handle.remove()
+
+    extra = {name: value[0].permute(1, 2, 0).contiguous() for name, value in stages.items()}
+    extra["reg_max"] = torch.tensor(head.reg_max, dtype=torch.int32)
+    extra["end2end"] = torch.tensor(int(bool(getattr(head, "end2end", False))), dtype=torch.int32)
+    globals()["_extra"] = extra
     return decoded[0].transpose(0, 1).contiguous()              # [anchors, 4 + classes]
 
 
@@ -5991,6 +6280,333 @@ def run_rtdetr_real(image, checkpoint):
     return out.logits[0].clone().contiguous()                                   # [300, 80]
 
 
+def run_rtdetr_v2(image):
+    """RT-DETRv2 at a tiny random configuration, exercising what v2 adds to RT-DETR.
+
+    v2's only architectural change is the deformable decoder's sampling: `decoder_offset_scale`
+    replaces RT-DETR's fixed 0.5, and `decoder_method` offers `discrete` (the nearest cell, clamped)
+    beside `default` (bilinear). Every released v2 configuration states the RT-DETR values, so this
+    mode deliberately sets neither: `discrete` with an offset scale of 0.35, which is the only way the
+    new code is measured rather than merely present. `rtdetr_v2_real` covers the released settings.
+
+    The BatchNorm buffers stay physical for the reason `run_rtdetr` documents: the shared `_randomized`
+    helper would randomize `running_var` negative and `rsqrt` would be NaN on both sides.
+    """
+    from transformers import RTDetrV2Config, RTDetrV2ForObjectDetection
+    from transformers.models.rt_detr.configuration_rt_detr_resnet import RTDetrResNetConfig
+
+    backbone = RTDetrResNetConfig(
+        embedding_size=16, hidden_sizes=[16, 32, 64, 128], depths=[1, 1, 1, 1],
+        layer_type="bottleneck", downsample_in_bottleneck=False, downsample_in_first_stage=False,
+        out_features=["stage2", "stage3", "stage4"], num_channels=3)
+    config = RTDetrV2Config(
+        backbone_config=backbone, use_timm_backbone=False, backbone=None,
+        encoder_in_channels=[32, 64, 128], feat_strides=[8, 16, 32], encoder_hidden_dim=32,
+        encoder_ffn_dim=48, num_attention_heads=2, encoder_layers=1, encode_proj_layers=[2],
+        d_model=32, decoder_attention_heads=2, decoder_ffn_dim=48, decoder_layers=2,
+        decoder_n_points=4, num_feature_levels=3, decoder_in_channels=[32, 32, 32],
+        num_queries=10, num_denoising=0, learn_initial_query=False, anchor_image_size=None,
+        with_box_refine=True, num_labels=4, hidden_expansion=1.0,
+        decoder_method="discrete", decoder_offset_scale=0.35, decoder_n_levels=3)
+
+    model = RTDetrV2ForObjectDetection(config)
+    torch.manual_seed(29)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn_like(parameter) * 0.05)
+    model = model.eval().float()
+
+    generator = torch.Generator().manual_seed(7)
+    pixels = torch.randn(1, 3, 64, 64, generator=generator)
+
+    extra = {"pixels": pixels[0].permute(1, 2, 0).contiguous()}
+    features = []
+    handle = model.model.backbone.register_forward_hook(lambda m, i, o: features.append([f for f, _ in o]))
+    with torch.no_grad():
+        out = model(pixels, return_dict=True)
+        topk = torch.topk(out.enc_outputs_class.max(-1).values, config.num_queries, dim=1).indices
+    handle.remove()
+    for index, feature in enumerate(features[0]):
+        extra[f"bb.{index}"] = feature[0].permute(1, 2, 0).contiguous()
+    extra["pred_boxes"] = out.pred_boxes[0].clone().contiguous()
+    extra["enc_class"] = out.enc_outputs_class[0].clone().contiguous()
+    extra["enc_coord"] = out.enc_outputs_coord_logits[0].clone().contiguous()
+    extra["topk_ind"] = topk[0].to(torch.int32).contiguous()
+    for key, value in model.state_dict().items():
+        if key.startswith("model.") and not key.endswith("num_batches_tracked"):
+            extra[f"w::{key}"] = value.contiguous()
+
+    globals()["_extra"] = extra
+    return out.logits[0].clone().contiguous()
+
+
+def run_rtdetr_v2_real(image, checkpoint):
+    """RT-DETRv2 on a RELEASED `PekingU/rtdetr_v2_*` checkpoint, from transformers' own
+    RTDetrV2ForObjectDetection and its image processor. `checkpoint` is the local release directory.
+    One mode serves all four sizes; the geometry comes from the release's own config. Runs under the
+    `llm` oracle env (transformers, needs Pillow).
+    """
+    from transformers import RTDetrImageProcessor, RTDetrV2ForObjectDetection
+    from PIL import Image
+
+    model = RTDetrV2ForObjectDetection.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = RTDetrImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8"))
+    pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]
+    with torch.no_grad():
+        out = model(pixel_values, return_dict=True)
+        topk = torch.topk(out.enc_outputs_class.max(-1).values, model.config.num_queries, dim=1).indices
+
+    globals()["_extra"] = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),
+        "pred_boxes": out.pred_boxes[0].clone().contiguous(),
+        "topk_ind": topk[0].to(torch.int32).contiguous(),
+    }
+    return out.logits[0].clone().contiguous()
+
+
+def run_vitpose(image, checkpoint):
+    """ViTPose on a RELEASED `usyd-community/vitpose-*` checkpoint, from transformers' own
+    VitPoseForPoseEstimation. `checkpoint` is the local release directory; one mode serves the simple
+    and classic decoders, since the geometry comes from the release's own config.
+
+    The image is resized to the trained crop and normalized here rather than through the release's
+    image processor, because that processor warps a person's BOX through an affine transform and a
+    whole-image caller has no box — the Swift backend resizes for the same reason. Records the
+    prepared pixels so the port runs on the identical input, the backbone feature map, the heatmaps,
+    and the DARK-refined keypoints the processor's own decode produces. Runs under the `llm` oracle
+    env (transformers, needs Pillow).
+    """
+    import numpy as np
+    from transformers import VitPoseForPoseEstimation
+    from transformers.models.vitpose.image_processing_vitpose import (
+        get_keypoint_predictions,
+        post_dark_unbiased_data_processing,
+    )
+
+    model = VitPoseForPoseEstimation.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    height = model.config.backbone_config.image_size[0]
+    width = model.config.backbone_config.image_size[1]
+    patch = model.config.backbone_config.patch_size[0]
+
+    pixels = torch.from_numpy(image).permute(2, 0, 1)[None].float()
+    pixels = torch.nn.functional.interpolate(pixels, size=(height, width), mode="bilinear",
+                                             align_corners=False)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    prepared = (pixels - mean) / std
+
+    features = []
+    handle = model.backbone.register_forward_hook(lambda m, i, o: features.append(o.feature_maps[-1]))
+    with torch.no_grad():
+        out = model(prepared, return_dict=True)
+    handle.remove()
+
+    heatmaps = out.heatmaps
+    coords, scores = get_keypoint_predictions(heatmaps.numpy())
+    refined = post_dark_unbiased_data_processing(coords.copy(), heatmaps.numpy(), kernel=11)
+
+    globals()["_extra"] = {
+        "pixels": prepared[0].permute(1, 2, 0).contiguous(),                 # [H, W, 3] NHWC
+        # The backbone returns the token sequence; the model permutes and reshapes it to a feature map
+        # before the head, which is what the port holds in NHWC.
+        "features": features[0].reshape(1, height // patch, width // patch, -1)[0].contiguous(),
+        "coords": torch.from_numpy(np.ascontiguousarray(coords[0])).float(), # [K, 2] integer peaks
+        "refined": torch.from_numpy(np.ascontiguousarray(refined[0])).float(),
+        "scores": torch.from_numpy(np.ascontiguousarray(scores[0])).float(),
+    }
+    return heatmaps[0].permute(1, 2, 0).contiguous()                         # [h, w, K] NHWC
+
+
+def run_ddcolor(image, checkpoint):
+    """DDColor on a RELEASED checkpoint, from the authors' own `DDColor` architecture.
+
+    The reference is not in transformers; IK_DDCOLOR_SRC holds the cloned repository's `basicsr/`
+    (its `ddcolor_arch.py` plus `ddcolor_arch_utils/`). The model is built at the released
+    ConvNeXt-L geometry and loaded strictly, so a key with no counterpart fails here.
+
+    The image is fed as the gray three-channel image the pipeline builds from the lightness alone, at
+    the model's own 512, and the recorded seams are the four hooked encoder features, the three U-Net
+    stage outputs, the pixel embedding, the color attention maps, and the two chroma channels. The
+    model normalizes with ImageNet statistics inside its own forward, so `pixels` is recorded before
+    that. Runs under the `llm` oracle env (torch; no transformers).
+    """
+    import numpy as np
+    from skimage import color
+
+    source = os.environ.get("IK_DDCOLOR_SRC")
+    if not source:
+        raise SystemExit("set IK_DDCOLOR_SRC to the cloned DDColor repository's directory")
+    sys.path.insert(0, source)
+    # `ddcolor_arch` imports basicsr's registry, which pulls the whole training package; a stub with
+    # the one decorator it uses keeps the import to the architecture itself.
+    import types
+    registry = types.ModuleType("basicsr.utils.registry")
+    registry.ARCH_REGISTRY = types.SimpleNamespace(register=lambda: (lambda cls: cls))
+    utils = types.ModuleType("basicsr.utils")
+    utils.registry = registry
+    sys.modules.setdefault("basicsr.utils", utils)
+    sys.modules.setdefault("basicsr.utils.registry", registry)
+    from basicsr.archs.ddcolor_arch import DDColor
+
+    size = image.shape[0]
+    model = DDColor(encoder_name="convnext-l", decoder_name="MultiScaleColorDecoder",
+                    input_size=[512, 512], num_output_channels=2, last_norm="Spectral",
+                    do_normalize=False, num_queries=100, num_scales=3, dec_layers=9)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    model.load_state_dict(state["params"], strict=False)
+    model.eval()
+
+    # The pipeline's own input: the lightness alone taken back through Lab with no chroma.
+    lab = color.rgb2lab(image)
+    lightness = lab[:, :, :1]
+    gray = color.lab2rgb(np.concatenate([lightness, np.zeros_like(lab[:, :, 1:])], axis=2))
+    tensor = torch.from_numpy(gray).permute(2, 0, 1)[None].float()
+    tensor = torch.nn.functional.interpolate(tensor, size=(512, 512), mode="bilinear",
+                                             align_corners=False)
+
+    extra = {"pixels": tensor[0].permute(1, 2, 0).contiguous(),
+             "lightness": torch.from_numpy(lightness[:, :, 0]).float().contiguous()}
+    with torch.no_grad():
+        normalized = model.normalize(tensor)
+        model.encoder(normalized)
+        for index, hook in enumerate(model.encoder.hooks):
+            extra[f"hook{index}"] = hook.feature[0].permute(1, 2, 0).contiguous()
+
+        decoder = model.decoder
+        out0 = decoder.layers[0](decoder.hooks[-1].feature)
+        out1 = decoder.layers[1](out0)
+        out2 = decoder.layers[2](out1)
+        out3 = decoder.last_shuf(out2)
+        for name, value in [("out0", out0), ("out1", out1), ("out2", out2), ("pixels_embed", out3)]:
+            extra[name] = value[0].permute(1, 2, 0).contiguous()
+        maps = decoder.color_decoder([out0, out1, out2], out3)
+        extra["color_maps"] = maps[0].permute(1, 2, 0).contiguous()
+        chroma = model.refine_net(torch.cat([maps, normalized], dim=1))
+
+    globals()["_extra"] = extra
+    return chroma[0].permute(1, 2, 0).contiguous()                       # [512, 512, 2]
+
+
+def run_realesrgan_compact(image, checkpoint):
+    """Real-ESRGAN's later COMPACT generator (`SRVGGNetCompact`) on a released checkpoint.
+
+    The `realesr-general-x4v3` and `realesr-animevideov3` releases run a VGG-style compact network
+    rather than the RRDBNet the earlier releases use, so they need their own mode. The body's
+    convolution count is derived from the checkpoint itself, because the two releases differ only in
+    that. Runs under the `llm` oracle env (torch alone; the architecture is inlined here rather than
+    pulled from basicsr).
+    """
+    import torch.nn as nn
+
+    class SRVGGNetCompact(nn.Module):
+        def __init__(self, num_in_ch=3, num_out_ch=3, num_feat=64, num_conv=16, upscale=4):
+            super().__init__()
+            self.upscale = upscale
+            self.body = nn.ModuleList()
+            self.body.append(nn.Conv2d(num_in_ch, num_feat, 3, 1, 1))
+            self.body.append(nn.PReLU(num_parameters=num_feat))
+            for _ in range(num_conv):
+                self.body.append(nn.Conv2d(num_feat, num_feat, 3, 1, 1))
+                self.body.append(nn.PReLU(num_parameters=num_feat))
+            self.body.append(nn.Conv2d(num_feat, num_out_ch * upscale * upscale, 3, 1, 1))
+            self.upsampler = nn.PixelShuffle(upscale)
+
+        def forward(self, x):
+            out = x
+            for layer in self.body:
+                out = layer(out)
+            out = self.upsampler(out)
+            return out + torch.nn.functional.interpolate(x, scale_factor=self.upscale, mode="nearest")
+
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = state.get("params", state.get("params_ema", state))
+    # Two tensors per convolution and one per activation, plus the first convolution and activation
+    # and the last convolution: (len - 5) / 3 body convolutions.
+    convolutions = (len(state) - 5) // 3
+    model = SRVGGNetCompact(num_conv=convolutions).eval()
+    model.load_state_dict(state, strict=True)
+
+    tensor = torch.from_numpy(image).permute(2, 0, 1)[None].float()
+    with torch.no_grad():
+        out = model(tensor)
+
+    globals()["_extra"] = {"num_conv": torch.tensor(convolutions, dtype=torch.int32)}
+    return out[0].permute(1, 2, 0).contiguous()
+
+
+def run_zero_dce_plus(image, checkpoint):
+    """Zero-DCE++ (`enhance_net_nopool`) on the authors' released weights.
+
+    The successor to Zero-DCE: depthwise-separable convolutions, ONE shared three-channel curve map
+    rather than eight, and a curve estimator that runs at a reduced resolution and lifts its map back.
+    The architecture is inlined here (the reference file is a single short module). The record carries
+    the curve map beside the enhanced image, because the map is where a wrong upsample or a wrong
+    iteration count shows first. Runs under the `llm` oracle env (torch alone).
+    """
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    class CSDN_Tem(nn.Module):
+        def __init__(self, in_ch, out_ch):
+            super().__init__()
+            self.depth_conv = nn.Conv2d(in_ch, in_ch, 3, 1, 1, groups=in_ch)
+            self.point_conv = nn.Conv2d(in_ch, out_ch, 1, 1, 0)
+
+        def forward(self, x):
+            return self.point_conv(self.depth_conv(x))
+
+    class EnhanceNet(nn.Module):
+        def __init__(self, scale_factor):
+            super().__init__()
+            self.relu = nn.ReLU(inplace=True)
+            self.scale_factor = scale_factor
+            self.upsample = nn.UpsamplingBilinear2d(scale_factor=scale_factor)
+            f = 32
+            self.e_conv1 = CSDN_Tem(3, f)
+            self.e_conv2 = CSDN_Tem(f, f)
+            self.e_conv3 = CSDN_Tem(f, f)
+            self.e_conv4 = CSDN_Tem(f, f)
+            self.e_conv5 = CSDN_Tem(f * 2, f)
+            self.e_conv6 = CSDN_Tem(f * 2, f)
+            self.e_conv7 = CSDN_Tem(f * 2, 3)
+
+        def enhance(self, x, x_r):
+            for _ in range(8):
+                x = x + x_r * (torch.pow(x, 2) - x)
+            return x
+
+        def forward(self, x):
+            down = x if self.scale_factor == 1 else F.interpolate(
+                x, scale_factor=1 / self.scale_factor, mode="bilinear")
+            x1 = self.relu(self.e_conv1(down))
+            x2 = self.relu(self.e_conv2(x1))
+            x3 = self.relu(self.e_conv3(x2))
+            x4 = self.relu(self.e_conv4(x3))
+            x5 = self.relu(self.e_conv5(torch.cat([x3, x4], 1)))
+            x6 = self.relu(self.e_conv6(torch.cat([x2, x5], 1)))
+            x_r = torch.tanh(self.e_conv7(torch.cat([x1, x6], 1)))
+            if self.scale_factor != 1:
+                x_r = self.upsample(x_r)
+            return self.enhance(x, x_r), x_r
+
+    scale = int(os.environ.get("IK_ZERO_DCE_PLUS_SCALE", "12"))
+    model = EnhanceNet(scale).eval()
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    state = {k[len("module."):] if k.startswith("module.") else k: v for k, v in state.items()}
+    model.load_state_dict(state, strict=True)
+
+    tensor = torch.from_numpy(image).permute(2, 0, 1)[None].float()
+    with torch.no_grad():
+        enhanced, curve = model(tensor)
+
+    globals()["_extra"] = {
+        "curve": curve[0].permute(1, 2, 0).contiguous(),
+        "scale_factor": torch.tensor(scale, dtype=torch.int32),
+    }
+    return enhanced[0].permute(1, 2, 0).contiguous()
+
+
 def run_rf_detr(image):
     """RF-DETR object detection end to end at a tiny random configuration, from transformers' own
     RfDetrForObjectDetection (transformers 5.16): the WINDOWED DINOv2 backbone (each block partitions
@@ -7589,16 +8205,16 @@ MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip
           "segformer_loss": run_segformer_loss,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rf_detr": run_rf_detr}
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr}
 CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
-                     "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "pose": run_pose,
+                     "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen,

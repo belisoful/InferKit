@@ -95,6 +95,42 @@ concatenation as a direct element of an `@[ ]`/`@{ }` literal raises `-Wobjc-str
 (parenthesize the element) — four of those had shipped in the catalog tests a round earlier because a
 `tail` on the test log hid them. Grep the log for `warning:` without a tail.
 
+**Discovery of the local runners** removes the question a consumer cannot answer, which app the user
+has running. `localProviders` is the four local presets in probe order (ollama, lmstudio, llamacpp,
+vllm); `availableProvidersAmong:timeout:` probes a list concurrently through a `dispatch_group` and
+answers in the list's order, so the call costs one timeout rather than four and the same machine gives
+the same answer twice; `firstAvailableProviderAmong:timeout:` probes in order and stops at the first
+reply, which is one probe when the first address is up; `availableLocalProviders` /
+`firstAvailableLocalProvider` are those two over `localProviders` at
+`NFKRemoteProviderProbeTimeout` (2 s), with completion-handler forms and
+`backendForFirstAvailableLocalProviderWithModelName:` as the one-call path. Every probe goes through
+the instance seam `isReachableWithAPIKey:timeout:error:`, which is `NFKRemoteModelCatalog`'s
+`isReachableWithError:` with the timeout set, so any HTTP reply counts and a subclass decides what
+available means. No key is sent, so a hosted preset answers 401 and reads as reachable; the call is
+aimed at the local ports, where nothing listening is the answer that matters.
+`NFKRemoteProvider` gained value equality for it: every preset getter builds a new instance, so
+`firstAvailableLocalProvider` used to compare unequal to `NFKRemoteProvider.ollama` under `==` and
+`containsObject:`, which the Swift example caught.
+
+Two things this round pinned. **The tests bind a real loopback socket** (`NFKLoopbackServer` in
+`NFKRemoteProviderTests`, port 0 so the kernel picks a free one, one 200 with `{}` per connection):
+`NSURLProtocol` cannot serve the probe, because the catalog uses `NSURLSession.sharedSession` and a
+session only consults the protocol classes in its own configuration, so a stubbed protocol is
+invisible to it. Dead addresses in those tests are the discard port (9), which loopback refuses at
+once. **The Swift async import shadows a blocking method of the same name:**
+`+availableLocalProvidersWithCompletionHandler:` imports as `availableLocalProviders() async`, which
+took the blocking `+availableLocalProviders`'s Swift name and made it unreachable ("'async' call in a
+function that does not support concurrency" at the *sync* call site). The completion forms therefore
+carry `NS_SWIFT_ASYNC_NAME(probeAvailableLocalProviders())` /
+`NS_SWIFT_ASYNC_NAME(probeFirstAvailableLocalProvider())`. The pair that already shipped,
+`modelsWithAPIKey:error:` and `modelsWithAPIKey:completionHandler:`, escapes this because the blocking
+one throws and `try` disambiguates. The importer also drops a trailing noun that repeats the return
+type, so `+firstAvailableLocalProvider` arrived as `firstAvailableLocal()` and now carries
+`NS_SWIFT_NAME(firstAvailableLocalProvider())`; `availableProvidersAmong:timeout:` and
+`firstAvailableProviderAmong:timeout:` carry their `among:timeout:` names for the same reason.
+Measured on this machine with Ollama 0.33 on 11434 and nothing on 1234 / 8080 / 8000:
+`firstAvailableLocalProvider` answers ollama, `availableLocalProviders` answers ollama alone.
+
 The remaining modalities have remote backends, so every on-device direction has a hosted
 counterpart on the same key (`NFKRemoteSpeechBackend` → `NFKOutputAudio` as an `NFKAudioAsset`, WAV
 by default to match `NFKMLXSpeechBackend`; `NFKRemoteImageBackend` → 32BGRA `CVPixelBuffer` under

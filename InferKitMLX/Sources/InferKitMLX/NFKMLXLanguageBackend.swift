@@ -553,13 +553,19 @@ public final class NFKMLXLanguage: NSObject {
         let experts = try expertConfiguration(json, modelType: modelType)
 
         let hidden = integer("hidden_size", 1024)
-        let heads = integer("num_attention_heads", 16)
+        // A release that states its head width but not its head count is read as the count that fills
+        // the hidden width, which is what transformers resolves for it. SmolVLM2-2.2B's `text_config`
+        // omits `num_attention_heads` and gives `head_dim` 64 at hidden 2048, where a fixed fallback
+        // builds projections the checkpoint does not fit.
+        let statedHeadDimensions = (json["head_dim"] as? NSNumber)?.intValue
+        let headFallback = statedHeadDimensions.map { hidden / max($0, 1) } ?? 16
+        let heads = integer("num_attention_heads", headFallback)
         var configuration = NFKMLXLanguageConfiguration(
             hiddenSize: hidden,
             layerCount: integer("num_hidden_layers", 28),
             headCount: heads,
             keyValueHeadCount: integer("num_key_value_heads", heads),
-            headDimensions: integer("head_dim", hidden / max(heads, 1)),
+            headDimensions: statedHeadDimensions ?? (hidden / max(heads, 1)),
             intermediateSize: integer("intermediate_size", 3072),
             vocabularySize: integer("vocab_size", 151_936),
             // Transformers 5.x nests the rotary base under `rope_parameters`.

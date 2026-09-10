@@ -4,6 +4,84 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # MLX on-device training and fine-tuning
 
+## Customization is part of parity
+
+A model is at parity when its inference matches the reference and its customization path is shipped
+end to end, or ruled out in writing. Inference parity alone is half of done. The rule exists because
+the alternative was measured: four of roughly a hundred shipped models expose a trainable network,
+and the rest capture theirs inside a backend a consumer cannot open.
+
+Every model records one of three outcomes in its `mlx-models-<class>.md` entry:
+
+- On-device trainable → the minimum shipped set below ships with the model.
+- Offline-only → the reference recipe needs what a device cannot hold: a discriminator stack (vocoders,
+  codecs), a large batch of negatives (contrastive CLIP), or weights past the working set (SDXL, FLUX,
+  a language model above 4B at float precision). The entry names the constraint and the offline route
+  (train in Python, merge, then convert or load through the ordinary factory).
+- Untrainable here → no differentiable objective exists or the reference publishes no training code.
+  The entry names it.
+
+Shipping inference and saying nothing about training is the failure this rule stops.
+
+**Choosing the level.** Take the reference's own recipe first, then the cheapest level a device holds
+that still answers the consumer's question:
+
+- probe → a small head over frozen features (CLIP, any embedder);
+- head retarget → the backbone frozen, the head trained to the consumer's own classes (segmenters,
+  detectors);
+- zero-reference → a loss over the output's own properties, no labels (Zero-DCE);
+- LoRA → detours on the attention projections, everything else frozen (Whisper, language and
+  vision-language models at 4B and under, SD 1.5 attention);
+- full → every weight, for the small networks (restoration and enhancement CNNs, the speech
+  enhancers under a few million parameters).
+
+The entry records the level and the reason.
+
+**The minimum shipped set** when a model is trainable:
+
+1. A public `network(weightsURL:configuration:)` builder returning the `Module`. Nil weights is the
+   random initialization, which is training from scratch; a released or fine-tuned file loads through
+   `NFKMLXWeights.loadCheckpoint` with the transpose gate. A retargetable head takes its new size here
+   and drops the checkpoint's head (the SegFormer pattern), because MLX adopts shapes rather than
+   validating them.
+2. A freezing policy: a `Trainable` enum or named parameter groups (backbone, head, attention). A
+   frozen group's normalization statistics do not move either; a BatchNorm backbone under a head-only
+   run stays in evaluation mode, and a test asserts it.
+3. An objective ported from the reference's training code, not its paper, with a separable
+   `loss(outputs:targets:)` so `run_reference.py <model>_loss` scores identical tensors. A wrong loss
+   is invisible in a fine-tune's output; the oracle is the only check that catches it, and the first
+   Zero-DCE port was wrong in all four losses.
+4. A data adapter for the modality: images through `NFKMLXTrainingData`, audio through the model's own
+   front end, text through the release tokenizer and chat template with a loss mask over the prompt.
+5. A `fineTune` recipe over `NFKMLXTrainer`, and `NFKMLXLoRA` where LoRA is the level, whose defaults
+   (optimizer, learning rate, clipping) are the reference's.
+6. The round trip: `NFKMLXWeights.save`, then a reload through the model's own factory that reproduces
+   the forward (`NFKMLXCheckpointRoundTripTests`). The fine-tuned file must also load through the
+   `@objc` factory, which is the Objective-C reach a closure-taking recipe can have.
+7. Tests on the tiny configuration: the loss falls over a few steps; the targeted parameters move and
+   the frozen ones do not (`testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` is the pattern); the
+   objective parity test; the round-trip test.
+8. Every listing in `mlx-parity-checklist.md` ("Customization is part of parity").
+
+Everything a consumer calls in that set is public. A recipe that compiles only under `@testable import`
+is not shipped.
+
+**Gaps against this rule, measured 2026-09-10.** These are package-level; a per-model change is
+blocked by the first alone and must fix it:
+
+- `NFKMLXWeights` is internal, so `save` and `loadCheckpoint` are unreachable from a consumer. The
+  documented recipes in `Docs/examples.md` compile only because the examples target imports the
+  package `@testable`.
+- Four models conform: Zero-DCE, SegFormer, Whisper, CLIP. Every `makeNet` is internal, 69 of 77
+  loaders are internal, and the language decoder's builder and initializer are internal, so no
+  language-model fine-tune is reachable at all.
+- No text data adapter (tokenize, template, mask) and no audio example adapter exist; no
+  response-masked SFT objective exists.
+- `NFKMLXTrainer` has no learning-rate schedule, gradient accumulation, validation hook, or bf16
+  training, and does not checkpoint optimizer state.
+- `NFKMLXLoRA` adapts `Linear` only, never `Conv2d` or the expert switch layers, and only through
+  `@ModuleInfo` properties.
+
 - `NFKMLXTrainer` — the supervised and zero-reference training loop, for customizing a shipped model
   on a consumer's own data, in the app. Two entry points (`batch:loss:` with a target,
   `sample:loss:` without one) share a private loop: gradient clipping, per-step progress and early

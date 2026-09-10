@@ -376,6 +376,16 @@ providers and every local runner serve): `NFKInputPrompt` in, the vector under `
 out, the same key the on-device embedders in InferKitMLX answer with, so search or clustering code does
 not change with the engine; `embeddingsForTexts:error:` embeds a batch in one call.
 
+**Discovery answers which local runner is up.** `localProviders` is the four local presets;
+`availableLocalProviders` probes them and returns the ones that reply, `firstAvailableLocalProvider`
+returns the first, and `backendForFirstAvailableLocalProviderWithModelName:` hands back a backend on
+it, so an app serves a user running Ollama, LM Studio, llama.cpp, or vLLM without naming one.
+`availableProvidersAmong:timeout:` takes a list of the caller's own, for another port or another
+machine, and probes it concurrently; `firstAvailableProviderAmong:timeout:` probes in order and stops
+at the first reply. `isReachableWithAPIKey:timeout:error:` is the single-address form and the seam the
+rest go through. Every one of them blocks, so the two local calls have completion-handler forms, and a
+provider compares by value, which is how a discovered one is recognized as the preset it came from.
+
 **Local runners have a second surface.** The OpenAI-compatible endpoints say nothing about what is
 installed, what is loaded, how large a model is, or how to get one. `-[NFKRemoteProvider localRunner]`
 hands back an adapter over the runner's native API (`NFKOllamaRunner`, `NFKLMStudioRunner`; llama.cpp
@@ -587,8 +597,9 @@ Each of these unlocks a category rather than a model.
   [model-parity.md](model-parity.md).
 - **Left out, deliberately.** BiRefNet's lite and other variants need its hardcoded channel widths
   moved into a configuration first. Whisper's `.en` releases share the multilingual geometry and differ
-  only in their tokenizer files, so they load through the same presets. RT-DETR v2 and Parakeet 1.1B are
-  architecture changes rather than sizes, and stay on the list below.
+  only in their tokenizer files, so they load through the same presets. RT-DETRv2 and Parakeet 1.1B are
+  architecture changes rather than sizes. RT-DETRv2 has since shipped through the same `NFKMLXRTDetr`
+  port; Parakeet 1.1B stays on the list below.
 
 ### Language-model runtime
 
@@ -870,15 +881,17 @@ alternatives.
   RF-DETR, and BiRefNet (all SHIPPED), with SAM 3 blocked on weight access.
   - `Depth Anything 3` (monocular) — **SHIPPED** (`NFKMLXDepthAnything3`): DA3-SMALL, at reference
     parity on the released weights, seam by seam, against the authors' `depth_anything_3` package (the
-    four hooked backbone features and every head stage ≥ 0.9999999999; the exp-depth map mean-removed
-    0.99999999997, max relative difference 8e-7). The backbone is a DINOv2 ViT variant, not a reuse of
+    four hooked backbone features ≥ 0.9999999999962167; the exp-depth map 0.9999999999999011,
+    mean-removed 0.9999999999101674; the ray map 0.9999999999998513; the predicted pose encoding
+    0.9999999999992621). The backbone is a DINOv2 ViT variant, not a reuse of
     the V2 encoder: from block 4 it adds a 2D rotary embedding, per-head query/key normalization, a
     learned camera token injected into the class-token slot, and alternating local/global attention
     whose cross-view "global" blocks collapse to query/key-normalized self-attention for a single
     image. Each hooked feature concatenates the preceding local block's output with the current
-    global block's (`cat_token`), so the DualDPT head reads twice the embedding width. Only the depth
-    branch of the DualDPT is built; the ray branch, the camera decoder/encoder, and the aux heads are
-    dropped and named as deliberately unimplemented. The output convention is exp-depth, not V2's
+    global block's (`cat_token`), so the DualDPT head reads twice the embedding width. The whole
+    released model is built and every released tensor loads: both DualDPT branches, the camera decoder,
+    and the camera encoder, with `NFKMLXDepth3Estimator` carrying the camera and the Plücker ray map
+    beside the depth backend. The output convention is exp-depth, not V2's
     relative disparity. Reaching parity found that the head's two `ConvTranspose2d` resize layers need
     the transposed-convolution axis order (`[C_in, C_out, kH, kW]` → `[C_out, kH, kW, C_in]`), not a
     regular convolution's — both are square, so the wrong order loaded silently and scrambled the
@@ -889,7 +902,13 @@ alternatives.
   - `RT-DETR` — a detector that avoids YOLO's AGPL. **SHIPPED** (`NFKMLXRTDetr`): the ResNet-D
     backbone, hybrid encoder, query selection, and the deformable-attention decoder (a `grid_sample`
     gather MLX expresses with `takeAlong`), at reference parity against transformers seam by seam and
-    on the released `rtdetr_r50vd` weights end to end.
+    on the released `rtdetr_r50vd` weights end to end. RT-DETRv2 is **SHIPPED** through the same port:
+    v2 changes only the decoder's deformable sampling, which `NFKMLXRTDetrConfiguration` carries as
+    `decoderOffsetScale` and `decoderMethod` (`NFKMLXRTDetrSamplingMethod`, bilinear or nearest-cell).
+    Every released v2 configuration repeats its RT-DETR namesake's geometry and its sampling settings, so
+    the four presets are their v1 counterparts, at reference parity against transformers'
+    `RTDetrV2ForObjectDetection` on all four released checkpoints and on a tiny configuration that sets
+    the discrete sampling no release uses.
   - `RF-DETR` (base) — the license-clean detector following RT-DETR. **SHIPPED** (`NFKMLXRFDetr`): a
     windowed DINOv2 backbone (per-block window partition, global attention at the out-index layers), a
     C2f/RepVGG projector, two-stage Group-DETR query selection, mixed queries, and an LW-DETR deformable
@@ -906,6 +925,26 @@ alternatives.
     reduces to the same bilinear-gather (`takeAlong`) primitive used for RAFT/RIFE/RVM and RT-DETR's
     deformable attention, so no DCNv2 Metal kernel was needed for correctness; the work was the
     Swin-v1-L backbone (which reuses SwinIR's window attention).
+  - **The single-image successors of the older shipped models — SHIPPED.** Each replaces a model the
+    toolkit already carried with the newer network its own authors published, so the older entry stays
+    for the checkpoints that exist only for it. `NFKMLXISNet` (IS-Net, the DIS project) follows U²-Net:
+    the same Residual U-blocks behind a stride-2 stem, wider stages, and six separate side maps.
+    `NFKMLXHAT` follows SwinIR: window attention plus a channel-attention convolution branch in every
+    block and an overlapping cross-attention block closing every group, whose relative-position index
+    relies on PyTorch reading negative indices from the end of the bias table. `NFKMLXAdaIN` follows
+    fast style transfer, handling any style image instead of one baked per checkpoint.
+    `NFKMLXZeroDCEPlus` follows Zero-DCE with depthwise-separable convolutions and one shared curve.
+    Real-ESRGAN gained its two later compact releases, and the CLIP towers gained MetaCLIP's weights.
+    All at reference parity. MetricGAN+ keeps its place as the deliberate smoke-test baseline: the
+    MetricGAN-U weights are not served.
+  - **YOLOv9 through YOLO26 — SHIPPED.** `NFKMLXYOLOGenerations` covers every generation after the
+    shipped v8 and every released size of each, at reference parity against ultralytics. One graph
+    interpreter builds them from the reference's own layer rows rather than five separate ports. Three
+    of the load-bearing details are visible only in the released checkpoints: YOLOv12's positional
+    encoding carries a bias no other generation's does, YOLO26's pooling stage drops its activation and
+    adds its input, and the end-to-end heads select over anchor-and-class pairs so one anchor can be
+    reported twice. The licence is ultralytics' AGPL-3.0, so RT-DETR and RF-DETR remain the
+    licence-clean detectors.
   - `SAM 3 / 3.1` — the successor to the shipped SAM 2, and a large staged effort rather than an
     increment. The SAM 2 Hiera encoder does not transfer: SAM 3 uses a different Perception Encoder, a
     CLIP-style text encoder, and a DETR detector, and only the tracker and mask decoder reuse SAM 2.

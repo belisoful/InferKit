@@ -15,6 +15,102 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <unistd.h>
+
+/*! A loopback listener that answers every connection with an empty JSON object, so a discovery probe
+	against its port is a real round trip rather than a stub. It binds port 0, which is the kernel
+	handing out a free port, so a machine already running a real server does not change the result. */
+@interface NFKLoopbackServer : NSObject
+@property (nonatomic, assign, readonly) uint16_t port;
++ (nullable instancetype)startedServer;
+- (void)stop;
+@end
+
+@interface NFKLoopbackServer ()
+@property (nonatomic, assign) uint16_t port;
+@property (nonatomic, assign) int listener;
+@end
+
+@implementation NFKLoopbackServer
+
++ (nullable instancetype)startedServer
+{
+	NFKLoopbackServer *server = [[self alloc] init];
+	return [server start] ? server : nil;
+}
+
+- (BOOL)start
+{
+	int listener = socket(AF_INET, SOCK_STREAM, 0);
+	if (listener < 0) {
+		return NO;
+	}
+	int reuse = 1;
+	(void)setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+	struct sockaddr_in address = { 0 };
+	address.sin_len = sizeof(address);
+	address.sin_family = AF_INET;
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	address.sin_port = 0;
+	socklen_t length = sizeof(address);
+	if (bind(listener, (const struct sockaddr *)&address, length) < 0 ||
+		listen(listener, 8) < 0 ||
+		getsockname(listener, (struct sockaddr *)&address, &length) < 0) {
+		close(listener);
+		return NO;
+	}
+	self.port = ntohs(address.sin_port);
+	self.listener = listener;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[self serve];
+	});
+	return YES;
+}
+
+- (void)serve
+{
+	static const char *reply = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+								"Content-Length: 2\r\nConnection: close\r\n\r\n{}";
+	while (YES) {
+		int connection = accept(self.listener, NULL, NULL);
+		if (connection < 0) {
+			return;
+		}
+		int nosignal = 1;
+		(void)setsockopt(connection, SOL_SOCKET, SO_NOSIGPIPE, &nosignal, sizeof(nosignal));
+		char request[1024];
+		(void)recv(connection, request, sizeof(request), 0);
+		(void)send(connection, reply, strlen(reply), 0);
+		close(connection);
+	}
+}
+
+- (void)stop
+{
+	int listener = self.listener;
+	self.listener = -1;
+	if (listener >= 0) {
+		shutdown(listener, SHUT_RDWR);
+		close(listener);
+	}
+}
+
+@end
+
+/*! A preset moved to a port on this machine, which is how a dead address and a live one are told
+	apart without touching the ports a real runner uses. */
+static NFKRemoteProvider *NFKProviderOnPort(NFKRemoteProvider *preset, uint16_t port)
+{
+	NSString *base = [NSString stringWithFormat:@"http://127.0.0.1:%u/v1", (unsigned)port];
+	return [preset providerWithBaseURL:[NSURL URLWithString:base]];
+}
+
+/*! The discard port. Nothing listens on it, so a connection there is refused at once. */
+static const uint16_t NFKDeadPort = 9;
+
 
 /*! An Anthropic backend whose transport is stubbed: it records the request and returns staged data. */
 @interface NFKAnthropicStubBackend : NFKAnthropicBackend
@@ -303,6 +399,132 @@
 	XCTAssertFalse(backend.isReady, @"the API requires a model name");
 	backend.modelName = @"m";
 	XCTAssertTrue(backend.isReady, @"the endpoint defaults to Anthropic's own");
+}
+
+#pragma mark Discovery
+
+// The order the discovery calls probe in is the order they answer in, so the same machine gives the
+// same answer twice.
+- (void)testTheLocalPresetsAreWhatDiscoveryProbes
+{
+	NSArray<NSString *> *identifiers = [NFKRemoteProvider.localProviders valueForKey:@"identifier"];
+	NSArray<NSString *> *expected = @[ @"ollama", @"lmstudio", @"llamacpp", @"vllm" ];
+	XCTAssertEqualObjects(identifiers, expected);
+	for (NFKRemoteProvider *provider in NFKRemoteProvider.localProviders) {
+		XCTAssertFalse(provider.requiresAPIKey, @"%@ is local", provider.identifier);
+	}
+}
+
+- (void)testNothingListeningLeavesTheDiscoveryEmpty
+{
+	NSArray<NFKRemoteProvider *> *dead = @[ NFKProviderOnPort(NFKRemoteProvider.ollama, NFKDeadPort),
+											NFKProviderOnPort(NFKRemoteProvider.lmStudio, NFKDeadPort) ];
+	XCTAssertEqualObjects([NFKRemoteProvider availableProvidersAmong:dead timeout:2.0], @[]);
+	XCTAssertNil([NFKRemoteProvider firstAvailableProviderAmong:dead timeout:2.0]);
+
+	XCTAssertEqualObjects([NFKRemoteProvider availableProvidersAmong:@[] timeout:2.0], @[]);
+	XCTAssertNil([NFKRemoteProvider firstAvailableProviderAmong:@[] timeout:2.0]);
+}
+
+// The point of the whole call: the caller names no runner, and the one that is up is found. The
+// server here is a real socket, so this measures the probe rather than a stubbed answer.
+- (void)testDiscoveryFindsTheServerThatIsListening
+{
+	NFKLoopbackServer *server = [NFKLoopbackServer startedServer];
+	XCTAssertNotNil(server, @"the test could not bind a loopback port");
+	[self addTeardownBlock:^{ [server stop]; }];
+
+	NSArray<NFKRemoteProvider *> *providers = @[ NFKProviderOnPort(NFKRemoteProvider.ollama, NFKDeadPort),
+												 NFKProviderOnPort(NFKRemoteProvider.lmStudio, NFKDeadPort),
+												 NFKProviderOnPort(NFKRemoteProvider.llamaCpp, server.port),
+												 NFKProviderOnPort(NFKRemoteProvider.vLLM, NFKDeadPort) ];
+
+	NSArray<NFKRemoteProvider *> *available = [NFKRemoteProvider availableProvidersAmong:providers timeout:2.0];
+	XCTAssertEqual(available.count, 1u);
+	XCTAssertEqualObjects(available.firstObject.identifier, @"llamacpp");
+
+	NFKRemoteProvider *first = [NFKRemoteProvider firstAvailableProviderAmong:providers timeout:2.0];
+	XCTAssertEqualObjects(first.identifier, @"llamacpp");
+	XCTAssertEqual(first.baseURL.port.unsignedIntegerValue, (NSUInteger)server.port);
+}
+
+// Two servers running is the case a caller cannot resolve alone. The answer is the earlier one in
+// the list, and the full list is there for a picker.
+- (void)testTheEarlierServerInTheListWins
+{
+	NFKLoopbackServer *ollama = [NFKLoopbackServer startedServer];
+	NFKLoopbackServer *studio = [NFKLoopbackServer startedServer];
+	XCTAssertNotNil(ollama);
+	XCTAssertNotNil(studio);
+	[self addTeardownBlock:^{ [ollama stop]; [studio stop]; }];
+
+	NSArray<NFKRemoteProvider *> *providers = @[ NFKProviderOnPort(NFKRemoteProvider.ollama, ollama.port),
+												 NFKProviderOnPort(NFKRemoteProvider.lmStudio, studio.port) ];
+	NSArray<NSString *> *available = [[NFKRemoteProvider availableProvidersAmong:providers timeout:2.0]
+									  valueForKey:@"identifier"];
+	NSArray<NSString *> *expected = @[ @"ollama", @"lmstudio" ];
+	XCTAssertEqualObjects(available, expected);
+	XCTAssertEqualObjects([NFKRemoteProvider firstAvailableProviderAmong:providers timeout:2.0].identifier,
+						  @"ollama");
+}
+
+- (void)testAProviderReportsWhetherItAnswers
+{
+	NFKLoopbackServer *server = [NFKLoopbackServer startedServer];
+	XCTAssertNotNil(server);
+	[self addTeardownBlock:^{ [server stop]; }];
+
+	NSError *error = nil;
+	XCTAssertTrue([NFKProviderOnPort(NFKRemoteProvider.ollama, server.port) isReachableWithAPIKey:nil
+																						  timeout:2.0
+																							error:&error]);
+	XCTAssertNil(error);
+	XCTAssertFalse([NFKProviderOnPort(NFKRemoteProvider.ollama, NFKDeadPort) isReachableWithAPIKey:nil
+																						   timeout:2.0
+																							 error:&error]);
+	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+}
+
+// The local ports of this machine, whatever is running on them: the assertion is the shape of the
+// answer, since a developer's Ollama may or may not be up.
+- (void)testTheAsynchronousDiscoveryAnswersOffTheCallingThread
+{
+	XCTestExpectation *listed = [self expectationWithDescription:@"the local servers are listed"];
+	[NFKRemoteProvider availableLocalProvidersWithCompletionHandler:^(NSArray<NFKRemoteProvider *> *providers) {
+		XCTAssertFalse(NSThread.isMainThread, @"the probes run off the calling thread");
+		for (NFKRemoteProvider *provider in providers) {
+			XCTAssertNotNil([NFKRemoteProvider providerWithIdentifier:provider.identifier]);
+			XCTAssertFalse(provider.requiresAPIKey);
+		}
+		[listed fulfill];
+	}];
+	[self waitForExpectationsWithTimeout:30.0 handler:nil];
+}
+
+// The one-call path: a backend on whichever runner is up, with no runner named. Nothing may be
+// running here, which is the nil answer. Measured with Ollama running: both calls answer ollama.
+- (void)testTheLocalBackendComesFromARunningRunner
+{
+	NFKRemoteProvider *running = NFKRemoteProvider.firstAvailableLocalProvider;
+	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForFirstAvailableLocalProviderWithModelName:@"a-model"];
+	if (running == nil) {
+		XCTAssertNil(backend, @"no runner is up on this machine");
+		return;
+	}
+	XCTAssertTrue([NFKRemoteProvider.localProviders containsObject:running], @"a provider compares by value");
+	XCTAssertEqualObjects([(NFKRemoteBackend *)backend endpointURL], running.endpointURL);
+	XCTAssertTrue(backend.isReady);
+}
+
+// A discovered provider is a fresh instance, and so is every preset getter's answer, so the
+// comparison a caller writes has to be by value.
+- (void)testProvidersCompareByValue
+{
+	XCTAssertEqualObjects(NFKRemoteProvider.ollama, NFKRemoteProvider.ollama);
+	XCTAssertEqual([NSSet setWithArray:(@[ NFKRemoteProvider.ollama, NFKRemoteProvider.ollama ])].count, 1u);
+	XCTAssertNotEqualObjects(NFKRemoteProvider.ollama, NFKRemoteProvider.lmStudio);
+	XCTAssertNotEqualObjects(NFKProviderOnPort(NFKRemoteProvider.ollama, NFKDeadPort), NFKRemoteProvider.ollama,
+							 @"another address is another endpoint");
 }
 
 #pragma mark A live local server

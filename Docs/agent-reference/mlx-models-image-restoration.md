@@ -17,7 +17,13 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   saves the net's params in PyTorch layout, reloads through the transpose, and confirms the forward
   matches. Adds the `MLXNN` product of `mlx-swift` to the target. Reference parity against the general
   ×4 release (cosine 0.9999947) and the anime release, a six-block generator where the general one has
-  twenty-three (0.9999956).
+  twenty-three (0.9999956). The two later releases run a different generator: `SRVGGNetCompact`
+  (`NFKRealESRGANCompactNet`, `NFKMLXRealESRGANVariant.generalX4V3` / `.animeVideoV3`) is a flat body of
+  3×3 convolutions each followed by a per-channel PReLU, then one pixel shuffle plus a nearest-neighbor
+  residual, with no RRDB blocks at all. The reference holds the whole stack in one `nn.ModuleList`, so
+  the port holds a `[Module]` array and the activations keep their own indices. The two releases differ
+  only in body length, 32 convolutions for `realesr-general-x4v3` and 16 for `realesr-animevideov3`.
+  Both at reference parity (0.9999999999997835 and 0.9999999999998643).
 - `NFKMLXNAFNet` (`@objc`) — a real single-forward restoration network (denoise / deblur): a U-shaped
   stack of NAFBlocks (SimpleGate + Simplified Channel Attention, channel LayerNorm = last-axis in NHWC,
   PixelShuffle up) in `MLXNN`, run through `NFKMLXModuleBackend` (image → restored image at input size,
@@ -63,6 +69,22 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   the border, because the instance norms are global and carry a border approximation into every pixel.
   Names match the reference, so `Tools/style-transfer-to-safetensors/convert.py` only drops the
   deprecated InstanceNorm running-stats keys.
+- `NFKMLXAdaIN` (`@objc`) — arbitrary style transfer (naoto0804's `pytorch-AdaIN`), the successor to
+  the one-style-per-checkpoint `NFKMLXStyleTransfer`. A normalized VGG-19 truncated after relu4_1
+  encodes both images, adaptive instance normalization moves the content features onto the style's
+  per-channel mean and standard deviation, and a mirrored decoder inverts the result. Both networks are
+  flat `nn.Sequential` stacks in the reference, so each is a `[Module]` array whose indices are the
+  reference's own and whose parameter-free slots (reflection padding, ReLU, pooling, upsampling) hold
+  their index with marker modules; the released VGG carries all 19 layers and the loader keeps the
+  truncated prefix. The encoder and the decoder ship as separate files, so the factory takes both URLs,
+  and a decoder trained through a wrapper module carries a `net.` prefix the loader strips. Run through
+  `NFKMLXModuleBackend`: the content image is `NFKInputImage`, the style image is `NFKInputControl`, and
+  the core's `NFKParameterStrength` blends the normalized features against the content's own. The plate
+  reaches the encoder unnormalized because the released VGG's first 1×1 convolution carries the
+  normalization. The seam that decides parity is the variance: the reference reads `Tensor.var`, whose
+  default correction is 1, so a population variance shifts every feature by `sqrt(n / (n − 1))`.
+  Reference parity throughout (content features 0.9999999999987861, style features 0.9999999999989787,
+  normalized 0.9999999999989898, decoded image 0.9999999999997728).
 - `NFKMLXCodeFormer` (`@objc`) — real face restoration: the reference CodeFormer (sczhou) in `MLXNN` —
   a VQGAN encoder and generator built as the reference's flat heterogeneous `blocks` list (residual
   blocks with a 1×1 skip projection where the width changes, single-head spatial attention at
@@ -117,6 +139,12 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   `NFKMLXModuleBackend` (dark image → brightened image). Enhancement applies `x = x + r·(x²−x)` eight
   times. `+register` under `zero-dce`. Names match the reference (`e_conv1`…`e_conv7`), so
   `Tools/zero-dce-to-safetensors` only extracts. Forward + round-trip tested.
+- `NFKMLXZeroDCEPlus` (`@objc`) — Zero-DCE++, the authors' own successor, registered as `zero-dce-plus`.
+  The seven convolutions become depthwise-separable pairs (`CSDN_Tem`: a grouped 3×3 followed by a 1×1),
+  the 24 curve channels collapse to ONE shared three-channel curve reused across all eight iterations,
+  and the estimator runs at a reduced resolution (`scaleFactor` 12) with the curve map lifted back by an
+  align-corners bilinear upsample. Reference parity against the authors' `Zero-DCE++` on their released
+  weights (curve map 0.9999999999998159, enhanced image 0.9999999999999741).
 - `NFKMLXSwinIR` (`@objc`) — real transformer super-resolution: SwinIR (shallow-feature conv → residual
   Swin Transformer blocks → pixel-shuffle upsampler) in `MLXNN`, with real window attention — window
   partition/reverse, cyclic shift with the standard attention mask, and a relative-position bias table
@@ -152,6 +180,25 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   plain ReLU this port had shipped with — on the released classical ×4 through the backend's 8-bit
   bridge the mean pixel difference fell from 0.0037 to 0.00136 (×3 0.0036 → 0.00119, ×8 0.0035 →
   0.00095); the lightweight release has no such tail and is unchanged.
+- `NFKMLXHAT` (`@objc`) — HAT, the Hybrid Attention Transformer (XPixelGroup), SwinIR's successor for
+  super-resolution. The window self-attention, the window partitioning and the shifted-window mask are
+  SwinIR's, so `NFKSwinOps` and `NFKSwinWindowAttention` carry over unchanged. HAT adds two things. Every
+  block gains a channel-attention convolution branch (`CAB`: a 3×3 to a narrow waist, GELU, a 3×3 back,
+  then RCAN channel attention) summed into the residual at `conv_scale` 0.01. Every group ends with an
+  overlapping cross-attention block whose queries come from a 16-wide window and whose keys and values
+  come from a 24-wide window centered on it, which the reference builds with `nn.Unfold` and the port
+  builds with a two-axis gather over a zero-padded map. `NFKMLXHATVariant` selects the geometry
+  (`.base` and `.realWorld` are 6 groups of 6 blocks at 180 channels, `.large` is 12 groups), and the
+  released checkpoints carry their tensors under `params_ema`, which the native reader already unwraps.
+  The trap is the overlapping relative-position index: the reference's own arithmetic leaves NEGATIVE
+  entries in that table and PyTorch reads a negative index from the end of the tensor. The raw values
+  span exactly the table size, so the port takes the index modulo `(window + overlap window − 1)²` and
+  the parity test compares both index tables against the checkpoint's own buffers. Reference parity on
+  HAT-L ×4 and Real-HAT-GAN ×4 through every seam (HAT-L: shallow 0.9999999999998852, first block
+  0.9999999999998327, first overlapping attention 0.9999999999983605, first group 0.9999999999995531,
+  deep features 0.9999999999993273, upscaled image 0.9999999999997842; Real-HAT-GAN: 0.999999999999886,
+  0.9999999999998452, 0.9999999999988557, 0.9999999999995886, 0.9999999967383821, 0.9999999999978274).
+  HAT-S has no released checkpoint outside Google Drive, so it ships no preset.
 - `NFKMLXColorizer` (`@objc`) — real colorization (Zhang et al. ECCV-16): eight VGG-style conv blocks
   (BatchNorm block ends; blocks 5–6 dilation 2) over the L channel predict a distribution over 313
   quantized ab bins; the annealed mean is the checkpoint's own `model_out` 1×1 conv (renamed
@@ -179,3 +226,52 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   `colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth`, converted with
   `Tools/colorizer-to-safetensors --passthrough` (the eccv16 rename does not apply). With an empty
   hint it colorizes automatically; `predictAB(lightness:hint:mask:)` takes user strokes. Forward, Lab math, bin softmax, and round-trip tested.
+- `NFKMLXDDColor` (`@objc`) — the modern colorizer beside the 2016 and 2017 ports (`DDColor`, piddnad,
+  Apache-2.0): automatic colorization, an image's lightness in and two chroma channels out. Three
+  parts. A **ConvNeXt-L encoder** (depths [3, 3, 27, 3], widths [192, 384, 768, 1536]) whose four stage
+  outputs are hooked. A **spectral-normalized U-Net decoder**: three `UnetBlockWide` blocks, each
+  shuffling the deeper path up through a `CustomPixelShuffle_ICNR` and concatenating the hooked skip
+  through its own BatchNorm, then a last pixel shuffle at scale 4 producing the pixel embedding. A
+  **Mask2Former-style color decoder**: 100 learned color queries cross-attend to the three U-Net stage
+  outputs in turn over nine layers (cross-attention first, then self-attention, then a feed-forward,
+  all post-norm), and the decoded queries dot against the pixel embedding to make one color attention
+  map each. A final 1×1 convolution reads those maps beside the input and emits the two chroma
+  channels. Four facts are load-bearing. The reference's `forward_features` calls each `norm{i}` for
+  its hook's side effect only (the assignment back to `x` is commented out), so the hooked feature is
+  the normalized stage output while the trunk carries the un-normalized one forward; normalizing the
+  trunk instead is a quiet change to every later stage. The convolutions are **spectral-normalized**:
+  `nn.utils.spectral_norm` stores `weight_orig` beside the power-iteration vectors `weight_u` and
+  `weight_v`, and in eval mode divides the weight by `uᵀ W v` using the vectors as stored rather than
+  iterating again; the loader fuses that, as the weight-norm fusions elsewhere in the package do for
+  `g·v/‖v‖`. `custom_conv_layer` builds an `nn.Sequential`, so a ReLU slot still consumes its index:
+  the BatchNorm that follows an activation lands at index 2, and one with no activation before it
+  lands at 1. Those Sequentials are held as `[Module]` arrays rather than named properties, because
+  MLX parses a numeric `@ModuleInfo` key as an array index and aborts the process when the
+  checkpoint's list meets a child module; that happened during the port, it is the hazard
+  `mlx-runtime-gotchas.md` documents, and a `[Module]` array is what those keys are for. The pixel
+  shuffle carries the checkerboard remedy from "Super-Resolution using Convolutional Neural Networks
+  without Any Checkerboard Artifacts": a replication pad of (1, 0, 1, 0) then a 2×2 average pool at
+  stride 1. Lightness comes from the caller's own image at full resolution and only chroma is
+  predicted, so luminance is preserved exactly, the convention the two older colorizers here follow;
+  the model normalizes its three-channel input with ImageNet statistics inside its own forward.
+  `NFKMLXDDColorVariant` (`.modelscope`, `.paper`, `.artistic`) selects the release, and every factory
+  honors it: `backendWithWeightsURL:error:`, `backendWithVariant:weightsURL:error:`, the two download
+  peers, and the two async peers. It runs through the shared `NFKMLXModuleBackend` (`NFKInputImage`
+  in, `NFKOutputImage` out), as the other colorizers do. `register()` registers `ddcolor`,
+  `ddcolor-paper`, and `ddcolor-artistic`, from `NFKMLXReferenceModels.registerAll`. Coverage: 573
+  built parameters, all loaded; 31 released tensors deliberately dropped (the power-iteration vectors
+  the fusion consumes, the encoder's classification head and its pooled norm, the normalization
+  buffers the port applies itself, and the BatchNorm step counters); 0 unaccounted. Reference parity
+  against the authors' own `DDColor` on the released `ddcolor_modelscope.pth`, first numeric run:
+  hooked encoder features 0.9999999999961443, 0.9999999999975543, 0.999999999986007, and
+  0.9999999999450404; U-Net stage outputs 0.9999999998703757, 0.9999999998944228, and
+  0.9999999999032585; pixel embedding 0.9999999999013038; color attention maps 0.9999999998470392;
+  chroma 0.9999999998455213. Oracle `run_reference.py ddcolor --checkpoint <release .pth>` under the
+  existing `llm` oracle environment, which gained `scikit-image`. The reference is not in
+  transformers, so `IK_DDCOLOR_SRC` holds the cloned repository's `basicsr/` directory
+  (`ddcolor_arch.py` plus `ddcolor_arch_utils/`), and the oracle stubs basicsr's registry so the
+  import stays to the architecture itself. It records the prepared gray pixels, the lightness, the
+  four hooked encoder features, the three U-Net stage outputs, the pixel embedding, the color
+  attention maps, and the chroma. Weights `piddnad/DDColor-models` (Apache-2.0):
+  `ddcolor_modelscope.pth`, `ddcolor_paper.pth`, `ddcolor_artistic.pth`, under `IK_VAL_DDCOLOR` and
+  `IK_PARITY_DDCOLOR`.

@@ -46,6 +46,10 @@ public struct NFKMLXDepth3Configuration: Sendable {
     public var features: Int = 64
     /// The per-hook reassemble widths (fine → coarse).
     public var outChannels: [Int] = [48, 96, 192, 384]
+    /// The camera encoder's trunk depth and head count. Every release carries the reference's defaults
+    /// and overrides only the width, which is the backbone's.
+    public var cameraTrunkDepth: Int = 4
+    public var cameraHeads: Int = 16
 
     public init() {}
 
@@ -83,6 +87,8 @@ public struct NFKMLXDepth3Configuration: Sendable {
     var tokenGrid: Int { inputSize / patchSize }
     /// The head reads concatenated local+global features (`cat_token`).
     var headInputDimensions: Int { embedDimensions * 2 }
+    /// The camera decoder reads a camera token, which carries the same concatenated width.
+    var cameraDecoderDimensions: Int { embedDimensions * 2 }
 }
 
 // MARK: - 2D rotary
@@ -200,19 +206,26 @@ final class NFKDA3LayerScale: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray { x * gamma }
 }
 
-/// The block MLP (`mlp.fc1`, `mlp.fc2`).
+/// The block MLP (`mlp.fc1`, `mlp.fc2`). The camera encoder's `pose_branch` is the same shape with a
+/// narrower input than output, so the widths are given separately there.
 final class NFKDA3MLP: Module {
     let fc1: Linear
     let fc2: Linear
-    init(dimensions: Int, hidden: Int) {
-        fc1 = Linear(dimensions, hidden, bias: true)
-        fc2 = Linear(hidden, dimensions, bias: true)
+    convenience init(dimensions: Int, hidden: Int) {
+        self.init(inputDimensions: dimensions, hidden: hidden, outputDimensions: dimensions)
+    }
+    init(inputDimensions: Int, hidden: Int, outputDimensions: Int) {
+        fc1 = Linear(inputDimensions, hidden, bias: true)
+        fc2 = Linear(hidden, outputDimensions, bias: true)
     }
     func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
 }
 
-/// One transformer block: norm → attention → scale (residual), norm → MLP → scale (residual). The
-/// LayerNorm epsilon is 1e-6 (the DA3 default), not MLXNN's 1e-5.
+/// One transformer block: norm → attention → scale (residual), norm → MLP → scale (residual).
+///
+/// The reference carries two of these. The backbone's (`dinov2/layers/block.py`) defaults its
+/// LayerNorm to `ln_eps` 1e-6; the camera encoder's (`utils/block.py`) takes a plain `nn.LayerNorm`,
+/// so torch's 1e-5. The epsilon is a parameter here because both are built.
 final class NFKDA3Block: Module {
     let norm1: LayerNorm
     let attn: NFKDA3Attention
@@ -221,11 +234,12 @@ final class NFKDA3Block: Module {
     @ModuleInfo(key: "mlp") var mlp: NFKDA3MLP
     let ls2: NFKDA3LayerScale
 
-    init(dimensions: Int, heads: Int, mlpRatio: Int, qkNorm: Bool, frequency: Float) {
-        norm1 = LayerNorm(dimensions: dimensions, eps: 1e-6)
+    init(dimensions: Int, heads: Int, mlpRatio: Int, qkNorm: Bool, frequency: Float,
+         layerNormEps: Float = 1e-6) {
+        norm1 = LayerNorm(dimensions: dimensions, eps: layerNormEps)
         attn = NFKDA3Attention(dimensions: dimensions, heads: heads, qkNorm: qkNorm, frequency: frequency)
         ls1 = NFKDA3LayerScale(dimensions: dimensions)
-        norm2 = LayerNorm(dimensions: dimensions, eps: 1e-6)
+        norm2 = LayerNorm(dimensions: dimensions, eps: layerNormEps)
         _mlp.wrappedValue = NFKDA3MLP(dimensions: dimensions, hidden: dimensions * mlpRatio)
         ls2 = NFKDA3LayerScale(dimensions: dimensions)
     }
@@ -290,7 +304,18 @@ final class NFKDA3Encoder: Module {
 
     /// - Parameter image: `[1, inputSize, inputSize, 3]`.
     /// - Returns: the hooked features, each `[1, grid*grid, 2*dimensions]`.
-    func hookedFeatures(_ image: MLXArray) -> [MLXArray] {
+    func hookedFeatures(_ image: MLXArray) -> [MLXArray] { hooked(image).features }
+
+    /// The hooked features beside the camera token each hook carries.
+    ///
+    /// The reference records `(out_x[:, :, 0], out_x)` per hook and normalizes only what feeds the
+    /// head, so the camera token is the concatenated local and global halves **before** the final
+    /// LayerNorm. The camera decoder reads the last hook's token.
+    ///
+    /// - Parameter image: `[1, inputSize, inputSize, 3]`.
+    /// - Returns: the features, each `[1, grid*grid, 2*dimensions]`, and the camera tokens, each
+    ///   `[1, 2*dimensions]`.
+    func hooked(_ image: MLXArray, conditioning: MLXArray? = nil) -> (features: [MLXArray], cameraTokens: [MLXArray]) {
         let dimensions = configuration.embedDimensions
         let grid = configuration.tokenGrid
         let patches = patchEmbed(image)                                 // [1, grid, grid, dimensions]
@@ -303,10 +328,13 @@ final class NFKDA3Encoder: Module {
 
         var localOutput = tokens
         var outputs = [MLXArray]()
+        var cameras = [MLXArray]()
         for (index, block) in blocks.enumerated() {
             // The camera token replaces the class-token slot at `altStart`, before that block runs.
+            // A caller that knows the camera supplies the encoder's pose token in its place, which is
+            // the reference's `cam_token` keyword.
             if index == configuration.altStart {
-                let camera = cameraToken[0..., 0 ..< 1, 0...]           // ref view token [1, 1, dim]
+                let camera = conditioning ?? cameraToken[0..., 0 ..< 1, 0...]   // [1, 1, dim]
                 tokens = concatenated([camera, tokens[0..., 1..., 0...]], axis: 1)
             }
             let isGlobal = index >= configuration.altStart && index % 2 == 1
@@ -326,9 +354,12 @@ final class NFKDA3Encoder: Module {
                 // over the second half). The class token is then dropped.
                 let combined = concatenated([localOutput, norm(tokens)], axis: -1)
                 outputs.append(combined[0..., 1..., 0...])
+                // The camera token is that same slot 0 with no norm on either half.
+                let raw = concatenated([localOutput[0..., 0, 0...], tokens[0..., 0, 0...]], axis: -1)
+                cameras.append(raw)
             }
         }
-        return outputs
+        return (outputs, cameras)
     }
 }
 
@@ -375,8 +406,24 @@ final class NFKDA3Fusion: Module {
     }
 }
 
-/// The DualDPT head, depth branch only. The `_aux` fusion chain, the aux heads, and the camera
-/// decoder/encoder of the reference are not built (monocular depth needs the main branch alone).
+/// What the DualDPT head predicts: the main branch's depth and its confidence, and the aux branch's
+/// ray map and its confidence.
+///
+/// The depth is at the input resolution. The ray map stays at the finest fusion resolution, which is
+/// the reference's own convention (only the main path is interpolated to the image size).
+struct NFKDA3Prediction {
+    /// Exponentiated depth, `[1, H, W]`.
+    var depth: MLXArray
+    /// The main branch's confidence, `[1, H, W]`.
+    var confidence: MLXArray
+    /// The ray map, `[1, h, w, 6]`.
+    var ray: MLXArray
+    /// The ray branch's confidence, `[1, h, w]`.
+    var rayConfidence: MLXArray
+}
+
+/// The DualDPT head: a shared reassembly and two independent fusion chains, the main branch
+/// predicting depth and the aux branch predicting rays.
 final class NFKDA3Head: Module {
     @ModuleInfo(key: "norm") var norm: LayerNorm
     @ModuleInfo(key: "projects") var projects: [Conv2d]
@@ -401,8 +448,7 @@ final class NFKDA3Head: Module {
     }
 
     /// - Parameter features: four hooked token features, each `[1, grid*grid, headInputDimensions]`.
-    /// - Returns: `(depth, confidence)`, each `[1, H, W]` at the input resolution.
-    func callAsFunction(_ features: [MLXArray]) -> (MLXArray, MLXArray) {
+    func callAsFunction(_ features: [MLXArray]) -> NFKDA3Prediction {
         let grid = configuration.tokenGrid
         let width = configuration.inputSize
         let height = configuration.inputSize
@@ -417,14 +463,20 @@ final class NFKDA3Head: Module {
             pyramid.append(x)
         }
 
-        var fused = scratch.fuse(pyramid)                               // includes output_conv1
-        fused = NFKDA3Resample.bilinearAlignCorners(fused, height: height, width: width)
+        let (main, aux) = scratch.fuse(pyramid)                         // includes output_conv1
+        var fused = NFKDA3Resample.bilinearAlignCorners(main, height: height, width: width)
         fused = NFKDA3Head.addUVPositionEmbedding(fused, width: width, height: height)
         let logits = scratch.outputConv2Forward(fused)                  // [1, H, W, 2]
 
-        let depth = exp(logits[0..., 0..., 0..., 0])
-        let confidence = exp(logits[0..., 0..., 0..., 1]) + 1
-        return (depth, confidence)
+        // The aux branch reads the finest level only, and is not interpolated to the image size.
+        let finest = NFKDA3Head.addUVPositionEmbedding(aux[aux.count - 1], width: width, height: height)
+        let rayLogits = scratch.outputConv2AuxForward(finest, level: NFKDA3Scratch.auxLevels - 1)
+
+        return NFKDA3Prediction(
+            depth: exp(logits[0..., 0..., 0..., 0]),
+            confidence: exp(logits[0..., 0..., 0..., 1]) + 1,
+            ray: rayLogits[0..., 0..., 0..., 0 ..< 6],
+            rayConfidence: exp(rayLogits[0..., 0..., 0..., 6]) + 1)
     }
 
     /// The head's intermediate seams (NHWC), for reference-parity localization.
@@ -441,11 +493,21 @@ final class NFKDA3Head: Module {
             out["stage\(index)"] = x
             pyramid.append(x)
         }
-        let fused = scratch.fuse(pyramid)
+        let (fused, aux) = scratch.fuse(pyramid)
         out["fused"] = fused
         var head = NFKDA3Resample.bilinearAlignCorners(fused, height: height, width: width)
         head = NFKDA3Head.addUVPositionEmbedding(head, width: width, height: height)
         out["logits"] = scratch.outputConv2Forward(head)
+        for (index, level) in aux.enumerated() {
+            out["aux\(index)"] = level
+        }
+        let finest = NFKDA3Head.addUVPositionEmbedding(aux[aux.count - 1], width: width, height: height)
+        out["aux_pos"] = finest
+        let stack = scratch.outputConv2Aux[NFKDA3Scratch.auxLevels - 1]
+        let stepped = (stack[0] as! Conv2d)(finest)
+        out["aux_conv0"] = stepped
+        out["aux_norm"] = (stack[2] as! LayerNorm)(stepped)
+        out["ray_logits"] = scratch.outputConv2AuxForward(finest, level: NFKDA3Scratch.auxLevels - 1)
         return out
     }
 
@@ -508,6 +570,15 @@ final class NFKDA3Scratch: Module {
     @ModuleInfo(key: "refinenet4") var refine4: NFKDA3Fusion
     @ModuleInfo(key: "output_conv1") var outputConv1: Conv2d
     @ModuleInfo(key: "output_conv2") var outputConv2: [Module]
+    @ModuleInfo(key: "refinenet1_aux") var refine1Aux: NFKDA3Fusion
+    @ModuleInfo(key: "refinenet2_aux") var refine2Aux: NFKDA3Fusion
+    @ModuleInfo(key: "refinenet3_aux") var refine3Aux: NFKDA3Fusion
+    @ModuleInfo(key: "refinenet4_aux") var refine4Aux: NFKDA3Fusion
+    @ModuleInfo(key: "output_conv1_aux") var outputConv1Aux: [[Module]]
+    @ModuleInfo(key: "output_conv2_aux") var outputConv2Aux: [[Module]]
+
+    /// The number of aux pyramid levels the reference keeps (`aux_pyramid_levels`, 4 in every release).
+    static let auxLevels = 4
 
     init(features: Int, outChannels: [Int]) {
         _layer1.wrappedValue = Conv2d(inputChannels: outChannels[0], outputChannels: features, kernelSize: 3, padding: 1, bias: false)
@@ -525,29 +596,280 @@ final class NFKDA3Scratch: Module {
             ReLU(),
             Conv2d(inputChannels: 32, outputChannels: 2, kernelSize: 1),
         ]
+        // The aux (ray) branch runs its own fusion chain over the same reassembled pyramid.
+        _refine1Aux.wrappedValue = NFKDA3Fusion(features: features, hasResidual: true)
+        _refine2Aux.wrappedValue = NFKDA3Fusion(features: features, hasResidual: true)
+        _refine3Aux.wrappedValue = NFKDA3Fusion(features: features, hasResidual: true)
+        _refine4Aux.wrappedValue = NFKDA3Fusion(features: features, hasResidual: false)
+        // `_make_aux_out1_block` at `aux_out1_conv_num` 5: five 3×3 convolutions alternating between
+        // the feature width and half of it, with no activation between them.
+        _outputConv1Aux.wrappedValue = (0 ..< NFKDA3Scratch.auxLevels).map { _ in
+            (0 ..< 5).map { index -> Module in
+                let narrows = index % 2 == 0
+                return Conv2d(inputChannels: narrows ? features : features / 2,
+                              outputChannels: narrows ? features / 2 : features,
+                              kernelSize: 3, padding: 1)
+            }
+        }
+        // Sequential(conv, permute, layerNorm, permute, relu, conv): the two permutes bracket a
+        // channel-last LayerNorm, which is what NHWC already is, so indices 1, 3, and 4 are markers.
+        _outputConv2Aux.wrappedValue = (0 ..< NFKDA3Scratch.auxLevels).map { _ in
+            [
+                Conv2d(inputChannels: features / 2, outputChannels: 32, kernelSize: 3, padding: 1),
+                Module(),
+                LayerNorm(dimensions: 32),
+                Module(),
+                Module(),
+                Conv2d(inputChannels: 32, outputChannels: 7, kernelSize: 1),
+            ]
+        }
     }
 
     private func size(_ x: MLXArray) -> (Int, Int) { (x.shape[1], x.shape[2]) }
 
-    /// Fuses the reassembled pyramid coarse → fine and applies `output_conv1`, as the reference `_fuse`
-    /// does. `pyramid` is fine → coarse (`layer1` … `layer4`).
-    func fuse(_ pyramid: [MLXArray]) -> MLXArray {
+    /// Fuses the reassembled pyramid coarse → fine, as the reference `_fuse` does, and applies
+    /// `output_conv1` to the main path and `output_conv1_aux[i]` to each aux level.
+    ///
+    /// - Parameter pyramid: the reassembled stages, fine → coarse (`layer1` … `layer4`).
+    /// - Returns: the main path and the aux pyramid, coarsest level first.
+    func fuse(_ pyramid: [MLXArray]) -> (main: MLXArray, aux: [MLXArray]) {
         let l1 = layer1(pyramid[0])
         let l2 = layer2(pyramid[1])
         let l3 = layer3(pyramid[2])
         let l4 = layer4(pyramid[3])
 
         var path = refine4(l4, skip: nil, size: size(l3))
+        var auxPath = refine4Aux(l4, skip: nil, size: size(l3))
+        var aux = [auxPath]
+
         path = refine3(path, skip: l3, size: size(l2))
+        auxPath = refine3Aux(auxPath, skip: l3, size: size(l2))
+        aux.append(auxPath)
+
         path = refine2(path, skip: l2, size: size(l1))
+        auxPath = refine2Aux(auxPath, skip: l2, size: size(l1))
+        aux.append(auxPath)
+
         path = refine1(path, skip: l1, size: nil)                      // upsample ×2
-        return outputConv1(path)
+        auxPath = refine1Aux(auxPath, skip: l1, size: nil)
+        aux.append(auxPath)
+
+        let necked = aux.enumerated().map { index, level in
+            outputConv1Aux[index].reduce(level) { ($1 as! Conv2d)($0) }
+        }
+        return (outputConv1(path), necked)
     }
 
     func outputConv2Forward(_ x: MLXArray) -> MLXArray {
         let conv0 = outputConv2[0] as! Conv2d
         let conv2 = outputConv2[2] as! Conv2d
         return conv2(relu(conv0(x)))
+    }
+
+    /// The aux head at one pyramid level: conv, channel LayerNorm, relu, 1×1 to seven channels.
+    func outputConv2AuxForward(_ x: MLXArray, level: Int) -> MLXArray {
+        let stack = outputConv2Aux[level]
+        let conv0 = stack[0] as! Conv2d
+        let norm = stack[2] as! LayerNorm
+        let conv5 = stack[5] as! Conv2d
+        return conv5(relu(norm(conv0(x))))
+    }
+}
+
+// MARK: - Camera head
+
+/// The camera pose the decoder predicts, in the reference's nine-number encoding.
+struct NFKDA3Pose {
+    /// The translation, `[1, 3]`.
+    var translation: MLXArray
+    /// The rotation as a scalar-last (xyzw) quaternion, `[1, 4]`.
+    var quaternion: MLXArray
+    /// The vertical and horizontal fields of view in radians, `[1, 2]`.
+    var fieldOfView: MLXArray
+
+    /// The concatenated `[t, qvec, fov]` encoding the reference passes between its stages, `[1, 9]`.
+    var encoding: MLXArray { concatenated([translation, quaternion, fieldOfView], axis: -1) }
+}
+
+/// The camera decoder (`cam_dec`): two hidden layers over a hook's camera token, then three heads for
+/// the translation, the rotation quaternion, and the field of view.
+final class NFKDA3CameraDecoder: Module {
+    // A Sequential(linear, relu, linear, relu), so the linears carry indices 0 and 2.
+    @ModuleInfo(key: "backbone") var backbone: [Module]
+    @ModuleInfo(key: "fc_t") var translation: Linear
+    @ModuleInfo(key: "fc_qvec") var quaternion: Linear
+    // A Sequential(linear, relu): the field of view is non-negative.
+    @ModuleInfo(key: "fc_fov") var fieldOfView: [Module]
+
+    init(dimensions: Int) {
+        _backbone.wrappedValue = [
+            Linear(dimensions, dimensions, bias: true),
+            Module(),
+            Linear(dimensions, dimensions, bias: true),
+            Module(),
+        ]
+        _translation.wrappedValue = Linear(dimensions, 3, bias: true)
+        _quaternion.wrappedValue = Linear(dimensions, 4, bias: true)
+        _fieldOfView.wrappedValue = [Linear(dimensions, 2, bias: true), Module()]
+    }
+
+    /// - Parameter token: a camera token, `[1, 2*dimensions]`.
+    func callAsFunction(_ token: MLXArray) -> NFKDA3Pose {
+        let first = backbone[0] as! Linear
+        let second = backbone[2] as! Linear
+        let hidden = relu(second(relu(first(token))))
+        let fov = fieldOfView[0] as! Linear
+        return NFKDA3Pose(translation: translation(hidden),
+                          quaternion: quaternion(hidden),
+                          fieldOfView: relu(fov(hidden)))
+    }
+}
+
+/// The camera encoder (`cam_enc`): a known pose becomes the token the backbone reads in place of its
+/// learned one, so a caller with calibrated cameras conditions the model rather than letting it guess.
+final class NFKDA3CameraEncoder: Module {
+    @ModuleInfo(key: "pose_branch") var poseBranch: NFKDA3MLP
+    @ModuleInfo(key: "token_norm") var tokenNorm: LayerNorm
+    @ModuleInfo(key: "trunk") var trunk: [NFKDA3Block]
+    @ModuleInfo(key: "trunk_norm") var trunkNorm: LayerNorm
+
+    init(dimensions: Int, heads: Int, depth: Int, mlpRatio: Int) {
+        // The reference's `Mlp(in_features=9, hidden_features=dim // 2, out_features=dim)`.
+        _poseBranch.wrappedValue = NFKDA3MLP(inputDimensions: NFKDA3CameraEncoder.encodingWidth,
+                                             hidden: dimensions / 2, outputDimensions: dimensions)
+        _tokenNorm.wrappedValue = LayerNorm(dimensions: dimensions)
+        _trunk.wrappedValue = (0 ..< depth).map { _ in
+            // No rotary and no query/key norm on this trunk: the reference passes neither, and its
+            // block takes a plain `nn.LayerNorm` where the backbone's takes `ln_eps` 1e-6.
+            NFKDA3Block(dimensions: dimensions, heads: heads, mlpRatio: mlpRatio, qkNorm: false,
+                        frequency: 0, layerNormEps: 1e-5)
+        }
+        _trunkNorm.wrappedValue = LayerNorm(dimensions: dimensions)
+    }
+
+    /// The width of the pose encoding the trunk reads: translation, quaternion, and two fields of view.
+    static let encodingWidth = 9
+
+    /// - Parameter encoding: the pose encoding, `[1, views, 9]`.
+    /// - Returns: the conditioning tokens, `[1, views, dimensions]`.
+    func callAsFunction(_ encoding: MLXArray) -> MLXArray {
+        var tokens = tokenNorm(poseBranch(encoding))
+        for block in trunk {
+            tokens = block(tokens, rope: nil)
+        }
+        return trunkNorm(tokens)
+    }
+
+    /// The reference's `extri_intri_to_pose_encoding`: a camera-to-world rotation and translation with
+    /// a pinhole intrinsic matrix become the nine-number encoding the trunk reads.
+    ///
+    /// - Parameters:
+    ///   - rotation: the camera-to-world rotation, `[3, 3]`.
+    ///   - translation: the camera-to-world translation, `[3]`.
+    ///   - focalLengths: `(fx, fy)` in pixels.
+    ///   - imageSize: `(height, width)` in pixels.
+    static func encoding(rotation: MLXArray, translation: MLXArray,
+                         focalLengths: (Float, Float), imageSize: (Int, Int)) -> MLXArray {
+        let quaternion = NFKDA3Rotation.quaternion(fromMatrix: rotation)
+        let fovHeight = 2 * atan((Float(imageSize.0) / 2) / focalLengths.1)
+        let fovWidth = 2 * atan((Float(imageSize.1) / 2) / focalLengths.0)
+        let fov = MLXArray([fovHeight, fovWidth])
+        return concatenated([translation.reshaped([3]), quaternion, fov], axis: 0).reshaped([1, 1, encodingWidth])
+    }
+}
+
+/// The quaternion conventions the camera head uses. The reference stores a rotation scalar-last
+/// (`xyzw`), which is the opposite of the more common scalar-first order.
+enum NFKDA3Rotation {
+    /// `quat_to_mat`: a scalar-last quaternion becomes a rotation matrix `[3, 3]`.
+    static func matrix(fromQuaternion q: MLXArray) -> MLXArray {
+        let values = q.reshaped([4]).asArray(Float.self)
+        let (i, j, k, r) = (values[0], values[1], values[2], values[3])
+        let twoS = 2.0 / (i * i + j * j + k * k + r * r)
+        let rows: [Float] = [
+            1 - twoS * (j * j + k * k), twoS * (i * j - k * r), twoS * (i * k + j * r),
+            twoS * (i * j + k * r), 1 - twoS * (i * i + k * k), twoS * (j * k - i * r),
+            twoS * (i * k - j * r), twoS * (j * k + i * r), 1 - twoS * (i * i + j * j),
+        ]
+        return MLXArray(rows, [3, 3])
+    }
+
+    /// The inverse: a rotation matrix `[3, 3]` becomes a scalar-last quaternion `[4]`. The branch on
+    /// the largest diagonal term is what keeps the square root away from zero.
+    static func quaternion(fromMatrix m: MLXArray) -> MLXArray {
+        let a = m.reshaped([9]).asArray(Float.self)
+        func at(_ row: Int, _ column: Int) -> Float { a[row * 3 + column] }
+        let trace = at(0, 0) + at(1, 1) + at(2, 2)
+        var x: Float, y: Float, z: Float, w: Float
+        if trace > 0 {
+            let s = sqrtf(trace + 1) * 2
+            w = 0.25 * s
+            x = (at(2, 1) - at(1, 2)) / s
+            y = (at(0, 2) - at(2, 0)) / s
+            z = (at(1, 0) - at(0, 1)) / s
+        } else if at(0, 0) > at(1, 1) && at(0, 0) > at(2, 2) {
+            let s = sqrtf(1 + at(0, 0) - at(1, 1) - at(2, 2)) * 2
+            w = (at(2, 1) - at(1, 2)) / s
+            x = 0.25 * s
+            y = (at(0, 1) + at(1, 0)) / s
+            z = (at(0, 2) + at(2, 0)) / s
+        } else if at(1, 1) > at(2, 2) {
+            let s = sqrtf(1 + at(1, 1) - at(0, 0) - at(2, 2)) * 2
+            w = (at(0, 2) - at(2, 0)) / s
+            x = (at(0, 1) + at(1, 0)) / s
+            y = 0.25 * s
+            z = (at(1, 2) + at(2, 1)) / s
+        } else {
+            let s = sqrtf(1 + at(2, 2) - at(0, 0) - at(1, 1)) * 2
+            w = (at(1, 0) - at(0, 1)) / s
+            x = (at(0, 2) + at(2, 0)) / s
+            y = (at(1, 2) + at(2, 1)) / s
+            z = 0.25 * s
+        }
+        return MLXArray([x, y, z, w])
+    }
+}
+
+/// A camera the model predicts: where it is and what it sees.
+@objc(NFKMLXDepth3Camera)
+public final class NFKMLXDepth3Camera: NSObject {
+    /// The camera-to-world translation.
+    @objc public let translation: [NSNumber]
+    /// The camera-to-world rotation, row-major `[3, 3]` flattened to nine numbers.
+    @objc public let rotation: [NSNumber]
+    /// The horizontal focal length in pixels, at the size the estimate was made for.
+    @objc public let focalLengthX: Double
+    /// The vertical focal length in pixels.
+    @objc public let focalLengthY: Double
+    /// The horizontal field of view in radians.
+    @objc public let fieldOfViewX: Double
+    /// The vertical field of view in radians.
+    @objc public let fieldOfViewY: Double
+
+    init(translation: [Float], rotation: [Float], focalLengthX: Float, focalLengthY: Float,
+         fieldOfViewX: Float, fieldOfViewY: Float) {
+        self.translation = translation.map { NSNumber(value: $0) }
+        self.rotation = rotation.map { NSNumber(value: $0) }
+        self.focalLengthX = Double(focalLengthX)
+        self.focalLengthY = Double(focalLengthY)
+        self.fieldOfViewX = Double(fieldOfViewX)
+        self.fieldOfViewY = Double(fieldOfViewY)
+        super.init()
+    }
+
+    /// The reference's `pose_encoding_to_extri_intri`: the nine-number encoding becomes a rotation, a
+    /// translation, and the focal lengths a pinhole intrinsic matrix carries at `imageSize`.
+    static func camera(from pose: NFKDA3Pose, imageSize: (height: Int, width: Int)) -> NFKMLXDepth3Camera {
+        let rotation = NFKDA3Rotation.matrix(fromQuaternion: pose.quaternion).reshaped([9]).asArray(Float.self)
+        let translation = pose.translation.reshaped([3]).asArray(Float.self)
+        let fov = pose.fieldOfView.reshaped([2]).asArray(Float.self)
+        // The reference clamps the tangent away from zero so a degenerate field of view cannot divide.
+        let tangentHeight = Swift.max(tanf(fov[0] / 2), 1e-6)
+        let tangentWidth = Swift.max(tanf(fov[1] / 2), 1e-6)
+        return NFKMLXDepth3Camera(translation: translation, rotation: rotation,
+                                  focalLengthX: (Float(imageSize.width) / 2) / tangentWidth,
+                                  focalLengthY: (Float(imageSize.height) / 2) / tangentHeight,
+                                  fieldOfViewX: fov[1], fieldOfViewY: fov[0])
     }
 }
 
@@ -685,10 +1007,9 @@ public final class NFKMLXDepthAnything3: NSObject {
         }
     }
 
-    /// Loads a checkpoint, keeping only the monocular depth path: the backbone (`model.backbone.` →
-    /// `pretrained.`) and the DualDPT main branch (`model.head.`), transposing 4-D convolution weights
-    /// to MLX's channels-last layout. The aux/ray fusion chain, the aux heads, and the camera
-    /// decoder/encoder are dropped (a nil remap skips them).
+    /// Loads a checkpoint whole: the backbone (`model.backbone.pretrained.` → `backbone.`), both
+    /// DualDPT branches (`model.head.`), and the camera decoder and encoder, transposing 4-D
+    /// convolution weights to MLX's channels-last layout. Every released tensor is consumed.
     static func loadWeights(into net: NFKMLXDepthAnything3Net, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         // The transposed-convolution resize layers (`resize_layers.0` and `.1`) store their weight as
@@ -707,28 +1028,60 @@ public final class NFKMLXDepthAnything3: NSObject {
             }
             mapped.append((remapped, array))
         }
+        mapped.append(contentsOf: sharedAuxNormals(in: mapped))
         try NFKMLXWeights.apply(mapped, to: net)
     }
 
-    /// Maps a checkpoint key onto the built module, or nil to drop a tensor the depth path does not use.
+    /// The aux head's channel LayerNorm, copied from level 0 onto the levels a release omits.
+    ///
+    /// The reference builds `ln_seq` once and splices that one list into all four `output_conv2_aux`
+    /// Sequentials, so a single `nn.LayerNorm` **instance** is shared across the levels. PyTorch
+    /// deduplicates a shared module in a state dict, saving it once under the first name that reaches
+    /// it, so a released checkpoint carries `output_conv2_aux.0.2` alone and loading it sets all four.
+    /// MLX has four distinct modules, so level 0's parameters are copied onto the rest here.
+    ///
+    /// Reading the absence as "unlearned, left at the `nn.LayerNorm` init" instead is wrong and quiet:
+    /// the ray head is level 3, and the identity affine scored its logits at 0.9991 against the
+    /// reference's 0.9999999999.
+    static func sharedAuxNormals(in mapped: [(String, MLXArray)]) -> [(String, MLXArray)] {
+        let source = Dictionary(mapped.map { ($0.0, $0.1) }, uniquingKeysWith: { first, _ in first })
+        var supplied = [(String, MLXArray)]()
+        for parameter in ["weight", "bias"] {
+            let shared = "head.scratch.output_conv2_aux.0.2.\(parameter)"
+            guard let value = source[shared] else { continue }
+            for level in 1 ..< NFKDA3Scratch.auxLevels {
+                supplied.append(("head.scratch.output_conv2_aux.\(level).2.\(parameter)", value))
+            }
+        }
+        return supplied
+    }
+
+    /// Maps a checkpoint key onto the built module. Every key in a released checkpoint maps, so a nil
+    /// here means the file carries something this port does not build.
     static func remap(_ key: String) -> String? {
         if key.hasPrefix("model.backbone.pretrained.") {
             return "backbone." + key.dropFirst("model.backbone.pretrained.".count)
         }
         if key.hasPrefix("model.head.") {
-            let tail = String(key.dropFirst("model.head.".count))
-            // Drop the aux fusion chain and aux heads (monocular depth uses the main branch only).
-            if tail.contains("_aux") { return nil }
-            return "head." + tail
+            return "head." + key.dropFirst("model.head.".count)
         }
-        return nil                                                     // model.cam_enc / model.cam_dec
+        if key.hasPrefix("model.cam_dec.") {
+            return "cam_dec." + key.dropFirst("model.cam_dec.".count)
+        }
+        if key.hasPrefix("model.cam_enc.") {
+            return "cam_enc." + key.dropFirst("model.cam_enc.".count)
+        }
+        return nil
     }
 }
 
-/// The full model: backbone (`backbone`) + DualDPT depth head (`head`).
+/// The full model: backbone (`backbone`), DualDPT head (`head`), and the camera decoder and encoder
+/// (`cam_dec`, `cam_enc`).
 final class NFKMLXDepthAnything3Net: Module {
     @ModuleInfo(key: "backbone") var backbone: NFKDA3Encoder
     @ModuleInfo(key: "head") var head: NFKDA3Head
+    @ModuleInfo(key: "cam_dec") var cameraDecoder: NFKDA3CameraDecoder
+    @ModuleInfo(key: "cam_enc") var cameraEncoder: NFKDA3CameraEncoder
 
     let configuration: NFKMLXDepth3Configuration
 
@@ -736,25 +1089,51 @@ final class NFKMLXDepthAnything3Net: Module {
         self.configuration = configuration
         _backbone.wrappedValue = NFKDA3Encoder(configuration)
         _head.wrappedValue = NFKDA3Head(configuration)
+        _cameraDecoder.wrappedValue = NFKDA3CameraDecoder(dimensions: configuration.cameraDecoderDimensions)
+        _cameraEncoder.wrappedValue = NFKDA3CameraEncoder(dimensions: configuration.embedDimensions,
+                                                          heads: configuration.cameraHeads,
+                                                          depth: configuration.cameraTrunkDepth,
+                                                          mlpRatio: configuration.mlpRatio)
     }
 
     /// The raw network on a prepared `[1, inputSize, inputSize, 3]` image: the four hooked features.
     func features(_ image: MLXArray) -> [MLXArray] { backbone.hookedFeatures(image) }
 
+    /// Everything the model predicts from one prepared `[1, inputSize, inputSize, 3]` image: the depth
+    /// and ray maps with their confidences, and the camera the decoder reads off the last hook's token.
+    ///
+    /// - Parameter conditioning: a pose token from `cameraEncoder`, or nil to let the backbone use its
+    ///   own learned camera token.
+    func predict(_ image: MLXArray, conditioning: MLXArray? = nil)
+        -> (prediction: NFKDA3Prediction, pose: NFKDA3Pose) {
+        let (features, cameras) = backbone.hooked(image, conditioning: conditioning)
+        return (head(features), cameraDecoder(cameras[cameras.count - 1]))
+    }
+
+    /// The pipeline's ImageNet normalization (`_normalize_image`).
+    static func normalized(_ image: MLXArray) -> MLXArray {
+        let mean = MLXArray([Float(0.485), 0.456, 0.406])
+        let standardDeviation = MLXArray([Float(0.229), 0.224, 0.225])
+        return (image - mean) / standardDeviation
+    }
+
+    /// Resizes a bridged image `[H, W, 3]` (`0...1`) to the encoder's input size and normalizes it.
+    ///
+    /// The resize is bilinear where the reference uses a PIL resize, a documented consumer
+    /// approximation; the network is at parity on the reference's own pixel values.
+    func prepared(_ image: MLXArray) -> MLXArray {
+        let resized = NFKDA3Resample.bilinearAlignCorners(
+            image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]]),
+            height: configuration.inputSize, width: configuration.inputSize)
+        return NFKMLXDepthAnything3Net.normalized(resized)
+    }
+
     /// Maps a bridged image `[H, W, 3]` (`0...1`) to a grayscale depth image `[H, W, 3]` (`0...1`),
     /// near = bright. The encoder runs at the fixed input size; the map resizes back and normalizes.
     func depth(_ image: MLXArray) -> MLXArray {
         let (height, width) = (image.shape[0], image.shape[1])
-        let resized = NFKDA3Resample.bilinearAlignCorners(
-            image.reshaped([1, height, width, image.shape[2]]),
-            height: configuration.inputSize, width: configuration.inputSize)
-        // The pipeline normalizes with ImageNet statistics before the backbone (`_normalize_image`).
-        // The resize here is bilinear where the reference uses a PIL resize, a documented consumer
-        // approximation; the network is at parity on the reference's own pixel values.
-        let mean = MLXArray([Float(0.485), 0.456, 0.406])
-        let standardDeviation = MLXArray([Float(0.229), 0.224, 0.225])
-        let prepared = (resized - mean) / standardDeviation
-        let (depthMap, _) = head(backbone.hookedFeatures(prepared))    // [1, h, w]
+        let prepared = prepared(image)
+        let depthMap = head(backbone.hookedFeatures(prepared)).depth   // [1, h, w]
         let full = NFKDA3Resample.bilinearAlignCorners(
             depthMap.reshaped([1, configuration.inputSize, configuration.inputSize, 1]),
             height: height, width: width)
@@ -763,6 +1142,91 @@ final class NFKMLXDepthAnything3Net: Module {
         let span = maximum(full.max() - minimum, MLXArray(1e-6))
         let normalized = ((full - minimum) / span).reshaped([height, width, 1])
         return concatenated([normalized, normalized, normalized], axis: 2)
+    }
+}
+
+/// Depth Anything 3 as an object, for the predictions a single-image backend cannot carry: the camera
+/// the model reads off its own camera token, and the ray map beside the depth.
+///
+/// The depth path is `NFKMLXDepthAnything3.backend(variant:weightsURL:)`, which returns a grayscale
+/// image through the ordinary inference contract. This class is the way to the rest.
+///
+/// - Since: InferKit 0.4.0
+@objc(NFKMLXDepth3Estimator)
+public final class NFKMLXDepth3Estimator: NSObject {
+    private let net: NFKMLXDepthAnything3Net
+
+    init(net: NFKMLXDepthAnything3Net) {
+        self.net = net
+        super.init()
+    }
+
+    /// Builds an estimator from optional local weights. A nil `weightsURL` builds random weights, as
+    /// the backend factories do.
+    @objc(estimatorWithVariant:weightsURL:error:)
+    public static func estimator(variant: NFKMLXDepth3Variant, weightsURL: URL?) throws -> NFKMLXDepth3Estimator {
+        let net = NFKMLXDepthAnything3Net(NFKMLXDepthAnything3.specs(for: variant).configuration)
+        if let weightsURL {
+            try NFKMLXDepthAnything3.loadWeights(into: net, from: weightsURL)
+        }
+        return NFKMLXDepth3Estimator(net: net)
+    }
+
+    /// Downloads the checkpoint from Hugging Face, then builds. Blocking on the network; run off the
+    /// render thread.
+    @objc(estimatorWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func estimator(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
+                                 revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXDepth3Estimator {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try estimator(variant: variant, weightsURL: url)
+    }
+
+    /// The camera the model reads off the image: where it is and what it sees.
+    ///
+    /// The focal lengths are in pixels at the image's own size, so a caller can build an intrinsic
+    /// matrix directly.
+    @objc(cameraForImage:error:)
+    public func camera(for image: CGImage) throws -> NFKMLXDepth3Camera {
+        let tensor = try NFKMLXImageBridge.tensor(from: image, channels: 3,
+                                              colorSpace: CGColorSpaceCreateDeviceRGB())
+        let pose = net.predict(net.prepared(tensor)).pose
+        return NFKMLXDepth3Camera.camera(from: pose, imageSize: (image.height, image.width))
+    }
+
+    /// The ray map: six Plücker channels per position at the head's own resolution, beside its
+    /// confidence.
+    ///
+    /// Swift-only, because the maps are `MLXArray`s. An Objective-C caller reads the camera above,
+    /// which is what the ray branch is there to support.
+    public func rays(for image: CGImage) throws -> (ray: MLXArray, confidence: MLXArray) {
+        let tensor = try NFKMLXImageBridge.tensor(from: image, channels: 3,
+                                              colorSpace: CGColorSpaceCreateDeviceRGB())
+        let prediction = net.predict(net.prepared(tensor)).prediction
+        return (prediction.ray, prediction.rayConfidence)
+    }
+
+    /// Conditions the backbone on a known camera rather than letting it predict one, which is what the
+    /// camera encoder is for.
+    ///
+    /// - Parameters:
+    ///   - rotation: the camera-to-world rotation, row-major nine numbers.
+    ///   - translation: the camera-to-world translation, three numbers.
+    ///   - focalLengthX: the horizontal focal length in pixels.
+    ///   - focalLengthY: the vertical focal length in pixels.
+    @objc(cameraForImage:knownRotation:translation:focalLengthX:focalLengthY:error:)
+    public func camera(for image: CGImage, knownRotation rotation: [NSNumber], translation: [NSNumber],
+                       focalLengthX: Double, focalLengthY: Double) throws -> NFKMLXDepth3Camera {
+        let encoding = NFKDA3CameraEncoder.encoding(
+            rotation: MLXArray(rotation.map { $0.floatValue }, [3, 3]),
+            translation: MLXArray(translation.map { $0.floatValue }),
+            focalLengths: (Float(focalLengthX), Float(focalLengthY)),
+            imageSize: (image.height, image.width))
+        let tensor = try NFKMLXImageBridge.tensor(from: image, channels: 3,
+                                              colorSpace: CGColorSpaceCreateDeviceRGB())
+        let conditioning = net.cameraEncoder(encoding)
+        let pose = net.predict(net.prepared(tensor), conditioning: conditioning).pose
+        return NFKMLXDepth3Camera.camera(from: pose, imageSize: (image.height, image.width))
     }
 }
 

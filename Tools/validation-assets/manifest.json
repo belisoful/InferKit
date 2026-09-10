@@ -28,7 +28,7 @@
       "file": "da3-small/model.safetensors",
       "bytes": 137248940,
       "url": "https://huggingface.co/depth-anything/DA3-SMALL/resolve/main/model.safetensors",
-      "note": "Depth Anything 3 monocular (DA3-SMALL, Apache-2.0). Already a PyTorch-layout safetensors NFKMLXDepthAnything3.loadWeights reads directly: it keeps model.backbone.pretrained.* (the DinoV2 vits backbone with rope/qknorm/camera-token/cat_token from block 4) and the model.head.* DualDPT DEPTH branch, dropping the aux/ray branch and model.cam_enc/cam_dec. 4-D convs transpose to NHWC; the two resize_layers ConvT weights take the transposed-conv axis order [C_in,C_out,kH,kW]->[C_out,kH,kW,C_in], NOT a regular conv's. The reference (IK_VAL_DEPTH3_REF) is produced by `run_reference.py depth3 <out> --checkpoint <this> --size 518` under the da3 oracle env with IK_REF_SRC pointing at the unpacked `depth_anything_3` pip package; it records the 4 hooked features, the 4 head stages, the fused map, the pre-exp logits, and the exp-depth output.",
+      "note": "Depth Anything 3 monocular (DA3-SMALL, Apache-2.0). Already a PyTorch-layout safetensors NFKMLXDepthAnything3.loadWeights reads directly: every branch loads, all 437 tensors: model.backbone.pretrained.* (the DinoV2 vits backbone with rope/qknorm/camera-token/cat_token from block 4), the model.head.* DualDPT depth AND aux/ray branches, model.cam_dec.*, and model.cam_enc.*. 4-D convs transpose to NHWC; the two resize_layers ConvT weights take the transposed-conv axis order [C_in,C_out,kH,kW]->[C_out,kH,kW,C_in], NOT a regular conv's. head.scratch.output_conv2_aux.0.2 is a SHARED nn.LayerNorm instance the state dict saves once, so the loader copies it onto levels 1-3. The reference (IK_VAL_DEPTH3_REF) is produced by `run_reference.py depth3 <out> --checkpoint <this> --size 518` under the da3 oracle env with IK_REF_SRC pointing at the unpacked `depth_anything_3` pip package; it records the 4 hooked features, the 4 head stages, the fused map, the pre-exp logits, the exp-depth output, the aux pyramid, the ray map and its confidence, the 4 camera tokens, the pose encoding, and the camera encoder's input and tokens.",
       "config": [
         "IK_VAL_DEPTH3_WEIGHTS"
       ]
@@ -750,6 +750,358 @@
         "IK_VAL_HTDEMUCS_FT_4"
       ],
       "note": "htdemucs_ft model 4 of 4 (the release's order: drums, bass, other, vocals), each fine-tuned for one stem and combined by NFKMLXHTDemucsBag with one-hot weights. Record: `run_reference.py htdemucs_bag --checkpoint <a directory holding the four files under their release names>` -> IK_PARITY_HTDEMUCS_FT."
+    },
+    {
+      "key": "REALESRGAN_GENERAL_V3",
+      "file": "realesrgan-compact/realesr-general-x4v3.pth",
+      "bytes": 4885424,
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-general-x4v3.pth",
+      "note": "Real-ESRGAN's later COMPACT general x4 release (`SRVGGNetCompact`, 32 body convolutions). The native .pth reader loads it directly; the keys are the reference's own `body.N` flat ModuleList, which the port holds as a [Module] array so the PReLU slots keep their indices. Record: `run_reference.py realesrgan_compact <out> --checkpoint <this>` under the llm oracle env (torch alone; the architecture is inlined in the mode) -> IK_PARITY_REALESRGAN_GENERAL_V3.",
+      "config": [
+        "IK_VAL_REALESRGAN_GENERAL_V3"
+      ]
+    },
+    {
+      "key": "REALESRGAN_ANIME_V3",
+      "file": "realesrgan-compact/realesr-animevideov3.pth",
+      "bytes": 2495712,
+      "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth",
+      "note": "Real-ESRGAN's later COMPACT anime-video x4 release: the same generator with 16 body convolutions instead of 32. The record carries `num_conv` so the test builds the right body length and checks it against the variant. Record: `run_reference.py realesrgan_compact` -> IK_PARITY_REALESRGAN_ANIME_V3.",
+      "config": [
+        "IK_VAL_REALESRGAN_ANIME_V3"
+      ]
+    },
+    {
+      "key": "ZERODCE_PLUS",
+      "file": "zerodce2/Epoch99.pth",
+      "bytes": 42489,
+      "url": "https://github.com/Li-Chongyi/Zero-DCE_extension/raw/main/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth",
+      "note": "Zero-DCE++ (`enhance_net_nopool`), the authors' successor to Zero-DCE: depthwise-separable convolutions (`CSDN_Tem`), ONE shared three-channel curve reused across all eight iterations, and an estimator run at 1/12 resolution with the curve map lifted back by an align-corners bilinear upsample. Keys carry a `module.` prefix from the training wrapper, which the loader strips. Record: `run_reference.py zero_dce_plus <out> --checkpoint <this>` under the llm oracle env -> IK_PARITY_ZERO_DCE_PLUS.",
+      "config": [
+        "IK_VAL_ZERO_DCE_PLUS"
+      ]
+    },
+    {
+      "key": "ISNET",
+      "file": "isnet/isnet-general-use.pth",
+      "bytes": 176651310,
+      "url": "https://huggingface.co/NimaBoscarino/IS-Net_DIS-general-use/resolve/main/isnet-general-use.pth",
+      "note": "IS-Net (`ISNetDIS`, the DIS project), U2-Net's successor by the same authors. The native .pth reader loads it directly and `NFKMLXU2Net.remapReferenceKey` translates the shared `rebnconvN` names, because the Residual U-blocks are U2-Net's unchanged. What differs: a stride-2 `conv_in` stem with no norm and no activation, wider stages, and six separate side maps with no fusion `outconv`. Record: `run_reference.py isnet <out> --checkpoint <this> --size 1024` under the llm oracle env with IK_REF_SRC pointing at a `dis/` directory holding the repository's `IS-Net/models/isnet.py`; it records the stem, stage 1, stage 6, and the five coarser side maps beside the prediction -> IK_PARITY_ISNET.",
+      "config": [
+        "IK_VAL_ISNET"
+      ]
+    },
+    {
+      "key": "ADAIN_VGG",
+      "file": "adain/vgg_normalised.pth",
+      "bytes": 80102481,
+      "url": "https://huggingface.co/BhupatiNadar/adain-style-transfer-models/resolve/main/vgg_normalized.pth",
+      "note": "The normalized VGG-19 AdaIN encodes with (MIT). Its first 1x1 convolution carries the input normalization, so the plate reaches it unnormalized. The port keeps the truncated prefix through relu4_1 (index 30), which is the slice the reference takes. Loaded by NFKMLXAdaIN.loadEncoderWeights.",
+      "config": [
+        "IK_VAL_ADAIN_VGG"
+      ]
+    },
+    {
+      "key": "ADAIN_DECODER",
+      "file": "adain/decoder.pth",
+      "bytes": 14027664,
+      "url": "https://huggingface.co/BhupatiNadar/adain-style-transfer-models/resolve/main/decoder_final.pth",
+      "note": "The AdaIN decoder that inverts relu4_1 features back to an image (MIT). Keys carry a `net.` prefix from the training wrapper, which both the loader and the oracle strip. Record: `run_reference.py adain <out> --checkpoint <this> --size 256` under the llm oracle env, with IK_ADAIN_VGG naming the encoder beside it and IK_REF_SRC pointing at an `adain/` directory holding naoto0804's `net.py` and `function.py`; it records both feature maps and the normalized features beside the decoded image -> IK_PARITY_ADAIN.",
+      "config": [
+        "IK_VAL_ADAIN_DECODER"
+      ]
+    },
+    {
+      "key": "HAT_L",
+      "file": "hat/HAT-L_SRx4_ImageNet-pretrain.pth",
+      "bytes": 165774123,
+      "url": "https://huggingface.co/anchuang/HAT-L_SRx4_ImageNet-pretrain/resolve/main/HAT-L_SRx4_ImageNet-pretrain.pth",
+      "note": "HAT-L x4 (the Hybrid Attention Transformer, XPixelGroup), SwinIR's successor: 12 groups of 6 blocks, 180 wide, 6 heads, window 16, overlap ratio 0.5, mlp ratio 2, compress ratio 3, squeeze factor 30. The tensors sit under `params_ema`, which the native reader unwraps. The two `relative_position_index_*` buffers are recomputed from the window geometry and dropped at load; the parity test compares both against these buffers, because the overlapping index relies on PyTorch reading NEGATIVE indices from the end of the bias table. Record: `run_reference.py hat <out> --checkpoint <this> --size 64` under the llm oracle env with IK_HAT_GROUPS=12 and IK_REF_SRC pointing at a `hat/` directory holding `hat_arch.py` (basicsr is shimmed in the mode) -> IK_PARITY_HAT_L.",
+      "config": [
+        "IK_VAL_HAT_L"
+      ]
+    },
+    {
+      "key": "REAL_HAT_GAN",
+      "file": "hat/Real_HAT_GAN_sharper.pth",
+      "bytes": 170277017,
+      "url": "https://huggingface.co/anchuang/Real_HAT_GAN_SRx4_sharper/resolve/main/Real_HAT_GAN_sharper.pth",
+      "note": "Real-HAT-GAN x4 sharper: the HAT BASE geometry (6 groups, not 12) trained for real-world degradation, which is what measures the `.base` configuration. Record: `run_reference.py hat` with IK_HAT_GROUPS=6 -> IK_PARITY_REAL_HAT_GAN.",
+      "config": [
+        "IK_VAL_REAL_HAT_GAN"
+      ]
+    },
+    {
+      "key": "METACLIP_B32",
+      "file": "metaclip-b32-400m.safetensors",
+      "raw": "metaclip/b32_400m.pt",
+      "bytes": 1815669915,
+      "url": "https://dl.fbaipublicfiles.com/MMPT/metaclip/b32_400m.pt",
+      "converter": "clip-to-safetensors",
+      "note": "MetaCLIP ViT-B/32 (400M), CLIP's architecture on a re-curated training set. The authors' release carries the OpenAI key names under a training checkpoint's `state_dict`, so `clip-to-safetensors` converts it unchanged and `NFKMLXCLIPVariant.vitB32` loads it. Its tensors are bitwise identical to facebook/metaclip-b32-400m, which is what lets the same transformers `CLIPModel` oracle serve as the reference: `run_reference.py clip <out> --size 224` with IK_CLIP_REPO=facebook/metaclip-b32-400m -> IK_PARITY_METACLIP_B32.",
+      "config": [
+        "IK_VAL_METACLIP_B32"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV9T",
+      "file": "yolo/yolov9t.pt",
+      "bytes": 4969803,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov9t.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV9T. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV9T"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV9S",
+      "file": "yolo/yolov9s.pt",
+      "bytes": 15389259,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov9s.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV9S. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV9S"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV9M",
+      "file": "yolo/yolov9m.pt",
+      "bytes": 40993492,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov9m.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV9M. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV9M"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV9C",
+      "file": "yolo/yolov9c.pt",
+      "bytes": 51794840,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov9c.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV9C. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV9C"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV9E",
+      "file": "yolo/yolov9e.pt",
+      "bytes": 117521038,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov9e.pt",
+      "note": "YOLOv9e keeps its programmable-gradient branch at inference (CBLinear taps each backbone stage into per-level splits, CBFuse sums the matching split back), so a graph row holds a list of tensors rather than one. Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV9E. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV9E"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10N",
+      "file": "yolo/yolov10n.pt",
+      "bytes": 5860383,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10n.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10N. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10N"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10S",
+      "file": "yolo/yolov10s.pt",
+      "bytes": 16623111,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10s.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10S. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10S"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10M",
+      "file": "yolo/yolov10m.pt",
+      "bytes": 33643667,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10m.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10M. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10M"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10B",
+      "file": "yolo/yolov10b.pt",
+      "bytes": 41679663,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10b.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10B. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10B"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10L",
+      "file": "yolo/yolov10l.pt",
+      "bytes": 52425230,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10l.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10L. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10L"
+      ]
+    },
+    {
+      "key": "YOLO_YOLOV10X",
+      "file": "yolo/yolov10x.pt",
+      "bytes": 64395854,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10x.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLOV10X. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLOV10X"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO11N",
+      "file": "yolo/yolo11n.pt",
+      "bytes": 5613764,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO11N. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO11N"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO11S",
+      "file": "yolo/yolo11s.pt",
+      "bytes": 19313732,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11s.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO11S. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO11S"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO11M",
+      "file": "yolo/yolo11m.pt",
+      "bytes": 40684120,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO11M. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO11M"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO11L",
+      "file": "yolo/yolo11l.pt",
+      "bytes": 51387343,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11l.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO11L. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO11L"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO11X",
+      "file": "yolo/yolo11x.pt",
+      "bytes": 114636239,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO11X. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO11X"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO12N",
+      "file": "yolo/yolo12n.pt",
+      "bytes": 5595063,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt",
+      "note": "YOLOv12's positional-encoding convolution carries a bias beside its batch norm, which no other generation's does. The current reference source does not show it; the released checkpoint does. Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO12N. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO12N"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO12S",
+      "file": "yolo/yolo12s.pt",
+      "bytes": 19006455,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO12S. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO12S"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO12M",
+      "file": "yolo/yolo12m.pt",
+      "bytes": 40904955,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12m.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO12M. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO12M"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO12L",
+      "file": "yolo/yolo12l.pt",
+      "bytes": 53699086,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12l.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO12L. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO12L"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO12X",
+      "file": "yolo/yolo12x.pt",
+      "bytes": 119322638,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12x.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO12X. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO12X"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO26N",
+      "file": "yolo/yolo26n.pt",
+      "bytes": 5544453,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26n.pt",
+      "note": "YOLO26's SPPF differs from every earlier one: the narrowing convolution has no activation and the fused result adds the input. Its head is end-to-end with reg_max 1, so it carries no DFL module and its postprocess selects over anchor-and-class pairs. Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO26N. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO26N"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO26S",
+      "file": "yolo/yolo26s.pt",
+      "bytes": 20422725,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO26S. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO26S"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO26M",
+      "file": "yolo/yolo26m.pt",
+      "bytes": 44255705,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26m.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO26M. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO26M"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO26L",
+      "file": "yolo/yolo26l.pt",
+      "bytes": 53211173,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26l.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO26L. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO26L"
+      ]
+    },
+    {
+      "key": "YOLO_YOLO26X",
+      "file": "yolo/yolo26x.pt",
+      "bytes": 118667365,
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt",
+      "note": "Loaded by NFKMLXYOLOGenerations through the graph interpreter; the native .pt reader reads the pickled ultralytics module directly. Record: `run_reference.py yolo_generation <out> --checkpoint <this> --size 640 --plate subject` on the interpreter that has ultralytics installed -> IK_PARITY_YOLO26X. AGPL-3.0.",
+      "config": [
+        "IK_VAL_YOLO26X"
+      ]
     }
   ],
   "unresolved": [
@@ -1658,7 +2010,7 @@
       "config": {
         "IK_VAL_DEPTH3_BASE_WEIGHTS": "model.safetensors"
       },
-      "note": "Depth Anything 3 BASE (vitb: 768/12/12, DualDPT 128 over [96,192,384,768]; `.base`). Record: `IK_REF_SRC=<unpacked depth_anything_3 wheel dir> IK_DEPTH3_VARIANT=base run_reference.py depth3 --checkpoint model.safetensors --size 518` (da3 env) -> IK_PARITY_DEPTH3_BASE."
+      "note": "Depth Anything 3 BASE (vitb: 768/12/12, DualDPT 128 over [96,192,384,768]; `.base`). All 437 tensors load, every branch (depth, aux/ray, cam_dec, cam_enc). Record: `IK_REF_SRC=<unpacked depth_anything_3 wheel dir> IK_DEPTH3_VARIANT=base run_reference.py depth3 --checkpoint model.safetensors --size 518` (da3 env) -> IK_PARITY_DEPTH3_BASE; it carries the same seams as DEPTH3, including the aux pyramid, the ray map and its confidence, the 4 camera tokens, the pose encoding, and the camera encoder's input and tokens."
     },
     {
       "key": "DA3_LARGE",
@@ -1671,7 +2023,7 @@
       "config": {
         "IK_VAL_DEPTH3_LARGE_WEIGHTS": "model.safetensors"
       },
-      "note": "Depth Anything 3 LARGE (vitl: 1024/24/16, hooks 11/15/19/23, alternation from block 8, DualDPT 256 over [256,512,1024,1024]; `.large`, CC-BY-NC). Record as DA3_BASE with IK_DEPTH3_VARIANT=large -> IK_PARITY_DEPTH3_LARGE."
+      "note": "Depth Anything 3 LARGE (vitl: 1024/24/16, hooks 11/15/19/23, alternation from block 8, DualDPT 256 over [256,512,1024,1024]; `.large`, CC-BY-NC). All 637 tensors load, every branch (depth, aux/ray, cam_dec, cam_enc). Record as DA3_BASE with IK_DEPTH3_VARIANT=large -> IK_PARITY_DEPTH3_LARGE, with the same aux/ray/camera seams."
     },
     {
       "key": "RTDETR_R18VD",
@@ -1714,6 +2066,62 @@
         "IK_VAL_RTDETR_R101VD": ""
       },
       "note": "RT-DETR r101vd: ResNet-101-vd with a 384-wide hybrid encoder (`.r101vd`). Record: `run_reference.py rtdetr_real --checkpoint <this directory> --image subject384.jpg --size 640` (llm env) -> IK_PARITY_RTDETR_R101VD."
+    },
+    {
+      "key": "RTDETR_V2_R18VD",
+      "repo": "PekingU/rtdetr_v2_r18vd",
+      "directory": "raw/rtdetr-v2-r18vd",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_RTDETR_V2_R18VD": ""
+      },
+      "note": "RT-DETRv2 r18vd (`.v2R18VD`), the v2 retrain of the r18vd geometry. Record: `run_reference.py rtdetr_v2_real --checkpoint <this directory> --image subject384.jpg --size 640` (llm env) -> IK_PARITY_RTDETR_V2_R18VD."
+    },
+    {
+      "key": "RTDETR_V2_R34VD",
+      "repo": "PekingU/rtdetr_v2_r34vd",
+      "directory": "raw/rtdetr-v2-r34vd",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_RTDETR_V2_R34VD": ""
+      },
+      "note": "RT-DETRv2 r34vd (`.v2R34VD`), the v2 retrain of the r34vd geometry. Record: `run_reference.py rtdetr_v2_real --checkpoint <this directory> --image subject384.jpg --size 640` (llm env) -> IK_PARITY_RTDETR_V2_R34VD."
+    },
+    {
+      "key": "RTDETR_V2_R50VD",
+      "repo": "PekingU/rtdetr_v2_r50vd",
+      "directory": "raw/rtdetr-v2-r50vd",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_RTDETR_V2_R50VD": ""
+      },
+      "note": "RT-DETRv2 r50vd (`.v2R50VD`), the v2 retrain of the r50vd geometry. RT-DETRv2 (RTDetrV2ForObjectDetection, Apache-2.0) runs through NFKMLXRTDetr: v2 changes only the deformable decoder's sampling, carried by NFKMLXRTDetrConfiguration.decoderOffsetScale and .decoderMethod (NFKMLXRTDetrSamplingMethod bilinear/discrete). Every released v2 config repeats its RT-DETR namesake's geometry and states the RT-DETR sampling settings (decoder_method default, decoder_offset_scale 0.5), so the four v2 presets return their v1 counterparts and the releases differ only in their weights. Record: `run_reference.py rtdetr_v2_real --checkpoint <this directory> --image subject384.jpg --size 640` (llm env) -> IK_PARITY_RTDETR_V2_R50VD; one real mode serves all four sizes. The tiny-config parity is `run_reference.py rtdetr_v2` (no weights) -> IK_PARITY_RTDETR_V2, which sets decoder_method discrete and an offset scale of 0.35 so the discrete sampling path and a non-default offset scale are exercised."
+    },
+    {
+      "key": "RTDETR_V2_R101VD",
+      "repo": "PekingU/rtdetr_v2_r101vd",
+      "directory": "raw/rtdetr-v2-r101vd",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_RTDETR_V2_R101VD": ""
+      },
+      "note": "RT-DETRv2 r101vd (`.v2R101VD`), the v2 retrain of the r101vd geometry. Record: `run_reference.py rtdetr_v2_real --checkpoint <this directory> --image subject384.jpg --size 640` (llm env) -> IK_PARITY_RTDETR_V2_R101VD."
     },
     {
       "key": "RFDETR_NANO",
@@ -1795,6 +2203,89 @@
         "IK_PARITY_GEMMA3N_E4B": "records/gemma3n_e4b.safetensors"
       },
       "note": "Gemma 3n E4B (16 GB bf16): 35 layers, fifteen sharing keys and values, at the E2B's widths and towers; read by the E2B's configuration reader. Measured at bf16 on both sides (`IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n --checkpoint <this directory>`, gemma env), the Gemma 4 E4B treatment: logit cosine 0.99989, argmax 5/6, the one flip at a half-logit reference margin. The E2B recorded the same way (IK_PARITY_GEMMA3N_E2B_BF16, the same command on the E2B directory) is the control: exact at float32, it reads 0.99989 at bf16 too, so that is the rounding floor the E4B is held to."
+    },
+    {
+      "key": "VITPOSE",
+      "repo": "usyd-community/vitpose-base-simple",
+      "directory": "raw/vitpose-base-simple",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VITPOSE": "",
+        "IK_PARITY_VITPOSE": "records/vitpose.safetensors"
+      },
+      "note": "ViTPose base with the SIMPLE decoder (ViTAE-Transformer, Apache-2.0), a plain ViT-B backbone under a ReLU + bilinear upsample + 3x3 convolution head, at 256x192 with patch 16. Loads directly through NFKMLXVitPose.loadWeights (the module keys are the checkpoint's; only the convolution layouts move). Two load-bearing facts: the patch-embedding convolution pads by 2, which at this geometry leaves the patch count at 16x12 either way, so a plain non-overlapping patchify loads cleanly and samples every window two pixels early (a wrong patchify scores the backbone 0.998 instead of 0.9999999999); and the position table carries a class-token row the sequence does not, added to every patch as a constant bias (pos[:, 1:] + pos[:, :1]). The backbone layer_norm_eps is 1e-12, not a ViT's usual 1e-6. Record: `run_reference.py vitpose --checkpoint <this directory>` (llm env, needs Pillow) -> IK_PARITY_VITPOSE; one mode serves both released decoders, since the geometry comes from each release's config.json. The oracle resizes and normalizes the image itself rather than through VitPoseImageProcessor, which warps a person's BOX through an affine transform that a whole-image caller has no box for, and records the prepared pixels, the backbone feature map, the heatmaps, the integer peaks, the DARK-refined keypoints, and the scores. The DARK decode (post_dark_unbiased_data_processing) is ported in full: keypoints_from_heatmaps defaults kernel=11 (Gaussian radius 5) while the callee's own signature defaults to 3, and scipy's default reflect mode is SYMMETRIC where mirror is not, so the blur's border gathers reflected indices. At reference parity on these released weights (testVitPoseMatchesTheReference): backbone feature map 0.9999999999995017, heatmaps 0.9999999999966225, every integer peak exact, the refinement within 8.80751758813858e-05 of a cell. vitpose-plus-* releases route the feed-forward through per-dataset experts and need a dataset index at inference; the configuration reader refuses them."
+    },
+    {
+      "key": "VITPOSE_BASE",
+      "repo": "usyd-community/vitpose-base",
+      "directory": "raw/vitpose-base",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VITPOSE_BASE": "",
+        "IK_PARITY_VITPOSE_BASE": "records/vitpose_base.safetensors"
+      },
+      "note": "ViTPose base with the CLASSIC decoder (`.base`): the same ViT-B backbone under two transposed-convolution blocks (no bias, each followed by a BatchNorm and a ReLU) and a 1x1 convolution, which is the head SimpleBaseline uses; use_simple_decoder in the release's config.json selects it. Record: `run_reference.py vitpose --checkpoint <this directory>` (llm env) -> IK_PARITY_VITPOSE_BASE. At reference parity on these released weights: feature map 0.9999999999931072, heatmaps 0.9999999999953517, every integer peak exact, refinement within 4.622340202331543e-05 of a cell. This release is what showed that the DARK refinement must NOT be clamped: a flat neighborhood can move a peak past its own heatmap, and clamping the shift to one cell disagreed with the reference by 1.04 cells, so NFKMLXVitPoseNet.estimate clamps the final normalized position instead, because NFKKeypoint promises one."
+    },
+    {
+      "key": "DDCOLOR",
+      "repo": "piddnad/DDColor-models",
+      "directory": "ddcolor",
+      "files": [
+        "ddcolor_modelscope.pth",
+        "ddcolor_paper.pth",
+        "ddcolor_artistic.pth"
+      ],
+      "config": {
+        "IK_VAL_DDCOLOR": "ddcolor_modelscope.pth",
+        "IK_PARITY_DDCOLOR": "records/ddcolor.safetensors"
+      },
+      "note": "DDColor (piddnad/DDColor, Apache-2.0), the modern colorizer beside the 2016 and 2017 ports: a ConvNeXt-L encoder (depths [3,3,27,3], widths [192,384,768,1536]) hooked at its four stages, a spectral-normalized U-Net decoder (three UnetBlockWide blocks over CustomPixelShuffle_ICNR, then a last pixel shuffle at scale 4 for the pixel embedding), and a Mask2Former-style color decoder (100 learned color queries cross-attending the three U-Net stage outputs over nine layers, dotted against the pixel embedding into one color attention map each, read by a final 1x1 convolution beside the input). The three released .pth checkpoints are the NFKMLXDDColorVariant cases (.modelscope, .paper, .artistic), loaded by the native torch reader. Coverage on ddcolor_modelscope.pth: 573 built parameters all loaded, 31 released tensors deliberately dropped (the weight_u/weight_v power-iteration vectors the spectral-norm fusion consumes, the encoder's classification head and its pooled norm, the normalization buffers the port applies itself, and the BatchNorm step counters), 0 unaccounted. Oracle: `run_reference.py ddcolor --checkpoint <release .pth>` on the llm env (which gained scikit-image). The reference is not in transformers, so IK_DDCOLOR_SRC names the cloned repository's basicsr/ directory (ddcolor_arch.py plus ddcolor_arch_utils/) and the oracle stubs basicsr's registry so the import stays to the architecture itself; the record carries the prepared gray pixels, the lightness, the four hooked encoder features, the three U-Net stage outputs, the pixel embedding, the color attention maps, and the chroma. THE load-bearing facts: forward_features calls each norm{i} for its hook's side effect only (the assignment back to x is commented out), so the trunk carries the un-normalized stage output forward; spectral_norm stores weight_orig beside weight_u/weight_v and in eval mode divides by u^T W v using the vectors as stored, which the loader fuses; custom_conv_layer builds an nn.Sequential where a ReLU slot still consumes its index (a BatchNorm after an activation lands at 2, one with no activation before it at 1); and those Sequentials are held as [Module] arrays, because MLX parses a numeric @ModuleInfo key as an array index and aborts the process when the checkpoint's list meets a child module. At reference parity on ddcolor_modelscope.pth: hooks 0.9999999999961443 / 0.9999999999975543 / 0.999999999986007 / 0.9999999999450404, U-Net stages 0.9999999998703757 / 0.9999999998944228 / 0.9999999999032585, pixel embedding 0.9999999999013038, color attention maps 0.9999999998470392, chroma 0.9999999998455213."
+    },
+    {
+      "key": "SMOLVLM2_256M",
+      "repo": "HuggingFaceTB/SmolVLM2-256M-Video-Instruct",
+      "directory": "smolvlm2-256m",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_SMOLVLM2_256M": ""
+      },
+      "note": "SmolVLM2-256M-Video-Instruct (Apache, ungated), the smallest released size. NFKMLXSmolVLM.release(directoryURL:) reads the SigLIP geometry, the pixel-shuffle factor, the tile size and the tokens per tile from this config.json, so no preset is hard-coded. Record: `run_reference.py smolvlm` with the directory -> IK_PARITY_SMOLVLM_256M."
+    },
+    {
+      "key": "SMOLVLM2_2_2B",
+      "repo": "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+      "directory": "smolvlm2-2.2b",
+      "files": [
+        "config.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_SMOLVLM2_2_2B": ""
+      },
+      "note": "SmolVLM2-2.2B-Instruct (Apache, ungated), the largest released size, sharded across two files that NFKMLXReleaseWeights reads. Its text config states no `num_attention_heads`, so the language reader derives the head count from `head_dim` (32) rather than falling back to 16; the wrong count would have loaded silently. Record: `run_reference.py smolvlm` with the directory -> IK_PARITY_SMOLVLM_2_2B."
     }
   ],
   "oracle_environments": {
@@ -1814,8 +2305,8 @@
     },
     "llm": {
       "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
-      "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor.",
-      "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac'",
+      "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor, and the DDColor oracle needs scikit-image for its Lab conversion, and the HAT oracle needs einops (basicsr itself is shimmed in the mode rather than installed).",
+      "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac' scikit-image einops",
       "modes": [
         "qwen3",
         "qwen3_embedding",
@@ -1836,7 +2327,16 @@
         "umt5",
         "rtdetr",
         "rtdetr_real",
-        "kokoro"
+        "rtdetr_v2",
+        "rtdetr_v2_real",
+        "vitpose",
+        "kokoro",
+        "ddcolor",
+        "realesrgan_compact",
+        "zero_dce_plus",
+        "isnet",
+        "adain",
+        "hat"
       ]
     },
     "voicerestore": {
@@ -1974,6 +2474,16 @@
       "modes": [
         "rf_detr",
         "rf_detr_real"
+      ]
+    },
+    "ultralytics": {
+      "interpreter": "/usr/bin/python3",
+      "why": "The YOLO oracles read ultralytics' own model, and the released .pt files carry a pickled module rather than a bare state dict, so the package that wrote them has to import them. It sits on the system interpreter here, outside the virtual environments the other oracles use. Version 8.4.120 supports every generation this port covers, including YOLO26.",
+      "rebuild": "/usr/bin/python3 -m pip install --user ultralytics",
+      "modes": [
+        "yolo",
+        "yolo_detections",
+        "yolo_generation"
       ]
     }
   },

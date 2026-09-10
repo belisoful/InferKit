@@ -27,7 +27,11 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
 
     public typealias Forward = @Sendable (MLXArray) -> MLXArray
 
-    private let forward: Forward
+    /// A forward that also reads the request, for a model conditioned on more than the input image
+    /// (a style image under `NFKInputControl`, a per-request strength).
+    public typealias RequestForward = @Sendable (_ image: MLXArray, _ request: NFKInferenceRequest) -> MLXArray
+
+    private let forward: RequestForward
     private let identifier: String
     private let ready: Bool
 
@@ -42,7 +46,22 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
                 forward: @escaping Forward) {
         self.identifier = identifier
         self.ready = isReady
-        self.forward = forward
+        self.forward = { image, _ in forward(image) }
+        super.init()
+    }
+
+    /// The request-aware form: `forward` receives the bridged input image and the request it came from.
+    ///
+    /// - Parameters:
+    ///   - identifier: The value reported by `backendIdentifier`.
+    ///   - isReady: Whether the model's weights are already loaded.
+    ///   - requestForward: Maps an input image tensor and its request to an output image tensor.
+    public init(identifier: String = "mlx-module",
+                isReady: Bool = true,
+                requestForward: @escaping RequestForward) {
+        self.identifier = identifier
+        self.ready = isReady
+        self.forward = requestForward
         super.init()
     }
 
@@ -82,13 +101,13 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
         return job
     }
 
-    private static func run(_ request: NFKInferenceRequest, forward: Forward) throws -> CGImage {
+    private static func run(_ request: NFKInferenceRequest, forward: RequestForward) throws -> CGImage {
         guard let value = request.input(forKey: NFKInputImage) else {
             throw NFKMLXError.unsupportedInput
         }
         // Through the shared bridge, which accepts a CGImage or an MTLTexture as the input image.
         let input = try NFKMLXImageBridge.tensor(from: value, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())
-        let output = forward(input)
+        let output = forward(input, request)
         eval(output)
         return try NFKMLXImageBridge.cgImage(from: output, options: NFKMLXImageOptions())
     }

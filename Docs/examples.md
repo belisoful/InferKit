@@ -723,6 +723,35 @@ mismatches (adjust with the `remap` on `NFKMLXDepthAnything.loadWeights`). `regi
 sizes — `depth-anything-v2-small` / `-base` / `-large` — via the `NFKMLXDepthConfiguration.small`,
 `.base`, and `.large` presets (which set `embedDimensions`, `depth`, `heads`, and the DPT widths).
 
+### Depth Anything 3 (`NFKMLXDepthAnything3`, a shipped MLX model)
+
+`NFKMLXDepthAnything3` predicts depth, a ray map, and the camera. The depth path is an ordinary
+backend: an RGB image in, a grayscale depth map out under `NFKOutputImage`, at one of the three
+released sizes.
+
+```swift
+let depth = try NFKMLXDepthAnything3.backend(variant: .small, weightsURL: checkpointURL)
+let map = try depth.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: frame])).output(forKey: NFKOutputImage)
+```
+
+The camera and the ray map do not fit a single-image backend, so `NFKMLXDepth3Estimator` carries them.
+The focal lengths come back in pixels at the image's own size, so a caller can build an intrinsic
+matrix directly.
+
+```swift
+let estimator = try NFKMLXDepth3Estimator.estimator(variant: .small, weightsURL: checkpointURL)
+let camera = try estimator.camera(for: frame)
+let (ray, confidence) = try estimator.rays(for: frame)          // Swift-only: both are MLXArrays
+```
+
+A caller who already knows the camera conditions the model on it instead of letting it predict one,
+which is what the release's camera encoder is for.
+
+```swift
+let known = try estimator.camera(for: frame, knownRotation: rotation, translation: translation,
+                                 focalLengthX: 320, focalLengthY: 300)
+```
+
 ### NAFNet restoration (`NFKMLXNAFNet`, a shipped MLX model)
 
 `NFKMLXNAFNet` is a real single-forward restoration network (denoise / deblur) — a U-shaped stack of
@@ -875,6 +904,17 @@ id matte = [result outputForKey:NFKOutputMask];            // the alpha on its o
 `Tools/u2net-to-safetensors/convert.py` converts `u2net.pth` / `u2netp.pth` and renames each RSU
 block's `rebnconvN` convolutions to the module's `enc`/`dec` keys, so the file loads directly.
 
+`NFKMLXISNet` is the successor the same authors published: the same Residual U-blocks behind a
+stride-2 stem, wider stages, and six separate side maps instead of a fused one. It loads a released
+`.pth` directly and runs the same matting contract under the name `isnet`.
+
+```objc
+[NFKMLXISNet register];
+id<NFKInferenceBackend> dichotomous = [NFKMLXISNet backendWithWeightsURL:weightsURL error:&error];
+NFKInferenceResult *cut = [dichotomous runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: plate }] error:&error];
+id alpha = [cut outputForKey:NFKOutputMask];
+```
+
 ### Segment Anything (`NFKMLXSAM`, a shipped MLX model)
 
 `NFKMLXSAM` is promptable segmentation: a ViT image encoder, a prompt encoder, and a two-way-transformer
@@ -892,6 +932,22 @@ let mask = result.output(forKey: NFKOutputMask)
 The ViT encoder uses real windowed attention (with global-attention layers) and decomposed
 relative-position embeddings, matching the reference; `Tools/sam-to-safetensors/convert.py --list-keys`
 covers the remaining block/neck key remap. SAM 2's Hiera encoder / video memory are future variants.
+
+### Arbitrary style transfer (`NFKMLXAdaIN`, a shipped MLX model)
+
+`NFKMLXAdaIN` stylizes a photograph with any style image, where `NFKMLXStyleTransfer` bakes one style
+into each checkpoint. A normalized VGG-19 encodes both images, adaptive instance normalization moves
+the content features onto the style's per-channel statistics, and a mirrored decoder inverts the
+result. The reference publishes the encoder and the decoder as separate files, so the factory takes
+both. The content image goes under `NFKInputImage`, the style image under `NFKInputControl`, and
+`NFKParameterStrength` blends between the content reconstruction and the full transfer.
+
+```swift
+let stylizer = try NFKMLXAdaIN.backend(encoderURL: vggURL, decoderURL: decoderURL)
+let request = NFKInferenceRequest(inputs: [NFKInputImage: photo, NFKInputControl: painting],
+                                  parameters: [NFKParameterStrength: NSNumber(value: 0.8)])
+let stylized = try stylizer.runInference(for: request).output(forKey: NFKOutputImage)
+```
 
 ### LaMa inpainting (`NFKMLXLaMa`, a shipped MLX model)
 
@@ -1567,6 +1623,50 @@ NSArray<NSNumber *> *vector = one.embedding;
 NSArray<NSArray<NSNumber *> *> *vectors = [embedder embeddingsForTexts:documents error:&error];
 ```
 
+**Which local runner is up is a question the code should not have to answer.** Discovery probes the
+local presets and hands back the ones that reply, so an app serves a user running Ollama, LM Studio,
+llama.cpp, or vLLM without being told which:
+
+```objc
+// The four local presets, in the order discovery probes them.
+NSArray<NFKRemoteProvider *> *local = NFKRemoteProvider.localProviders;   // ollama, lmstudio, llamacpp, vllm
+
+// One call instead of a choice the app cannot make. nil means none of them is running. Blocks, so
+// run it off the render thread.
+NFKRemoteProvider *running = NFKRemoteProvider.firstAvailableLocalProvider;
+id<NFKInferenceBackend> backend =
+    [NFKRemoteProvider backendForFirstAvailableLocalProviderWithModelName:@"llama3.2"];
+
+// The whole list, for a picker of the runners this machine has up right now.
+for (NFKRemoteProvider *provider in NFKRemoteProvider.availableLocalProviders) {
+    NSLog(@"%@ is running", provider.displayName);
+}
+
+// One address on its own: any HTTP reply counts, so a rejected key is still a server that is there.
+NFKRemoteProvider *stopped = [NFKRemoteProvider.ollama providerWithBaseURL:
+                              [NSURL URLWithString:@"http://127.0.0.1:9/v1"]];
+NSError *error = nil;
+BOOL up = [stopped isReachableWithAPIKey:nil timeout:2.0 error:&error];   // NO, kNFKError_RemoteUnreachable
+```
+
+```swift
+let running = NFKRemoteProvider.firstAvailableLocalProvider()
+let backend = NFKRemoteProvider.backendForFirstAvailableLocalProvider(withModelName: "llama3.2")
+
+// Another port or another machine: pass the list to probe.
+let lan = [NFKRemoteProvider.ollama.withBaseURL(URL(string: "http://192.168.1.20:11434/v1")!)]
+let reachable = NFKRemoteProvider.availableProviders(among: lan, timeout: 2)
+
+// The completion-handler forms import as async calls under a probe name.
+let discovered = await NFKRemoteProvider.probeAvailableLocalProviders()
+```
+
+`availableProvidersAmong:timeout:` probes concurrently, so the call costs one timeout rather than one
+per address; `firstAvailableProviderAmong:timeout:` probes in order and stops at the first reply. Two
+providers are equal when their identifier and base match, so a discovered provider compares to the
+preset it came from. `availableLocalProvidersWithCompletionHandler:` and
+`firstAvailableLocalProviderWithCompletionHandler:` are the forms that do not block the caller.
+
 **Local runners have a second surface.** The OpenAI-compatible endpoints say nothing about what is
 installed, what is loaded, how large a model is, or how to get one. The preset hands back an adapter
 over the runner's native API — Ollama and LM Studio have one; llama.cpp and vLLM have nothing beyond
@@ -1815,13 +1915,17 @@ The compiled `MLXModelGalleryExamples` builds and runs each of these. Grouped by
 
 ```swift
 // Upscaling & restoration (image → image)
-let upscaler   = try NFKMLXRealESRGAN.backend(variant: .x4, weightsURL: nil)   // "real-esrgan-x4"
+let upscaler   = try NFKMLXRealESRGAN.backend(variant: .x4, weightsURL: nil)   // "real-esrgan-x4"; .generalX4V3/.animeVideoV3 run the compact generator
 let swinIR     = try NFKMLXSwinIR.backend(weightsURL: nil)                      // "swinir-x4"; every release: .classicalX2…X8, .lightweightSRX2…X4, .realWorldX4Medium/Large
 let realWorld  = try NFKMLXSwinIR.backend(variant: .realWorldX4Large, weightsURL: nil)
+let hat        = try NFKMLXHAT.backend(variant: .large, weightsURL: nil)        // "hat-l-x4"; .base / .realWorld
 let denoiser   = try NFKMLXNAFNet.backend(weightsURL: nil)                      // "nafnet"; .sidd/.goPro/.reds/.siddWidth64/.goProWidth64
 let lowLight   = try NFKMLXZeroDCE.backend(weightsURL: nil)                     // "zero-dce"
+let lowLight2  = try NFKMLXZeroDCEPlus.backend(weightsURL: nil)                 // "zero-dce-plus"
 let stylizer   = try NFKMLXStyleTransfer.backend(weightsURL: nil)              // "fast-style-transfer"
+let adain      = try NFKMLXAdaIN.backend(encoderURL: nil, decoderURL: nil)      // "adain"; style image under NFKInputControl
 let colorizer  = try NFKMLXColorizer.backend(weightsURL: nil)                  // "colorizer-eccv16"
+let ddcolor    = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: nil)  // "ddcolor"; .paper / .artistic
 let faceRestore = try NFKMLXCodeFormer.backend(weightsURL: nil)                // "codeformer"
 
 // Depth (image → grayscale depth)
@@ -1829,6 +1933,7 @@ let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  /
 
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"
+let dichotomous = try NFKMLXISNet.backend(weightsURL: nil)                     // "isnet"
 let videoKey = try NFKMLXRVM.backend(weightsURL: nil)                          // "robust-video-matting" (MobileNetV3); .resNet50 is the heavier release
 let portrait = try NFKMLXMODNet.backend(weightsURL: nil)                       // "modnet"
 
@@ -1839,7 +1944,9 @@ let bisenet   = try NFKMLXBiSeNet.backend(weightsURL: nil)                     /
 
 // Detection & pose (new core value types)
 let yolo = try NFKMLXYOLO.backend(weightsURL: nil, labels: cocoLabels)         // result.detections : [NFKDetection]
+let yolo26 = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: nil, labels: cocoLabels)   // "yolo26n"; every v9/v10/11/12/26 size is a release
 let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: cocoJoints)     // result.pose : [NFKKeypoint]
+let vitPose = try NFKMLXVitPose.backend(variant: .base, weightsURL: nil, jointNames: cocoJoints)  // "vitpose-base"; .baseSimple is the simple decoder; DARK-refined [NFKKeypoint]
 
 // Embeddings, video, promptable segmentation
 let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]; .vitB16 / .vitL14 / .vitL14At336 too

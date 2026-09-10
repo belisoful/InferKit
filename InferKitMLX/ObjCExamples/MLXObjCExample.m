@@ -921,6 +921,49 @@
 	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(boundingBox)]);
 	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(leftEye)]);
 	XCTAssertTrue([NFKFaceObservation instancesRespondToSelector:@selector(rightMouthCorner)]);
+
+	// ViTPose builds both released decoders and answers with NFKKeypoint joints.
+	id<NFKInferenceBackend> vitPose =
+		[NFKMLXVitPose backendWithVariant:NFKMLXVitPoseVariantBase weightsURL:nil jointNames:nil error:&error];
+	XCTAssertNotNil(vitPose, @"%@", error);
+	XCTAssertTrue([NFKMLXVitPose respondsToSelector:@selector(backendWithDirectoryURL:jointNames:error:)]);
+	XCTAssertTrue([NFKMLXVitPose respondsToSelector:
+		@selector(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:jointNames:completionHandler:)]);
+
+	// DDColor builds each released weight from ObjC.
+	id<NFKInferenceBackend> ddcolor =
+		[NFKMLXDDColor backendWithVariant:NFKMLXDDColorVariantArtistic weightsURL:nil error:&error];
+	XCTAssertNotNil(ddcolor, @"%@", error);
+	XCTAssertEqualObjects(ddcolor.backendIdentifier, @"ddcolor-artistic");
+
+	// RT-DETRv2's released sizes are variant cases on the existing factories.
+	id<NFKInferenceBackend> rtdetrV2 =
+		[NFKMLXRTDetr backendWithVariant:NFKMLXRTDetrVariantV2R18VD weightsURL:nil labels:nil error:&error];
+	XCTAssertNotNil(rtdetrV2, @"%@", error);
+	XCTAssertEqualObjects(rtdetrV2.backendIdentifier, @"rtdetr-v2-r18vd");
+
+	// Every YOLO generation after v8 reaches ObjC through one release enum, and the registry name is
+	// the reference's own checkpoint stem.
+	id<NFKInferenceBackend> yolo26 =
+		[NFKMLXYOLOGenerations backendWithRelease:NFKMLXYOLOReleaseV26Nano weightsURL:nil labels:nil error:&error];
+	XCTAssertNotNil(yolo26, @"%@", error);
+	XCTAssertEqualObjects(yolo26.backendIdentifier, @"yolo26n");
+	XCTAssertEqualObjects([NFKMLXYOLOGenerations modelNameForRelease:NFKMLXYOLOReleaseV9Extended], @"yolov9e");
+	XCTAssertTrue([NFKMLXYOLOGenerations respondsToSelector:
+		@selector(backendWithRelease:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)]);
+	XCTAssertTrue([NFKMLXYOLOGenerations respondsToSelector:
+		@selector(backendWithRelease:repo:weightsPath:revision:cacheDirectoryURL:labels:completionHandler:)]);
+
+	// Depth Anything 3's camera reaches ObjC through the estimator; the ray map stays Swift-only
+	// because it is an MLXArray.
+	NFKMLXDepth3Estimator *estimator =
+		[NFKMLXDepth3Estimator estimatorWithVariant:NFKMLXDepth3VariantSmall weightsURL:nil error:&error];
+	XCTAssertNotNil(estimator, @"%@", error);
+	XCTAssertTrue([estimator respondsToSelector:@selector(cameraForImage:error:)]);
+	XCTAssertTrue([estimator respondsToSelector:
+		@selector(cameraForImage:knownRotation:translation:focalLengthX:focalLengthY:error:)]);
+	XCTAssertTrue([NFKMLXDepth3Camera instancesRespondToSelector:@selector(focalLengthX)]);
+	XCTAssertTrue([NFKMLXDepth3Camera instancesRespondToSelector:@selector(rotation)]);
 }
 
 @end

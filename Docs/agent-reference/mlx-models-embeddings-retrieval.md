@@ -18,7 +18,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `.vitL14At336`); B/16 and L/14 load their released checkpoints strictly and return unit embeddings,
   and being the B/32 blocks at another geometry they carry the numeric parity above.
   `Tools/clip-to-safetensors/convert.py` targets the OpenAI JIT/state-dict (names match). Forward,
-  round-trip, and unit-length embedding tested.
+  round-trip, and unit-length embedding tested. The towers also load MetaCLIP, which is CLIP's
+  architecture on a re-curated training set: the authors' released `b32_400m.pt` carries the same key
+  names, so the converter takes it unchanged (its `state_dict` is nested under a training checkpoint,
+  which the converter already unwraps once its torch 2.6 fallback passes `weights_only=False`). The
+  reference is the same `CLIPModel` path pointed at `facebook/metaclip-b32-400m`, whose tensors are
+  bitwise the authors' own release; at parity through the public backend (image embedding
+  0.9999031286241951, the same 8-bit image bridge the OpenAI row measures through).
 - `NFKMLXSigLIP2` (`@objc`) — real image+text embeddings (SigLIP 2, base-patch16-224), the CLIP upgrade
   and the vision tower a VLM reads. The vision and text towers are the same transformer the SmolVLM
   SigLIP encoder uses (`NFKSigLIPLayer`/`NFKSigLIPAttention`/`NFKSigLIPMLP`/`NFKSigLIPEncoder` are reused

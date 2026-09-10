@@ -21,6 +21,19 @@ import MLXNN
 
 // MARK: - Configuration
 
+/// How the deformable decoder reads a sampled location.
+///
+/// - Since: InferKit 0.4.0
+@objc(NFKMLXRTDetrSamplingMethod)
+public enum NFKMLXRTDetrSamplingMethod: Int, Sendable {
+    /// Bilinear interpolation at the sampled point (`grid_sample`), which is RT-DETR's only mode and
+    /// RT-DETRv2's `decoder_method: "default"`.
+    case bilinear
+    /// The nearest cell to the sampled point, RT-DETRv2's `decoder_method: "discrete"`. The reference
+    /// scales the location by the level's size, adds a half cell, truncates toward zero, and clamps.
+    case discrete
+}
+
 public struct NFKMLXRTDetrConfiguration: Sendable {
     // Backbone (ResNet-D).
     public var embeddingSize: Int
@@ -55,6 +68,13 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
     /// r34vd releases) rather than bottlenecks. A basic block's stage widths are the block widths
     /// themselves; a bottleneck's are four times its reduced width.
     public var basicBlocks: Bool = false
+    /// What the deformable decoder multiplies a sampling offset by before it leaves the reference
+    /// box. RT-DETR fixes this at 0.5; RT-DETRv2 reads `decoder_offset_scale`, and every released v2
+    /// config also states 0.5.
+    public var decoderOffsetScale: Float = 0.5
+    /// How the deformable decoder reads its sampled locations. RT-DETR bilinearly interpolates;
+    /// RT-DETRv2 reads `decoder_method` and offers a nearest-neighbour alternative.
+    public var decoderMethod: NFKMLXRTDetrSamplingMethod = .bilinear
 
     public init(embeddingSize: Int, hiddenSizes: [Int], depths: [Int], encoderInChannels: [Int],
                 featStrides: [Int], encoderHiddenDim: Int, encoderFFNDim: Int, numAttentionHeads: Int,
@@ -137,6 +157,24 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
         configuration.decoderLayers = 4
         return configuration
     }()
+
+    /// RT-DETRv2 at each released size.
+    ///
+    /// v2 changes the deformable decoder's sampling and nothing else: `decoder_offset_scale` replaces
+    /// the fixed 0.5, and `decoder_method` offers a nearest-cell alternative to bilinear. Every
+    /// released v2 configuration states 0.5 and `default`, and every one repeats its RT-DETR
+    /// namesake's geometry, so these presets are their v1 counterparts and the releases differ only in
+    /// their trained weights. A consumer's own v2 configuration that sets either knob runs through the
+    /// same code.
+    ///
+    /// - Since: InferKit 0.4.0
+    public static var v2R18VD: NFKMLXRTDetrConfiguration { r18vd }
+    /// - Since: InferKit 0.4.0
+    public static var v2R34VD: NFKMLXRTDetrConfiguration { r34vd }
+    /// - Since: InferKit 0.4.0
+    public static var v2R50VD: NFKMLXRTDetrConfiguration { r50vd }
+    /// - Since: InferKit 0.4.0
+    public static var v2R101VD: NFKMLXRTDetrConfiguration { r101vd }
 }
 
 // MARK: - Backbone (ResNet-D)
@@ -598,16 +636,39 @@ final class NFKRTDetrDeformableAttention: Module {
     let levels: Int
     let points: Int
     let dModel: Int
+    let offsetScale: Float
+    let method: NFKMLXRTDetrSamplingMethod
 
     init(_ config: NFKMLXRTDetrConfiguration) {
         heads = config.decoderAttentionHeads
         levels = config.numFeatureLevels
         points = config.decoderNPoints
         dModel = config.dModel
+        offsetScale = config.decoderOffsetScale
+        method = config.decoderMethod
         _samplingOffsets.wrappedValue = Linear(dModel, heads * levels * points * 2)
         _attentionWeights.wrappedValue = Linear(dModel, heads * levels * points)
         _valueProj.wrappedValue = Linear(dModel, dModel)
         _outputProj.wrappedValue = Linear(dModel, dModel)
+    }
+
+    /// Nearest-cell gather, RT-DETRv2's `decoder_method: "discrete"`.
+    ///
+    /// The reference scales the normalized location by the level's size, adds half a cell, truncates
+    /// toward zero (`.to(torch.int64)`), and clamps each axis independently. There is no blend and no
+    /// zero padding: a location outside the map reads the nearest edge cell rather than nothing, which
+    /// is the opposite of what the bilinear path does at a border.
+    private func sampleDiscrete(_ value: MLXArray, coords: MLXArray, height: Int, width: Int) -> MLXArray {
+        let (headCount, n, hd) = (value.dim(0), coords.dim(1), value.dim(3))
+        let flat = value.reshaped([headCount, height * width, hd])
+        let x = coords[0..., 0..., 0] * Float(width) + Float(0.5)
+        let y = coords[0..., 0..., 1] * Float(height) + Float(0.5)
+        // Truncation toward zero, which is not `floor` for a negative coordinate.
+        let xCell = clip(x.asType(.int32), min: Int32(0), max: Int32(width - 1))
+        let yCell = clip(y.asType(.int32), min: Int32(0), max: Int32(height - 1))
+        let flatIndex = yCell * Int32(width) + xCell                                 // [heads, n]
+        let indices = broadcast(flatIndex.reshaped([headCount, n, 1]), to: [headCount, n, hd])
+        return takeAlong(flat, indices, axis: 1)
     }
 
     /// Bilinear gather of `value` `[heads, H, W, hd]` at normalized `coords` `[heads, n, 2]` in `0...1`,
@@ -656,12 +717,15 @@ final class NFKRTDetrDeformableAttention: Module {
         var weights = attentionWeights(hidden).reshaped([q, heads, levels * points])
         weights = softmax(weights, axis: -1).reshaped([q, heads, levels, points])
 
-        // 4-coordinate reference points: location = ref_xy + offset / n_points * ref_wh * 0.5.
+        // 4-coordinate reference points: location = ref_xy + offset / n_points * ref_wh * offsetScale.
+        // RT-DETR fixes the scale at 0.5; RT-DETRv2 reads it from the config, and its `n_points_scale`
+        // is the same `1 / n_points` when every level samples the same number of points, which every
+        // released configuration does.
         let ref = referencePoints.reshaped([q, 1, levels, 1, 4])                     // [Q, 1, levels, 1, 4]
         let refXY = ref[0..., 0..., 0..., 0..., 0 ..< 2]
         let refWH = ref[0..., 0..., 0..., 0..., 2 ..< 4]
         let scaledOffsets = offsets / Float(points)
-        let offsetLocations = scaledOffsets * refWH * Float(0.5)
+        let offsetLocations = scaledOffsets * refWH * offsetScale
         let locations = refXY + offsetLocations                                     // [Q, heads, levels, points, 2]
 
         var levelStart = 0
@@ -673,7 +737,9 @@ final class NFKRTDetrDeformableAttention: Module {
             let reshaped = levelValue.transposed(1, 0, 2).reshaped([heads, h, w, hd])
             let levelLoc = locations[0..., 0..., levelIndex, 0..., 0...]             // [Q, heads, points, 2]
             let coords = levelLoc.transposed(1, 0, 2, 3).reshaped([heads, q * points, 2])
-            let sampled = sample(reshaped, coords: coords, height: h, width: w)      // [heads, Q*points, hd]
+            let sampled = method == .bilinear
+                ? sample(reshaped, coords: coords, height: h, width: w)              // [heads, Q*points, hd]
+                : sampleDiscrete(reshaped, coords: coords, height: h, width: w)
             perLevel.append(sampled.reshaped([heads, q, points, hd]))
         }
         // Combine levels and points, weighted.
@@ -1031,6 +1097,17 @@ public enum NFKMLXRTDetrVariant: Int {
     case r18vd
     case r34vd
     case r101vd
+    /// RT-DETRv2 at each released size. v2 keeps every geometry, so these run the same configurations
+    /// as the cases above and differ in their trained weights.
+    ///
+    /// - Since: InferKit 0.4.0
+    case v2R18VD
+    /// - Since: InferKit 0.4.0
+    case v2R34VD
+    /// - Since: InferKit 0.4.0
+    case v2R50VD
+    /// - Since: InferKit 0.4.0
+    case v2R101VD
 }
 
 @objc(NFKMLXRTDetr)
@@ -1044,6 +1121,10 @@ public final class NFKMLXRTDetr: NSObject {
         case .r18vd: return ("rtdetr-r18vd", .r18vd)
         case .r34vd: return ("rtdetr-r34vd", .r34vd)
         case .r101vd: return ("rtdetr-r101vd", .r101vd)
+        case .v2R18VD: return ("rtdetr-v2-r18vd", .v2R18VD)
+        case .v2R34VD: return ("rtdetr-v2-r34vd", .v2R34VD)
+        case .v2R50VD: return ("rtdetr-v2-r50vd", .v2R50VD)
+        case .v2R101VD: return ("rtdetr-v2-r101vd", .v2R101VD)
         }
     }
 
@@ -1113,7 +1194,8 @@ public final class NFKMLXRTDetr: NSObject {
     /// Registers every released size (`rtdetr` for r50vd, `rtdetr-r18vd`, `rtdetr-r34vd`,
     /// `rtdetr-r101vd`) with `NFKMLXModelRegistry`.
     @objc public static func register() {
-        for variant in [NFKMLXRTDetrVariant.r50vd, .r18vd, .r34vd, .r101vd] {
+        for variant in [NFKMLXRTDetrVariant.r50vd, .r18vd, .r34vd, .r101vd,
+                        .v2R18VD, .v2R34VD, .v2R50VD, .v2R101VD] {
             NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
                 try backend(variant: variant, weightsURL: weightsURL, labels: nil)
             }

@@ -239,6 +239,39 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(model?.ownedBy, "library")
     }
 
+    // Discovery from Swift. The blocking calls import as methods rather than properties, and the
+    // reachability check imports as a throwing call because it reports its failure through NSError.
+    func testFindingWhicheverLocalRunnerIsRunning() {
+        XCTAssertEqual(NFKRemoteProvider.localProviders.map(\.identifier),
+                       ["ollama", "lmstudio", "llamacpp", "vllm"])
+
+        let running = NFKRemoteProvider.firstAvailableLocalProvider()
+        let backend = NFKRemoteProvider.backendForFirstAvailableLocalProvider(withModelName: "llama3.2")
+        XCTAssertTrue(running == nil || backend != nil)
+        for provider in NFKRemoteProvider.availableLocalProviders() {
+            XCTAssertFalse(provider.requiresAPIKey)
+        }
+
+        // A list of the caller's own, for other ports or other machines on the network.
+        let elsewhere = [NFKRemoteProvider.ollama.withBaseURL(URL(string: "http://127.0.0.1:9/v1")!)]
+        XCTAssertTrue(NFKRemoteProvider.availableProviders(among: elsewhere, timeout: 2).isEmpty)
+        XCTAssertNil(NFKRemoteProvider.firstAvailableProvider(among: elsewhere, timeout: 2))
+
+        let stopped = NFKRemoteProvider.ollama.withBaseURL(URL(string: "http://127.0.0.1:9/v1")!)
+        XCTAssertThrowsError(try stopped.isReachable(withAPIKey: nil, timeout: 2)) { error in
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_RemoteUnreachable.rawValue)
+        }
+    }
+
+    // The completion-handler forms import as async calls. Their names carry a probe prefix: the
+    // importer drops the handler from the name, which would otherwise take the blocking call's.
+    func testDiscoveryAwaited() async {
+        let providers = await NFKRemoteProvider.probeAvailableLocalProviders()
+        XCTAssertLessThanOrEqual(providers.count, NFKRemoteProvider.localProviders.count)
+        let first = await NFKRemoteProvider.probeFirstAvailableLocalProvider()
+        XCTAssertTrue(first == nil || providers.contains(first!), "a provider compares by value")
+    }
+
     // The embeddings backend and the local-runner surface from Swift: the importer's naming for the
     // factory, the optional actions as optional protocol requirements, and the Ollama list entry.
     func testRemoteEmbeddingsAndLocalRunners() {

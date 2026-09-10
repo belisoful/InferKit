@@ -41,6 +41,16 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   reference's own pixel values, and end to end on the real Apollo-astronaut validation photo the model
   answers "a man is standing in front of a backdrop that resembles the moon. He is dressed in a white
   …". ObjC reaches it through `smolVLMWithDirectoryURL:error:` and `answerForImage:question:`.
+  The port reads the release rather than hard-coding 500M: `NFKMLXSmolVLM.release(directoryURL:)` builds
+  the SigLIP geometry, the pixel-shuffle factor, the tile size and the tokens per tile from the
+  directory's own `config.json`, and the weights load sharded through `NFKMLXReleaseWeights`, so the
+  other two released sizes run the same code. SmolVLM2-256M and SmolVLM2-2.2B are both at parity
+  (256M: vision 0.9999999999398742, connector 0.9999999999894968, logits 0.9999999999585247, argmax
+  1140/1140; 2.2B: vision 0.9999999997401828, connector 0.9999999998995716, logits 0.9999999959030899,
+  argmax 1428/1429, where the one disagreeing position is a 1.4e-05 tie in the REFERENCE's own logits
+  and the test asserts that gap rather than the token). The 2.2B config states no
+  `num_attention_heads`, so the language reader derives the head count from `head_dim` instead of
+  falling back to 16; transformers derives 32, and the wrong count would have loaded silently.
 - `NFKMLXQwen3VLVisionNet` / `NFKMLXQwen3VL` — the vision tower of a **second VLM**, Qwen3-VL-2B, and a
   second vision architecture beside SmolVLM's SigLIP. Qwen3-VL's encoder is a **2D-rotary ViT** whose
   patches are laid out in **2×2 merge blocks** (not row-major): a patch embedding (the reference's

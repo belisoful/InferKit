@@ -45,6 +45,28 @@ registration, the `run_reference.py` oracle mode, and the parity test) is covere
 pattern; a converter under `Tools/<model>-to-safetensors/` is optional because the native `.pth`/`.pt`
 reader loads most released checkpoints directly.
 
+## Customization is part of parity
+
+A parity cosine is the inference half of done. The other half is the model's customization path, and a
+model is not at parity until that half is shipped or ruled out in writing. The levels, the minimum
+shipped set, and the tests that prove it are defined in `mlx-training.md` ("Customization is part of
+parity"). This checklist adds the listings that half touches:
+
+- `Docs/agent-reference/mlx-models-<class>.md` — the model's entry states its customization level
+  (probe, head retarget, zero-reference, LoRA, full), the objective's reference source, and the
+  measured objective parity; or it names the constraint that makes the model offline-only or
+  untrainable here.
+- `Docs/model-parity.md` — a row in "Training objectives and the checkpoint path" for the objective:
+  its `run_reference.py` mode and the measured agreement on identical tensors.
+- `Docs/examples.md` — the recipe snippet under "Customizing a model on a consumer's own data",
+  mirrored by a compiled example in `InferKitMLX/Examples/MLXExamples.swift`.
+- `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/InferKitMLX.md` — the network, objective, and
+  recipe symbols in the "Customizing a model" Topics list.
+- `Docs/model-index.md` and the DocC `ModelIndex.md` — the construction cell gains the
+  `network(weightsURL:)` line, the way the HT Demucs row carries its fine-tuned form.
+- `Tools/validation-assets/manifest.json` and `~/.inferkit-validation.json` — the objective's parity
+  record and its `IK_PARITY_*` key, provisioned the same way the inference record is.
+
 ## Entry house style (keep the whole consistent)
 
 These files accreted across many sessions and drifted into several voices for the same thing. A new

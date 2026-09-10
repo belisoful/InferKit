@@ -8,6 +8,8 @@
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKRemoteModelCatalog.h>
 
+const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
+
 @interface NFKRemoteProvider ()
 @property (nonatomic, copy, readwrite) NSString *identifier;
 @property (nonatomic, copy, readwrite) NSString *displayName;
@@ -52,6 +54,28 @@
 	provider.apiStyle = self.apiStyle;
 	provider.requiresAPIKey = self.requiresAPIKey;
 	return provider;
+}
+
+// Each preset getter builds a new instance, and a discovered provider is a fresh one, so a value
+// comparison is what a caller means by "is this the Ollama preset".
+- (BOOL)isEqual:(nullable id)object
+{
+	if (self == object) {
+		return YES;
+	}
+	if (![object isKindOfClass:NFKRemoteProvider.class]) {
+		return NO;
+	}
+	NFKRemoteProvider *other = object;
+	return [self.identifier isEqualToString:other.identifier] &&
+		   [self.baseURL isEqual:other.baseURL] &&
+		   self.apiStyle == other.apiStyle &&
+		   self.requiresAPIKey == other.requiresAPIKey;
+}
+
+- (NSUInteger)hash
+{
+	return self.identifier.hash ^ self.baseURL.hash;
 }
 
 #pragma mark Derived URLs
@@ -142,11 +166,6 @@
 
 #pragma mark Local
 
-// @todo an option is needed that checks all the local ports and then selects the provide based
-//		on first.  another method is needed that simply does the check and returns which are available.
-//      the main method -for this- uses that "another method" to select which of the following
-//		NFKRemoteProvider "Local" providers to return.
-
 + (NFKRemoteProvider *)ollama
 {
 	return [self providerWithIdentifier:@"ollama" displayName:@"Ollama"
@@ -193,6 +212,101 @@
 	}
 	return nil;
 }
+
+#pragma mark Discovery
+
++ (NSArray<NFKRemoteProvider *> *)localProviders
+{
+	return @[ self.ollama, self.lmStudio, self.llamaCpp, self.vLLM ];
+}
+
+- (BOOL)isReachableWithAPIKey:(nullable NSString *)apiKey
+					  timeout:(NSTimeInterval)timeout
+						error:(NSError * _Nullable *)outError
+{
+	NFKRemoteModelCatalog *catalog = [NFKRemoteModelCatalog catalogForProvider:self apiKey:apiKey];
+	catalog.timeout = timeout;
+	return [catalog isReachableWithError:outError];
+}
+
++ (NSArray<NFKRemoteProvider *> *)availableProvidersAmong:(NSArray<NFKRemoteProvider *> *)providers
+												  timeout:(NSTimeInterval)timeout
+{
+	NSUInteger count = providers.count;
+	if (count == 0) {
+		return @[];
+	}
+	NSMutableArray<NSNumber *> *answered = [NSMutableArray arrayWithCapacity:count];
+	for (NSUInteger index = 0; index < count; index++) {
+		[answered addObject:@NO];
+	}
+	dispatch_group_t group = dispatch_group_create();
+	dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+	for (NSUInteger index = 0; index < count; index++) {
+		NFKRemoteProvider *provider = providers[index];
+		dispatch_group_async(group, queue, ^{
+			BOOL reachable = [provider isReachableWithAPIKey:nil timeout:timeout error:NULL];
+			@synchronized (answered) {
+				answered[index] = @(reachable);
+			}
+		});
+	}
+	dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+
+	NSMutableArray<NFKRemoteProvider *> *available = [NSMutableArray array];
+	for (NSUInteger index = 0; index < count; index++) {
+		if (answered[index].boolValue) {
+			[available addObject:providers[index]];
+		}
+	}
+	return available;
+}
+
++ (nullable NFKRemoteProvider *)firstAvailableProviderAmong:(NSArray<NFKRemoteProvider *> *)providers
+													timeout:(NSTimeInterval)timeout
+{
+	for (NFKRemoteProvider *provider in providers) {
+		if ([provider isReachableWithAPIKey:nil timeout:timeout error:NULL]) {
+			return provider;
+		}
+	}
+	return nil;
+}
+
++ (NSArray<NFKRemoteProvider *> *)availableLocalProviders
+{
+	return [self availableProvidersAmong:self.localProviders timeout:NFKRemoteProviderProbeTimeout];
+}
+
++ (nullable NFKRemoteProvider *)firstAvailableLocalProvider
+{
+	return [self firstAvailableProviderAmong:self.localProviders timeout:NFKRemoteProviderProbeTimeout];
+}
+
++ (void)availableLocalProvidersWithCompletionHandler:(void (^)(NSArray<NFKRemoteProvider *> *))completionHandler
+{
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		completionHandler(self.availableLocalProviders);
+	});
+}
+
++ (void)firstAvailableLocalProviderWithCompletionHandler:(void (^)(NFKRemoteProvider * _Nullable))completionHandler
+{
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		completionHandler(self.firstAvailableLocalProvider);
+	});
+}
+
++ (nullable id<NFKInferenceBackend>)backendForFirstAvailableLocalProviderWithModelName:(nullable NSString *)modelName
+{
+	NFKRemoteProvider *provider = self.firstAvailableLocalProvider;
+	if (provider == nil) {
+		return nil;
+	}
+	return [self backendForProvider:provider apiKey:nil modelName:modelName];
+}
+
+#pragma mark Backends
 
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey

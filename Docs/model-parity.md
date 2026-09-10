@@ -56,6 +56,8 @@ unclipped step (it now seeds and clips).
 | --- | --- | --- | --- | --- |
 | Real-ESRGAN ×4 | `NFKMLXRealESRGAN` | BasicSR `RRDBNet` | RealESRGAN_x4plus | cosine 0.9999947, mean abs 0.00146 |
 | Real-ESRGAN anime | `NFKMLXRealESRGAN` (`.anime`) | BasicSR `RRDBNet`, 6 blocks | RealESRGAN_x4plus_anime_6B | cosine 0.9999956, mean abs 0.00133 |
+| Real-ESRGAN general ×4 v3 | `NFKMLXRealESRGAN` (`.generalX4V3`) | BasicSR `SRVGGNetCompact`, 32 body convolutions | realesr-general-x4v3 | cosine 0.9999999999997835 |
+| Real-ESRGAN anime video v3 | `NFKMLXRealESRGAN` (`.animeVideoV3`) | same, 16 body convolutions | realesr-animevideov3 | cosine 0.9999999999998643 |
 | SwinIR classical ×4 | `NFKMLXSwinIR` | JingyunLiang `network_swinir.py` | 001_classicalSR_DIV2K_s48w8 x4 | through the 8-bit backend bridge: cosine 0.99986, mean abs 0.00136 (was 0.0037 before the classical tail's activation was corrected to leaky ReLU 0.01) |
 | SwinIR classical ×3 | `NFKMLXSwinIR` (`.x3`) | same | x3 (one ×3 shuffle stage) | 8-bit bridge: cosine 0.99987, mean abs 0.00119 |
 | SwinIR classical ×8 | `NFKMLXSwinIR` (`.x8`) | same | x8 (three ×2 stages) | 8-bit bridge: cosine 0.99991, mean abs 0.00095 |
@@ -65,15 +67,20 @@ unclipped step (it now seeds and clips).
 | SwinIR lightweight ×4 | `NFKMLXSwinIR` (`.lightweightSRX4`) | same | 002_lightweightSR x4 | float path: cosine 0.99999999999968, mean abs 1.2e-7 |
 | SwinIR real-world ×4 medium | `NFKMLXSwinIR` (`.realWorldX4Medium`) | same, `nearest+conv` upsampler | 003_realSR_BSRGAN_DFO_s64w8_SwinIR-M x4 GAN | float path: cosine 0.99999999999929, mean abs 3.6e-7 |
 | SwinIR real-world ×4 large | `NFKMLXSwinIR` (`.realWorldX4Large`) | same, `3conv` residual connection | 003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L x4 GAN | float path: cosine 0.99999999999932, mean abs 3.0e-7 |
+| HAT-L ×4 | `NFKMLXHAT` (`.large`) | XPixelGroup `hat_arch.py` | HAT-L_SRx4_ImageNet-pretrain | shallow 0.9999999999998852; first block 0.9999999999998327; first overlapping attention 0.9999999999983605; first group 0.9999999999995531; deep features 0.9999999999993273; upscaled 0.9999999999997842 |
+| Real-HAT-GAN ×4 | `NFKMLXHAT` (`.realWorld`) | same, 6 groups | Real_HAT_GAN_sharper | shallow 0.999999999999886; first block 0.9999999999998452; first overlapping attention 0.9999999999988557; first group 0.9999999999995886; deep features 0.9999999967383821; upscaled 0.9999999999978274 |
 | NAFNet SIDD (denoise) | `NFKMLXNAFNet` | megvii-research NAFNet | NAFNet-SIDD-width32 | cosine 0.9999973, mean abs 0.00098 |
 | NAFNet GoPro (deblur) | `NFKMLXNAFNet` (`.goPro`) | same | NAFNet-GoPro-width32 | cosine 0.9999973, mean abs 0.00098 |
 | NAFNet REDS | `NFKMLXNAFNet` (`.reds`) | same | NAFNet-REDS-width64 | cosine 0.9999971, mean abs 0.00098 |
 | NAFNet SIDD width 64 | `NFKMLXNAFNet` (`.siddWidth64`) | same | NAFNet-SIDD-width64 | float path: cosine 0.99999986 |
 | NAFNet GoPro width 64 | `NFKMLXNAFNet` (`.goProWidth64`, the REDS geometry) | same | NAFNet-GoPro-width64 | float path: cosine 0.9999999966, on the photographic plate; on the synthetic plate the reference itself diverges (output range −111 to 110), so that record measures nothing |
 | Zero-DCE | `NFKMLXZeroDCE` | Li-Chongyi `model.py` | Epoch99 | cosine 0.9999971, mean abs 0.00134 |
+| Zero-DCE++ | `NFKMLXZeroDCEPlus` | Li-Chongyi `Zero-DCE++` `model.py` | Epoch99 | curve map 0.9999999999998159; enhanced image 0.9999999999999741 |
 | Fast style transfer | `NFKMLXStyleTransfer` | pytorch/examples `TransformerNet` | mosaic | **skipped** — the checkpoint is no longer served (last measured 0.9999926); a seeded stand-in measures only noise and was rejected |
+| AdaIN | `NFKMLXAdaIN` | naoto0804 `pytorch-AdaIN` | vgg_normalised + decoder | content features 0.9999999999987861; style features 0.9999999999989787; normalized 0.9999999999989898; decoded image 0.9999999999997728 |
 | Colorizer ECCV-16 | `NFKMLXColorizer` | richzhang `eccv16.py` | colorization_release_v2 | ab cosine 0.9999999998, sRGB cosine 0.9999971 |
 | Colorizer SIGGRAPH-17 | `NFKMLXSiggraphColorizer` | richzhang `siggraph17.py` | siggraph17 | ab cosine 0.99999999999956, sRGB cosine 0.99999999987 |
+| DDColor | `NFKMLXDDColor` | piddnad `DDColor` | ddcolor_modelscope.pth | encoder hooks 0.9999999999961443, 0.9999999999975543, 0.999999999986007, 0.9999999999450404; U-Net stages 0.9999999998703757, 0.9999999998944228, 0.9999999999032585; pixel embedding 0.9999999999013038; color attention maps 0.9999999998470392; chroma 0.9999999998455213 |
 | LaMa | `NFKMLXLaMa` | advimman `FFCResNetGenerator` | big-lama | cosine 0.99999999999972, mean abs 5.9e-8 |
 | CodeFormer | `NFKMLXCodeFormer` | sczhou CodeFormer (w 0.5, AdaIN on) | codeformer.pth | code logits 0.99999999999855, code agreement 1.0, restored face 0.99999999999868; public backend path 0.9999968 (8-bit image bridge) |
 | TAESD | `NFKMLXTAESD` | madebyollin `taesd.py` | taesd encoder + decoder | latent 0.99999999999959, decode 0.99999999999978, mean abs 1.9e-7 |
@@ -89,9 +96,9 @@ measured on float tensors sit at 1e-7.
 | Depth Anything V2 Small | `NFKMLXDepthAnything` | authors' `depth_anything_v2` package | vits | depth cosine 0.99817, mean abs 0.0286; encoder seam 0.9999924 over 525,696 values |
 | Depth Anything V2 Base | `NFKMLXDepthAnything` (`.base`) | same | vitb | cosine 0.99807, mean abs 0.0249 |
 | Depth Anything V2 Large | `NFKMLXDepthAnything` (`.large`) | same | vitl | cosine 0.99846, mean abs 0.0263 |
-| Depth Anything 3 Small | `NFKMLXDepthAnything3` | authors' `depth_anything_3` package | DA3-SMALL | the four hooked backbone features and every DualDPT stage ≥ 0.9999999999; exp-depth mean-removed 0.99999999992 |
-| Depth Anything 3 Base | `NFKMLXDepthAnything3` (`.base`) | same | DA3-BASE | hooks 0.99999999999446 / 0.99999999999436 / 0.99999999999711 / 0.99999999999738; depth 0.99999999999990, mean-removed 0.99999999998975 |
-| Depth Anything 3 Large | `NFKMLXDepthAnything3` (`.large`, hooks at 11/15/19/23, the alternating attention from block 8) | same | DA3-LARGE | hooks 0.99999999999876 / 0.99999999999788 / 0.99999999999713 / 0.99999999999717; depth 0.99999999999990, mean-removed 0.99999999998452 |
+| Depth Anything 3 Small | `NFKMLXDepthAnything3`, `NFKMLXDepth3Estimator` | authors' `depth_anything_3` package | DA3-SMALL | hooks ≥ 0.9999999999962167; depth 0.9999999999999011, mean-removed 0.9999999999101674; ray 0.9999999999998513, ray confidence 0.9999999999995774; camera tokens ≥ 0.9999999999950343; pose encoding 0.9999999999992621; camera-encoder pose encoding 0.9999999999998606, camera-encoder tokens 0.9999999999999734 |
+| Depth Anything 3 Base | `NFKMLXDepthAnything3` (`.base`) | same | DA3-BASE | hooks ≥ 0.999999999994421; depth 0.9999999999999064, mean-removed 0.999999999990152; ray 0.9999999999998437, ray confidence 0.9999999999985674; pose encoding 0.9999999999995328; camera encoder 0.9999999999999702 |
+| Depth Anything 3 Large | `NFKMLXDepthAnything3` (`.large`, hooks at 11/15/19/23, the alternating attention from block 8) | same | DA3-LARGE | hooks ≥ 0.999999999997466; depth 0.9999999999998904, mean-removed 0.9999999999835174; ray 0.999999999999276, ray confidence 0.9999999999926193; pose encoding 0.9999999999993067; camera encoder 0.9999999999999863 |
 | Marigold depth | `NFKMLXMarigold` | diffusers `UNet2DConditionModel` | marigold-depth-v1-0 UNet | predicted noise 0.99999999999043 |
 | SegFormer B0 | `NFKMLXSegFormer` | transformers `SegformerForSemanticSegmentation` | nvidia/segformer-b0-finetuned-ade-512-512 | logit cosine 0.99999992, label agreement 0.99994 |
 | DeepLabV3 | `NFKMLXDeepLab` | torchvision `deeplabv3_resnet50` | COCO release | logit cosine 0.99999999999976, label agreement 1.0 |
@@ -105,8 +112,9 @@ The Depth Anything map cosines near 0.998 are the recorded values for this famil
 
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
-| U²-Net | `NFKMLXU2Net` | xuebinqin `u2net.py` | u2net | cosine 0.99918, mean abs 0.00143 |
-| U²-Net light | `NFKMLXU2Net` (`.light`) | `U2NETP` (a separate class) | u2netp | cosine 0.99981 |
+| U²-Net | `NFKMLXU2Net` | xuebinqin `u2net.py` | u2net | cosine 0.9999992900356037, mean abs 7.263675130994506e-05 |
+| U²-Net light | `NFKMLXU2Net` (`.light`) | `U2NETP` (a separate class) | u2netp | cosine 0.9999997057950919 |
+| IS-Net (DIS) | `NFKMLXISNet` | xuebinqin `isnet.py` (`ISNetDIS`) | isnet-general-use | stem 0.9999999999990618; stage 1 0.9999999999987647; stage 6 0.9999999999996586; side maps 0.9999999999999872 / 0.9999999999999584 / 0.9999999999999386 / 0.9999999999999148 / 0.9999999999999514 / 0.9999999999999729 |
 | Robust Video Matting | `NFKMLXRVM` | PeterL1n `MattingNetwork` | rvm_mobilenetv3 | alpha 0.99999999999998, foreground 0.99999999999967, guided-filter refine at 0.5: 0.99999999999985; odd frame size 0.99999999999991 |
 | Robust Video Matting, ResNet-50 | `NFKMLXRVM` (`.resNet50`) | same (no ImageNet normalization on this encoder) | rvm_resnet50 | alpha 0.99999999995280, foreground 0.99999999999967, guided-filter refine at 0.5: 0.99999999997671 |
 | MODNet | `NFKMLXMODNet` | ZHKKKe MODNet | photographic portrait | alpha cosine 0.99999999999939, mean abs 1.4e-8 |
@@ -136,11 +144,42 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | YOLOv8m | `NFKMLXYOLO` (`.medium`) | same | yolov8m | box 0.99999999999996, class 0.99999999999849 |
 | YOLOv8l | `NFKMLXYOLO` (`.large`) | same | yolov8l | box 0.99999999999993, class 0.99999999999985 |
 | YOLOv8x | `NFKMLXYOLO` (`.extraLarge`) | same | yolov8x | box 0.99999999999994, class 0.99999999999975 |
+| YOLOv9t | `NFKMLXYOLOGenerations` (`.v9Tiny`) | ultralytics YOLOv9 | yolov9t | box 1.0, class 0.9999910261187523 |
+| YOLOv9s | `NFKMLXYOLOGenerations` (`.v9Small`) | ultralytics YOLOv9 | yolov9s | box 0.9999996167931218, class 0.9999981051644089 |
+| YOLOv9m | `NFKMLXYOLOGenerations` (`.v9Medium`) | ultralytics YOLOv9 | yolov9m | box 0.9999999009361632, class 0.9999988198171225 |
+| YOLOv9c | `NFKMLXYOLOGenerations` (`.v9Compact`) | ultralytics YOLOv9 | yolov9c | box 1.0, class 0.9999943238326455 |
+| YOLOv9e | `NFKMLXYOLOGenerations` (`.v9Extended`) | ultralytics YOLOv9 | yolov9e | box 0.9999990983375147, class 0.9999989247388907 |
+| YOLOv10n | `NFKMLXYOLOGenerations` (`.v10Nano`) | ultralytics YOLOv10 | yolov10n | box 0.9999998911933768, class 0.9999834743692632; end to end 2/2 detections, worst box IoU 0.9999339580535889 |
+| YOLOv10s | `NFKMLXYOLOGenerations` (`.v10Small`) | ultralytics YOLOv10 | yolov10s | box 1.0000001091264288, class 0.9999658099864496 |
+| YOLOv10m | `NFKMLXYOLOGenerations` (`.v10Medium`) | ultralytics YOLOv10 | yolov10m | box 1.0, class 0.9999668244168369 |
+| YOLOv10b | `NFKMLXYOLOGenerations` (`.v10Balanced`) | ultralytics YOLOv10 | yolov10b | box 1.0, class 0.9999983584200546 |
+| YOLOv10l | `NFKMLXYOLOGenerations` (`.v10Large`) | ultralytics YOLOv10 | yolov10l | box 1.0, class 0.9999301437413929 |
+| YOLOv10x | `NFKMLXYOLOGenerations` (`.v10ExtraLarge`) | ultralytics YOLOv10 | yolov10x | box 1.0, class 0.9999953969506037 |
+| YOLO11n | `NFKMLXYOLOGenerations` (`.v11Nano`) | ultralytics YOLO11 | yolo11n | box 0.9999998978191751, class 0.9999964116107475; end to end on a 16:9 frame 2/2 detections, worst box IoU 0.9993941187858582 |
+| YOLO11s | `NFKMLXYOLOGenerations` (`.v11Small`) | ultralytics YOLO11 | yolo11s | box 1.0, class 0.9999804490353833 |
+| YOLO11m | `NFKMLXYOLOGenerations` (`.v11Medium`) | ultralytics YOLO11 | yolo11m | box 0.9999998978254393, class 0.999997277887588 |
+| YOLO11l | `NFKMLXYOLOGenerations` (`.v11Large`) | ultralytics YOLO11 | yolo11l | box 0.9999998984416892, class 0.9999965726479424 |
+| YOLO11x | `NFKMLXYOLOGenerations` (`.v11ExtraLarge`) | ultralytics YOLO11 | yolo11x | box 1.0000001004523469, class 0.9999988961865268 |
+| YOLOv12n | `NFKMLXYOLOGenerations` (`.v12Nano`) | ultralytics YOLOv12 | yolo12n | box 1.0, class 0.9999967840606224 |
+| YOLOv12s | `NFKMLXYOLOGenerations` (`.v12Small`) | ultralytics YOLOv12 | yolo12s | box 0.9999999015310349, class 0.9999778828708199 |
+| YOLOv12m | `NFKMLXYOLOGenerations` (`.v12Medium`) | ultralytics YOLOv12 | yolo12m | box 1.0, class 0.9999983919522263 |
+| YOLOv12l | `NFKMLXYOLOGenerations` (`.v12Large`) | ultralytics YOLOv12 | yolo12l | box 1.000000100369188, class 0.9999951280112048 |
+| YOLOv12x | `NFKMLXYOLOGenerations` (`.v12ExtraLarge`) | ultralytics YOLOv12 | yolo12x | box 1.000000099889153, class 0.9999970667536978 |
+| YOLO26n | `NFKMLXYOLOGenerations` (`.v26Nano`) | ultralytics YOLO26 | yolo26n | box 1.0, class 0.9999846576758435; end to end 1/1 detections, worst box IoU 0.9999259114265442 |
+| YOLO26s | `NFKMLXYOLOGenerations` (`.v26Small`) | ultralytics YOLO26 | yolo26s | box 0.9999997789807854, class 0.9999993465937533 |
+| YOLO26m | `NFKMLXYOLOGenerations` (`.v26Medium`) | ultralytics YOLO26 | yolo26m | box 0.9999998892458986, class 0.9999958200485036 |
+| YOLO26l | `NFKMLXYOLOGenerations` (`.v26Large`) | ultralytics YOLO26 | yolo26l | box 0.9999996677621655, class 0.9999885859037952 |
+| YOLO26x | `NFKMLXYOLOGenerations` (`.v26ExtraLarge`) | ultralytics YOLO26 | yolo26x | box 0.9999994459080476, class 0.99994127570431 |
 | RT-DETR (tiny config) | `NFKMLXRTDetr` | transformers `RTDetrForObjectDetection` | random tiny | backbone and encoder seams ≥ 0.99999999999999; query-selection scores 0.9999999999999925, boxes 0.9999999999999999; decoder over the reference's selection: logits 0.9999999999999958, boxes 0.9999999999999966; over its own selection 0.9999998 / 0.981 (a sub-ulp top-k tie swaps one query) |
 | RT-DETR r50vd | `NFKMLXRTDetr` (`.r50vd`) | same | PekingU/rtdetr_r50vd | logits 0.99999999998875, boxes 0.99999999996419 |
 | RT-DETR r18vd | `NFKMLXRTDetr` (`.r18vd`, basic blocks, 3 decoder layers) | same | PekingU/rtdetr_r18vd | over the reference's selection: logits 0.99999999999881, boxes 0.99999999999285 |
 | RT-DETR r34vd | `NFKMLXRTDetr` (`.r34vd`, basic blocks, 4 decoder layers) | same | PekingU/rtdetr_r34vd | logits 0.99999999999911, boxes 0.99999999999693 |
 | RT-DETR r101vd | `NFKMLXRTDetr` (`.r101vd`, encoder 384 wide) | same | PekingU/rtdetr_r101vd | logits 0.99999999997880, boxes 0.99999999979751 |
+| RT-DETRv2 (tiny config) | `NFKMLXRTDetr` (`decoderMethod` `.discrete`, offset scale 0.35) | transformers `RTDetrV2ForObjectDetection` | random tiny | query-selection scores 0.999999999999993, boxes 0.9999999999999999; decoder over the reference's selection: logits 0.9999999999999964, boxes 0.9999999999999982. The configuration sets what no release does, so v2's sampling additions are measured rather than merely present |
+| RT-DETRv2 r18vd | `NFKMLXRTDetr` (`.v2R18VD`) | same | PekingU/rtdetr_v2_r18vd | over the reference's selection: logits 0.999999999996304, boxes 0.9999999999901055 |
+| RT-DETRv2 r34vd | `NFKMLXRTDetr` (`.v2R34VD`) | same | PekingU/rtdetr_v2_r34vd | logits 0.9999999999910995, boxes 0.999999999885731 |
+| RT-DETRv2 r50vd | `NFKMLXRTDetr` (`.v2R50VD`) | same | PekingU/rtdetr_v2_r50vd | logits 0.9999999999202086, boxes 0.9999999990654127 |
+| RT-DETRv2 r101vd | `NFKMLXRTDetr` (`.v2R101VD`) | same | PekingU/rtdetr_v2_r101vd | logits 0.9999999999796655, boxes 0.9999999997898816 |
 | RF-DETR (tiny config) | `NFKMLXRFDetr` | transformers `RfDetrForObjectDetection` | random tiny | every seam (windowed DINOv2 backbone, projector, first-stage class head, decoder last hidden) ≥ 0.9999999999999; over its own selection logits 0.9999999999999996, boxes 1.0 |
 | RF-DETR base | `NFKMLXRFDetr` (`.base`) | same | Roboflow/rf-detr-base | over the reference's selection: backbone/projector 0.9999999999940, decoder last / logits / boxes 0.9999999976 / 0.9999999999 / 0.9999999919; over its own selection logits 0.9999350, boxes 0.9978662 (a sub-ulp top-k tie swaps a few of the 300 queries). The released file loads directly (`loadWeights` converts the original Roboflow naming); the antialiased-bicubic position-embedding interpolation (PIL a=-0.5) was the one seam bug |
 | RF-DETR nano | `NFKMLXRFDetr` (`.nano`, patch 16 at 384, 2 decoder layers) | same | Roboflow/rf-detr-nano | over the reference's selection: projector 0.99999999999583, decoder last 0.99999999984363, logits 0.99999999998936, boxes 0.99999999977172 |
@@ -148,6 +187,8 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | RF-DETR medium | `NFKMLXRFDetr` (`.medium`, 576, 4 layers) | same | Roboflow/rf-detr-medium | projector 0.99999999999475, decoder last 0.99999999811089, logits 0.99999999994142, boxes 0.99999999775668 |
 | RF-DETR large | `NFKMLXRFDetr` (`.large`, 704, 4 layers) | same | Roboflow/rf-detr-large | projector 0.99999999999674, decoder last 0.99999999653836, logits 0.99999999988494, boxes 0.99999999221948 |
 | SimpleBaseline pose | `NFKMLXPose` | microsoft `pose_resnet.py` | mmpose ResNet-50 COCO | heatmap cosine 0.99999999999495, peak agreement 1.0 |
+| ViTPose base-simple | `NFKMLXVitPose` (`.baseSimple`) | transformers `VitPoseForPoseEstimation` | usyd-community/vitpose-base-simple | backbone feature map 0.9999999999995017; heatmaps 0.9999999999966225; every integer peak exact; the DARK refinement within 8.80751758813858e-05 of a cell |
+| ViTPose base | `NFKMLXVitPose` (`.base`, the classic transposed-convolution decoder) | same | usyd-community/vitpose-base | feature map 0.9999999999931072; heatmaps 0.9999999999953517; every integer peak exact; refinement within 4.622340202331543e-05 of a cell |
 
 ## Embeddings, reranking, and vision-language
 
@@ -156,6 +197,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | CLIP ViT-B/32 image tower | `NFKMLXCLIP` | transformers `CLIPModel` | OpenAI ViT-B/32 | image 0.9999965 |
 | CLIP ViT-B/32 text tower | `NFKMLXCLIP` | same | same | text 0.99999999999876 |
 | CLIP ViT-B/16, ViT-L/14 | `NFKMLXCLIP` (`.vitB16`, `.vitL14`) | the released OpenAI checkpoints | ViT-B-16.pt, ViT-L-14.pt | strict load of every tensor, unit-length image embedding (0.99999994); the towers are the ViT-B/32 blocks at another width and depth, so the numeric parity above carries |
+| MetaCLIP ViT-B/32 | `NFKMLXCLIP` (`.vitB32`) | transformers `CLIPModel` on facebook/metaclip-b32-400m | b32_400m.pt | image 0.9999031286241951, through the 8-bit backend bridge |
 | SigLIP 2 base-patch16-224 | `NFKMLXSigLIP2` | transformers SigLIP 2 | google/siglip2-base-patch16-224 | image 0.99999999999892, worst text 0.99999999999861, max logit diff 9.5e-6 |
 | SigLIP 2, the other fourteen releases | `NFKMLXSigLIP2` (`NFKMLXSigLIP2Variant`) | checkpoint headers | base patch16 256/384/512 and patch32 256; large patch16 256/384/512; so400m patch14 224/384 and patch16 256/384/512; giant-opt patch16 256/384 | structural: 408 / 792 / 888 / 1096 tensors consumed per family, 0 missing, 0 mismatched, 0 unaccounted |
 | Qwen3-Embedding-0.6B | `NFKMLXQwen3Embedding` | model-card transformers recipe | released 0.6B | query 0.99999999999492, document 0.99999999999162, retrieval score 0.7645564 vs 0.7645574 |
@@ -163,6 +205,8 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | EmbeddingGemma-300M | `NFKMLXEmbeddingGemma` | sentence-transformers over `Gemma3TextModel` | unsloth mirror | every layer exact; query 0.99999999999968, document 0.99999999999964, retrieval score 0.6092325 vs 0.6092324 |
 | gte-reranker-modernbert-base | `NFKMLXModernBERTReranker` | transformers `ModernBertForSequenceClassification` | released | every layer exact; relevant 2.968215 vs 2.968218, irrelevant −2.403371 vs −2.403368 |
 | SmolVLM2-500M | `NFKMLXSmolVLM` | transformers `SmolVLMForConditionalGeneration` | SmolVLM2-500M-Video-Instruct | SigLIP embeddings 0.9999999999992, layer 0 0.9999999999983, vision 0.99999999997, connector 0.99999999999; fused decoder argmax 1140/1140, last-position logit cosine 0.99999999992; greedy continuation token for token |
+| SmolVLM2-256M | `NFKMLXSmolVLM` | same | SmolVLM2-256M-Video-Instruct | vision 0.9999999999398742; connector 0.9999999999894968; logits 0.9999999999585247; argmax 1140/1140 |
+| SmolVLM2-2.2B | `NFKMLXSmolVLM` | same | SmolVLM2-2.2B-Instruct | vision 0.9999999997401828; connector 0.9999999998995716; logits 0.9999999959030899; argmax 1428/1429, the one disagreement a 1.4e-05 tie in the reference's own logits |
 | Qwen3-VL-2B vision tower | `NFKMLXQwen3VL` | transformers Qwen3-VL vision model | Qwen3-VL-2B-Instruct | patch embed 0.99999999999991, position embed 0.99999999999998, merged output 0.99999999968, deepstack 0/1/2 0.99999999999 / 0.99999999994 / 0.99999999991 |
 | Qwen3-VL-4B, -8B, -32B, -30B-A3B | `NFKMLXQwen3VL` (`visionNet(directoryURL:)` + `decoder(directoryURL:)`) | checkpoint headers | released (shapes only) | structural, tower and decoder together: 713 / 750 / 1058 / 930 tensors consumed, 0 missing, 0 mismatched, 0 unaccounted; the 30B-A3B's fused `gate_up_proj` experts split into the module's gate and up projections |
 | Gemma 4 vision tower (tiny) | `NFKMLXGemma4VisionNet` | transformers Gemma 4 vision model | random tiny | encoder 1.0000000000000002, pooled 0.9999999999999997 |

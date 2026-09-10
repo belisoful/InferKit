@@ -77,15 +77,22 @@ final class NFKYOLOConv: Module {
     @ModuleInfo(key: "conv") var conv: Conv2d
     @ModuleInfo(key: "bn") var bn: BatchNorm
 
-    init(inChannels: Int, outChannels: Int, kernel: Int = 1, stride: Int = 1) {
+    private let activates: Bool
+
+    /// `groups` gives the depthwise convolutions the later generations use; `activates` drops the SiLU
+    /// where the reference passes `act=False`. Both default to the v8 behavior.
+    init(inChannels: Int, outChannels: Int, kernel: Int = 1, stride: Int = 1,
+         groups: Int = 1, activates: Bool = true, bias: Bool = false) {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
-                                    padding: IntOrPair(kernel / 2), bias: false)
+                                    padding: IntOrPair(kernel / 2), groups: groups, bias: bias)
         _bn.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3)
+        self.activates = activates
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        silu(bn(conv(x)))
+        let normalized = bn(conv(x))
+        return activates ? silu(normalized) : normalized
     }
 }
 

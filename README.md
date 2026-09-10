@@ -43,8 +43,9 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   generation / reranking / moderation clients, and a submit-poll-fetch base for job-style services.
 - **Remote providers** — `NFKRemoteProvider` names thirteen services (OpenAI, Anthropic, xAI, Gemini,
   Groq, Mistral, DeepSeek, Together, OpenRouter, and the local runners Ollama, LM Studio, llama.cpp,
-  and vLLM), lists each one's models from the server rather than a constant, and reaches a local
-  runner's native API — what is installed and loaded, and Ollama's pull and delete.
+  and vLLM), lists each one's models from the server rather than a constant, probes the local ports to
+  find which runner is actually up so calling code names none, and reaches a local runner's native
+  API — what is installed and loaded, and Ollama's pull and delete.
 - **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, image and video coding
   (`NFKImageCoding`, `NFKVideoSampling`), a tokenizer (BPE / CLIP / WordPiece / Unigram), a Core ML
   compute-plan reader, a hardware profile, and a Hugging Face download and cache layer.
@@ -64,11 +65,11 @@ Music 3 text-to-music — each validated numerically against its reference imple
 Every row links to its class, configuration, and factory in the [model index](Docs/model-index.md);
 the measured parity of each is in [model parity](Docs/model-parity.md).
 
-- **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN, SwinIR (every released SR checkpoint), NAFNet (all five), Zero-DCE, fast style transfer, colorizers (ECCV-16, SIGGRAPH-17), LaMa, CodeFormer, TAESD, SD inpainting
-- **[Image → map](Docs/model-index.md#image-to-map)** — Depth Anything V2, Marigold, SegFormer, DeepLabV3, BiSeNet V1 / V2
-- **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, Robust Video Matting (MobileNetV3 / ResNet-50), MODNet, SAM (ViT-B/L/H), SAM 2 (all four Hiera sizes), RetinaFace, face alignment
-- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), RT-DETR (r18–r101), RF-DETR (nano–large), SimpleBaseline pose
-- **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP (ViT-B/32, B/16, L/14, L/14@336), SigLIP 2 (all fourteen fixed-resolution sizes), Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2, Gemma 3 (4B, image + text), Gemma 3n (image + audio + text), Qwen3-VL, Gemma 4 vision / audio
+- **[Image → image](Docs/model-index.md#image-to-image)** — Real-ESRGAN (RRDBNet and compact), SwinIR (every released SR checkpoint), HAT, NAFNet (all five), Zero-DCE and Zero-DCE++, fast style transfer, AdaIN, colorizers (ECCV-16, SIGGRAPH-17, DDColor), LaMa, CodeFormer, TAESD, SD inpainting
+- **[Image → map](Docs/model-index.md#image-to-map)** — Depth Anything V2, Depth Anything 3 (depth, rays, camera), Marigold, SegFormer, DeepLabV3, BiSeNet V1 / V2
+- **[Matting & faces](Docs/model-index.md#matting-segmentation-and-faces)** — U²-Net, IS-Net, Robust Video Matting (MobileNetV3 / ResNet-50), MODNet, SAM (ViT-B/L/H), SAM 2 (all four Hiera sizes), RetinaFace, face alignment
+- **[Detection & pose](Docs/model-index.md#detection-and-pose)** — YOLOv8 (n–x), YOLOv9 / v10 / 11 / v12 / 26 (every released size), RT-DETR and RT-DETRv2 (r18–r101), RF-DETR (nano–large), SimpleBaseline pose, ViTPose (base-simple, base)
+- **[Embeddings & vision-language](Docs/model-index.md#embeddings-reranking-and-vision-language)** — CLIP (ViT-B/32, B/16, L/14, L/14@336, and MetaCLIP weights), SigLIP 2 (all fourteen fixed-resolution sizes), Qwen3-Embedding, EmbeddingGemma, ModernBERT reranker, SmolVLM2 (256M, 500M, 2.2B), Gemma 3 (4B, image + text), Gemma 3n (image + audio + text), Qwen3-VL, Gemma 4 vision / audio
 - **[Language models](Docs/model-index.md#language-models)** — Qwen3 (dense, MoE), Qwen2-MoE, Mixtral, gpt-oss (MXFP4), GGUF, Qwen3.5 / 3.8, Gemma 3 (270M, 1B, 4B), Gemma 3n (E2B, E4B), Gemma 4 (E2B, E4B, 26B-A4B, 12B), Gemma 2, DeepSeek V4, T5 / umT5, chat templates, constrained decoding
 - **[Video](Docs/model-index.md#video)** — RIFE HDv3 / v4, RAFT, BasicVSR, SD ×4 upscaler, the clip backend
 - **[Audio](Docs/model-index.md#audio)** — Whisper (every size, tiny–large-v3-turbo), Parakeet-TDT, Demucs v2 / HT Demucs, speech denoiser, MossFormer2 SE / SR, DeepFilterNet3, VoiceRestore, Resemble Enhance, MetricGAN+, CMGAN, FRCRN, NU-Wave 2, Apollo, Conv-TasNet, MarbleNet and Silero VAD, PANNs tagger, DAC, SNAC (24 kHz speech, 32 / 44.1 kHz music)

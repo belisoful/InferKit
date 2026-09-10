@@ -438,7 +438,8 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     }
 
     // Depth Anything 3's base and large, against the authors' package at each size's own geometry:
-    // the four hooked backbone features and the exp-depth map, mean-removed.
+    // the four hooked backbone features, the exp-depth map (mean-removed), the ray branch, and the
+    // camera the decoder reads off the last hook's token.
     func testDepthAnything3LargerSizesMatchTheReference() throws {
         try requireMLXRuntime()
         for (name, weightsKey, parityKey, configuration) in [
@@ -456,7 +457,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
                 print("VALIDATION PARITY da3-\(name) hook\(i): cosine \(similarity)")
                 XCTAssertGreaterThan(similarity, 0.9999, "\(name) hook\(i) matches the reference backbone feature")
             }
-            let (depth, _) = net.head(features)
+            let depth = net.head(features).depth
             eval(depth)
             let mine = depth[0].reshaped([-1]).asArray(Float.self).map(Double.init)
             let theirs = try XCTUnwrap(reference["output"]).reshaped([-1]).asArray(Float.self).map(Double.init)
@@ -464,6 +465,92 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
             let meanRemoved = cosine(mine.map { $0 - meanA }, theirs.map { $0 - meanB })
             print("VALIDATION PARITY da3-\(name) depth: cosine \(cosine(mine, theirs)), mean-removed \(meanRemoved)")
             XCTAssertGreaterThan(meanRemoved, 0.9999, "\(name): the depth structure matches the reference")
+
+            let prediction = net.head(features)
+            eval(prediction.ray, prediction.rayConfidence)
+            let ray = cosine(prediction.ray[0], try XCTUnwrap(reference["ray"]))
+            let rayConfidence = cosine(prediction.rayConfidence[0], try XCTUnwrap(reference["ray_conf"]))
+            print("VALIDATION PARITY da3-\(name) ray: cosine \(ray), confidence \(rayConfidence)")
+            XCTAssertGreaterThan(ray, 0.9999, "\(name): the ray map matches the reference")
+            XCTAssertGreaterThan(rayConfidence, 0.9999, "\(name): the ray confidence matches the reference")
+
+            let cameras = net.backbone.hooked(input).cameraTokens
+            let pose = net.cameraDecoder(cameras[cameras.count - 1]).encoding
+            eval(pose)
+            let poseSimilarity = cosine(pose, try XCTUnwrap(reference["pose_enc"]))
+            print("VALIDATION PARITY da3-\(name) pose_enc: cosine \(poseSimilarity)")
+            XCTAssertGreaterThan(poseSimilarity, 0.9999, "\(name): the predicted pose matches the reference")
+
+            let tokens = net.cameraEncoder(try XCTUnwrap(reference["cam_enc_pose_encoding"]).reshaped([1, 1, 9]))
+            eval(tokens)
+            let tokenSimilarity = cosine(tokens, try XCTUnwrap(reference["cam_enc_tokens"]))
+            print("VALIDATION PARITY da3-\(name) cam_enc: cosine \(tokenSimilarity)")
+            XCTAssertGreaterThan(tokenSimilarity, 0.9999, "\(name): the camera encoder matches the reference")
+        }
+    }
+
+    // SmolVLM2's other released sizes, each read from its own config: the 256M keeps the 500M's vision
+    // tower under a narrower decoder, and the 2.2B changes the tower, the decoder, the pixel-shuffle
+    // factor, and the tiling together, and ships sharded.
+    func testSmolVLMOtherSizesMatchTheReference() throws {
+        try requireMLXRuntime()
+        for (name, directoryKey, parityKey) in [
+            ("256m", "IK_VAL_SMOLVLM2_256M", "IK_PARITY_SMOLVLM_256M"),
+            ("2.2b", "IK_VAL_SMOLVLM2_2_2B", "IK_PARITY_SMOLVLM_2_2B"),
+        ] {
+            guard let parityPath = config[parityKey], let directory = config[directoryKey],
+                  FileManager.default.fileExists(atPath: parityPath) else {
+                print("SKIP smolvlm-\(name): no \(parityKey)")
+                continue
+            }
+            let arrays = try loadArrays(url: URL(fileURLWithPath: parityPath))
+            let directoryURL = URL(fileURLWithPath: directory)
+            let release = try NFKMLXSmolVLM.release(directoryURL: directoryURL)
+            let net = try NFKMLXSmolVLM.model(directoryURL: directoryURL)
+
+            // The vision tower on the reference's own pixel values, so the tiling is out of the
+            // comparison.
+            let pixels = try XCTUnwrap(arrays["pixel_values"])
+            let tiles = pixels.reshaped([-1, 3, release.vision.imageSize, release.vision.imageSize])
+            let vision = net.vision(tiles.transposed(0, 2, 3, 1))
+            eval(vision)
+            let visionSimilarity = cosine(
+                vision.reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["vision_hidden"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY smolvlm-\(name): vision cosine \(visionSimilarity)")
+            XCTAssertGreaterThan(visionSimilarity, 0.9999, "\(name): the vision tower matches the reference")
+
+            let features = net.connector(vision)
+            eval(features)
+            let connectorSimilarity = cosine(
+                features.reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["image_features"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY smolvlm-\(name): connector cosine \(connectorSimilarity)")
+            XCTAssertGreaterThan(connectorSimilarity, 0.9999, "\(name): the connector matches the reference")
+            // The connector folds each tile's patches by the release's own pixel-shuffle factor.
+            XCTAssertEqual(features.dim(1), release.tokensPerTile)
+
+            let ids = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map { Int($0) }
+            let logits = net.logits(inputIds: ids, pixelValues: tiles)
+            eval(logits)
+            let reference = try XCTUnwrap(arrays["output"])
+            let ourArgmax = logits.argMax(axis: -1).asArray(Int32.self)
+            let theirArgmax = reference.argMax(axis: -1).asArray(Int32.self)
+            let agreement = zip(ourArgmax, theirArgmax).filter { $0 == $1 }.count
+            let logitSimilarity = cosine(
+                logits.reshaped([-1]).asArray(Float.self).map(Double.init),
+                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY smolvlm-\(name): logit cosine \(logitSimilarity), argmax agreement \(agreement)/\(ourArgmax.count)")
+            XCTAssertGreaterThan(logitSimilarity, 0.9999, "\(name): the language head matches the reference")
+
+            // A position where the two argmaxes differ is only defensible when the reference itself puts
+            // the two tokens within float noise of each other; anything wider is a real disagreement.
+            for (index, pair) in zip(ourArgmax, theirArgmax).enumerated() where pair.0 != pair.1 {
+                let row = reference[index]
+                let gap = row[Int(pair.1)].item(Float.self) - row[Int(pair.0)].item(Float.self)
+                print("VALIDATION PARITY smolvlm-\(name): position \(index) tie, reference gap \(gap)")
+                XCTAssertLessThan(gap, 1e-3, "\(name): position \(index) is a float tie, not a disagreement")
+            }
         }
     }
 

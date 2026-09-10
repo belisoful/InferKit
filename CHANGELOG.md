@@ -18,8 +18,135 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKParameterOutputFormat` and `NFKParameterChoices` request parameters and returns JSON it was asked
   for parsed under `NFKOutputStructured`; the MLX language backend honors the same keys.
 - `NFKByteLevelBPETokenizer` reads the `o200k` pre-tokenization (see the gpt-oss entry below).
+- Local-runner discovery on `NFKRemoteProvider`: `localProviders` names the four local presets, and
+  `availableLocalProviders` / `firstAvailableLocalProvider` probe them and answer with the ones that
+  reply, so calling code no longer names the app the user happens to be running.
+  `backendForFirstAvailableLocalProviderWithModelName:` is the one-call path to a backend on it, and
+  `availableProvidersAmong:timeout:` (concurrent) and `firstAvailableProviderAmong:timeout:` (in order,
+  stopping at the first reply) take a list of the caller's own, for another port or another machine.
+  `isReachableWithAPIKey:timeout:error:` is the single-address form and the seam the rest go through.
+  The two local calls have completion-handler forms, which Swift imports as
+  `probeAvailableLocalProviders()` and `probeFirstAvailableLocalProvider()`.
+- `NFKRemoteProvider` compares by value (identifier, base, protocol, key requirement), so a discovered
+  provider is recognized as the preset it came from. Each preset getter builds a new instance, which
+  identity comparison read as a different provider.
 
 ### InferKitMLX (companion)
+
+#### Depth Anything 3, complete
+
+- The port built only the DualDPT depth branch and dropped 168 of the 437 released tensors. It now
+  builds and loads the whole model on all three sizes, and every released tensor is consumed.
+- The aux branch predicts the ray map: its own four fusion blocks over the same reassembled pyramid, a
+  per-level neck of five convolutions, and a per-level head to seven channels — six Plücker channels and
+  a confidence. Inference reads the finest level, which stays at the fusion resolution rather than being
+  interpolated to the image size, as the reference does.
+- The camera decoder predicts the camera from the last hook's camera token (a translation, a scalar-last
+  quaternion, and two fields of view), and the camera encoder turns a known camera into the token the
+  backbone reads in place of its learned one.
+- The aux head carries a **shared module instance**: the reference splices one `nn.LayerNorm` into all
+  four `output_conv2_aux` Sequentials, and PyTorch deduplicates it in the state dict under level 0.
+  Reading that absence as an unlearned norm scored the ray logits 0.9991 against 0.9999999999.
+- The reference carries two Block implementations with different LayerNorm epsilons — the backbone's
+  defaults to 1e-6, the camera encoder's to torch's 1e-5 — so the epsilon is now a parameter.
+- New: `NFKMLXDepth3Estimator` (`@objc`) with `cameraForImage:error:`, the camera-encoder conditioning
+  path, and a Swift-only `rays(for:)`; the `@objc` value type `NFKMLXDepth3Camera`.
+
+#### RT-DETRv2
+
+- `NFKMLXRTDetr` runs the RT-DETRv2 releases. v2 changes the deformable decoder's sampling and nothing
+  else: `NFKMLXRTDetrConfiguration` gained `decoderOffsetScale` and `decoderMethod`, the latter an
+  `@objc` enum `NFKMLXRTDetrSamplingMethod` whose `.discrete` case samples the nearest cell with a
+  clamp rather than interpolating.
+- Every released v2 configuration repeats its RT-DETR namesake's geometry and states the RT-DETR
+  sampling settings, so `.v2R18VD` / `.v2R34VD` / `.v2R50VD` / `.v2R101VD` are their v1 counterparts and
+  the releases differ only in their trained weights. All four are at reference parity, and a tiny
+  configuration measures the discrete path that no release exercises.
+
+#### ViTPose
+
+- `NFKMLXVitPose` (`@objc`) is the modern pose estimator beside SimpleBaseline: a plain ViT backbone
+  under either released decoder, at reference parity against transformers' own
+  `VitPoseForPoseEstimation` on `vitpose-base-simple` and `vitpose-base`.
+- The decode is DARK, not the classic quarter-cell shift: the heatmap is blurred, logged, and its peak
+  refined by one Newton step against the local derivative and Hessian.
+- Three load-bearing facts: the patch-embedding convolution pads by two (which leaves the patch count
+  alone at the trained geometry, so a plain patchify loads cleanly and samples two pixels early); the
+  position table's class-token row is added to every patch as a constant bias; and the release's own
+  decode passes `kernel=11`, so the Gaussian radius is 5 rather than the callee signature's 3.
+- A `vitpose-plus-*` release routes its feed-forward through per-dataset experts and is refused rather
+  than loaded into a dense stack.
+
+#### DDColor
+
+- `NFKMLXDDColor` (`@objc`) is the modern colorizer beside the 2016 and 2017 ports: a ConvNeXt-L
+  encoder, a spectral-normalized U-Net, and a Mask2Former-style decoder whose 100 learned color queries
+  become per-pixel attention maps. At reference parity against the authors' own `DDColor` on the
+  released weights, first numeric run, every seam at or above 0.99999999984.
+- The loader fuses the spectral normalization the way the weight-norm fusions elsewhere fuse `g·v/‖v‖`.
+- Two reference quirks are reproduced: `forward_features` calls each `norm{i}` for its hook's side
+  effect only, so the trunk carries the un-normalized stage output forward; and a `custom_conv_layer`
+  Sequential's ReLU slot still consumes its index, so a BatchNorm after an activation lands at 2.
+
+#### SmolVLM2's other sizes
+
+- The port read one release's geometry from frozen presets and one `model.safetensors`. It now reads
+  every axis from the release's own `config.json` — the vision tower, the decoder, the pixel-shuffle
+  factor, the image token, and the tiling from `preprocessor_config.json` — settles the tied head from
+  the weights rather than the config, and loads through the shard-index-aware reader.
+- `NFKMLXSmolVLM.Release` carries what a release states, and the tokens one tile expands to are derived
+  from the geometry rather than fixed at 64.
+- SmolVLM2-256M and SmolVLM2-2.2B are both at reference parity. The 2.2B config states no
+  `num_attention_heads`, so the language reader now derives the head count from `head_dim` rather than
+  falling back to 16; transformers derives 32, and the wrong count would have loaded silently.
+
+#### YOLOv9 through YOLO26
+
+- `NFKMLXYOLOGenerations` (`@objc`) runs every YOLO generation after the shipped v8: YOLOv9, YOLOv10,
+  YOLO11, YOLOv12 and YOLO26, at every released size — twenty-six checkpoints, all at reference parity
+  against ultralytics over the full pre-suppression tensor.
+- The releases are built from the reference's own layer rows (`NFKYOLONode`, `NFKYOLOGraphs`) rather
+  than written out one graph at a time, so every module lands at the reference's index and a released
+  checkpoint loads with a remap only inside the detection head.
+- New blocks: v9's GELAN set (`RepNCSPELAN4`, `ELAN1`, `RepCSP`, `RepConv`, `SPPELAN`, `AConv`,
+  `ADown`, and the `CBLinear` / `CBFuse` branch YOLOv9e keeps at inference), v10's `SCDown`, `PSA`,
+  `C2fCIB`, `CIB` and `RepVGGDW`, YOLO11's `C3k2` / `C3k` / `C2PSA`, and YOLOv12's `A2C2f` area
+  attention.
+- Three details are stated only by the released checkpoints, not by the current reference source:
+  YOLOv12's positional-encoding convolution carries a bias, YOLO26's `SPPF` drops its narrowing
+  activation and adds the input, and the end-to-end heads select over anchor-and-CLASS pairs so one
+  anchor is reported twice when two classes clear the threshold.
+- `NFKYOLOConv` gained `groups`, `activates` and `bias` parameters, all defaulted to the v8 behavior.
+
+#### The successors of the older shipped image models
+
+Each entry is the newer network the same authors published. The older model stays, because checkpoints
+exist only for it.
+
+- `NFKMLXISNet` (`@objc`, `isnet`) is IS-Net from the DIS project, U²-Net's successor. The Residual
+  U-blocks are U²-Net's unchanged, so `NFKU2NetRSU` and `NFKMLXU2Net.remapReferenceKey` carry over and a
+  released `.pth` loads directly. What differs: a stride-2 stem with no norm and no activation, wider
+  stages, and six separate side maps with no fusion convolution.
+- `NFKMLXHAT` (`@objc`, `hat-x4` / `hat-l-x4` / `real-hat-gan-x4`) is HAT, SwinIR's successor. It reuses
+  `NFKSwinOps` and `NFKSwinWindowAttention`, and adds a channel-attention convolution branch inside every
+  block and an overlapping cross-attention block closing every group. The reference's own arithmetic
+  leaves negative entries in the overlapping relative-position index and relies on PyTorch reading them
+  from the end of the bias table; the port takes the index modulo the table size and the parity test
+  compares both index tables against the checkpoint's own buffers.
+- `NFKMLXAdaIN` (`@objc`, `adain`) is arbitrary style transfer, where `NFKMLXStyleTransfer` bakes one
+  style per checkpoint. The content image is `NFKInputImage`, the style image is `NFKInputControl`, and
+  the core's `NFKParameterStrength` blends the two. `NFKMLXModuleBackend` gained a request-aware
+  `forward` for it.
+- `NFKMLXZeroDCEPlus` (`@objc`, `zero-dce-plus`) is Zero-DCE++: depthwise-separable convolutions, one
+  shared curve reused across all eight iterations, and an estimator run at a twelfth of the resolution.
+- `NFKMLXRealESRGAN` gained the two later compact releases, which run `SRVGGNetCompact` rather than
+  RRDBNet (`.generalX4V3`, `.animeVideoV3`).
+- The CLIP towers load MetaCLIP's released weights through the same variants, at reference parity
+  against the same transformers path pointed at `facebook/metaclip-b32-400m`.
+- `NFKMLXU2Net` and `NFKMLXISNet` call `train(false)` after loading. MLXNN modules start in training
+  mode, and a `BatchNorm` left there normalizes over the plate instead of reading its released running
+  statistics. U²-Net's measured parity rose from 0.99918 to 0.9999993 once it was fixed, and its test
+  thresholds moved with it.
 
 #### Stable Diffusion 3 / 3.5 and FLUX.1
 

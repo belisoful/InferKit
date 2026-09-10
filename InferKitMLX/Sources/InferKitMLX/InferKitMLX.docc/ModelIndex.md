@@ -24,13 +24,17 @@ The measured parity of every row is recorded in `Docs/model-parity.md` in the re
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
-| Real-ESRGAN | ``NFKMLXRealESRGAN`` | `NFKRealESRGANNet` | ``NFKMLXRealESRGANVariant`` `.x4` (23 blocks) · `.anime` (6 blocks) · `.x2` | `real-esrgan-x4` · `real-esrgan-x4-anime` · `real-esrgan-x2` | ``NFKMLXModuleBackend`` |
+| Real-ESRGAN | ``NFKMLXRealESRGAN`` | `NFKRealESRGANNet` · `NFKRealESRGANCompactNet` | ``NFKMLXRealESRGANVariant`` `.x4` (23 blocks) · `.anime` (6 blocks) · `.x2` · `.generalX4V3` (compact, 32 convolutions) · `.animeVideoV3` (compact, 16) | `real-esrgan-x4` · `real-esrgan-x4-anime` · `real-esrgan-x2` · `real-esrgan-general-x4v3` · `real-esrgan-anime-video-x4v3` | ``NFKMLXModuleBackend`` |
 | SwinIR | ``NFKMLXSwinIR`` | `NFKMLXSwinIRNet` | ``NFKMLXSwinIRVariant`` `.classicalX2` / `.classicalX3` / `.classicalX4` / `.classicalX8` / `.lightweightSRX2` / `.lightweightSRX3` / `.lightweightSRX4` / `.realWorldX4Medium` / `.realWorldX4Large` (`NFKMLXSwinIRConfiguration.classicalSRx4` …; `.lightweightX2` is the small test geometry) | `swinir-x4` | ``NFKMLXModuleBackend`` |
+| HAT | ``NFKMLXHAT`` | `NFKMLXHATNet` | ``NFKMLXHATVariant`` `.base` / `.large` / `.realWorld` (`NFKMLXHATConfiguration.base` — 6 groups of 6 blocks at 180 channels — `.large` — 12 groups) | `hat-x4` · `hat-l-x4` · `real-hat-gan-x4` | ``NFKMLXModuleBackend`` |
 | NAFNet | ``NFKMLXNAFNet`` | `NFKMLXNAFNetNet` | ``NFKMLXNAFNetVariant`` `.sidd` / `.goPro` / `.reds` / `.siddWidth64` / `.goProWidth64` (`NFKMLXNAFNetConfiguration.sidd` …) | `nafnet` | ``NFKMLXModuleBackend`` |
 | Zero-DCE | ``NFKMLXZeroDCE`` | ``NFKMLXZeroDCENet`` | fixed geometry (seven 3×3 convolutions) | `zero-dce` | ``NFKMLXModuleBackend`` |
+| Zero-DCE++ | ``NFKMLXZeroDCEPlus`` | `NFKMLXZeroDCEPlusNet` | fixed geometry (seven depthwise-separable convolutions, one shared curve, scale factor 12) | `zero-dce-plus` | ``NFKMLXModuleBackend`` |
 | Fast style transfer | ``NFKMLXStyleTransfer`` | `NFKStyleTransferNet` | fixed geometry; one style per checkpoint | `fast-style-transfer` | ``NFKMLXModuleBackend`` |
+| AdaIN | ``NFKMLXAdaIN`` | `NFKMLXAdaINNet` | fixed geometry (VGG-19 through relu4_1 and its mirrored decoder); style image under `NFKInputControl` | `adain` | ``NFKMLXModuleBackend`` |
 | Colorizer ECCV-16 | ``NFKMLXColorizer`` | `NFKMLXColorizerNet` | `NFKMLXColorizerConfiguration.eccv16` | `colorizer-eccv16` | ``NFKMLXModuleBackend`` |
 | Colorizer SIGGRAPH-17 | ``NFKMLXSiggraphColorizer`` | `NFKMLXSiggraphNet` | fixed geometry (four-channel input, hints optional) | `colorizer-siggraph17` | ``NFKMLXModuleBackend`` |
+| DDColor | ``NFKMLXDDColor`` | `NFKMLXDDColorNet` | ``NFKMLXDDColorVariant`` `.modelscope` / `.paper` / `.artistic` (`NFKMLXDDColorConfiguration.large`; `.tiny` is the small test geometry) | `ddcolor` · `ddcolor-paper` · `ddcolor-artistic` | ``NFKMLXModuleBackend`` |
 | LaMa | ``NFKMLXLaMa`` | `NFKMLXLaMaNet` | `NFKMLXLaMaConfiguration()` = big-lama (64 channels, 3 downsamples, 18 blocks) | `lama-inpaint` | ``NFKMLXMattingBackend`` |
 | CodeFormer | ``NFKMLXCodeFormer`` | `NFKMLXCodeFormerNet` | `NFKMLXCodeFormerConfiguration.base`; fidelity `w` per backend (`backend(fidelity:weightsURL:)`); ``NFKMLXPhotoFaceBackend`` for whole photographs | `codeformer` | ``NFKMLXModuleBackend`` |
 | TAESD | ``NFKMLXTAESD`` | `NFKMLXTAESDNet` | fixed geometry (64-wide, 8× down/up) | `taesd` | ``NFKMLXTAESDBackend`` |
@@ -43,17 +47,27 @@ let backend = try NFKMLXRealESRGAN.backend(variant: .x4, weightsURL: url)
 // SwinIR
 let backend = try NFKMLXSwinIR.backend(variant: .classicalX4, weightsURL: url)
 // .classicalX3 / .classicalX8 / .lightweightSRX2 · …VariantClassicalX3 / …ClassicalX8 / …LightweightSRX2
+// HAT
+let backend = try NFKMLXHAT.backend(variant: .large, weightsURL: url)
+// .base / .realWorld · …VariantBase / …VariantRealWorld
 // NAFNet
 let backend = try NFKMLXNAFNet.backend(variant: .sidd, weightsURL: url)
 // .goPro / .reds · …VariantGoPro / …VariantReds
 // Zero-DCE
 let backend = try NFKMLXZeroDCE.backend(weightsURL: url)
+// Zero-DCE++
+let backend = try NFKMLXZeroDCEPlus.backend(weightsURL: url)
 // Fast style transfer
 let backend = try NFKMLXStyleTransfer.backend(weightsURL: url)
+// AdaIN (arbitrary style; the style image travels under NFKInputControl)
+let backend = try NFKMLXAdaIN.backend(encoderURL: vgg, decoderURL: decoder)
 // Colorizer ECCV-16
 let backend = try NFKMLXColorizer.backend(weightsURL: url)
 // Colorizer SIGGRAPH-17
 let backend = try NFKMLXSiggraphColorizer.backend(weightsURL: url)
+// DDColor
+let backend = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: url)
+// .paper / .artistic · …VariantPaper / …VariantArtistic
 // LaMa
 let backend = try NFKMLXLaMa.backend(weightsURL: url)
 // CodeFormer
@@ -70,16 +84,24 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 [NFKMLXRealESRGAN backendWithVariant:NFKMLXRealESRGANVariantX4 weightsURL:url error:&error]
 // SwinIR
 [NFKMLXSwinIR backendWithVariant:NFKMLXSwinIRVariantClassicalX4 weightsURL:url error:&error]
+// HAT
+[NFKMLXHAT backendWithVariant:NFKMLXHATVariantLarge weightsURL:url error:&error]
 // NAFNet
 [NFKMLXNAFNet backendWithVariant:NFKMLXNAFNetVariantSidd weightsURL:url error:&error]
 // Zero-DCE
 [NFKMLXZeroDCE backendWithWeightsURL:url error:&error]
+// Zero-DCE++
+[NFKMLXZeroDCEPlus backendWithWeightsURL:url error:&error]
 // Fast style transfer
 [NFKMLXStyleTransfer backendWithWeightsURL:url error:&error]
+// AdaIN
+[NFKMLXAdaIN backendWithEncoderURL:vgg decoderURL:decoder error:&error]
 // Colorizer ECCV-16
 [NFKMLXColorizer backendWithWeightsURL:url error:&error]
 // Colorizer SIGGRAPH-17
 [NFKMLXSiggraphColorizer backendWithWeightsURL:url error:&error]
+// DDColor
+[NFKMLXDDColor backendWithVariant:NFKMLXDDColorVariantModelscope weightsURL:url error:&error]
 // LaMa
 [NFKMLXLaMa backendWithWeightsURL:url error:&error]
 // CodeFormer
@@ -97,7 +119,7 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | Depth Anything V2 | ``NFKMLXDepthAnything`` | `NFKMLXDepthAnythingNet` | ``NFKMLXDepthVariant`` `.small` / `.base` / `.large` (`NFKMLXDepthConfiguration.small` …) | `depth-anything-v2-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
-| Depth Anything 3 | ``NFKMLXDepthAnything3`` | `NFKMLXDepthAnything3Net` | ``NFKMLXDepth3Variant`` `.small` / `.base` / `.large` (`NFKMLXDepth3Configuration.small` …) | `depth-anything-3-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
+| Depth Anything 3 | ``NFKMLXDepthAnything3``; ``NFKMLXDepth3Estimator`` for the camera and the ray map | `NFKMLXDepthAnything3Net` | ``NFKMLXDepth3Variant`` `.small` / `.base` / `.large` (`NFKMLXDepth3Configuration.small` …) | `depth-anything-3-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
 | Marigold depth | ``NFKMLXMarigold`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.marigold` | `marigold-depth` | ``NFKMLXDiffusionBackend`` |
 | SegFormer | ``NFKMLXSegFormer`` | ``NFKMLXSegFormerNet`` | `NFKMLXSegFormerConfiguration.mitB0`; `network(weightsURL:classCount:)` for a custom head | `segformer-b0` | ``NFKMLXModuleBackend`` |
 | DeepLabV3 | ``NFKMLXDeepLab`` | `NFKMLXDeepLabNet` over `NFKMLXResNetBackbone` | `NFKMLXDeepLabConfiguration.base` (`NFKMLXResNetConfiguration.deepLab`) | `deeplabv3` | ``NFKMLXModuleBackend`` |
@@ -109,7 +131,8 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 let backend = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: url)
 // .base / .large · …VariantBase / …VariantLarge
 // Depth Anything 3 (DA3-SMALL)
-let backend = try NFKMLXDepthAnything3.backend(weightsURL: url)
+let backend = try NFKMLXDepthAnything3.backend(variant: .small, weightsURL: url)
+// camera and rays: NFKMLXDepth3Estimator.estimator(variant: .small, weightsURL: url)
 // Marigold depth
 let backend = try NFKMLXMarigold.backend(unetWeightsURL: unetURL, vaeWeightsURL: vaeURL, textContextURL: contextURL)
 // SegFormer
@@ -127,7 +150,8 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 // Depth Anything V2
 [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantSmall weightsURL:url error:&error]
 // Depth Anything 3
-[NFKMLXDepthAnything3 backendWithWeightsURL:url error:&error]
+[NFKMLXDepthAnything3 backendWithVariant:NFKMLXDepth3VariantSmall weightsURL:url error:&error]
+// camera and rays: [NFKMLXDepth3Estimator estimatorWithVariant:NFKMLXDepth3VariantSmall weightsURL:url error:&error]
 // Marigold depth
 [NFKMLXMarigold backendWithUNetWeightsURL:unetURL vaeWeightsURL:vaeURL textContextURL:contextURL error:&error]
 // SegFormer
@@ -147,6 +171,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | U²-Net | ``NFKMLXU2Net`` | `NFKMLXU2NetNet` | ``NFKMLXU2NetVariant`` `.full` / `.light` | `u2net` · `u2netp` | ``NFKMLXMattingBackend`` |
+| IS-Net (DIS) | ``NFKMLXISNet`` | `NFKMLXISNetNet` | fixed geometry (stride-2 stem, six Residual U-block stages, six side maps) | `isnet` | ``NFKMLXMattingBackend`` |
 | Robust Video Matting | ``NFKMLXRVM`` | `NFKMLXRVMNet` | ``NFKMLXRVMVariant`` `.mobileNetV3` / `.resNet50` (`NFKMLXRVMConfiguration.large` / `.resNet50`); `downsampleRatio` for the guided-filter path | `robust-video-matting` · `-resnet50` | ``NFKMLXMattingBackend`` (single frame) / `NFKMLXRVMNet.forward` (video) |
 | MODNet | ``NFKMLXMODNet`` | `NFKMLXMODNetNet` | `NFKMLXMODNetConfiguration.base` | `modnet` | ``NFKMLXMattingBackend`` |
 | BiRefNet | ``NFKMLXBiRefNet`` | `NFKMLXBiRefNetModel` (Swin-v1-L backbone + ASPPDeformable decoder) | released `ZhengPeng7/BiRefNet` (`model.safetensors`, MIT); resizes to 1024 | `birefnet` | ``NFKMLXMattingBackend`` |
@@ -158,6 +183,8 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 ```swift
 // U²-Net
 let backend = try NFKMLXU2Net.backend(variant: .full, weightsURL: url)
+// IS-Net (DIS)
+let backend = try NFKMLXISNet.backend(weightsURL: url)
 // .light · …VariantLight
 // Robust Video Matting
 let backend = try NFKMLXRVM.backend(weightsURL: url)
@@ -180,6 +207,8 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 ```objc
 // U²-Net
 [NFKMLXU2Net backendWithVariant:NFKMLXU2NetVariantFull weightsURL:url error:&error]
+// IS-Net (DIS)
+[NFKMLXISNet backendWithWeightsURL:url error:&error]
 // Robust Video Matting
 [NFKMLXRVM backendWithWeightsURL:url error:&error]
 // MODNet
@@ -199,31 +228,46 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | YOLOv8 | ``NFKMLXYOLO`` | `NFKMLXYOLONet` | ``NFKMLXYOLOVariant`` `.nano` / `.small` / `.medium` / `.large` / `.extraLarge` (`NFKMLXYOLOConfiguration.base`, `.small` …) | `yolo` | ``NFKMLXYOLOBackend`` (`labels:`) |
+| YOLOv9 · v10 · 11 · v12 · 26 | ``NFKMLXYOLOGenerations`` | `NFKMLXYOLOGenerationNet` | ``NFKMLXYOLORelease`` — every released size of each generation | the checkpoint stem: `yolov9t` … `yolo26x` | ``NFKMLXYOLOGenerationBackend`` (`labels:`) |
 | RT-DETR | ``NFKMLXRTDetr`` | ``NFKMLXRTDetrNet`` | ``NFKMLXRTDetrVariant`` `.r18vd` / `.r34vd` / `.r50vd` / `.r101vd` | `rtdetr` · `rtdetr-r18vd` · `-r34vd` · `-r101vd` | ``NFKMLXRTDetrBackend`` (`labels:`) |
+| RT-DETRv2 | ``NFKMLXRTDetr`` | ``NFKMLXRTDetrNet`` | ``NFKMLXRTDetrVariant`` `.v2R18VD` / `.v2R34VD` / `.v2R50VD` / `.v2R101VD` | `rtdetr-v2-r18vd` · `-r34vd` · `-r50vd` · `-r101vd` | ``NFKMLXRTDetrBackend`` (`labels:`); `decoderMethod` (``NFKMLXRTDetrSamplingMethod``) and `decoderOffsetScale` carry v2's sampling |
 | RF-DETR | ``NFKMLXRFDetr`` | ``NFKMLXRFDetrNet`` | ``NFKMLXRFDetrVariant`` `.nano` / `.small` / `.medium` / `.base` / `.large` | `rf-detr` · `rf-detr-nano` · `-small` · `-medium` · `-large` | ``NFKMLXRFDetrBackend`` (`labels:`); Roboflow naming converted on device |
 | SimpleBaseline pose | ``NFKMLXPose`` | `NFKMLXPoseNet` over `NFKMLXResNetBackbone` | `NFKMLXPoseConfiguration.simpleBaseline` (ResNet-50, 256×192) | `pose-simplebaseline` | ``NFKMLXPoseBackend`` (`jointNames:`) |
+| ViTPose | ``NFKMLXVitPose`` | `NFKMLXVitPoseNet` | ``NFKMLXVitPoseVariant`` `.baseSimple` / `.base` (ViT-B 256×192; ``NFKMLXVitPoseDecoder`` `.simple` / `.classic`) | `vitpose-base-simple` · `vitpose-base` | ``NFKMLXVitPoseBackend`` (`jointNames:`); `backend(directoryURL:jointNames:)` reads a release's own `config.json` |
 
 ```swift
 // YOLOv8
 let backend = try NFKMLXYOLO.backend(variant: .nano, weightsURL: url, labels: nil)
+// YOLOv9 / v10 / 11 / v12 / 26
+let backend = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: url, labels: nil)
 // .small / .medium / .large / .extraLarge · …VariantSmall … …VariantExtraLarge
 // RT-DETR
 let backend = try NFKMLXRTDetr.backend(weightsURL: url, labels: nil)
+// RT-DETRv2 · .v2R18VD / .v2R34VD / .v2R50VD / .v2R101VD
+let backend = try NFKMLXRTDetr.backend(variant: .v2R50VD, weightsURL: url, labels: nil)
 // RF-DETR
 let backend = try NFKMLXRFDetr.backend(weightsURL: url, labels: nil)
 // SimpleBaseline pose
 let backend = try NFKMLXPose.backend(weightsURL: url, jointNames: nil)
+// ViTPose · .baseSimple / .base
+let backend = try NFKMLXVitPose.backend(variant: .base, weightsURL: url, jointNames: nil)
 ```
 
 ```objc
 // YOLOv8
 [NFKMLXYOLO backendWithVariant:NFKMLXYOLOVariantNano weightsURL:url labels:nil error:&error]
+// YOLOv9 / v10 / 11 / v12 / 26
+[NFKMLXYOLOGenerations backendWithRelease:NFKMLXYOLOReleaseV26Nano weightsURL:url labels:nil error:&error]
 // RT-DETR
 [NFKMLXRTDetr backendWithWeightsURL:url labels:nil error:&error]
+// RT-DETRv2 · …VariantV2R18VD … …VariantV2R101VD
+[NFKMLXRTDetr backendWithVariant:NFKMLXRTDetrVariantV2R50VD weightsURL:url labels:nil error:&error]
 // RF-DETR
 [NFKMLXRFDetr backendWithWeightsURL:url labels:nil error:&error]
 // SimpleBaseline pose
 [NFKMLXPose backendWithWeightsURL:url jointNames:nil error:&error]
+// ViTPose · …VariantBaseSimple / …VariantBase
+[NFKMLXVitPose backendWithVariant:NFKMLXVitPoseVariantBase weightsURL:url jointNames:nil error:&error]
 ```
 
 

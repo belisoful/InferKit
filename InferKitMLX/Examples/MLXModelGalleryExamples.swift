@@ -32,15 +32,23 @@ final class MLXModelGalleryExamples: XCTestCase {
         let swinIR = try NFKMLXSwinIR.backend(weightsURL: nil)
         let nafnet = try NFKMLXNAFNet.backend(weightsURL: nil)
         let zeroDCE = try NFKMLXZeroDCE.backend(weightsURL: nil)
+        // Zero-DCE++ is the authors' successor: separable convolutions and one shared curve.
+        let zeroDCEPlus = try NFKMLXZeroDCEPlus.backend(weightsURL: nil)
         let styleTransfer = try NFKMLXStyleTransfer.backend(weightsURL: nil)
+        // AdaIN stylizes with any style image rather than a baked-in style.
+        let adain = try NFKMLXAdaIN.backend(encoderURL: nil, decoderURL: nil)
         let colorizer = try NFKMLXColorizer.backend(weightsURL: nil)
+        // DDColor is the modern colorizer: a ConvNeXt encoder under learned color queries.
+        let ddcolor = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: nil)
         let codeFormer = try NFKMLXCodeFormer.backend(weightsURL: nil)
 
         XCTAssertEqual(realESRGAN.backendIdentifier, "real-esrgan-x4")
         XCTAssertEqual(swinIR.backendIdentifier, "swinir-x4")
-        for backend in [nafnet, zeroDCE, styleTransfer, colorizer, codeFormer] {
+        for backend in [nafnet, zeroDCE, zeroDCEPlus, styleTransfer, adain, colorizer, codeFormer] {
             XCTAssertTrue(backend.isReady)
         }
+        XCTAssertEqual(adain.backendIdentifier, "adain")
+        XCTAssertEqual(ddcolor.backendIdentifier, "ddcolor")
 
         // Every released SwinIR and NAFNet fits its own variant: the lightweight ×3 / ×4, the classical
         // ×2, the real-world ×4 (nearest-neighbor tail; the large one with the 3-conv residual), and
@@ -48,9 +56,16 @@ final class MLXModelGalleryExamples: XCTestCase {
         let lightX3 = try NFKMLXSwinIR.backend(variant: .lightweightSRX3, weightsURL: nil)
         let realWorld = try NFKMLXSwinIR.backend(variant: .realWorldX4Medium, weightsURL: nil)
         let wide = try NFKMLXNAFNet.backend(variant: .siddWidth64, weightsURL: nil)
-        for backend in [lightX3, realWorld, wide] {
+        // Real-ESRGAN's later releases run the compact generator behind the same variant enum.
+        let compact = try NFKMLXRealESRGAN.backend(variant: .generalX4V3, weightsURL: nil)
+        for backend in [lightX3, realWorld, wide, compact] {
             XCTAssertTrue(backend.isReady)
         }
+
+        // HAT is SwinIR's successor: window attention plus a channel-attention branch in every block
+        // and an overlapping cross-attention block closing every group.
+        let hat = try NFKMLXHAT.backend(variant: .large, weightsURL: nil)
+        XCTAssertEqual(hat.backendIdentifier, "hat-l-x4")
 
         // Representative run: Zero-DCE brightens a dark frame to a same-size image.
         let result = try zeroDCE.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32, value: 40)]))
@@ -73,6 +88,13 @@ final class MLXModelGalleryExamples: XCTestCase {
 
         // DA3-BASE and DA3-LARGE are the same network at their own widths, through the variant factory.
         let depth3Base = try NFKMLXDepthAnything3.backend(variant: .base, weightsURL: nil)
+        // Depth Anything 3 also predicts the camera and a ray map, which a single-image backend cannot
+        // carry; `NFKMLXDepth3Estimator` is the way to them.
+        let estimator = try NFKMLXDepth3Estimator.estimator(variant: .small, weightsURL: nil)
+        let camera = try estimator.camera(for: Self.solid(64))
+        XCTAssertEqual(camera.translation.count, 3)
+        XCTAssertEqual(camera.rotation.count, 9)
+        XCTAssertGreaterThan(camera.focalLengthX, 0)
         XCTAssertEqual(depth3Base.backendIdentifier, "depth-anything-3-base")
     }
 
@@ -81,6 +103,9 @@ final class MLXModelGalleryExamples: XCTestCase {
     func testMattingModels() throws {
         try requireMLXRuntime()
         let u2net = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)
+        // IS-Net is U²-Net's successor: the same Residual U-blocks behind a stride-2 stem.
+        let isnet = try NFKMLXISNet.backend(weightsURL: nil)
+        XCTAssertEqual(isnet.backendIdentifier, "isnet")
         let rvm = try NFKMLXRVM.backend(weightsURL: nil)
         // RVM's heavier release swaps MobileNetV3 for a ResNet-50 encoder under the same contract.
         let rvmResNet = try NFKMLXRVM.backend(variant: .resNet50, weightsURL: nil)
@@ -121,6 +146,19 @@ final class MLXModelGalleryExamples: XCTestCase {
         let detected = try yolo.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32)]))
         XCTAssertNotNil(detected.detections, "detections (possibly empty)")
 
+        // The generations after v8 share one graph interpreter. YOLO11 keeps the classic head, so it
+        // runs suppression; YOLO26 and YOLOv10 predict from a one-to-one branch and need none.
+        let yolo11 = try NFKMLXYOLOGenerations.backend(release: .v11Nano, weightsURL: nil, labels: nil)
+        XCTAssertEqual(yolo11.backendIdentifier, "yolo11n")
+        let yolo26 = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: nil, labels: nil)
+        XCTAssertEqual(yolo26.backendIdentifier, "yolo26n")
+        let latest = try yolo26.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(latest.detections, "detections (possibly empty)")
+        for release in [NFKMLXYOLORelease.v9Tiny, .v9Extended, .v10Nano, .v12Nano] {
+            let backend = try NFKMLXYOLOGenerations.backend(release: release, weightsURL: nil, labels: nil)
+            XCTAssertTrue(backend.isReady)
+        }
+
         // RT-DETR: the license-clean (Apache-2.0) detector — same NFKOutputDetections contract, no NMS.
         let rtdetr = try NFKMLXRTDetr.backend(weightsURL: nil, labels: nil)
         let rtDetected = try rtdetr.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
@@ -142,6 +180,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: nil)
         let estimated = try pose.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(48)]))
         XCTAssertEqual(estimated.pose?.count, 17, "17 COCO joints")
+
+        // ViTPose is the modern pose model: a ViT backbone under a small decoding head, decoded with
+        // DARK rather than the classic quarter-cell shift.
+        let vitPose = try NFKMLXVitPose.backend(weightsURL: nil, jointNames: nil)
+        XCTAssertEqual(vitPose.backendIdentifier, "vitpose-base-simple")
+        let vitEstimated = try vitPose.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(48)]))
+        XCTAssertEqual(vitEstimated.pose?.count, 17, "17 COCO joints")
+        let vitPoseClassic = try NFKMLXVitPose.backend(variant: .base, weightsURL: nil, jointNames: nil)
+        XCTAssertEqual(vitPoseClassic.backendIdentifier, "vitpose-base")
     }
 
     // MARK: Embeddings (image+text → shared space)

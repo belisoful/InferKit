@@ -2,9 +2,11 @@
 //  NFKMLXDepthAnything3Tests.swift
 //  InferKitMLXTests
 //
-//  Reference parity for Depth Anything 3 (monocular). The seams come from the authors'
-//  `depth_anything_3` package via Tools/reference-parity (the da3_oracle capture): the input, the four
-//  hooked backbone features, and the exp-depth map. Gated on the reference + released weights.
+//  Reference parity for Depth Anything 3. The seams come from the authors' `depth_anything_3` package
+//  via Tools/reference-parity (the da3_oracle capture): the input, the four hooked backbone features,
+//  the head's stage and fusion seams, the exp-depth map, the aux (ray) pyramid and ray map, the camera
+//  decoder's pose encoding, and the camera encoder's conditioning tokens. Gated on the reference +
+//  released weights.
 //
 //    IK_VAL_DEPTH3_REF=~/.inferkit-validation/da3-reference.safetensors \
 //    IK_VAL_DEPTH3_WEIGHTS=~/.inferkit-validation/da3-small/model.safetensors \
@@ -75,13 +77,15 @@ final class NFKMLXDepthAnything3Tests: XCTestCase {
         }
         let headSeams = net.head.seams(features)
         eval(Array(headSeams.values))
-        for name in ["stage0", "stage1", "stage2", "stage3", "fused", "logits"] {
+        for name in ["stage0", "stage1", "stage2", "stage3", "fused", "logits",
+                     "aux0", "aux1", "aux2", "aux3", "aux_pos", "aux_conv0", "aux_norm", "ray_logits"] {
             let mr = meanRemoved(headSeams[name]!.transposed(0, 3, 1, 2), reference[name]!)
             print("[DA3] \(name) mean-removed = \(mr)")
             XCTAssertGreaterThan(mr, 0.99999, "\(name) must match the reference head seam")
         }
 
-        let (depth, _) = net.head(features)
+        let prediction = net.head(features)
+        let depth = prediction.depth
         eval(depth)
         let c = cosine(depth[0], reference["output"]!)
         // The depth values cluster near 1.0, so raw cosine is dominated by the mean; the mean-removed
@@ -100,11 +104,59 @@ final class NFKMLXDepthAnything3Tests: XCTestCase {
         print("[DA3] depth cosine = \(c)  mean-removed = \(meanRemoved)  maxRel = \(maxRel)")
         XCTAssertGreaterThan(c, 0.9999, "the depth map must match the reference")
         XCTAssertGreaterThan(meanRemoved, 0.9999, "the depth structure must match the reference")
+
+        // The ray branch. `ray` is [h, w, 6] and `ray_conf` [h, w], both at the finest fusion
+        // resolution rather than the image size, which is the reference's own convention.
+        eval(prediction.ray, prediction.rayConfidence)
+        let rayCosine = cosine(prediction.ray[0], reference["ray"]!)
+        let rayConfidence = cosine(prediction.rayConfidence[0], reference["ray_conf"]!)
+        print("[DA3] ray cosine = \(rayCosine)  ray_conf cosine = \(rayConfidence)")
+        XCTAssertEqual(prediction.ray[0].shape, reference["ray"]!.shape)
+        XCTAssertGreaterThan(rayCosine, 0.9999, "the ray map must match the reference")
+        XCTAssertGreaterThan(rayConfidence, 0.9999, "the ray confidence must match the reference")
+
+        // The camera decoder reads the last hook's camera token, which is the concatenated local and
+        // global halves before the final LayerNorm.
+        let cameras = net.backbone.hooked(input).cameraTokens
+        eval(cameras)
+        for i in 0 ..< 4 {
+            let tokenCosine = cosine(cameras[i], reference["camera_token\(i)"]!)
+            print("[DA3] camera_token\(i) cosine = \(tokenCosine)")
+            XCTAssertGreaterThan(tokenCosine, 0.99999999, "camera token \(i) must match the reference")
+        }
+        let pose = net.cameraDecoder(cameras[cameras.count - 1])
+        let encoding = pose.encoding
+        eval(encoding)
+        let poseCosine = cosine(encoding, reference["pose_enc"]!)
+        print("[DA3] pose_enc cosine = \(poseCosine)")
+        XCTAssertGreaterThan(poseCosine, 0.9999999, "the predicted pose encoding must match the reference")
+
+        // The camera encoder: the reference's own extrinsic and intrinsic become the nine-number
+        // encoding, and that becomes the conditioning token the backbone would read.
+        let extrinsic = reference["cam_enc_extrinsic"]!
+        let intrinsic = reference["cam_enc_intrinsic"]!.asType(.float32).asArray(Float.self)
+        // `extri_intri_to_pose_encoding` reads the camera-to-world pose, so the world-to-camera
+        // extrinsic the record carries is inverted first: R becomes Rᵀ and t becomes -Rᵀt.
+        let rotation = extrinsic[0 ..< 3, 0 ..< 3].transposed(1, 0)
+        let translation = matmul(rotation, extrinsic[0 ..< 3, 3].reshaped([3, 1])).reshaped([3]) * Float(-1)
+        let ours = NFKDA3CameraEncoder.encoding(
+            rotation: rotation, translation: translation,
+            focalLengths: (intrinsic[0], intrinsic[4]), imageSize: (518, 518))
+        eval(ours)
+        let encodingCosine = cosine(ours, reference["cam_enc_pose_encoding"]!)
+        print("[DA3] cam_enc_pose_encoding cosine = \(encodingCosine)")
+        XCTAssertGreaterThan(encodingCosine, 0.9999999, "the pose encoding must match the reference")
+
+        let tokens = net.cameraEncoder(reference["cam_enc_pose_encoding"]!.reshaped([1, 1, 9]))
+        eval(tokens)
+        let tokenCosine = cosine(tokens, reference["cam_enc_tokens"]!)
+        print("[DA3] cam_enc_tokens cosine = \(tokenCosine)")
+        XCTAssertGreaterThan(tokenCosine, 0.9999999, "the camera encoder tokens must match the reference")
     }
 
-    // Every released tensor is either loaded by the monocular depth path or named as deliberately
-    // unimplemented (the aux/ray fusion chain and heads, and the camera decoder/encoder), so a tensor
-    // the port silently ignores is a failure rather than an oversight (the Gemma/DeepSeek discipline).
+    // Every released tensor is loaded: the backbone, both DualDPT branches, the camera decoder, and
+    // the camera encoder. The converse holds but for six parameters, which is a property of the
+    // release rather than of this port — see the assertion below.
     func testEveryReleasedTensorIsLoadedOrNamedAsDropped() throws {
         try requireMLXRuntime()
         let weightsURL = URL(fileURLWithPath: try envPath("IK_VAL_DEPTH3_WEIGHTS"))
@@ -113,18 +165,27 @@ final class NFKMLXDepthAnything3Tests: XCTestCase {
         try NFKMLXDepthAnything3.loadWeights(into: net, from: weightsURL)
         let builtKeys = Set(net.parameters().flattened().map { $0.0 })
 
-        var loaded = 0, dropped = 0, unaccounted = [String]()
+        var loadedKeys = Set<String>()
+        var unaccounted = [String]()
         for (key, _) in checkpoint.arrays {
-            if let remapped = NFKMLXDepthAnything3.remap(key) {
-                if builtKeys.contains(remapped) { loaded += 1 } else { unaccounted.append(key) }
-            } else if key.contains("_aux") || key.hasPrefix("model.cam_enc") || key.hasPrefix("model.cam_dec") {
-                dropped += 1                                    // the aux/ray branch and the camera modules
-            } else {
+            guard let remapped = NFKMLXDepthAnything3.remap(key), builtKeys.contains(remapped) else {
                 unaccounted.append(key)
+                continue
             }
+            loadedKeys.insert(remapped)
         }
-        print("[DA3] coverage: loaded=\(loaded) dropped=\(dropped) unaccounted=\(unaccounted.count)")
-        XCTAssertEqual(unaccounted, [], "every released tensor must be loaded or named as deliberately dropped")
-        XCTAssertEqual(loaded, builtKeys.count, "every built parameter must be loaded from the checkpoint")
+        // The release carries the aux head's channel LayerNorm for level 0 only, and the reference's
+        // own loader (`utils/model_loading.py`) loads `strict=False`, so levels 1-3 run at the
+        // `nn.LayerNorm` init of weight 1 and bias 0. Inference reads level 3, so the ray head's
+        // normalization is unweighted by construction, in the reference and here alike.
+        let unlearned = Set((1 ... 3).flatMap { level in
+            ["weight", "bias"].map { "head.scratch.output_conv2_aux.\(level).2.\($0)" }
+        })
+        let built = builtKeys.subtracting(loadedKeys)
+        print("[DA3] coverage: loaded=\(loadedKeys.count) built=\(builtKeys.count) "
+              + "unloaded=\(built.count) unaccounted=\(unaccounted.count)")
+        XCTAssertEqual(unaccounted, [], "every released tensor must map onto a built parameter")
+        XCTAssertEqual(built, unlearned,
+                       "the only parameters the release does not carry are the three unlearned aux LayerNorms")
     }
 }
