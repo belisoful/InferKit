@@ -13,7 +13,7 @@ import Foundation
 /// model by default — no per-run environment is needed. A test that reads
 /// `ProcessInfo.processInfo.environment` directly is invisible to the JSON, so a new model's test
 /// reads `NFKMLXValidationConfig.environment` instead. See "Completing an InferKitMLX model to
-/// parity" in CLAUDE.md.
+/// parity" in `Docs/agent-reference/mlx-parity-checklist.md`.
 enum NFKMLXValidationConfig {
 	static var environment: [String: String] {
 		var merged = ProcessInfo.processInfo.environment

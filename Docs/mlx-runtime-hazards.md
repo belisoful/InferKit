@@ -124,7 +124,7 @@ probe, because the failure is a process kill that would truncate the suite it ra
 
 ## Confirmed previously, and still true
 
-These were found while building this package and are recorded in `CLAUDE.md`. They are repeated here
+These were found while building this package and are recorded in `Docs/agent-reference/mlx-runtime-gotchas.md`. They are repeated here
 because they are not specific to InferKit.
 
 ### Never pass `padding:` to an mlx-swift pooling layer

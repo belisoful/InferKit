@@ -346,7 +346,7 @@ configurations plus the per-stage parities above, the same treatment Music 3 get
 | --- | --- |
 | Fast style transfer parity and its real-weights run | the `mosaic.pth` checkpoint is no longer served anywhere; a seeded stand-in was tried and rejected because it measures noise |
 | Music 3 listening clip, DiT bit-width sweep, embedding-quantization probe | opt-in probes (`IK_MUSIC3_LISTEN`, `IK_MUSIC3_DIT_SWEEP`, `IK_MUSIC3_EMB_PROBE`); the recorded sweep is in `Docs/companions.md` |
-| Qwen3 tied-embedding quantization probe | opt-in (`IK_QWEN_EMB_PROBE`); recorded in `CLAUDE.md` |
+| Qwen3 tied-embedding quantization probe | opt-in (`IK_QWEN_EMB_PROBE`); recorded in `Docs/agent-reference/mlx-weights-and-formats.md` |
 | Live Hugging Face download | needs `INFERKIT_LIVE_MODEL` |
 | Cross-thread evaluation probe | opt-in (`IK_PROBE_CROSS_THREAD`) |
 
