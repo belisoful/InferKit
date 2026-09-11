@@ -127,7 +127,9 @@ final class NFKMLXStoRMTests: XCTestCase {
 
         // Denoiser seam: y → y_denoised.
         let denoised = net.denoise(inY.reshaped([1, bins, frames, 2]))
-        XCTAssertGreaterThan(cosine(denoised[0], denoiserOut), 0.999, "the denoiser seam diverges")
+        let denoiserSimilarity = cosine(denoised[0], denoiserOut)
+        print("VALIDATION PARITY storm: denoiser seam cosine \(denoiserSimilarity)")
+        XCTAssertGreaterThan(denoiserSimilarity, 0.999, "the denoiser seam diverges")
 
         // Score seam: [x_t, *conditioning] → raw score-net output.
         var parts = [inXt]
@@ -138,6 +140,8 @@ final class NFKMLXStoRMTests: XCTestCase {
         }
         let packed = concatenated(parts, axis: -1).reshaped([1, bins, frames, config.scoreInputChannels])
         let score = net.score(packed, sigmas: MLXArray([t]))
-        XCTAssertGreaterThan(cosine(score[0], record["score_out"]!), 0.999, "the score seam diverges")
+        let scoreSimilarity = cosine(score[0], record["score_out"]!)
+        print("VALIDATION PARITY storm: score seam cosine \(scoreSimilarity)")
+        XCTAssertGreaterThan(scoreSimilarity, 0.999, "the score seam diverges")
     }
 }

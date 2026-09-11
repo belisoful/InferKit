@@ -154,10 +154,14 @@ final class NFKMLXSGMSETests: XCTestCase {
 
         // Input-conv seam (all_modules.3), NHWC [1,F,T,nf] vs reference [F,T,nf].
         let convIn = (net.allModules[3] as! Conv2d)(packed)
-        XCTAssertGreaterThan(cosine(convIn[0], record["conv_in"]!), 0.999, "the input-conv seam diverges")
+        let convSimilarity = cosine(convIn[0], record["conv_in"]!)
+        print("VALIDATION PARITY sgmse: input-conv seam cosine \(convSimilarity)")
+        XCTAssertGreaterThan(convSimilarity, 0.999, "the input-conv seam diverges")
 
         // The full network output vs the recorded raw dnn output.
         let out = net(packed, sigmas: MLXArray([t]))
-        XCTAssertGreaterThan(cosine(out[0], record["net_out"]!), 0.999, "the score-net output diverges")
+        let outputSimilarity = cosine(out[0], record["net_out"]!)
+        print("VALIDATION PARITY sgmse: score-net output cosine \(outputSimilarity)")
+        XCTAssertGreaterThan(outputSimilarity, 0.999, "the score-net output diverges")
     }
 }

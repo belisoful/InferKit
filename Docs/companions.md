@@ -183,6 +183,10 @@ models.
   loads directly (`depth-anything-3-small` / `-base` / `-large`, `NFKMLXDepth3Variant`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
+- **`NFKMLXBiRefNet`** — high-resolution background removal (MIT): a Swin-v1-L backbone, a neck that
+  concatenates a downscaled second view with a context stack, and a decoder whose `ASPPDeformable`
+  blocks run a modulated deformable convolution. Run through the matting backend at 1024, at reference
+  parity against the released weights on every seam.
 - **`NFKMLXISNet`** — IS-Net, the dichotomous segmentation network the U²-Net authors published next:
   the same Residual U-blocks behind a stride-2 stem, wider stages, and six separate side maps with no
   fusion convolution, run through the matting backend (plate → foreground + alpha cutout) at

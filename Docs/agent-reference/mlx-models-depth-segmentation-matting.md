@@ -112,6 +112,22 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `0...1`, normalizes with mean 0.5 and unit standard deviation, and min-max stretches the returned map.
   Reference parity against the DIS `isnet.py` on `isnet-general-use.pth`: stem 0.9999999999990618,
   stage 1 0.9999999999987647, stage 6 0.9999999999996586, and every side map ≥ 0.9999999999999148.
+- `NFKMLXBiRefNet` (`@objc`) — high-resolution background removal (`ZhengPeng7/BiRefNet`, MIT), run
+  through `NFKMLXMattingBackend` and registered as `birefnet`. Three parts: a **Swin-v1-L backbone**
+  that reuses SwinIR's window attention, a neck that concatenates a downscaled second view
+  (`mul_scl_ipt='cat'`) with a context stack, and a decoder whose `ASPPDeformable` blocks run a
+  **modulated deformable convolution**. That convolution reduces to the same bilinear-gather
+  (`takeAlong`) primitive RAFT, RIFE, RVM and RT-DETR's deformable attention already use, so it needed
+  no DCNv2 Metal kernel. The plate is resized to 1024 and ImageNet-normalized. Two facts are
+  load-bearing. The decoder's `gdt` attention gating is **active at inference**, not a training-only
+  branch as its siblings `pred`/`label`/`ms` are. And the model must be put in evaluation mode after
+  loading, or `BatchNorm` normalizes over the plate — the backbone's LayerNorm masks the error, so it
+  reads as a plausible matte rather than a broken one. Reference parity on the released weights, every
+  seam: neck x1 0.9999999999975541, x2 0.999999999997728, x3 0.9999999999869097, x4 context
+  0.9999999999948102, x4 squeezed 0.9999999999989743; decoder p4 0.9999999999997091, p3
+  0.9999999999994882, p2 0.9999999999996263, p1 0.9999999999995682, logit 0.9999999999998718; and the
+  assembled encoder-to-decoder chain 0.9999999999996281. The lite and other released variants need the
+  hardcoded channel widths generalized and are left out.
 - `NFKMLXSAM` (`@objc`) — real promptable segmentation (Segment Anything): a ViT image encoder, a prompt
   encoder (point → sparse tokens via a random-Fourier positional encoding), and a two-way-transformer
   mask decoder with a hypernetwork mask head, in `MLXNN`. Run through `NFKMLXMattingBackend` (plate +

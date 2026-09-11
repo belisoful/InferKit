@@ -112,6 +112,7 @@ The Depth Anything map cosines near 0.998 are the recorded values for this famil
 
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
+| BiRefNet | `NFKMLXBiRefNet` | ZhengPeng7 `BiRefNet` | ZhengPeng7/BiRefNet `model.safetensors` | neck x1 0.9999999999975541, x2 0.999999999997728, x3 0.9999999999869097, x4 context 0.9999999999948102, x4 squeezed 0.9999999999989743; decoder p4 0.9999999999997091, p3 0.9999999999994882, p2 0.9999999999996263, p1 0.9999999999995682, logit 0.9999999999998718; assembled encoder to decoder 0.9999999999996281 |
 | U²-Net | `NFKMLXU2Net` | xuebinqin `u2net.py` | u2net | cosine 0.9999992900356037, mean abs 7.263675130994506e-05 |
 | U²-Net light | `NFKMLXU2Net` (`.light`) | `U2NETP` (a separate class) | u2netp | cosine 0.9999997057950919 |
 | IS-Net (DIS) | `NFKMLXISNet` | xuebinqin `isnet.py` (`ISNetDIS`) | isnet-general-use | stem 0.9999999999990618; stage 1 0.9999999999987647; stage 6 0.9999999999996586; side maps 0.9999999999999872 / 0.9999999999999584 / 0.9999999999999386 / 0.9999999999999148 / 0.9999999999999514 / 0.9999999999999729 |
@@ -292,6 +293,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | --- | --- | --- | --- | --- |
 | Whisper tiny | `NFKMLXWhisper` | openai-whisper | tiny.pt | log-mel 0.99999999999401, first-step logits 0.99999999974, greedy tokens exact; the reference's suppression rules exact; timestamped decode exact with segment (0.0, 3.0) s |
 | Whisper small / medium / large-v3 | `NFKMLXWhisper` (variants) | same | released | mel 0.99999999999401 / 0.99999999999401 / 0.99999999998511; tokens exact for all three |
+| Parakeet-TDT 0.6B v2 | `NFKMLXParakeet` | NeMo `EncDecRNNTBPEModel` | nvidia/parakeet-tdt-0.6b-v2 | features 0.9999999996366677, pre-encode 0.9999999998896353, layer 0 0.999999999752081, encoder 0.9999999999931254, joint 0.9999999999999598; greedy TDT transcription exact on the validation clip, through the public backend too |
 | Whisper base / large-v2 / large-v3-turbo | `NFKMLXWhisper` (`.base`, `.large`, `.largeV3Turbo`) | same | base.pt, large-v2.pt, large-v3-turbo.pt | greedy tokens exact for all three (`.large` fits large-v1 and large-v2 alike; the turbo is large-v3's encoder over a 4-layer decoder) |
 | Demucs v2 | `NFKMLXDemucs` | facebookresearch demucs v2 | demucs-e07c671f | per-stem-channel cosine ≥ 0.99999999949 (worst), most ≥ 0.9999999998 |
 | Hybrid Transformer Demucs (v4) | `NFKMLXHTDemucs` | `demucs` 4.0.1 `load_model` | htdemucs 955717e8 | spectrogram 0.99999999999995, bottleneck in/out 0.99999999996 / 0.99999999999, freq-out 0.99999999999601, time-out 0.99999999999975; separated stems 0.99999999999955, mean abs 7.7e-8 |
@@ -299,6 +301,10 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | Hybrid Transformer Demucs, fine-tuned bag | `NFKMLXHTDemucsBag` (four checkpoints, one-hot weights) | `demucs` 4.0.1 `BagOfModels` | htdemucs_ft | separated stems 0.99999999999958 |
 | Conv-TasNet | `NFKMLXConvTasNet` | asteroid `ConvTasNet` | Libri2Mix sep_clean 16k | per-speaker cosine 0.99999999949 / 0.99999999999975 |
 | Speech denoiser (dns48) | `NFKMLXDenoiser` | facebookresearch/denoiser | dns48 | cosine 0.99999999999992; on real speech the correlation with the clean signal rises 0.9657 → 0.9970 |
+| MP-SENet | `NFKMLXMPSENetFactory` | reference `MPNet` | g_best_dns | enhanced waveform 0.99998856, every seam exact |
+| GTCRN | `NFKMLXGTCRNFactory` | Xiaobin-Rong `gtcrn` | model_trained_on_dns3 | enhanced waveform 1.0000002, every seam exact |
+| SGMSE+ | `NFKMLXSGMSE` | sp-uhh `sgmse` | sp-uhh VoiceBank-DEMAND EMA | input-conv seam 0.99999976, score-net output 1.0000001 (both released backbones: classic `ncsnpp` and the no-attention `ncsnpp_48k`) |
+| StoRM | `NFKMLXStoRM` | sp-uhh `storm` | tiny random configuration (the combined checkpoints are Google-Drive only; the NCSN++ backbone is at released-weight parity through SGMSE+) | denoiser seam 0.9999999999999989, score seam 0.9999999999999977 |
 | MossFormer2 SE 48K | `NFKMLXMossFormer2SENet` | ClearerVoice `mossformer2_se` MaskNet | alibabasglab/MossFormer2_SE_48K | Kaldi fbank+Δ 1.0, encoder & FLASH block 0 0.99999994, FLASH block last & 961-bin mask 1.0, enhanced waveform 0.9999998 |
 | MossFormer2 SR 48K | `NFKMLXMossFormer2SRNet` | ClearerVoice `Mossformer` + `Generator` + `bandwidth_sub` | alibabasglab/MossFormer2_SR_48K | log-mel 1.0, backbone 1.0, generator 0.9999999999987, detected cutoff 6937.5 Hz exact, bandwidth substitution 1.0, end to end 0.9999999999992 |
 | DeepFilterNet3 | `NFKMLXDeepFilterNet` | `deepfilternet` pip package (`DfNet` + libdf DSP) | Rikorose/DeepFilterNet3 | every net seam exact (e0–e3 / emb / c0 / m / df_coefs / spec_e 1.0000000), DSP spec / feat_erb / feat_spec 1.0000000, enhanced waveform 0.9999999 |

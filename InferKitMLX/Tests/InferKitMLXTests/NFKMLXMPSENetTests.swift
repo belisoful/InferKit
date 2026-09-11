@@ -120,7 +120,9 @@ final class NFKMLXMPSENetTests: XCTestCase {
         let a = Array(ours[0 ..< count]), b = Array(reference[0 ..< count])
         let dot = zip(a, b).reduce(Float(0)) { $0 + $1.0 * $1.1 }
         let na = sqrtf(a.reduce(0) { $0 + $1 * $1 }), nb = sqrtf(b.reduce(0) { $0 + $1 * $1 })
-        XCTAssertGreaterThan(dot / (na * nb), 0.999, "the enhanced waveform matches the reference")
+        let similarity = dot / (na * nb)
+        print("VALIDATION PARITY mpsenet: enhanced waveform cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.999, "the enhanced waveform matches the reference")
     }
 
     /// Localizes the first divergence: feeds the net the RECORDED compressed magnitude and phase (so the

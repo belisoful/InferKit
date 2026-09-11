@@ -1934,6 +1934,7 @@ let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  /
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"
 let dichotomous = try NFKMLXISNet.backend(weightsURL: nil)                     // "isnet"
+let highRes  = try NFKMLXBiRefNet.backend(weightsURL: nil)                     // "birefnet"; resizes to 1024
 let videoKey = try NFKMLXRVM.backend(weightsURL: nil)                          // "robust-video-matting" (MobileNetV3); .resNet50 is the heavier release
 let portrait = try NFKMLXMODNet.backend(weightsURL: nil)                       // "modnet"
 
