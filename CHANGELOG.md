@@ -33,6 +33,31 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Fine-tuning is reachable, and a frozen backbone stays frozen
+
+- `NFKMLXWeights`, `NFKMLXQuantization`, and `NFKMLXError` are public. `NFKMLXWeights.save` is the
+  output of every fine-tune and the input of the model's own `weightsURL:` factory, and it was
+  internal: the customization recipes in `Docs/examples.md` compiled only because the examples target
+  imports the package `@testable`, so an app that linked InferKitMLX could train a model and not write
+  the result. Quantization is public for the same reason. The LoRA guidance is to merge at float
+  precision and quantize afterward, which a consumer could not do. The error type is public because a
+  public call that documents what it throws has to let a caller act on it.
+- `Examples/MLXCustomizationExamples.swift` holds the customization snippets and imports
+  `InferKitMLX` without `@testable`, so a recipe that slips back behind `internal` breaks the build
+  rather than being found by a consumer.
+- A training run leaves every fully frozen subtree in evaluation mode. `train(true)` sets the flag on
+  every module in the tree and freezing does not touch it, so a frozen `BatchNorm` normalized with the
+  batch's own mean and variance and folded them into the running statistics it was released with.
+  `NFKMLXWeights.save` writes those statistics, so a head-only fine-tune over a pretrained
+  convolutional backbone shipped the damage in the checkpoint. A subtree with no parameters at all
+  follows its parent, so a dropout inside the trainable group still drops. No shipped recipe reached
+  the defect; every head-only recipe over a BatchNorm backbone would have.
+- A run over a model with no trainable parameter left throws `NFKMLXError.nothingToTrain` instead of
+  reporting a loss curve for an update that changes nothing. A LoRA predicate that matched no layer
+  leaves exactly that state.
+- `NFKMLXTrainingCheckpoint` clamps `everySteps` to at least one. The loop writes on
+  `(step + 1) % everySteps`, which trapped on zero.
+
 #### Depth Anything 3, complete
 
 - The port built only the DualDPT depth branch and dropped 168 of the 437 released tensors. It now

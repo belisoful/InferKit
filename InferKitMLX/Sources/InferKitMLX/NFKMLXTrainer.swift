@@ -38,12 +38,14 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
     /// The destination, which must be a `.safetensors` file.
     public let url: URL
 
-    /// How many steps pass between writes.
+    /// How many steps pass between writes. At least one.
     public let everySteps: Int
 
     public init(url: URL, everySteps: Int) {
         self.url = url
-        self.everySteps = everySteps
+        // The loop writes on `(step + 1) % everySteps`, which traps on zero. A caller asking for a
+        // non-positive interval means every step.
+        self.everySteps = max(everySteps, 1)
     }
 }
 
@@ -78,11 +80,13 @@ public enum NFKMLXTrainer {
     ///   - observer: receives each step and can end the run early.
     ///
     /// - Throws: `NFKMLXError.trainingDiverged` when a step's loss stops being finite, before that
-    ///   step can reach a checkpoint.
+    ///   step can reach a checkpoint. `NFKMLXError.nothingToTrain` when every parameter is frozen,
+    ///   which a predicate that matched no layer leaves behind.
     ///
-    /// The module is put in training mode for the duration and restored afterward, so a model built
-    /// by a factory that set evaluation mode for its batch-normalization statistics updates those
-    /// statistics while training and returns ready to infer.
+    /// The module is put in training mode for the duration and restored afterward, so the group that
+    /// trains updates its batch-normalization statistics and returns ready to infer. A subtree whose
+    /// parameters are all frozen stays in evaluation mode instead, so a frozen backbone normalizes
+    /// with the statistics it was released with rather than folding the training batches into them.
     ///
     /// A run is multi-second; call it off the main thread.
     @discardableResult
@@ -147,8 +151,15 @@ public enum NFKMLXTrainer {
         checkpoint: NFKMLXTrainingCheckpoint?,
         observer: Observer?
     ) throws -> [Float] {
+        guard !model.trainableParameters().flattened().isEmpty else {
+            throw NFKMLXError.nothingToTrain(
+                "every parameter of this model is frozen, so the run would compute gradients for "
+                + "nothing and leave the weights exactly as they are. Unfreeze the group to train, "
+                + "or check that the LoRA predicate matched the layers it names.")
+        }
+
         let wasTraining = model.training
-        model.train(true)
+        enterTrainingMode(model)
         defer { model.train(wasTraining) }
 
         let lossAndGradient = valueAndGrad(model: model) { model, arrays in [loss(model, arrays)] }
@@ -182,6 +193,37 @@ public enum NFKMLXTrainer {
             }
         }
         return history
+    }
+
+    /// Puts the model into training mode, leaving every fully frozen subtree in evaluation mode.
+    ///
+    /// @discussion `train(true)` sets the flag on every module in the tree, and freezing does not
+    /// touch it. A `BatchNorm` whose flag is set normalizes with the batch's own mean and variance
+    /// and folds them into its running statistics, so a head-only run over a pretrained
+    /// convolutional backbone changes what the frozen backbone computes and overwrites the
+    /// statistics it was released with, from batches of one or two examples.
+    /// ``NFKMLXWeights/save(_:to:)`` then writes those statistics into the checkpoint, which is how
+    /// the damage outlives the run.
+    ///
+    /// A subtree that holds parameters and has none trainable is therefore returned to evaluation
+    /// mode. A subtree holding no parameters at all follows its parent, so a dropout inside the
+    /// trainable group still drops.
+    private static func enterTrainingMode(_ model: Module) {
+        model.train(true)
+        restoreEvaluationMode(inFrozenSubtreesOf: model)
+    }
+
+    /// Walks down from `module`, returning each wholly frozen subtree to evaluation mode.
+    private static func restoreEvaluationMode(inFrozenSubtreesOf module: Module) {
+        guard module.parameters().flattened().isEmpty
+                || !module.trainableParameters().flattened().isEmpty else {
+            // Nothing below this point trains, so the whole subtree evaluates.
+            module.train(false)
+            return
+        }
+        for (_, child) in module.children().flattened() {
+            restoreEvaluationMode(inFrozenSubtreesOf: child)
+        }
     }
 
     /// Sanitizes the gradients, then scales them so their global norm is at most `maxNorm`.

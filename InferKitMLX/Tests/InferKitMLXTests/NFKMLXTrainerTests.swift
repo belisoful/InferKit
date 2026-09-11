@@ -290,4 +290,175 @@ final class NFKMLXTrainerTests: XCTestCase {
         eval(values)
         XCTAssertTrue(values.asArray(Float.self).allSatisfy { $0 == 0 })
     }
+
+    // MARK: Frozen normalization
+
+    /// A backbone whose parameters are frozen, under a head that trains: the shape of every
+    /// head-only fine-tune in the package.
+    private final class HeadOverFrozenBackbone: Module {
+
+        @ModuleInfo(key: "backbone") var backbone: BatchNorm
+        @ModuleInfo(key: "head") var head: Linear
+
+        override init() {
+            _backbone.wrappedValue = BatchNorm(featureCount: 2)
+            _head.wrappedValue = Linear(2, 2)
+            super.init()
+        }
+
+        func callAsFunction(_ x: MLXArray) -> MLXArray {
+            head(backbone(x))
+        }
+
+        func freezeBackbone() {
+            unfreeze()
+            backbone.freeze()
+        }
+
+        /// `BatchNorm.runningMean` is internal to MLXNN, so the statistics are read the way a
+        /// checkpoint sees them: as parameters of the module.
+        var runningMean: [Float] {
+            eval(self)
+            let statistics = parameters().flattened().first { $0.0 == "backbone.running_mean" }
+            return statistics!.1.asArray(Float.self)
+        }
+    }
+
+    /// `train(true)` sets the flag on every module, and freezing does not touch it, so a frozen
+    /// BatchNorm would fold the batch it sees into the statistics it was released with — and
+    /// `NFKMLXWeights.save` would then write them.
+    func testAFrozenNormalizationKeepsItsReleasedStatistics() throws {
+        try requireMLXRuntime()
+        let model = HeadOverFrozenBackbone()
+        model.freezeBackbone()
+        let before = model.runningMean
+
+        let input = MLXArray([3.0, -4.0, 5.0, -6.0] as [Float]).reshaped([2, 2])
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.01), steps: 3,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        (model(input) - target).square().mean()
+                                    })
+
+        XCTAssertEqual(model.runningMean, before,
+                       "the frozen backbone's running statistics did not move")
+    }
+
+    /// The frozen backbone also has to compute what it computes at inference. In training mode a
+    /// BatchNorm normalizes with the batch's own mean and variance, which over two examples is a
+    /// different function from the released one.
+    func testAFrozenNormalizationNormalizesWithItsReleasedStatistics() throws {
+        try requireMLXRuntime()
+        let model = HeadOverFrozenBackbone()
+        model.freezeBackbone()
+        let input = MLXArray([3.0, -4.0, 5.0, -6.0] as [Float]).reshaped([2, 2])
+
+        model.train(false)
+        let atInference = model.backbone(input)
+        eval(atInference)
+        let expected = atInference.asArray(Float.self)
+
+        var duringTraining: [Float] = []
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0), steps: 1,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        let normalized = model.backbone(input)
+                                        eval(normalized)
+                                        duringTraining = normalized.asArray(Float.self)
+                                        return (model(input) - target).square().mean()
+                                    })
+
+        XCTAssertEqual(duringTraining.count, expected.count)
+        for (during, inference) in zip(duringTraining, expected) {
+            XCTAssertEqual(during, inference, accuracy: 1e-6)
+        }
+    }
+
+    /// A normalization inside the group that trains still updates, or a full fine-tune would never
+    /// adapt its statistics to the consumer's data.
+    func testAnUnfrozenNormalizationStillUpdatesItsStatistics() throws {
+        try requireMLXRuntime()
+        let model = HeadOverFrozenBackbone()
+        model.unfreeze()
+        let before = model.runningMean
+
+        let input = MLXArray([3.0, -4.0, 5.0, -6.0] as [Float]).reshaped([2, 2])
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.01), steps: 3,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        (model(input) - target).square().mean()
+                                    })
+
+        XCTAssertNotEqual(model.runningMean, before)
+    }
+
+    /// The models this rule protects hold their stages in `[Module]` arrays, not in named
+    /// properties, so the walk has to descend through array structure to reach a frozen backbone.
+    private final class HeadOverArrayHeldBackbone: Module {
+
+        @ModuleInfo(key: "stages") var stages: [BatchNorm]
+        @ModuleInfo(key: "head") var head: Linear
+
+        override init() {
+            _stages.wrappedValue = [BatchNorm(featureCount: 2), BatchNorm(featureCount: 2)]
+            _head.wrappedValue = Linear(2, 2)
+            super.init()
+        }
+
+        func callAsFunction(_ x: MLXArray) -> MLXArray {
+            head(stages.reduce(x) { $1($0) })
+        }
+
+        var runningMeans: [[Float]] {
+            eval(self)
+            return parameters().flattened()
+                .filter { $0.0.hasPrefix("stages.") && $0.0.hasSuffix(".running_mean") }
+                .map { $0.1.asArray(Float.self) }
+        }
+    }
+
+    func testAFrozenBackboneHeldInAnArrayKeepsItsStatistics() throws {
+        try requireMLXRuntime()
+        let model = HeadOverArrayHeldBackbone()
+        model.unfreeze()
+        for stage in model.stages {
+            stage.freeze()
+        }
+        let before = model.runningMeans
+        XCTAssertEqual(before.count, 2, "the premise: both array-held stages carry statistics")
+
+        let input = MLXArray([3.0, -4.0, 5.0, -6.0] as [Float]).reshaped([2, 2])
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.01), steps: 3,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        (model(input) - target).square().mean()
+                                    })
+
+        XCTAssertEqual(model.runningMeans, before)
+    }
+
+    // MARK: Guards
+
+    /// A predicate that matched nothing leaves every parameter frozen, and a run over it reports a
+    /// falling loss curve while changing nothing.
+    func testAFullyFrozenModelIsRefusedRatherThanTrainingNothing() throws {
+        try requireMLXRuntime()
+        let model = Linear(2, 2)
+        model.freeze()
+        let batch = fixedBatch()
+
+        XCTAssertThrowsError(try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.1),
+                                                     steps: 5, batch: { _ in batch },
+                                                     loss: meanSquaredError)) { error in
+            guard case NFKMLXError.nothingToTrain = error else {
+                return XCTFail("expected nothingToTrain, got \(error)")
+            }
+        }
+    }
+
+    /// The loop writes on `(step + 1) % everySteps`, which traps on zero.
+    func testANonPositiveCheckpointIntervalMeansEveryStep() {
+        XCTAssertEqual(NFKMLXTrainingCheckpoint(url: temporaryURL(), everySteps: 0).everySteps, 1)
+        XCTAssertEqual(NFKMLXTrainingCheckpoint(url: temporaryURL(), everySteps: -4).everySteps, 1)
+    }
 }

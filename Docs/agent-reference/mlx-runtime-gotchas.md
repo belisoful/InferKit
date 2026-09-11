@@ -90,3 +90,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   skips unless they are set, so CI stays green while the real Hugging Face path stays runnable on demand.
   Per-model correctness against real trained weights (the validation sweep) still needs a converted
   checkpoint fed to that live test.
+
+- **`freeze()` does not stop a `BatchNorm` from training.** `train(_:)` sets the flag on every module
+  in the tree and freezing marks parameters as taking no gradient; the two are independent, and
+  `BatchNorm` branches on the flag alone. A frozen backbone under a head-only fine-tune therefore
+  normalizes with the training batch's statistics instead of the released ones, and folds the batch
+  into `running_mean` / `running_var`, which a checkpoint write persists. `NFKMLXTrainer` returns every
+  wholly frozen subtree to evaluation mode after `train(true)`; a subtree with no parameters at all
+  follows its parent, so a dropout in the trainable group still drops. Consumer-facing write-up and
+  probes: `Docs/mlx-runtime-hazards.md`.

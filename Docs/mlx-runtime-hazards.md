@@ -92,6 +92,27 @@ present. `NFKMLXTrainer.bounded(_:maxNorm:)` does both.
 `Acelogic/Retrieval-based-Voice-Conversion-MLX`, whose `docs/TRAINING_STABILITY_FIXES.md` records
 hitting it in a real run; confirmed here.*
 
+### `freeze()` does not stop a `BatchNorm` from training
+
+`Module.train(_:)` visits every module in the tree and sets the flag unconditionally.
+`freeze(recursive:keys:)` marks parameters as taking no gradient. The two are independent, and
+`BatchNorm.callAsFunction` branches on the flag alone: when it is set it normalizes with the batch's
+own mean and variance and folds them into `running_mean` / `running_var`.
+
+A frozen backbone under a head-only fine-tune therefore does two wrong things at once. It computes a
+different function from the one it computes at inference, because a batch of one or two examples is
+not the released statistics. And it overwrites those statistics, which a checkpoint write then
+persists, so the damage outlives the run. Nothing reports it: the loss falls, the head learns, and
+the model is quietly worse.
+
+**Rule:** after `train(true)`, return every subtree that holds parameters and has none trainable to
+evaluation mode. A subtree with no parameters at all follows its parent, or a dropout inside the
+group that trains would stop dropping. `NFKMLXTrainer` does this for every run.
+
+*Probes: `testAFrozenNormalizationKeepsItsReleasedStatistics` and
+`testAFrozenNormalizationNormalizesWithItsReleasedStatistics` fail without the rule;
+`testAnUnfrozenNormalizationStillUpdatesItsStatistics` fails if it over-applies.*
+
 ### Merging a LoRA delta into a quantized base discards the training
 
 A rank-r detour's contribution to any one weight is small by construction. Requantizing `W + Δ` snaps

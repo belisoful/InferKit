@@ -29,14 +29,19 @@ public enum NFKMLXWeightPrecision: Int, Sendable {
     case checkpoint
 }
 
-/// Runtime MLX quantization: packs a module's `Linear` layers into affine 4- or 8-bit groups.
+/// Runtime MLX quantization: packs a module's `Linear` layers, a mixture's stacked experts, and
+/// optionally its `Embedding` layers into affine 4- or 8-bit groups.
 ///
-/// Only `Linear` layers whose input width divides the group size quantize; everything else —
-/// convolutions, norms, embeddings, the Snake alphas — computes as built. Quantizing an EMBEDDING is
-/// deliberately not offered: `QuantizedLinear` subclasses `Linear`, which every module here stores
-/// behind `@ModuleInfo`, so the replacement is assignable; and the same subclassing is why a filter
-/// must exclude layers that are already quantized.
-enum NFKMLXQuantization {
+/// A layer quantizes only when its input width divides the group size; everything else (convolutions,
+/// norms, the Snake alphas) computes as built. The replacement works because `QuantizedLinear`
+/// subclasses `Linear`, which every module here stores behind `@ModuleInfo`, so it is assignable to
+/// the property it replaces. The same subclassing is why the filter must exclude layers that are
+/// already quantized, and why ``NFKMLXLoRA`` refuses a quantized layer rather than adapting one.
+///
+/// This is the step that follows a merged low-rank fine-tune: merge at float precision, then quantize.
+/// The other order rounds the training away, because requantizing a weight plus a small delta snaps
+/// back to the value it started from.
+public enum NFKMLXQuantization {
 
     /// Replaces the module's eligible `Linear` layers with `QuantizedLinear` at the given geometry,
     /// and its `Embedding` layers with `QuantizedEmbedding` when `includeEmbeddings` is set. On a
@@ -47,8 +52,8 @@ enum NFKMLXQuantization {
     /// output projection, so quantizing it quantizes the logit head too — a cost that has to be
     /// measured per model rather than assumed free. It is safe to enable for an untied model, whose
     /// embedding is a lookup table separate from `lm_head`.
-    static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
-                         includeEmbeddings: Bool = false) {
+    public static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
+                                includeEmbeddings: Bool = false) {
         MLXNN.quantize(model: module, groupSize: groupSize, bits: bits, mode: .affine, filter: { _, layer in
             if let linear = layer as? Linear, !(linear is QuantizedLinear) {
                 return linear.weight.shape[1] % groupSize == 0
@@ -91,12 +96,12 @@ enum NFKMLXQuantization {
     }
 }
 
-enum NFKMLXWeights {
+public enum NFKMLXWeights {
 
     /// Applies `precision` to already-remapped pairs, leaving integer tensors alone — an index cast to
     /// float is not a rounding error, it is a different value.
-    static func converted(_ mapped: [(String, MLXArray)],
-                          to precision: NFKMLXWeightPrecision) -> [(String, MLXArray)] {
+    public static func converted(_ mapped: [(String, MLXArray)],
+                                 to precision: NFKMLXWeightPrecision) -> [(String, MLXArray)] {
         guard precision == .float32 else { return mapped }
         return mapped.map { name, value in
             (name, value.dtype == .float16 || value.dtype == .bfloat16 ? value.asType(.float32) : value)
@@ -111,10 +116,10 @@ enum NFKMLXWeights {
     private static let quantizationKey = "inferkit.quantization"
 
     /// The MLX quantization a checkpoint was stored under.
-    struct Quantization: Sendable, Equatable {
-        let bits: Int
-        let groupSize: Int
-        let mode: QuantizationMode
+    public struct Quantization: Sendable, Equatable {
+        public let bits: Int
+        public let groupSize: Int
+        public let mode: QuantizationMode
         init(bits: Int, groupSize: Int, mode: QuantizationMode = .affine) {
             self.bits = bits
             self.groupSize = groupSize
@@ -123,8 +128,8 @@ enum NFKMLXWeights {
     }
 
     /// A checkpoint's arrays together with the layout its convolution weights are stored in.
-    struct Checkpoint {
-        let arrays: [String: MLXArray]
+    public struct Checkpoint {
+        public let arrays: [String: MLXArray]
 
         /// True for a converted PyTorch checkpoint, whose 4-D weights are `[out, in, kH, kW]` and need
         /// the model's transpose to MLX's `[out, kH, kW, in]`. False for a checkpoint written by
@@ -134,19 +139,19 @@ enum NFKMLXWeights {
         /// inverting is what keeps the round trip exact for the models whose transpose is not the
         /// common one: SAM's `up1`/`up2` use `transposed(1, 2, 3, 0)` and Whisper handles 3-D Conv1d,
         /// and a generic inverse would corrupt both.
-        let needsConvTranspose: Bool
+        public let needsConvTranspose: Bool
 
         /// Non-nil for a checkpoint whose weights are MLX-quantized. A loader quantizes the module's
         /// structure to match BEFORE applying: a packed uint32 weight loaded into a plain `Linear`
         /// adopts the wrong shape and dtype silently, which is exactly the hazard the metadata
         /// exists to close.
-        let quantization: Quantization?
+        public let quantization: Quantization?
 
         /// True when the file was a raw PyTorch checkpoint read by ``NFKMLXTorchFormat``. A model
         /// whose offline converter pre-permutes a tensor (a transposed-convolution axis swap) reads
         /// this to apply that permutation itself: the raw and converted files can carry identical
         /// key names, so the distinction cannot be recovered from the arrays.
-        let isNativeTorch: Bool
+        public let isNativeTorch: Bool
 
         init(arrays: [String: MLXArray], needsConvTranspose: Bool, quantization: Quantization?,
              isNativeTorch: Bool = false) {
@@ -166,7 +171,7 @@ enum NFKMLXWeights {
     /// checkpoint (`.pth`, `.pt`, `.ckpt`, `.th`, or an HF `.bin`, which shares its extension with
     /// nothing that identifies it) routes through ``NFKMLXTorchFormat`` and reports PyTorch layout,
     /// so every model accepts one wherever it accepts a converted safetensors.
-    static func loadCheckpoint(url: URL) throws -> Checkpoint {
+    public static func loadCheckpoint(url: URL) throws -> Checkpoint {
         if NFKMLXTorchFormat.isTorchCheckpoint(leadingBytes(of: url)) {
             let contents = try NFKMLXTorchFormat.read(url: url)
             return Checkpoint(arrays: try NFKMLXTorchFormat.arrays(from: contents),
@@ -206,7 +211,7 @@ enum NFKMLXWeights {
     ///
     /// Non-trainable parameters are included, so a model carrying batch-normalization running
     /// statistics reloads complete.
-    static func save(_ module: Module, to url: URL) throws {
+    public static func save(_ module: Module, to url: URL) throws {
         guard url.pathExtension == "safetensors" else {
             throw NFKMLXError.checkpointNotWritable(
                 "a checkpoint must be written as .safetensors to carry its layout metadata, "
@@ -266,8 +271,8 @@ enum NFKMLXWeights {
     ///   feed-forward-doubling heuristic, both load right only because adoption reshapes them. Those
     ///   leave it off (the default), and shape adoption being load-bearing in several builders is why
     ///   this cannot be turned on globally. Default off.
-    static func apply(_ mapped: [(String, MLXArray)], to module: Module,
-                      strict: Bool = true, verifyShapes: Bool = false) throws {
+    public static func apply(_ mapped: [(String, MLXArray)], to module: Module,
+                             strict: Bool = true, verifyShapes: Bool = false) throws {
         if strict {
             try verifyCoverage(of: mapped, for: module, verifyShapes: verifyShapes)
         }

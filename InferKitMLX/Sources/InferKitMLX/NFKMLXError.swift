@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum NFKMLXError: Error {
+public enum NFKMLXError: Error {
     case notReady
     case noOutput
     case unsupportedInput
@@ -23,6 +23,9 @@ enum NFKMLXError: Error {
     case trainingDataMismatch(String)
     /// A layer selected for low-rank adaptation cannot be replaced. See `NFKMLXLoRA.apply(to:rank:alpha:where:)`.
     case loRANotApplicable(String)
+    /// A training run was asked for over a model with no trainable parameter left.
+    /// See `NFKMLXTrainer.train(_:optimizer:steps:batch:loss:)`.
+    case nothingToTrain(String)
     /// A model was asked for a geometry it has no architecture for, such as a super-resolution scale
     /// the reference upsampler does not build.
     case unsupportedConfiguration(String)
@@ -31,7 +34,7 @@ enum NFKMLXError: Error {
 }
 
 extension NFKMLXError: LocalizedError {
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .notReady: return "the MLX backend is not ready"
         case .noOutput: return "the MLX backend produced no output"
@@ -41,6 +44,7 @@ extension NFKMLXError: LocalizedError {
         case .trainingDiverged(let detail): return detail
         case .trainingDataMismatch(let detail): return detail
         case .loRANotApplicable(let detail): return detail
+        case .nothingToTrain(let detail): return detail
         case .unsupportedConfiguration(let detail): return detail
         case .malformedCheckpoint(let detail): return detail
         }

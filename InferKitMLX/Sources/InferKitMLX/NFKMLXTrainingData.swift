@@ -30,7 +30,7 @@ public enum NFKMLXTrainingData {
     public static func batch(_ images: [CGImage],
                              colorSpace: CGColorSpace = CGColorSpaceCreateDeviceRGB()) throws -> MLXArray {
         guard let first = images.first else {
-            throw NFKMLXError.unsupportedInput
+            throw NFKMLXError.trainingDataMismatch("a batch needs at least one image")
         }
         let tensors = try images.map { image -> MLXArray in
             guard image.width == first.width, image.height == first.height else {

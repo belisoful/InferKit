@@ -257,6 +257,45 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
                        "evaluating the results adds nothing, because each was evaluated as produced")
     }
 
+    // MARK: Freezing and training mode
+
+    /// `freeze()` marks parameters as taking no gradient. `train(_:)` sets a flag on every module in
+    /// the tree. They are independent, and `BatchNorm` branches on the flag alone, so a FROZEN
+    /// normalization still normalizes with the batch's own statistics and still folds them into the
+    /// running ones it was released with.
+    ///
+    /// Nothing reports it. A head-only fine-tune over a pretrained convolutional backbone computes a
+    /// different function from the one it computes at inference, and a checkpoint write persists the
+    /// overwritten statistics, so the damage outlives the run.
+    func testFreezingDoesNotStopABatchNormFromTrainingItsStatistics() throws {
+        try requireMLXRuntime()
+        let normalization = BatchNorm(featureCount: 2)
+        normalization.freeze()
+        XCTAssertTrue(normalization.trainableParameters().flattened().isEmpty,
+                      "the premise: freezing left no trainable parameter")
+
+        func runningMean() -> [Float] {
+            eval(normalization)
+            let statistics = normalization.parameters().flattened().first { $0.0 == "running_mean" }
+            return statistics!.1.asArray(Float.self)
+        }
+        let released = runningMean()
+
+        normalization.train(true)
+        let batch = MLXArray([3.0, -4.0, 5.0, -6.0] as [Float]).reshaped([2, 2])
+        _ = normalization(batch)
+
+        XCTAssertNotEqual(runningMean(), released,
+                          "a frozen BatchNorm folded the batch into its released statistics")
+
+        // The rule the package applies: a wholly frozen subtree goes back to evaluation mode, after
+        // which the same call leaves the statistics alone.
+        normalization.train(false)
+        let beforeInference = runningMean()
+        _ = normalization(batch)
+        XCTAssertEqual(runningMean(), beforeInference)
+    }
+
     // MARK: Subnormal flushing
 
     /// Metal flushes subnormal floats to zero, where the CPU keeps them. A quantity computed by

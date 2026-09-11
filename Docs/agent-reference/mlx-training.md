@@ -66,12 +66,16 @@ The entry records the level and the reason.
 Everything a consumer calls in that set is public. A recipe that compiles only under `@testable import`
 is not shipped.
 
-**Gaps against this rule, measured 2026-09-10.** These are package-level; a per-model change is
-blocked by the first alone and must fix it:
+**The public surface.** `NFKMLXWeights`, `NFKMLXQuantization`, and `NFKMLXError` are public, so the
+whole path — build, train, `save`, reload through the model's own factory, catch what it throws — is
+callable by an app that links the package as an ordinary dependency. `Examples/MLXCustomizationExamples.swift`
+holds the customization snippets and imports `InferKitMLX` WITHOUT `@testable`, which is what keeps
+that true: a recipe that slips back behind `internal` breaks the examples build rather than being
+found by a consumer. Every other file in that target still imports `@testable`, because a gallery
+example reaches for internals a consumer does not need.
 
-- `NFKMLXWeights` is internal, so `save` and `loadCheckpoint` are unreachable from a consumer. The
-  documented recipes in `Docs/examples.md` compile only because the examples target imports the
-  package `@testable`.
+**Gaps against this rule, measured 2026-09-10.** These are package-level:
+
 - Four models conform: Zero-DCE, SegFormer, Whisper, CLIP. Every `makeNet` is internal, 69 of 77
   loaders are internal, and the language decoder's builder and initializer are internal, so no
   language-model fine-tune is reachable at all.
@@ -101,6 +105,24 @@ blocked by the first alone and must fix it:
     transposed convolutions). An ungated loader double-transposes a fine-tuned file and loads silently
     wrong weights: `NFKMLXCheckpointRoundTripTests` saves and reloads through each model's own loader,
     and removing one gate makes it fail with a transposed shape rather than a bad number.
+  - **A frozen subtree stays in evaluation mode.** `train(true)` sets the flag on every module in the
+    tree and freezing does not touch it, so a frozen `BatchNorm` normalizes with the batch's own mean
+    and variance and folds them into the running statistics it was released with. A head-only run over
+    a pretrained convolutional backbone would therefore change what the frozen backbone computes and
+    overwrite its statistics from batches of one or two examples, and `NFKMLXWeights.save` writes
+    those statistics into the checkpoint, so the damage outlives the run. `enterTrainingMode` returns
+    every subtree that holds parameters and has none trainable to evaluation mode; a subtree with no
+    parameters at all follows its parent, so a dropout inside the trainable group still drops.
+    `testAFrozenNormalizationKeepsItsReleasedStatistics` and
+    `testAFrozenNormalizationNormalizesWithItsReleasedStatistics` fail without it, and
+    `testAnUnfrozenNormalizationStillUpdatesItsStatistics` is what stops the rule from over-applying.
+    No shipped recipe reached the defect (SegFormer's frozen encoder normalizes with LayerNorm), and
+    every head-only recipe over a BatchNorm backbone would have.
+  - A run over a model with no trainable parameter left throws `NFKMLXError.nothingToTrain` rather
+    than reporting a loss curve for an update that changes nothing. A LoRA predicate that matched no
+    layer leaves exactly that state, and `apply`'s return count is easy to ignore.
+  - `NFKMLXTrainingCheckpoint` clamps `everySteps` to at least one: the loop writes on
+    `(step + 1) % everySteps`, which traps on zero.
   - Writes are atomic (scratch file then replace), because a periodic checkpoint overwrites the only
     copy of a run's progress. A non-finite loss throws `NFKMLXError.trainingDiverged` **before** that
     step can reach a checkpoint, so divergence cannot replace good weights with ruined ones.

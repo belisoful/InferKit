@@ -2065,7 +2065,7 @@ LoRA adds a trainable rank-r detour to each targeted `Linear` and freezes everyt
 
 ```swift
 // Target the attention projections rather than every Linear — far cheaper, and usually enough.
-NFKMLXLoRA.apply(to: net, rank: 8, alpha: 16) { path, _ in
+try NFKMLXLoRA.apply(to: net, rank: 8, alpha: 16) { path, _ in
     path.hasSuffix("q") || path.hasSuffix("v")
 }
 
@@ -2074,7 +2074,7 @@ try NFKMLXTrainer.train(net, optimizer: AdamW(learningRate: 1e-4), steps: 500,
                         loss: myLoss)
 
 // Fold the detours back into the base weights, then save one ordinary checkpoint.
-NFKMLXLoRA.merge(into: net)
+try NFKMLXLoRA.merge(into: net)
 try NFKMLXWeights.save(net, to: tuned)
 ```
 
@@ -2143,6 +2143,10 @@ Notes:
 - A run is multi-second. Call it off the render thread.
 - `train` throws `NFKMLXError.trainingDiverged` if a step's loss stops being finite, before that step
   can overwrite a checkpoint with ruined weights.
+- `train` throws `NFKMLXError.nothingToTrain` when every parameter is frozen, so a predicate that
+  matched no layer reports itself rather than running a loss curve over an update that changes nothing.
+- A frozen group stays in evaluation mode for the run, so a frozen `BatchNorm` backbone normalizes with
+  the statistics it was released with and does not fold the training batches into them.
 - Checkpoints record the model's parameters, not the optimizer's state: an `SGD` run resumes exactly,
   an `Adam` run rebuilds its moment estimates and shows a brief rise in loss.
 
