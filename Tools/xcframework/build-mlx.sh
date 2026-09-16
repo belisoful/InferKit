@@ -59,7 +59,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PACKAGE="$ROOT/InferKitMLX"
-OUTPUT="$ROOT/.xcframework-build"
+OUTPUT="$ROOT/xcframework-build"
 VERIFY=no
 VARIANT=both
 INTERFACES=yes

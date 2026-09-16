@@ -512,8 +512,9 @@ models.
 - Customizing a model on device — `NFKMLXTrainer` runs supervised and zero-reference fine-tuning
   with clipping, checkpoints, and early stop; `NFKMLXLoRA` adapts attention blocks and merges the
   result back into plain weights; `NFKMLXCLIPProbe` trains a classifier over frozen CLIP embeddings;
-  recipes ship for Zero-DCE, SegFormer's decode head, and Whisper, each with its loss at reference
-  parity. A fine-tuned file loads through the model's ordinary `weightsURL:` factory.
+  recipes ship for Zero-DCE, SegFormer's decode head, and Whisper. The Zero-DCE and SegFormer losses
+  are at reference parity; the Whisper objective is not yet measured against a reference. A
+  fine-tuned file loads through the model's ordinary `weightsURL:` factory.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
   the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
   the backend runs the denoise loop with per-step progress and cancellation. No source latent runs

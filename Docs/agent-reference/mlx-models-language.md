@@ -243,7 +243,7 @@ The dense decoder and its generation runtime, the hybrid decoder, DeepSeek, rota
   walks a grammar byte by byte and caches the admissible mask per state (the uncached cost is the
   vocabulary times a few bytes; a run revisits a handful of states); `NFKMLXJSONConstraint` is JSON
   syntax with `root` (`.container`/`.object`/`.array`/`.any`), `NFKMLXChoiceConstraint` a fixed set.
-  `NFKMLXJSONSchemaConstraint` (`NFKMLXJSONSchemaConstraint.swift`, 0.4.0) is the schema grammar:
+  `NFKMLXJSONSchemaConstraint` (`NFKMLXJSONSchemaConstraint.swift`, 0.3.1) is the schema grammar:
   `NFKMLXJSONSchema` compiles a JSON Schema dictionary into nodes (`type` as a name or a list,
   `properties`/`required`/`additionalProperties`, `items`/`minItems`/`maxItems`, `enum`/`const` as
   byte-matched compact serializations, `anyOf`/`oneOf`, `$ref` into `$defs`/`definitions` with

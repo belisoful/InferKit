@@ -23,7 +23,7 @@
 //  The normalization is `x_norm · w`, the PLAIN scale — NOT Gemma 3's `x_norm · (1 + w)`. The two are
 //  indistinguishable by shape and differ in every number.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

@@ -7,6 +7,13 @@
 
 import Foundation
 
+/// The errors InferKitMLX throws.
+///
+/// New cases are added as the package grows, so a `switch` over this type includes
+/// `@unknown default`. Without it, a later release that adds a case stops the caller's code from
+/// compiling.
+///
+/// - Since: InferKit 0.3.1
 public enum NFKMLXError: Error {
     case notReady
     case noOutput

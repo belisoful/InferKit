@@ -4,7 +4,7 @@
 //
 //  Turning a caller's picture and audio into what Gemma 3n's towers read.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

@@ -7,7 +7,7 @@
 # "Failed to load the default metallib" at the first array evaluation, which is why each probe runs a
 # real model on the GPU instead of only constructing one.
 #
-#   Tools/xcframework/verify-mlx.sh [.xcframework-build]
+#   Tools/xcframework/verify-mlx.sh [xcframework-build]
 #
 # Called by build-mlx.sh --verify. Both probes are Objective-C: that is the surface a binary artifact
 # vends. A Swift consumer needs MLX's own module interfaces, which is what SwiftPM is for.
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT="${1:-$ROOT/.xcframework-build}"
+OUTPUT="${1:-$ROOT/xcframework-build}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 TARGET=arm64-apple-macos14.0
@@ -89,6 +89,7 @@ xcrun clang -fobjc-arc -fmodules -target "$TARGET" -w \
 # From inside the slice, which is the copy a consumer makes: an xcframework is a build-time
 # container, so a static consumer places the bundle in their own product themselves.
 cp -R "$STATIC_SLICE/mlx-swift_Cmlx.bundle" "$WORK/static-run/"
+echo "    static: a one-model consumer links to $(du -h "$WORK/static-run/probe" | awk '{print $1}') dead-stripped"
 report "static (Objective-C)" "$(cd "$WORK/static-run" && ./probe 2>&1 | tail -1)"
 fi
 
@@ -106,6 +107,7 @@ xcrun clang -fobjc-arc -fmodules -target "$TARGET" -w \
     -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
     -o "$WORK/dynamic-run/probe" 2>&1 | grep -viE "warning|swiftCompatibility" || true
 [ -x "$WORK/dynamic-run/probe" ] || { echo "    dynamic: FAILED — did not link"; exit 1; }
+echo "    dynamic: a one-model consumer links to $(du -h "$WORK/dynamic-run/probe" | awk '{print $1}') beside a $(du -h "$DYNAMIC_SLICE/InferKitMLX.framework/Versions/A/InferKitMLX" | awk '{print $1}') framework binary"
 # Nothing is copied beside it: the Metal library has to come from inside the framework.
 report "dynamic (Objective-C)" "$("$WORK/dynamic-run/probe" 2>&1 | tail -1)"
 fi

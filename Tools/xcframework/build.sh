@@ -8,7 +8,7 @@
 # static library `-create-xcframework` wants. Public headers come from the include directory, so the
 # framework's `#import <InferKit/NFKFoo.h>` resolves the same way it does through SwiftPM.
 #
-#   Tools/xcframework/build.sh              # -> .xcframework-build/InferKit.xcframework
+#   Tools/xcframework/build.sh              # -> xcframework-build/InferKit.xcframework
 #   Tools/xcframework/build.sh --output DIR
 #
 # THE CORE ONLY. InferKitMLX has its own script, `build-mlx.sh`, because it packages differently: its
@@ -22,7 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUTPUT="$ROOT/.xcframework-build"
+OUTPUT="$ROOT/xcframework-build"
 [ "${1:-}" = "--output" ] && OUTPUT="$2"
 
 WORK="$OUTPUT/intermediates"

@@ -14,7 +14,7 @@ swift test
 # Cross-platform build check (the core supports macOS 11 / iOS 14 / tvOS 14)
 xcodebuild build -scheme InferKit -destination 'generic/platform=iOS'
 # tvOS goes through the SDK, not a destination — see the Full Check below.
-xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos26.5 -arch arm64
+xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64
 
 # The MLX companion (Apple Silicon, macOS 14 / iOS 17) is a separate package. SwiftPM cannot
 # compile Metal shaders, so place MLX's Metal library beside the test binary first or the
@@ -28,6 +28,39 @@ cd InferKitFoundationModels && swift build && swift test
 pod lib lint InferKit.podspec --quick
 ```
 
+The tvOS SDK is named without a version, so the command resolves to the SDK the installed Xcode ships
+(`appletvos` is `appletvos27.0` under Xcode 27). A versioned name fails once a different Xcode is
+installed.
+
+The build and test commands need Xcode's toolchain. When `xcode-select -p` names
+`/Library/Developer/CommandLineTools`, `swift build` fails with `Could not initialize build system` and
+`Unknown error parsing property list`, and `xcodebuild` refuses to run. Exporting
+`DEVELOPER_DIR` with the installed Xcode's `Contents/Developer` path points the commands at Xcode
+without changing the system setting. Measured 2026-09-15 with Xcode 27.0 installed.
+
+Xcode 27 installs its Metal compiler as a separate component. Until
+`xcodebuild -downloadComponent MetalToolchain` has run, `xcodebuild -showComponent MetalToolchain`
+reports `uninstalled` and any `metal` invocation fails with `missing Metal Toolchain`. SwiftPM under
+Xcode 27 compiles mlx-swift's Metal kernels during `swift build` (a `CompileMetalFile` step), so
+`InferKitMLX` does not build at all without the component, including the leg where MLX tests are
+expected to skip. With the component installed, the same build places `default.metallib` inside
+`mlx-swift_Cmlx.bundle` in each of the three test bundles (`.build/out/Products/Debug/<target>.xctest`,
+which `.build/debug` links to), so a plain `swift test` runs the MLX-dependent tests without
+`Tools/mlx-metallib.sh`: `NFKMLXTrainerTests` ran all 21 tests, none skipped. The script recognizes
+that layout and exits without placing anything; for a toolchain that builds the single
+`InferKitMLXPackageTests.xctest`, it still compiles the kernels and places `mlx.metallib`. Measured
+2026-09-15 with Xcode 27.0 (27A266a).
+
+Xcode 27's Swift 6.4 optimizer aborts the compile of
+`NFKMLXJSONSchemaConstraint.startValue(_:node:byte:)`. Its CopyPropagation pass fails its own
+ownership verification with `Found over consume?!`, and the frontend ends with `fatal error
+encountered during compilation`. It reproduces with a plain `swift build -c release` as well as
+through `Tools/xcframework/build-mlx.sh`, so it reaches a consumer who builds the package in Release,
+not only the release assets. Debug builds are unaffected, which is why the whole test suite passed the
+same day. The function carries `@_optimize(none)` until the compiler is fixed. After an Xcode bump,
+remove the attribute and run `swift build -c release --package-path InferKitMLX`: a clean build means
+the workaround can go. Measured 2026-09-15, Xcode 27.0 (27A266a), swiftlang-6.4.0.34.1.
+
 ## Full Check (required before commit)
 
 Code is commit-ready only when every check below passes.
@@ -40,7 +73,7 @@ step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints 
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green.
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
-   through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos26.5 -arch arm64`.
+   through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.
    Xcode derives destinations from installed platform *support*, which a machine without the tvOS
    platform lacks even when the tvOS SDK is present — and the SDK is what a compile needs. Naming the

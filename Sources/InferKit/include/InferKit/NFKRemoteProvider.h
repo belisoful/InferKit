@@ -11,7 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class NFKRemoteModel;
 
 /*! The timeout the discovery calls give each probe when a caller names none: two seconds, which a
-	server on this machine answers well inside. Introduced in InferKit 0.4.0. */
+	server on this machine answers well inside. Introduced in InferKit 0.3.1. */
 extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
 
 /*!
@@ -71,7 +71,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 /*! Two providers are equal when their identifier, base, protocol, and key requirement match. Each
 	preset getter builds a new instance and a discovered provider is a fresh one, so equality is by
-	value rather than by identity. Introduced in InferKit 0.4.0. */
+	value rather than by identity. Introduced in InferKit 0.3.1. */
 - (BOOL)isEqual:(nullable id)object;
 
 /*!
@@ -100,7 +100,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier;
 
 /*! Every local-server preset, in the order the discovery calls probe them: ollama, lmstudio,
-	llamacpp, vllm. Introduced in InferKit 0.4.0. */
+	llamacpp, vllm. Introduced in InferKit 0.3.1. */
 @property (class, nonatomic, copy, readonly) NSArray<NFKRemoteProvider *> *localProviders;
 
 /*!
@@ -112,7 +112,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 				answered. Blocks for at most the timeout; run it off the render thread.
 
 				This is the seam every discovery call goes through, so a subclass that overrides it
-				decides what "available" means. Introduced in InferKit 0.4.0.
+				decides what "available" means. Introduced in InferKit 0.3.1.
 */
 - (BOOL)isReachableWithAPIKey:(nullable NSString *)apiKey
 					  timeout:(NSTimeInterval)timeout
@@ -124,7 +124,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@discussion The probes run concurrently, so the call costs one timeout rather than one per
 				provider, and no key is sent. A hosted provider answers 401 without one, which still
 				counts as reachable, so this is aimed at the local servers, where nothing listening
-				on the port is the answer that matters. Blocks. Introduced in InferKit 0.4.0.
+				on the port is the answer that matters. Blocks. Introduced in InferKit 0.3.1.
 */
 + (NSArray<NFKRemoteProvider *> *)availableProvidersAmong:(NSArray<NFKRemoteProvider *> *)providers
 												  timeout:(NSTimeInterval)timeout
@@ -134,7 +134,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@method     firstAvailableProviderAmong:timeout:
 	@abstract   The first provider in the list that answers, or nil when none does.
 	@discussion Probes in the list's order and stops at the first reply, so a running server on the
-				first address costs one probe. Blocks. Introduced in InferKit 0.4.0.
+				first address costs one probe. Blocks. Introduced in InferKit 0.3.1.
 */
 + (nullable NFKRemoteProvider *)firstAvailableProviderAmong:(NSArray<NFKRemoteProvider *> *)providers
 													timeout:(NSTimeInterval)timeout
@@ -145,7 +145,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@abstract   The local servers running on this machine right now, in localProviders order.
 	@discussion localProviders probed at NFKRemoteProviderProbeTimeout, which is what fills a picker
 				of the runners a user can pick from. Blocks; run it off the render thread, or use the
-				completion-handler form. Introduced in InferKit 0.4.0.
+				completion-handler form. Introduced in InferKit 0.3.1.
 */
 + (NSArray<NFKRemoteProvider *> *)availableLocalProviders;
 
@@ -154,20 +154,20 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@abstract   The first local server that answers, or nil when none is running.
 	@discussion The call that removes the choice from the calling code: rather than naming Ollama or
 				LM Studio, ask which one is up and use it. The order is localProviders order, so the
-				answer is the same for the same machine. Blocks. Introduced in InferKit 0.4.0.
+				answer is the same for the same machine. Blocks. Introduced in InferKit 0.3.1.
 */
 + (nullable NFKRemoteProvider *)firstAvailableLocalProvider NS_SWIFT_NAME(firstAvailableLocalProvider());
 
 /*! The asynchronous form of availableLocalProviders. The handler runs on a background queue at
 	user-initiated quality of service. Swift's async import of a completion handler drops the
 	handler from the name, which would take the blocking call's name and leave it unreachable, so
-	the awaited form is named probeAvailableLocalProviders(). Introduced in InferKit 0.4.0. */
+	the awaited form is named probeAvailableLocalProviders(). Introduced in InferKit 0.3.1. */
 + (void)availableLocalProvidersWithCompletionHandler:(void (^)(NSArray<NFKRemoteProvider *> *providers))completionHandler
 	NS_SWIFT_ASYNC_NAME(probeAvailableLocalProviders());
 
 /*! The asynchronous form of firstAvailableLocalProvider, named probeFirstAvailableLocalProvider()
 	in Swift for the reason above. The handler runs on a background queue at user-initiated quality
-	of service. Introduced in InferKit 0.4.0. */
+	of service. Introduced in InferKit 0.3.1. */
 + (void)firstAvailableLocalProviderWithCompletionHandler:(void (^)(NFKRemoteProvider * _Nullable provider))completionHandler
 	NS_SWIFT_ASYNC_NAME(probeFirstAvailableLocalProvider());
 
@@ -179,7 +179,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 				the caller's, since the runners name their models differently; llama.cpp serves
 				whatever it has loaded, so nil is a working argument there. A caller that needs to
 				know which runner it got asks firstAvailableLocalProvider instead and builds the
-				backend from it. Blocks. Introduced in InferKit 0.4.0.
+				backend from it. Blocks. Introduced in InferKit 0.3.1.
 */
 + (nullable id<NFKInferenceBackend>)backendForFirstAvailableLocalProviderWithModelName:(nullable NSString *)modelName;
 

@@ -164,7 +164,7 @@ public final class NFKMLXZeroDCE: NSObject {
 
 /// A depthwise-separable convolution (`CSDN_Tem`): a depthwise 3×3 followed by a pointwise 1×1.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 public final class NFKZeroDCEPlusConv: Module {
     @ModuleInfo(key: "depth_conv") var depthwise: Conv2d
     @ModuleInfo(key: "point_conv") var pointwise: Conv2d
@@ -188,7 +188,7 @@ public final class NFKZeroDCEPlusConv: Module {
 /// back before it is applied to the full-resolution image, so cost falls with the square of the factor
 /// while the enhancement stays full resolution.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 final class NFKMLXZeroDCEPlusNet: Module {
     @ModuleInfo(key: "e_conv1") var conv1: NFKZeroDCEPlusConv
     @ModuleInfo(key: "e_conv2") var conv2: NFKZeroDCEPlusConv
@@ -258,7 +258,7 @@ final class NFKMLXZeroDCEPlusNet: Module {
 /// Zero-DCE++: the authors' lightweight successor to Zero-DCE, at reference parity against their own
 /// `enhance_net_nopool`.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXZeroDCEPlus)
 public final class NFKMLXZeroDCEPlus: NSObject {
     /// The registry name the model builds under.

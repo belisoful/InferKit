@@ -6,7 +6,7 @@
 Add the package to your `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/belisoful/InferKit.git", from: "0.1.0")
+.package(url: "https://github.com/belisoful/InferKit.git", from: "0.3.1")
 ```
 
 then add `"InferKit"` to your target's dependencies. In Xcode, use File ▸ Add Package Dependencies
@@ -185,7 +185,7 @@ take the static variant.
 
 ## Release assets
 
-The build output is not committed — `.xcframework-build/` is gitignored, and this repository is
+The build output is not committed — `xcframework-build/` is gitignored, and this repository is
 distributed as source through SwiftPM and CocoaPods, so a consumer resolving the package clones its
 history. A binary added per release would compound there permanently.
 
@@ -195,8 +195,8 @@ Three compressed assets, produced with
 | asset | contents | size |
 | --- | --- | --- |
 | `InferKit.xcframework.zip` | the core alone, no MLX | 1.3 MB |
-| `InferKitMLX.xcframework.zip` | static, three slices, Metal library inside each | 37 MB |
-| `InferKitMLXDynamic.xcframework.zip` | dynamic, three slices | 24 MB |
+| `InferKitMLX.xcframework.zip` | static, three slices, Metal library inside each | 38 MB |
+| `InferKitMLXDynamic.xcframework.zip` | dynamic, three slices | 25 MB |
 
 **One asset per variant, carrying every slice**, rather than splitting by platform. An iOS developer
 always needs two slices (device and simulator), so a platform split is two-way rather than three and

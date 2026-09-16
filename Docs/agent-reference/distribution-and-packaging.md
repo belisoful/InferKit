@@ -48,13 +48,14 @@ iOS device, iOS simulator):
 
 - `InferKitMLX.xcframework` — static: `libInferKitMLX.a` (every target's object merged with `libtool`,
   the core included), headers, a modulemap, and the `mlx-swift_Cmlx.bundle` that slice's consumer
-  ships. 47 MB a slice, 140 MB in all.
+  ships. 60 to 63 MB a slice, 183 MB in all.
 - `InferKitMLXDynamic.xcframework` — dynamic: `InferKitMLX.framework`, Metal library inside. A slice is
-  a 15.5 MB binary, 3.6 MB of shaders, and 12 MB of Swift module interfaces an Objective-C consumer
-  never reads; 96 MB in all.
+  a 21 MB binary, 3.7 MB of shaders, and 19 MB of Swift module interfaces an Objective-C consumer
+  never reads; 130 MB in all.
 - `CoreHeaders/` (the core's headers beside a modulemap) for Objective-C consumers of the dynamic one.
 
-Either way a consumer's binary grows by about 14 MB plus the shaders.
+A static consumer's binary grows by about 29 MB plus the shaders. A dynamic consumer ships the
+21 MB framework binary, which carries them.
 
 What made it possible. MLX needs `default.metallib`, which SwiftPM delivers as a
 `mlx-swift_Cmlx.bundle` resource, and a bare library carries no resources. MLX's loader
@@ -85,10 +86,11 @@ xcframework; that claim was never tested — SwiftPM requires `https` for a `bin
 cannot be checked against a local server — and the question is now moot, because the zip holds exactly
 one `.xcframework` either way.
 
-Neither variant is smaller. A consumer using one model links to 13.8 MB static against 14.2 MB
-dynamic — dead-stripping buys about 3%, because `Cmlx.o` is one merged object and MLX's runtime is
-densely interconnected. Of the ~18 MB a slice weighs, MLX's C++ is 72% of the code and its shaders are
-3.6 MB; InferKitMLX and the core together are about 320 KB. So the choice is deployment mechanics:
+Neither variant is smaller. A consumer using one model links to 29 MB static, dead-stripped. A dynamic
+consumer's own binary is tiny, 52 KB for the verification probe, beside the 21 MB framework binary it
+ships. A static slice weighs 60 to 63 MB and a dynamic one 43 to 44 MB, and the shaders are 3.7 MB of
+that. `Tools/xcframework/verify-mlx.sh` reports both link sizes, so these figures are re-measured
+whenever a release is built. Measured 2026-09-15. So the choice is deployment mechanics:
 
 - Static needs no embedding and no code signing, and vends both modules from one plain modulemap.
 - Dynamic is one self-contained drop-in and is shared between several consumers, but clang refuses a
@@ -102,7 +104,7 @@ verified by building and running it: Xcode static and dynamic, SwiftPM `binaryTa
 The artifacts are not committed — this repository is source-distributed, so a consumer resolving it
 clones its history. Three compressed release assets, one per variant carrying every slice: core 0.7 MB,
 static 28 MB, dynamic 19 MB. The core's `build.sh` cleans only its own artifact — both scripts share
-`.xcframework-build/`, and an `rm -rf` of the whole directory once discarded a twenty-minute MLX build
+`xcframework-build/`, and an `rm -rf` of the whole directory once discarded a twenty-minute MLX build
 beside a twenty-second core one.
 
 `--variant static|dynamic|both`, `--slices macos,ios,iossim`, and `--no-swift-interfaces` trim the

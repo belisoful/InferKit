@@ -27,7 +27,7 @@
 //  Everything else — attention, the normalizations, AltUp, LAuReL, the token embedding — is carried
 //  across untouched, and is byte-identical between the two releases.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

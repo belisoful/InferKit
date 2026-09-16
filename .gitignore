@@ -9,9 +9,10 @@ build/
 *.hmap
 *.xcworkspace
 # ...except the umbrella workspace, which is the only way to open the core and both companions in one
-# window. It holds no user state (that lives in xcuserdata/, ignored above).
+# window. The re-include below also matches its user state, so xcuserdata/ is ignored again after it.
 !InferKit.xcworkspace
 !InferKit.xcworkspace/**
+InferKit.xcworkspace/xcuserdata/
 
 # Swift Package Manager
 .build/
@@ -42,4 +43,4 @@ Local/
 
 # DocC build output
 .docc-build/
-.xcframework-build/
+xcframework-build/

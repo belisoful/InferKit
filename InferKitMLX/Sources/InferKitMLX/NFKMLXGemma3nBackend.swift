@@ -4,7 +4,7 @@
 //
 //  Text generation from Gemma 3n, with a picture or a clip in the prompt.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

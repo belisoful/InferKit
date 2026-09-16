@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion A grammar is defined over text, a model emits token ids, and a byte-level vocabulary
 	is the bridge: a token is admissible when appending its bytes keeps the output inside the
 	grammar. `size` is the model's logit width, which can exceed the tokenizer's vocabulary; an id
-	with no bytes is never admitted. Introduced in InferKit 0.4.0.
+	with no bytes is never admitted. Introduced in InferKit 0.3.1.
 */
 @interface NFKTokenVocabulary : NSObject
 
@@ -47,7 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
 	`NFKChoiceConstraint` (exactly one of a fixed set). `NFKCoreMLLanguageBackend` builds one from the
 	`NFKParameterOutputFormat` or `NFKParameterChoices` request parameter and applies its cursor's mask
 	to the logits before sampling, so sampling and greedy decoding alike stay inside the grammar.
-	Introduced in InferKit 0.4.0.
+	Introduced in InferKit 0.3.1.
 */
 @interface NFKTokenConstraint : NSObject
 
@@ -103,7 +103,7 @@ typedef NS_ENUM(NSInteger, NFKJSONRoot) {
 	`maximumWhitespaceRun` consecutive bytes (8 by default): a model whose preferred next token is
 	forbidden takes the whitespace it is offered indefinitely otherwise. Strings take any UTF-8 and the
 	standard escapes; a number is refused a leading zero or a trailing dot as the specification refuses
-	them. Introduced in InferKit 0.4.0.
+	them. Introduced in InferKit 0.3.1.
 */
 @interface NFKJSONConstraint : NFKTokenConstraint
 
@@ -124,7 +124,7 @@ typedef NS_ENUM(NSInteger, NFKJSONRoot) {
 	@discussion A classification or a menu: the model picks among the choices and nothing else, ending
 	as soon as a choice is spelled out in full. A choice that is a prefix of another ends only when the
 	model emits the end token, which the grammar admits at any complete choice. Introduced in
-	InferKit 0.4.0.
+	InferKit 0.3.1.
 */
 @interface NFKChoiceConstraint : NFKTokenConstraint
 

@@ -17,7 +17,7 @@
 //  - **The queries carry a learned per-dimension scale through a softplus**, on top of a fixed scale
 //    that is the usual `1/sqrt(headDim)` divided by `softplus(0)`.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

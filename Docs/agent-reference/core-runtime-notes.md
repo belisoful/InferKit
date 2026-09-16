@@ -57,7 +57,7 @@ are the model's geometry, not the tokenizer's, so they are added where the conte
 
 ## Grammar-constrained sampling in the core
 
-`NFKTokenConstraint` (`Sources/InferKit/NFKTokenConstraint.m`, 0.4.0) ports the MLX companion's
+`NFKTokenConstraint` (`Sources/InferKit/NFKTokenConstraint.m`, 0.3.1) ports the MLX companion's
 byte-level engine into the core so `NFKCoreMLLanguageBackend` can constrain its own sampler:
 `NFKTokenVocabulary` holds every id's bytes (from `NFKTokenizer.bytesForTokenId:` at the model's logit
 width, or explicit `NSData`s), `NFKJSONConstraint` is JSON syntax with an `NFKJSONRoot` and the same

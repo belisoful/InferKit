@@ -59,7 +59,7 @@ public struct NFKMLXSigLIPConfiguration: Sendable {
     /// layers of 1152 at patch 14 over a 384 tile. A value the release leaves out falls back to the
     /// reference's own default rather than to another size's.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     static func configuration(fromJSON json: [String: Any]) -> NFKMLXSigLIPConfiguration {
         let vision = (json["vision_config"] as? [String: Any]) ?? [:]
         func integer(_ key: String, _ fallback: Int) -> Int {
@@ -384,7 +384,7 @@ public enum NFKMLXSmolVLMImageProcessor {
 
     /// The same at a release's own tiling.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static func process(_ image: CGImage, tileSize: Int,
                                longestEdge: Int) -> (pixelValues: MLXArray, rows: Int, cols: Int) {
         let scale = Double(longestEdge) / Double(max(image.width, image.height))
@@ -511,7 +511,7 @@ public final class NFKMLXSmolVLM: NSObject {
 
     /// The geometry a release states, which is what a size other than the 500M needs.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public struct Release {
         public var vision: NFKMLXSigLIPConfiguration
         public var decoder: NFKMLXLanguageConfiguration
@@ -531,7 +531,7 @@ public final class NFKMLXSmolVLM: NSObject {
     /// together. Whether the head is tied is settled by the weights, not the config, as the Qwen3-VL
     /// reader does — a release that ships `lm_head.weight` is untied.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static func release(directoryURL: URL) throws -> Release {
         let configURL = directoryURL.appendingPathComponent("config.json")
         guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
@@ -619,7 +619,7 @@ public final class NFKMLXSmolVLM: NSObject {
     /// The `<image>` tokens one tile expands to at a release's own geometry: the patches the tile
     /// carries, folded by the connector's pixel shuffle.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     static func tokensPerTile(vision: NFKMLXSigLIPConfiguration, scaleFactor: Int) -> Int {
         (vision.grid * vision.grid) / (scaleFactor * scaleFactor)
     }
@@ -634,7 +634,7 @@ public final class NFKMLXSmolVLM: NSObject {
 
     /// The same at a release's own token count.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     static func prompt(rows: Int, cols: Int, question: String, tokensPerTile: Int) -> String {
         let images = String(repeating: "<image>", count: tokensPerTile)
         var structure = ""

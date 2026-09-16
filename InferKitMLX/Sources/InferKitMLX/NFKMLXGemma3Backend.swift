@@ -7,7 +7,7 @@
 //  layers, one bounded to the window for the sliding ones), so a step costs one token's work rather
 //  than the whole sequence's.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

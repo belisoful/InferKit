@@ -9,6 +9,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-15
+
 ### Core (`InferKit`)
 
 - Grammar-constrained sampling for the Core ML language backend: `NFKTokenVocabulary`,
@@ -486,6 +488,32 @@ the module by shape against its released safetensors headers (`Tools/validation-
   keys reproduce it (last-logit cosine 0.99997, the 24-token greedy continuation exact) where 8-bit
   per-position read 0.994; 4-bit per-channel reads 0.994 (group 64) and 0.997 (group 32) where
   per-position read 0.68 and 0.97.
+
+### Changed
+
+- The quantized key-value cache groups keys per channel by default
+  (`NFKMLXKeyValueCache.Quantization.keyAxis` is `.sequence`; from Objective-C,
+  `cacheQuantizationPerChannelKeys` defaults to true). Source stays compatible because the initializer
+  defaults the new argument, and a run at the same bit width and group size produces different logits.
+  `.headDimension` selects the previous per-position layout.
+- `NFKMLXTrainer` keeps every fully frozen subtree in evaluation mode for the whole run. A fine-tune
+  over a frozen `BatchNorm` backbone produces different weights than before, with the backbone's
+  released normalization statistics intact.
+- `NFKMLXTrainer.train` throws `NFKMLXError.nothingToTrain` for a model with no trainable parameter,
+  where it previously returned a loss curve for an update that changed nothing.
+- `NFKMLXError` is public and gains cases as the package grows. A `switch` over it includes
+  `@unknown default`.
+- `NFKMLXJSONSchemaConstraint.startValue(_:node:byte:)` compiles with optimization disabled.
+  Xcode 27's Swift 6.4 optimizer aborts on it, so every Release build of InferKitMLX failed,
+  including a consumer's own. The attribute comes off once the compiler is fixed.
+
+### Documentation
+
+- "At reference parity" in this release's model documentation describes inference. From 0.4.0 a model
+  reaches parity only when its customization path also ships end to end, or its entry names why it
+  cannot. No model entry records that outcome yet.
+- `Docs/companions.md` claimed a reference-parity loss for the Whisper recipe. The measured training
+  objectives are Zero-DCE's and SegFormer's.
 
 ## [0.3.0] — 2026-09-06
 

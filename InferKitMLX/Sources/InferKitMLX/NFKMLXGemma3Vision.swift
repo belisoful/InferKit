@@ -11,7 +11,7 @@
 //  an average pool over the 64×64 patch grid in 4×4 cells, a Gemma `(1 + w)` RMS norm over the pooled
 //  features, and one bias-free matrix into the decoder's width.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

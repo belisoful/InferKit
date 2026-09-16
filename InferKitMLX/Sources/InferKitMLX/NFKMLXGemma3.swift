@@ -14,7 +14,7 @@
 //  which the larger sizes stretch by a linear rotary scaling factor. The multimodal releases pair this
 //  decoder with a SigLIP vision tower (`NFKMLXGemma3Vision.swift`).
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

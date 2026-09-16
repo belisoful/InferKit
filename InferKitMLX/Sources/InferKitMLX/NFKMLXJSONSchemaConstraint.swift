@@ -25,7 +25,7 @@ import MLX
 /// Keys are spelled in any order; an object may close only once every `required` key has appeared,
 /// and a key is admitted only while it is the prefix of an unwritten property (or, where
 /// `additionalProperties` allows it, any key). A property name is matched as raw bytes, so a name that
-/// needs a JSON escape cannot be constrained to. Introduced in InferKit 0.4.0.
+/// needs a JSON escape cannot be constrained to. Introduced in InferKit 0.3.1.
 public struct NFKMLXJSONSchema: Hashable, Sendable {
     /// A property of an object node: the bytes its key is spelled with, its value's node, and
     /// whether the object may close without it.
@@ -287,7 +287,7 @@ public struct NFKMLXJSONSchemaState: Hashable, Sendable {
 /// ones), closes only once its required keys are written, and types each value; an array honors its
 /// item type and count bounds; an `enum` or `const` admits only its listed spellings; an `anyOf`
 /// keeps every alternative alive until the bytes decide. Whitespace between tokens is capped as the
-/// free grammar caps it, and for the same reason. Introduced in InferKit 0.4.0.
+/// free grammar caps it, and for the same reason. Introduced in InferKit 0.3.1.
 public final class NFKMLXJSONSchemaConstraint: NFKMLXByteConstraint<NFKMLXJSONSchemaState>, @unchecked Sendable {
     public let schema: NFKMLXJSONSchema
     /// The most consecutive whitespace bytes admitted between tokens. See
@@ -513,6 +513,13 @@ public final class NFKMLXJSONSchemaConstraint: NFKMLXByteConstraint<NFKMLXJSONSc
 
     /// Opens the value `byte` begins under `node`, with the enclosing frame already advanced past it.
     /// An `anyOf` forks into one machine per alternative the byte can open.
+    // Xcode 27's Swift 6.4 optimizer aborts the compile on this function: its CopyPropagation
+    // pass fails its own ownership verification ("Found over consume?!") on the `Scalar` the
+    // branches assign, so every Release build of the package fails, a consumer's included.
+    // Optimization is off for this one function until the compiler is fixed; Debug builds and
+    // the test suite never reached it. Measured 2026-09-15, Xcode 27.0 (27A266a),
+    // swiftlang-6.4.0.34.1.
+    @_optimize(none)
     private func startValue(_ machine: Machine, node: Int, byte: UInt8) -> [Machine] {
         var m = machine
         switch schema.nodes[node] {

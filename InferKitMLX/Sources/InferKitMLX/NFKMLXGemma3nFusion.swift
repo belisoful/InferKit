@@ -11,7 +11,7 @@
 //  only replaced the soft positions would still be right, and a caller who only did the hard pass
 //  would get a model that runs and ignores the picture.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

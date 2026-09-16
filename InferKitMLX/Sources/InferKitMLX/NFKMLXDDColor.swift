@@ -557,7 +557,7 @@ final class NFKDDColorDecoder: Module {
 
 /// The released DDColor weights.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXDDColorVariant)
 public enum NFKMLXDDColorVariant: Int {
     /// `ddcolor_modelscope`, the release the authors' demo runs.
@@ -571,7 +571,7 @@ public enum NFKMLXDDColorVariant: Int {
 /// DDColor: automatic colorization through learned color queries, at reference parity against the
 /// authors' own `DDColor`.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXDDColor)
 public final class NFKMLXDDColor: NSObject {
     /// The registry name the modelscope release builds under.

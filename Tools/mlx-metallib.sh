@@ -15,6 +15,10 @@
 # A `swift build` relink leaves the file in place; re-run after `swift package clean` or an mlx-swift
 # bump. Requires the Metal toolchain (`xcrun metal`), which ships with Xcode.
 #
+# SwiftPM under Xcode 27 compiles the kernels itself and builds one test bundle per target, each
+# carrying `mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib`. MLX's loader finds that
+# bundle, so when every test bundle already carries the library this script places nothing.
+#
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE="$ROOT/InferKitMLX"
@@ -23,9 +27,27 @@ CONFIG=debug
 
 KERNELS="$PACKAGE/.build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
 BUNDLE="$PACKAGE/.build/$CONFIG/InferKitMLXPackageTests.xctest"
+bundled_by_swiftpm() {
+    local bundle found=0
+    shopt -s nullglob
+    for bundle in "$PACKAGE/.build/$CONFIG"/*.xctest; do
+        [ -f "$bundle/Contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib" ] || return 1
+        found=1
+    done
+    [ "$found" -eq 1 ]
+}
+
+if [ ! -d "$BUNDLE/Contents/MacOS" ] && bundled_by_swiftpm; then
+    echo "==> every test bundle in $PACKAGE/.build/$CONFIG already carries default.metallib; nothing to place"
+    exit 0
+fi
 if [ ! -d "$KERNELS" ] || [ ! -d "$BUNDLE/Contents/MacOS" ]; then
     echo "==> building the test bundle: swift build --build-tests -c $CONFIG"
     ( cd "$PACKAGE" && swift build --build-tests -c "$CONFIG" )
+fi
+if [ ! -d "$BUNDLE/Contents/MacOS" ] && bundled_by_swiftpm; then
+    echo "==> every test bundle in $PACKAGE/.build/$CONFIG already carries default.metallib; nothing to place"
+    exit 0
 fi
 [ -d "$KERNELS" ] || { echo "mlx-swift kernels not found at $KERNELS" >&2; exit 1; }
 [ -d "$BUNDLE/Contents/MacOS" ] || { echo "test bundle not found at $BUNDLE" >&2; exit 1; }

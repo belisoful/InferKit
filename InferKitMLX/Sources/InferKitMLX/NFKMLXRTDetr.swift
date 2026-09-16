@@ -23,7 +23,7 @@ import MLXNN
 
 /// How the deformable decoder reads a sampled location.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXRTDetrSamplingMethod)
 public enum NFKMLXRTDetrSamplingMethod: Int, Sendable {
     /// Bilinear interpolation at the sampled point (`grid_sample`), which is RT-DETR's only mode and
@@ -167,13 +167,13 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
     /// their trained weights. A consumer's own v2 configuration that sets either knob runs through the
     /// same code.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static var v2R18VD: NFKMLXRTDetrConfiguration { r18vd }
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static var v2R34VD: NFKMLXRTDetrConfiguration { r34vd }
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static var v2R50VD: NFKMLXRTDetrConfiguration { r50vd }
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     public static var v2R101VD: NFKMLXRTDetrConfiguration { r101vd }
 }
 
@@ -1100,13 +1100,13 @@ public enum NFKMLXRTDetrVariant: Int {
     /// RT-DETRv2 at each released size. v2 keeps every geometry, so these run the same configurations
     /// as the cases above and differ in their trained weights.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case v2R18VD
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case v2R34VD
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case v2R50VD
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case v2R101VD
 }
 

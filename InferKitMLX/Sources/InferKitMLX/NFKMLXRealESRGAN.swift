@@ -148,7 +148,7 @@ private final class NFKRealESRGANHolder: @unchecked Sendable {
 /// share one index sequence: `body.0` is the first convolution, `body.1` its PReLU, and the last entry
 /// is the convolution the shuffle reads.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 final class NFKRealESRGANCompactNet: Module {
     @ModuleInfo(key: "body") var body: [Module]
     private let scale: Int
@@ -205,11 +205,11 @@ public enum NFKMLXRealESRGANVariant: Int {
     case x2
     /// `realesr-general-x4v3`, the compact general-purpose ×4 release (32 body convolutions).
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case generalX4V3
     /// `realesr-animevideov3`, the compact anime-video ×4 release (16 body convolutions).
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     case animeVideoV3
 }
 
@@ -314,7 +314,7 @@ public final class NFKMLXRealESRGAN: NSObject {
     /// Loads a compact release. Its `params` subtree carries the body directly, and the PReLU slopes are
     /// one-dimensional, so only the convolutions transpose.
     ///
-    /// - Since: InferKit 0.4.0
+    /// - Since: InferKit 0.3.1
     static func loadCompactWeights(into net: NFKRealESRGANCompactNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in

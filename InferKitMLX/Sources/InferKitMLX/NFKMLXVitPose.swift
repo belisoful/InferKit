@@ -18,7 +18,7 @@ import InferKit
 
 /// How a ViTPose release turns the backbone's feature map into heatmaps.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXVitPoseDecoder)
 public enum NFKMLXVitPoseDecoder: Int, Sendable {
     /// `use_simple_decoder: true` — a ReLU, a bilinear upsample, and one 3×3 convolution.
@@ -598,7 +598,7 @@ public final class NFKMLXVitPoseBackend: NSObject, NFKInferenceBackend {
 
 /// The size a ViTPose release ships at.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXVitPoseVariant)
 public enum NFKMLXVitPoseVariant: Int {
     /// `usyd-community/vitpose-base-simple`.
@@ -610,7 +610,7 @@ public enum NFKMLXVitPoseVariant: Int {
 /// ViTPose: a plain ViT backbone under a small decoding head, at reference parity against
 /// transformers' own `VitPoseForPoseEstimation`.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXVitPose)
 public final class NFKMLXVitPose: NSObject {
     /// The registry name the base-simple release builds under.

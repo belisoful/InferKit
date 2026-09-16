@@ -1151,7 +1151,7 @@ final class NFKMLXDepthAnything3Net: Module {
 /// The depth path is `NFKMLXDepthAnything3.backend(variant:weightsURL:)`, which returns a grayscale
 /// image through the ordinary inference contract. This class is the way to the rest.
 ///
-/// - Since: InferKit 0.4.0
+/// - Since: InferKit 0.3.1
 @objc(NFKMLXDepth3Estimator)
 public final class NFKMLXDepth3Estimator: NSObject {
     private let net: NFKMLXDepthAnything3Net

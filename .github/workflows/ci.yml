@@ -9,6 +9,12 @@
 # and the parity suites read multi-gigabyte checkpoints from ~/.inferkit-validation that only exist
 # on the validation machine — on a runner they would skip, proving nothing. The three-scheme run
 # stays the documented local pre-release step.
+#
+# The runner image decides which Xcode is active, and the two current ones behave differently for
+# MLX. Through Xcode 26, SwiftPM leaves mlx-swift's .metal sources alone and a compile needs no Metal
+# compiler. From Xcode 27, SwiftPM compiles them during `swift build` and Xcode ships that compiler as
+# a separate component, so the MLX job installs it when it is missing. Both paths are supported, so
+# the workflow runs on an image that has not moved to Xcode 27 yet.
 
 name: CI
 
@@ -66,6 +72,26 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
+      # From Xcode 27 the Metal compiler is an on-demand component, and SwiftPM compiles mlx-swift's
+      # kernels during `swift build`, so a missing component fails the build at the first shader.
+      # Through Xcode 26 the compiler either ships with Xcode or is never invoked here, so the
+      # download is attempted only when `metal` does not run, and a toolchain whose xcodebuild has no
+      # -downloadComponent is reported rather than treated as a failure.
+      - name: Metal toolchain
+        run: |
+          xcodebuild -version
+          if xcrun metal --version >/dev/null 2>&1; then
+            echo "metal runs; no component to install"
+            exit 0
+          fi
+          echo "metal is unavailable; attempting the on-demand component"
+          if xcodebuild -downloadComponent MetalToolchain; then
+            xcrun metal --version
+          else
+            echo "this Xcode does not offer -downloadComponent MetalToolchain; continuing"
+          fi
+
       - name: Build (macOS)
         run: swift build --package-path InferKitMLX
       - name: Build (iOS)

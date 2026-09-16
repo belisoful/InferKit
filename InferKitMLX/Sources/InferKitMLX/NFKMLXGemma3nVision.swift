@@ -25,7 +25,7 @@
 //  - **The frame is scaled to `0...1` and NOT normalized further**, though the release's preprocessor
 //    file states a mean and a standard deviation. It sets `do_normalize` false.
 //
-//  Introduced in InferKit 0.4.0.
+//  Introduced in InferKit 0.3.1.
 //
 
 import Foundation

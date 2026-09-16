@@ -31,7 +31,7 @@ swift test
 
 # Cross-platform compile checks (the core supports macOS 11 / iOS 14 / tvOS 14)
 xcodebuild build -scheme InferKit -destination 'generic/platform=iOS'
-xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos26.5 -arch arm64
+xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64
 
 # MLX companion (Apple Silicon, macOS 14 / iOS 17). Place MLX's Metal library first or the
 # MLX-dependent tests skip.
