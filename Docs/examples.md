@@ -597,6 +597,21 @@ let request = NFKInferenceRequest(
 let reply = try backend.runInference(for: request).text
 ```
 
+Choosing the model: on-device by default, specialized by `useCase` and `guardrails`; Private Cloud
+Compute on macOS 27 / iOS 27, with the quota read before switching to it.
+
+```swift
+let backend = NFKFoundationModelsBackend()
+backend.useCase = .contentTagging                    // the on-device tagging specialization
+backend.guardrails = .permissiveContentTransformations
+if #available(macOS 27, iOS 27, *) {
+    let quota = backend.privateCloudComputeQuota
+    if !quota.isLimitReached {
+        backend.model = .privateCloudCompute         // Apple's larger model; leaves the device
+    }
+}
+```
+
 ### Streaming and cancellation
 
 ```swift

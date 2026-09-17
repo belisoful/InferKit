@@ -1,7 +1,7 @@
 # ``InferKitFoundationModels``
 
-Runs Apple's on-device system language model behind the InferKit contract — text generation, streaming,
-tool calling, and structured output.
+Runs Apple's language models behind the InferKit contract: the on-device system model or Private Cloud
+Compute, with text generation, streaming, tool calling, and structured output.
 
 @Metadata {
     @DisplayName("InferKitFoundationModels")
@@ -24,6 +24,8 @@ let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Name one color."])
 let reply = try backend.runInference(for: request).text
 ```
 
+- **Model** — `model` picks the on-device system model or Private Cloud Compute (macOS 27 / iOS 27);
+  `useCase` and `guardrails` specialize the on-device model. See ``NFKFoundationModel``.
 - **Multi-turn** — pass `NFKInputMessages` (an OpenAI-style array); a system message becomes the
   session instructions and the history seeds a `Transcript`.
 - **Streaming & cancellation** — read `NFKInferenceJob`'s `partialResult` in its `progressHandler`.
@@ -54,6 +56,13 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 ### Concepts
 
 - <doc:ToolsAndStructuredOutput>
+
+### Choosing the model
+
+- ``NFKFoundationModel``
+- ``NFKFoundationModelUseCase``
+- ``NFKFoundationModelGuardrails``
+- ``NFKFoundationModelQuota``
 
 ### Tools & structured output
 

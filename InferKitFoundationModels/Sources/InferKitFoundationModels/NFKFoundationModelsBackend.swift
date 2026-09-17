@@ -11,13 +11,16 @@ enum NFKFoundationModelsError: Error {
     case noOutput
 }
 
-/// `userInfo` keys on the error thrown when a request does not fit the model's context.
-/// Introduced in InferKit 0.4.0.
+/// `userInfo` keys on the errors the backend throws. Introduced in InferKit 0.4.0.
 @objc public class NFKFoundationModelsErrorKey: NSObject {
-    /// The tokens the request needs (`NSNumber`).
+    /// The tokens the request needs (`NSNumber`), on the error for a request that does not fit the
+    /// model's context.
     @objc public static let tokenCount = "NFKFoundationModelsTokenCount"
-    /// The tokens the model's context holds (`NSNumber`).
+    /// The tokens the model's context holds (`NSNumber`), on the same error.
     @objc public static let contextSize = "NFKFoundationModelsContextSize"
+    /// When the Private Cloud Compute quota resets (`NSDate`), on the error for a reached quota,
+    /// where the service reports it.
+    @objc public static let resetDate = "NFKFoundationModelsResetDate"
 }
 
 // InferKit's request and job are immutable or internally locked, so they are safe to hand to the
@@ -25,13 +28,15 @@ enum NFKFoundationModelsError: Error {
 extension NFKInferenceRequest: @retroactive @unchecked Sendable {}
 extension NFKInferenceJob: @retroactive @unchecked Sendable {}
 
-/// An InferKit backend that runs Apple's on-device system language model through the Foundation
-/// Models framework.
+/// An InferKit backend that runs Apple's language models through the Foundation Models framework:
+/// the on-device system model, or Apple's larger model on Private Cloud Compute.
 ///
 /// It adopts the Objective-C `NFKInferenceBackend` protocol, so an InferKit consumer swaps it in
 /// like any other engine: the request that runs against `NFKCoreMLLanguageBackend`, the MLX language
 /// backend, or `NFKRemoteBackend` runs here with the same keys.
 ///
+/// - Model: `model` chooses the on-device system model (the default) or Private Cloud Compute
+///   (macOS 27 / iOS 27). `useCase` and `guardrails` specialize the on-device model.
 /// - Input: `NFKInputPrompt` (a string) or `NFKInputMessages` (an OpenAI-style array). A system
 ///   message becomes the session's instructions; earlier turns seed the transcript, including
 ///   assistant `tool_calls` messages and `tool` results; the last user turn is the prompt.
@@ -47,9 +52,9 @@ extension NFKInferenceJob: @retroactive @unchecked Sendable {}
 ///   caller replies with a `tool` message.
 /// - `submitInferenceJob(for:)` streams partial text through the job's `partialResult`.
 ///
-/// `isReady` reflects `SystemLanguageModel.default.availability`: the model needs Apple
-/// Intelligence enabled on supported hardware, and `prepare()` reports the reason when it is not
-/// available.
+/// `isReady` reflects the chosen model's availability: the on-device model needs Apple Intelligence
+/// enabled on supported hardware; Private Cloud Compute needs macOS 27 / iOS 27, an eligible device,
+/// and quota left. `prepare()` reports the reason when the model cannot take a request.
 @objc(NFKFoundationModelsBackend)
 public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
 
@@ -57,13 +62,62 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     /// with the key offers its own declarations and takes handlers from here by name. Empty by default.
     @objc public var tools: [NFKFoundationTool] = []
 
-    /// The tokens the model's context holds. 4096 below macOS 26.4 / iOS 26.4; the model's own reading
-    /// from there on. Introduced in InferKit 0.4.0.
-    @objc public var contextSize: Int {
-        SystemLanguageModel.default.contextSize
+    /// The model requests run on. `.onDevice` by default. `.privateCloudCompute` needs macOS 27 /
+    /// iOS 27: below that `isReady` is false and a request fails with
+    /// `kNFKError_InferenceUnsupported`. A request captures the model when it is submitted, so a
+    /// change here does not move a running request. Introduced in InferKit 0.4.0.
+    @objc public var model: NFKFoundationModel {
+        get { lock.withLock { configuration.model } }
+        set { lock.withLock { configuration.model = newValue } }
     }
 
-    private let prewarmed = NFKOnce()
+    /// The on-device model's specialization. `.general` by default. Private Cloud Compute ignores it.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var useCase: NFKFoundationModelUseCase {
+        get { lock.withLock { configuration.useCase } }
+        set { lock.withLock { configuration.useCase = newValue } }
+    }
+
+    /// The on-device model's content guardrails. `.default` by default. Private Cloud Compute ignores
+    /// it. Introduced in InferKit 0.4.0.
+    @objc public var guardrails: NFKFoundationModelGuardrails {
+        get { lock.withLock { configuration.guardrails } }
+        set { lock.withLock { configuration.guardrails = newValue } }
+    }
+
+    /// The tokens the model's context holds. For the on-device model, 4096 below macOS 26.4 /
+    /// iOS 26.4 and the model's own reading from there on. For Private Cloud Compute the service
+    /// reports the size; `prepare()` reads it, and this is 0 until then. Introduced in InferKit 0.4.0.
+    @objc public var contextSize: Int {
+        let (configuration, cloudContextSize) = lock.withLock { (self.configuration, self.cloudContextSize) }
+        switch configuration.model {
+        case .onDevice:
+            return configuration.systemModel.contextSize
+        case .privateCloudCompute:
+            return cloudContextSize
+        }
+    }
+
+    /// The Private Cloud Compute quota, whatever `model` is set to, so an app decides before switching
+    /// to it. Introduced in InferKit 0.4.0.
+    @available(macOS 27, iOS 27, *)
+    @objc public var privateCloudComputeQuota: NFKFoundationModelQuota {
+        NFKFoundationModelQuota(usage: PrivateCloudComputeLanguageModel().quotaUsage)
+    }
+
+    /// The on-device model's variant name (`SystemLanguageModel.Variant.displayName`), or nil when
+    /// `model` is Private Cloud Compute, which reports no variant. Introduced in InferKit 0.4.0.
+    @available(macOS 27, iOS 27, *)
+    @objc public var variantDisplayName: String? {
+        let configuration = lock.withLock { self.configuration }
+        guard configuration.model == .onDevice else { return nil }
+        return configuration.systemModel.variant.displayName
+    }
+
+    private let lock = NSLock()
+    private var configuration = NFKFoundationModelConfiguration()
+    private var cloudContextSize = 0
+    private var prewarmedConfiguration: NFKFoundationModelConfiguration?
 
     @objc public override init() {
         super.init()
@@ -72,19 +126,44 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     // MARK: NFKInferenceBackend
 
     @objc public var isReady: Bool {
-        SystemLanguageModel.default.availability == .available
+        lock.withLock { configuration }.isReady
     }
 
     @objc public var backendIdentifier: String { "foundation-models" }
 
-    /// Checks availability and loads the model's resources once, so the first request does not pay
-    /// the warm-up.
+    /// Checks the chosen model's availability and loads its resources once, so the first request
+    /// does not pay the warm-up. For Private Cloud Compute it also reads `contextSize`.
     @objc(prepareWithError:)
     public func prepare() throws {
-        try Self.checkAvailability()
-        prewarmed.run {
-            LanguageModelSession().prewarm()
+        let configuration = lock.withLock { self.configuration }
+        try configuration.checkAvailability()
+        if configuration.model == .privateCloudCompute, #available(macOS 27, iOS 27, *) {
+            let size = try Self.readCloudContextSize()
+            lock.withLock { cloudContextSize = size }
         }
+        let warm = lock.withLock { prewarmedConfiguration == configuration }
+        if !warm {
+            try configuration.makeSession(tools: [], entries: []).prewarm()
+            lock.withLock { prewarmedConfiguration = configuration }
+        }
+    }
+
+    /// The service reports the context size asynchronously; `prepare()` is the synchronous seam that
+    /// is allowed to wait for it.
+    @available(macOS 27, iOS 27, *)
+    private static func readCloudContextSize() throws -> Int {
+        let outcome = NFKOutcome<Int>()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            do {
+                outcome.succeed(try await PrivateCloudComputeLanguageModel().contextSize)
+            } catch {
+                outcome.fail(error)
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return try outcome.value()
     }
 
     @objc(runInferenceForRequest:error:)
@@ -106,16 +185,17 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
         let registered = self.tools
+        let configuration = lock.withLock { self.configuration }
         let task = Task.detached(priority: .userInitiated) {
             do {
-                try Self.checkAvailability()
+                try configuration.checkAvailability()
                 let plan = Self.plan(for: request)
                 let recorder = NFKToolCallRecorder()
                 let adapted = try Self.toolAdapters(for: request, registered: registered, recorder: recorder)
-                let session = Self.makeSession(for: plan, tools: adapted)
+                let session = try Self.makeSession(for: plan, tools: adapted, configuration: configuration)
                 let options = try Self.generationOptions(for: request)
                 let format = try Self.outputFormat(for: request)
-                try await Self.checkContext(plan: plan, tools: adapted, format: format)
+                try await Self.checkContext(plan: plan, tools: adapted, format: format, configuration: configuration)
 
                 var latestText = ""
                 do {
@@ -183,28 +263,16 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         return job
     }
 
-    // MARK: Availability
-
-    static func checkAvailability() throws {
-        switch SystemLanguageModel.default.availability {
-        case .available:
-            return
-        case .unavailable(let reason):
-            throw NSError(domain: NFKInferenceErrorDomain,
-                          code: NFKInferenceError.error_InferenceNotReady.rawValue,
-                          userInfo: [NSLocalizedDescriptionKey: "the system language model is unavailable: \(reason)"])
-        @unknown default:
-            throw NSError(domain: NFKInferenceErrorDomain,
-                          code: NFKInferenceError.error_InferenceNotReady.rawValue,
-                          userInfo: [NSLocalizedDescriptionKey: "the system language model is unavailable"])
-        }
-    }
+    // MARK: Context
 
     /// Counts the request's tokens against the context before the session does, so an oversized
     /// request fails with the core's error and both numbers, on an OS whose model counts tokens.
-    static func checkContext(plan: RequestPlan, tools: [any Tool], format: OutputFormat) async throws {
-        guard #available(macOS 26.4, iOS 26.4, *) else { return }
-        let model = SystemLanguageModel.default
+    /// Only the on-device model counts tokens; a Private Cloud Compute request is checked by the
+    /// service.
+    static func checkContext(plan: RequestPlan, tools: [any Tool], format: OutputFormat,
+                             configuration: NFKFoundationModelConfiguration = .init()) async throws {
+        guard configuration.model == .onDevice, #available(macOS 26.4, iOS 26.4, *) else { return }
+        let model = configuration.systemModel
         var count = try await model.tokenCount(for: plan.prompt)
         count += try await model.tokenCount(for: transcriptEntries(for: plan))
         if !tools.isEmpty {
@@ -345,14 +413,11 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         return entries
     }
 
-    /// Builds a session seeded with the plan's instructions and prior turns through the Foundation
-    /// Models transcript, offering the adapted tools.
-    static func makeSession(for plan: RequestPlan, tools: [any Tool]) -> LanguageModelSession {
-        let entries = transcriptEntries(for: plan)
-        if tools.isEmpty {
-            return entries.isEmpty ? LanguageModelSession() : LanguageModelSession(transcript: Transcript(entries: entries))
-        }
-        return LanguageModelSession(tools: tools, transcript: Transcript(entries: entries))
+    /// Builds a session over the configured model, seeded with the plan's instructions and prior
+    /// turns through the Foundation Models transcript and offering the adapted tools.
+    static func makeSession(for plan: RequestPlan, tools: [any Tool],
+                            configuration: NFKFoundationModelConfiguration = .init()) throws -> LanguageModelSession {
+        try configuration.makeSession(tools: tools, entries: transcriptEntries(for: plan))
     }
 
     /// The tools a request offers. `NFKParameterTools` entries (`{name, description, parameters}`)
@@ -460,18 +525,23 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     }
 }
 
-/// Runs a block once, from whichever thread reaches it first.
-final class NFKOnce: @unchecked Sendable {
+/// Carries one asynchronous result across a semaphore to a synchronous caller.
+final class NFKOutcome<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
-    private var done = false
+    private var result: Result<Value, Error>?
 
-    func run(_ block: () -> Void) {
-        lock.lock()
-        let first = !done
-        done = true
-        lock.unlock()
-        if first {
-            block()
+    func succeed(_ value: Value) {
+        lock.withLock { result = .success(value) }
+    }
+
+    func fail(_ error: Error) {
+        lock.withLock { result = .failure(error) }
+    }
+
+    func value() throws -> Value {
+        guard let result = lock.withLock({ result }) else {
+            throw NFKFoundationModelsError.noOutput
         }
+        return try result.get()
     }
 }

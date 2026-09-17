@@ -6,9 +6,28 @@ The backend maps the InferKit request onto a `LanguageModelSession`. A single `N
 one-shot generation; an `NFKInputMessages` array replays a conversation, where a system message becomes
 the session instructions and the prior turns seed a `Transcript`. `NFKParameterTemperature` and
 `NFKParameterMaxTokens` map to `GenerationOptions`, and `NFKParameterTopK`, `NFKParameterTopP`, and
-`NFKParameterSeed` choose the sampling mode (a temperature of zero is greedy). `isReady` mirrors
-`SystemLanguageModel.default.availability`; a request that needs more tokens than ``contextSize`` fails
+`NFKParameterSeed` choose the sampling mode (a temperature of zero is greedy). `isReady` mirrors the
+chosen model's availability; an on-device request that needs more tokens than ``contextSize`` fails
 before the session runs, with both counts under ``NFKFoundationModelsErrorKey``.
+
+### Choosing the model
+
+``model`` picks the on-device system model (the default) or Apple's larger model on Private Cloud
+Compute (macOS 27 / iOS 27). ``useCase`` and ``guardrails`` specialize the on-device model. Below
+macOS 27 a Private Cloud Compute backend is not ready, and a request fails with
+`kNFKError_InferenceUnsupported`.
+
+```swift
+let backend = NFKFoundationModelsBackend()
+backend.useCase = .contentTagging
+if #available(macOS 27, iOS 27, *), !backend.privateCloudComputeQuota.isLimitReached {
+    backend.model = .privateCloudCompute
+}
+```
+
+``privateCloudComputeQuota`` reads the quota whatever `model` is set to, so an app decides before
+switching; a reached quota makes the backend not ready. ``variantDisplayName`` names the on-device
+model's variant. A request captures the model when it is submitted.
 
 ### Multi-turn conversations
 
@@ -39,6 +58,14 @@ job.progressHandler = { job in print(job.partialResult?.text ?? "") }
 ```
 
 ## Topics
+
+### Choosing the model
+
+- ``NFKFoundationModelsBackend/model``
+- ``NFKFoundationModelsBackend/useCase``
+- ``NFKFoundationModelsBackend/guardrails``
+- ``NFKFoundationModelsBackend/privateCloudComputeQuota``
+- ``NFKFoundationModelsBackend/variantDisplayName``
 
 ### Runtime configuration
 

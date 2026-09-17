@@ -29,6 +29,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   before the session runs (macOS 26.4 / iOS 26.4 and later), with both counts under
   `NFKFoundationModelsErrorKey` in the error's `userInfo`. `prepare()` prewarms the model once.
 
+#### Model selection
+
+- `model` on `NFKFoundationModelsBackend` picks the on-device system model (the default) or Apple's
+  larger model on Private Cloud Compute (macOS 27 / iOS 27); `useCase` (`general`, `contentTagging`)
+  and `guardrails` (`default`, `permissiveContentTransformations`) specialize the on-device model.
+  `isReady` and `prepare()` consult the chosen model, and a Private Cloud Compute request below
+  macOS 27 fails with `kNFKError_InferenceUnsupported`. A request captures the model when submitted.
+- `privateCloudComputeQuota` (macOS 27 / iOS 27) reads the quota whatever `model` is set to:
+  `isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`. A reached
+  quota makes the backend not ready, with the reset date under `NFKFoundationModelsErrorKey.resetDate`.
+  `variantDisplayName` (macOS 27 / iOS 27) names the on-device model's variant. All of it is `@objc`.
+
 #### Removed
 
 - `NFKFoundationModelsBackend.responseSchema`, `NFKFoundationToolParameter`, and `NFKToolParameterType`.

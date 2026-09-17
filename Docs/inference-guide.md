@@ -82,7 +82,7 @@ companion packages add heavier engines without raising the core's platform floor
 | --- | --- | --- | --- |
 | `NFKCoreMLLanguageBackend` | core | A converted Core ML LLM, on device | Streaming, chat templates, chunked prefill, int8. macOS 15 / iOS 18. |
 | `NFKMLXLanguageBackend` | `InferKitMLX/` | A Hugging Face LLM release, on device through MLX | Qwen3 / Llama dense decoders, Gemma 4, the Qwen3.5 hybrid, each at reference parity. Cache window and quantization, chunked prefill, ChatML. Apple Silicon, macOS 14 / iOS 17. |
-| `NFKFoundationModelsBackend` | `InferKitFoundationModels/` | Apple's on-device system model | Streaming, multi-turn, tool calling, structured output. macOS 26 / iOS 26, Apple Intelligence. |
+| `NFKFoundationModelsBackend` | `InferKitFoundationModels/` | Apple's on-device system model, or Private Cloud Compute (macOS 27 / iOS 27) | Streaming, multi-turn, tool calling, structured output. macOS 26 / iOS 26, Apple Intelligence. |
 | `NFKRemoteBackend` | core | An OpenAI-compatible endpoint | Twelve named presets, hosted and local (Ollama, LM Studio, llama.cpp, vLLM). Foundation-only. |
 | `NFKAnthropicBackend` | core | Anthropic's Messages API | Its own backend, because the protocol differs; the same request shape. |
 | `NFKRemoteTranscriptionBackend` | core | An OpenAI-compatible audio→text (Whisper) endpoint | `NFKInputAudio` in, `NFKOutputText` out. |
@@ -238,6 +238,28 @@ case .unavailable(let why): // .deviceNotEligible, .appleIntelligenceNotEnabled,
 
 `NFKFoundationModelsBackend.isReady` mirrors this, and `prepare()` throws
 `NFKInferenceError.error_InferenceNotReady` with the reason when the model is unavailable.
+
+### Choosing the model
+
+`backend.model` picks the Apple model: `.onDevice` (the default) runs the system model, which
+`backend.useCase` (`.general`, `.contentTagging`) and `backend.guardrails` (`.default`,
+`.permissiveContentTransformations`) specialize; `.privateCloudCompute` runs Apple's larger model on
+Private Cloud Compute (macOS 27 / iOS 27), where the request leaves the device and usage counts
+against a quota. Below macOS 27 a Private Cloud Compute backend is not ready and a request fails with
+`kNFKError_InferenceUnsupported`.
+
+```swift
+let backend = NFKFoundationModelsBackend()
+if #available(macOS 27, iOS 27, *) {
+    let quota = backend.privateCloudComputeQuota   // readable whatever `model` is set to
+    if !quota.isLimitReached { backend.model = .privateCloudCompute }
+}
+```
+
+`privateCloudComputeQuota` reports `isLimitReached`, `isApproachingLimit`, `resetDate`, and shows the
+system's limit-increase suggestion. A reached quota makes the backend not ready, so the runtime pick
+below falls through to the next engine before the quota error. `variantDisplayName` (macOS 27 /
+iOS 27) names the on-device model's variant.
 
 ### Text generation and options
 
@@ -484,7 +506,8 @@ and the most recently registered present provider wins.
 ## Choosing and combining engines
 
 - **Private, offline, no download infrastructure, latest OS** → `NFKFoundationModelsBackend` (Apple's
-  model, zero weights to ship).
+  model, zero weights to ship). On macOS 27 / iOS 27 the same backend runs Apple's larger model on
+  Private Cloud Compute (`model = .privateCloudCompute`), off the device and against a quota.
 - **Private, offline, a specific open model, Apple Silicon** → `NFKMLXLanguageBackend` (the release
   directory as published, no conversion step; Qwen3, Llama, Gemma 4, Qwen3.5).
 - **Private, offline, Intel Macs or a Core ML deployment** → `NFKCoreMLLanguageBackend` (convert

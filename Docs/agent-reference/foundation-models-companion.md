@@ -39,10 +39,32 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   `NFKOutputToolCalls` in the remote shape (`{id, name, arguments, argumentsJSON}`; the id is minted
   here, since `Tool.call` does not receive the transcript's). Executed calls are not reported under
   that key, so generic code that acts on `result.toolCalls` never runs a tool twice.
+- Model selection (2026-09-17): `model` (`NFKFoundationModel`: `.onDevice` / `.privateCloudCompute`),
+  `useCase`, and `guardrails` are `@objc` enums on the backend; `NFKFoundationModelConfiguration`
+  snapshots them when a request is submitted, and `checkAvailability()` / `makeSession(tools:entries:)`
+  dispatch on it. `SystemLanguageModel.default` is a computed static that builds a new instance per
+  read, so never compare it by identity. Private Cloud Compute is `#available(macOS 27, iOS 27, *)`
+  throughout: below it `isReady` is false and a request fails with `kNFKError_InferenceUnsupported`
+  (never a silent fall-through to the device). `PrivateCloudComputeLanguageModel` has no
+  `tokenCount(for:)`, so the context preflight is on-device only, and its `contextSize` is
+  `async throws`, so `prepare()` reads it through a semaphore and `contextSize` is 0 before then. A
+  reached quota (`quotaUsage.status == .limitReached`) makes the backend not ready with
+  `NFKFoundationModelsErrorKey.resetDate` in `userInfo`. `privateCloudComputeQuota` and
+  `variantDisplayName` are `@available(macOS 27, iOS 27, *)` `@objc` members, which ObjC reaches
+  under `if (@available(macOS 27, *))`. Live (M1 Max, macOS 26.6.2): the content-tagging model
+  answers "photography, emotion, nature"; the Private Cloud Compute tests skip below 27 and are
+  unmeasured.
+- Gotcha, load-time crash: an `@objc` class is realized when the binary loads, which lays out its
+  stored properties and needs their types' metadata. A stored property whose type exists only in the
+  27 SDK (`PrivateCloudComputeLanguageModel.QuotaUsage`) crashes every process on macOS 26 at
+  `realizeAllClasses` → `type metadata completion function`, before any test runs, even with the
+  class marked `@available(macOS 27, *)`. `NFKFoundationModelQuota` stores it as `Any` and casts in
+  the one method that uses it.
 - Context preflight: on 26.4+ the backend sums `tokenCount(for:)` over the prompt, transcript entries,
   tools, and schema against `contextSize` and throws `kNFKError_InferenceUnsupported` with
   `NFKFoundationModelsErrorKey.tokenCount` / `.contextSize` in `userInfo`; below 26.4 the session's own
-  error stands. `contextSize` is `@objc` on the backend (back-deployed, 4096 below 26.4).
+  error stands. `contextSize` is `@objc` on the backend (back-deployed, 4096 below 26.4). The
+  preflight runs for the on-device model only.
 - Live measurements (M1 Max, macOS 26.6.2, 2026-09-16): a name / age / traits schema returns typed
   fields with the integer inside its bounds; `["yes", "no", "unsure"]` returns `yes`; a declared
   vault-code tool without a handler returns the call with `{"vault": "Orion"}`; the same call handed

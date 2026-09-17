@@ -16,7 +16,9 @@ hardware) that bridges InferKit and Apple's **Foundation Models** framework:
   `NFKInputMessages` (a system message becomes the session's instructions), the standard text
   parameters including top-k / top-p / seed, `NFKParameterJSONSchema` and `NFKParameterChoices` for
   structured output, `NFKParameterTools` with handlers registered as `NFKFoundationTool`s, and
-  streamed partial text through the job. `isReady` reflects the model's availability.
+  streamed partial text through the job. `isReady` reflects the model's availability. `model`
+  picks the on-device system model (specialized by `useCase` and `guardrails`) or Apple's larger
+  model on Private Cloud Compute (macOS 27 / iOS 27), whose quota `privateCloudComputeQuota` reads.
 
 The reverse direction — adopting Apple's provider protocols (`LanguageModel` /
 `LanguageModelExecutor`, WWDC26) so InferKit's local and remote backends stand behind

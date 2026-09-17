@@ -39,6 +39,77 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         XCTAssertGreaterThan(NFKFoundationModelsBackend().contextSize, 0)
     }
 
+    // MARK: Model selection
+
+    func testTheDefaultModelIsOnDeviceWithDefaultOptions() {
+        let backend = NFKFoundationModelsBackend()
+        XCTAssertEqual(backend.model, .onDevice)
+        XCTAssertEqual(backend.useCase, .general)
+        XCTAssertEqual(backend.guardrails, .default)
+    }
+
+    func testTheUseCaseMapsToTheFrameworkValue() {
+        XCTAssertEqual(NFKFoundationModelUseCase.general.systemUseCase, .general)
+        XCTAssertEqual(NFKFoundationModelUseCase.contentTagging.systemUseCase, .contentTagging)
+    }
+
+    func testASpecializedModelIsBuiltFromTheOptions() {
+        var configuration = NFKFoundationModelConfiguration()
+        XCTAssertEqual(configuration.systemModel.availability, SystemLanguageModel.default.availability)
+        configuration.useCase = .contentTagging
+        configuration.guardrails = .permissiveContentTransformations
+        XCTAssertEqual(configuration.isReady, configuration.systemModel.availability == .available)
+    }
+
+    func testPrivateCloudComputeNeedsOS27() throws {
+        let backend = NFKFoundationModelsBackend()
+        backend.model = .privateCloudCompute
+        if #available(macOS 27, iOS 27, *) {
+            throw XCTSkip("the host runs macOS 27; the refusal is a below-27 behavior")
+        }
+        XCTAssertFalse(backend.isReady)
+        XCTAssertEqual(backend.contextSize, 0)
+        XCTAssertThrowsError(try backend.prepare()) { error in
+            XCTAssertEqual((error as NSError).domain, NFKInferenceErrorDomain)
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceUnsupported.rawValue)
+        }
+        let job = backend.submitInferenceJob(for: request([NFKInputPrompt: "hello"]))
+        let finished = expectation(description: "the request is refused")
+        job.completionHandler = { _ in finished.fulfill() }
+        wait(for: [finished], timeout: 5)
+        XCTAssertEqual((job.error as NSError?)?.code, NFKInferenceError.error_InferenceUnsupported.rawValue)
+    }
+
+    func testARequestKeepsTheModelItWasSubmittedWith() {
+        let backend = NFKFoundationModelsBackend()
+        backend.useCase = .contentTagging
+        let before = backend.useCase
+        backend.useCase = .general
+        XCTAssertEqual(before, .contentTagging)
+        XCTAssertEqual(backend.useCase, .general)
+    }
+
+    func testThePrivateCloudComputeQuotaReadsOnOS27() throws {
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("Private Cloud Compute needs macOS 27")
+        }
+        let quota = NFKFoundationModelsBackend().privateCloudComputeQuota
+        if quota.isLimitReached {
+            XCTAssertTrue(quota.isApproachingLimit)
+        }
+        print("[live] private cloud compute quota: limit reached \(quota.isLimitReached), approaching \(quota.isApproachingLimit), resets \(String(describing: quota.resetDate))")
+    }
+
+    func testTheVariantNameIsReportedOnOS27() throws {
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("the variant needs macOS 27")
+        }
+        let backend = NFKFoundationModelsBackend()
+        XCTAssertFalse(backend.variantDisplayName?.isEmpty ?? true)
+        backend.model = .privateCloudCompute
+        XCTAssertNil(backend.variantDisplayName)
+    }
+
     // MARK: Request mapping
 
     func testAPlainPromptMapsToASinglePromptPlan() {
@@ -402,6 +473,33 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         XCTAssertGreaterThan(counter.updates, 0, "expected streamed partial results")
         XCTAssertTrue(counter.monotonic, "streamed text should only grow")
     }
+
+    func testTheContentTaggingModelGeneratesText() throws {
+        let backend = NFKFoundationModelsBackend()
+        backend.useCase = .contentTagging
+        try XCTSkipUnless(backend.isReady, "the content-tagging model is unavailable on this host")
+        let result = try backend.runInference(for: request(
+            [NFKInputPrompt: "A hiker photographs a glacier at sunrise and feels calm."],
+            [NFKParameterMaxTokens: 48]))
+        let text = result.text ?? ""
+        XCTAssertFalse(text.isEmpty)
+        print("[live] foundation-models content-tagging reply: \(text)")
+    }
+
+    func testPrivateCloudComputeGeneratesText() throws {
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("Private Cloud Compute needs macOS 27")
+        }
+        let backend = NFKFoundationModelsBackend()
+        backend.model = .privateCloudCompute
+        try XCTSkipUnless(backend.isReady, "Private Cloud Compute is unavailable on this host")
+        try backend.prepare()
+        XCTAssertGreaterThan(backend.contextSize, 0)
+        let result = try backend.runInference(for: request(
+            [NFKInputPrompt: "Reply with exactly one word: the color of a clear daytime sky."],
+            [NFKParameterMaxTokens: 16]))
+        XCTAssertFalse(result.text?.isEmpty ?? true)
+        print("[live] private cloud compute reply: \(result.text ?? "")")
 }
 
 /// A thread-safe boolean, set from a tool handler that runs on the generation task.
@@ -429,4 +527,5 @@ private final class NFKStreamCounter: @unchecked Sendable {
 
     var updates: Int { lock.lock(); defer { lock.unlock() }; return _updates }
     var monotonic: Bool { lock.lock(); defer { lock.unlock() }; return _monotonic }
+}
 }

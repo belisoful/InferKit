@@ -30,6 +30,32 @@
 	XCTAssertGreaterThan(backend.contextSize, (NSInteger)0);
 }
 
+- (void)testObjectiveCChoosesTheModel
+{
+	// The on-device model is the default; its specialization and guardrails are plain enums. Private
+	// Cloud Compute is macOS 27 / iOS 27: below that the backend is not ready and a request fails
+	// with kNFKError_InferenceUnsupported rather than running on the device unasked.
+	NFKFoundationModelsBackend *backend = [[NFKFoundationModelsBackend alloc] init];
+	XCTAssertEqual(backend.model, NFKFoundationModelOnDevice);
+	backend.useCase = NFKFoundationModelUseCaseContentTagging;
+	backend.guardrails = NFKFoundationModelGuardrailsPermissiveContentTransformations;
+	XCTAssertEqual(backend.useCase, NFKFoundationModelUseCaseContentTagging);
+
+	if (@available(macOS 27, iOS 27, *)) {
+		// The quota is readable whatever `model` is set to, so an app decides before switching.
+		NFKFoundationModelQuota *quota = backend.privateCloudComputeQuota;
+		if (!quota.isLimitReached) {
+			backend.model = NFKFoundationModelPrivateCloudCompute;
+		}
+	} else {
+		backend.model = NFKFoundationModelPrivateCloudCompute;
+		XCTAssertFalse(backend.isReady);
+		NSError *error = nil;
+		XCTAssertFalse([backend prepareWithError:&error]);
+		XCTAssertEqual(error.code, kNFKError_InferenceUnsupported);
+	}
+}
+
 - (void)testObjectiveCRegistersAToolTheModelCanCall
 {
 	// A tool is a name, a description, a JSON Schema for its arguments, and a handler. The schema

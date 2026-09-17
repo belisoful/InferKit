@@ -17,10 +17,36 @@ endpoint), or this backend (Apple's model).
   greedy decoding.
 - The result carries text under `NFKOutputText`; `submitInferenceJob(for:)` streams partial text
   through the job's `partialResult` and honors cancellation.
-- `isReady` mirrors `SystemLanguageModel.default.availability`; `prepare()` reports the reason when
-  the model is unavailable (Apple Intelligence off, unsupported hardware, model not downloaded) and
-  warms the model up once. `contextSize` reports the tokens the context holds, and a request that
-  needs more fails before the session runs, with both counts in the error's `userInfo`.
+- `isReady` mirrors the chosen model's availability; `prepare()` reports the reason when the model
+  is unavailable (Apple Intelligence off, unsupported hardware, model not downloaded, Private Cloud
+  Compute quota reached) and warms the model up once. `contextSize` reports the tokens the context
+  holds, and an on-device request that needs more fails before the session runs, with both counts in
+  the error's `userInfo`.
+
+### Choosing the model
+
+`model` picks the Apple model a request runs on. `.onDevice` (the default) is the system language
+model; `useCase` (`.general`, `.contentTagging`) and `guardrails` (`.default`,
+`.permissiveContentTransformations`) specialize it. `.privateCloudCompute` is Apple's larger model on
+Private Cloud Compute (macOS 27 / iOS 27): the request leaves the device, and usage counts against a
+quota. Below macOS 27 a Private Cloud Compute backend is not ready, and a request fails with
+`kNFKError_InferenceUnsupported` rather than running on the device unasked.
+
+```swift
+let backend = NFKFoundationModelsBackend()
+backend.useCase = .contentTagging
+if #available(macOS 27, iOS 27, *), !backend.privateCloudComputeQuota.isLimitReached {
+    backend.model = .privateCloudCompute
+}
+```
+
+`privateCloudComputeQuota` (macOS 27 / iOS 27) reads the quota whatever `model` is set to:
+`isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`. A reached
+quota makes the backend not ready, and `prepare()` throws with the reset date under
+`NFKFoundationModelsErrorKey.resetDate`. `variantDisplayName` (macOS 27 / iOS 27) names the on-device
+model's variant. A request captures the model when it is submitted, so changing `model` does not move
+a running request. Verified live: the content-tagging model answers "photography, emotion, nature"
+to a sentence about a hiker at a glacier.
 
 Multi-turn: prior turns seed a Foundation Models `Transcript` (system → `.instructions`, user →
 `.prompt`, assistant → `.response`, assistant `tool_calls` → `.toolCalls`, `tool` → `.toolOutput`),
