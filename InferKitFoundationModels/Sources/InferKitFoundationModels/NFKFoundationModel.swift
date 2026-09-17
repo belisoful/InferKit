@@ -52,14 +52,27 @@ public final class NFKFoundationModelQuota: NSObject {
     @objc public let resetDate: Date?
 
     /// The system offers a way to raise the limit; `showLimitIncreaseSuggestion()` presents it.
-    @objc public let canShowLimitIncreaseSuggestion: Bool
+    @objc public var canShowLimitIncreaseSuggestion: Bool {
+        limitIncreaseSuggestion != nil
+    }
 
     // Boxed: an `@objc` class is realized when the binary loads, which lays out its stored
-    // properties and needs their types' metadata, and this type does not exist below macOS 27.
-    private let usage: Any
+    // properties and needs their types' metadata, and the suggestion's type does not exist below
+    // macOS 27.
+    private let limitIncreaseSuggestion: Any?
 
-    init(usage: PrivateCloudComputeLanguageModel.QuotaUsage) {
-        self.usage = usage
+    init(isLimitReached: Bool, isApproachingLimit: Bool, resetDate: Date?, limitIncreaseSuggestion: Any?) {
+        self.isLimitReached = isLimitReached
+        self.isApproachingLimit = isApproachingLimit
+        self.resetDate = resetDate
+        self.limitIncreaseSuggestion = limitIncreaseSuggestion
+        super.init()
+    }
+
+    #if compiler(>=6.4)
+    convenience init(usage: PrivateCloudComputeLanguageModel.QuotaUsage) {
+        let isLimitReached: Bool
+        let isApproachingLimit: Bool
         switch usage.status {
         case .belowLimit(let status):
             isLimitReached = false
@@ -71,18 +84,24 @@ public final class NFKFoundationModelQuota: NSObject {
             isLimitReached = false
             isApproachingLimit = false
         }
-        resetDate = usage.resetDate
-        canShowLimitIncreaseSuggestion = usage.limitIncreaseSuggestion != nil
-        super.init()
+        self.init(isLimitReached: isLimitReached,
+                  isApproachingLimit: isApproachingLimit,
+                  resetDate: usage.resetDate,
+                  limitIncreaseSuggestion: usage.limitIncreaseSuggestion)
     }
+    #endif
 
     /// Presents the system's limit-increase suggestion. Returns `false` when there is none.
     @objc @discardableResult
     public func showLimitIncreaseSuggestion() -> Bool {
-        guard let usage = usage as? PrivateCloudComputeLanguageModel.QuotaUsage,
-              let suggestion = usage.limitIncreaseSuggestion else { return false }
+        #if compiler(>=6.4)
+        guard let suggestion = limitIncreaseSuggestion
+                as? PrivateCloudComputeLanguageModel.QuotaUsage.LimitIncreaseSuggestion else { return false }
         suggestion.show()
         return true
+        #else
+        return false
+        #endif
     }
 }
 
@@ -130,10 +149,14 @@ struct NFKFoundationModelConfiguration: Equatable, Sendable {
         case .onDevice:
             try checkSystemAvailability()
         case .privateCloudCompute:
+            #if compiler(>=6.4)
             guard #available(macOS 27, iOS 27, *) else {
                 throw Self.privateCloudComputeUnsupported()
             }
             try checkPrivateCloudComputeAvailability()
+            #else
+            throw Self.privateCloudComputeUnsupported()
+            #endif
         }
     }
 
@@ -148,6 +171,7 @@ struct NFKFoundationModelConfiguration: Equatable, Sendable {
         }
     }
 
+    #if compiler(>=6.4)
     @available(macOS 27, iOS 27, *)
     private func checkPrivateCloudComputeAvailability() throws {
         let cloud = PrivateCloudComputeLanguageModel()
@@ -170,6 +194,7 @@ struct NFKFoundationModelConfiguration: Equatable, Sendable {
                           userInfo: userInfo)
         }
     }
+    #endif
 
     /// A session over the configured model, seeded with the transcript entries and offering the tools.
     func makeSession(tools: [any Tool], entries: [Transcript.Entry]) throws -> LanguageModelSession {
@@ -178,10 +203,14 @@ struct NFKFoundationModelConfiguration: Equatable, Sendable {
         case .onDevice:
             return LanguageModelSession(model: systemModel, tools: tools, transcript: transcript)
         case .privateCloudCompute:
+            #if compiler(>=6.4)
             guard #available(macOS 27, iOS 27, *) else {
                 throw Self.privateCloudComputeUnsupported()
             }
             return LanguageModelSession(model: PrivateCloudComputeLanguageModel(), tools: tools, transcript: transcript)
+            #else
+            throw Self.privateCloudComputeUnsupported()
+            #endif
         }
     }
 
@@ -194,6 +223,6 @@ struct NFKFoundationModelConfiguration: Equatable, Sendable {
     private static func privateCloudComputeUnsupported() -> NSError {
         NSError(domain: NFKInferenceErrorDomain,
                 code: NFKInferenceError.error_InferenceUnsupported.rawValue,
-                userInfo: [NSLocalizedDescriptionKey: "Private Cloud Compute needs macOS 27 / iOS 27"])
+                userInfo: [NSLocalizedDescriptionKey: "Private Cloud Compute needs macOS 27 / iOS 27 and a build with the macOS 27 SDK"])
     }
 }

@@ -35,13 +35,14 @@ quota. Below macOS 27 a Private Cloud Compute backend is not ready, and a reques
 ```swift
 let backend = NFKFoundationModelsBackend()
 backend.useCase = .contentTagging
-if #available(macOS 27, iOS 27, *), !backend.privateCloudComputeQuota.isLimitReached {
+if #available(macOS 27, iOS 27, *), let quota = backend.privateCloudComputeQuota, !quota.isLimitReached {
     backend.model = .privateCloudCompute
 }
 ```
 
 `privateCloudComputeQuota` (macOS 27 / iOS 27) reads the quota whatever `model` is set to:
-`isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`. A reached
+`isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`; it is nil
+when the package was built with an SDK before macOS 27, which has no Private Cloud Compute. A reached
 quota makes the backend not ready, and `prepare()` throws with the reset date under
 `NFKFoundationModelsErrorKey.resetDate`. `variantDisplayName` (macOS 27 / iOS 27) names the on-device
 model's variant. A request captures the model when it is submitted, so changing `model` does not move

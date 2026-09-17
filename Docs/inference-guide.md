@@ -251,8 +251,10 @@ against a quota. Below macOS 27 a Private Cloud Compute backend is not ready and
 ```swift
 let backend = NFKFoundationModelsBackend()
 if #available(macOS 27, iOS 27, *) {
-    let quota = backend.privateCloudComputeQuota   // readable whatever `model` is set to
-    if !quota.isLimitReached { backend.model = .privateCloudCompute }
+    // Readable whatever `model` is set to; nil in a build with an SDK before macOS 27.
+    if let quota = backend.privateCloudComputeQuota, !quota.isLimitReached {
+        backend.model = .privateCloudCompute
+    }
 }
 ```
 

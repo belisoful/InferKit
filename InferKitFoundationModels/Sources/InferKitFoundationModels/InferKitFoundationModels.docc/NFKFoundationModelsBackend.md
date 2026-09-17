@@ -20,13 +20,14 @@ macOS 27 a Private Cloud Compute backend is not ready, and a request fails with
 ```swift
 let backend = NFKFoundationModelsBackend()
 backend.useCase = .contentTagging
-if #available(macOS 27, iOS 27, *), !backend.privateCloudComputeQuota.isLimitReached {
+if #available(macOS 27, iOS 27, *), let quota = backend.privateCloudComputeQuota, !quota.isLimitReached {
     backend.model = .privateCloudCompute
 }
 ```
 
 ``privateCloudComputeQuota`` reads the quota whatever `model` is set to, so an app decides before
-switching; a reached quota makes the backend not ready. ``variantDisplayName`` names the on-device
+switching; a reached quota makes the backend not ready. It is nil in a build with an SDK before
+macOS 27. ``variantDisplayName`` names the on-device
 model's variant. A request captures the model when it is submitted.
 
 ### Multi-turn conversations

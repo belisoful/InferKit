@@ -93,7 +93,9 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         guard #available(macOS 27, iOS 27, *) else {
             throw XCTSkip("Private Cloud Compute needs macOS 27")
         }
-        let quota = NFKFoundationModelsBackend().privateCloudComputeQuota
+        guard let quota = NFKFoundationModelsBackend().privateCloudComputeQuota else {
+            throw XCTSkip("built with an SDK before macOS 27")
+        }
         if quota.isLimitReached {
             XCTAssertTrue(quota.isApproachingLimit)
         }
@@ -105,7 +107,9 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
             throw XCTSkip("the variant needs macOS 27")
         }
         let backend = NFKFoundationModelsBackend()
+        #if compiler(>=6.4)
         XCTAssertFalse(backend.variantDisplayName?.isEmpty ?? true)
+        #endif
         backend.model = .privateCloudCompute
         XCTAssertNil(backend.variantDisplayName)
     }

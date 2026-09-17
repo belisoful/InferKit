@@ -99,19 +99,29 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The Private Cloud Compute quota, whatever `model` is set to, so an app decides before switching
-    /// to it. Introduced in InferKit 0.4.0.
+    /// to it. Nil when the package was built with an SDK before macOS 27, which has no Private Cloud
+    /// Compute. Introduced in InferKit 0.4.0.
     @available(macOS 27, iOS 27, *)
-    @objc public var privateCloudComputeQuota: NFKFoundationModelQuota {
-        NFKFoundationModelQuota(usage: PrivateCloudComputeLanguageModel().quotaUsage)
+    @objc public var privateCloudComputeQuota: NFKFoundationModelQuota? {
+        #if compiler(>=6.4)
+        return NFKFoundationModelQuota(usage: PrivateCloudComputeLanguageModel().quotaUsage)
+        #else
+        return nil
+        #endif
     }
 
-    /// The on-device model's variant name (`SystemLanguageModel.Variant.displayName`), or nil when
-    /// `model` is Private Cloud Compute, which reports no variant. Introduced in InferKit 0.4.0.
+    /// The on-device model's variant name (`SystemLanguageModel.Variant.displayName`). Nil when
+    /// `model` is Private Cloud Compute, which reports no variant, and when the package was built
+    /// with an SDK before macOS 27. Introduced in InferKit 0.4.0.
     @available(macOS 27, iOS 27, *)
     @objc public var variantDisplayName: String? {
+        #if compiler(>=6.4)
         let configuration = lock.withLock { self.configuration }
         guard configuration.model == .onDevice else { return nil }
         return configuration.systemModel.variant.displayName
+        #else
+        return nil
+        #endif
     }
 
     private let lock = NSLock()
@@ -137,10 +147,12 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     public func prepare() throws {
         let configuration = lock.withLock { self.configuration }
         try configuration.checkAvailability()
+        #if compiler(>=6.4)
         if configuration.model == .privateCloudCompute, #available(macOS 27, iOS 27, *) {
             let size = try Self.readCloudContextSize()
             lock.withLock { cloudContextSize = size }
         }
+        #endif
         let warm = lock.withLock { prewarmedConfiguration == configuration }
         if !warm {
             try configuration.makeSession(tools: [], entries: []).prewarm()
@@ -148,6 +160,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         }
     }
 
+    #if compiler(>=6.4)
     /// The service reports the context size asynchronously; `prepare()` is the synchronous seam that
     /// is allowed to wait for it.
     @available(macOS 27, iOS 27, *)
@@ -165,6 +178,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         semaphore.wait()
         return try outcome.value()
     }
+    #endif
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {

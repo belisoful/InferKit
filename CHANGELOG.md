@@ -37,8 +37,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `isReady` and `prepare()` consult the chosen model, and a Private Cloud Compute request below
   macOS 27 fails with `kNFKError_InferenceUnsupported`. A request captures the model when submitted.
 - `privateCloudComputeQuota` (macOS 27 / iOS 27) reads the quota whatever `model` is set to:
-  `isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`. A reached
-  quota makes the backend not ready, with the reset date under `NFKFoundationModelsErrorKey.resetDate`.
+  `isLimitReached`, `isApproachingLimit`, `resetDate`, and `showLimitIncreaseSuggestion()`; nil in a
+  build with an SDK before macOS 27. A reached quota makes the backend not ready, with the reset date
+  under `NFKFoundationModelsErrorKey.resetDate`.
   `variantDisplayName` (macOS 27 / iOS 27) names the on-device model's variant. All of it is `@objc`.
 
 #### Removed

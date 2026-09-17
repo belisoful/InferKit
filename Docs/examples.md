@@ -605,8 +605,7 @@ let backend = NFKFoundationModelsBackend()
 backend.useCase = .contentTagging                    // the on-device tagging specialization
 backend.guardrails = .permissiveContentTransformations
 if #available(macOS 27, iOS 27, *) {
-    let quota = backend.privateCloudComputeQuota
-    if !quota.isLimitReached {
+    if let quota = backend.privateCloudComputeQuota, !quota.isLimitReached {
         backend.model = .privateCloudCompute         // Apple's larger model; leaves the device
     }
 }

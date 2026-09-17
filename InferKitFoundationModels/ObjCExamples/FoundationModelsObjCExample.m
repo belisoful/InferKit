@@ -43,8 +43,8 @@
 
 	if (@available(macOS 27, iOS 27, *)) {
 		// The quota is readable whatever `model` is set to, so an app decides before switching.
-		NFKFoundationModelQuota *quota = backend.privateCloudComputeQuota;
-		if (!quota.isLimitReached) {
+		NFKFoundationModelQuota *quota = backend.privateCloudComputeQuota;   // nil: built before the 27 SDK
+		if (quota && !quota.isLimitReached) {
 			backend.model = NFKFoundationModelPrivateCloudCompute;
 		}
 	} else {
