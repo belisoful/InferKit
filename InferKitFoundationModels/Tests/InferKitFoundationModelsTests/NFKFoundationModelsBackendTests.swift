@@ -113,27 +113,27 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
             for: request([NFKInputPrompt: "x"], [NFKParameterTemperature: 0.5, NFKParameterMaxTokens: 16]))
         XCTAssertEqual(options.temperature, 0.5)
         XCTAssertEqual(options.maximumResponseTokens, 16)
-        XCTAssertNil(options.samplingMode)
+        XCTAssertNil(NFKFoundationModelsBackend.samplingMode(of: options))
     }
 
     func testAZeroTemperatureIsGreedy() throws {
         let options = try NFKFoundationModelsBackend.generationOptions(
             for: request([NFKInputPrompt: "x"], [NFKParameterTemperature: 0]))
-        XCTAssertEqual(options.samplingMode, .greedy)
+        XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: options), .greedy)
     }
 
     func testTopKTopPAndSeedChooseTheSamplingMode() throws {
         let topK = try NFKFoundationModelsBackend.generationOptions(
             for: request([NFKInputPrompt: "x"], [NFKParameterTopK: 40, NFKParameterSeed: 7]))
-        XCTAssertEqual(topK.samplingMode, .random(top: 40, seed: 7))
+        XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: topK), .random(top: 40, seed: 7))
 
         let topP = try NFKFoundationModelsBackend.generationOptions(
             for: request([NFKInputPrompt: "x"], [NFKParameterTopP: 0.9]))
-        XCTAssertEqual(topP.samplingMode, .random(probabilityThreshold: 0.9, seed: nil))
+        XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: topP), .random(probabilityThreshold: 0.9, seed: nil))
 
         let seedOnly = try NFKFoundationModelsBackend.generationOptions(
             for: request([NFKInputPrompt: "x"], [NFKParameterSeed: 3]))
-        XCTAssertEqual(seedOnly.samplingMode, .random(probabilityThreshold: 1, seed: 3))
+        XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: seedOnly), .random(probabilityThreshold: 1, seed: 3))
     }
 
     // MARK: Schemas

@@ -48,7 +48,7 @@ final class FoundationModelsExamples: XCTestCase {
             inputs: [NFKInputPrompt: "Name one color."],
             parameters: [NFKParameterTopK: 40, NFKParameterSeed: 7, NFKParameterMaxTokens: 16])
         let options = try NFKFoundationModelsBackend.generationOptions(for: request)
-        XCTAssertEqual(options.samplingMode, .random(top: 40, seed: 7))
+        XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: options), .random(top: 40, seed: 7))
     }
 
     // Docs/examples.md: Tool calling — a registered tool carries its handler; the declaration is the

@@ -435,9 +435,28 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         } else if let seed {
             samplingMode = .random(probabilityThreshold: 1, seed: seed)
         }
-        return GenerationOptions(samplingMode: samplingMode,
-                                 temperature: temperature,
-                                 maximumResponseTokens: maximumResponseTokens)
+        var options = GenerationOptions(temperature: temperature, maximumResponseTokens: maximumResponseTokens)
+        setSamplingMode(samplingMode, on: &options)
+        return options
+    }
+
+    // The macOS 27 SDK renames `GenerationOptions.sampling` to `samplingMode` and deprecates the old
+    // spelling; the 26 SDKs have only the old one. Xcode 27 is the first toolchain with Swift 6.4, so
+    // the compiler version selects the spelling the SDK at hand accepts without a warning.
+    static func setSamplingMode(_ mode: GenerationOptions.SamplingMode?, on options: inout GenerationOptions) {
+        #if compiler(>=6.4)
+        options.samplingMode = mode
+        #else
+        options.sampling = mode
+        #endif
+    }
+
+    static func samplingMode(of options: GenerationOptions) -> GenerationOptions.SamplingMode? {
+        #if compiler(>=6.4)
+        return options.samplingMode
+        #else
+        return options.sampling
+        #endif
     }
 }
 

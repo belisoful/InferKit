@@ -58,3 +58,10 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   are in `xcode27-foundation-models-and-neural-accelerators.md`.
 - Gotchas: SwiftPM tools 5.9 spells the platform `.macOS("26.0")` (`.v26` needs newer tools); the
   `NFKInferenceError` cases import into Swift as `.error_InferenceNotReady` style.
+- Two SDKs, one source: CI's `macos-latest` image builds this package with an Xcode 26 SDK while the
+  host builds with 27. The 27 SDK renames `GenerationOptions.sampling` to `samplingMode` and
+  deprecates the old spelling; the 26 SDKs have only `sampling`. `setSamplingMode(_:on:)` /
+  `samplingMode(of:)` in the backend select the spelling under `#if compiler(>=6.4)` (Xcode 27 is the
+  first toolchain with Swift 6.4), and tests read the mode through the accessor. A 27-SDK API that is
+  a rename rather than an addition cannot be gated with `#available`; it needs this compile-time
+  check. `GenerationOptions(temperature:maximumResponseTokens:)` resolves without a warning on both.
