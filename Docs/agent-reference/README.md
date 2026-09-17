@@ -79,3 +79,7 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
 
 - [foundation-models-companion.md](foundation-models-companion.md) — the Foundation Models backend,
   tools, structured output, and the provider bridge.
+- [xcode27-foundation-models-and-neural-accelerators.md](xcode27-foundation-models-and-neural-accelerators.md)
+  — the 2026-09-16 audit against the macOS 27 SDK: every Foundation Models 27 API and its
+  availability, the ordered companion work, the Apple frameworks that overlap the toolkit, Core ML's
+  unadopted hints, and the M5 / M6 neural-accelerator gate in the pinned mlx core.

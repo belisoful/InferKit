@@ -42,26 +42,43 @@ final class FoundationModelsExamples: XCTestCase {
         XCTAssertEqual(plan.prompt, "Name one color.")
     }
 
-    // Docs/examples.md: Tool calling
+    // Docs/examples.md: Sampling — the core keys choose Apple's sampling mode.
+    func testExampleSamplingKeys() throws {
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Name one color."],
+            parameters: [NFKParameterTopK: 40, NFKParameterSeed: 7, NFKParameterMaxTokens: 16])
+        let options = try NFKFoundationModelsBackend.generationOptions(for: request)
+        XCTAssertEqual(options.samplingMode, .random(top: 40, seed: 7))
+    }
+
+    // Docs/examples.md: Tool calling — a registered tool carries its handler; the declaration is the
+    // same {name, description, parameters} dictionary a remote backend takes under NFKParameterTools.
     func testExampleRegisterATool() {
         let backend = NFKFoundationModelsBackend()
         backend.tools = [
             NFKFoundationTool(
                 name: "get_temperature",
                 description: "Get the current temperature for a city.",
-                parameters: [NFKFoundationToolParameter(name: "city", description: "the city", type: .string, required: true)],
+                parameters: ["type": "object",
+                             "properties": ["city": ["type": "string", "description": "the city"]],
+                             "required": ["city"]],
                 handler: { arguments in "It is 21°C in \(arguments["city"] as? String ?? "")" })
         ]
         XCTAssertEqual(backend.tools.count, 1)
+        XCTAssertEqual(backend.tools[0].declaration["name"] as? String, "get_temperature")
     }
 
-    // Docs/examples.md: Structured output
-    func testExampleSetResponseSchema() {
-        let backend = NFKFoundationModelsBackend()
-        backend.responseSchema = [
-            NFKFoundationToolParameter(name: "name", description: "the character's full name", type: .string, required: true),
-            NFKFoundationToolParameter(name: "age", description: "the character's age in years", type: .integer, required: true),
-        ]
-        XCTAssertEqual(backend.responseSchema?.count, 2)
+    // Docs/examples.md: Structured output — the core's JSON Schema key, as for a remote or MLX backend.
+    func testExampleStructuredOutputSchema() throws {
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Invent a fictional character."],
+            parameters: [NFKParameterJSONSchema: [
+                "type": "object",
+                "properties": ["name": ["type": "string", "description": "the character's full name"],
+                               "age": ["type": "integer", "description": "the character's age in years"]],
+                "required": ["name", "age"],
+            ]])
+        let format = try NFKFoundationModelsBackend.outputFormat(for: request)
+        guard case .schema = format else { return XCTFail("expected the schema path") }
     }
 }

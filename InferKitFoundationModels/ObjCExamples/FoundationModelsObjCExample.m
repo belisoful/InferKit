@@ -3,9 +3,9 @@
 //  InferKitFoundationModelsObjCExamples
 //
 //  The Objective-C half of this package's examples, mirroring the "Foundation Models" section of
-//  Docs/examples.md. The backend, its tools, and its typed parameters are all `@objc`, so an
-//  Objective-C app (an FCPX plugin, an AppKit app) drives Apple's on-device model through the same
-//  NFKInferenceBackend protocol it uses for every other engine, without writing Swift.
+//  Docs/examples.md. The backend and its tools are `@objc`, and every option is a core request key,
+//  so an Objective-C app (an FCPX plugin, an AppKit app) drives Apple's on-device model through the
+//  same NFKInferenceBackend protocol it uses for every other engine, without writing Swift.
 //
 //  Generation needs Apple Intelligence enabled, so these exercise construction and the contract; the
 //  Swift half covers the same ground and skips its generating tests the same way.
@@ -27,24 +27,25 @@
 	// `isReady` mirrors SystemLanguageModel.default.availability, so it is false wherever Apple
 	// Intelligence is off — which is the check to make before offering the feature in a UI.
 	(void)backend.isReady;
+	XCTAssertGreaterThan(backend.contextSize, (NSInteger)0);
 }
 
-- (void)testObjectiveCRegistersATypedToolTheModelCanCall
+- (void)testObjectiveCRegistersAToolTheModelCanCall
 {
-	// A tool is a name, a description, typed parameters, and a handler. The adapter builds the
-	// runtime schema, so no compile-time @Generable type is needed.
-	NFKFoundationToolParameter *city =
-		[[NFKFoundationToolParameter alloc] initWithName:@"city"
-											 description:@"The city to report on"
-													type:NFKToolParameterTypeString
-												required:YES];
+	// A tool is a name, a description, a JSON Schema for its arguments, and a handler. The schema
+	// is the same dictionary a remote backend takes in an NFKParameterTools entry.
+	NSDictionary *parameters = @{
+		@"type": @"object",
+		@"properties": @{ @"city": @{ @"type": @"string", @"description": @"The city to report on" } },
+		@"required": @[ @"city" ],
+	};
 
 	// Objective-C gets the synchronous initializer; the asynchronous handler is Swift-only, because a
 	// block cannot carry Swift's `async throws`.
 	NFKFoundationTool *weather =
 		[[NFKFoundationTool alloc] initWithName:@"lookup_weather"
 									description:@"Look up the current weather for a city"
-									 parameters:@[city]
+									 parameters:parameters
 									syncHandler:^NSString * _Nonnull(NSDictionary<NSString *, id> * _Nonnull arguments) {
 											return [NSString stringWithFormat:@"It is fair in %@.", arguments[@"city"]];
 										}];
@@ -53,35 +54,28 @@
 	backend.tools = @[weather];
 	XCTAssertEqual(backend.tools.count, (NSUInteger)1);
 	XCTAssertEqualObjects(backend.tools.firstObject.name, @"lookup_weather");
-
-	XCTAssertEqualObjects(weather.parameters.firstObject.name, @"city");
-	XCTAssertEqual(weather.parameters.firstObject.type, NFKToolParameterTypeString);
-	XCTAssertTrue(weather.parameters.firstObject.isRequired);
+	XCTAssertEqualObjects(weather.parameters[@"required"], @[ @"city" ]);
+	XCTAssertEqualObjects(weather.declaration[@"name"], @"lookup_weather");
 }
 
-- (void)testObjectiveCAsksForStructuredOutput
+- (void)testObjectiveCAsksForStructuredOutputThroughTheCoreKey
 {
-	// Setting a response schema switches generation to the structured path: the result carries the
-	// parsed dictionary under the core key NFKOutputStructured and the JSON under NFKOutputText.
-	NFKFoundationToolParameter *title =
-		[[NFKFoundationToolParameter alloc] initWithName:@"title"
-											 description:@"A short headline"
-													type:NFKToolParameterTypeString
-												required:YES];
-	NFKFoundationToolParameter *rating =
-		[[NFKFoundationToolParameter alloc] initWithName:@"rating"
-											 description:@"A score from 1 to 5"
-													type:NFKToolParameterTypeInteger
-												required:NO];
-
-	NFKFoundationModelsBackend *backend = [[NFKFoundationModelsBackend alloc] init];
-	backend.responseSchema = @[title, rating];
-	XCTAssertEqual(backend.responseSchema.count, (NSUInteger)2);
-
-	// The request is the same shape as for any other backend.
+	// NFKParameterJSONSchema switches generation to the structured path: the result carries the
+	// parsed object under NFKOutputStructured and the JSON under NFKOutputText. The same request
+	// runs against NFKRemoteBackend and the MLX language backend.
+	NSDictionary *schema = @{
+		@"type": @"object",
+		@"properties": @{
+			@"title": @{ @"type": @"string", @"description": @"A short headline" },
+			@"rating": @{ @"type": @"integer", @"description": @"A score from 1 to 5", @"minimum": @1, @"maximum": @5 },
+		},
+		@"required": @[ @"title" ],
+	};
 	NFKInferenceRequest *request =
-		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Review this lens in one line." }];
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Review this lens in one line." }
+									parameters:@{ NFKParameterJSONSchema: schema, NFKParameterTemperature: @0 }];
 	XCTAssertEqualObjects(request.prompt, @"Review this lens in one line.");
+	XCTAssertEqualObjects(request.parameters[NFKParameterJSONSchema], schema);
 }
 
 - (void)testObjectiveCReachesTheBackendThroughDynamicDiscovery

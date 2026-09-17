@@ -36,5 +36,5 @@
   <path d="M372 213 L372 170" fill="none" stroke="#94A3B8" stroke-width="2" marker-end="url(#fma)"/>
   <text x="380" y="196" font-size="11" fill="#64748B">returns a value</text>
 
-  <text x="40" y="290" font-size="11.5" fill="#5A6672">Structured output works the same way: set responseSchema and read the parsed fields from result.structured.</text>
+  <text x="40" y="290" font-size="11.5" fill="#5A6672">Structured output works the same way: pass NFKParameterJSONSchema and read the parsed object from result.structured.</text>
 </svg>

@@ -9,6 +9,32 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ## [Unreleased]
 
+### InferKitFoundationModels (companion)
+
+#### Every option is a core request key
+
+- `NFKParameterJSONSchema` constrains generation to a JSON Schema object (object, array, string with
+  `pattern` / `const` / `enum`, integer and number with bounds, boolean, `anyOf` / `oneOf`, `$ref` into
+  `$defs`); the parsed object rides under `NFKOutputStructured` and its JSON under `NFKOutputText`. A
+  keyword outside that subset is refused by path. `NFKParameterChoices` constrains the reply to one of
+  its strings. `NFKParameterOutputFormat` is refused, since guided generation needs a schema.
+- `NFKParameterTools` declares the tools a request offers, in the `{name, description, parameters}`
+  shape the remote backends take; handlers come from the `NFKFoundationTool`s registered on
+  `backend.tools` by name, and a request without the key offers every registered tool. A declared
+  tool with no handler ends the turn with the call under `NFKOutputToolCalls`, and an assistant
+  `tool_calls` message with a `tool` result message in the next request seeds the transcript.
+- `NFKParameterTopK`, `NFKParameterTopP`, and `NFKParameterSeed` choose Apple's sampling mode; a
+  temperature of zero is greedy decoding.
+- `contextSize` on the backend, and a request that needs more tokens than the context holds fails
+  before the session runs (macOS 26.4 / iOS 26.4 and later), with both counts under
+  `NFKFoundationModelsErrorKey` in the error's `userInfo`. `prepare()` prewarms the model once.
+
+#### Removed
+
+- `NFKFoundationModelsBackend.responseSchema`, `NFKFoundationToolParameter`, and `NFKToolParameterType`.
+  `NFKFoundationTool.parameters` is a JSON Schema dictionary. The core keys above replace them; a
+  request written for a remote or MLX backend now runs here unchanged.
+
 ## [0.3.1] — 2026-09-15
 
 ### Core (`InferKit`)

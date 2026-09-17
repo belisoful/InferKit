@@ -27,7 +27,10 @@ let reply = try backend.runInference(for: request).text
 - **Multi-turn** — pass `NFKInputMessages` (an OpenAI-style array); a system message becomes the
   session instructions and the history seeds a `Transcript`.
 - **Streaming & cancellation** — read `NFKInferenceJob`'s `partialResult` in its `progressHandler`.
-- **Tool calling** and **structured output** — defined at runtime, no compile-time `@Generable` type.
+- **Sampling** — `NFKParameterTemperature`, `NFKParameterMaxTokens`, `NFKParameterTopK`,
+  `NFKParameterTopP`, and `NFKParameterSeed`; a temperature of zero is greedy.
+- **Tool calling** and **structured output** — through the core's `NFKParameterTools`,
+  `NFKParameterJSONSchema`, and `NFKParameterChoices`, no compile-time `@Generable` type.
   See <doc:ToolsAndStructuredOutput>.
 
 ### Activates the core's text-generation capability
@@ -55,8 +58,7 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 ### Tools & structured output
 
 - ``NFKFoundationTool``
-- ``NFKFoundationToolParameter``
-- ``NFKToolParameterType``
+- ``NFKFoundationModelsErrorKey``
 
 ### Dynamic discovery
 

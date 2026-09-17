@@ -12,22 +12,31 @@ endpoint), or this backend (Apple's model).
 
 - `NFKInputPrompt` (string) or `NFKInputMessages` (OpenAI-style array); a system message becomes
   the session's instructions.
-- `NFKParameterTemperature` and `NFKParameterMaxTokens` map to `GenerationOptions`.
+- `NFKParameterTemperature` and `NFKParameterMaxTokens` map to `GenerationOptions`. `NFKParameterTopK`,
+  `NFKParameterTopP`, and `NFKParameterSeed` choose the sampling mode, and a temperature of zero is
+  greedy decoding.
 - The result carries text under `NFKOutputText`; `submitInferenceJob(for:)` streams partial text
   through the job's `partialResult` and honors cancellation.
 - `isReady` mirrors `SystemLanguageModel.default.availability`; `prepare()` reports the reason when
-  the model is unavailable (Apple Intelligence off, unsupported hardware, model not downloaded).
+  the model is unavailable (Apple Intelligence off, unsupported hardware, model not downloaded) and
+  warms the model up once. `contextSize` reports the tokens the context holds, and a request that
+  needs more fails before the session runs, with both counts in the error's `userInfo`.
 
 Multi-turn: prior turns seed a Foundation Models `Transcript` (system → `.instructions`, user →
-`.prompt`, assistant → `.response`), and the final turn is the prompt, so the model sees a real
-conversation rather than a flattened string. Verified live: given "my favorite color is teal" earlier
-in the history, the model answers "Teal." to "what is my favorite color?".
+`.prompt`, assistant → `.response`, assistant `tool_calls` → `.toolCalls`, `tool` → `.toolOutput`),
+and the last user turn is the prompt, so the model sees a real conversation rather than a flattened
+string. Verified live: given "my favorite color is teal" earlier in the history, the model answers
+"Teal." to "what is my favorite color?".
+
+Every option is a core request key, so the request that runs against `NFKRemoteBackend` or the MLX
+language backend runs here unchanged.
 
 ### Tool calling
 
-Register tools on `backend.tools` and the model calls them during generation when they fit the
-question. A tool is defined at runtime — no compile-time `@Generable` type — with a name, a
-description, typed parameters, and a handler that receives the model's arguments and returns text:
+A tool is declared the way a remote backend takes it under `NFKParameterTools`: a name, a description
+the model reads to decide relevance, and a JSON Schema object for its arguments. Registering an
+`NFKFoundationTool` on `backend.tools` adds the handler, which receives the parsed arguments and
+returns text the model reads before continuing:
 
 ```swift
 let backend = NFKFoundationModelsBackend()
@@ -35,9 +44,9 @@ backend.tools = [
     NFKFoundationTool(
         name: "get_temperature",
         description: "Get the current temperature for a city.",
-        parameters: [
-            NFKFoundationToolParameter(name: "city", description: "the city", type: .string, required: true),
-        ],
+        parameters: ["type": "object",
+                     "properties": ["city": ["type": "string", "description": "the city"]],
+                     "required": ["city"]],
         handler: { arguments in
             let city = arguments["city"] as? String ?? ""
             return "It is 21°C in \(city)."
@@ -47,33 +56,46 @@ let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "How warm is it in Pa
 let reply = try backend.runInference(for: request).output(forKey: NFKOutputText)
 ```
 
-Each tool becomes an Apple `Tool` with a runtime `GenerationSchema` (`DynamicGenerationSchema` per
-parameter); the model's arguments arrive as `GeneratedContent`, are read into a `[String: Any]`
-(values are `String`, `Int`, `Double`, or `Bool`), and passed to the handler. Objective-C callers use
-the synchronous `syncHandler:` initializer. Verified live: the model calls a registered tool and folds
-its result into the reply.
+A request without `NFKParameterTools` offers every registered tool. A request with the key offers
+its own declarations and takes handlers from the registered tools by name. A declared tool with no
+handler is the remote backend's contract: when the model calls it, the turn ends with the call under
+`NFKOutputToolCalls` (`{id, name, arguments, argumentsJSON}`), the caller runs the tool, and the next
+request carries the assistant `tool_calls` message and a `tool` message with the result. Verified
+live in both forms: the model calls a registered tool and folds its result into the reply, and a
+`tool` message with "7391" in it produces "7391".
+
+Each tool becomes an Apple `Tool` with a runtime `GenerationSchema` built from the JSON Schema; no
+compile-time `@Generable` type is needed. Objective-C callers use the synchronous `syncHandler:`
+initializer.
 
 ### Structured output
 
-Set `backend.responseSchema` to a list of typed fields and the model generates a structured result
-matching them instead of free text — again with no compile-time `@Generable` type:
+`NFKParameterJSONSchema` constrains generation to a JSON Schema object, again with no compile-time
+`@Generable` type:
 
 ```swift
-backend.responseSchema = [
-    NFKFoundationToolParameter(name: "name", description: "the character's full name", type: .string, required: true),
-    NFKFoundationToolParameter(name: "age", description: "the character's age in whole years", type: .integer, required: true),
-]
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Invent a fictional character."],
+    parameters: [NFKParameterJSONSchema: [
+        "type": "object",
+        "properties": ["name": ["type": "string", "description": "the character's full name"],
+                       "age": ["type": "integer", "description": "the character's age", "minimum": 20, "maximum": 40]],
+        "required": ["name", "age"],
+    ]])
 let result = try backend.runInference(for: request)
-let fields = result.output(forKey: NFKOutputStructured) as? [String: Any]  // ["name": "Aria Thompson", "age": 27]
-let json = result.output(forKey: NFKOutputText) as? String
+let fields = result.structured   // ["name": "Elara Windrider", "age": 28]
+let json = result.text           // the same as JSON
 ```
 
-The result carries the parsed fields under `NFKOutputStructured` (a dictionary of `String` / `Int` /
-`Double` / `Bool` values) and their JSON under `NFKOutputText`. `NFKFoundationToolParameter` doubles as
-a schema field (name, description, type, required). Verified live: a name/age schema returns
-`["name": "Aria Thompson", "age": 27]`.
+The supported JSON Schema subset: object (`properties`, `required`), array (`items`, `minItems`,
+`maxItems`), string (`pattern`, `const`, `enum`), integer and number (`minimum`, `maximum`), boolean,
+`anyOf` / `oneOf`, `$ref` into `$defs`, and `description`. A keyword outside it is refused by path
+rather than dropped. `NFKParameterChoices` constrains the reply to exactly one of its strings.
+`NFKParameterOutputFormat` (JSON of no particular shape) is refused, since guided generation needs a
+schema. Verified live: a name / age / traits schema returns `["name": "Elara Windrider", "age": 28,
+"traits": […]]`, and `["yes", "no", "unsure"]` returns `yes`.
 
-## Provider bridge (planned, needs the macOS 27 / iOS 27 SDK)
+## Provider bridge (planned, in the macOS 27 / iOS 27 SDK)
 
 WWDC26 introduced public provider protocols — `LanguageModel` (capabilities + executor
 configuration) and `LanguageModelExecutor` (transcript in, streamed response out) — that let a
@@ -85,10 +107,10 @@ session API:
 let session = LanguageModelSession(model: NFKInferKitLanguageModel(backend: coreMLBackend))
 ```
 
-Those protocols are not in the macOS 26 SDK (verified against Xcode 26.6: `LanguageModel` is not a
-resolvable type), so this direction lands when the macOS 27 / iOS 27 SDK is the build baseline. The
-planned mapping: transcript entries → `NFKInputMessages`; `GenerationOptions` → the standard
-`NFKParameter*` keys; the executor's streaming channel ← the job's `partialResult`.
+The protocols are in the macOS 27 / iOS 27 SDK (Xcode 27) and not in 26, so the bridge lands gated
+to that OS with the package floor at 26. The planned mapping: transcript entries → `NFKInputMessages`;
+`GenerationOptions` → the standard `NFKParameter*` keys; `enabledToolDefinitions` → `NFKParameterTools`;
+`schema` → `NFKParameterJSONSchema`; the executor's streaming channel ← the job's `partialResult`.
 
 ## Build & test
 

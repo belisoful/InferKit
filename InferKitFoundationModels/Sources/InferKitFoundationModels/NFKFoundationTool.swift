@@ -5,51 +5,29 @@
 
 import Foundation
 
-/// The type of a tool argument the model fills in.
-@objc(NFKToolParameterType)
-public enum NFKToolParameterType: Int, Sendable {
-    case string
-    case integer
-    case number
-    case boolean
-}
-
-/// One argument a tool accepts: its name, a description that guides the model, its type, and whether
-/// the model must supply it.
-@objc(NFKFoundationToolParameter)
-public final class NFKFoundationToolParameter: NSObject, Sendable {
-
-    @objc public let name: String
-    @objc public let parameterDescription: String
-    @objc public let type: NFKToolParameterType
-    @objc public let isRequired: Bool
-
-    @objc public init(name: String, description: String, type: NFKToolParameterType, required: Bool) {
-        self.name = name
-        self.parameterDescription = description
-        self.type = type
-        self.isRequired = required
-        super.init()
-    }
-}
-
-/// A tool the on-device model can call during generation. Register tools on
-/// `NFKFoundationModelsBackend.tools`; the model decides when to call one based on its name,
-/// description, and parameters. The handler receives the model's arguments as a dictionary keyed by
-/// parameter name (values are `String`, `Int`, `Double`, or `Bool`) and returns the tool's result
-/// text, which the model reads before continuing its reply.
+/// A tool the on-device model can call during generation, with the handler that runs it.
+///
+/// Register tools on `NFKFoundationModelsBackend.tools`. A tool declares itself the way the core's
+/// `NFKParameterTools` entries do: a name, a description the model reads to decide relevance, and a
+/// JSON Schema object for its arguments. A request that carries `NFKParameterTools` declares its own
+/// tool set and reaches these by name for their handlers; a request without it offers every
+/// registered tool. The handler receives the model's arguments as the parsed JSON object (`String`,
+/// `NSNumber`, `Bool`, nested `[String: Any]` and `[Any]`) and returns the tool's result text, which
+/// the model reads before continuing its reply. Introduced in InferKit 0.4.0.
 @objc(NFKFoundationTool)
 public final class NFKFoundationTool: NSObject, @unchecked Sendable {
 
     @objc public let name: String
     @objc public let toolDescription: String
-    @objc public let parameters: [NFKFoundationToolParameter]
+    /// The JSON Schema object for the arguments, the same shape as an `NFKParameterTools` entry's
+    /// `parameters`: `{"type": "object", "properties": {…}, "required": […]}`.
+    @objc public let parameters: [String: Any]
     let handler: @Sendable ([String: Any]) async throws -> String
 
     /// Swift: an asynchronous handler (for tools that do I/O).
     public init(name: String,
                 description: String,
-                parameters: [NFKFoundationToolParameter],
+                parameters: [String: Any],
                 handler: @escaping @Sendable ([String: Any]) async throws -> String) {
         self.name = name
         self.toolDescription = description
@@ -61,12 +39,18 @@ public final class NFKFoundationTool: NSObject, @unchecked Sendable {
     /// Objective-C: a synchronous handler.
     @objc public init(name: String,
                       description: String,
-                      parameters: [NFKFoundationToolParameter],
+                      parameters: [String: Any],
                       syncHandler: @escaping @Sendable ([String: Any]) -> String) {
         self.name = name
         self.toolDescription = description
         self.parameters = parameters
         self.handler = { arguments in syncHandler(arguments) }
         super.init()
+    }
+
+    /// The tool as an `NFKParameterTools` entry, so a request built for a remote backend and one
+    /// built from registered tools carry the same dictionary.
+    @objc public var declaration: [String: Any] {
+        ["name": name, "description": toolDescription, "parameters": parameters]
     }
 }

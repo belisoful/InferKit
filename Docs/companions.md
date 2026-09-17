@@ -14,12 +14,13 @@ hardware) that bridges InferKit and Apple's **Foundation Models** framework:
   (`LanguageModelSession`) as an `NFKInferenceBackend`. The same request that runs against
   `NFKCoreMLLanguageBackend` or `NFKRemoteBackend` runs here: `NFKInputPrompt` or
   `NFKInputMessages` (a system message becomes the session's instructions), the standard text
-  parameters, streamed partial text through the job. `isReady` reflects the model's availability.
+  parameters including top-k / top-p / seed, `NFKParameterJSONSchema` and `NFKParameterChoices` for
+  structured output, `NFKParameterTools` with handlers registered as `NFKFoundationTool`s, and
+  streamed partial text through the job. `isReady` reflects the model's availability.
 
 The reverse direction — adopting Apple's provider protocols (`LanguageModel` /
 `LanguageModelExecutor`, WWDC26) so InferKit's local and remote backends stand behind
-`LanguageModelSession` — needs the macOS 27 / iOS 27 SDK and follows when that SDK is the build
-baseline.
+`LanguageModelSession` — is in the macOS 27 / iOS 27 SDK and follows, gated to that OS.
 
 ## InferKitMLX (optional companion)
 

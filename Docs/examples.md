@@ -51,7 +51,7 @@ the following cells; each links to its example.
 | Input | Output | Backend(s) | Example |
 | --- | --- | --- | --- |
 | text | text | `NFKCoreMLLanguageBackend`, `NFKRemoteBackend`, `NFKFoundationModelsBackend` | [Text → text](#text--text) |
-| text | structured | `NFKFoundationModelsBackend` | [Structured output](#structured-output-and-tools) |
+| text | structured | `NFKFoundationModelsBackend`, `NFKRemoteBackend` | [Structured output](#structured-output-and-tools) |
 | text | image | `NFKMLXBackend` (text-to-image) | [Text → image](#text--image-and-image--image) |
 | text + image | image | `NFKMLXBackend` (image-to-image) | [Image → image](#text--image-and-image--image) |
 | image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
@@ -2172,19 +2172,25 @@ A consumer brings any engine by adding a class conforming to `NFKDynamicBackendP
 
 ## Structured output and tools
 
-Apple's model (through `NFKFoundationModelsBackend`) can return typed fields or call app-provided
-tools, both defined at runtime with no compile-time `@Generable` type.
+Apple's model (through `NFKFoundationModelsBackend`) returns a JSON object or calls app-provided
+tools through the same core keys a remote backend and the MLX language backend read, with no
+compile-time `@Generable` type.
 
 ### Structured output
 
 ```swift
-backend.responseSchema = [
-    NFKFoundationToolParameter(name: "name", description: "the character's full name", type: .string, required: true),
-    NFKFoundationToolParameter(name: "age", description: "the character's age in years", type: .integer, required: true),
-]
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Invent a fictional character."],
+    parameters: [NFKParameterJSONSchema: [
+        "type": "object",
+        "properties": ["name": ["type": "string", "description": "the character's full name"],
+                       "age": ["type": "integer", "description": "the character's age in years"]],
+        "required": ["name", "age"],
+    ]])
 let result = try backend.runInference(for: request)
-let fields = result.structured    // ["name": "Aria Thompson", "age": 27]
+let fields = result.structured    // ["name": "Elara Windrider", "age": 28]
 let json = result.text            // the same as JSON
+// NFKParameterChoices: ["yes", "no"] constrains the reply to exactly one of the strings instead.
 ```
 
 ### Tool calling
@@ -2194,13 +2200,28 @@ backend.tools = [
     NFKFoundationTool(
         name: "get_temperature",
         description: "Get the current temperature for a city.",
-        parameters: [NFKFoundationToolParameter(name: "city", description: "the city", type: .string, required: true)],
+        parameters: ["type": "object",
+                     "properties": ["city": ["type": "string", "description": "the city"]],
+                     "required": ["city"]],
         handler: { arguments in
             let city = arguments["city"] as? String ?? ""
             return "It is 21°C in \(city)."                 // the model reads this and continues its reply
         })
 ]
 // "How warm is it in Paris?" → the model calls get_temperature(city: "Paris").
+// A request carrying NFKParameterTools offers its own declarations and takes handlers from
+// backend.tools by name; a declared tool with no handler ends the turn with the call under
+// NFKOutputToolCalls, and the next request answers it with a `tool` message.
+```
+
+### Sampling
+
+```swift
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Name one color."],
+    parameters: [NFKParameterTopK: 40, NFKParameterSeed: 7, NFKParameterMaxTokens: 16])
+// NFKParameterTopK / NFKParameterTopP / NFKParameterSeed choose Apple's sampling mode;
+// NFKParameterTemperature: 0 is greedy decoding.
 ```
 
 ## Audio → text (transcription)

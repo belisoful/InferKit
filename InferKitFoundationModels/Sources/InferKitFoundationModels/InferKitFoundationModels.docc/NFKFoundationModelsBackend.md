@@ -5,7 +5,10 @@
 The backend maps the InferKit request onto a `LanguageModelSession`. A single `NFKInputPrompt` runs a
 one-shot generation; an `NFKInputMessages` array replays a conversation, where a system message becomes
 the session instructions and the prior turns seed a `Transcript`. `NFKParameterTemperature` and
-`NFKParameterMaxTokens` map to `GenerationOptions`; `isReady` mirrors `SystemLanguageModel.default.availability`.
+`NFKParameterMaxTokens` map to `GenerationOptions`, and `NFKParameterTopK`, `NFKParameterTopP`, and
+`NFKParameterSeed` choose the sampling mode (a temperature of zero is greedy). `isReady` mirrors
+`SystemLanguageModel.default.availability`; a request that needs more tokens than ``contextSize`` fails
+before the session runs, with both counts under ``NFKFoundationModelsErrorKey``.
 
 ### Multi-turn conversations
 
@@ -40,7 +43,7 @@ job.progressHandler = { job in print(job.partialResult?.text ?? "") }
 ### Runtime configuration
 
 - ``NFKFoundationModelsBackend/tools``
-- ``NFKFoundationModelsBackend/responseSchema``
+- ``NFKFoundationModelsBackend/contextSize``
 
 ### Related
 

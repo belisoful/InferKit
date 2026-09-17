@@ -252,7 +252,11 @@ print(response.content)
 
 Through InferKit: `NFKInputPrompt` becomes the prompt, a system message in `NFKInputMessages` becomes
 the session instructions, and `NFKParameterTemperature` / `NFKParameterMaxTokens` map to
-`GenerationOptions`. The reply arrives under `NFKOutputText`.
+`GenerationOptions`. `NFKParameterTopK`, `NFKParameterTopP`, and `NFKParameterSeed` choose the
+sampling mode (`.random(top:seed:)`, `.random(probabilityThreshold:seed:)`), and a temperature of zero
+is `.greedy`. The reply arrives under `NFKOutputText`. `backend.contextSize` reports the tokens the
+context holds; a request that needs more fails before the session runs, with both counts in the
+error's `userInfo`.
 
 ### Streaming
 
@@ -289,7 +293,9 @@ let answer = try await session.respond(to: "In one word, my favorite color?")   
 
 The model can call app-provided functions mid-generation. Apple's `Tool` protocol pairs a
 description with a `@Generable` argument type; the framework runs the call-and-continue loop.
-InferKit registers tools at **runtime** — no compile-time type — by building the schema dynamically:
+InferKit declares tools at **runtime**, in the shape a remote backend takes under
+`NFKParameterTools` (a name, a description, a JSON Schema for the arguments), and registers the
+handler on the backend:
 
 ```swift
 let backend = NFKFoundationModelsBackend()
@@ -297,9 +303,9 @@ backend.tools = [
     NFKFoundationTool(
         name: "get_temperature",
         description: "Get the current temperature for a city.",
-        parameters: [
-            NFKFoundationToolParameter(name: "city", description: "the city", type: .string, required: true),
-        ],
+        parameters: ["type": "object",
+                     "properties": ["city": ["type": "string", "description": "the city"]],
+                     "required": ["city"]],
         handler: { arguments in
             let city = arguments["city"] as? String ?? ""
             return "It is 21°C in \(city)."
@@ -308,29 +314,44 @@ backend.tools = [
 // "How warm is it in Paris?" → the model calls get_temperature(city: "Paris") and folds the result in.
 ```
 
+A request without `NFKParameterTools` offers every registered tool. A request with the key offers its
+own declarations and takes handlers from the registered tools by name. A declared tool with no
+handler keeps the remote contract: the turn ends with the call under `NFKOutputToolCalls`
+(`{id, name, arguments, argumentsJSON}`), the caller runs it, and the next request carries the
+assistant `tool_calls` message and a `tool` message with the result. Those seed the transcript as
+`.toolCalls` and `.toolOutput` entries, and the last user turn is asked again over them.
+
 Under the hood each tool becomes an Apple `Tool` whose parameters are a runtime `GenerationSchema`
-(a `DynamicGenerationSchema` per field); the model's arguments arrive as `GeneratedContent`, are read
-into a `[String: Any]`, and passed to the handler. Objective-C callers use the synchronous
-`syncHandler:` initializer.
+built from the JSON Schema; the model's arguments arrive as `GeneratedContent`, are read into a
+`[String: Any]`, and passed to the handler. Objective-C callers use the synchronous `syncHandler:`
+initializer.
 
 ### Structured output
 
-Ask the model for typed fields instead of free text. Apple's `@Generable` marks a type the model
-fills; InferKit does the runtime equivalent with `responseSchema`:
+Ask the model for a JSON object instead of free text. Apple's `@Generable` marks a type the model
+fills; InferKit does the runtime equivalent with the core's `NFKParameterJSONSchema`, the key the
+remote backends and the MLX language backend read:
 
 ```swift
-backend.responseSchema = [
-    NFKFoundationToolParameter(name: "name", description: "the character's full name", type: .string, required: true),
-    NFKFoundationToolParameter(name: "age", description: "the character's age in years", type: .integer, required: true),
-]
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Invent a fictional character."],
+    parameters: [NFKParameterJSONSchema: [
+        "type": "object",
+        "properties": ["name": ["type": "string", "description": "the character's full name"],
+                       "age": ["type": "integer", "description": "the character's age in years"]],
+        "required": ["name", "age"],
+    ]])
 let result = try backend.runInference(for: request)
-let fields = result.output(forKey: NFKOutputStructured) as? [String: Any]   // ["name": "Aria Thompson", "age": 27]
+let fields = result.output(forKey: NFKOutputStructured) as? [String: Any]   // ["name": "Elara Windrider", "age": 28]
 let json = result.output(forKey: NFKOutputText) as? String
 ```
 
-This calls `session.respond(to:schema:)` with a runtime `GenerationSchema` and reads the result out
-of `GeneratedContent`. The parsed fields land under `NFKOutputStructured`; the JSON under
-`NFKOutputText`.
+This calls `session.streamResponse(to:schema:)` with a runtime `GenerationSchema` built from the JSON
+Schema (object, array, string with `pattern` / `const` / `enum`, integer and number with bounds,
+boolean, `anyOf`, `$ref` into `$defs`) and reads the result out of `GeneratedContent`. The parsed
+object lands under `NFKOutputStructured`; the JSON under `NFKOutputText`. A keyword outside the subset
+is refused by path rather than dropped. `NFKParameterChoices` constrains the reply to exactly one of
+its strings; `NFKParameterOutputFormat` is refused, because guided generation needs a schema.
 
 ## Remote providers
 
@@ -656,8 +677,8 @@ What remains of each:
 
 - **Provider bridge (WWDC26).** Apple's `LanguageModel` / `LanguageModelExecutor` protocols let a
   third-party model stand *behind* `LanguageModelSession`. Adopting them would let InferKit's local
-  and remote backends serve any app written against Apple's session API. Those protocols are not in
-  the macOS 26 SDK; this direction lands when macOS 27 / iOS 27 is the build baseline.
+  and remote backends serve any app written against Apple's session API. The protocols are in the
+  macOS 27 / iOS 27 SDK (Xcode 27); the bridge lands gated to that OS, with the package floor at 26.
 - **Exact-type structured output** through Apple's `@Generable` macro for compile-time result types
   (the runtime-schema path here covers the dynamic case).
 
