@@ -99,3 +99,33 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   wholly frozen subtree to evaluation mode after `train(true)`; a subtree with no parameters at all
   follows its parent, so a dropout in the trainable group still drops. Consumer-facing write-up and
   probes: `Docs/mlx-runtime-hazards.md`.
+
+- **A seed fixes the weights; it does not fix the gradients.** `NFKMLXRandom.seed` makes a net's
+  initialization exactly reproducible, and a test that reads a training loss looks deterministic
+  because of it. It is not. Measured 2026-09-19 on an M1 Max (macOS 26.6.2, Xcode 27), seeding
+  `20_260_904` and building `NFKMLXRVMNet(.tiny)`: the parameter sum is bit-identical across runs,
+  while six SGD steps from those identical weights land somewhere different on every run. Over 12 seeded GPU runs the final loss ranged 0.13 to 0.54 against that
+  first loss of 0.52, and the run ended higher than it started **5 times out of 12**. The same test
+  passed three times out of three in isolation, which is what made it read as order-dependent when
+  it is simply a coin flip.
+  - The nondeterminism enters at the backward pass, not the forward. Three training-mode forwards on
+    the same weights score identically, and the loss recorded at step 0, which is taken before that
+    step's update, read `0.5203694` on all 24 CPU runs and on 11 of the 12 GPU runs. Step 1 onward
+    moves every time.
+  - It is not GPU-only. The CPU device is not bitwise reproducible either, but the same six steps
+    there land between 0.171 and 0.208 over 24 runs against the same first loss, so the margin is
+    roughly eight times the spread. On the GPU the six-step margin is smaller than the spread, and
+    lengthening the run does not buy enough: at 12, 20, and 30 steps the worst final loss was 0.502,
+    0.472, and 0.438, all inside the band the six-step runs already covered.
+  - So a training test that reads a loss is pinned to the CPU with `NFKMLXDevice.perform(on: .cpu)`,
+    which is what `NFKMLXRVMTests.testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` now does.
+    Pinning keeps the assertion exactly as strict rather than widening the threshold. The test's own
+    question is whether gradients reach the squeeze-excitation gates through the hardswish blocks,
+    which is about the autodiff graph, and the CPU answers that as well as Metal does.
+  - The other loss-descent assertions in the package have margins that clear this noise by an order
+    of magnitude and are left alone: `NFKMLXTrainerTests` asks for a tenfold fall over 100 steps, and
+    `NFKMLXZeroDCETrainingTests` measured 2.57 → 0.13 over 60 steps with a spread under 0.01.
+    `NFKMLXTrainingDeterminismTests` pins both halves of the finding.
+  - The rule this leaves: a single-digit-step training run is noise on this runtime. Assert on
+    something the noise cannot reach, such as parameters moving or a long run's fall on a pinned
+    device. Never assert on the shape of a short loss curve.

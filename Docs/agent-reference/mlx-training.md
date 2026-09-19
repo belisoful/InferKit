@@ -205,3 +205,10 @@ example reaches for internals a consumer does not need.
   invisible in a fine-tune's output, so the oracle is the only check that catches it — the first
   implementation, written from the paper rather than the code, was wrong in all four. Three reference
   expressions that read like slips are reproduced deliberately and marked where they occur.
+
+- **A training test cannot read a short run's loss.** The seed fixes the weights, not the gradients:
+  MLX's backward pass is not reproducible on either device, and six steps on the GPU move the loss
+  by less than the run-to-run spread moves it. Pin a run whose loss is asserted to the CPU with
+  `NFKMLXDevice.perform(on: .cpu)`, or judge it by parameters that moved or by a run long enough
+  that the progress dwarfs the spread. The measurements are in `mlx-runtime-gotchas.md`, and the
+  consumer-facing write-up is in `Docs/mlx-runtime-hazards.md`.

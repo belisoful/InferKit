@@ -113,6 +113,30 @@ group that trains would stop dropping. `NFKMLXTrainer` does this for every run.
 `testAFrozenNormalizationNormalizesWithItsReleasedStatistics` fail without the rule;
 `testAnUnfrozenNormalizationStillUpdatesItsStatistics` fails if it over-applies.*
 
+### A seed makes the weights reproducible, not the run
+
+`NFKMLXRandom.seed` fixes what a net starts from. Build the same net twice from the same seed and its
+parameters are bit-identical on either device. A training run from that identical start still lands
+somewhere different every time, because MLX's gradient computation is not reproducible.
+
+Measured on an M1 Max (macOS 26.6.2) over the recurrent matting net's tiny configuration, six SGD
+steps at a 0.05 rate against a fixed target. The loss recorded at the first step, which is taken
+before that step's update, read `0.5203694` on every one of 24 CPU runs and on 11 of 12 GPU runs. The
+final loss ranged 0.13 to 0.54 across those 12 GPU runs, and five of them ended higher than they
+started. The same six steps on the CPU landed between 0.171 and 0.208, so the CPU is not reproducible
+either, but its spread is far smaller than the progress the run makes.
+
+This is invisible while a run is long. It surfaces when a short run's result is read as though it
+were a fixed number: a handful of steps on the GPU moves the loss by less than the noise moves it.
+
+**Rule:** do not treat a seeded training run as repeatable. Seed to fix the starting point, and judge
+a run by something the noise cannot reach: parameters that moved, or a fall measured over a run long
+enough that the progress dwarfs the spread. Where a short run has to be judged exactly, pin it to the
+CPU with `NFKMLXDevice.perform(on: .cpu)`.
+
+*Probes: `NFKMLXTrainingDeterminismTests.testASeedFixesTheWeightsAndTheFirstLoss` holds the first
+half, and `testASeededRunStillFallsEveryTimeOnTheCPU` holds the second.*
+
 ### Merging a LoRA delta into a quantized base discards the training
 
 A rank-r detour's contribution to any one weight is small by construction. Requantizing `W + Δ` snaps

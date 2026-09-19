@@ -201,14 +201,33 @@ final class NFKMLXRVMTests: XCTestCase {
     /// a decreasing loss alone could ride on the decoder while the backbone stays untouched.
     func testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks() throws {
         try requireMLXRuntime()
-        // Seeded, and clipped: an unseeded init under a 0.05 step can diverge to NaN within six
-        // steps, which reads as a trainer failure rather than an unlucky draw.
+        var run: Result<(gates: Int, losses: [Float], moved: Int), Error>?
+        // Pinned to the CPU, because MLX's gradients are not reproducible on either device and on
+        // the GPU the noise in a six-step run is the size of the signal. See
+        // `Docs/agent-reference/mlx-runtime-gotchas.md`.
+        NFKMLXDevice.perform(on: .cpu) {
+            run = Result { try Self.fineTuneTheTinyNet() }
+        }
+        let (gates, losses, moved) = try XCTUnwrap(run).get()
+
+        XCTAssertGreaterThan(gates, 0, "the tiny configuration carries squeeze-excitation blocks")
+        XCTAssertLessThan(losses.last!, losses.first!, "the loss falls over the run")
+        XCTAssertGreaterThan(moved, 0,
+                             "gradients reach the squeeze-excitation gates through the hardswish blocks")
+    }
+
+    /// Six steps against a fixed target, answering how many squeeze-excitation parameters the run
+    /// moved. Seeded, and clipped: an unseeded init under a 0.05 step can diverge to NaN within six
+    /// steps, which reads as a trainer failure rather than an unlucky draw.
+    private static func fineTuneTheTinyNet() throws -> (gates: Int, losses: [Float], moved: Int) {
         NFKMLXRandom.seed(20_260_904)
         let net = NFKMLXRVMNet(.tiny)
-        let before = Dictionary(uniqueKeysWithValues: net.parameters().flattened()
-            .filter { $0.0.contains(".se.") }
-            .map { ($0.0, $0.1.asArray(Float.self)) })
-        XCTAssertFalse(before.isEmpty, "the tiny configuration carries squeeze-excitation blocks")
+        func squeezeExciteParameters() -> [String: [Float]] {
+            Dictionary(uniqueKeysWithValues: net.parameters().flattened()
+                .filter { $0.0.contains(".se.") }
+                .map { ($0.0, $0.1.asArray(Float.self)) })
+        }
+        let before = squeezeExciteParameters()
 
         let frame = MLXArray.ones([1, 32, 32, 3]) * 0.5
         let target = MLXArray.ones([1, 32, 32, 1])
@@ -221,14 +240,10 @@ final class NFKMLXRVMTests: XCTestCase {
             },
             clipGradientNorm: 1)
 
-        XCTAssertLessThan(losses.last!, losses.first!, "the loss falls over the run")
-        let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened()
-            .filter { $0.0.contains(".se.") }
-            .map { ($0.0, $0.1.asArray(Float.self)) })
+        let after = squeezeExciteParameters()
         let moved = before.filter { key, values in
             zip(values, after[key] ?? values).contains { abs($0 - $1) > 1e-9 }
         }
-        XCTAssertFalse(moved.isEmpty,
-                       "gradients reach the squeeze-excitation gates through the hardswish blocks")
+        return (before.count, losses, moved.count)
     }
 }

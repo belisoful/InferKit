@@ -48,6 +48,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+- `Docs/mlx-runtime-hazards.md`: a seed makes a training run's weights reproducible, not the run.
+  MLX's gradients are not reproducible on either device, so a short run's loss moves by less than
+  the noise does. Measured over the recurrent matting net's tiny configuration: the weights are
+  bit-identical from the seed, while six SGD steps from them ended higher than they started 5 times
+  out of 12 on the GPU. `NFKMLXRVMTests.testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` was reading that
+  noise and is now pinned to the CPU, where the same six steps clear their spread by an order of
+  magnitude; its assertion is unchanged.
 - The core's reasoning keys reach the on-device text backends. A reasoning release's chain comes back
   under `NFKOutputReasoning` and `NFKOutputText` holds the answer alone; the markers come from the
   release's own chat template (`<think>` … `</think>` in the Qwen3 family, the harmony channels in
