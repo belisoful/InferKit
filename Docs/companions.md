@@ -20,9 +20,14 @@ hardware) that bridges InferKit and Apple's **Foundation Models** framework:
   picks the on-device system model (specialized by `useCase` and `guardrails`) or Apple's larger
   model on Private Cloud Compute (macOS 27 / iOS 27), whose quota `privateCloudComputeQuota` reads.
 
-The reverse direction — adopting Apple's provider protocols (`LanguageModel` /
-`LanguageModelExecutor`, WWDC26) so InferKit's local and remote backends stand behind
-`LanguageModelSession` — is in the macOS 27 / iOS 27 SDK and follows, gated to that OS.
+The reverse direction ships too. `NFKInferKitLanguageModel` adopts Apple's provider protocols
+(`LanguageModel` / `LanguageModelExecutor`), so an InferKit backend stands behind
+`LanguageModelSession`: `LanguageModelSession(model: NFKInferKitLanguageModel(backend: backend))`
+runs a remote endpoint or a converted Core ML model through Apple's session API. The session's
+transcript becomes `NFKInputMessages`, its tool definitions `NFKParameterTools`, its schema
+`NFKParameterJSONSchema`, and its generation options the core's sampling keys. The model reports
+what the backend declares through the protocol's `supportedParameterKeys` and `supportedInputKeys`.
+It needs macOS 27 / iOS 27 and a build with the macOS 27 SDK; the package floor stays at 26.
 
 ## InferKitMLX (optional companion)
 

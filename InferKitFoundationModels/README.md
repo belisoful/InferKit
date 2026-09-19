@@ -122,22 +122,35 @@ rather than dropped. `NFKParameterChoices` constrains the reply to exactly one o
 schema. Verified live: a name / age / traits schema returns `["name": "Elara Windrider", "age": 28,
 "traits": […]]`, and `["yes", "no", "unsure"]` returns `yes`.
 
-## Provider bridge (planned, in the macOS 27 / iOS 27 SDK)
+## Provider bridge (macOS 27 / iOS 27)
 
-WWDC26 introduced public provider protocols — `LanguageModel` (capabilities + executor
-configuration) and `LanguageModelExecutor` (transcript in, streamed response out) — that let a
-third-party model stand behind `LanguageModelSession`. Adopting them here would let InferKit's
-backends (a converted Core ML model, a remote endpoint) serve any app written against Apple's
-session API:
+`NFKInferKitLanguageModel` runs the bridge the other way: an InferKit backend stands behind
+`LanguageModelSession`, so an app written against Apple's session API reaches a remote endpoint, a
+converted Core ML model, or any other `NFKInferenceBackend`.
 
 ```swift
-let session = LanguageModelSession(model: NFKInferKitLanguageModel(backend: coreMLBackend))
+let backend = NFKRemoteBackend(endpointURL: url)
+let session = LanguageModelSession(model: NFKInferKitLanguageModel(backend: backend))
+let reply = try await session.respond(to: "Name three sea birds.")
 ```
 
-The protocols are in the macOS 27 / iOS 27 SDK (Xcode 27) and not in 26, so the bridge lands gated
-to that OS with the package floor at 26. The planned mapping: transcript entries → `NFKInputMessages`;
-`GenerationOptions` → the standard `NFKParameter*` keys; `enabledToolDefinitions` → `NFKParameterTools`;
-`schema` → `NFKParameterJSONSchema`; the executor's streaming channel ← the job's `partialResult`.
+The mapping: transcript entries → `NFKInputMessages` (instructions to a system message, tool calls
+and outputs to the `tool_calls` and `tool` shapes, attached images to `NFKInputImage`);
+`GenerationOptions` → `NFKParameterTemperature`, `NFKParameterMaxTokens`, and the sampling keys;
+`enabledToolDefinitions` → `NFKParameterTools`; `schema` → `NFKParameterJSONSchema`; the job's
+`partialResult` → the executor's streaming channel, and its `NFKOutputToolCalls` → the channel's
+tool calls.
+
+The model reports the capabilities the backend declares through the core protocol's
+`supportedParameterKeys` and `supportedInputKeys`: `NFKParameterJSONSchema` is guided generation,
+`NFKParameterTools` is tool calling, `NFKInputImage` is vision. A session refuses what the backend
+does not declare. A backend that declares no keys takes them from the caller:
+`NFKInferKitLanguageModel(backend:capabilities:)`, whose `NFKInferKitLanguageModelCapabilities` an
+Objective-C caller reads as well.
+
+The provider protocols are in the macOS 27 / iOS 27 SDK and not in 26, so the type needs that OS
+and a build with the macOS 27 SDK. The package floor stays at 26. Token counts are the one gap: the
+core reports no usage, so the channel's counts are zero.
 
 ## Build & test
 

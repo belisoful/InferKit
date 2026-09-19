@@ -1,7 +1,8 @@
 # ``InferKitFoundationModels``
 
-Runs Apple's language models behind the InferKit contract: the on-device system model or Private Cloud
-Compute, with text generation, streaming, tool calling, and structured output.
+Runs Apple's language models behind the InferKit contract, and InferKit's backends behind Apple's
+session API: the on-device system model or Private Cloud Compute, with text generation, streaming,
+tool calling, and structured output.
 
 @Metadata {
     @DisplayName("InferKitFoundationModels")
@@ -34,6 +35,8 @@ let reply = try backend.runInference(for: request).text
 - **Tool calling** and **structured output** — through the core's `NFKParameterTools`,
   `NFKParameterJSONSchema`, and `NFKParameterChoices`, no compile-time `@Generable` type.
   See <doc:ToolsAndStructuredOutput>.
+- **The provider bridge** — ``NFKInferKitLanguageModel`` presents any `NFKInferenceBackend` to
+  `LanguageModelSession` (macOS 27 / iOS 27). See <doc:ProviderBridge>.
 
 ### Activates the core's text-generation capability
 
@@ -56,6 +59,7 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 ### Concepts
 
 - <doc:ToolsAndStructuredOutput>
+- <doc:ProviderBridge>
 
 ### Choosing the model
 
@@ -68,6 +72,12 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 
 - ``NFKFoundationTool``
 - ``NFKFoundationModelsErrorKey``
+
+### The provider bridge
+
+- ``NFKInferKitLanguageModel``
+- ``NFKInferKitLanguageModelExecutor``
+- ``NFKInferKitLanguageModelCapabilities``
 
 ### Dynamic discovery
 

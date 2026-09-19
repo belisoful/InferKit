@@ -9,6 +9,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ## [Unreleased]
 
+### Core (`InferKit`)
+
+- `NFKInferenceBackend` gains two optional declarations: `supportedParameterKeys` and
+  `supportedInputKeys`, the keys a backend acts on. A caller that has to know in advance reads them,
+  and the Foundation Models provider bridge derives Apple's capabilities from them. The remote
+  backend, the Anthropic backend, the Core ML language backend, and the Foundation Models backend
+  declare their own. A backend that declares nothing behaves as before.
+- `NFKInferencePrepare(backend, &error)` prepares a backend uniformly, calling `prepareWithError:`
+  where the backend implements it and returning `YES` where it does not, the way
+  `NFKInferenceSubmit` covers both submission paths.
+
 ### InferKitFoundationModels (companion)
 
 #### Every option is a core request key
@@ -41,6 +52,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   build with an SDK before macOS 27. A reached quota makes the backend not ready, with the reset date
   under `NFKFoundationModelsErrorKey.resetDate`.
   `variantDisplayName` (macOS 27 / iOS 27) names the on-device model's variant. All of it is `@objc`.
+
+#### The provider bridge
+
+- `NFKInferKitLanguageModel` adopts Apple's provider protocols (`LanguageModel` /
+  `LanguageModelExecutor`, macOS 27 / iOS 27), so `LanguageModelSession(model:)` runs any
+  `NFKInferenceBackend`: a remote endpoint, a converted Core ML model, an MLX model. The session's
+  transcript becomes `NFKInputMessages`, its tool definitions `NFKParameterTools`, its schema
+  `NFKParameterJSONSchema`, its generation options the sampling keys, and its attached images
+  `NFKInputImage`. The job's partial results stream into the executor's channel, and the result's
+  `NFKOutputToolCalls` become the channel's tool calls. The core reports no token counts, so the
+  channel's counts are zero.
+- The model reports the capabilities the backend declares: `NFKParameterJSONSchema` is guided
+  generation, `NFKParameterTools` is tool calling, `NFKInputImage` is vision.
+  `NFKInferKitLanguageModelCapabilities` reads them, is `@objc`, and can be stated by the caller for
+  a backend that declares none. The type needs a build with the macOS 27 SDK, which is where the
+  provider protocols are; the package floor stays at macOS 26 / iOS 26.
 
 #### Removed
 

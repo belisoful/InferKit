@@ -85,6 +85,21 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	return @"remote";
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	// Tools, the schema, the audio reply, and the frame count are translated into the endpoint's
+	// shapes. Every other parameter folds into the body under its own spelling, so a core key
+	// reaches the endpoint only where the two spellings agree, as temperature and seed do.
+	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterAudioOutput,
+								  NFKParameterVideoFrameCount, NFKParameterTemperature, NFKParameterSeed ]];
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages,
+								  NFKInputVideo, NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 													error:(NSError * _Nullable *)outError
 {

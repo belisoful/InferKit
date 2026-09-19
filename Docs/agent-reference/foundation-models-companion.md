@@ -74,15 +74,36 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   named the default the core tries for `NFKCapabilityTextGeneration`, so linking this package activates
   on-device LLM through `NFKDynamicBackend.backendForCapability:` with no registration (mirrors
   InferKitMLX's `NFKStableDiffusionProvider` / `NFKMLXWhisperProvider`).
-- The reverse bridge (Apple's `LanguageModel` / `LanguageModelExecutor` provider protocols, WWDC26)
-  needs the macOS 27 / iOS 27 SDK; it is documented in the package README, not built. Xcode 27's SDK
-  carries the protocols (verified 2026-09-16); the API inventory, the mapping, and the ordered work
-  are in `xcode27-foundation-models-and-neural-accelerators.md`.
+- The reverse bridge ships (2026-09-18). `NFKInferKitLanguageModel` adopts `LanguageModel` and
+  `NFKInferKitLanguageModelExecutor` adopts `LanguageModelExecutor`, so
+  `LanguageModelSession(model:)` runs any `NFKInferenceBackend`. Design points worth keeping:
+  - `LanguageModel` requires `Self == Executor.Model`, and `Executor.Configuration` is
+    `Hashable & Sendable`. The backend travels in the configuration, which is a struct holding the
+    existential, `@unchecked Sendable`, hashed and compared by object identity. The framework keeps
+    one executor per distinct configuration, so identity is the right equality.
+  - Capabilities come from the core protocol's new `supportedParameterKeys` / `supportedInputKeys`
+    (`NFKParameterJSONSchema` → `.guidedGeneration`, `NFKParameterTools` → `.toolCalling`,
+    `NFKInputImage` → `.vision`), read by `NFKInferKitLanguageModelCapabilities`. That class is
+    `@objc` and ungated, so the capability reading is testable on macOS 26 and reachable from
+    Objective-C, which cannot use `LanguageModelSession` at all.
+  - The mapping functions that name only macOS 26 types (`messages(for:)`, `parameters(for:)`,
+    `schemaJSON(for:)`) stay outside the compiler gate, so the test bundle exercises them on this
+    host. Only the model, the executor, the attachment reading, and the tool declarations are gated.
+  - Streaming: `NFKInferenceSubmit` covers sync and async backends, the job's `progressHandler`
+    feeds an `AsyncStream`, and each reading contributes its new suffix through `appendix(sent:text:)`
+    (a reading that does not extend what was sent is a rewrite, which an append cannot express).
+    `withTaskCancellationHandler` cancels the job. The channel's `tokenCount` is 0 everywhere,
+    because the core reports no usage; item 4's `NFKOutputUsage` is where that changes.
+  - **Compiler crash to avoid:** calling an `@optional` Objective-C protocol method as a value from
+    Swift (`backend.prepare?()`) crashed swift-frontend 6.4 in IRGen, emitting the reabstraction
+    thunk for the imported throwing function. The core's `NFKInferencePrepare(backend, &error)`
+    replaces it and is the shape to use for any other optional member.
 - Gotchas: SwiftPM tools 5.9 spells the platform `.macOS("26.0")` (`.v26` needs newer tools); the
   `NFKInferenceError` cases import into Swift as `.error_InferenceNotReady` style.
 - Two SDKs, one source: CI's `macos-latest` image builds this package with an Xcode 26 SDK while the
   host builds with 27. Every 27-only symbol (`PrivateCloudComputeLanguageModel`,
-  `SystemLanguageModel.variant`, the provider protocols, `LanguageModelError`) needs BOTH gates:
+  `SystemLanguageModel.variant`, `LanguageModel` / `LanguageModelExecutor`, `LanguageModelError`)
+  needs BOTH gates:
   `#if compiler(>=6.4)` so the 26 SDK never sees the name (Xcode 27 is the first toolchain with
   Swift 6.4; `#available` alone fails CI with "cannot find type in scope"), and `#available(macOS 27,
   iOS 27, *)` inside it for the run-time check. The `#else` branch behaves as "below 27": the

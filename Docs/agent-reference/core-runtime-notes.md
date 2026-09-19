@@ -4,7 +4,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # Core runtime notes
 
-Value-type accessors, tokenizers, grammar-constrained sampling, and dynamic backend discovery in the core.
+Value-type accessors, tokenizers, grammar-constrained sampling, what a backend declares, and dynamic
+backend discovery in the core.
 
 ## Value-type convenience accessors
 
@@ -75,6 +76,27 @@ as aliases of its own, so a request is engine-agnostic. The schema grammar (`NFK
 stays MLX-only. Two ObjC test traps struck while writing its tests: an `@[ ]` literal inside an
 `XCTAssert` macro argument splits the macro (parenthesize the argument), and `NSSet` has
 `isSubsetOfSet:` but no `isSupersetOfSet:`.
+
+## What a backend declares
+
+`NFKInferenceBackend` has two optional declarations (2026-09-18): `supportedParameterKeys` and
+`supportedInputKeys`, the `NFKParameter*` and `NFKInput*` keys a backend acts on. They exist because
+a caller sometimes has to know in advance what an engine honors: the Foundation Models provider
+bridge derives Apple's `LanguageModelCapabilities` from them, and a router picks the engine that
+honors the key a request needs. A backend that declares nothing is used the way it always was.
+
+- A backend declares only what it acts on. The remote backend declares the four keys it translates
+  (`NFKParameterTools`, `NFKParameterJSONSchema`, `NFKParameterAudioOutput`,
+  `NFKParameterVideoFrameCount`) plus temperature and seed. It does **not** declare
+  `NFKParameterMaxTokens` or `NFKParameterTopP`: every other parameter folds into the body under its
+  own spelling, and `maxTokens` / `topP` are not the endpoint's spelling, so those keys do not reach
+  an OpenAI-compatible service. A caller sets `max_tokens` itself, as the backend's header says.
+- The Core ML language backend declares the sampling keys plus `NFKParameterOutputFormat` and
+  `NFKParameterChoices`, and not `NFKParameterJSONSchema`: JSON comes from its token grammar.
+- `NFKInferencePrepare(backend, &error)` is the prepare counterpart of `NFKInferenceSubmit`: it calls
+  `prepareWithError:` where the backend implements it and returns `YES` where it does not. Swift
+  calls it rather than `backend.prepare?()`, which crashes swift-frontend 6.4 in IRGen (the
+  reabstraction thunk for an imported throwing function used as a value).
 
 ## Dynamic backend discovery
 

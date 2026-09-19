@@ -71,7 +71,41 @@ NS_ASSUME_NONNULL_BEGIN
 */
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request;
 
+/*!
+	@property   supportedParameterKeys
+	@abstract   The NFKParameter* keys the backend reads, for a caller that adapts to the engine.
+	@discussion A request carries whatever keys a caller sets, and a backend ignores the ones it
+				does not implement. A caller that has to know in advance reads this set: a bridge
+				that presents the backend to another framework declares the framework's
+				capabilities from it (NFKParameterJSONSchema for guided generation,
+				NFKParameterTools for tool calling), and a router picks the engine that honors the
+				key a request needs.
+
+				A backend declares only the keys it acts on. Absent the property, a caller assumes
+				nothing beyond the required protocol. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSSet<NSString *> *supportedParameterKeys;
+
+/*!
+	@property   supportedInputKeys
+	@abstract   The NFKInput* keys the backend reads, for a caller that adapts to the engine.
+	@discussion The counterpart of supportedParameterKeys for inputs: NFKInputImage on a backend
+				that takes an image beside the text, NFKInputMessages on one that takes a
+				conversation. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSSet<NSString *> *supportedInputKeys;
+
 @end
+
+/*!
+	@function   NFKInferencePrepare
+	@abstract   Prepares a backend, uniformly across backends that need it and backends that do not.
+	@discussion When the backend implements prepareWithError:, this calls it and returns its result.
+				Otherwise it returns YES, because a backend with nothing to load is ready. A caller
+				that holds a backend through the protocol uses this rather than testing the
+				selector itself. Introduced in InferKit 0.4.0.
+*/
+BOOL NFKInferencePrepare(id<NFKInferenceBackend> backend, NSError * _Nullable * _Nullable error);
 
 /*!
 	@function   NFKInferenceSubmit

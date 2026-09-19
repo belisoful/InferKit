@@ -64,6 +64,18 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	return @"anthropic-messages";
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterTemperature,
+								  NFKParameterMaxTokens, NFKParameterAudioOutput ]];
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages,
+								  NFKInputVideo, NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
+}
+
 - (BOOL)isReady
 {
 	return self.endpointURL != nil && self.modelName.length > 0;

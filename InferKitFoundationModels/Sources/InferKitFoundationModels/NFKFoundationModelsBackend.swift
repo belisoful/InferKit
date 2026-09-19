@@ -141,6 +141,17 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
 
     @objc public var backendIdentifier: String { "foundation-models" }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterTopK, NFKParameterTopP,
+         NFKParameterSeed, NFKParameterJSONSchema, NFKParameterChoices, NFKParameterTools]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        [NFKInputPrompt, NFKInputMessages]
+    }
+
     /// Checks the chosen model's availability and loads its resources once, so the first request
     /// does not pay the warm-up. For Private Cloud Compute it also reads `contextSize`.
     @objc(prepareWithError:)

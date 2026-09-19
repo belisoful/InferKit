@@ -6,6 +6,14 @@
 #import "NFKInferenceBackend.h"
 #import "NFKErrors.h"
 
+BOOL NFKInferencePrepare(id<NFKInferenceBackend> backend, NSError * _Nullable * _Nullable error)
+{
+	if (![backend respondsToSelector:@selector(prepareWithError:)]) {
+		return YES;
+	}
+	return [backend prepareWithError:error];
+}
+
 NFKInferenceJob *NFKInferenceSubmit(id<NFKInferenceBackend> backend,
 									NFKInferenceRequest *request,
 									dispatch_queue_t _Nullable queue)

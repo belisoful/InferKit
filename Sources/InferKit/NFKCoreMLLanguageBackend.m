@@ -122,6 +122,20 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	return @"coreml-llm";
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	// JSON comes from NFKParameterOutputFormat and NFKParameterChoices through the token grammar;
+	// the backend takes no JSON Schema, so it declares none.
+	return [NSSet setWithArray:@[ NFKParameterTemperature, NFKParameterTopK, NFKParameterTopP,
+								  NFKParameterRepetitionPenalty, NFKParameterMaxTokens, NFKParameterSeed,
+								  NFKParameterStopSequences, NFKParameterOutputFormat, NFKParameterChoices ]];
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages ]];
+}
+
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError
 {
 	if ([self isReady]) {

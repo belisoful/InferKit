@@ -117,4 +117,21 @@
 	XCTAssertEqualObjects(backend.backendIdentifier, @"foundation-models");
 }
 
+- (void)testObjectiveCReadsWhatABackendOffersTheProviderBridge
+{
+	// The bridge that presents an InferKit backend to Foundation Models is Swift-only, because
+	// LanguageModelSession is a Swift API. The capabilities it derives are readable here, so an
+	// Objective-C app knows what the Swift side of the app can ask the backend for.
+	NFKRemoteBackend *remote = [NFKRemoteBackend backendWithEndpointURL:nil];
+	NFKInferKitLanguageModelCapabilities *capabilities =
+		[[NFKInferKitLanguageModelCapabilities alloc] initWithBackend:remote];
+	XCTAssertTrue(capabilities.toolCalling);
+	XCTAssertTrue(capabilities.guidedGeneration);
+	XCTAssertTrue(capabilities.vision);
+
+	// The keys behind that reading are on the protocol, so any backend answers for itself.
+	XCTAssertTrue([remote.supportedParameterKeys containsObject:NFKParameterTools]);
+	XCTAssertTrue([remote.supportedInputKeys containsObject:NFKInputImage]);
+}
+
 @end

@@ -611,6 +611,28 @@ if #available(macOS 27, iOS 27, *) {
 }
 ```
 
+The provider bridge, the other direction: an InferKit backend behind `LanguageModelSession`
+(macOS 27 / iOS 27, built with the macOS 27 SDK).
+
+```swift
+let backend = NFKRemoteBackend(endpointURL: url)
+backend.modelName = "qwen3:8b"
+let model = NFKInferKitLanguageModel(backend: backend)   // capabilities from the keys it declares
+let session = LanguageModelSession(model: model)
+let reply = try await session.respond(to: "Name three sea birds.")
+```
+
+What the backend offers the bridge is readable from Objective-C, where `LanguageModelSession` is
+not:
+
+```objc
+NFKInferKitLanguageModelCapabilities *capabilities =
+    [[NFKInferKitLanguageModelCapabilities alloc] initWithBackend:remote];
+BOOL tools = capabilities.toolCalling;                          // NFKParameterTools
+BOOL images = capabilities.vision;                              // NFKInputImage
+BOOL declared = [remote.supportedParameterKeys containsObject:NFKParameterJSONSchema];
+```
+
 ### Streaming and cancellation
 
 ```swift

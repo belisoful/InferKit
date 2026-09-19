@@ -8,6 +8,9 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceBackend.h>
 #import <InferKit/NFKPassthroughBackend.h>
+#import <InferKit/NFKRemoteBackend.h>
+#import <InferKit/NFKCoreMLLanguageBackend.h>
+#import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 
 @interface NFKInferenceCoreTests : XCTestCase
@@ -107,6 +110,56 @@
 	id<NFKInferenceBackend> backend = [NFKPassthroughBackend backend];
 	XCTAssertTrue([backend conformsToProtocol:@protocol(NFKInferenceBackend)]);
 	XCTAssertTrue([backend respondsToSelector:@selector(runInferenceForRequest:error:)]);
+}
+
+#pragma mark Declared keys
+
+- (void)testTheRemoteBackendDeclaresTheKeysItActsOn
+{
+	id<NFKInferenceBackend> backend = [NFKRemoteBackend backendWithEndpointURL:nil];
+	XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterTools]);
+	XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterJSONSchema]);
+	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputMessages]);
+	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputImage], @"a vision model reads an image");
+	XCTAssertFalse([backend.supportedParameterKeys containsObject:NFKParameterMaxTokens],
+				   @"the key folds in under its own spelling, which is not the endpoint's");
+}
+
+- (void)testTheCoreMLLanguageBackendDeclaresNoSchemaKey
+{
+	if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) {
+		id<NFKInferenceBackend> backend = [NFKCoreMLLanguageBackend backendWithModelDirectoryURL:nil];
+		XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterChoices]);
+		XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterTopK]);
+		XCTAssertFalse([backend.supportedParameterKeys containsObject:NFKParameterJSONSchema],
+					   @"the token grammar is reached through the output format and the choices");
+		XCTAssertFalse([backend.supportedInputKeys containsObject:NFKInputImage]);
+	}
+}
+
+- (void)testABackendNeedNotDeclareItsKeys
+{
+	id<NFKInferenceBackend> backend = [NFKPassthroughBackend backend];
+	XCTAssertFalse([backend respondsToSelector:@selector(supportedParameterKeys)]);
+	XCTAssertFalse([backend respondsToSelector:@selector(supportedInputKeys)]);
+}
+
+#pragma mark Preparing through the protocol
+
+- (void)testPreparingABackendWithNothingToLoadSucceeds
+{
+	NSError *error = nil;
+	XCTAssertTrue(NFKInferencePrepare([NFKPassthroughBackend backend], &error));
+	XCTAssertNil(error);
+}
+
+- (void)testPreparingReportsTheBackendsError
+{
+	if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) {
+		NSError *error = nil;
+		XCTAssertFalse(NFKInferencePrepare([NFKCoreMLLanguageBackend backendWithModelDirectoryURL:nil], &error));
+		XCTAssertNotNil(error);
+	}
 }
 
 @end

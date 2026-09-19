@@ -5,11 +5,12 @@ import PackageDescription
 // Models framework without raising the core's platform floor. The framework needs Apple
 // Intelligence hardware and macOS 26 / iOS 26, so this package is opt-in.
 //
-// Direction one ships here: NFKFoundationModelsBackend wraps the on-device system language model
-// (LanguageModelSession) as an NFKInferenceBackend, so an InferKit consumer swaps it in like any
-// other engine. Direction two — adopting the Foundation Models provider protocols (LanguageModel /
-// LanguageModelExecutor, WWDC26) so InferKit backends stand behind Apple's session API — needs the
-// macOS 27 / iOS 27 SDK and follows when that SDK is the build baseline.
+// Both directions ship here. NFKFoundationModelsBackend wraps Apple's language models
+// (LanguageModelSession) as an NFKInferenceBackend, so an InferKit consumer swaps them in like any
+// other engine. NFKInferKitLanguageModel adopts the Foundation Models provider protocols
+// (LanguageModel / LanguageModelExecutor), so an InferKit backend stands behind Apple's session
+// API; it needs macOS 27 / iOS 27 and a build with the macOS 27 SDK, and the package floor stays
+// at 26.
 let package = Package(
     name: "InferKitFoundationModels",
     platforms: [

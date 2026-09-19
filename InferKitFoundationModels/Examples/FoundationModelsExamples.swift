@@ -98,4 +98,24 @@ final class FoundationModelsExamples: XCTestCase {
         let format = try NFKFoundationModelsBackend.outputFormat(for: request)
         guard case .schema = format else { return XCTFail("expected the schema path") }
     }
+
+    // Docs/examples.md: The provider bridge — an InferKit backend run through LanguageModelSession.
+    func testExampleProviderBridge() throws {
+        #if compiler(>=6.4)
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("the provider protocols need macOS 27 / iOS 27")
+        }
+        let backend = NFKRemoteBackend(endpointURL: URL(string: "http://localhost:11434/v1/chat/completions"))
+        backend.modelName = "qwen3:8b"
+        let model = NFKInferKitLanguageModel(backend: backend)
+        XCTAssertTrue(model.capabilities.contains(.toolCalling), "the remote backend declares the tools key")
+
+        // `session.respond(to:)` from here on reaches the endpoint, so the example stops at the
+        // session, which needs no server.
+        let session = LanguageModelSession(model: model)
+        XCTAssertTrue(session.transcript.isEmpty)
+        #else
+        throw XCTSkip("built with an SDK before macOS 27")
+        #endif
+    }
 }

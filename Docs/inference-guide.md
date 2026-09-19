@@ -20,11 +20,13 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
 - [Running a language model locally (MLX)](#running-a-language-model-locally-mlx)
 - [Apple's Foundation Models](#apples-foundation-models)
   - [Availability](#availability)
+  - [Choosing the model](#choosing-the-model)
   - [Text generation and options](#text-generation-and-options)
   - [Streaming](#streaming)
   - [Multi-turn conversation](#multi-turn-conversation)
   - [Tool calling: app tools for the model](#tool-calling-app-tools-for-the-model)
   - [Structured output](#structured-output)
+  - [The provider bridge](#the-provider-bridge)
 - [Remote providers](#remote-providers)
 - [Speech in, text out](#speech-in-text-out)
 - [Optional engines discovered at runtime](#optional-engines-discovered-at-runtime)
@@ -52,6 +54,12 @@ A backend maps the shared keys to its provider's own names and ignores what it d
 with a single natural type have typed accessors (`result.text`, `result.structured`,
 `result.embedding`, `result.toolCalls`, `request.prompt`, `request.messages`), each returning nil on
 a type mismatch rather than crashing.
+
+A backend states what it acts on. `supportedParameterKeys` and `supportedInputKeys` are optional
+members of the protocol: a caller that has to know in advance reads them, a router picks the engine
+that honors the key a request needs, and the Foundation Models bridge derives Apple's capabilities
+from them. A backend that declares nothing is used the way it always was, since a request carries
+whatever keys a caller sets and a backend ignores the ones it does not implement.
 
 Inference is multi-second, so run it off the render thread. `runInferenceForRequest:error:` blocks;
 `submitInferenceJobForRequest:` returns an [`NFKInferenceJob`](../Sources/InferKit/include/InferKit/NFKInferenceJob.h)
@@ -377,6 +385,32 @@ object lands under `NFKOutputStructured`; the JSON under `NFKOutputText`. A keyw
 is refused by path rather than dropped. `NFKParameterChoices` constrains the reply to exactly one of
 its strings; `NFKParameterOutputFormat` is refused, because guided generation needs a schema.
 
+### The provider bridge
+
+The bridge runs the other way as well. `NFKInferKitLanguageModel` adopts Apple's provider protocols
+(`LanguageModel` / `LanguageModelExecutor`, macOS 27 / iOS 27), so an InferKit backend stands behind
+`LanguageModelSession` and an app written against Apple's session API reaches any engine InferKit
+has:
+
+```swift
+let backend = NFKRemoteBackend(endpointURL: url)
+let session = LanguageModelSession(model: NFKInferKitLanguageModel(backend: backend))
+let reply = try await session.respond(to: "Name three sea birds.")
+```
+
+The session's transcript becomes `NFKInputMessages` (instructions a system message, tool calls and
+outputs the `tool_calls` and `tool` shapes, attached images `NFKInputImage`), its tool definitions
+`NFKParameterTools`, its response schema `NFKParameterJSONSchema`, and its generation options the
+sampling keys, including the sampling mode that `NFKFoundationModelsBackend` reads in the other
+direction. The job's partial results stream into the executor's channel, and its
+`NFKOutputToolCalls` become the channel's tool calls.
+
+The model reports the capabilities the backend declares: `NFKParameterJSONSchema` is guided
+generation, `NFKParameterTools` is tool calling, `NFKInputImage` is vision. A session refuses what
+the backend does not declare. A backend that declares no keys takes them from the caller through
+`NFKInferKitLanguageModel(backend:capabilities:)`. The core reports no token counts, so the
+channel's counts are zero.
+
 ## Remote providers
 
 [`NFKRemoteProvider`](../Sources/InferKit/include/InferKit/NFKRemoteProvider.h) names the services a
@@ -700,10 +734,6 @@ What remains of each:
 
 ### Foundation Models
 
-- **Provider bridge (WWDC26).** Apple's `LanguageModel` / `LanguageModelExecutor` protocols let a
-  third-party model stand *behind* `LanguageModelSession`. Adopting them would let InferKit's local
-  and remote backends serve any app written against Apple's session API. The protocols are in the
-  macOS 27 / iOS 27 SDK (Xcode 27); the bridge lands gated to that OS, with the package floor at 26.
 - **Exact-type structured output** through Apple's `@Generable` macro for compile-time result types
   (the runtime-schema path here covers the dynamic case).
 
