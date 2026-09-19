@@ -644,6 +644,29 @@ job.completionHandler = { j in /* j.result or j.error */ }
 // job.cancel()
 ```
 
+### Reasoning and what the turn cost
+
+`NFKParameterReasoningEffort` asks a reasoning model how hard to think. The three levels the contract
+names are `NFKReasoningEffortLight`, `NFKReasoningEffortModerate`, and `NFKReasoningEffortDeep`, and
+each backend maps them to its provider's control: `reasoning_effort` on an OpenAI-compatible endpoint,
+a thinking budget on the Messages API, `ContextOptions.reasoningLevel` on Apple's model.
+
+```objc
+NFKInferenceRequest *request =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Why is the sky blue?" }
+                                parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+
+NSString *chain = [result outputForKey:NFKOutputReasoning];      // what the model showed, where it does
+NSDictionary *usage = [result outputForKey:NFKOutputUsage];      // nil where the provider reports none
+NSNumber *inputTokens = usage[NFKUsageInputTokens];              // beside NFKUsageCachedTokens,
+NSNumber *outputTokens = usage[NFKUsageOutputTokens];            // NFKUsageOutputTokens, NFKUsageReasoningTokens
+```
+
+A count the provider leaves out is absent from the dictionary rather than zero, so read the key you
+need and treat a missing one as unreported. A streamed reply carries the chain as it grows under
+`NFKOutputReasoning` on the partial result, beside the text.
+
 ## Text → image and image → image
 
 `NFKMLXBackend` runs a bundled Stable Diffusion release (Swift; Apple Silicon, macOS and iOS). No

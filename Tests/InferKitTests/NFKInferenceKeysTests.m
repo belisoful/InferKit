@@ -27,6 +27,20 @@
 	XCTAssertEqualObjects(NFKOutputAudio, @"audio");
 	XCTAssertEqualObjects(NFKParameterSampleRate, @"sampleRate");
 	XCTAssertEqualObjects(NFKParameterChannelCount, @"channelCount");
+	XCTAssertEqualObjects(NFKParameterReasoningEffort, @"reasoningEffort");
+	XCTAssertEqualObjects(NFKOutputReasoning, @"reasoning");
+	XCTAssertEqualObjects(NFKOutputUsage, @"usage");
+}
+
+- (void)testTheReasoningEffortsAndTheUsageCounts
+{
+	XCTAssertEqualObjects(NFKReasoningEffortLight, @"light");
+	XCTAssertEqualObjects(NFKReasoningEffortModerate, @"moderate");
+	XCTAssertEqualObjects(NFKReasoningEffortDeep, @"deep");
+	XCTAssertEqualObjects(NFKUsageInputTokens, @"inputTokens");
+	XCTAssertEqualObjects(NFKUsageCachedTokens, @"cachedTokens");
+	XCTAssertEqualObjects(NFKUsageOutputTokens, @"outputTokens");
+	XCTAssertEqualObjects(NFKUsageReasoningTokens, @"reasoningTokens");
 }
 
 - (void)testARequestBuiltFromTheVocabularyReadsBack

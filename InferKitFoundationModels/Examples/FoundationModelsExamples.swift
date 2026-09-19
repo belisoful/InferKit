@@ -99,6 +99,26 @@ final class FoundationModelsExamples: XCTestCase {
         guard case .schema = format else { return XCTFail("expected the schema path") }
     }
 
+    // Docs/examples.md: Reasoning and what the turn cost — the core keys on Apple's model.
+    func testExampleReasoningAndUsage() throws {
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Why is the sky blue?"],
+            parameters: [NFKParameterReasoningEffort: NFKReasoningEffortDeep])
+        let backend = NFKFoundationModelsBackend()
+        guard backend.supportedParameterKeys.contains(NFKParameterReasoningEffort) else {
+            // Below macOS 27 / iOS 27 the model takes no reasoning level, and says so both by
+            // leaving the key out of what it declares and by refusing a request that asks for one.
+            XCTAssertThrowsError(try NFKFoundationModelsBackend.reasoningEffort(for: request))
+            throw XCTSkip("a reasoning level needs macOS 27 / iOS 27")
+        }
+        XCTAssertEqual(try NFKFoundationModelsBackend.reasoningEffort(for: request), "deep")
+
+        // What the model showed comes back under NFKOutputReasoning, and what the turn cost under
+        // NFKOutputUsage, the same keys a remote backend fills.
+        let answered = try backend.runInference(for: request)
+        XCTAssertNotNil(answered.output(forKey: NFKOutputUsage))
+    }
+
     // Docs/examples.md: The provider bridge — an InferKit backend run through LanguageModelSession.
     func testExampleProviderBridge() throws {
         #if compiler(>=6.4)

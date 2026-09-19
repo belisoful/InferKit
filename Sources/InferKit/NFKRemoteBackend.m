@@ -31,15 +31,33 @@ static NSDictionary<NSString *, NSArray<NSString *> *> *NFKRemoteWireNames(void)
 	return names;
 }
 
+/*! The endpoint's spelling for each reasoning effort the contract names. An OpenAI-compatible
+	service reads low / medium / high under reasoning_effort, so the three core levels are renamed and
+	any other string goes out as written, which reaches a service that names its own levels. */
+static NSDictionary<NSString *, NSString *> *NFKRemoteReasoningEfforts(void)
+{
+	static NSDictionary<NSString *, NSString *> *efforts;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		efforts = @{ NFKReasoningEffortLight: @"low",
+					 NFKReasoningEffortModerate: @"medium",
+					 NFKReasoningEffortDeep: @"high" };
+	});
+	return efforts;
+}
+
 NSString * const NFKRemoteBackendPromptKey	= @"prompt";
 NSString * const NFKRemoteBackendMessagesKey	= @"messages";
 NSString * const NFKRemoteBackendTextKey		= @"text";
 NSString * const NFKRemoteBackendRawKey		= @"raw";
 
-/*! What a streamed reply assembles into: the text, the tool calls keyed by their index, and the
-	spoken reply's base64 chunks and transcript. */
+/*! What a streamed reply assembles into: the text, the reasoning shown before it, the tool calls
+	keyed by their index, the spoken reply's base64 chunks and transcript, and the token counts the
+	last chunk reports. */
 @interface NFKRemoteStreamState : NSObject
 @property (nonatomic, strong) NSMutableString *text;
+@property (nonatomic, strong) NSMutableString *reasoning;
+@property (nonatomic, copy, nullable) NSDictionary<NSString *, NSNumber *> *usage;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableDictionary *> *toolCallsByIndex;
 @property (nonatomic, strong) NSMutableString *audioBase64;
 @property (nonatomic, strong) NSMutableString *transcript;
@@ -52,6 +70,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	self = [super init];
 	if (self != nil) {
 		_text = [NSMutableString string];
+		_reasoning = [NSMutableString string];
 		_toolCallsByIndex = [NSMutableDictionary dictionary];
 		_audioBase64 = [NSMutableString string];
 		_transcript = [NSMutableString string];
@@ -109,7 +128,8 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	// text parameters are renamed to the endpoint's spelling; temperature and seed already carry it.
 	NSMutableSet<NSString *> *keys = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
 																   NFKParameterAudioOutput, NFKParameterVideoFrameCount,
-																   NFKParameterTemperature, NFKParameterSeed ]];
+																   NFKParameterTemperature, NFKParameterSeed,
+																   NFKParameterReasoningEffort ]];
 	[keys addObjectsFromArray:NFKRemoteWireNames().allKeys];
 	return keys;
 }
@@ -174,7 +194,11 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		id chunk = [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
 		if ([chunk isKindOfClass:NSDictionary.class] && [self applyStreamChunk:chunk toState:state]) {
 			NSString *text = state.text.length > 0 ? [state.text copy] : [state.transcript copy];
-			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKRemoteBackendTextKey: text }]];
+			NSMutableDictionary<NSString *, id> *partial = [NSMutableDictionary dictionaryWithObject:text forKey:NFKRemoteBackendTextKey];
+			if (state.reasoning.length > 0) {
+				partial[NFKOutputReasoning] = [state.reasoning copy];
+			}
+			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:partial]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
 		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
@@ -296,8 +320,16 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		}
 	}
 
+	// The reasoning effort is renamed and its value translated, so the contract's levels reach a
+	// service that names its own.
+	NSString *effort = request.parameters[NFKParameterReasoningEffort];
+	if ([effort isKindOfClass:NSString.class]) {
+		body[@"reasoning_effort"] = NFKRemoteReasoningEfforts()[effort] ?: effort;
+	}
+
 	NSMutableSet<NSString *> *translated = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
-																		 NFKParameterAudioOutput, NFKParameterVideoFrameCount ]];
+																		 NFKParameterAudioOutput, NFKParameterVideoFrameCount,
+																		   NFKParameterReasoningEffort ]];
 	[translated addObjectsFromArray:wireNames.allKeys];
 	for (NSString *key in request.parameters) {
 		if (![translated containsObject:key]) {
@@ -412,6 +444,8 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		content = audio[@"transcript"];
 	}
 	return [self resultWithText:content
+					  reasoning:[self reasoningInMessage:message]
+						  usage:[self usageInResponseBody:responseBody]
 					  wireCalls:message[@"tool_calls"]
 					audioBase64:audioBase64
 					audioFormat:[self audioOutputFormatForRequest:request]
@@ -420,7 +454,35 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 						  error:outError];
 }
 
+// A reasoning model returns its chain beside the answer. The field has two spellings across the
+// OpenAI-compatible servers and they mean the same thing, so both are read.
+- (nullable NSString *)reasoningInMessage:(nullable NSDictionary *)message
+{
+	for (NSString *key in @[ @"reasoning_content", @"reasoning" ]) {
+		id reasoning = message[key];
+		if ([reasoning isKindOfClass:NSString.class] && [reasoning length] > 0) {
+			return reasoning;
+		}
+	}
+	return nil;
+}
+
+// The counts ride under usage, with the cached and reasoning breakdowns one level further down.
+- (nullable NSDictionary<NSString *, NSNumber *> *)usageInResponseBody:(nullable NSDictionary *)body
+{
+	NSDictionary *usage = [body[@"usage"] isKindOfClass:NSDictionary.class] ? body[@"usage"] : nil;
+	if (usage == nil) {
+		return nil;
+	}
+	NSDictionary *inputDetails = [usage[@"prompt_tokens_details"] isKindOfClass:NSDictionary.class] ? usage[@"prompt_tokens_details"] : nil;
+	NSDictionary *outputDetails = [usage[@"completion_tokens_details"] isKindOfClass:NSDictionary.class] ? usage[@"completion_tokens_details"] : nil;
+	return NFKRemoteUsage(usage[@"prompt_tokens"], inputDetails[@"cached_tokens"],
+						  usage[@"completion_tokens"], outputDetails[@"reasoning_tokens"]);
+}
+
 - (nullable NFKInferenceResult *)resultWithText:(nullable NSString *)text
+									  reasoning:(nullable NSString *)reasoning
+										  usage:(nullable NSDictionary<NSString *, NSNumber *> *)usage
 									  wireCalls:(nullable NSArray *)wireCalls
 									audioBase64:(nullable NSString *)audioBase64
 									audioFormat:(nullable NSString *)audioFormat
@@ -431,6 +493,12 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionary];
 	if (text.length > 0) {
 		outputs[NFKRemoteBackendTextKey] = text;
+	}
+	if (reasoning.length > 0) {
+		outputs[NFKOutputReasoning] = reasoning;
+	}
+	if (usage != nil) {
+		outputs[NFKOutputUsage] = usage;
 	}
 	NSArray *toolCalls = [self toolCallsFromWireCalls:wireCalls];
 	if (toolCalls.count > 0) {
@@ -500,6 +568,14 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 // reporting for.
 - (BOOL)applyStreamChunk:(NSDictionary *)chunk toState:(NFKRemoteStreamState *)state
 {
+	// A server that reports the token counts puts them on a chunk of their own at the end. OpenAI
+	// sends them only when the request asked, which a caller does by setting stream_options in the
+	// request parameters; a server that sends them unasked is read either way.
+	NSDictionary<NSString *, NSNumber *> *usage = [self usageInResponseBody:chunk];
+	if (usage != nil) {
+		state.usage = usage;
+	}
+
 	NSArray *choices = chunk[@"choices"];
 	NSDictionary *choice = [choices isKindOfClass:NSArray.class] && choices.count > 0 ? choices.firstObject : nil;
 	NSDictionary *delta = [choice isKindOfClass:NSDictionary.class] && [choice[@"delta"] isKindOfClass:NSDictionary.class]
@@ -510,6 +586,11 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	BOOL carriedText = NO;
 	if ([delta[@"content"] isKindOfClass:NSString.class] && [delta[@"content"] length] > 0) {
 		[state.text appendString:delta[@"content"]];
+		carriedText = YES;
+	}
+	NSString *reasoning = [self reasoningInMessage:delta];
+	if (reasoning != nil) {
+		[state.reasoning appendString:reasoning];
 		carriedText = YES;
 	}
 	// A spoken reply streams as base64 chunks that concatenate, beside its transcript's pieces.
@@ -568,6 +649,8 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	}
 	NSError *error = nil;
 	NFKInferenceResult *result = [self resultWithText:text
+											reasoning:state.reasoning.length > 0 ? [state.reasoning copy] : nil
+												usage:state.usage
 											wireCalls:wireCalls
 										  audioBase64:state.audioBase64.length > 0 ? [state.audioBase64 copy] : nil
 										  audioFormat:audioFormat

@@ -117,6 +117,28 @@
 	XCTAssertEqualObjects(backend.backendIdentifier, @"foundation-models");
 }
 
+- (void)testObjectiveCAsksForReasoningAndReadsWhatTheTurnCost
+{
+	// The reasoning level and the token counts are core keys, so Objective-C reaches them the way
+	// it reaches temperature. The backend declares the level key only where the OS takes one, which
+	// is how an app decides whether to ask.
+	NFKFoundationModelsBackend *backend = [[NFKFoundationModelsBackend alloc] init];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Why is the sky blue?" }
+									parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+	if (![backend.supportedParameterKeys containsObject:NFKParameterReasoningEffort]) {
+		NSError *error = nil;
+		XCTAssertNil([backend runInferenceForRequest:request error:&error],
+					 @"a level this OS cannot give is refused rather than dropped");
+		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+		return;
+	}
+	NFKInferenceResult *result = [backend runInferenceForRequest:request error:NULL];
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertNotNil(usage[NFKUsageInputTokens]);
+	XCTAssertNotNil(usage[NFKUsageOutputTokens]);
+}
+
 - (void)testObjectiveCReadsWhatABackendOffersTheProviderBridge
 {
 	// The bridge that presents an InferKit backend to Foundation Models is Swift-only, because

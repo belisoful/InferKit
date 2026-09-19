@@ -179,7 +179,21 @@ wire spelling. The renaming runs before the fold, so a caller who writes `max_to
 keeps their value. Before that, those four keys folded in as `maxTokens` and friends and every
 OpenAI-compatible service ignored them, while `Docs/inference-guide.md` promised the contract's keys
 work on any text engine. `NFKAnthropicBackend` reads the same five explicitly (`stop_sequences` is
-its spelling for the stops) and has no repetition penalty. **Tools:**
+its spelling for the stops) and has no repetition penalty. **Reasoning and usage (2026-09-19):**
+`NFKParameterReasoningEffort` renames its value as well as its key, so it has its own table,
+`NFKRemoteReasoningEfforts()`: light → `low`, moderate → `medium`, deep → `high` under
+`reasoning_effort`, any other string written as it stands. The Messages API takes a budget rather
+than a level, so `NFKAnthropicThinkingBudgets()` maps the three to 2048 / 8192 / 16384 under
+`thinking: {type: enabled, budget_tokens}`, a numeric string is an exact budget, and anything else
+is refused in `urlRequestForRequest:`. Extended thinking there forbids `temperature` / `top_p` /
+`top_k` and needs `max_tokens` above the budget, so the backend drops the three and raises the
+limit. Coming back: `message.reasoning_content` or `message.reasoning` (both spellings are in use)
+and Anthropic's `thinking` blocks → `NFKOutputReasoning`; `usage` → `NFKOutputUsage` through the
+shared `NFKRemoteUsage(...)`, which leaves out a count the provider did not report. Streaming:
+`reasoning_content` deltas and `thinking_delta` grow the chain on the partial result beside the
+text; OpenAI puts the counts on a choice-less final chunk, which it sends only when the request set
+`stream_options.include_usage` (a caller adds that itself, since it folds in by name), while
+Anthropic splits them across `message_start` (input) and `message_delta` (output). **Tools:**
 `NFKParameterTools` (`{name, description, parameters}`) → OpenAI `{type: function, function}` /
 Anthropic `{name, description, input_schema}`; replies → `NFKOutputToolCalls` = `{id, name, arguments
 (parsed), argumentsJSON}` (`result.toolCalls`). The key is spelled `"tools"`, the wire field's own

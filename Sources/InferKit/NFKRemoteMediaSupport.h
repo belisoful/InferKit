@@ -44,6 +44,14 @@ NS_ASSUME_NONNULL_BEGIN
 NSURL * _Nullable NFKRemoteWriteMediaFile(NSData *data, NSString *prefix, NSString *extension,
 										  NSURL * _Nullable directory, NSError * _Nullable * _Nullable outError);
 
+/*! The NFKOutputUsage dictionary for the token counts a provider reported, or nil when it reported
+	none. A count the provider leaves out is left out here, so a caller reads a key that is present
+	rather than trusting a zero. Introduced in InferKit 0.4.0. */
+NSDictionary<NSString *, NSNumber *> * _Nullable NFKRemoteUsage(NSNumber * _Nullable inputTokens,
+														 NSNumber * _Nullable cachedTokens,
+														 NSNumber * _Nullable outputTokens,
+														 NSNumber * _Nullable reasoningTokens);
+
 NS_ASSUME_NONNULL_END
 
 #endif /* NFKRemoteMediaSupport_h */

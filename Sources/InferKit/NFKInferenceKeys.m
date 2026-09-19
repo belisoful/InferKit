@@ -44,6 +44,11 @@ NSString * const NFKParameterTopK				= @"topK";
 NSString * const NFKParameterMaxTokens			= @"maxTokens";
 NSString * const NFKParameterRepetitionPenalty	= @"repetitionPenalty";
 NSString * const NFKParameterStopSequences		= @"stopSequences";
+NSString * const NFKParameterReasoningEffort		= @"reasoningEffort";
+
+NSString * const NFKReasoningEffortLight		= @"light";
+NSString * const NFKReasoningEffortModerate		= @"moderate";
+NSString * const NFKReasoningEffortDeep			= @"deep";
 
 NSString * const NFKOutputImage				= @"image";
 NSString * const NFKOutputVideo				= @"video";
@@ -57,3 +62,10 @@ NSString * const NFKOutputDetections		= @"detections";
 NSString * const NFKOutputPose				= @"pose";
 NSString * const NFKOutputClassifications	= @"classifications";
 NSString * const NFKOutputSegments			= @"segments";
+NSString * const NFKOutputReasoning			= @"reasoning";
+NSString * const NFKOutputUsage				= @"usage";
+
+NSString * const NFKUsageInputTokens		= @"inputTokens";
+NSString * const NFKUsageCachedTokens		= @"cachedTokens";
+NSString * const NFKUsageOutputTokens		= @"outputTokens";
+NSString * const NFKUsageReasoningTokens	= @"reasoningTokens";

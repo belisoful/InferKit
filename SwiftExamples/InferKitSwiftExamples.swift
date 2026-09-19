@@ -377,6 +377,25 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual((watched.parameter(forKey: NFKParameterAudioOutput) as? [String: String])?["voice"], "alloy")
     }
 
+    // One contract key asks a reasoning model how hard to think; each backend maps the three levels
+    // to its provider's control. What came back is the chain and what the turn cost.
+    func testReasoningEffortAndWhatTheTurnCost() {
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Why is the sky blue?"],
+                                          parameters: [NFKParameterReasoningEffort: NFKReasoningEffortDeep])
+        XCTAssertEqual(request.parameter(forKey: NFKParameterReasoningEffort) as? String, "deep")
+
+        let result = NFKInferenceResult(outputs: [
+            NFKOutputText: "Shorter wavelengths scatter more.",
+            NFKOutputReasoning: "Rayleigh scattering goes as the inverse fourth power.",
+            NFKOutputUsage: [NFKUsageInputTokens: 11, NFKUsageOutputTokens: 7, NFKUsageReasoningTokens: 5],
+        ])
+        let usage = result.output(forKey: NFKOutputUsage) as? [String: Int]
+        XCTAssertEqual(usage?[NFKUsageInputTokens], 11)
+        XCTAssertEqual(usage?[NFKUsageReasoningTokens], 5)
+        XCTAssertNil(usage?[NFKUsageCachedTokens], "an unreported count is absent, not zero")
+        XCTAssertNotNil(result.output(forKey: NFKOutputReasoning))
+    }
+
     // MARK: Where Core ML runs (Docs/examples.md: Where Core ML actually runs)
 
     // `MLComputeUnitsCPUOnly` is zero, so an unset property would move every model off the

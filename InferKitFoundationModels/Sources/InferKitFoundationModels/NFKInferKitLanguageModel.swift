@@ -144,24 +144,19 @@ public struct NFKInferKitLanguageModelExecutor: LanguageModelExecutor {
 
         // The job reports the reply so far on its own thread; the stream carries those readings
         // into this task, and finishes when the job reaches a terminal state.
-        let readings = AsyncStream<String> { continuation in
+        let readings = AsyncStream<Reading> { continuation in
             job.progressHandler = { job in
-                if let text = job.partialResult?.text {
-                    continuation.yield(text)
+                if let partial = job.partialResult {
+                    continuation.yield(Reading(of: partial))
                 }
             }
             job.completionHandler = { _ in continuation.finish() }
         }
 
-        var sent = ""
+        var sent = Reading()
         await withTaskCancellationHandler {
-            for await text in readings {
-                let appendix = Self.appendix(sent: sent, text: text)
-                if appendix.isEmpty {
-                    continue
-                }
-                sent += appendix
-                await channel.send(.response(action: .appendText(appendix, tokenCount: 0)))
+            for await reading in readings {
+                sent = await Self.send(reading, after: sent, to: channel)
             }
         } onCancel: {
             job.cancel()
@@ -174,9 +169,12 @@ public struct NFKInferKitLanguageModelExecutor: LanguageModelExecutor {
             throw CancellationError()
         }
 
-        let appendix = Self.appendix(sent: sent, text: result.text ?? "")
-        if !appendix.isEmpty {
-            await channel.send(.response(action: .appendText(appendix, tokenCount: 0)))
+        _ = await Self.send(Reading(of: result), after: sent, to: channel)
+
+        // The counts are the turn's totals, so they arrive once the turn is over; every append
+        // above carries a count of zero because the core reports no per-token reading.
+        if let usage = Self.usage(in: result) {
+            await channel.send(.response(action: .updateUsage(input: usage.input, output: usage.output)))
         }
         for call in result.toolCalls ?? [] {
             guard let name = call["name"] as? String else {
@@ -189,6 +187,37 @@ public struct NFKInferKitLanguageModelExecutor: LanguageModelExecutor {
         }
     }
 
+    /// One reading of the reply so far: the answer, and the reasoning the model showed before it.
+    struct Reading: Sendable {
+        var text = ""
+        var reasoning = ""
+
+        init() {}
+
+        init(of result: NFKInferenceResult) {
+            text = result.text ?? ""
+            reasoning = result.output(forKey: NFKOutputReasoning) as? String ?? ""
+        }
+    }
+
+    /// Appends what a reading adds to each channel of the turn, and answers the reading the channel
+    /// now carries.
+    static func send(_ reading: Reading, after sent: Reading,
+                     to channel: LanguageModelExecutorGenerationChannel) async -> Reading {
+        var carried = sent
+        let reasoning = appendix(sent: sent.reasoning, text: reading.reasoning)
+        if !reasoning.isEmpty {
+            carried.reasoning += reasoning
+            await channel.send(.reasoning(action: .appendText(reasoning, tokenCount: 0)))
+        }
+        let text = appendix(sent: sent.text, text: reading.text)
+        if !text.isEmpty {
+            carried.text += text
+            await channel.send(.response(action: .appendText(text, tokenCount: 0)))
+        }
+        return carried
+    }
+
     /// The text to append to what the channel already carries. A backend reports the reply so far,
     /// so a longer reading contributes its new suffix. A reading that does not extend what was
     /// sent is a rewrite, which an append cannot express, so it contributes nothing.
@@ -197,6 +226,21 @@ public struct NFKInferKitLanguageModelExecutor: LanguageModelExecutor {
             return ""
         }
         return String(text.dropFirst(sent.count))
+    }
+
+    /// The token counts a result reports, in the shape the channel takes. A backend that reports no
+    /// counts leaves them out rather than sending zeros.
+    static func usage(in result: NFKInferenceResult)
+        -> (input: LanguageModelExecutorGenerationChannel.Usage.Input,
+            output: LanguageModelExecutorGenerationChannel.Usage.Output)? {
+        guard let counts = result.output(forKey: NFKOutputUsage) as? [String: NSNumber] else {
+            return nil
+        }
+        let count = { (key: String) in counts[key]?.intValue ?? 0 }
+        return (.init(totalTokenCount: count(NFKUsageInputTokens),
+                      cachedTokenCount: count(NFKUsageCachedTokens)),
+                .init(totalTokenCount: count(NFKUsageOutputTokens),
+                      reasoningTokenCount: count(NFKUsageReasoningTokens)))
     }
 }
 
@@ -339,6 +383,21 @@ enum NFKInferKitLanguageModelRequest {
         }
     }
 
+    /// The name `NFKParameterReasoningEffort` takes for a reasoning level. The framework's three
+    /// named levels are the contract's three; a custom level goes out under its own name, which
+    /// reaches a backend that names it.
+    @available(macOS 27, iOS 27, *)
+    static func reasoningEffort(for level: ContextOptions.ReasoningLevel?) -> String? {
+        switch level {
+        case nil: return nil
+        case .light: return NFKReasoningEffortLight
+        case .moderate: return NFKReasoningEffortModerate
+        case .deep: return NFKReasoningEffortDeep
+        case .custom(let name): return name
+        @unknown default: return nil
+        }
+    }
+
     /// The core request one generation request describes.
     ///
     /// `.disallowed` tool calling drops the declarations. `.required` has no core key, so a
@@ -360,6 +419,9 @@ enum NFKInferKitLanguageModelRequest {
         if !request.enabledToolDefinitions.isEmpty,
            request.generationOptions.toolCallingMode?.kind != .disallowed {
             parameters[NFKParameterTools] = try toolDeclarations(for: request.enabledToolDefinitions)
+        }
+        if let effort = reasoningEffort(for: request.contextOptions.reasoningLevel) {
+            parameters[NFKParameterReasoningEffort] = effort
         }
         return NFKInferenceRequest(inputs: inputs, parameters: parameters, outputModality: .text)
     }

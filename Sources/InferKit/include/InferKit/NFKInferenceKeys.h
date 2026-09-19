@@ -128,6 +128,19 @@ extern NSString * const NFKParameterMaxTokens;
 extern NSString * const NFKParameterRepetitionPenalty;
 /*! The stop sequences (NSArray<NSString *>). Generation ends when the output ends with one of them. */
 extern NSString * const NFKParameterStopSequences;
+/*! How much the model reasons before it answers (NSString): NFKReasoningEffortLight,
+	NFKReasoningEffortModerate, or NFKReasoningEffortDeep. A backend maps the three to its provider's
+	control, which may be a named level or a token budget. Any other string passes through, so a
+	caller reaches a level only one provider names. A backend that cannot reason refuses the key
+	rather than answering without it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterReasoningEffort;
+
+/*! The least reasoning: a short chain, for a question that needs little of it. */
+extern NSString * const NFKReasoningEffortLight;
+/*! The middle level, between NFKReasoningEffortLight and NFKReasoningEffortDeep. */
+extern NSString * const NFKReasoningEffortModerate;
+/*! The most reasoning: a long chain, for a question worth the tokens. */
+extern NSString * const NFKReasoningEffortDeep;
 
 #pragma mark Output keys
 
@@ -163,6 +176,26 @@ extern NSString * const NFKOutputClassifications;
 /*! Time spans (NSArray<NFKAudioSegment *>), for a backend that locates events over time (voice-activity
     or sound-event detection). */
 extern NSString * const NFKOutputSegments;
+
+/*! The reasoning a model showed before its answer (NSString), separate from the answer under
+	NFKOutputText. Present only where the provider returns it; a provider that hides its reasoning
+	reports the tokens it spent under NFKOutputUsage and nothing here. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputReasoning;
+
+/*! What the turn cost in tokens (NSDictionary of NSNumber keyed by NFKUsageInputTokens,
+	NFKUsageCachedTokens, NFKUsageOutputTokens, and NFKUsageReasoningTokens). A backend fills the
+	counts its provider reports and leaves the rest out, so a caller reads a key that is present
+	rather than trusting a zero. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputUsage;
+
+/*! The tokens the request cost, the cached ones included (NSNumber). */
+extern NSString * const NFKUsageInputTokens;
+/*! How many of the input tokens were served from the provider's cache (NSNumber). */
+extern NSString * const NFKUsageCachedTokens;
+/*! The tokens the reply cost, the reasoning ones included (NSNumber). */
+extern NSString * const NFKUsageOutputTokens;
+/*! How many of the output tokens went to reasoning (NSNumber). */
+extern NSString * const NFKUsageReasoningTokens;
 
 NS_ASSUME_NONNULL_END
 

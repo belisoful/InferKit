@@ -102,6 +102,22 @@ honors the key a request needs. A backend that declares nothing is used the way 
   pattern the chat backends now follow.
 - The Core ML language backend declares the sampling keys plus `NFKParameterOutputFormat` and
   `NFKParameterChoices`, and not `NFKParameterJSONSchema`: JSON comes from its token grammar.
+- **Reasoning keys (2026-09-19).** `NFKParameterReasoningEffort` is a string, not a number, because
+  no two providers agree on a scale: OpenAI names levels (`low` / `medium` / `high`), Anthropic takes
+  a token budget, Apple names its own (`.light` / `.moderate` / `.deep`) and allows a custom string.
+  The contract names three levels (`NFKReasoningEffortLight` / `Moderate` / `Deep`) and lets any
+  other string through, so a caller reaches a level only one provider names. `NFKRemoteBackend` has
+  `NFKRemoteReasoningEfforts()` beside `NFKRemoteWireNames()` because this key renames its **value**
+  as well as its name. `NFKAnthropicBackend` has a budget table plus a numeric-string escape, and
+  refuses anything else in `urlRequestForRequest:`, where there is an error out-parameter to report
+  through (`bodyForRequest:attachments:` has only one nil meaning). Extended thinking there forbids
+  temperature / `top_p` / `top_k` and needs `max_tokens` above the budget, so the backend drops the
+  three and raises the limit.
+- `NFKOutputUsage` is a dictionary rather than four output keys so a caller reads one key and finds
+  what the provider reported. A count the provider leaves out is **absent**, never zero, which is
+  what `NFKRemoteUsage(...)` in `NFKRemoteMediaSupport.m` enforces for both chat backends. The
+  Messages API reports no reasoning count (thinking tokens are inside the output total), so that key
+  is simply missing there.
 - `NFKInferencePrepare(backend, &error)` is the prepare counterpart of `NFKInferenceSubmit`: it calls
   `prepareWithError:` where the backend implements it and returns `YES` where it does not. Swift
   calls it rather than `backend.prepare?()`, which crashes swift-frontend 6.4 in IRGen (the

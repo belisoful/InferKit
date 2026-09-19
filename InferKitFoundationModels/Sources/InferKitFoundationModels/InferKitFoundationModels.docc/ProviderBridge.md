@@ -33,12 +33,16 @@ SDK. The package floor stays at macOS 26 / iOS 26.
 | `schema` | `NFKParameterJSONSchema` |
 | `GenerationOptions.temperature`, `maximumResponseTokens` | `NFKParameterTemperature`, `NFKParameterMaxTokens` |
 | the sampling mode | `NFKParameterTopK` or `NFKParameterTopP` with `NFKParameterSeed`; greedy is a temperature of zero |
+| `ContextOptions.reasoningLevel` | `NFKParameterReasoningEffort` (light, moderate, deep; a custom level by its own name) |
 | the executor's streaming channel | the job's `partialResult`, appended as it grows |
+| the channel's reasoning | the result's `NFKOutputReasoning`, appended as it grows |
 | the channel's tool calls | the result's `NFKOutputToolCalls` |
+| the channel's token counts | the result's `NFKOutputUsage`, once the turn is over |
 
 `.disallowed` tool calling drops the declarations. `.required` has no core key, so the declarations
-go out and the backend decides. The core reports no token counts, so the counts on the channel are
-zero.
+go out and the backend decides. The token counts are the turn's totals, so they arrive once the turn
+is over and each appended fragment carries a count of zero; a backend that reports no counts sends
+none.
 
 ### What the backend declares
 

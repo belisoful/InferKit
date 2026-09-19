@@ -16,7 +16,9 @@ hardware) that bridges InferKit and Apple's **Foundation Models** framework:
   `NFKInputMessages` (a system message becomes the session's instructions), the standard text
   parameters including top-k / top-p / seed, `NFKParameterJSONSchema` and `NFKParameterChoices` for
   structured output, `NFKParameterTools` with handlers registered as `NFKFoundationTool`s, and
-  streamed partial text through the job. `isReady` reflects the model's availability. `model`
+  streamed partial text through the job. On macOS 27 / iOS 27 it also reads `NFKInputImage` and
+  `NFKParameterReasoningEffort`, and answers with `NFKOutputReasoning` and `NFKOutputUsage`.
+  `isReady` reflects the model's availability. `model`
   picks the on-device system model (specialized by `useCase` and `guardrails`) or Apple's larger
   model on Private Cloud Compute (macOS 27 / iOS 27), whose quota `privateCloudComputeQuota` reads.
 
@@ -25,8 +27,10 @@ The reverse direction ships too. `NFKInferKitLanguageModel` adopts Apple's provi
 `LanguageModelSession`: `LanguageModelSession(model: NFKInferKitLanguageModel(backend: backend))`
 runs a remote endpoint or a converted Core ML model through Apple's session API. The session's
 transcript becomes `NFKInputMessages`, its tool definitions `NFKParameterTools`, its schema
-`NFKParameterJSONSchema`, and its generation options the core's sampling keys. The model reports
-what the backend declares through the protocol's `supportedParameterKeys` and `supportedInputKeys`.
+`NFKParameterJSONSchema`, its reasoning level `NFKParameterReasoningEffort`, and its generation
+options the core's sampling keys; the backend's `NFKOutputReasoning` and `NFKOutputUsage` come back
+on the session's own channels. The model reports what the backend declares through the protocol's
+`supportedParameterKeys` and `supportedInputKeys`.
 It needs macOS 27 / iOS 27 and a build with the macOS 27 SDK; the package floor stays at 26.
 
 ## InferKitMLX (optional companion)

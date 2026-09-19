@@ -15,8 +15,14 @@ endpoint), or this backend (Apple's model).
 - `NFKParameterTemperature` and `NFKParameterMaxTokens` map to `GenerationOptions`. `NFKParameterTopK`,
   `NFKParameterTopP`, and `NFKParameterSeed` choose the sampling mode, and a temperature of zero is
   greedy decoding.
-- The result carries text under `NFKOutputText`; `submitInferenceJob(for:)` streams partial text
-  through the job's `partialResult` and honors cancellation.
+- On macOS 27 / iOS 27: `NFKInputImage` and `NFKInputImages` attach to the prompt, and
+  `NFKParameterReasoningEffort` (`NFKReasoningEffortLight`, `…Moderate`, `…Deep`) becomes
+  `ContextOptions.reasoningLevel`. Below 27 the framework has neither, so the backend leaves the
+  keys out of what it declares and refuses a request that carries one.
+- The result carries text under `NFKOutputText`, and on macOS 27 / iOS 27 the reasoning the model
+  showed under `NFKOutputReasoning` and what the turn cost under `NFKOutputUsage`;
+  `submitInferenceJob(for:)` streams partial text through the job's `partialResult` and honors
+  cancellation.
 - `isReady` mirrors the chosen model's availability; `prepare()` reports the reason when the model
   is unavailable (Apple Intelligence off, unsupported hardware, model not downloaded, Private Cloud
   Compute quota reached) and warms the model up once. `contextSize` reports the tokens the context
@@ -137,9 +143,11 @@ let reply = try await session.respond(to: "Name three sea birds.")
 The mapping: transcript entries → `NFKInputMessages` (instructions to a system message, tool calls
 and outputs to the `tool_calls` and `tool` shapes, attached images to `NFKInputImage`);
 `GenerationOptions` → `NFKParameterTemperature`, `NFKParameterMaxTokens`, and the sampling keys;
-`enabledToolDefinitions` → `NFKParameterTools`; `schema` → `NFKParameterJSONSchema`; the job's
-`partialResult` → the executor's streaming channel, and its `NFKOutputToolCalls` → the channel's
-tool calls.
+`enabledToolDefinitions` → `NFKParameterTools`; `schema` → `NFKParameterJSONSchema`;
+`ContextOptions.reasoningLevel` → `NFKParameterReasoningEffort`; the job's `partialResult` → the
+executor's streaming channel, its `NFKOutputReasoning` → the channel's reasoning, its
+`NFKOutputToolCalls` → the channel's tool calls, and its `NFKOutputUsage` → the channel's token
+counts at the end of the turn.
 
 The model reports the capabilities the backend declares through the core protocol's
 `supportedParameterKeys` and `supportedInputKeys`: `NFKParameterJSONSchema` is guided generation,
@@ -149,8 +157,9 @@ does not declare. A backend that declares no keys takes them from the caller:
 Objective-C caller reads as well.
 
 The provider protocols are in the macOS 27 / iOS 27 SDK and not in 26, so the type needs that OS
-and a build with the macOS 27 SDK. The package floor stays at 26. Token counts are the one gap: the
-core reports no usage, so the channel's counts are zero.
+and a build with the macOS 27 SDK. The package floor stays at 26. The token counts are the turn's
+totals, which arrive when the turn is over, so each appended fragment carries a count of zero and a
+backend that reports no counts sends none.
 
 ## Build & test
 

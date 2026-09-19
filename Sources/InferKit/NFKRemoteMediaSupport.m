@@ -150,3 +150,24 @@ NSURL * _Nullable NFKRemoteWriteMediaFile(NSData *data, NSString *prefix, NSStri
 	}
 	return fileURL;
 }
+
+NSDictionary<NSString *, NSNumber *> * _Nullable NFKRemoteUsage(NSNumber * _Nullable inputTokens,
+																 NSNumber * _Nullable cachedTokens,
+																 NSNumber * _Nullable outputTokens,
+																 NSNumber * _Nullable reasoningTokens)
+{
+	NSMutableDictionary<NSString *, NSNumber *> *usage = [NSMutableDictionary dictionary];
+	if ([inputTokens isKindOfClass:NSNumber.class]) {
+		usage[NFKUsageInputTokens] = inputTokens;
+	}
+	if ([cachedTokens isKindOfClass:NSNumber.class]) {
+		usage[NFKUsageCachedTokens] = cachedTokens;
+	}
+	if ([outputTokens isKindOfClass:NSNumber.class]) {
+		usage[NFKUsageOutputTokens] = outputTokens;
+	}
+	if ([reasoningTokens isKindOfClass:NSNumber.class]) {
+		usage[NFKUsageReasoningTokens] = reasoningTokens;
+	}
+	return usage.count > 0 ? [usage copy] : nil;
+}

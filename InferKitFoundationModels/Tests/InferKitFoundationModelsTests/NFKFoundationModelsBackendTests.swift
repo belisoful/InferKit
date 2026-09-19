@@ -7,6 +7,7 @@
 //  elsewhere, so CI stays green without the model.
 //
 
+import CoreGraphics
 import XCTest
 import FoundationModels
 import InferKit
@@ -21,6 +22,26 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
 
     private func request(_ inputs: [String: Any], _ parameters: [String: Any]? = nil) -> NFKInferenceRequest {
         NFKInferenceRequest(inputs: inputs, parameters: parameters)
+    }
+
+    /// Whether this host both built against the macOS 27 SDK and runs macOS 27, which is what the
+    /// image, reasoning, and usage paths need.
+    private var reachesOS27: Bool {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return true
+        }
+        #endif
+        return false
+    }
+
+    private func makeSquare() -> CGImage {
+        let context = CGContext(data: nil, width: 2, height: 2, bitsPerComponent: 8, bytesPerRow: 8,
+                                space: CGColorSpaceCreateDeviceRGB(),
+                                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
+        context.setFillColor(gray: 0.5, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        return context.makeImage()!
     }
 
     // MARK: Contract
@@ -209,6 +230,64 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         let seedOnly = try NFKFoundationModelsBackend.generationOptions(
             for: request([NFKInputPrompt: "x"], [NFKParameterSeed: 3]))
         XCTAssertEqual(NFKFoundationModelsBackend.samplingMode(of: seedOnly), .random(probabilityThreshold: 1, seed: 3))
+    }
+
+    // MARK: Images, reasoning, and usage
+
+    func testTheDeclaredKeysFollowTheOS() {
+        let backend = NFKFoundationModelsBackend()
+        let reads27 = reachesOS27
+        XCTAssertEqual(backend.supportedParameterKeys.contains(NFKParameterReasoningEffort), reads27)
+        XCTAssertEqual(backend.supportedInputKeys.contains(NFKInputImage), reads27)
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterJSONSchema), "the schema key is read everywhere")
+    }
+
+    func testARequestWithNoImageCarriesNone() throws {
+        XCTAssertEqual(try NFKFoundationModelsBackend.images(in: request([NFKInputPrompt: "x"])).count, 0)
+    }
+
+    func testAnImageIsReadOnOS27AndRefusedBelowIt() throws {
+        let square = makeSquare()
+        let carried = request([NFKInputPrompt: "what is this?", NFKInputImage: square])
+        if reachesOS27 {
+            XCTAssertEqual(try NFKFoundationModelsBackend.images(in: carried).count, 1)
+        } else {
+            XCTAssertThrowsError(try NFKFoundationModelsBackend.images(in: carried)) { error in
+                XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceUnsupported.rawValue)
+            }
+        }
+    }
+
+    func testAReasoningEffortIsReadOnOS27AndRefusedBelowIt() throws {
+        let asked = request([NFKInputPrompt: "x"], [NFKParameterReasoningEffort: NFKReasoningEffortDeep])
+        if reachesOS27 {
+            XCTAssertEqual(try NFKFoundationModelsBackend.reasoningEffort(for: asked), NFKReasoningEffortDeep)
+        } else {
+            XCTAssertThrowsError(try NFKFoundationModelsBackend.reasoningEffort(for: asked))
+        }
+        XCTAssertNil(try NFKFoundationModelsBackend.reasoningEffort(for: request([NFKInputPrompt: "x"])))
+    }
+
+    func testTheContractsLevelsBecomeTheFrameworksLevels() throws {
+        #if compiler(>=6.4)
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("a reasoning level needs macOS 27")
+        }
+        typealias Backend = NFKFoundationModelsBackend
+        XCTAssertNil(Backend.reasoningLevel(named: nil))
+        XCTAssertEqual(Backend.reasoningLevel(named: NFKReasoningEffortLight), .light)
+        XCTAssertEqual(Backend.reasoningLevel(named: NFKReasoningEffortModerate), .moderate)
+        XCTAssertEqual(Backend.reasoningLevel(named: NFKReasoningEffortDeep), .deep)
+        XCTAssertEqual(Backend.reasoningLevel(named: "exhaustive"), .custom("exhaustive"))
+        #else
+        throw XCTSkip("built with an SDK before macOS 27")
+        #endif
+    }
+
+    func testAReplyCarriesWhateverTheRunReportedBesideIt() {
+        let outputs = NFKFoundationModelsBackend.outputs(text: "four", reported: [NFKOutputReasoning: "two plus two"])
+        XCTAssertEqual(outputs[NFKOutputText] as? String, "four")
+        XCTAssertEqual(outputs[NFKOutputReasoning] as? String, "two plus two")
     }
 
     // MARK: Schemas

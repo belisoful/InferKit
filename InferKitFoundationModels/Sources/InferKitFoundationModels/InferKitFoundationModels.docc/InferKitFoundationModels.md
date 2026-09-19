@@ -32,6 +32,10 @@ let reply = try backend.runInference(for: request).text
 - **Streaming & cancellation** — read `NFKInferenceJob`'s `partialResult` in its `progressHandler`.
 - **Sampling** — `NFKParameterTemperature`, `NFKParameterMaxTokens`, `NFKParameterTopK`,
   `NFKParameterTopP`, and `NFKParameterSeed`; a temperature of zero is greedy.
+- **Images, reasoning, usage** (macOS 27 / iOS 27) — `NFKInputImage` and `NFKInputImages` attach to
+  the prompt, `NFKParameterReasoningEffort` becomes the context's reasoning level, and the result
+  adds `NFKOutputReasoning` and `NFKOutputUsage`. Below 27 the backend declares none of the three
+  and refuses a request that asks for one.
 - **Tool calling** and **structured output** — through the core's `NFKParameterTools`,
   `NFKParameterJSONSchema`, and `NFKParameterChoices`, no compile-time `@Generable` type.
   See <doc:ToolsAndStructuredOutput>.

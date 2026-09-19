@@ -46,10 +46,15 @@ and returns an [`NFKInferenceResult`](../Sources/InferKit/include/InferKit/NFKIn
   ignores the rest. A remote engine reads them under its own spelling, which the backend writes
   (`NFKParameterMaxTokens` goes out as `max_tokens`), so one request carries the same meaning to an
   in-process model and to a service.
+  `NFKParameterReasoningEffort` asks a reasoning model how hard to think, in the three levels
+  `NFKReasoningEffortLight`, `NFKReasoningEffortModerate`, and `NFKReasoningEffortDeep`.
 - **outputs** — the result, keyed by name: `NFKOutputText` (a string), `NFKOutputStructured` (a
   dictionary), `NFKOutputEmbedding`, `NFKOutputImage`, `NFKOutputAudio`, `NFKOutputVideo`, and the
   typed lists (`NFKOutputDetections`, `NFKOutputPose`, `NFKOutputClassifications`,
-  `NFKOutputSegments`).
+  `NFKOutputSegments`). A reasoning model adds `NFKOutputReasoning` (the chain it showed) and
+  `NFKOutputUsage` (what the turn cost, keyed by `NFKUsageInputTokens`, `NFKUsageCachedTokens`,
+  `NFKUsageOutputTokens`, and `NFKUsageReasoningTokens`). A count the provider leaves out is absent
+  rather than zero.
 
 The vocabulary lives in [`NFKInferenceKeys.h`](../Sources/InferKit/include/InferKit/NFKInferenceKeys.h).
 A backend maps the shared keys to its provider's own names and ignores what it does not use. The keys
@@ -292,6 +297,13 @@ is `.greedy`. The reply arrives under `NFKOutputText`. `backend.contextSize` rep
 context holds; a request that needs more fails before the session runs, with both counts in the
 error's `userInfo`.
 
+On macOS 27 / iOS 27 the backend also reads `NFKInputImage` and `NFKInputImages`, which attach to the
+prompt, and `NFKParameterReasoningEffort`, which becomes `ContextOptions.reasoningLevel`. What the
+model showed comes back under `NFKOutputReasoning` and what the turn cost under `NFKOutputUsage`.
+Below 27 the framework has none of the three: `supportedParameterKeys` and `supportedInputKeys` leave
+the keys out, and a request that carries one fails with `kNFKError_InferenceUnsupported` rather than
+answering without it.
+
 ### Streaming
 
 The session streams a growing snapshot; read `.content` off each partial:
@@ -402,16 +414,18 @@ let reply = try await session.respond(to: "Name three sea birds.")
 
 The session's transcript becomes `NFKInputMessages` (instructions a system message, tool calls and
 outputs the `tool_calls` and `tool` shapes, attached images `NFKInputImage`), its tool definitions
-`NFKParameterTools`, its response schema `NFKParameterJSONSchema`, and its generation options the
-sampling keys, including the sampling mode that `NFKFoundationModelsBackend` reads in the other
-direction. The job's partial results stream into the executor's channel, and its
-`NFKOutputToolCalls` become the channel's tool calls.
+`NFKParameterTools`, its response schema `NFKParameterJSONSchema`, its context's reasoning level
+`NFKParameterReasoningEffort`, and its generation options the sampling keys, including the sampling
+mode that `NFKFoundationModelsBackend` reads in the other direction. The job's partial results stream
+into the executor's channel, its `NFKOutputReasoning` into the channel's reasoning, and its
+`NFKOutputToolCalls` into the channel's tool calls. A backend that reports `NFKOutputUsage` closes
+the turn with the channel's token counts; one that reports none sends no counts.
 
 The model reports the capabilities the backend declares: `NFKParameterJSONSchema` is guided
 generation, `NFKParameterTools` is tool calling, `NFKInputImage` is vision. A session refuses what
 the backend does not declare. A backend that declares no keys takes them from the caller through
-`NFKInferKitLanguageModel(backend:capabilities:)`. The core reports no token counts, so the
-channel's counts are zero.
+`NFKInferKitLanguageModel(backend:capabilities:)`. The counts are the turn's totals, which arrive
+once the turn is over, so each appended fragment carries a count of zero.
 
 ## Remote providers
 
@@ -451,7 +465,10 @@ The contract's sampling keys reach a service under the name it reads: `NFKParame
 out as `max_tokens`, `NFKParameterTopP` as `top_p`, `NFKParameterTopK` as `top_k`, and
 `NFKParameterStopSequences` as `stop` (`stop_sequences` on Anthropic). `NFKParameterRepetitionPenalty`
 goes out as both `repetition_penalty` and `repeat_penalty`, since the servers disagree on the name and
-agree on the meaning. Every other parameter folds into the request body under its own name, which is
+agree on the meaning. `NFKParameterReasoningEffort` goes out as `reasoning_effort` with the level
+renamed to the one the service reads (light → low, moderate → medium, deep → high), and on the
+Messages API as a `thinking` budget in tokens, which is the control that API takes. What came back
+rides under `NFKOutputReasoning` and `NFKOutputUsage`. Every other parameter folds into the request body under its own name, which is
 how a caller reaches a field the contract does not name, and a parameter written in the service's own
 spelling keeps the value the caller wrote.
 

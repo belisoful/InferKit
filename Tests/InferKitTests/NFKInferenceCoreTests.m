@@ -121,6 +121,7 @@
 	XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterJSONSchema]);
 	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputMessages]);
 	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputImage], @"a vision model reads an image");
+	XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterReasoningEffort]);
 	// The text parameters are renamed to the endpoint's spelling, so the contract's keys reach it.
 	for (NSString *key in @[ NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
 							 NFKParameterStopSequences, NFKParameterRepetitionPenalty ]) {

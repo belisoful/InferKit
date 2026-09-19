@@ -289,6 +289,61 @@
 
 // Set INFERKIT_LIVE_LOCAL_MODEL to a model the local server has. The point is the stream itself:
 // more than one partial arrives before the end, and the final text is what the partials built.
+#pragma mark Reasoning and usage over a stream
+
+- (void)testAStreamedReasoningChainAndTheClosingCountsAssemble
+{
+	self.backend.stagedLines = @[
+		@"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"two \"}}]}",
+		@"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plus two\"}}]}",
+		@"data: {\"choices\":[{\"delta\":{\"content\":\"four\"}}]}",
+		@"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,"
+		 "\"completion_tokens_details\":{\"reasoning_tokens\":3}}}",
+		@"data: [DONE]",
+	];
+	self.backend.holdOpen = YES;
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[self prompt:@"2+2?"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded);
+	XCTAssertEqualObjects(job.result.text, @"four");
+	XCTAssertEqualObjects([job.result outputForKey:NFKOutputReasoning], @"two plus two");
+	NSDictionary *usage = [job.result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @9);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @4);
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @3);
+}
+
+- (void)testAReasoningDeltaReportsThePartialChain
+{
+	self.backend.stagedLines = @[ @"data: {\"choices\":[{\"delta\":{\"reasoning\":\"weighing it\"}}]}" ];
+	self.backend.holdOpen = YES;
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqualObjects([job.partialResult outputForKey:NFKOutputReasoning], @"weighing it");
+}
+
+- (void)testAnthropicThinkingBlocksBecomeTheReasoningAndTheEventsCarryTheCounts
+{
+	self.anthropic.stagedLines = @[
+		@"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],"
+		 "\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4}}}",
+		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
+		@"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"two plus two\"}}",
+		@"data: {\"type\":\"content_block_stop\",\"index\":0}",
+		@"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+		@"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"four\"}}",
+		@"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":6}}",
+		@"data: {\"type\":\"message_stop\"}",
+	];
+	self.anthropic.holdOpen = YES;
+	NFKInferenceJob *job = [self.anthropic submitInferenceJobForRequest:[self prompt:@"2+2?"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded);
+	XCTAssertEqualObjects(job.result.text, @"four", @"the thinking block is not part of the answer");
+	XCTAssertEqualObjects([job.result outputForKey:NFKOutputReasoning], @"two plus two");
+	NSDictionary *usage = [job.result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @12);
+	XCTAssertEqualObjects(usage[NFKUsageCachedTokens], @4);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @6);
+}
+
 - (void)testALocalRunnerStreamsTokenByToken
 {
 	NSDictionary *environment = NSProcessInfo.processInfo.environment;

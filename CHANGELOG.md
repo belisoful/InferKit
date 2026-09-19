@@ -29,6 +29,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInferencePrepare(backend, &error)` prepares a backend uniformly, calling `prepareWithError:`
   where the backend implements it and returning `YES` where it does not, the way
   `NFKInferenceSubmit` covers both submission paths.
+- Three request keys and their vocabulary for reasoning models. `NFKParameterReasoningEffort` asks
+  how hard to think, in the levels `NFKReasoningEffortLight`, `NFKReasoningEffortModerate`, and
+  `NFKReasoningEffortDeep`; `NFKOutputReasoning` carries the chain the model showed;
+  `NFKOutputUsage` carries what the turn cost, keyed by `NFKUsageInputTokens`,
+  `NFKUsageCachedTokens`, `NFKUsageOutputTokens`, and `NFKUsageReasoningTokens`. A count the
+  provider leaves out is absent rather than zero.
+- `NFKRemoteBackend` sends the effort as `reasoning_effort` with the level renamed to the one an
+  OpenAI-compatible service reads (light → low, moderate → medium, deep → high) and any other string
+  written as it stands. It fills `NFKOutputReasoning` from `reasoning_content` or `reasoning` and
+  `NFKOutputUsage` from the response's `usage`, streamed or not; a streamed chain grows on the
+  partial result beside the text.
+- `NFKAnthropicBackend` turns the effort into a `thinking` budget, which is the control the Messages
+  API takes, and accepts a numeric string as an exact budget. Extended thinking rules the sampling,
+  so temperature, `top_p`, and `top_k` are dropped beside it and `max_tokens` is raised to leave the
+  answer room. Thinking blocks become `NFKOutputReasoning` and the message events' counts become
+  `NFKOutputUsage`.
 
 ### InferKitFoundationModels (companion)
 
@@ -71,13 +87,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   transcript becomes `NFKInputMessages`, its tool definitions `NFKParameterTools`, its schema
   `NFKParameterJSONSchema`, its generation options the sampling keys, and its attached images
   `NFKInputImage`. The job's partial results stream into the executor's channel, and the result's
-  `NFKOutputToolCalls` become the channel's tool calls. The core reports no token counts, so the
-  channel's counts are zero.
+  `NFKOutputToolCalls` become the channel's tool calls.
 - The model reports the capabilities the backend declares: `NFKParameterJSONSchema` is guided
   generation, `NFKParameterTools` is tool calling, `NFKInputImage` is vision.
   `NFKInferKitLanguageModelCapabilities` reads them, is `@objc`, and can be stated by the caller for
   a backend that declares none. The type needs a build with the macOS 27 SDK, which is where the
   provider protocols are; the package floor stays at macOS 26 / iOS 26.
+
+#### Images, reasoning, and usage (macOS 27 / iOS 27)
+
+- `NFKFoundationModelsBackend` reads `NFKInputImage` and `NFKInputImages`, which attach to the
+  prompt, and `NFKParameterReasoningEffort`, which becomes `ContextOptions.reasoningLevel`. What the
+  model showed comes back under `NFKOutputReasoning` and what the turn cost under `NFKOutputUsage`,
+  on the partial results as well as the final one. Below macOS 27 the framework has none of the
+  three: the backend leaves the keys out of `supportedParameterKeys` / `supportedInputKeys` and
+  refuses a request that carries one, rather than answering without it.
+- The provider bridge carries the same three the other way: `ContextOptions.reasoningLevel` becomes
+  `NFKParameterReasoningEffort`, the backend's `NFKOutputReasoning` streams into the channel's
+  reasoning, and its `NFKOutputUsage` closes the turn with the channel's token counts. A backend
+  that reports no counts sends none.
 
 #### Removed
 

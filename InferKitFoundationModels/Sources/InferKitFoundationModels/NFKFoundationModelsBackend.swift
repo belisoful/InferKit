@@ -3,6 +3,7 @@
 //  InferKitFoundationModels
 //
 
+import CoreGraphics
 import Foundation
 import FoundationModels
 import InferKit
@@ -40,6 +41,7 @@ extension NFKInferenceJob: @retroactive @unchecked Sendable {}
 /// - Input: `NFKInputPrompt` (a string) or `NFKInputMessages` (an OpenAI-style array). A system
 ///   message becomes the session's instructions; earlier turns seed the transcript, including
 ///   assistant `tool_calls` messages and `tool` results; the last user turn is the prompt.
+///   `NFKInputImage` and `NFKInputImages` attach to the prompt on macOS 27 / iOS 27.
 /// - Sampling: `NFKParameterTemperature` and `NFKParameterMaxTokens` map to `GenerationOptions`;
 ///   `NFKParameterTopK`, `NFKParameterTopP`, and `NFKParameterSeed` choose the sampling mode, and a
 ///   temperature of zero is greedy decoding.
@@ -50,6 +52,11 @@ extension NFKInferenceJob: @retroactive @unchecked Sendable {}
 ///   of the same name supplies the handler. Without the key, every registered tool is offered. A
 ///   declared tool with no handler ends the turn with the call under `NFKOutputToolCalls`, and the
 ///   caller replies with a `tool` message.
+/// - Reasoning: `NFKParameterReasoningEffort` (light, moderate, or deep) becomes the context's
+///   reasoning level on macOS 27 / iOS 27, and what the model showed comes back under
+///   `NFKOutputReasoning`.
+/// - Usage: `NFKOutputUsage` carries what the turn cost, on macOS 27 / iOS 27, which is where the
+///   framework reports token counts.
 /// - `submitInferenceJob(for:)` streams partial text through the job's `partialResult`.
 ///
 /// `isReady` reflects the chosen model's availability: the on-device model needs Apple Intelligence
@@ -141,15 +148,30 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
 
     @objc public var backendIdentifier: String { "foundation-models" }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    /// The request parameters the backend reads. `NFKParameterReasoningEffort` is among them on
+    /// macOS 27 / iOS 27, where the model takes a reasoning level. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterTopK, NFKParameterTopP,
-         NFKParameterSeed, NFKParameterJSONSchema, NFKParameterChoices, NFKParameterTools]
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterTopK,
+                                 NFKParameterTopP, NFKParameterSeed, NFKParameterJSONSchema,
+                                 NFKParameterChoices, NFKParameterTools]
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            keys.insert(NFKParameterReasoningEffort)
+        }
+        #endif
+        return keys
     }
 
-    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    /// The request inputs the backend reads. The image inputs are among them on macOS 27 / iOS 27,
+    /// where a prompt takes an image attachment. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> {
-        [NFKInputPrompt, NFKInputMessages]
+        var keys: Set<String> = [NFKInputPrompt, NFKInputMessages]
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            keys.formUnion([NFKInputImage, NFKInputImages])
+        }
+        #endif
+        return keys
     }
 
     /// Checks the chosen model's availability and loads its resources once, so the first request
@@ -215,30 +237,37 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
             do {
                 try configuration.checkAvailability()
                 let plan = Self.plan(for: request)
+                let prompt = Self.prompt(text: plan.prompt, images: try Self.images(in: request))
+                let effort = try Self.reasoningEffort(for: request)
                 let recorder = NFKToolCallRecorder()
                 let adapted = try Self.toolAdapters(for: request, registered: registered, recorder: recorder)
                 let session = try Self.makeSession(for: plan, tools: adapted, configuration: configuration)
                 let options = try Self.generationOptions(for: request)
                 let format = try Self.outputFormat(for: request)
-                try await Self.checkContext(plan: plan, tools: adapted, format: format, configuration: configuration)
+                try await Self.checkContext(plan: plan, prompt: prompt, tools: adapted, format: format,
+                                            configuration: configuration)
 
                 var latestText = ""
+                var reported: [String: Any] = [:]
                 do {
                     switch format {
                     case .text:
-                        let stream = session.streamResponse(to: plan.prompt, options: options)
+                        let stream = Self.textStream(from: session, prompt: prompt, options: options,
+                                                     reasoningEffort: effort)
                         for try await partial in stream {
                             if Task.isCancelled {
                                 job.cancel()
                                 return
                             }
                             latestText = partial.content
-                            job.reportProgress(-1, partialResult: NFKInferenceResult(outputs: [NFKOutputText: latestText]))
+                            reported = Self.runOutputs(of: partial)
+                            job.reportProgress(-1, partialResult: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported)))
                         }
-                        job.finish(with: NFKInferenceResult(outputs: [NFKOutputText: latestText]))
+                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported)))
 
                     case .schema(let schema):
-                        let stream = session.streamResponse(to: plan.prompt, schema: schema, options: options)
+                        let stream = Self.schemaStream(from: session, prompt: prompt, schema: schema,
+                                                       options: options, reasoningEffort: effort)
                         var latest: GeneratedContent?
                         for try await partial in stream {
                             if Task.isCancelled {
@@ -247,30 +276,33 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                             }
                             latest = partial.content
                             latestText = partial.content.jsonString
-                            job.reportProgress(-1, partialResult: NFKInferenceResult(outputs: [NFKOutputText: latestText]))
+                            reported = Self.runOutputs(of: partial)
+                            job.reportProgress(-1, partialResult: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported)))
                         }
                         guard let content = latest else {
                             throw NFKFoundationModelsError.noOutput
                         }
-                        var outputs: [String: Any] = [NFKOutputText: content.jsonString]
+                        var outputs = Self.outputs(text: content.jsonString, reported: reported)
                         if let parsed = NFKSchema.jsonObject(from: content) {
                             outputs[NFKOutputStructured] = parsed
                         }
                         job.finish(with: NFKInferenceResult(outputs: outputs))
 
                     case .choice(let schema):
-                        let response = try await session.respond(to: plan.prompt, schema: schema, options: options)
+                        let response = try await Self.choiceResponse(from: session, prompt: prompt, schema: schema,
+                                                                     options: options, reasoningEffort: effort)
                         if Task.isCancelled {
                             job.cancel()
                             return
                         }
                         let chosen = (try? response.content.value(String.self)) ?? response.content.jsonString
-                        job.finish(with: NFKInferenceResult(outputs: [NFKOutputText: chosen]))
+                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: chosen, reported: Self.runOutputs(of: response))))
                     }
                 } catch let error as LanguageModelSession.ToolCallError where error.underlyingError is NFKUnhandledToolCall {
                     // The model called a tool the caller runs: the turn ends here, the way a remote
                     // backend returns a tool-call turn, and the caller answers with a `tool` message.
-                    var outputs: [String: Any] = [NFKOutputToolCalls: recorder.recorded.map(\.dictionary)]
+                    var outputs = reported
+                    outputs[NFKOutputToolCalls] = recorder.recorded.map(\.dictionary)
                     if !latestText.isEmpty {
                         outputs[NFKOutputText] = latestText
                     }
@@ -294,11 +326,11 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     /// request fails with the core's error and both numbers, on an OS whose model counts tokens.
     /// Only the on-device model counts tokens; a Private Cloud Compute request is checked by the
     /// service.
-    static func checkContext(plan: RequestPlan, tools: [any Tool], format: OutputFormat,
+    static func checkContext(plan: RequestPlan, prompt: Prompt? = nil, tools: [any Tool], format: OutputFormat,
                              configuration: NFKFoundationModelConfiguration = .init()) async throws {
         guard configuration.model == .onDevice, #available(macOS 26.4, iOS 26.4, *) else { return }
         let model = configuration.systemModel
-        var count = try await model.tokenCount(for: plan.prompt)
+        var count = try await model.tokenCount(for: prompt ?? Prompt(plan.prompt))
         count += try await model.tokenCount(for: transcriptEntries(for: plan))
         if !tools.isEmpty {
             count += try await model.tokenCount(for: tools)
@@ -316,6 +348,186 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                                      NFKFoundationModelsErrorKey.tokenCount: count,
                                      NFKFoundationModelsErrorKey.contextSize: contextSize])
         }
+    }
+
+    // MARK: Images, reasoning, and usage
+
+    /// The images a request carries, `NFKInputImage` first and then `NFKInputImages`. An image needs
+    /// macOS 27 / iOS 27, where a prompt takes an attachment, so a request that carries one is
+    /// refused below that rather than answered without it.
+    static func images(in request: NFKInferenceRequest) throws -> [CGImage] {
+        var sources: [Any] = []
+        if let image = request.input(forKey: NFKInputImage) {
+            sources.append(image)
+        }
+        if let images = request.input(forKey: NFKInputImages) as? [Any] {
+            sources.append(contentsOf: images)
+        }
+        if sources.isEmpty {
+            return []
+        }
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return try sources.map { source in
+                guard let image = NFKImageCoding.cgImage(forImage: source) else {
+                    throw NSError(domain: NFKInferenceErrorDomain,
+                                  code: NFKInferenceError.error_InferenceMissingInput.rawValue,
+                                  userInfo: [NSLocalizedDescriptionKey: "an image is not a CGImage, CVPixelBuffer, or BGRA/RGBA texture"])
+                }
+                return image
+            }
+        }
+        #endif
+        throw NSError(domain: NFKInferenceErrorDomain,
+                      code: NFKInferenceError.error_InferenceUnsupported.rawValue,
+                      userInfo: [NSLocalizedDescriptionKey: "an image input needs macOS 27 / iOS 27"])
+    }
+
+    /// The prompt one turn sends: the text, and the images the request attached after it. The images
+    /// come from `images(in:)`, which refuses them below macOS 27 / iOS 27, so the list is empty on
+    /// an OS whose prompt takes no attachment.
+    static func prompt(text: String, images: [CGImage]) -> Prompt {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *), !images.isEmpty {
+            return Prompt {
+                text
+                for image in images {
+                    Attachment(image)
+                }
+            }
+        }
+        #endif
+        return Prompt(text)
+    }
+
+    /// The reasoning level a request asks for, read here so a request that asks for reasoning the OS
+    /// cannot give fails before generation starts. Nil when the request asks for none.
+    static func reasoningEffort(for request: NFKInferenceRequest) throws -> String? {
+        guard let effort = request.parameter(forKey: NFKParameterReasoningEffort) else {
+            return nil
+        }
+        guard let name = effort as? String, !name.isEmpty else {
+            throw NSError(domain: NFKInferenceErrorDomain,
+                          code: NFKInferenceError.error_InferenceUnsupported.rawValue,
+                          userInfo: [NSLocalizedDescriptionKey: "NFKParameterReasoningEffort is a level name: light, moderate, or deep"])
+        }
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return name
+        }
+        #endif
+        throw NSError(domain: NFKInferenceErrorDomain,
+                      code: NFKInferenceError.error_InferenceUnsupported.rawValue,
+                      userInfo: [NSLocalizedDescriptionKey: "a reasoning level needs macOS 27 / iOS 27"])
+    }
+
+    /// The outputs a reply carries: its text, and whatever the run reported beside it.
+    static func outputs(text: String, reported: [String: Any]) -> [String: Any] {
+        var outputs = reported
+        outputs[NFKOutputText] = text
+        return outputs
+    }
+
+    /// What the framework reports beside the reply: the reasoning the model showed under
+    /// `NFKOutputReasoning`, and what the turn cost under `NFKOutputUsage`. Both arrive on macOS 27 /
+    /// iOS 27; below it a run reports neither.
+    static func runOutputs<Content>(of snapshot: LanguageModelSession.ResponseStream<Content>.Snapshot) -> [String: Any] {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return runOutputs(entries: snapshot.transcriptEntries, usage: snapshot.usage)
+        }
+        #endif
+        return [:]
+    }
+
+    static func runOutputs<Content>(of response: LanguageModelSession.Response<Content>) -> [String: Any] {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return runOutputs(entries: response.transcriptEntries, usage: response.usage)
+        }
+        #endif
+        return [:]
+    }
+
+    #if compiler(>=6.4)
+
+    /// The framework's level for each level the contract names. Another string becomes the
+    /// framework's custom level, which reaches a model that names one of its own.
+    @available(macOS 27, iOS 27, *)
+    static func reasoningLevel(named name: String?) -> ContextOptions.ReasoningLevel? {
+        switch name {
+        case nil: return nil
+        case NFKReasoningEffortLight: return .light
+        case NFKReasoningEffortModerate: return .moderate
+        case NFKReasoningEffortDeep: return .deep
+        case let other?: return .custom(other)
+        }
+    }
+
+    @available(macOS 27, iOS 27, *)
+    static func runOutputs(entries: ArraySlice<Transcript.Entry>,
+                           usage: LanguageModelSession.Usage) -> [String: Any] {
+        var outputs: [String: Any] = [
+            NFKOutputUsage: [NFKUsageInputTokens: usage.input.totalTokenCount,
+                             NFKUsageCachedTokens: usage.input.cachedTokenCount,
+                             NFKUsageOutputTokens: usage.output.totalTokenCount,
+                             NFKUsageReasoningTokens: usage.output.reasoningTokenCount],
+        ]
+        let reasoning = entries.compactMap { entry -> String? in
+            guard case .reasoning(let reasoning) = entry else {
+                return nil
+            }
+            return NFKInferKitLanguageModelRequest.text(of: reasoning.segments)
+        }.joined(separator: "\n")
+        if !reasoning.isEmpty {
+            outputs[NFKOutputReasoning] = reasoning
+        }
+        return outputs
+    }
+
+    #endif
+
+    // MARK: Generation calls
+
+    // The macOS 27 SDK adds `contextOptions` to every respond and stream call, which is where the
+    // reasoning level rides. The 26 SDKs have neither the parameter nor the type, so the compiler
+    // version selects the call that the SDK at hand offers.
+
+    static func textStream(from session: LanguageModelSession, prompt: Prompt, options: GenerationOptions,
+                           reasoningEffort: String?) -> LanguageModelSession.ResponseStream<String> {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return session.streamResponse(to: prompt, options: options,
+                                          contextOptions: ContextOptions(reasoningLevel: reasoningLevel(named: reasoningEffort)))
+        }
+        #endif
+        return session.streamResponse(to: prompt, options: options)
+    }
+
+    static func schemaStream(from session: LanguageModelSession, prompt: Prompt, schema: GenerationSchema,
+                             options: GenerationOptions,
+                             reasoningEffort: String?) -> LanguageModelSession.ResponseStream<GeneratedContent> {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return session.streamResponse(to: prompt, schema: schema, options: options,
+                                          contextOptions: ContextOptions(includeSchemaInPrompt: true,
+                                                                         reasoningLevel: reasoningLevel(named: reasoningEffort)))
+        }
+        #endif
+        return session.streamResponse(to: prompt, schema: schema, options: options)
+    }
+
+    static func choiceResponse(from session: LanguageModelSession, prompt: Prompt, schema: GenerationSchema,
+                               options: GenerationOptions,
+                               reasoningEffort: String?) async throws -> LanguageModelSession.Response<GeneratedContent> {
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            return try await session.respond(to: prompt, schema: schema, options: options,
+                                             contextOptions: ContextOptions(includeSchemaInPrompt: true,
+                                                                            reasoningLevel: reasoningLevel(named: reasoningEffort)))
+        }
+        #endif
+        return try await session.respond(to: prompt, schema: schema, options: options)
     }
 
     // MARK: Request mapping

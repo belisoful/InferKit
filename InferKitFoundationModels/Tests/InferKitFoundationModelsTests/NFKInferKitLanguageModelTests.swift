@@ -116,6 +116,62 @@ final class NFKInferKitLanguageModelTests: XCTestCase {
         #endif
     }
 
+    // MARK: Reasoning and usage
+
+    func testTheReasoningLevelBecomesTheCoreEffort() throws {
+        #if compiler(>=6.4)
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("a reasoning level needs macOS 27")
+        }
+        typealias Request = NFKInferKitLanguageModelRequest
+        XCTAssertNil(Request.reasoningEffort(for: nil))
+        XCTAssertEqual(Request.reasoningEffort(for: .light), NFKReasoningEffortLight)
+        XCTAssertEqual(Request.reasoningEffort(for: .moderate), NFKReasoningEffortModerate)
+        XCTAssertEqual(Request.reasoningEffort(for: .deep), NFKReasoningEffortDeep)
+        XCTAssertEqual(Request.reasoningEffort(for: .custom("exhaustive")), "exhaustive",
+                       "a level the contract does not name goes out under its own name")
+        #else
+        throw XCTSkip("built with an SDK before macOS 27")
+        #endif
+    }
+
+    func testTheResultsTokenCountsBecomeTheChannelsUsage() throws {
+        #if compiler(>=6.4)
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("the provider protocols need macOS 27")
+        }
+        typealias Executor = NFKInferKitLanguageModelExecutor
+        XCTAssertNil(Executor.usage(in: NFKInferenceResult(outputs: [NFKOutputText: "hi"])),
+                     "a backend that reports no counts sends no usage")
+        let counted = NFKInferenceResult(outputs: [NFKOutputUsage: [NFKUsageInputTokens: 11,
+                                                                    NFKUsageCachedTokens: 8,
+                                                                    NFKUsageOutputTokens: 7,
+                                                                    NFKUsageReasoningTokens: 5]])
+        let usage = try XCTUnwrap(Executor.usage(in: counted))
+        XCTAssertEqual(usage.input.totalTokenCount, 11)
+        XCTAssertEqual(usage.input.cachedTokenCount, 8)
+        XCTAssertEqual(usage.output.totalTokenCount, 7)
+        XCTAssertEqual(usage.output.reasoningTokenCount, 5)
+        #else
+        throw XCTSkip("built with an SDK before macOS 27")
+        #endif
+    }
+
+    func testAReadingCarriesTheAnswerAndTheReasoningApart() throws {
+        #if compiler(>=6.4)
+        guard #available(macOS 27, iOS 27, *) else {
+            throw XCTSkip("the provider protocols need macOS 27")
+        }
+        let result = NFKInferenceResult(outputs: [NFKOutputText: "four",
+                                                  NFKOutputReasoning: "two plus two"])
+        let reading = NFKInferKitLanguageModelExecutor.Reading(of: result)
+        XCTAssertEqual(reading.text, "four")
+        XCTAssertEqual(reading.reasoning, "two plus two")
+        #else
+        throw XCTSkip("built with an SDK before macOS 27")
+        #endif
+    }
+
     // MARK: Schema mapping
 
     func testASchemaBecomesAJSONSchemaObject() throws {

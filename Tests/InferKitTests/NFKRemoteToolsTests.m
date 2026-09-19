@@ -219,6 +219,43 @@
 	XCTAssertNil(result.text);
 }
 
+// The Messages API takes a token budget rather than a named level, and refuses a request that sets
+// the sampling beside extended thinking.
+- (void)testAnthropicTurnsAReasoningEffortIntoAThinkingBudget
+{
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"thinking\",\"thinking\":\"two plus two\"},"
+		"{\"type\":\"text\",\"text\":\"four\"}],\"usage\":{\"input_tokens\":9,\"output_tokens\":5}}";
+	NFKInferenceRequest *request = [self prompt:@"2+2?" parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate,
+																	  NFKParameterTemperature: @0.7,
+																	  NFKParameterTopP: @0.9 }];
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:request error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"thinking"], (@{ @"type": @"enabled", @"budget_tokens": @8192 }));
+	XCTAssertNil(body[@"temperature"], @"the API refuses sampling beside extended thinking");
+	XCTAssertNil(body[@"top_p"]);
+	XCTAssertGreaterThan([body[@"max_tokens"] integerValue], 8192, @"the budget leaves room for the answer");
+
+	XCTAssertEqualObjects(result.text, @"four");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputReasoning], @"two plus two");
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @9);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @5);
+	XCTAssertNil(usage[NFKUsageReasoningTokens], @"the API folds the thinking tokens into the output total");
+}
+
+- (void)testAnthropicTakesAThinkingBudgetInTokensAndRefusesAnythingElse
+{
+	self.anthropic.stagedBody = @"{\"content\":[]}";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"12000" }]
+													 error:NULL]);
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"thinking"][@"budget_tokens"], @12000);
+
+	NSError *error = nil;
+	XCTAssertNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"exhaustive" }]
+												  error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
 - (void)testAnthropicAttachesSeveralImagesBeforeTheText
 {
 	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"same\"}]}";

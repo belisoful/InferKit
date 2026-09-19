@@ -447,6 +447,29 @@
 	XCTAssertEqualWithAccuracy(NFKRemoteTransport.maximumRetryDelay, 8, 1e-9);
 }
 
+- (void)testExampleReasoningEffortAndWhatTheTurnCost
+{
+	// A reasoning model is asked how hard to think through one contract key. Each backend maps the
+	// three levels to its provider's control: reasoning_effort on an OpenAI-compatible endpoint, a
+	// thinking budget on the Messages API, the context's reasoning level on Apple's model.
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Why is the sky blue?" }
+									parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+	XCTAssertEqualObjects([request parameterForKey:NFKParameterReasoningEffort], @"deep");
+
+	// What came back: the chain the model showed, and what the turn cost. A count the provider
+	// leaves out is absent rather than zero, so a caller reads the key it needs.
+	NFKInferenceResult *result = [NFKInferenceResult resultWithOutputs:@{
+		NFKOutputText: @"Shorter wavelengths scatter more.",
+		NFKOutputReasoning: @"Rayleigh scattering goes as the inverse fourth power.",
+		NFKOutputUsage: @{ NFKUsageInputTokens: @11, NFKUsageOutputTokens: @7, NFKUsageReasoningTokens: @5 } }];
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @11);
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @5);
+	XCTAssertNil(usage[NFKUsageCachedTokens], @"an unreported count is absent");
+	XCTAssertGreaterThan([[result outputForKey:NFKOutputReasoning] length], 0);
+}
+
 - (void)testExampleRemoteMediaModes
 {
 	// Beside images, the chat backends take audio, documents, and a clip beside the prompt, and can

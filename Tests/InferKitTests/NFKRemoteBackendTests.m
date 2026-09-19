@@ -185,6 +185,62 @@
 	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceBackendFailure);
 }
 
+#pragma mark Reasoning and usage
+
+- (void)testTheReasoningEffortCarriesTheEndpointsSpelling
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"why" }
+															  parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"reasoning_effort"], @"high");
+	XCTAssertNil([self.backend decodedRequestBody][NFKParameterReasoningEffort], @"the core key is renamed, not folded in beside it");
+}
+
+- (void)testALevelTheContractDoesNotNameGoesOutAsWritten
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{}
+															  parameters:@{ NFKParameterReasoningEffort: @"minimal" }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"reasoning_effort"], @"minimal");
+}
+
+- (void)testTheReasoningAndTheTokenCountsComeBack
+{
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"four\","
+								"\"reasoning_content\":\"two plus two\"}}],"
+								"\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,"
+								"\"prompt_tokens_details\":{\"cached_tokens\":8},"
+								"\"completion_tokens_details\":{\"reasoning_tokens\":5}}}"
+							  dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{}] error:NULL];
+	XCTAssertEqualObjects([result outputForKey:NFKOutputReasoning], @"two plus two");
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @11);
+	XCTAssertEqualObjects(usage[NFKUsageCachedTokens], @8);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @7);
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @5);
+}
+
+- (void)testACountTheEndpointLeavesOutIsAbsentRatherThanZero
+{
+	self.backend.stagedData = [@"{\"choices\":[],\"usage\":{\"prompt_tokens\":3}}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{}] error:NULL];
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @3);
+	XCTAssertNil(usage[NFKUsageOutputTokens]);
+}
+
+- (void)testAReplyWithoutReasoningOrCountsCarriesNeitherKey
+{
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}"
+							  dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{}] error:NULL];
+	XCTAssertNil([result outputForKey:NFKOutputReasoning]);
+	XCTAssertNil([result outputForKey:NFKOutputUsage]);
+}
+
 - (void)testTheAuthorizationHeaderCarriesTheAPIKey
 {
 	self.backend.apiKey = @"secret";

@@ -92,12 +92,42 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   - Streaming: `NFKInferenceSubmit` covers sync and async backends, the job's `progressHandler`
     feeds an `AsyncStream`, and each reading contributes its new suffix through `appendix(sent:text:)`
     (a reading that does not extend what was sent is a rewrite, which an append cannot express).
-    `withTaskCancellationHandler` cancels the job. The channel's `tokenCount` is 0 everywhere,
-    because the core reports no usage; item 4's `NFKOutputUsage` is where that changes.
+    `withTaskCancellationHandler` cancels the job. Each reading is a `Reading` (text plus reasoning),
+    so the two grow apart into the channel's response and reasoning through the same `appendix`.
+    Every `tokenCount` on an append is 0: the counts are the turn's totals, which arrive once the
+    turn is over, as one `.updateUsage` built from the result's `NFKOutputUsage`.
   - **Compiler crash to avoid:** calling an `@optional` Objective-C protocol method as a value from
     Swift (`backend.prepare?()`) crashed swift-frontend 6.4 in IRGen, emitting the reabstraction
     thunk for the imported throwing function. The core's `NFKInferencePrepare(backend, &error)`
     replaces it and is the shape to use for any other optional member.
+- Images, reasoning, and usage (2026-09-19, item 4 of the Xcode 27 audit). All three are 27-only, so
+  all three take both gates.
+  - Images: `NFKInputImage` / `NFKInputImages` → `Attachment(cgImage)` appended to the prompt. The
+    prompt stops being a `String` and becomes a `Prompt` built through
+    `Prompt(@PromptBuilder _:)`, whose builder has `buildArray`, so a `for` over the images works
+    inside it. `NFKImageCoding.cgImage(forImage:)` is the core's converter for the three
+    representations. `tokenCount(for:)` takes `some PromptRepresentable`, so the preflight counts the
+    attachments rather than the text alone.
+  - Reasoning in: `NFKParameterReasoningEffort` → `ContextOptions.reasoningLevel`. The level is a
+    27-only enum, so what crosses the gate is the **level's name as a String**, not a boxed enum, and
+    each call site builds its own `ContextOptions`. That matters because the 27 schema overloads
+    default to `ContextOptions(includeSchemaInPrompt: true)`: passing a bare `ContextOptions` would
+    silently drop the schema from the prompt.
+  - The `contextOptions:` parameter exists only on the 27 overloads, so `textStream(from:…)`,
+    `schemaStream(from:…)`, and `choiceResponse(from:…)` each wrap one call with the compiler check
+    inside, which keeps the three format branches from doubling.
+  - Reasoning and usage out: `Response.usage` / `Snapshot.usage` (27) → `NFKOutputUsage`, and the
+    `.reasoning` transcript entries → `NFKOutputReasoning`. `runOutputs(of:)` is generic over the
+    snapshot and the response and answers an empty dictionary below 27, so the branches read one
+    line each. A `guard case .reasoning(let r) = entry` inside a 27-available function needs no
+    `@unknown default`, unlike a `switch`.
+  - Below 27 a request that carries an image or an effort is **refused** with
+    `kNFKError_InferenceUnsupported` rather than answered without it, which matches how
+    `NFKParameterOutputFormat` is handled in the same file, and `supportedParameterKeys` /
+    `supportedInputKeys` leave the keys out so a caller can ask first.
+  - Unmeasured on this host (macOS 26.6.2): every one of these paths needs OS 27, so the tests
+    assert the refusal and the declaration instead, through a `reachesOS27` helper that is true only
+    when both gates pass.
 - Gotchas: SwiftPM tools 5.9 spells the platform `.macOS("26.0")` (`.v26` needs newer tools); the
   `NFKInferenceError` cases import into Swift as `.error_InferenceNotReady` style.
 - Two SDKs, one source: CI's `macos-latest` image builds this package with an Xcode 26 SDK while the

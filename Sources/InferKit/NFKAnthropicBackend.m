@@ -18,9 +18,26 @@
 	forced into a tool whose input schema is the caller's. */
 static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
-/*! What a streamed reply assembles into: content blocks by index, each text or a tool use. */
+/*! The thinking budget each reasoning effort the contract names asks for. The Messages API takes a
+	token budget rather than a named level, so the three levels are a table of budgets. The API's own
+	floor is 1024 tokens, and max_tokens is raised where a budget would not fit under it. */
+static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
+{
+	static NSDictionary<NSString *, NSNumber *> *budgets;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		budgets = @{ NFKReasoningEffortLight: @2048,
+					 NFKReasoningEffortModerate: @8192,
+					 NFKReasoningEffortDeep: @16384 };
+	});
+	return budgets;
+}
+
+/*! What a streamed reply assembles into: content blocks by index, each text, thinking, or a tool
+	use, and the token counts the message events report. */
 @interface NFKAnthropicStreamState : NSObject
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableDictionary *> *blocksByIndex;
+@property (nonatomic, copy, nullable) NSDictionary<NSString *, NSNumber *> *usage;
 @property (nonatomic, assign) BOOL finished;
 @end
 
@@ -69,7 +86,8 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	// The Messages API has no repetition penalty, so that core key has nothing to become here.
 	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterTemperature,
 								  NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
-								  NFKParameterStopSequences, NFKParameterAudioOutput ]];
+								  NFKParameterStopSequences, NFKParameterAudioOutput,
+								  NFKParameterReasoningEffort ]];
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -111,7 +129,10 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 							error:outError];
 	}
 	NSArray *content = [responseBody[@"content"] isKindOfClass:NSArray.class] ? responseBody[@"content"] : @[];
-	return [self resultForContentBlocks:content raw:responseBody expectsStructured:[self requestExpectsStructuredReply:request]];
+	return [self resultForContentBlocks:content
+								  usage:[self usageInMessageBody:responseBody]
+									raw:responseBody
+					  expectsStructured:[self requestExpectsStructuredReply:request]];
 }
 
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
@@ -153,7 +174,13 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 			return;
 		}
 		if ([self applyStreamEvent:event type:type toState:state]) {
-			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKRemoteBackendTextKey: [self textInState:state] }]];
+			NSMutableDictionary<NSString *, id> *partial = [NSMutableDictionary dictionary];
+			partial[NFKRemoteBackendTextKey] = [self textInState:state];
+			NSString *reasoning = [self reasoningInState:state];
+			if (reasoning.length > 0) {
+				partial[NFKOutputReasoning] = reasoning;
+			}
+			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:partial]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
 		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
@@ -192,6 +219,12 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	if ([request.parameters[NFKParameterAudioOutput] isKindOfClass:NSDictionary.class]) {
 		[self failWithCode:kNFKError_InferenceUnsupported
 			   description:@"the Messages API answers in text only; speak the reply through NFKRemoteSpeechBackend" error:outError];
+		return nil;
+	}
+	id effort = [request parameterForKey:NFKParameterReasoningEffort];
+	if (effort != nil && [self thinkingBudgetForEffort:effort] == nil) {
+		[self failWithCode:kNFKError_InferenceUnsupported
+			   description:@"NFKParameterReasoningEffort is light, moderate, deep, or a thinking budget in tokens" error:outError];
 		return nil;
 	}
 	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request error:outError];
@@ -237,18 +270,29 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	NSNumber *maxTokens = [request parameterForKey:NFKParameterMaxTokens];
 	body[@"max_tokens"] = [maxTokens isKindOfClass:NSNumber.class] ? maxTokens : @(self.maxTokens);
 
+	// Extended thinking rules the sampling: the API refuses a request that sets temperature, top_p,
+	// or top_k beside it, so those three are dropped where a reasoning effort is asked for. The
+	// budget must also leave room under max_tokens for the answer itself.
+	NSNumber *budget = [self thinkingBudgetForEffort:[request parameterForKey:NFKParameterReasoningEffort]];
+	if (budget != nil) {
+		body[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": budget };
+		if ([body[@"max_tokens"] integerValue] <= budget.integerValue) {
+			body[@"max_tokens"] = @(budget.integerValue + self.maxTokens);
+		}
+	}
+
 	NSNumber *temperature = [request parameterForKey:NFKParameterTemperature];
-	if ([temperature isKindOfClass:NSNumber.class]) {
+	if ([temperature isKindOfClass:NSNumber.class] && budget == nil) {
 		body[@"temperature"] = temperature;
 	}
 
 	// The Messages API names these three itself, so the core keys are renamed rather than dropped.
 	NSNumber *topP = [request parameterForKey:NFKParameterTopP];
-	if ([topP isKindOfClass:NSNumber.class]) {
+	if ([topP isKindOfClass:NSNumber.class] && budget == nil) {
 		body[@"top_p"] = topP;
 	}
 	NSNumber *topK = [request parameterForKey:NFKParameterTopK];
-	if ([topK isKindOfClass:NSNumber.class]) {
+	if ([topK isKindOfClass:NSNumber.class] && budget == nil) {
 		body[@"top_k"] = topK;
 	}
 	NSArray<NSString *> *stopSequences = [request parameterForKey:NFKParameterStopSequences];
@@ -298,6 +342,26 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 		body[@"tools"] = tools;
 	}
 	return body;
+}
+
+// The three levels the contract names come from the table; a numeric string is a budget in tokens,
+// which is how a caller asks for one the table does not hold. Anything else is nil, and the request
+// is refused rather than answered without the thinking it asked for.
+- (nullable NSNumber *)thinkingBudgetForEffort:(nullable id)effort
+{
+	if (![effort isKindOfClass:NSString.class]) {
+		return nil;
+	}
+	NSNumber *named = NFKAnthropicThinkingBudgets()[effort];
+	if (named != nil) {
+		return named;
+	}
+	NSScanner *scanner = [NSScanner scannerWithString:effort];
+	NSInteger tokens = 0;
+	if ([scanner scanInteger:&tokens] && scanner.isAtEnd && tokens > 0) {
+		return @(tokens);
+	}
+	return nil;
 }
 
 // The contract's {name, description, parameters} is the API's {name, description, input_schema};
@@ -357,14 +421,28 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
 #pragma mark Response
 
+// The counts ride under usage, with the input side split between what was read and what the cache
+// served. The API reports no reasoning count: the thinking tokens are part of the output total.
+- (nullable NSDictionary<NSString *, NSNumber *> *)usageInMessageBody:(nullable NSDictionary *)body
+{
+	NSDictionary *usage = [body[@"usage"] isKindOfClass:NSDictionary.class] ? body[@"usage"] : nil;
+	if (usage == nil) {
+		return nil;
+	}
+	return NFKRemoteUsage(usage[@"input_tokens"], usage[@"cache_read_input_tokens"],
+						  usage[@"output_tokens"], nil);
+}
+
 /*! Joins the text blocks into the text output and reads the tool uses. The API returns a list of
 	typed blocks, not one string; the forced structured tool's input is the structured output. */
 - (NFKInferenceResult *)resultForContentBlocks:(NSArray *)content
+											 usage:(nullable NSDictionary<NSString *, NSNumber *> *)usage
 										   raw:(id)raw
 							 expectsStructured:(BOOL)expectsStructured
 {
 	NSMutableDictionary *outputs = [NSMutableDictionary dictionary];
 	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
+	NSMutableArray<NSString *> *reasoning = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *toolCalls = [NSMutableArray array];
 	for (NSDictionary *block in content) {
 		if (![block isKindOfClass:NSDictionary.class]) {
@@ -372,6 +450,12 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 		}
 		if ([block[@"type"] isEqualToString:@"text"] && [block[@"text"] isKindOfClass:NSString.class]) {
 			[pieces addObject:block[@"text"]];
+			continue;
+		}
+		// A thinking block carries the chain; a redacted one carries encrypted bytes with nothing
+		// to read, so it contributes no reasoning text.
+		if ([block[@"type"] isEqualToString:@"thinking"] && [block[@"thinking"] isKindOfClass:NSString.class]) {
+			[reasoning addObject:block[@"thinking"]];
 			continue;
 		}
 		if (![block[@"type"] isEqualToString:@"tool_use"] || ![block[@"name"] isKindOfClass:NSString.class]) {
@@ -391,8 +475,14 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	if (pieces.count > 0) {
 		outputs[NFKRemoteBackendTextKey] = [pieces componentsJoinedByString:@""];
 	}
+	if (reasoning.count > 0) {
+		outputs[NFKOutputReasoning] = [reasoning componentsJoinedByString:@"\n"];
+	}
 	if (toolCalls.count > 0) {
 		outputs[NFKOutputToolCalls] = toolCalls;
+	}
+	if (usage != nil) {
+		outputs[NFKOutputUsage] = usage;
 	}
 	outputs[NFKRemoteBackendRawKey] = raw;
 	return [NFKInferenceResult resultWithOutputs:outputs];
@@ -404,12 +494,25 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 // Returns whether the event carried text, which is what a partial result is worth reporting for.
 - (BOOL)applyStreamEvent:(NSDictionary *)event type:(NSString *)type toState:(NFKAnthropicStreamState *)state
 {
+	// message_start opens with what the request cost; message_delta closes with what the reply cost,
+	// so the two together are the turn's counts.
+	if ([type isEqualToString:@"message_start"] || [type isEqualToString:@"message_delta"]) {
+		NSDictionary *carrier = [event[@"message"] isKindOfClass:NSDictionary.class] ? event[@"message"] : event;
+		NSDictionary<NSString *, NSNumber *> *reported = [self usageInMessageBody:carrier];
+		if (reported != nil) {
+			NSMutableDictionary<NSString *, NSNumber *> *usage = [state.usage mutableCopy] ?: [NSMutableDictionary dictionary];
+			[usage addEntriesFromDictionary:reported];
+			state.usage = usage;
+		}
+	}
 	NSNumber *index = [event[@"index"] isKindOfClass:NSNumber.class] ? event[@"index"] : nil;
 	if ([type isEqualToString:@"content_block_start"] && index != nil) {
 		NSDictionary *block = [event[@"content_block"] isKindOfClass:NSDictionary.class] ? event[@"content_block"] : @{};
 		NSMutableDictionary *opened = [block mutableCopy];
 		if ([opened[@"type"] isEqual:@"text"]) {
 			opened[@"text"] = [opened[@"text"] isKindOfClass:NSString.class] ? opened[@"text"] : @"";
+		} else if ([opened[@"type"] isEqual:@"thinking"]) {
+			opened[@"thinking"] = [opened[@"thinking"] isKindOfClass:NSString.class] ? opened[@"thinking"] : @"";
 		} else if ([opened[@"type"] isEqual:@"tool_use"]) {
 			opened[@"partial_json"] = @"";
 		}
@@ -428,22 +531,38 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 		block[@"text"] = [(block[@"text"] ?: @"") stringByAppendingString:delta[@"text"]];
 		return [delta[@"text"] length] > 0;
 	}
+	if ([delta[@"type"] isEqual:@"thinking_delta"] && [delta[@"thinking"] isKindOfClass:NSString.class]) {
+		block[@"thinking"] = [(block[@"thinking"] ?: @"") stringByAppendingString:delta[@"thinking"]];
+		return [delta[@"thinking"] length] > 0;
+	}
 	if ([delta[@"type"] isEqual:@"input_json_delta"] && [delta[@"partial_json"] isKindOfClass:NSString.class]) {
 		block[@"partial_json"] = [(block[@"partial_json"] ?: @"") stringByAppendingString:delta[@"partial_json"]];
 	}
 	return NO;
 }
 
-- (NSString *)textInState:(NFKAnthropicStreamState *)state
+// The blocks of one type, in the order the stream opened them; a block's own text rides under a
+// field named for the block, which is what the API's deltas append to.
+- (NSArray<NSString *> *)piecesOfBlockType:(NSString *)type inState:(NFKAnthropicStreamState *)state
 {
-	NSMutableString *text = [NSMutableString string];
+	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
 	for (NSNumber *index in [state.blocksByIndex.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
 		NSDictionary *block = state.blocksByIndex[index];
-		if ([block[@"type"] isEqual:@"text"] && [block[@"text"] isKindOfClass:NSString.class]) {
-			[text appendString:block[@"text"]];
+		if ([block[@"type"] isEqual:type] && [block[type] isKindOfClass:NSString.class]) {
+			[pieces addObject:block[type]];
 		}
 	}
-	return text;
+	return pieces;
+}
+
+- (NSString *)textInState:(NFKAnthropicStreamState *)state
+{
+	return [[self piecesOfBlockType:@"text" inState:state] componentsJoinedByString:@""];
+}
+
+- (NSString *)reasoningInState:(NFKAnthropicStreamState *)state
+{
+	return [[self piecesOfBlockType:@"thinking" inState:state] componentsJoinedByString:@"\n"];
 }
 
 // The assembled blocks are read the way a blocking reply's are; a tool use's input is the parse of
@@ -463,6 +582,7 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 		[content addObject:block];
 	}
 	return [self resultForContentBlocks:content
+								  usage:state.usage
 									raw:@{ @"role": @"assistant", @"content": content }
 					  expectsStructured:expectsStructured];
 }
