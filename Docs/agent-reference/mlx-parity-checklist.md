@@ -37,6 +37,13 @@ to prevent. Update all of these, in the modality's existing section, mirroring t
   commit — but skipping it leaves the model's parity test silently skipped on a plain run (green with
   nothing behind it), which is exactly the gap a full models test exists to catch.
 
+One line of code belongs with the listings, because nothing else catches it: a model whose backend
+reads a request key beyond what its base backend reads declares that key at the construction site
+(`forwardInputKeys` / `forwardParameterKeys` on `NFKMLXModuleBackend` and `NFKMLXMattingBackend`,
+`encodedInputKeys` / `encodedParameterKeys` on `NFKMLXDiffusionBackend`). The backend's
+`supportedInputKeys` and `supportedParameterKeys` answer what the engine acts on, and a missing
+declaration makes that answer wrong. See "Declared keys" in `mlx-companion.md`.
+
 Not a listing, so not required per model: `InferKitMLX/ObjCExamples/MLXObjCExample.m` is a curated
 illustrative set, not an exhaustive gallery.
 

@@ -1335,6 +1335,20 @@ for (NFKFaceObservation *face in [detector facesInImage:image error:&error]) {
 double bytesPerSecond = [NFKMLXGPU measuredMemoryBandwidthWithMegabytes:0 repetitions:4];
 ```
 
+Every backend declares the request keys it acts on, so a caller sets what the engine honors and a
+router picks the engine a request needs:
+
+```objc
+id<NFKInferenceBackend> style = [NFKMLXAdaIN backendWithEncoderURL:nil decoderURL:nil error:&error];
+BOOL takesStyle = [style.supportedInputKeys containsObject:NFKInputControl];       // YES
+BOOL takesBlend = [style.supportedParameterKeys containsObject:NFKParameterStrength];  // YES
+```
+
+The language backend declares the core sampling keys, `NFKParameterJSONSchema`,
+`NFKParameterOutputFormat`, `NFKParameterChoices`, and every `NFKMLXGenerationParameterKey`. A
+backend that reads one input and no parameters declares exactly that, which is a different answer
+from declaring nothing.
+
 Variant models expose an `@objc` enum: `NFKMLXRealESRGANVariant` (x4 / anime / x2), `NFKMLXDepthVariant`
 (small / base / large), `NFKMLXU2NetVariant` (full / light). Single-config models
 (`NFKMLXNAFNet`, `NFKMLXSAM`, `NFKMLXLaMa`, `NFKMLXStableDiffusionInpaint`, `NFKMLXMarigold`,

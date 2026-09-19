@@ -351,6 +351,14 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
 
     @objc public var backendIdentifier: String { "minimax-music3" }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterDurationSeconds, NFKParameterSteps, NFKParameterGuidanceScale, NFKParameterSeed]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputLyrics] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

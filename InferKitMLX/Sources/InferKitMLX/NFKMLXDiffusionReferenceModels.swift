@@ -109,6 +109,7 @@ extension NFKMLXReferenceModels {
                 identifier: "diffusion-controlnet",
                 configuration: configuration,
                 scheduler: NFKDDIMScheduler(predictionType: .epsilon, setsAlphaToOne: true),
+                encodedInputKeys: [NFKInputControl],
                 encode: { request, _, _ in
                     guard let controlValue = request.input(forKey: NFKInputControl) else {
                         throw NFKMLXError.unsupportedInput

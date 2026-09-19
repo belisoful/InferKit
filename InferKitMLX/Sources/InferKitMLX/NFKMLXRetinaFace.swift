@@ -583,6 +583,12 @@ final class NFKMLXDetectionBackend: NSObject, NFKInferenceBackend {
     var isReady: Bool { true }
     var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc var supportedParameterKeys: Set<String> { [] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc var supportedInputKeys: Set<String> { [NFKInputImage] }
+
     func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let value = request.input(forKey: NFKInputImage),
               CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {

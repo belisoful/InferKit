@@ -46,6 +46,26 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (Foundation-only, unit-tested), and returns an `NFKAudioAsset` under `NFKOutputAudio`.
   `NFKMLXReferenceModels.registerToneSpeech` is the shipped reference (`tone-speech`), so ObjC builds
   the text→audio path by name. This is the first backend for the audio modality.
+- **Declared keys (2026-09-18).** Every backend class here implements the core protocol's optional
+  `supportedParameterKeys` / `supportedInputKeys`, so a caller reads what an engine acts on: the
+  Foundation Models provider bridge derives Apple's capabilities from them, and a router picks the
+  engine a request needs. A backend that reads one input and no parameters declares exactly that,
+  which is a different answer from declaring nothing. Rules that keep the declarations honest:
+  - Declare only what the code reads. `NFKMLXLanguageBackend` declares the core sampling keys,
+    `NFKParameterJSONSchema`, `NFKParameterOutputFormat`, `NFKParameterChoices`, and every
+    `NFKMLXGenerationParameterKey`; it does not declare `NFKParameterTopK` or `NFKParameterTools`,
+    which it does not read.
+  - A closure backend cannot know what its closure reads, so the caller names it:
+    `NFKMLXModuleBackend` and `NFKMLXMattingBackend` take `forwardInputKeys` / `forwardParameterKeys`
+    on the request-aware initializer, and `NFKMLXDiffusionBackend` takes `encodedInputKeys` /
+    `encodedParameterKeys`. Each unions them with the keys the class itself reads. AdaIN passes
+    `NFKInputControl` and `NFKParameterStrength`, SAM passes `NFKSAMPointKey`, and
+    `NFKMLXTextToImage` passes the prompt pair and `NFKParameterWidth` / `NFKParameterHeight`. Those
+    two sets are `NFKMLXTextToImage.encodedInputKeys` / `.encodedParameterKeys`, and the lazy
+    `NFKMLXBackend` reads the same two: asking the backend it builds would download the release.
+  - `NFKMLXTensorBackend` derives its inputs from the configured ports.
+  - A new model that reads a request key beyond its class's own adds it at the construction site, or
+    the declaration lies. `NFKMLXDeclaredKeysTests` covers the fixed sets, the unions, and the ports.
 - `NFKStableDiffusionProvider` (`@objc`) — the bridge that lets the core activate the bundled
   `NFKMLXBackend` (Stable Diffusion) without depending on InferKitMLX. It conforms to the core's
   `NFKDynamicBackendProvider` and is named exactly the default the core tries for its `stable-diffusion`

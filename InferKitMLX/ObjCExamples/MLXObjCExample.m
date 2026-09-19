@@ -966,4 +966,21 @@
 	XCTAssertTrue([NFKMLXDepth3Camera instancesRespondToSelector:@selector(rotation)]);
 }
 
+- (void)testObjectiveCReadsWhatABackendActsOn
+{
+	// Each backend declares the keys it reads, so an Objective-C caller sets what the engine honors
+	// instead of guessing, and a router picks the engine a request needs.
+	NSError *error = nil;
+	id<NFKInferenceBackend> keyer = [NFKMLXModelRegistry backendNamed:@"green-screen-keyer" weightsURL:nil error:&error];
+	XCTAssertNotNil(keyer, @"%@", error);
+	XCTAssertTrue([keyer.supportedInputKeys containsObject:NFKInputImage]);
+	XCTAssertEqual(keyer.supportedParameterKeys.count, (NSUInteger)0, @"the keyer reads no parameters");
+
+	// Style transfer reads a second image and a blend, and says so.
+	id<NFKInferenceBackend> style = [NFKMLXAdaIN backendWithEncoderURL:nil decoderURL:nil error:&error];
+	XCTAssertNotNil(style, @"%@", error);
+	XCTAssertTrue([style.supportedInputKeys containsObject:NFKInputControl]);
+	XCTAssertTrue([style.supportedParameterKeys containsObject:NFKParameterStrength]);
+}
+
 @end

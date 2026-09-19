@@ -34,6 +34,8 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     private let forward: RequestForward
     private let identifier: String
     private let ready: Bool
+    private let forwardInputKeys: Set<String>
+    private let forwardParameterKeys: Set<String>
 
     /// - Parameters:
     ///   - identifier: The value reported by `backendIdentifier`.
@@ -46,6 +48,8 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
                 forward: @escaping Forward) {
         self.identifier = identifier
         self.ready = isReady
+        self.forwardInputKeys = []
+        self.forwardParameterKeys = []
         self.forward = { image, _ in forward(image) }
         super.init()
     }
@@ -55,12 +59,20 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     /// - Parameters:
     ///   - identifier: The value reported by `backendIdentifier`.
     ///   - isReady: Whether the model's weights are already loaded.
+    ///   - forwardInputKeys: The request inputs `requestForward` reads beyond `NFKInputImage`, such
+    ///     as a style image under `NFKInputControl`. They join `supportedInputKeys`.
+    ///   - forwardParameterKeys: The request parameters `requestForward` reads, such as
+    ///     `NFKParameterStrength`. They join `supportedParameterKeys`.
     ///   - requestForward: Maps an input image tensor and its request to an output image tensor.
     public init(identifier: String = "mlx-module",
                 isReady: Bool = true,
+                forwardInputKeys: Set<String> = [],
+                forwardParameterKeys: Set<String> = [],
                 requestForward: @escaping RequestForward) {
         self.identifier = identifier
         self.ready = isReady
+        self.forwardInputKeys = forwardInputKeys
+        self.forwardParameterKeys = forwardParameterKeys
         self.forward = requestForward
         super.init()
     }
@@ -70,6 +82,14 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { ready }
 
     @objc public var backendIdentifier: String { identifier }
+
+    /// The request parameters the backend reads: none of its own, plus whatever the request-aware
+    /// forward was built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { forwardParameterKeys }
+
+    /// The request inputs the backend reads: the image, plus whatever the request-aware forward was
+    /// built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { forwardInputKeys.union([NFKInputImage]) }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {

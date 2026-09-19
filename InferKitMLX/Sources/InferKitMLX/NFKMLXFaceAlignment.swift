@@ -289,6 +289,12 @@ public final class NFKMLXPhotoFaceBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let value = request.input(forKey: NFKInputImage) else {
             throw NFKMLXError.unsupportedInput

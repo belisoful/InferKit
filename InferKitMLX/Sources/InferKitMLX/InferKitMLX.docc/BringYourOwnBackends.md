@@ -29,6 +29,26 @@ let backend = NFKMLXModuleBackend(identifier: "invert", isReady: true) { image i
 let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: cgImage]))
 ```
 
+### Declaring the keys a closure reads
+
+A backend declares the request keys it acts on through the protocol's `supportedParameterKeys` and
+`supportedInputKeys`, which a caller reads to configure the engine and a bridge reads to report what
+the engine can do. A base backend knows its own keys and not the closure's, so a closure that reads
+more names them:
+
+```swift
+let styled = NFKMLXModuleBackend(identifier: "style",
+                                 forwardInputKeys: [NFKInputControl],
+                                 forwardParameterKeys: [NFKParameterStrength]) { image, request in
+    stylize(image, style: request.input(forKey: NFKInputControl))
+}
+styled.supportedInputKeys      // [NFKInputImage, NFKInputControl]
+```
+
+``NFKMLXMattingBackend`` takes the same two, ``NFKMLXDiffusionBackend`` takes `encodedInputKeys` and
+`encodedParameterKeys` for what its `encode` closure reads, and ``NFKMLXTensorBackend`` derives its
+inputs from the configured ports.
+
 ### Registering a closure by name
 
 A model author registers a factory by name from Swift; an Objective-C consumer then builds it through

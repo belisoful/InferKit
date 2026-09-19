@@ -312,6 +312,27 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads: the core sampling keys, the schema and the two
+    /// keys that shape the output, and every ``NFKMLXGenerationParameterKey``. Introduced in
+    /// InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+         NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
+         NFKMLXGenerationParameterKey.contextWindow,
+         NFKMLXGenerationParameterKey.cacheQuantizationBits,
+         NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
+         NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys,
+         NFKMLXGenerationParameterKey.prefillChunkSize,
+         NFKMLXGenerationParameterKey.chatTemplate,
+         NFKMLXGenerationParameterKey.draftTokens,
+         NFKMLXGenerationParameterKey.reusesPromptCache,
+         NFKMLXGenerationParameterKey.outputFormat,
+         NFKMLXGenerationParameterKey.choices]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
+
     /// Whether the backend holds a draft model, so requests can decode speculatively.
     @objc public var hasDraftModel: Bool { holder.draft != nil }
 

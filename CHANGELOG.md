@@ -14,8 +14,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInferenceBackend` gains two optional declarations: `supportedParameterKeys` and
   `supportedInputKeys`, the keys a backend acts on. A caller that has to know in advance reads them,
   and the Foundation Models provider bridge derives Apple's capabilities from them. The remote
-  backend, the Anthropic backend, the Core ML language backend, and the Foundation Models backend
-  declare their own. A backend that declares nothing behaves as before.
+  backend, the Anthropic backend, the Core ML language backend, the Foundation Models backend, and
+  every InferKitMLX backend declare their own. A backend that declares nothing behaves as before.
 - `NFKInferencePrepare(backend, &error)` prepares a backend uniformly, calling `prepareWithError:`
   where the backend implements it and returning `YES` where it does not, the way
   `NFKInferenceSubmit` covers both submission paths.
@@ -100,6 +100,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   identity comparison read as a different provider.
 
 ### InferKitMLX (companion)
+
+#### Every backend declares the keys it reads
+
+- Each backend implements the core protocol's `supportedParameterKeys` and `supportedInputKeys`, so a
+  caller reads what an engine acts on: the language backend declares the core sampling keys,
+  `NFKParameterJSONSchema`, `NFKParameterOutputFormat`, `NFKParameterChoices`, and every
+  `NFKMLXGenerationParameterKey`; Gemma 3 declares its image input; an audio model declares
+  `NFKInputAudio` and no parameters. The Foundation Models provider bridge reads the declarations to
+  report what a session may ask of the backend.
+- The closure backends take the keys their closures read, since the class cannot know them:
+  `NFKMLXModuleBackend` and `NFKMLXMattingBackend` gain `forwardInputKeys` / `forwardParameterKeys` on
+  the request-aware initializer, and `NFKMLXDiffusionBackend` gains `encodedInputKeys` /
+  `encodedParameterKeys`; each unions them with its own. `NFKMLXTensorBackend` derives its inputs from
+  the configured ports. AdaIN declares `NFKInputControl` and `NFKParameterStrength`, SAM declares
+  `NFKSAMPointKey`, and text-to-image declares the prompt pair with `NFKParameterWidth` /
+  `NFKParameterHeight`.
 
 #### Fine-tuning is reachable, and a frozen backbone stays frozen
 

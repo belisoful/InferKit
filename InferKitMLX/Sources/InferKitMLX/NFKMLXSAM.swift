@@ -535,7 +535,8 @@ public final class NFKMLXSAM: NSObject {
         let holder = NFKMLXSAMHolder(net)
         var configuration = NFKMattingConfiguration()
         configuration.emitsMatte = true
-        return NFKMLXMattingBackend(identifier: modelName, configuration: configuration) { plate, _, request in
+        return NFKMLXMattingBackend(identifier: modelName, configuration: configuration,
+                                    forwardParameterKeys: [NFKSAMPointKey]) { plate, _, request in
             let point = NFKMLXSAMHolder.point(from: request, width: plate.shape[1], height: plate.shape[0])
             return holder.segment(plate, point: point)
         }

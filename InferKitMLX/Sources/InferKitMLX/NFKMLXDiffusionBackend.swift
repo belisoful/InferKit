@@ -139,11 +139,20 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     private let encode: Encode
     private let denoise: Denoise
     private let decode: Decode
+    private let encodedInputKeys: Set<String>
+    private let encodedParameterKeys: Set<String>
 
+    /// - Parameters:
+    ///   - encodedInputKeys: The request inputs `encode` reads beyond the image and the mask, such
+    ///     as the prompt of a text-to-image model. They join `supportedInputKeys`.
+    ///   - encodedParameterKeys: The request parameters `encode` reads beyond the sampling keys the
+    ///     loop itself reads, such as an output size. They join `supportedParameterKeys`.
     public init(identifier: String = "mlx-diffusion",
                 isReady: Bool = true,
                 configuration: NFKDiffusionConfiguration = NFKDiffusionConfiguration(),
                 scheduler: any NFKDiffusionScheduler = NFKDDIMScheduler(),
+                encodedInputKeys: Set<String> = [],
+                encodedParameterKeys: Set<String> = [],
                 encode: @escaping Encode,
                 denoise: @escaping Denoise,
                 decode: @escaping Decode = { $0 }) {
@@ -151,6 +160,8 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         self.ready = isReady
         self.configuration = configuration
         self.scheduler = scheduler
+        self.encodedInputKeys = encodedInputKeys
+        self.encodedParameterKeys = encodedParameterKeys
         self.encode = encode
         self.denoise = denoise
         self.decode = decode
@@ -162,6 +173,19 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { ready }
 
     @objc public var backendIdentifier: String { identifier }
+
+    /// The request parameters the backend reads: the sampling keys the loop resolves, plus whatever
+    /// the encode closure was built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        encodedParameterKeys.union([NFKParameterSteps, NFKParameterGuidanceScale,
+                                    NFKParameterStrength, NFKParameterSeed])
+    }
+
+    /// The request inputs the backend reads: the source image and the mask, plus whatever the encode
+    /// closure was built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        encodedInputKeys.union([NFKInputImage, NFKInputMask])
+    }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {

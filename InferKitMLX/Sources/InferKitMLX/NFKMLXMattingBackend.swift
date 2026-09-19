@@ -72,6 +72,8 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
     private let ready: Bool
     private let configuration: NFKMattingConfiguration
+    private let forwardInputKeys: Set<String>
+    private let forwardParameterKeys: Set<String>
 
     public init(identifier: String = "mlx-matting",
                 isReady: Bool = true,
@@ -80,17 +82,28 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
+        self.forwardInputKeys = []
+        self.forwardParameterKeys = []
         self.forward = { plate, hint, _ in forward(plate, hint) }
         super.init()
     }
 
+    /// - Parameters:
+    ///   - forwardInputKeys: The request inputs `requestForward` reads beyond the plate and the
+    ///     hint. They join `supportedInputKeys`.
+    ///   - forwardParameterKeys: The request parameters `requestForward` reads, such as SAM's click
+    ///     point. They join `supportedParameterKeys`.
     public init(identifier: String = "mlx-matting",
                 isReady: Bool = true,
                 configuration: NFKMattingConfiguration = NFKMattingConfiguration(),
+                forwardInputKeys: Set<String> = [],
+                forwardParameterKeys: Set<String> = [],
                 requestForward: @escaping RequestForward) {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
+        self.forwardInputKeys = forwardInputKeys
+        self.forwardParameterKeys = forwardParameterKeys
         self.forward = requestForward
         super.init()
     }
@@ -100,6 +113,16 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { ready }
 
     @objc public var backendIdentifier: String { identifier }
+
+    /// The request parameters the backend reads: none of its own, plus whatever the request-aware
+    /// forward was built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { forwardParameterKeys }
+
+    /// The request inputs the backend reads: the plate and the hint, plus whatever the request-aware
+    /// forward was built to read. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        forwardInputKeys.union([NFKInputImage, NFKInputMask])
+    }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {

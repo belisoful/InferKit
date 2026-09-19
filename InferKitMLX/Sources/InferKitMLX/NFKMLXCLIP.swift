@@ -347,6 +347,12 @@ public final class NFKMLXCLIPBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputImage, NFKInputPrompt] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

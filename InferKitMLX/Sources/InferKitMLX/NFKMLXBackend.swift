@@ -72,6 +72,19 @@ public final class NFKMLXBackend: NSObject, NFKInferenceBackend {
 
     @objc public var backendIdentifier: String { "mlx-stable-diffusion" }
 
+    /// The request parameters the backend reads. It always builds a text-to-image backend, so it
+    /// answers for that one; asking the loaded backend would download the release. Introduced in
+    /// InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        NFKMLXTextToImage.encodedParameterKeys.union([NFKParameterSteps, NFKParameterGuidanceScale,
+                                                      NFKParameterStrength, NFKParameterSeed])
+    }
+
+    /// The request inputs the backend reads, on the same reading. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        NFKMLXTextToImage.encodedInputKeys.union([NFKInputImage, NFKInputMask])
+    }
+
     @objc(prepareWithError:)
     public func prepare() throws {
         _ = try loaded()
@@ -89,7 +102,7 @@ public final class NFKMLXBackend: NSObject, NFKInferenceBackend {
         // model's own job carries the per-step progress and takes the cancellation, so this one
         // forwards both rather than standing in front of them.
         let job = NFKInferenceJob()
-        Task.detached(priority: .userInitiated) { [self] in
+        Task.detached(priority: .userInitiated) { [self, job] in
             do {
                 let model = try self.loaded()
                 // Every backend this builds implements the job form; the protocol makes it optional.

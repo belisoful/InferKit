@@ -163,6 +163,12 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
+
     /// How wide an embedding this backend produces, after any Matryoshka truncation.
     @objc public var embeddingDimensions: Int { holder.embedder.embeddingDimensions }
 

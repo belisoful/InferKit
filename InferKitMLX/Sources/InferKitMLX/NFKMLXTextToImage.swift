@@ -158,6 +158,12 @@ public struct NFKMLXSDReleaseFiles: Sendable {
 @objc(NFKMLXTextToImage)
 public final class NFKMLXTextToImage: NSObject {
 
+    /// The request inputs the conditioning reads, which the backend adds to its own.
+    static let encodedInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt]
+
+    /// The request parameters the conditioning reads, which the backend adds to its own.
+    static let encodedParameterKeys: Set<String> = [NFKParameterWidth, NFKParameterHeight]
+
     /// The identifier a backend built here reports. Text-to-image takes a whole release rather than a
     /// single checkpoint, so it has no `NFKMLXModelRegistry` entry — the registry's factory signature
     /// is one weights URL.
@@ -311,6 +317,8 @@ final class NFKMLXSDTextToImageModel {
             configuration: backendConfiguration,
             scheduler: NFKDDIMScheduler(predictionType: configuration.predictionType,
                                         spacing: configuration.timestepSpacing),
+            encodedInputKeys: NFKMLXTextToImage.encodedInputKeys,
+            encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys,
             encode: { request, image, _ in try holder.model.encode(request: request, image: image) },
             denoise: { latent, timestep, context, guidance in
                 holder.model.denoise(latent, timestep, context, guidance)

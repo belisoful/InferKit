@@ -136,6 +136,17 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     }
 
     @objc public var backendIdentifier: String { identifier }
+
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputAudio]
+    }
+
     @objc public var isReady: Bool { true }
     @objc public var acceptsImages: Bool { holder.model.model.vision != nil }
     @objc public var acceptsAudio: Bool { holder.model.model.audio != nil }

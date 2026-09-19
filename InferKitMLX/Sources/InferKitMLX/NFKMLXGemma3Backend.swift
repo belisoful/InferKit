@@ -56,6 +56,14 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages, NFKInputImage] }
+
     /// Whether the release carries a vision tower, so a request may attach `NFKInputImage`.
     @objc public var acceptsImages: Bool { holder.model.acceptsImages }
 

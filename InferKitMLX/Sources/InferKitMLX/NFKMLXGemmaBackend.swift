@@ -54,6 +54,14 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed]
+    }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
         var maximumTokens = 256

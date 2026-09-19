@@ -369,6 +369,12 @@ public final class NFKMLXNUWave2Backend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [NFKParameterSeed] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let (samples, rate) = Self.audio(from: request) else { throw NFKMLXError.unsupportedInput }

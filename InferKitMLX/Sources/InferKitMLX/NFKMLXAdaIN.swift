@@ -178,7 +178,9 @@ public final class NFKMLXAdaIN: NSObject {
             try loadDecoderWeights(into: net.decoder, from: decoderURL)
         }
         let holder = NFKMLXAdaINHolder(net)
-        return NFKMLXModuleBackend(identifier: modelName, isReady: true) { content, request in
+        return NFKMLXModuleBackend(identifier: modelName, isReady: true,
+                                   forwardInputKeys: [NFKInputControl],
+                                   forwardParameterKeys: [NFKParameterStrength]) { content, request in
             guard let styleValue = request.input(forKey: NFKInputControl),
                   let style = try? NFKMLXImageBridge.tensor(from: styleValue, channels: 3,
                                                             colorSpace: CGColorSpaceCreateDeviceRGB()) else {
