@@ -76,9 +76,14 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let promptTokens = try tokens(for: request)
         let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
-        return NFKInferenceResult(outputs: [NFKOutputText: holder.tokenizer.decode(produced)])
+        return NFKInferenceResult(outputs: [
+            NFKOutputText: holder.tokenizer.decode(produced),
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+                                                outputTokens: produced.count, reasoningTokens: nil),
+        ])
     }
 
     /// The prompt as token ids: a raw prompt is encoded after the begin-of-sequence marker; a message

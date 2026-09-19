@@ -5511,6 +5511,91 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertFalse(object.isEmpty, "the object carries fields")
     }
 
+    // The chain and the counts on released weights: Qwen3 wraps its reasoning in <think> tags, so
+    // the reply splits and NFKOutputText holds the answer alone.
+    func testQwen3ReportsItsChainAndWhatTheTurnCost() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let url = URL(fileURLWithPath: directory)
+        var options = NFKMLXGenerationOptions()
+        // The release's own template is what opens the block and what names the markers.
+        let template = try XCTUnwrap(NFKMLXLanguage.chatTemplate(inDirectory: url),
+                                     "the release ships a chat template")
+        options.chatTemplate = .jinja(template: template)
+        options.maxTokens = 192
+        let backend = try NFKMLXLanguage.backend(directoryURL: url, options: options)
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputMessages: [["role": "user", "content": "What is 2 + 2? Answer briefly."]]],
+            parameters: [NFKParameterTemperature: 0])
+        let result = try backend.runInference(for: request)
+
+        let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+        let reasoning = result.output(forKey: NFKOutputReasoning) as? String
+        print("VALIDATION reasoning qwen3-0.6B: usage \(usage), chain \((reasoning ?? "").count) characters, "
+              + "answer \((result.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines))")
+
+        XCTAssertGreaterThan(usage[NFKUsageInputTokens] ?? 0, 0)
+        XCTAssertGreaterThan(usage[NFKUsageOutputTokens] ?? 0, 0)
+        XCTAssertEqual(usage[NFKUsageCachedTokens], 0, "nothing was cached on a first request")
+        let reasoningTokens = try XCTUnwrap(usage[NFKUsageReasoningTokens],
+                                            "a format applied, so the chain's share is known")
+        XCTAssertLessThanOrEqual(reasoningTokens, usage[NFKUsageOutputTokens] ?? 0)
+
+        let chain = try XCTUnwrap(reasoning, "Qwen3 thinks before it answers")
+        XCTAssertGreaterThan(chain.count, 0)
+        XCTAssertGreaterThan(reasoningTokens, 0)
+        let answer = try XCTUnwrap(result.text)
+        XCTAssertFalse(answer.contains("</think>"), "the markers are not part of the answer")
+        XCTAssertFalse(chain.contains("</think>"))
+    }
+
+    // What a retained prompt cache served is the cached share of the input, which is the one count
+    // that only a second request can show.
+    func testAReusedPromptCacheIsReportedAsTheCachedShare() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        var options = NFKMLXGenerationOptions()
+        options.reusesPromptCache = true
+        options.maxTokens = 8
+        let backend = try NFKMLXLanguage.backend(directoryURL: URL(fileURLWithPath: directory), options: options)
+        func ask(_ text: String) throws -> [String: Int] {
+            let request = NFKInferenceRequest(inputs: [NFKInputPrompt: text],
+                                              parameters: [NFKParameterTemperature: 0])
+            return try XCTUnwrap(backend.runInference(for: request).output(forKey: NFKOutputUsage) as? [String: Int])
+        }
+        let first = try ask("The capital of France is")
+        XCTAssertEqual(first[NFKUsageCachedTokens], 0, "the first request prefills everything")
+
+        let second = try ask("The capital of France is famously")
+        print("VALIDATION prompt-cache qwen3-0.6B: first \(first), second \(second)")
+        XCTAssertGreaterThan(second[NFKUsageCachedTokens] ?? 0, 0, "the shared prefix came from the cache")
+        XCTAssertLessThan(second[NFKUsageCachedTokens] ?? 0, second[NFKUsageInputTokens] ?? 0,
+                          "the cached share is part of the input, not all of it")
+    }
+
+    // The lightest level closes the block through the release's own template, so the model answers
+    // without a chain at all.
+    func testTheLightestEffortTurnsQwen3sThinkingOff() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let url = URL(fileURLWithPath: directory)
+        var options = NFKMLXGenerationOptions()
+        options.chatTemplate = .jinja(template: try XCTUnwrap(NFKMLXLanguage.chatTemplate(inDirectory: url)))
+        options.maxTokens = 64
+        let backend = try NFKMLXLanguage.backend(directoryURL: url, options: options)
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputMessages: [["role": "user", "content": "What is 2 + 2? Answer briefly."]]],
+            parameters: [NFKParameterTemperature: 0,
+                         NFKParameterReasoningEffort: NFKReasoningEffortLight])
+        let result = try backend.runInference(for: request)
+        let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+        print("VALIDATION reasoning-off qwen3-0.6B: usage \(usage), answer "
+              + "\((result.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines))")
+        XCTAssertNil(result.output(forKey: NFKOutputReasoning), "the template closed the block")
+        XCTAssertEqual(usage[NFKUsageReasoningTokens], 0)
+        XCTAssertGreaterThan((result.text ?? "").count, 0, "the model still answers")
+    }
+
     // Schema-constrained generation on released weights: the keys, the types, and the parsed
     // NFKOutputStructured come back exactly as the schema asks, from the core's own request key.
     func testASchemaConstrainedRequestOnQwen3ConformsAndReturnsStructuredOutput() throws {

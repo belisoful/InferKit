@@ -217,6 +217,21 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
   `NFKParameterJSONSchema` request parameter, the same key the remote backends read) narrows the grammar
   to a JSON Schema, so the keys, the types, the enumerations, and the array bounds are guaranteed too;
   JSON that was asked for comes back parsed under `NFKOutputStructured` beside the text.
+- **`reasoningFormat`** names the markers a reasoning release wraps its chain in, so the chain comes
+  back under `NFKOutputReasoning` and `NFKOutputText` holds the answer alone. Without it the markers
+  come from the release's chat template, which is where they are written: `<think>` and `</think>` in
+  the Qwen3 family, the harmony channels in gpt-oss.
+
+`NFKParameterReasoningEffort` binds the reasoning variables the release's own template reads, so one
+core key reaches either family: Qwen3 tests an `enable_thinking` flag, which the lightest level turns
+off, and gpt-oss writes a `reasoning_effort` level into its system message. The template is the only
+thing that takes the level, so a request that names one without a Jinja template is refused, and a
+model that does not reason refuses it outright.
+
+Every run reports `NFKOutputUsage`: the prompt's tokens, what a retained prompt cache served, the
+reply's tokens, and the chain's share of them where a reasoning format applied. Measured on the
+released Qwen3-0.6B, "What is 2 + 2?" costs 19 input tokens and 156 output tokens, 147 of them the
+chain; at `NFKReasoningEffortLight` the same question costs 8 output tokens and no chain.
 
 Generation stops at the release's end-of-sequence token unless the request names its own stop tokens.
 

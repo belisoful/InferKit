@@ -223,6 +223,36 @@ let prompt = try NFKMLXChatTemplateRenderer.render(
     addGenerationPrompt: true)
 ```
 
+**A reasoning model's chain, and what the turn cost.** A reasoning release writes its chain before its
+answer. The backend splits the two, so `NFKOutputText` holds the answer alone and the chain rides under
+`NFKOutputReasoning`. The markers come from the release's own template, which is also what takes
+`NFKParameterReasoningEffort`:
+
+```swift
+var options = NFKMLXGenerationOptions()
+// The template states the markers and takes the level, so it is what the backend renders with.
+options.chatTemplate = .jinja(template: NFKMLXLanguage.chatTemplate(inDirectory: releaseDirectory)!)
+let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
+
+let request = NFKInferenceRequest(
+    inputs: [NFKInputMessages: [["role": "user", "content": "What is 2 + 2? Answer briefly."]]],
+    parameters: [NFKParameterReasoningEffort: NFKReasoningEffortDeep])   // light, moderate, or deep
+let result = try backend.runInference(for: request)
+
+result.text                                       // "2 + 2 = 4."
+result.output(forKey: NFKOutputReasoning)         // the chain, apart from the answer
+result.output(forKey: NFKOutputUsage)             // ["inputTokens": 19, "cachedTokens": 0,
+                                                  //  "outputTokens": 156, "reasoningTokens": 147]
+```
+
+Measured on the released Qwen3-0.6B. `NFKReasoningEffortLight` closes the block through the release's
+own template, which took the same question to 8 output tokens and no chain. The level reaches the
+model only through a Jinja template, so a request that names one without a template is refused. A
+caller who renders its own prompt names the markers instead, through
+`NFKMLXGenerationParameterKey.reasoningFormat` (`"think"`, `"harmony"`, or the markers themselves).
+`NFKUsageCachedTokens` counts what a retained prompt cache served, so it is above zero only on a
+request that shares a prefix with the last one.
+
 **Refusing a release that will not fit.** The dense loader checks a release's weight bytes against the
 memory budget before materializing any, so a load that would kill the process is an error instead:
 

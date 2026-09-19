@@ -33,6 +33,11 @@ public final class NFKMLXPromptCache {
 
     /// The token ids the cache currently holds rows for, in order.
     public private(set) var tokens: [Int] = []
+
+    /// How many of the last aligned prompt's tokens the cache already held, which is the cached
+    /// share of the input a backend reports under `NFKUsageCachedTokens`. Introduced in InferKit
+    /// 0.4.0.
+    public private(set) var sharedPrefixLength = 0
     private(set) var cache: NFKMLXKeyValueCache
 
     public init(layerCount: Int, window: Int? = nil,
@@ -68,9 +73,11 @@ public final class NFKMLXPromptCache {
         let discarded = tokens.count - shared
         guard cache.rollback(by: discarded) else {
             reset()
+            sharedPrefixLength = 0
             return 0
         }
         tokens.removeLast(discarded)
+        sharedPrefixLength = shared
         return shared
     }
 
@@ -88,6 +95,7 @@ public final class NFKMLXPromptCache {
     /// Empties the cache.
     public func reset() {
         tokens = []
+        sharedPrefixLength = 0
         cache = NFKMLXKeyValueCache(layerCount: layerCount, window: window, quantization: quantization)
     }
 

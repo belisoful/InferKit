@@ -81,10 +81,15 @@ public enum NFKMLXChatTemplateRenderer {
     ///   - bosToken: the release's beginning-of-sequence marker, for templates that reference it.
     ///   - eosToken: the release's end-of-sequence marker, for templates that reference it.
     ///   - tools: tool definitions in the provider's wire shape, bound to the template's `tools`.
+    ///   - variables: further bindings the release's template reads, such as the `enable_thinking`
+    ///     flag Qwen3 tests or the `reasoning_effort` level gpt-oss writes into its system message.
+    ///     A template that reads none of them renders unchanged, which is what an unused binding
+    ///     means in Jinja.
     public static func render(_ template: String, messages: [[String: Any]],
                               addGenerationPrompt: Bool = true,
                               bosToken: String = "", eosToken: String = "",
-                              tools: [[String: Any]]? = nil) throws -> String {
+                              tools: [[String: Any]]? = nil,
+                              variables: [String: Any] = [:]) throws -> String {
         var context: [String: NFKJinjaValue] = [
             "messages": .list(messages.map(value(from:))),
             "add_generation_prompt": .bool(addGenerationPrompt),
@@ -93,6 +98,9 @@ public enum NFKMLXChatTemplateRenderer {
         ]
         if let tools = tools {
             context["tools"] = .list(tools.map(value(from:)))
+        }
+        for (name, binding) in variables {
+            context[name] = value(from: binding)
         }
         let nodes = try NFKJinjaParser(template).parse()
         var output = ""

@@ -52,6 +52,11 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// The strings the output must be one of, as an `NSArray<NSString *>`. See
     /// ``NFKMLXGenerationOptions/choices`` and ``NFKMLXChoiceConstraint``.
     @objc public static let choices = "NFKMLXParameterChoices"
+    /// Which markers the model wraps its reasoning in, as an `NSString` naming one of `"think"`,
+    /// `"harmony"`, or `"none"`, or as an `NSArray<NSString *>` of the markers themselves (opening,
+    /// closing, and optionally what stands before the answer). Without the key the format comes
+    /// from the release's own chat template. See ``NFKMLXReasoningFormat``.
+    @objc public static let reasoningFormat = "NFKMLXParameterReasoningFormat"
 }
 
 /// The template that turns a message list into prompt text.
@@ -157,6 +162,16 @@ public struct NFKMLXGenerationOptions: Sendable {
 
     /// Strings the output must be one of, or nil. See ``NFKMLXChoiceConstraint``.
     public var choices: [String]?
+
+    /// The markers the model wraps its reasoning in, or nil to read them from the chat template.
+    ///
+    /// @discussion Setting this reaches a model whose prompt the caller rendered itself, where there
+    /// is no template to read the markers from. See ``NFKMLXReasoningFormat``.
+    public var reasoningFormat: NFKMLXReasoningFormat?
+
+    /// Whether ``reasoningFormat`` was set deliberately, so a nil format means "no chain to split"
+    /// rather than "take it from the template".
+    var reasoningFormatIsStated = false
 
     /// A schema the JSON output must conform to, or nil. See ``NFKMLXJSONSchemaConstraint``.
     ///
@@ -287,8 +302,16 @@ public extension NFKMLXLanguageNet {
 ///
 /// Reads `NFKInputPrompt` or `NFKInputMessages` and returns `NFKOutputText`. `NFKParameterTemperature`,
 /// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults.
-/// Generation is many forward passes; run it off the render thread, or submit a job, which reports
-/// each token through `partialResult`.
+///
+/// A reasoning model's chain comes back under `NFKOutputReasoning`, so `NFKOutputText` holds the
+/// answer alone; the markers come from the release's chat template, or from
+/// ``NFKMLXGenerationParameterKey/reasoningFormat``. `NFKParameterReasoningEffort` binds the
+/// template's own reasoning variables, so it reaches a release whose template reads one.
+/// `NFKOutputUsage` reports what the run cost: the prompt, what a retained prompt cache served, the
+/// reply, and the chain's share of it.
+///
+/// Generation is many forward passes; run it off the render thread, or submit a job, which runs the
+/// whole generation and finishes with the result.
 @objc(NFKMLXLanguageBackend)
 public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
@@ -327,7 +350,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
          NFKMLXGenerationParameterKey.draftTokens,
          NFKMLXGenerationParameterKey.reusesPromptCache,
          NFKMLXGenerationParameterKey.outputFormat,
-         NFKMLXGenerationParameterKey.choices]
+         NFKMLXGenerationParameterKey.choices,
+         NFKMLXGenerationParameterKey.reasoningFormat,
+         NFKParameterReasoningEffort]
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -374,20 +399,99 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.jsonSchema = try NFKMLXJSONSchema(json: dictionary)
         }
 
-        guard let text = Self.prompt(from: request, template: options.chatTemplate) else {
+        let variables = try Self.templateVariables(for: request, template: options.chatTemplate)
+        guard let text = Self.prompt(from: request, template: options.chatTemplate, variables: variables) else {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
-        let produced = generate(tokens, options: options)
-        let reply = tokenizer.decode(produced.map { NSNumber(value: $0) })
-        var outputs: [String: Any] = [NFKOutputText: reply]
+        let (produced, cached) = generate(tokens, options: options)
+        let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
+        let reply = decode(produced)
+
+        // A reasoning model's chain is not its answer, so it comes back under its own key and
+        // NFKOutputText holds what the model concluded. Without a format there is nothing to split:
+        // the reply stands as it was generated, and the chain's share of it is unknown rather than
+        // zero, since the backend cannot say whether the text holds a chain at all.
+        var answer = reply
+        var reasoning = ""
+        var reasoningTokens: Int?
+        if let format = Self.reasoningFormat(for: options) {
+            (reasoning, answer) = format.split(reply)
+            let chainEnd: Int
+            if let end = reply.range(of: format.closing) {
+                chainEnd = reply.distance(from: reply.startIndex, to: end.upperBound)
+            } else if reasoning.isEmpty {
+                chainEnd = 0
+            } else {
+                chainEnd = reply.count      // the run ended inside the chain, so all of it is reasoning
+            }
+            reasoningTokens = NFKMLXUsage.tokenCount(inPrefixOf: produced, characters: chainEnd, decode: decode)
+        }
+
+        var outputs: [String: Any] = [NFKOutputText: answer]
+        if !reasoning.isEmpty {
+            outputs[NFKOutputReasoning] = reasoning
+        }
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
+                                                      cachedTokens: cached,
+                                                      outputTokens: produced.count,
+                                                      reasoningTokens: reasoningTokens)
         // JSON that was asked for comes back parsed too, as the remote backends return it; JSON-looking
         // text that was not asked for is not guessed at.
         if options.jsonSchema != nil || options.jsonOutput,
-           let parsed = try? JSONSerialization.jsonObject(with: Data(reply.utf8), options: [.fragmentsAllowed]) {
+           let parsed = try? JSONSerialization.jsonObject(with: Data(answer.utf8), options: [.fragmentsAllowed]) {
             outputs[NFKOutputStructured] = parsed
         }
         return NFKInferenceResult(outputs: outputs)
+    }
+
+    /// The reasoning markers a run's output carries: the ones the request named, or the ones the
+    /// release's own chat template shows. A run with no template and no stated format splits
+    /// nothing, since there is no way to know what the model wraps a chain in.
+    static func reasoningFormat(for options: NFKMLXGenerationOptions) -> NFKMLXReasoningFormat? {
+        if options.reasoningFormatIsStated {
+            return options.reasoningFormat
+        }
+        guard case .jinja(let template, _, _) = options.chatTemplate else {
+            return nil
+        }
+        return NFKMLXReasoningFormat.detected(inChatTemplate: template)
+    }
+
+    /// The template bindings a request's reasoning effort asks for.
+    ///
+    /// @discussion The release's template is what takes the effort, and the two shipped families
+    /// spell it differently: Qwen3 tests an `enable_thinking` flag and closes the block when it is
+    /// false, while gpt-oss writes a `reasoning_effort` level into its system message. Both are
+    /// bound, and a template that reads neither renders unchanged. A request that names an effort
+    /// without a template to read it is refused, since the level would reach the model nowhere.
+    static func templateVariables(for request: NFKInferenceRequest,
+                                  template: NFKMLXChatTemplate) throws -> [String: Any] {
+        guard let effort = request.parameter(forKey: NFKParameterReasoningEffort) else {
+            return [:]
+        }
+        guard let level = effort as? String, !level.isEmpty else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "NFKParameterReasoningEffort is a level name: light, moderate, or deep")
+        }
+        guard case .jinja = template else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a reasoning effort reaches the model through the release's chat template; "
+                + "set NFKMLXParameterChatTemplate to it")
+        }
+        return ["enable_thinking": level != NFKReasoningEffortLight,
+                "reasoning_effort": Self.harmonyLevel(for: level)]
+    }
+
+    /// The level a harmony template reads for each level the contract names. Another string goes out
+    /// as written, which reaches a release that names its own.
+    static func harmonyLevel(for effort: String) -> String {
+        switch effort {
+        case NFKReasoningEffortLight: return "low"
+        case NFKReasoningEffortModerate: return "medium"
+        case NFKReasoningEffortDeep: return "high"
+        default: return effort
+        }
     }
 
     /// The vocabulary's bytes, read from the tokenizer once and kept for every constrained request.
@@ -412,8 +516,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Runs the tokens through the plain or the speculative loop, against the retained prompt cache
-    /// when the options ask for one.
-    private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions) -> [Int] {
+    /// when the options ask for one. Answers the tokens produced and how many of the prompt's the
+    /// cache already held, which is the cached share a run reports.
+    private func generate(_ tokens: [Int],
+                          options requested: NFKMLXGenerationOptions) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
@@ -438,10 +544,13 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         } else {
             promptCache = nil
         }
+        let produced: [Int]
         if let draft = holder.draft, options.draftTokens > 0, options.constraint == nil {
-            return net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
+            produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
+        } else {
+            produced = net.generate(prompt: tokens, options: options, promptCache: cache)
         }
-        return net.generate(prompt: tokens, options: options, promptCache: cache)
+        return (produced, cache?.sharedPrefixLength ?? 0)
     }
 
     /// Overrides `options` with the MLX generation parameters a request carries, so an Objective-C
@@ -486,12 +595,18 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                         ?? request.parameter(forKey: NFKParameterChoices)) as? [String], !value.isEmpty {
             options.choices = value
         }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.reasoningFormat),
+           let format = NFKMLXReasoningFormat.named(value) {
+            options.reasoningFormat = format
+            options.reasoningFormatIsStated = true
+        }
     }
 
     /// The prompt text, from either input key. A raw `NFKInputPrompt` is used verbatim; a message
     /// list is flattened plainly, or rendered through the chat template when one is asked for.
     static func prompt(from request: NFKInferenceRequest,
-                       template: NFKMLXChatTemplate = .none) -> String? {
+                       template: NFKMLXChatTemplate = .none,
+                       variables: [String: Any] = [:]) -> String? {
         if let prompt = request.prompt { return prompt }
         guard let messages = request.messages else { return nil }
         switch template {
@@ -503,7 +618,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             // A render failure must not abort generation; fall back to the ChatML approximation.
             return (try? NFKMLXChatTemplateRenderer.render(templateSource, messages: messages,
                                                            addGenerationPrompt: true,
-                                                           bosToken: bosToken, eosToken: eosToken))
+                                                           bosToken: bosToken, eosToken: eosToken,
+                                                           variables: variables))
                 ?? chatMLPrompt(from: messages)
         }
     }
@@ -898,6 +1014,18 @@ public final class NFKMLXLanguage: NSObject {
         }
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: options, draft: draft)
+    }
+
+    /// The release's own Jinja `chat_template`, or nil where it ships none.
+    ///
+    /// @discussion An instruct release is trained on its template and answers a different question
+    /// without one, so a caller renders a message list through it: in Swift by setting
+    /// ``NFKMLXGenerationOptions/chatTemplate`` to `.jinja(template:)`, and from Objective-C by
+    /// passing the string under ``NFKMLXGenerationParameterKey/chatTemplate``. The template is also
+    /// what states a reasoning model's markers, so the chain comes back under `NFKOutputReasoning`
+    /// only where the template is in play. Introduced in InferKit 0.4.0.
+    @objc public static func chatTemplate(inDirectory directoryURL: URL) -> String? {
+        NFKMLXReleaseChatTemplate(inDirectory: directoryURL)
     }
 
     /// The network and tokenizer a release directory describes.

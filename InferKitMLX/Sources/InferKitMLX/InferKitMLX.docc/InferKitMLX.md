@@ -145,6 +145,7 @@ limits.
 - ``NFKMLXLanguageBackend``
 - ``NFKMLXGenerationOptions``
 - ``NFKMLXGenerationParameterKey``
+- ``NFKMLXReasoningFormat``
 - ``NFKMLXKeyValueCache``
 - ``NFKMLXPromptCache``
 - ``NFKMLXSpeculativeReport``

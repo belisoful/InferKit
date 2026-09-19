@@ -516,6 +516,40 @@ final class MLXExamples: XCTestCase {
         if case .none = defaults.chatTemplate {} else { XCTFail("the default template flattens contents") }
     }
 
+    // Docs/examples.md: Reasoning and what the turn cost — a reasoning model's chain comes back apart
+    // from its answer, and the run reports what it spent. The markers come from the release's own
+    // template, so no runtime is needed to show the splitting and the counting.
+    func testExampleReasoningAndUsageOnDevice() throws {
+        // The release's template is read from its directory and set as the generation option:
+        //   options.chatTemplate = .jinja(template: NFKMLXLanguage.chatTemplate(inDirectory: url)!)
+        let template = "{%- if enable_thinking is defined and enable_thinking is false %}"
+            + "{{- '<think>\n\n</think>\n\n' }}{%- endif %}"
+        var options = NFKMLXGenerationOptions()
+        options.chatTemplate = .jinja(template: template)
+
+        // The same template states the markers, so the backend knows what to split.
+        let format = try XCTUnwrap(NFKMLXLanguageBackend.reasoningFormat(for: options))
+        XCTAssertEqual(format, NFKMLXReasoningFormat.thinkTags)
+
+        let (reasoning, answer) = format.split("<think>\nTwo plus two.\n</think>\n\nFour.")
+        XCTAssertEqual(reasoning, "Two plus two.")       // NFKOutputReasoning
+        XCTAssertEqual(answer, "Four.")                  // NFKOutputText holds the answer alone
+
+        // NFKParameterReasoningEffort binds the template's own reasoning variables: Qwen3 reads a
+        // flag, gpt-oss reads a level, and both are bound so either release honors the key.
+        let asked = NFKInferenceRequest(inputs: [NFKInputPrompt: "Why?"],
+                                        parameters: [NFKParameterReasoningEffort: NFKReasoningEffortLight])
+        let variables = try NFKMLXLanguageBackend.templateVariables(for: asked, template: options.chatTemplate)
+        XCTAssertEqual(variables["enable_thinking"] as? Bool, false)
+        XCTAssertEqual(try NFKMLXChatTemplateRenderer.render(template, messages: [], variables: variables),
+                       "<think>\n\n</think>\n\n", "the lightest level closes the block")
+
+        // Measured on the released Qwen3-0.6B: 19 prompt tokens in, 156 out, 147 of them the chain.
+        let usage = NFKMLXUsage.outputs(inputTokens: 19, cachedTokens: 0, outputTokens: 156,
+                                        reasoningTokens: 147)
+        XCTAssertEqual(usage[NFKUsageReasoningTokens], 147)     // NFKOutputUsage
+    }
+
     // Docs/examples.md: The release's own Jinja chat template renders a message list into the exact
     // input the instruct model was trained on, rather than the ChatML approximation. Pass the template
     // text (from the release's tokenizer_config.json) as a generation option. No runtime needed here —

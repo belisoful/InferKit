@@ -46,6 +46,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   answer room. Thinking blocks become `NFKOutputReasoning` and the message events' counts become
   `NFKOutputUsage`.
 
+### InferKitMLX (companion)
+
+- The core's reasoning keys reach the on-device text backends. A reasoning release's chain comes back
+  under `NFKOutputReasoning` and `NFKOutputText` holds the answer alone; the markers come from the
+  release's own chat template (`<think>` … `</think>` in the Qwen3 family, the harmony channels in
+  gpt-oss), or from the new `NFKMLXGenerationParameterKey.reasoningFormat` for a caller that renders
+  its own prompt. ``NFKMLXReasoningFormat`` is `@objc` and carries both as presets.
+- `NFKParameterReasoningEffort` binds the reasoning variables a release's template reads, so one core
+  key reaches either family: Qwen3 tests `enable_thinking`, which `NFKReasoningEffortLight` turns off,
+  and gpt-oss takes a `reasoning_effort` level. The template is what takes the level, so a request
+  that names one without a Jinja template is refused, and the Gemma backends refuse it outright.
+  `NFKMLXChatTemplateRenderer.render` takes a `variables:` dictionary for these bindings.
+- Every text backend reports `NFKOutputUsage`: the prompt's tokens, what a retained prompt cache
+  served (`NFKMLXPromptCache.sharedPrefixLength`), the reply's tokens, and the chain's share of them
+  where a reasoning format applied. Measured on the released Qwen3-0.6B: "What is 2 + 2?" costs 19
+  input and 156 output tokens with 147 in the chain, and 8 output tokens with no chain at the
+  lightest level.
+- Structured output is parsed from the answer rather than the whole reply, so a schema-constrained
+  request against a reasoning model is no longer read across its chain.
+- `NFKMLXLanguage.chatTemplate(inDirectory:)` reads a release's own Jinja template, which is what a
+  caller sets to render a message list faithfully and what states a reasoning model's markers.
+
 ### InferKitFoundationModels (companion)
 
 #### Every option is a core request key

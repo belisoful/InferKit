@@ -171,6 +171,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             options.seed = value.uint64Value
         }
 
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let gemma = holder.model
         let image = request.input(forKey: NFKInputImage)
         if image != nil, !acceptsImages {
@@ -201,7 +202,11 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             produced.append(token)
             return onToken?(token, produced) ?? true
         }
-        return NFKInferenceResult(outputs: [NFKOutputText: gemma.decode(produced)])
+        return NFKInferenceResult(outputs: [
+            NFKOutputText: gemma.decode(produced),
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
+                                                outputTokens: produced.count, reasoningTokens: nil),
+        ])
     }
 
     /// The samples an `NFKAudioAsset` or raw WAV bytes carry.

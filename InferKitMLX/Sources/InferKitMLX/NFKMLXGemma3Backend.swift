@@ -85,6 +85,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKParameterSeed) as? NSNumber {
             options.seed = value.uint64Value
         }
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let model = holder.model
         let image = request.input(forKey: NFKInputImage)
         if image != nil, !model.acceptsImages {
@@ -106,7 +107,11 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
             produced.append(token)
             return onToken?(token, produced) ?? true
         }
-        return NFKInferenceResult(outputs: [NFKOutputText: model.decode(produced)])
+        return NFKInferenceResult(outputs: [
+            NFKOutputText: model.decode(produced),
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
+                                                outputTokens: produced.count, reasoningTokens: nil),
+        ])
     }
 
     @objc(submitInferenceJobForRequest:)
@@ -319,18 +324,8 @@ public final class NFKMLXGemma3: NSObject {
         return tokens
     }
 
-    /// The release's chat template: `chat_template.jinja` beside the weights, else the
-    /// `chat_template` string in `tokenizer_config.json`, else nil.
+    /// The release's chat template. See ``NFKMLXReleaseChatTemplate(inDirectory:)``.
     static func chatTemplate(inDirectory directory: URL) -> String? {
-        if let text = try? String(contentsOf: directory.appendingPathComponent("chat_template.jinja"), encoding: .utf8),
-           !text.isEmpty {
-            return text
-        }
-        if let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json")),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let template = json["chat_template"] as? String {
-            return template
-        }
-        return nil
+        NFKMLXReleaseChatTemplate(inDirectory: directory)
     }
 }

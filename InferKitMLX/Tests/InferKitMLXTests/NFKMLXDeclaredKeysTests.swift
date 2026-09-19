@@ -29,7 +29,8 @@ final class NFKMLXDeclaredKeysTests: XCTestCase {
         XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages])
         for key in [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
                     NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
-                    NFKMLXGenerationParameterKey.draftTokens, NFKMLXGenerationParameterKey.chatTemplate] {
+                    NFKMLXGenerationParameterKey.draftTokens, NFKMLXGenerationParameterKey.chatTemplate,
+                    NFKMLXGenerationParameterKey.reasoningFormat, NFKParameterReasoningEffort] {
             XCTAssertTrue(backend.supportedParameterKeys.contains(key), key)
         }
         XCTAssertFalse(backend.supportedParameterKeys.contains(NFKParameterTools),

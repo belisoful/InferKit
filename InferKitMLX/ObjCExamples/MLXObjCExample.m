@@ -469,6 +469,47 @@
 
 // Docs/examples.md: An Objective-C caller configures every MLX generation option through request
 // parameters — parity with the Swift NFKMLXGenerationOptions struct.
+- (void)testObjectiveCAsksForReasoningAndReadsWhatTheTurnCost
+{
+	// A reasoning model's chain comes back apart from its answer, and the level it thinks at is a
+	// core key. Both reach the model through the release's own chat template, which is why it is
+	// read from the directory and passed with the request.
+	//   NSString *template = [NFKMLXLanguage chatTemplateInDirectory:releaseDirectory];
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(chatTemplateInDirectory:)]);
+
+	NSString *template = @"{%- if enable_thinking is defined and enable_thinking is false %}"
+						 @"{{- '<think>\n\n</think>\n\n' }}{%- endif %}";
+	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputMessages: @[ @{ @"role": @"user", @"content": @"Why is the sky blue?" } ] }
+		parameters:@{ NFKMLXGenerationParameterKey.chatTemplate: template,
+					  NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+	XCTAssertEqualObjects(request.parameters[NFKParameterReasoningEffort], @"deep");
+
+	// The markers come from that template. A caller who renders its own prompt names them instead,
+	// by preset or by the markers themselves.
+	XCTAssertEqualObjects([NFKMLXReasoningFormat detectedInChatTemplate:template],
+						  NFKMLXReasoningFormat.thinkTags);
+	NFKInferenceRequest *stated = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"Why is the sky blue?" }
+		parameters:@{ NFKMLXGenerationParameterKey.reasoningFormat: @"think" }];
+	XCTAssertEqualObjects(stated.parameters[NFKMLXGenerationParameterKey.reasoningFormat], @"think");
+
+	NFKMLXReasoningFormat *harmony = NFKMLXReasoningFormat.harmonyChannels;
+	XCTAssertEqualObjects(harmony.opening, @"<|channel|>analysis<|message|>");
+	XCTAssertGreaterThan(harmony.answerPrefix.length, 0, @"the answer opens its own channel");
+
+	// What comes back: the answer under NFKOutputText, the chain under NFKOutputReasoning, and the
+	// counts under NFKOutputUsage. A count the runtime cannot know is absent rather than zero.
+	NFKInferenceResult *result = [NFKInferenceResult resultWithOutputs:@{
+		NFKOutputText: @"Shorter wavelengths scatter more.",
+		NFKOutputReasoning: @"Rayleigh scattering goes as the inverse fourth power.",
+		NFKOutputUsage: @{ NFKUsageInputTokens: @19, NFKUsageCachedTokens: @0,
+						   NFKUsageOutputTokens: @156, NFKUsageReasoningTokens: @147 } }];
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @147);
+	XCTAssertGreaterThan([[result outputForKey:NFKOutputReasoning] length], 0);
+}
+
 - (void)testObjectiveCConfiguresGenerationThroughRequestParameters
 {
 	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]

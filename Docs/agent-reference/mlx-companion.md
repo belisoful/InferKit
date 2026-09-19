@@ -66,6 +66,49 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   - `NFKMLXTensorBackend` derives its inputs from the configured ports.
   - A new model that reads a request key beyond its class's own adds it at the construction site, or
     the declaration lies. `NFKMLXDeclaredKeysTests` covers the fixed sets, the unions, and the ports.
+- **Reasoning and usage (2026-09-19).** The core's three reasoning keys reach the MLX text backends.
+  `NFKMLXReasoning.swift` holds the pieces; `NFKMLXReasoningTests` covers them without the runtime,
+  since all of it is text work.
+  - **The markers are a value, not a constant, because the shipped families disagree.** Qwen3 writes
+    `<think>` … `</think>` and continues with the answer. gpt-oss writes the harmony channels:
+    `<|channel|>analysis<|message|>` … `<|end|>` and then `<|start|>assistant<|channel|>final<|message|>`,
+    so the format carries an `answerPrefix` as well, or the scaffolding would land in the answer.
+    `NFKMLXReasoningFormat` is `@objc` with both as presets, and a request names one under
+    `NFKMLXGenerationParameterKey.reasoningFormat` by preset name or by the markers themselves.
+  - The format is **detected from the release's own chat template**, which is what renders a prior
+    chain back into the prompt and so states the markers. Either marker is enough. A run with no
+    Jinja template splits nothing, because there is no way to know what the model wraps a chain in;
+    it does not guess from the text.
+  - **The reasoning effort can be honored, through the template rather than the backend.** The two
+    families spell the control differently and neither is a number: Qwen3's template tests
+    `enable_thinking` and pre-closes the block with `<think>\n\n</think>` when it is false, while
+    gpt-oss's takes a `reasoning_effort` string and writes `Reasoning: <level>` into its system
+    message. So the backend binds BOTH variables (`enable_thinking` = the level is not light;
+    `reasoning_effort` = light/moderate/deep renamed to low/medium/high, another string as written)
+    and lets the release's own Jinja decide. A template that reads neither renders unchanged, which
+    is what an unused binding means in Jinja. `NFKMLXChatTemplateRenderer.render` gained a
+    `variables:` parameter for this. A request that names a level with no Jinja template is refused,
+    and the Gemma backends refuse it outright, since neither has anywhere to put it.
+  - Usage: the runtime knows the prompt, the reply, and what a retained prompt cache served, so all
+    three are always reported. `NFKMLXPromptCache.sharedPrefixLength` records what `align(to:)`
+    matched, which is the only way to recover the cached share after generation. The chain's share
+    is reported only where a format applied, because without one the backend cannot say whether the
+    text holds a chain; it is found by **bisecting** the decoded prefix rather than re-encoding the
+    chain, since a detokenizer's output grows with its input.
+  - `NFKMLXLanguage.chatTemplate(inDirectory:)` reads the release's template (`chat_template.jinja`
+    beside the weights, else `tokenizer_config.json`, including the 5.x named-template list), shared
+    with the Gemma 3 backend, which had the only copy. The release factory still defaults
+    `chatTemplate` to `.none`, so a caller sets it; without it the chain is not split and the effort
+    is refused.
+  - Measured live on the released Qwen3-0.6B: "What is 2 + 2?" costs 19 input and 156 output tokens
+    with 147 in the chain, and the answer comes back as "2 + 2 = 4." alone; at
+    `NFKReasoningEffortLight` the same question costs 8 output tokens with no chain. A second
+    request sharing a prefix reported 5 of its 6 input tokens as cached. gpt-oss is covered by the
+    marker and detection tests only, not by a run.
+  - Correcting a doc claim found on the way: `NFKMLXLanguageBackend` has no
+    `submitInferenceJobForRequest:`, so its jobs go through the core's wrapper and report no
+    per-token partials. Its class comment said otherwise; it now says what the code does. The Gemma
+    backends do stream.
 - `NFKStableDiffusionProvider` (`@objc`) — the bridge that lets the core activate the bundled
   `NFKMLXBackend` (Stable Diffusion) without depending on InferKitMLX. It conforms to the core's
   `NFKDynamicBackendProvider` and is named exactly the default the core tries for its `stable-diffusion`
