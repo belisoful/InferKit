@@ -13,6 +13,24 @@
 #import "NFKAudioAsset.h"
 #import "NFKErrors.h"
 
+/*! The endpoint's spelling for each core text parameter the contract names. The core keys are
+	camelCase and an OpenAI-compatible service reads underscored names, so the key is renamed and the
+	value passes through unchanged. The repetition penalty goes out under both spellings the servers
+	use: they mean the same multiplicative penalty, and no server reads both. */
+static NSDictionary<NSString *, NSArray<NSString *> *> *NFKRemoteWireNames(void)
+{
+	static NSDictionary<NSString *, NSArray<NSString *> *> *names;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		names = @{ NFKParameterMaxTokens: @[ @"max_tokens" ],
+				   NFKParameterTopP: @[ @"top_p" ],
+				   NFKParameterTopK: @[ @"top_k" ],
+				   NFKParameterStopSequences: @[ @"stop" ],
+				   NFKParameterRepetitionPenalty: @[ @"repetition_penalty", @"repeat_penalty" ] };
+	});
+	return names;
+}
+
 NSString * const NFKRemoteBackendPromptKey	= @"prompt";
 NSString * const NFKRemoteBackendMessagesKey	= @"messages";
 NSString * const NFKRemoteBackendTextKey		= @"text";
@@ -87,11 +105,13 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 
 - (NSSet<NSString *> *)supportedParameterKeys
 {
-	// Tools, the schema, the audio reply, and the frame count are translated into the endpoint's
-	// shapes. Every other parameter folds into the body under its own spelling, so a core key
-	// reaches the endpoint only where the two spellings agree, as temperature and seed do.
-	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterAudioOutput,
-								  NFKParameterVideoFrameCount, NFKParameterTemperature, NFKParameterSeed ]];
+	// Tools, the schema, the audio reply, and the frame count become the endpoint's own shapes; the
+	// text parameters are renamed to the endpoint's spelling; temperature and seed already carry it.
+	NSMutableSet<NSString *> *keys = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
+																   NFKParameterAudioOutput, NFKParameterVideoFrameCount,
+																   NFKParameterTemperature, NFKParameterSeed ]];
+	[keys addObjectsFromArray:NFKRemoteWireNames().allKeys];
+	return keys;
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -263,8 +283,22 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		body[@"audio"] = audio;
 		body[@"modalities"] = @[ @"text", @"audio" ];
 	}
-	NSSet<NSString *> *translated = [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
-														   NFKParameterAudioOutput, NFKParameterVideoFrameCount ]];
+	// The contract's text parameters carry the endpoint's spelling. These are written before the fold
+	// below, so a caller who sets the endpoint's own name keeps the value they wrote.
+	NSDictionary<NSString *, NSArray<NSString *> *> *wireNames = NFKRemoteWireNames();
+	for (NSString *key in wireNames) {
+		id value = request.parameters[key];
+		if (value == nil) {
+			continue;
+		}
+		for (NSString *wireName in wireNames[key]) {
+			body[wireName] = value;
+		}
+	}
+
+	NSMutableSet<NSString *> *translated = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
+																		 NFKParameterAudioOutput, NFKParameterVideoFrameCount ]];
+	[translated addObjectsFromArray:wireNames.allKeys];
 	for (NSString *key in request.parameters) {
 		if (![translated containsObject:key]) {
 			body[key] = request.parameters[key];

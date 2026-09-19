@@ -170,7 +170,16 @@ streamed form (`respondsToSelector:`) and the task is cancelled. OpenAI deltas: 
 appends; `delta.tool_calls[]` assemble by index (id/name in the first delta, `function.arguments`
 fragments after); `data: [DONE]` finishes; a stream closing without `[DONE]` still delivers what it
 delivered. Anthropic events: `content_block_start` opens a block by index, `text_delta` /
-`input_json_delta` append, `message_stop` finishes, an `error` event fails. **Tools:**
+`input_json_delta` append, `message_stop` finishes, an `error` event fails. **Sampling keys (2026-09-19):** the contract's text parameters are camelCase and the services read
+underscored names, so `NFKRemoteWireNames()` in `NFKRemoteBackend.m` renames them: `maxTokens` →
+`max_tokens`, `topP` → `top_p`, `topK` → `top_k`, `stopSequences` → `stop`, and `repetitionPenalty`
+→ **both** `repetition_penalty` (vLLM, TGI) and `repeat_penalty` (llama.cpp, Ollama), which name the
+same multiplicative penalty with no server reading both. `temperature` and `seed` already carry the
+wire spelling. The renaming runs before the fold, so a caller who writes `max_tokens` themselves
+keeps their value. Before that, those four keys folded in as `maxTokens` and friends and every
+OpenAI-compatible service ignored them, while `Docs/inference-guide.md` promised the contract's keys
+work on any text engine. `NFKAnthropicBackend` reads the same five explicitly (`stop_sequences` is
+its spelling for the stops) and has no repetition penalty. **Tools:**
 `NFKParameterTools` (`{name, description, parameters}`) → OpenAI `{type: function, function}` /
 Anthropic `{name, description, input_schema}`; replies → `NFKOutputToolCalls` = `{id, name, arguments
 (parsed), argumentsJSON}` (`result.toolCalls`). The key is spelled `"tools"`, the wire field's own

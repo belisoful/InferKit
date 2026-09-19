@@ -24,7 +24,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 				Reads NFKInputPrompt or NFKInputMessages and returns NFKOutputText. A message list with
 				a leading system role is lifted into the top-level system field, so a caller writes the
-				same request here as for an OpenAI-compatible provider.
+				same request here as for an OpenAI-compatible provider. The contract's sampling
+				parameters carry this API's spelling: NFKParameterMaxTokens becomes max_tokens,
+				NFKParameterTemperature temperature, NFKParameterTopP top_p, NFKParameterTopK top_k,
+				and NFKParameterStopSequences stop_sequences. The API has no repetition penalty.
 
 				Inference is synchronous and multi-second: run it off the main or render thread, or
 				submit a job. isReady reports whether an endpoint and a model are set.

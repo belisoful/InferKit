@@ -66,8 +66,10 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
 - (NSSet<NSString *> *)supportedParameterKeys
 {
+	// The Messages API has no repetition penalty, so that core key has nothing to become here.
 	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterTemperature,
-								  NFKParameterMaxTokens, NFKParameterAudioOutput ]];
+								  NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
+								  NFKParameterStopSequences, NFKParameterAudioOutput ]];
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -238,6 +240,20 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 	NSNumber *temperature = [request parameterForKey:NFKParameterTemperature];
 	if ([temperature isKindOfClass:NSNumber.class]) {
 		body[@"temperature"] = temperature;
+	}
+
+	// The Messages API names these three itself, so the core keys are renamed rather than dropped.
+	NSNumber *topP = [request parameterForKey:NFKParameterTopP];
+	if ([topP isKindOfClass:NSNumber.class]) {
+		body[@"top_p"] = topP;
+	}
+	NSNumber *topK = [request parameterForKey:NFKParameterTopK];
+	if ([topK isKindOfClass:NSNumber.class]) {
+		body[@"top_k"] = topK;
+	}
+	NSArray<NSString *> *stopSequences = [request parameterForKey:NFKParameterStopSequences];
+	if ([stopSequences isKindOfClass:NSArray.class]) {
+		body[@"stop_sequences"] = stopSequences;
 	}
 
 	NSMutableArray *conversation = [NSMutableArray array];

@@ -32,12 +32,16 @@ extern NSString * const NFKRemoteBackendRawKey;
 				messages array, used as-is) or NFKRemoteBackendPromptKey (a string wrapped as
 				one user message). An image under NFKInputImage, and any under NFKInputImages,
 				ride on the last user turn as inline image_url content parts, which is how a
-				vision model reads them. Request parameters fold into the request body, so a
-				caller sets temperature, max_tokens, and similar by name; two are translated:
-				NFKParameterTools becomes the endpoint's function tools and what the model called
-				comes back under NFKOutputToolCalls, and NFKParameterJSONSchema becomes a
-				json_schema response format whose parsed reply comes back under
-				NFKOutputStructured. The result exposes the assistant text under
+				vision model reads them. The contract's text parameters carry the endpoint's own
+				spelling: NFKParameterMaxTokens becomes max_tokens, NFKParameterTopP becomes top_p,
+				NFKParameterTopK becomes top_k, NFKParameterStopSequences becomes stop, and
+				NFKParameterRepetitionPenalty becomes both repetition_penalty and repeat_penalty,
+				the two names the servers use for it. NFKParameterTools becomes the endpoint's
+				function tools and what the model called comes back under NFKOutputToolCalls, and
+				NFKParameterJSONSchema becomes a json_schema response format whose parsed reply
+				comes back under NFKOutputStructured. Every other parameter folds into the body
+				under its own name, so a caller reaches a field the contract does not name, and one
+				written in the endpoint's spelling keeps the value the caller wrote. The result exposes the assistant text under
 				NFKRemoteBackendTextKey and the parsed body under NFKRemoteBackendRawKey.
 
 				runInferenceForRequest: blocks until the whole reply is back, so a caller runs it

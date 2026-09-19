@@ -344,6 +344,22 @@ static const uint16_t NFKDeadPort = 9;
 	XCTAssertEqualObjects([self.anthropic decodedRequestBody][@"max_tokens"], @64);
 }
 
+// The Messages API names these itself, so the core keys reach it rather than being dropped.
+- (void)testTheSamplingKeysReachTheMessagesAPI
+{
+	self.anthropic.stagedData = [@"{\"content\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }
+															   parameters:@{ NFKParameterTopP: @0.9,
+																			 NFKParameterTopK: @40,
+																			 NFKParameterStopSequences: @[ @"END" ] }];
+	[self.anthropic runInferenceForRequest:request error:NULL];
+
+	NSDictionary *body = [self.anthropic decodedRequestBody];
+	XCTAssertEqualObjects(body[@"top_p"], @0.9);
+	XCTAssertEqualObjects(body[@"top_k"], @40);
+	XCTAssertEqualObjects(body[@"stop_sequences"], (@[ @"END" ]));
+}
+
 // A system turn is a top-level field here, not a message with a role, so a caller can write the same
 // request for Anthropic as for an OpenAI-compatible provider.
 - (void)testASystemMessageIsLiftedOutOfTheConversation

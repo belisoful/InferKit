@@ -121,8 +121,11 @@
 	XCTAssertTrue([backend.supportedParameterKeys containsObject:NFKParameterJSONSchema]);
 	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputMessages]);
 	XCTAssertTrue([backend.supportedInputKeys containsObject:NFKInputImage], @"a vision model reads an image");
-	XCTAssertFalse([backend.supportedParameterKeys containsObject:NFKParameterMaxTokens],
-				   @"the key folds in under its own spelling, which is not the endpoint's");
+	// The text parameters are renamed to the endpoint's spelling, so the contract's keys reach it.
+	for (NSString *key in @[ NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
+							 NFKParameterStopSequences, NFKParameterRepetitionPenalty ]) {
+		XCTAssertTrue([backend.supportedParameterKeys containsObject:key], @"%@", key);
+	}
 }
 
 - (void)testTheCoreMLLanguageBackendDeclaresNoSchemaKey

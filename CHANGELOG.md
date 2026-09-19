@@ -11,6 +11,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+- The contract's text parameters reach a remote service. The core keys are camelCase
+  (`maxTokens`, `topP`, `topK`, `stopSequences`) and `NFKRemoteBackend` folded every untranslated
+  parameter into the request body under its own name, so those four never reached an
+  OpenAI-compatible endpoint, which reads `max_tokens`, `top_p`, `top_k`, and `stop`. The backend now
+  writes the endpoint's spelling. `NFKParameterRepetitionPenalty` goes out as both
+  `repetition_penalty` and `repeat_penalty`, the two names the servers use for the same penalty. The
+  renaming happens before the fold, so a caller who sets the endpoint's own name keeps the value they
+  wrote. `NFKAnthropicBackend` maps `NFKParameterTopP`, `NFKParameterTopK`, and
+  `NFKParameterStopSequences` to the Messages API's `top_p`, `top_k`, and `stop_sequences`, which it
+  had been dropping.
 - `NFKInferenceBackend` gains two optional declarations: `supportedParameterKeys` and
   `supportedInputKeys`, the keys a backend acts on. A caller that has to know in advance reads them,
   and the Foundation Models provider bridge derives Apple's capabilities from them. The remote

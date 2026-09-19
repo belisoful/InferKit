@@ -85,12 +85,21 @@ a caller sometimes has to know in advance what an engine honors: the Foundation 
 bridge derives Apple's `LanguageModelCapabilities` from them, and a router picks the engine that
 honors the key a request needs. A backend that declares nothing is used the way it always was.
 
-- A backend declares only what it acts on. The remote backend declares the four keys it translates
+- A backend declares only what it acts on. The remote backend declares the keys it translates
   (`NFKParameterTools`, `NFKParameterJSONSchema`, `NFKParameterAudioOutput`,
-  `NFKParameterVideoFrameCount`) plus temperature and seed. It does **not** declare
-  `NFKParameterMaxTokens` or `NFKParameterTopP`: every other parameter folds into the body under its
-  own spelling, and `maxTokens` / `topP` are not the endpoint's spelling, so those keys do not reach
-  an OpenAI-compatible service. A caller sets `max_tokens` itself, as the backend's header says.
+  `NFKParameterVideoFrameCount`, and the text parameters renamed to the endpoint's spelling) plus
+  temperature and seed, whose core spelling is already the endpoint's.
+- **The core keys reach the endpoint by renaming (2026-09-19).** The core keys are camelCase
+  (`maxTokens`, `topP`, `topK`, `stopSequences`) and a parameter the backend does not translate folds
+  into the body under its own name, so those four silently missed every OpenAI-compatible service
+  until `NFKRemoteWireNames()` in `NFKRemoteBackend.m` renamed them to `max_tokens`, `top_p`,
+  `top_k`, and `stop`. `NFKParameterRepetitionPenalty` goes out under both `repetition_penalty`
+  (vLLM, TGI) and `repeat_penalty` (llama.cpp, Ollama): the two name the same multiplicative
+  penalty, and no server reads both. The renaming is written into the body before the fold, so a
+  caller who sets the endpoint's own name keeps the value they wrote. `NFKAnthropicBackend` maps the
+  same keys to the Messages API's own names (`stop_sequences` there), and has no repetition penalty
+  to map. The image and video backends were already translating (`size`, `seconds`), which is the
+  pattern the chat backends now follow.
 - The Core ML language backend declares the sampling keys plus `NFKParameterOutputFormat` and
   `NFKParameterChoices`, and not `NFKParameterJSONSchema`: JSON comes from its token grammar.
 - `NFKInferencePrepare(backend, &error)` is the prepare counterpart of `NFKInferenceSubmit`: it calls

@@ -43,7 +43,9 @@ and returns an [`NFKInferenceResult`](../Sources/InferKit/include/InferKit/NFKIn
 - **parameters** — scalar controls. Text engines read `NFKParameterTemperature`, `NFKParameterTopP`,
   `NFKParameterTopK`, `NFKParameterMaxTokens`, `NFKParameterRepetitionPenalty`,
   `NFKParameterStopSequences`, and `NFKParameterSeed`. Each engine honors the subset it can and
-  ignores the rest.
+  ignores the rest. A remote engine reads them under its own spelling, which the backend writes
+  (`NFKParameterMaxTokens` goes out as `max_tokens`), so one request carries the same meaning to an
+  in-process model and to a service.
 - **outputs** — the result, keyed by name: `NFKOutputText` (a string), `NFKOutputStructured` (a
   dictionary), `NFKOutputEmbedding`, `NFKOutputImage`, `NFKOutputAudio`, `NFKOutputVideo`, and the
   typed lists (`NFKOutputDetections`, `NFKOutputPose`, `NFKOutputClassifications`,
@@ -444,6 +446,14 @@ id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:provider
                                                                 apiKey:nil
                                                              modelName:@"llama3.2"];
 ```
+
+The contract's sampling keys reach a service under the name it reads: `NFKParameterMaxTokens` goes
+out as `max_tokens`, `NFKParameterTopP` as `top_p`, `NFKParameterTopK` as `top_k`, and
+`NFKParameterStopSequences` as `stop` (`stop_sequences` on Anthropic). `NFKParameterRepetitionPenalty`
+goes out as both `repetition_penalty` and `repeat_penalty`, since the servers disagree on the name and
+agree on the meaning. Every other parameter folds into the request body under its own name, which is
+how a caller reaches a field the contract does not name, and a parameter written in the service's own
+spelling keeps the value the caller wrote.
 
 `backendForProvider:apiKey:modelName:` returns whichever backend the provider's protocol needs, so
 switching from a local server to Anthropic changes one argument. Both backends speak the synchronous

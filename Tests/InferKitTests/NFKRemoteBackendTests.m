@@ -9,6 +9,7 @@
 #import <XCTest/XCTest.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKInferenceRequest.h>
+#import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKErrors.h>
 
@@ -94,6 +95,61 @@
 	XCTAssertEqual(messages.count, (NSUInteger)1);
 	XCTAssertEqualObjects(messages.firstObject[@"role"], @"user");
 	XCTAssertEqualObjects(messages.firstObject[@"content"], @"Hello");
+}
+
+// The contract's text parameters are camelCase; the endpoint reads underscored names, so a request
+// written for any engine reaches this one.
+- (void)testTheContractsTextParametersCarryTheEndpointsSpelling
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSDictionary *parameters = @{ NFKParameterMaxTokens: @64,
+								  NFKParameterTopP: @0.9,
+								  NFKParameterTopK: @40,
+								  NFKParameterStopSequences: @[ @"\n\n" ],
+								  NFKParameterTemperature: @0.5,
+								  NFKParameterSeed: @7 };
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+															   parameters:parameters];
+	[self.backend runInferenceForRequest:request error:NULL];
+
+	NSDictionary *body = [self.backend decodedRequestBody];
+	XCTAssertEqualObjects(body[@"max_tokens"], @64);
+	XCTAssertEqualObjects(body[@"top_p"], @0.9);
+	XCTAssertEqualObjects(body[@"top_k"], @40);
+	XCTAssertEqualObjects(body[@"stop"], (@[ @"\n\n" ]));
+	XCTAssertEqualObjects(body[@"temperature"], @0.5, @"the two spellings already agree");
+	XCTAssertEqualObjects(body[@"seed"], @7);
+	XCTAssertNil(body[NFKParameterMaxTokens], @"the camelCase key does not also ride along");
+	XCTAssertNil(body[NFKParameterTopP]);
+	XCTAssertNil(body[NFKParameterStopSequences]);
+}
+
+// The servers disagree on the name for the same penalty, and none reads both.
+- (void)testTheRepetitionPenaltyGoesOutUnderBothSpellings
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+									parameters:@{ NFKParameterRepetitionPenalty: @1.1 }];
+	[self.backend runInferenceForRequest:request error:NULL];
+
+	NSDictionary *body = [self.backend decodedRequestBody];
+	XCTAssertEqualObjects(body[@"repetition_penalty"], @1.1);
+	XCTAssertEqualObjects(body[@"repeat_penalty"], @1.1);
+	XCTAssertNil(body[NFKParameterRepetitionPenalty]);
+}
+
+// A caller who writes the endpoint's own name keeps what they wrote: the translation runs first and
+// the fold runs after it.
+- (void)testAnExplicitWireNameOutranksTheTranslatedCoreKey
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+									parameters:@{ NFKParameterMaxTokens: @64, @"max_tokens": @128 }];
+	[self.backend runInferenceForRequest:request error:NULL];
+
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"max_tokens"], @128);
 }
 
 - (void)testAMessagesArrayIsSentAsIs
