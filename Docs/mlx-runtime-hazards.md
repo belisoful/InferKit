@@ -141,12 +141,28 @@ in one process with the buffer cache left alone, 1 matched. The other 24 took 11
 around 0.127 and 0.377, wrong by a factor near a million, with no infinity and no not-a-number among
 them.
 
-**The cause is MLX's Metal buffer cache.** It hands a recycled buffer to a backward pass that does not
-fully initialize it, so the gradient reads whatever the last run left there. Holding the cache limit
-at zero gives 25 correct calls out of 25. Returning the cache to the system immediately before each
-backward pass gives 25 out of 25. The fault is not a race at the backward pass boundary: a
-`Stream.gpu.synchronize()` before each call gives 1 correct out of 25, which is what doing nothing
-gives.
+**MLX's Metal buffer cache is involved, and the mechanism is not established.** Holding the cache
+limit at zero gives 25 correct calls out of 25. Returning the cache to the system immediately before
+each backward pass gives 25 out of 25. A cache that is already empty gives the correct answer as
+well, which is why a reading taken after a training run can look healthy.
+
+What the fault is not, each measured rather than assumed:
+
+- It is not a race at the backward pass boundary. A `Stream.gpu.synchronize()` before each call gives
+  1 correct out of 25, which is what doing nothing gives.
+- It is not the gradient reading leftover values. Filling the cache with buffers set to 0.0, 1.0,
+  1e3, and 1e6 leaves the wrong answer unchanged at about 0.127309 in every case. A gradient reading
+  those bytes would move with them. Whether that fill reaches the buffers the backward reuses is not
+  established, so this narrows the explanation rather than closing it.
+- It is not random. The wrong answer is about 0.127309 on run after run, which is a definite wrong
+  value rather than garbage.
+
+Two things unrelated to the cache also make it correct, and both point at how much of the lazy graph
+is evaluated. Materializing the parameters before calling `valueAndGrad` gives 12 correct out of 12.
+Evaluating the loss value together with the gradient, rather than evaluating the gradient alone,
+gives 12 out of 12. Neither helps a training loop: over 20 six-step runs with the cache left on, the
+loss rose 2 times evaluating the value afterward and 5 times evaluating it alongside the model. Only
+the cache limit fixes the loop.
 
 This reaches a real fine-tune. Over 60 six-step runs of the matting net's tiny configuration on the
 GPU, the loss ended above where it started 8 times with the cache left alone, 4 times with the cache

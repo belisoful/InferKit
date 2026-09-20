@@ -131,9 +131,8 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     something the noise cannot reach, such as parameters moving or a long run's fall on a pinned
     device. Never assert on the shape of a short loss curve.
 
-- **The buffer cache corrupts a backward pass (2026-09-19).** MLX hands a recycled buffer to a
-  backward that does not fully initialize it, so the gradient reads what the last run left there.
-  Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
+- **The buffer cache is involved in a wrong backward pass, and the mechanism is not established
+  (2026-09-19).** Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
   - **The CPU is the accurate device, arbitrated rather than assumed.** On the smallest graph that
     shows the fault, central finite differences along the CPU gradient's own direction give ratios of
     0.968, 0.9996, and 1.000 at steps of 1e-2, 1e-3, and 1e-4. The norm is 1.42553e-07, returned on
@@ -142,10 +141,24 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **The GPU is accurate on its first backward in a process.** It returns 1.42912e-07, confirmed at
     ratio 0.995. Of 25 calls in one process with the cache left alone, 1 matched; the other 24 took
     11 distinct values near 0.127 and 0.377.
-  - **Two mitigations work and one does not.** Holding `cacheLimit` at zero gives 25 of 25. Calling
-    `clearCache()` immediately before each backward gives 25 of 25. A `Stream.gpu.synchronize()`
-    before each backward gives 1 of 25, which is what doing nothing gives, so this is not a race at
-    the backward boundary and the recycled buffer's contents are the fault.
+  - **Two cache mitigations work and a synchronize does not.** Holding `cacheLimit` at zero gives 25
+    of 25. Calling `clearCache()` immediately before each backward gives 25 of 25. A
+    `Stream.gpu.synchronize()` before each backward gives 1 of 25, which is what doing nothing gives,
+    so this is not a race at the backward boundary. An already-empty cache is also correct, which is
+    why a reading taken after a training run can look healthy.
+  - **What it is not, each measured.** It is not the gradient reading leftover values: filling the
+    cache with buffers set to 0.0, 1.0, 1e3, and 1e6 leaves the wrong answer unchanged at about
+    0.127309 in every case, and a gradient reading those bytes would move with them. Whether that
+    fill reaches the buffers the backward reuses is not established, so this narrows the explanation
+    without closing it. It is not random either: 0.127309 recurs run after run, which is a definite
+    wrong value rather than garbage. An earlier draft of this entry asserted a recycled buffer that
+    is not fully initialized; that is the hypothesis the fill was meant to confirm, and it did not.
+  - **How much of the lazy graph is evaluated also decides it.** Materializing the parameters before
+    calling `valueAndGrad` gives 12 of 12 correct. Evaluating the loss value together with the
+    gradient, rather than the gradient alone, gives 12 of 12. Neither helps a training loop: over 20
+    six-step runs with the cache on, the loss rose 2 times evaluating the value afterward and 5 times
+    evaluating it alongside the model. The isolated probe and the training loop therefore do not
+    respond to the same lever, and only the cache limit fixes the loop.
   - **Clearing per step is not enough inside a training loop,** because the step refills the cache
     before its own backward runs. Over 60 six-step GPU runs the loss ended above where it started 8
     times with the cache left alone, 4 times clearing per step, and 0 times with the limit at zero.
@@ -205,9 +218,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     the same shape.
   - **Both defects are watched, not asserted.** `NFKMLXUpstreamWatchTests` reports whether a later GPU
     backward still disagrees with the CPU, and times a depthwise convolution against a dense one to
-    report whether MLX still routes them differently. Both print `UPSTREAM WATCH ... still present`
-    or `APPEARS FIXED` and pass either way, because a red suite for a defect no change here can fix
-    teaches a maintainer to ignore the suite.
+    report whether MLX still routes them differently. Both pass either way, because a red suite for a
+    defect no change here can fix teaches a maintainer to ignore the suite. The backward watch is
+    deterministic only in a fresh process, at 0 of 20 on three runs out of three; after a training
+    test has run it gave 12, 16, and 20 of 20, because the trainer leaves the cache empty behind it.
+    A clean reading therefore prints `not observed in this process` rather than any claim of a fix,
+    and the authoritative check is `swift test --filter NFKMLXUpstreamWatchTests` on its own.
 
 - **Whether to own a convolution until MLX fixes it (2026-09-19, analysis, not adopted).** Replacing
   `slow_conv_2D` is reachable without touching C++: a depthwise convolution is a strided gather into
@@ -236,7 +252,11 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     `(out * out).mean()` as the loss. Call `valueAndGrad` 25 times in one process on the GPU. The
     first norm is 1.42912e-07 and 24 of the remainder take 11 distinct values near 0.127 and 0.377.
     `MLX.Memory.cacheLimit = 0` or `MLX.Memory.clearCache()` before each call makes all 25 return the
-    first value; `Stream.gpu.synchronize()` does not. The CPU returns 1.42553e-07 every time and
+    first value; `Stream.gpu.synchronize()` does not. Materializing the parameters before the call,
+    or evaluating the returned loss value alongside the gradient rather than the gradient alone, also
+    makes all of them correct, so how much of the lazy graph is evaluated is part of it. Filling the
+    cache with buffers set to 0.0, 1.0, 1e3, or 1e6 leaves the wrong value unchanged at 0.127309, so
+    the gradient is not reading those bytes. The CPU returns 1.42553e-07 every time and
     central finite differences confirm it at ratio 1.000. `NFKMLXBufferCacheGradientTests` holds it in
     runnable form. Note against [ml-explore/mlx#3689](https://github.com/ml-explore/mlx/issues/3689)
     that this reproduction uses stock `MLXNN` through `valueAndGrad` with no custom extensions and no

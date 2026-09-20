@@ -51,15 +51,25 @@ final class NFKMLXUpstreamWatchTests: XCTestCase {
 
     /// Reports whether a GPU backward is still wrong when the buffer cache is left alone.
     ///
-    /// The first backward in a process reads fresh memory and is correct, so the watch judges the
-    /// ones after it. When every one of them matches the CPU, MLX no longer recycles a buffer into a
-    /// backward pass, and ``NFKMLXTrainingCachePolicy/disabledOnGPU`` can stop being the default.
-    /// Measured today, 1 of 25 matched in a fresh process.
+    /// A reading that shows the fault is conclusive. A clean reading is not, so this test never
+    /// reports one as a fix.
     ///
-    /// The count is 25 because the fault is state-dependent: the same eight readings gave 0 matches
-    /// in a fresh process and 5 in one that had already run a training test. A short sample can
-    /// therefore read as fixed when it is not, so confirm any `APPEARS FIXED` by running this test
-    /// again in a fresh process before removing a workaround.
+    /// The fault needs the buffer cache to hold this graph's own buffers. In a fresh process it is
+    /// deterministic, at 0 of 20 readings matching the CPU on three runs out of three. In a process
+    /// that has already run a training test it is not, at 12, 16, and 20 of 20 on three runs,
+    /// because the trainer runs with the cache limit at zero and leaves the cache empty behind it.
+    /// Five discarded readings ahead of the judged ones do not repopulate it reliably. Why an empty
+    /// cache yields the correct answer here is the same open question as the fault itself.
+    ///
+    /// The authoritative check is this test alone in a fresh process:
+    ///
+    /// ```
+    /// swift test --filter NFKMLXUpstreamWatchTests
+    /// ```
+    ///
+    /// Run that way, `not observed` means the defect is gone and
+    /// ``NFKMLXTrainingCachePolicy/disabledOnGPU`` can stop being the default. Run inside a suite,
+    /// `not observed` means only that this process did not reproduce it.
     func testWhetherTheBufferCacheStillCorruptsABackward() throws {
         try requireMLXRuntime()
         var reference = 0.0
@@ -68,18 +78,29 @@ final class NFKMLXUpstreamWatchTests: XCTestCase {
         var norms: [Double] = []
         NFKMLXDevice.perform(on: .gpu) {
             let limitBefore = NFKMLXGPU.cacheLimit
-            NFKMLXGPU.setCacheLimit(limitBefore > 0 ? limitBefore : 1 << 29)
-            defer { NFKMLXGPU.setCacheLimit(limitBefore) }
-            norms = (0 ..< 25).map { _ in Self.gradientNorm() }
+            NFKMLXGPU.synchronize()
+            NFKMLXGPU.setCacheLimit(1 << 29)
+            defer {
+                NFKMLXGPU.synchronize()
+                NFKMLXGPU.setCacheLimit(limitBefore)
+            }
+            // The fault needs the cache to hold this graph's own buffers. A test that ran before
+            // this one may have left the cache empty, which reads as correct and is not. These
+            // readings populate it and are discarded.
+            for _ in 0 ..< 5 { _ = Self.gradientNorm() }
+            norms = (0 ..< 20).map { _ in Self.gradientNorm() }
         }
 
-        let afterTheFirst = norms.dropFirst()
-        let matching = afterTheFirst.filter { abs($0 - reference) <= reference * 0.01 }.count
-        let verdict = matching == afterTheFirst.count
-            ? "APPEARS FIXED, confirm in a fresh process" : "still present"
+        let matching = norms.filter { abs($0 - reference) <= reference * 0.01 }.count
+        // A clean reading inside a suite means this process did not reproduce the fault, which is
+        // not the same as the fault being gone. Only a fresh process can say that, so the wording
+        // never claims a fix on its own.
+        let verdict = matching == norms.count
+            ? "not observed in this process; authoritative only when run alone in a fresh process"
+            : "still present"
         print("UPSTREAM WATCH buffer-cache backward: \(verdict) "
-              + "(\(matching)/\(afterTheFirst.count) later backwards match the CPU's \(reference))")
-        XCTAssertEqual(norms.count, 25, "the watch took its readings")
+              + "(\(matching)/\(norms.count) warmed backwards match the CPU's \(reference))")
+        XCTAssertEqual(norms.count, 20, "the watch took its readings")
     }
 
     /// Reports whether MLX's CPU convolution still takes the path that crashes.

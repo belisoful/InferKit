@@ -51,9 +51,9 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
 
 /// How a training run treats MLX's Metal buffer cache.
 ///
-/// MLX hands a recycled buffer to a backward pass that does not fully initialize it, so a gradient
-/// after the first in a process can come back wrong by a factor of about a million, with no
-/// infinity and no not-a-number to give it away. Measured on an M1 Max over 25 backward passes of a
+/// A gradient after the first in a process can come back wrong by a factor of about a million, with
+/// no infinity and no not-a-number to give it away. MLX's Metal buffer cache is involved, and the
+/// mechanism is not established. Measured on an M1 Max over 25 backward passes of a
 /// MobileNetV3 stem and four inverted residuals, one of the 25 matched the arbitrated gradient with
 /// the cache left alone, and 25 of 25 matched it with the cache held at zero. The full measurements
 /// are in `Docs/mlx-runtime-hazards.md`.

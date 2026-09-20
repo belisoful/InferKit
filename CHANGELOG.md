@@ -48,10 +48,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
-- **On-device fine-tuning was producing wrong gradients on the GPU.** MLX hands a recycled buffer to
-  a backward pass that does not fully initialize it, so every gradient after the first in a process
-  can come back wrong by a factor of about a million, silently and with no infinity or not-a-number
-  to give it away. Of 25 backward passes in one process, 1 matched the arbitrated gradient.
+- **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
+  in a process can come back wrong by a factor of about a million, silently and with no infinity or
+  not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not
+  established. Of 25 backward passes in one process, 1 matched the arbitrated gradient.
   `NFKMLXTrainer` now holds MLX's buffer cache at zero for the duration of a GPU run, which is the
   new `cachePolicy` parameter and its `NFKMLXTrainingCachePolicy` values. Over 60 six-step matting
   fine-tunes the loss ended above where it started 8 times with the cache left alone, 4 times

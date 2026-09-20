@@ -214,7 +214,7 @@ example reaches for internals a consumer does not need.
   consumer-facing write-up is in `Docs/mlx-runtime-hazards.md`. No single kernel is at fault: every
   layer alone is exact on both devices, so a fine-tune's instability is a property of the whole
   backward graph rather than of one operation to work around. The cause is
-  MLX's buffer cache handing a recycled buffer to the backward. `NFKMLXTrainer` now holds the cache
+  MLX's buffer cache, by a mechanism that is not established. `NFKMLXTrainer` now holds the cache
   limit at zero for the duration of a GPU run, which is the only mitigation measured to fix a
   training loop: over 60 six-step runs the loss ended above where it started 8 times with the cache
   left alone, 4 times reclaiming it per step, and 0 times under the default policy. The parameter is
