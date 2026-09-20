@@ -211,4 +211,13 @@ example reaches for internals a consumer does not need.
   by less than the run-to-run spread moves it. Pin a run whose loss is asserted to the CPU with
   `NFKMLXDevice.perform(on: .cpu)`, or judge it by parameters that moved or by a run long enough
   that the progress dwarfs the spread. The measurements are in `mlx-runtime-gotchas.md`, and the
-  consumer-facing write-up is in `Docs/mlx-runtime-hazards.md`.
+  consumer-facing write-up is in `Docs/mlx-runtime-hazards.md`. No single kernel is at fault: every
+  layer alone is exact on both devices, so a fine-tune's instability is a property of the whole
+  backward graph rather than of one operation to work around. The cause is
+  MLX's buffer cache handing a recycled buffer to the backward. `NFKMLXTrainer` now holds the cache
+  limit at zero for the duration of a GPU run, which is the only mitigation measured to fix a
+  training loop: over 60 six-step runs the loss ended above where it started 8 times with the cache
+  left alone, 4 times reclaiming it per step, and 0 times under the default policy. The parameter is
+  ``NFKMLXTrainingCachePolicy`` and it costs 15% to 26% of throughput on a 23.6M-parameter stack,
+  against 4.58 GB of buffers the run no longer holds. Do not pin a training run to the CPU: a CPU
+  training-mode forward kills its process about one time in ten, in MLX's own convolution.

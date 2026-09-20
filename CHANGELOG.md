@@ -48,13 +48,35 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+- **On-device fine-tuning was producing wrong gradients on the GPU.** MLX hands a recycled buffer to
+  a backward pass that does not fully initialize it, so every gradient after the first in a process
+  can come back wrong by a factor of about a million, silently and with no infinity or not-a-number
+  to give it away. Of 25 backward passes in one process, 1 matched the arbitrated gradient.
+  `NFKMLXTrainer` now holds MLX's buffer cache at zero for the duration of a GPU run, which is the
+  new `cachePolicy` parameter and its `NFKMLXTrainingCachePolicy` values. Over 60 six-step matting
+  fine-tunes the loss ended above where it started 8 times with the cache left alone, 4 times
+  reclaiming the cache per step, and 0 times under the default. The default costs 15% to 26% of
+  throughput on a 23.6M-parameter stack, and returns 4.58 GB of buffers the run previously held.
+  Code calling `valueAndGrad` directly wants the same setting; `Docs/mlx-runtime-hazards.md` carries
+  the reproduction, and `NFKMLXUpstreamWatchTests` reports when MLX stops needing it.
+- **Training runs are no longer pinned to the CPU, which was killing test processes.** A CPU
+  training-mode forward pass faults on unmapped memory inside MLX's own convolution about one time in
+  ten, with no exception to catch. Evaluation-mode inference on the CPU is unaffected, measured at 0
+  in 1200 forwards. `Docs/mlx-runtime-hazards.md` records both stacks and which models take the
+  faulting path.
+- `Docs/mlx-runtime-hazards.md`: the gradient nondeterminism above is the composed backward pass, not
+  a broken kernel. Every layer on its own gives a bitwise identical gradient on repeat on both
+  devices and the two agree to five or six digits; the composed backward moves by far more, and only
+  on the GPU. Which value is accurate is now established on a graph whose output carries no clamp:
+  the CPU is accurate, confirmed by central finite differences at a ratio of 1.000.
+  `NFKMLXGradientDeterminismTests` keeps the layer agreement as a probe.
 - `Docs/mlx-runtime-hazards.md`: a seed makes a training run's weights reproducible, not the run.
   MLX's gradients are not reproducible on either device, so a short run's loss moves by less than
   the noise does. Measured over the recurrent matting net's tiny configuration: the weights are
   bit-identical from the seed, while six SGD steps from them ended higher than they started 5 times
   out of 12 on the GPU. `NFKMLXRVMTests.testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` was reading that
-  noise and is now pinned to the CPU, where the same six steps clear their spread by an order of
-  magnitude; its assertion is unchanged.
+  noise. It was pinned to the CPU, and now runs on the GPU under the trainer's cache policy, where
+  the six steps fall every time; its assertion is unchanged.
 - The core's reasoning keys reach the on-device text backends. A reasoning release's chain comes back
   under `NFKOutputReasoning` and `NFKOutputText` holds the answer alone; the markers come from the
   release's own chat template (`<think>` … `</think>` in the Qwen3 family, the harmony channels in

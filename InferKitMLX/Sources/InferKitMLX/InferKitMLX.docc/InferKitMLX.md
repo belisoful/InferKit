@@ -305,6 +305,7 @@ limits.
 - ``NFKMLXTrainer``
 - ``NFKMLXTrainingCheckpoint``
 - ``NFKMLXTrainingStep``
+- ``NFKMLXTrainingCachePolicy``
 - ``NFKMLXTrainingData``
 - ``NFKMLXBatchSampler``
 - ``NFKMLXLoRA``

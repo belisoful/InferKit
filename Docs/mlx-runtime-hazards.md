@@ -116,26 +116,125 @@ group that trains would stop dropping. `NFKMLXTrainer` does this for every run.
 ### A seed makes the weights reproducible, not the run
 
 `NFKMLXRandom.seed` fixes what a net starts from. Build the same net twice from the same seed and its
-parameters are bit-identical on either device. A training run from that identical start still lands
-somewhere different every time, because MLX's gradient computation is not reproducible.
+parameters are bit-identical. Measured over 30 builds on an M1 Max (macOS 26.6.2, mlx-swift 0.31.6),
+the sum of every parameter was the same value on both devices every time.
 
-Measured on an M1 Max (macOS 26.6.2) over the recurrent matting net's tiny configuration, six SGD
-steps at a 0.05 rate against a fixed target. The loss recorded at the first step, which is taken
-before that step's update, read `0.5203694` on every one of 24 CPU runs and on 11 of 12 GPU runs. The
-final loss ranged 0.13 to 0.54 across those 12 GPU runs, and five of them ended higher than they
-started. The same six steps on the CPU landed between 0.171 and 0.208, so the CPU is not reproducible
-either, but its spread is far smaller than the progress the run makes.
+Nothing after the weights is fixed. A forward pass is not reproducible on the CPU: over 180 builds
+from one seed, the loss of the first forward took four distinct values between 0.51985323 and
+0.52548116. A `BatchNorm` over a batch of one divides by that batch's own standard deviation, which
+turns an accumulation difference near 1e-07 into a difference near 5e-03 in the loss. A forward pass
+on the GPU is reproducible while no backward pass has run in the process, at 10 readings of one value
+in evaluation mode and 10 in training mode.
 
-This is invisible while a run is long. It surfaces when a short run's result is read as though it
-were a fixed number: a handful of steps on the GPU moves the loss by less than the noise moves it.
+A backward pass on the GPU is a separate matter, and it is wrong rather than noisy.
 
-**Rule:** do not treat a seeded training run as repeatable. Seed to fix the starting point, and judge
-a run by something the noise cannot reach: parameters that moved, or a fall measured over a run long
-enough that the progress dwarfs the spread. Where a short run has to be judged exactly, pin it to the
-CPU with `NFKMLXDevice.perform(on: .cpu)`.
+**The CPU is the accurate device, and this was arbitrated rather than assumed.** On the smallest graph
+that shows the fault, a MobileNetV3-style stem and four inverted residuals at 32x32x3 under a
+mean-of-squares loss, central finite differences along the CPU gradient's own direction give ratios
+of 0.968, 0.9996, and 1.000 at steps of 1e-2, 1e-3, and 1e-4. A ratio converging on 1 as the step
+shrinks is what a correct gradient does. The norm is 1.42553e-07, and the CPU returns it on 25 of 25
+calls.
 
-*Probes: `NFKMLXTrainingDeterminismTests.testASeedFixesTheWeightsAndTheFirstLoss` holds the first
-half, and `testASeededRunStillFallsEveryTimeOnTheCPU` holds the second.*
+**The GPU is accurate on its first backward pass in a process and wrong after it.** The first call
+returns 1.42912e-07, which the same finite-difference probe confirms at a ratio of 0.995. Of 25 calls
+in one process with the buffer cache left alone, 1 matched. The other 24 took 11 distinct values
+around 0.127 and 0.377, wrong by a factor near a million, with no infinity and no not-a-number among
+them.
+
+**The cause is MLX's Metal buffer cache.** It hands a recycled buffer to a backward pass that does not
+fully initialize it, so the gradient reads whatever the last run left there. Holding the cache limit
+at zero gives 25 correct calls out of 25. Returning the cache to the system immediately before each
+backward pass gives 25 out of 25. The fault is not a race at the backward pass boundary: a
+`Stream.gpu.synchronize()` before each call gives 1 correct out of 25, which is what doing nothing
+gives.
+
+This reaches a real fine-tune. Over 60 six-step runs of the matting net's tiny configuration on the
+GPU, the loss ended above where it started 8 times with the cache left alone, 4 times with the cache
+returned before each step, and 0 times with the limit held at zero. The median final loss over those
+runs is 0.496, 0.440, and 0.322 against a first loss of 0.520.
+
+Returning the cache before each step is a partial measure, because the step refills the cache before
+its own backward pass runs. The gradient cannot be corrected between the forward and the backward,
+because `valueAndGrad` runs both in one call and MLX builds the graph lazily, so a clear inside the
+loss closure runs while the graph is being built and before anything executes.
+
+**Rule:** hold the buffer cache at zero for the duration of a GPU training run, which
+``NFKMLXTrainingCachePolicy/disabledOnGPU`` does and ``NFKMLXTrainer`` uses by default. Code that
+calls `valueAndGrad` directly does the same, or accepts that only its first gradient in the process
+is trustworthy.
+
+The cost is throughput, and the cache is not holding down the model's footprint. Measured over 10
+steps of a 40-layer 256-channel stack, 23.6M parameters at 2776.2 MB of active memory: the run takes
+2.39 to 2.79 seconds with the cache, and 3.02 seconds without it, which is 15% to 26%. Peak active
+memory is 2776.2 MB either way, while the cache holds a further 4.58 GB that the run no longer holds
+when the limit is zero. On a small model the setting is faster rather than slower, at 3.45 seconds
+against 4.82 over 40 steps of the matting net.
+
+This is specific to what a graph does. Fourteen other graphs were reproducible on both devices and
+agreed with each other to five or six digits: smooth stacks up to sixteen deep, global-pool gating,
+bilinear resampling, skip concatenation, and stacks built on `relu`, `hardswish`, and `hardsigmoid`.
+Single layers are exact on both devices. Within the matting net the disagreement appears at the
+fourth inverted residual, where the CPU reads 1.43e-07 and the GPU reads 0.373; through the third the
+two devices agree to three digits.
+
+One reading is unexplained. The first six-step run in a fresh GPU process reported an anomalous first
+loss 19 times in 20 with the cache limit at zero, against 7 in 20 with the cache returned each step
+and 4 in 20 with it left alone. Later runs in the same process do not show it. No mechanism for this
+is established.
+
+*Probes: `NFKMLXBufferCacheGradientTests` holds the reference norm and the agreement under the
+policy. `NFKMLXTrainingDeterminismTests` holds what a seed does and does not fix.
+`NFKMLXGradientDeterminismTests` holds the layer-by-layer agreement. `NFKMLXUpstreamWatchTests`
+reports whether MLX still has the defect, and does not fail while it does.*
+
+### Training-mode work on the CPU kills the process
+
+A training-mode forward pass on the CPU ends the process outright, at a measured rate near one run in
+ten. There is no exception to catch. The suite prints "0 failures" for a run that died part way
+through, so an exit code is the only honest reading of a test run.
+
+Two stacks appear. The CPU one faults on unmapped memory inside MLX's own convolution, on MLX's
+scheduler thread:
+
+```
+SIGSEGV KERN_INVALID_ADDRESS / SIGBUS KERN_PROTECTION_FAILURE
+  mlx::core::slow_conv_2D<float>
+  mlx::core::scheduler::StreamThread::thread_fn()
+```
+
+The GPU one throws from a Metal completion handler, where nothing can catch it:
+
+```
+SIGABRT  [METAL] Command buffer execution failed: Invalid Input
+  mlx::core::gpu::check_error(MTL::CommandBuffer*)
+  thread com.Metal.CompletionQueueDispatch
+```
+
+What triggers it is training mode, not the backward pass. Measured over 20 processes each: 60
+evaluation-mode forward passes crashed 0 times, 60 training-mode forward passes with no backward pass
+anywhere crashed 2 times, and a twelve-step training run crashed between 1 and 4 times depending on
+the cache policy. Pooled over every run today, a CPU training run crashed 5 times in 62 with the
+cache untouched, 11 times in 114 with the cache returned each step, and 9 times in 50 with the limit
+at zero. The same work on the GPU crashed 0 times in 122 processes under every policy.
+
+The cache limit belongs in that list because zero is the setting that returns pages to the system,
+which is the operation the faulting stack implicates. This is why
+``NFKMLXTrainingCachePolicy/disabledOnGPU`` leaves a CPU run's cache alone.
+
+`slow_conv_2D` is reached for a reason worth knowing, because it decides which models are exposed.
+`conv_2D_cpu` uses an explicit-GEMM convolution only when every dilation is 1 and the group count is
+1, and calls `slow_conv_2D` otherwise. A depthwise convolution has a group count equal to its channel
+count, so every MobileNetV3 inverted residual takes the faulting path on the CPU, as does any dilated
+convolution. Measured on the CPU, a depthwise convolution costs 6.98 times a dense convolution of the
+same shape, which is the two paths showing themselves.
+
+**Rule:** do not pin a training run to the CPU. `NFKMLXDevice.perform(on: .cpu)` around a fine-tune is
+the way into this, and a fine-tune has no reason to be there: the GPU is correct under the trainer's
+default policy and does not crash. Evaluation-mode inference on the CPU is unaffected.
+
+*Watch: `NFKMLXUpstreamWatchTests` times a depthwise convolution against a dense one and reports when
+MLX routes them the same way. It does not run the faulting path, because a crash truncates the suite
+rather than reporting anything.*
 
 ### Merging a LoRA delta into a quantized base discards the training
 

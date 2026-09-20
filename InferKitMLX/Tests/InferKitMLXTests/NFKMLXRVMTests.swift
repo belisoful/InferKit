@@ -202,10 +202,10 @@ final class NFKMLXRVMTests: XCTestCase {
     func testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks() throws {
         try requireMLXRuntime()
         var run: Result<(gates: Int, losses: [Float], moved: Int), Error>?
-        // Pinned to the CPU, because MLX's gradients are not reproducible on either device and on
-        // the GPU the noise in a six-step run is the size of the signal. See
-        // `Docs/agent-reference/mlx-runtime-gotchas.md`.
-        NFKMLXDevice.perform(on: .cpu) {
+        // On the GPU, where the trainer holds the buffer cache at zero and the six steps fall every
+        // time. The earlier CPU pin is gone: training-mode work on the CPU kills its process about
+        // one time in ten, in MLX's own convolution. See `Docs/agent-reference/mlx-runtime-gotchas.md`.
+        NFKMLXDevice.perform(on: .gpu) {
             run = Result { try Self.fineTuneTheTinyNet() }
         }
         let (gates, losses, moved) = try XCTUnwrap(run).get()

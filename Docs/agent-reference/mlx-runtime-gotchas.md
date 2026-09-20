@@ -108,20 +108,21 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   first loss of 0.52, and the run ended higher than it started **5 times out of 12**. The same test
   passed three times out of three in isolation, which is what made it read as order-dependent when
   it is simply a coin flip.
-  - The nondeterminism enters at the backward pass, not the forward. Three training-mode forwards on
-    the same weights score identically, and the loss recorded at step 0, which is taken before that
-    step's update, read `0.5203694` on all 24 CPU runs and on 11 of the 12 GPU runs. Step 1 onward
-    moves every time.
+  - Most of the nondeterminism enters at the backward pass. The loss recorded at step 0, taken before
+    that step's update, read `0.5203694` on all 24 CPU runs and on 11 of the 12 GPU runs, and step 1
+    onward moves every time. **Superseded in part:** the reading of three identical training-mode
+    forwards was three samples. At 180 builds the CPU forward takes four distinct values between
+    0.51985323 and 0.52548116, so the forward is not exact either. See "The buffer cache corrupts a
+    backward pass" below.
   - It is not GPU-only. The CPU device is not bitwise reproducible either, but the same six steps
     there land between 0.171 and 0.208 over 24 runs against the same first loss, so the margin is
     roughly eight times the spread. On the GPU the six-step margin is smaller than the spread, and
     lengthening the run does not buy enough: at 12, 20, and 30 steps the worst final loss was 0.502,
     0.472, and 0.438, all inside the band the six-step runs already covered.
-  - So a training test that reads a loss is pinned to the CPU with `NFKMLXDevice.perform(on: .cpu)`,
-    which is what `NFKMLXRVMTests.testAFineTuneMovesTheSqueezeExciteAndHardswishBlocks` now does.
-    Pinning keeps the assertion exactly as strict rather than widening the threshold. The test's own
-    question is whether gradients reach the squeeze-excitation gates through the hardswish blocks,
-    which is about the autodiff graph, and the CPU answers that as well as Metal does.
+  - **Superseded:** that test was pinned to the CPU with `NFKMLXDevice.perform(on: .cpu)`, and is not
+    any more. A CPU training run kills its process about one time in ten, and the GPU is both correct
+    and crash-free under the trainer's default cache policy. See "Training-mode work on the CPU kills
+    the process" below.
   - The other loss-descent assertions in the package have margins that clear this noise by an order
     of magnitude and are left alone: `NFKMLXTrainerTests` asks for a tenfold fall over 100 steps, and
     `NFKMLXZeroDCETrainingTests` measured 2.57 → 0.13 over 60 steps with a spread under 0.01.
@@ -129,3 +130,151 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - The rule this leaves: a single-digit-step training run is noise on this runtime. Assert on
     something the noise cannot reach, such as parameters moving or a long run's fall on a pinned
     device. Never assert on the shape of a short loss curve.
+
+- **The buffer cache corrupts a backward pass (2026-09-19).** MLX hands a recycled buffer to a
+  backward that does not fully initialize it, so the gradient reads what the last run left there.
+  Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
+  - **The CPU is the accurate device, arbitrated rather than assumed.** On the smallest graph that
+    shows the fault, central finite differences along the CPU gradient's own direction give ratios of
+    0.968, 0.9996, and 1.000 at steps of 1e-2, 1e-3, and 1e-4. The norm is 1.42553e-07, returned on
+    25 of 25 calls. Finite differences are built from forward passes alone, which is what makes them
+    able to arbitrate between two devices that disagree about a gradient.
+  - **The GPU is accurate on its first backward in a process.** It returns 1.42912e-07, confirmed at
+    ratio 0.995. Of 25 calls in one process with the cache left alone, 1 matched; the other 24 took
+    11 distinct values near 0.127 and 0.377.
+  - **Two mitigations work and one does not.** Holding `cacheLimit` at zero gives 25 of 25. Calling
+    `clearCache()` immediately before each backward gives 25 of 25. A `Stream.gpu.synchronize()`
+    before each backward gives 1 of 25, which is what doing nothing gives, so this is not a race at
+    the backward boundary and the recycled buffer's contents are the fault.
+  - **Clearing per step is not enough inside a training loop,** because the step refills the cache
+    before its own backward runs. Over 60 six-step GPU runs the loss ended above where it started 8
+    times with the cache left alone, 4 times clearing per step, and 0 times with the limit at zero.
+    Median final loss 0.496, 0.440, 0.322 against a first loss of 0.520. There is no way to clear
+    between the forward and the backward: `valueAndGrad` runs both in one call, and MLX builds the
+    graph lazily, so a clear inside the loss closure runs before anything executes.
+  - **`NFKMLXTrainer` defaults to ``NFKMLXTrainingCachePolicy/disabledOnGPU``,** which holds the limit
+    at zero for the run and restores it in a `defer`. The limit is process-wide, so a concurrent
+    inference on another thread allocates without a cache until the run returns, and two concurrent
+    trainers race on the restore. A CPU run is left alone deliberately; see the CPU crash entry below.
+  - **Cost is throughput, and the cache is not holding the footprint down.** Over 10 steps of a
+    40-layer 256-channel stack (23.6M parameters, 2776.2 MB active): 2.39 to 2.79 seconds with the
+    cache, 3.02 without, so 15% to 26%. Peak active memory is 2776.2 MB either way, and the cache
+    holds a further 4.58 GB. On the tiny matting net the setting is faster, 3.45 seconds against 4.82
+    over 40 steps.
+  - **It is specific to the graph.** Fourteen synthetic graphs are reproducible on both devices and
+    agree to five or six digits, including smooth stacks to depth sixteen, global-pool gating,
+    bilinear resampling, skip concatenation, and stacks of `relu`, `hardswish`, and `hardsigmoid`.
+    Every single layer is exact. Within the matting net the disagreement appears at the **fourth**
+    inverted residual: through the third the devices agree to three digits, at the fourth the CPU
+    reads 1.43e-07 and the GPU 0.373.
+  - **A seed fixes the weights and nothing after them.** The parameter sum is identical over 30 builds
+    on both devices. The first forward's loss took four distinct values over 180 CPU builds, between
+    0.51985323 and 0.52548116, because a `BatchNorm` over a batch of one divides by that batch's own
+    standard deviation and turns a 1e-07 accumulation difference into a 5e-03 difference in the loss.
+    A GPU forward is exact while no backward has run in the process.
+  - **Unexplained.** The first six-step run in a fresh GPU process reported an anomalous first loss 19
+    times in 20 with the limit at zero, 7 in 20 clearing per step, and 4 in 20 with the cache left
+    alone. Later runs in the same process do not show it. Recorded rather than explained.
+  - **How the first pass at this went wrong, because the trap is cheap to repeat.** An earlier reading
+    concluded from six samples per condition that clearing per step was a complete fix, and that
+    every forward pass was exact. Both fell over at 25 and 60 samples. A mitigation for a fault that
+    appears in 24 of 25 calls looks total at n=6 whatever it actually does. Size the sample to the
+    claim before writing the claim down.
+
+- **Training-mode work on the CPU kills the process (2026-09-19).** A CPU training-mode forward ends
+  the process at a rate near one run in ten. There is no exception to catch, and the suite prints
+  "0 failures" for a run that died part way through, so read the exit code.
+  - **Two stacks.** The CPU one faults on unmapped memory in MLX's convolution on MLX's own scheduler
+    thread: `mlx::core::slow_conv_2D<float>` under `mlx::core::scheduler::StreamThread::thread_fn()`,
+    as SIGSEGV `KERN_INVALID_ADDRESS` or SIGBUS `KERN_PROTECTION_FAILURE`. The GPU one throws from a
+    completion handler where nothing can catch it: `mlx::core::gpu::check_error(MTL::CommandBuffer*)`
+    on thread `com.Metal.CompletionQueueDispatch`, reported as
+    `[METAL] Command buffer execution failed: Invalid Input`.
+  - **Training mode is the trigger, not the backward.** Over 20 processes each: 60 evaluation-mode
+    forwards crashed 0 times, 60 training-mode forwards with no backward crashed 2 times. Pooled over
+    every run: a CPU training run crashed 5 in 62 with the cache untouched, 11 in 114 clearing per
+    step, and 9 in 50 with the limit at zero. The same work on the GPU crashed 0 times in 122
+    processes under every policy.
+  - **Zero is the aggressive setting,** which is why the trainer leaves a CPU run's cache alone.
+    Returning pages to the system is the operation the faulting stack implicates.
+  - **Which models are exposed, and why.** `conv_2D_cpu` uses `explicit_gemm_conv_ND_cpu` only when
+    every `wt_dilation` and `in_dilation` is 1 and the group count is 1, and calls
+    `dispatch_slow_conv_2D` otherwise. A depthwise convolution has a group count equal to its channel
+    count, so every MobileNetV3 inverted residual takes the faulting path on the CPU, as does any
+    dilated convolution. Measured on the CPU, a depthwise convolution costs 6.98 times a dense one of
+    the same shape.
+  - **Both defects are watched, not asserted.** `NFKMLXUpstreamWatchTests` reports whether a later GPU
+    backward still disagrees with the CPU, and times a depthwise convolution against a dense one to
+    report whether MLX still routes them differently. Both print `UPSTREAM WATCH ... still present`
+    or `APPEARS FIXED` and pass either way, because a red suite for a defect no change here can fix
+    teaches a maintainer to ignore the suite.
+
+- **Whether to own a convolution until MLX fixes it (2026-09-19, analysis, not adopted).** Replacing
+  `slow_conv_2D` is reachable without touching C++: a depthwise convolution is a strided gather into
+  patches followed by a broadcast multiply and a sum over the window, and a dilated convolution is a
+  dense convolution over interleaved sub-grids. Both are MLX ops, both avoid the faulting path, and a
+  CPU-only switch on `NFKMLXDevice.currentType` would confine the change to the device that needs it.
+  - **The case for.** The faulting path is also 6.98 times the cost of the GEMM path, so a replacement
+    plausibly makes CPU depthwise inference several times faster. That argument stands on its own and
+    survives an upstream fix.
+  - **The case against, which is the reason it is not adopted.** The exposed population is small and
+    already has a better route. Evaluation-mode CPU inference does not crash, measured at 0 in 1200
+    forwards, so the only consumers at risk are those pinning a *training* run to the CPU, and the
+    documented answer for them is to train on the GPU, which is both correct and crash-free. Against
+    that, the cost is a convolution reimplementation validated against every shipped model that uses
+    a depthwise or dilated convolution, at the package's own standard of measured reference parity,
+    plus an im2col materialization of roughly nine times the activation for a 3x3 kernel.
+  - **What would change the decision.** A consumer requirement for CPU-only inference of MobileNet
+    class models, where the 6.98x would be the point rather than the crash. If it is taken up, it is
+    a performance change with a correctness side effect, gated on its own parity run, and removed
+    when `UPSTREAM WATCH cpu grouped convolution` reports `APPEARS FIXED`.
+
+- **Two upstream reports, drafted and not filed (2026-09-19).** Filing publishes under the developer's
+  identity, so both are written out here to paste.
+  - **Wrong gradients from a recycled buffer.** Build `NFKRVMBackbone(NFKMLXRVMConfiguration.tiny)`,
+    call `train(false)`, feed `[1, 32, 32, 3]`, take the stem and the first four blocks, and use
+    `(out * out).mean()` as the loss. Call `valueAndGrad` 25 times in one process on the GPU. The
+    first norm is 1.42912e-07 and 24 of the remainder take 11 distinct values near 0.127 and 0.377.
+    `MLX.Memory.cacheLimit = 0` or `MLX.Memory.clearCache()` before each call makes all 25 return the
+    first value; `Stream.gpu.synchronize()` does not. The CPU returns 1.42553e-07 every time and
+    central finite differences confirm it at ratio 1.000. `NFKMLXBufferCacheGradientTests` holds it in
+    runnable form. Note against [ml-explore/mlx#3689](https://github.com/ml-explore/mlx/issues/3689)
+    that this reproduction uses stock `MLXNN` through `valueAndGrad` with no custom extensions and no
+    aliased snapshot buffers, which is the ground on which
+    [PR #3688](https://github.com/ml-explore/mlx/pull/3688) was closed.
+  - **`slow_conv_2D` faults on unmapped memory.** Run a training-mode forward of a MobileNetV3-style
+    net with depthwise convolutions on the CPU stream, repeatedly, in one process. About one process
+    in ten dies in `slow_conv_2D<float>` on `scheduler::StreamThread::thread_fn`, as SIGSEGV
+    `KERN_INVALID_ADDRESS` or SIGBUS `KERN_PROTECTION_FAILURE`. Evaluation mode does not reproduce it
+    at 1200 forwards. Setting `cacheLimit = 0` raises the rate, which points at buffers being returned
+    to the system while the CPU stream still reads them.
+
+- **The composed backward is what moves, not any one kernel (2026-09-19).** Following the entry
+  above, the gradients were compared directly rather than through a training curve, on an M1 Max
+  (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6). What the comparison settles, and what it does not:
+  - **No single kernel is at fault.** A plain convolution, a depthwise convolution, a grouped
+    convolution, a `BatchNorm` in training mode, and a `Linear`, each on its own, give a bitwise
+    identical gradient on repeat on both devices, and the two devices agree to five or six digits.
+    So do a squeeze-excitation block, a whole inverted residual with one, a recurrent gate from a nil
+    state, and stacks of up to sixteen convolution-and-normalization pairs. `NFKMLXGradientDeterminismTests`
+    keeps that set as a probe.
+  - **The forward is far steadier than the backward, and the same 66 of 1024 output pixels sit inside
+    the clamp every time.** **Superseded in part:** "exact" came from three readings. A GPU forward is
+    exact while no backward has run in the process, and a CPU forward takes four distinct values over
+    180 builds. The backward still moves by a factor of a million, which the forward never approaches.
+  - **The composed backward is not.** For the same net at the same seeded weights, the CPU gradient
+    norm repeats as 2.9022650575922 to fourteen digits, while the GPU returns 7.17, 57.6, 295.5,
+    385.2, 67.0, 28.2, 327.5, and 497.1 across runs and processes. In evaluation mode the CPU repeats
+    0.14247507032592 while the GPU ranges 0.1425 to 8.25. The values hold no infinities and no
+    not-a-numbers; the GPU simply reports a different, plausible-looking gradient each time.
+  - **The loss this was found on is also ill-conditioned, which is a separate fact.** The matting
+    net's alpha is a clamp rather than a sigmoid, and at random initialization 958 of 1024 pixels sit
+    on the floor, where they contribute exactly nothing. The whole gradient comes from the remaining
+    66. That makes the surface kinked, which is why a finite-difference probe cannot arbitrate here:
+    stepping along the CPU's own gradient direction implies a true norm of at least 0.98, and
+    stepping along a GPU run's implies 0.37. Two contradictory bounds mean the function is not
+    differentiable at that point, not that one device is right.
+  - **Answered by the entry above.** The cause is the buffer cache and the CPU is the accurate device.
+    Reclaiming the cache makes a lone backward accurate, and holding the cache limit at zero is what a
+    training loop needs. The clamp reading below stands as a separate fact about that test's
+    conditioning, and is not what made the gradients move.

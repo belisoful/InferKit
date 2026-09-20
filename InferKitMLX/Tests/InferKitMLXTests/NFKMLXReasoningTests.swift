@@ -64,7 +64,10 @@ final class NFKMLXReasoningTests: XCTestCase {
         XCTAssertEqual(NFKMLXReasoningFormat.named("think") ?? nil, NFKMLXReasoningFormat.thinkTags)
         XCTAssertEqual(NFKMLXReasoningFormat.named("HARMONY") ?? nil, NFKMLXReasoningFormat.harmonyChannels)
         XCTAssertNil(NFKMLXReasoningFormat.named("none") ?? nil, "none states that there is no chain")
-        XCTAssertNil(NFKMLXReasoningFormat.named("gibberish"), "an unknown name names nothing")
+        // The result is doubly optional: an unknown name is the outer nil, while "none" is the outer
+        // some wrapping nil. Comparing the binding keeps the outer meaning and coerces nothing.
+        let unknown: NFKMLXReasoningFormat?? = NFKMLXReasoningFormat.named("gibberish")
+        XCTAssertTrue(unknown == nil, "an unknown name names nothing")
 
         let stated = NFKMLXReasoningFormat.named(["<r>", "</r>"]) ?? nil
         XCTAssertEqual(stated?.opening, "<r>")

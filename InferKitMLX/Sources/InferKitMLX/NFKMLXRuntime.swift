@@ -99,6 +99,19 @@ public final class NFKMLXGPU: NSObject {
         MLX.Memory.clearCache()
     }
 
+    /// Waits for work already sent to the GPU to finish.
+    ///
+    /// Changing the buffer-cache limit trims the cache, and mlx-swift writes the limit twice on the
+    /// first read of it in a process. A trim frees buffers that in-flight work is still reading, so
+    /// a cache change made while the GPU is busy corrupts whatever runs next. Draining the stream
+    /// first is what makes ``setCacheLimit(_:)`` safe to call around a piece of work. See
+    /// `Docs/mlx-runtime-hazards.md`.
+    ///
+    /// - Since: 0.3.1
+    @objc public static func synchronize() {
+        MLX.Stream.gpu.synchronize()
+    }
+
     /// Resets ``peakMemory`` to the current active memory.
     @objc public static func resetPeakMemory() {
         // The one `MLX.GPU` member this file still uses: the memory getters and limits all moved to

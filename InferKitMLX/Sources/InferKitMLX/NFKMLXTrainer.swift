@@ -49,6 +49,45 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
     }
 }
 
+/// How a training run treats MLX's Metal buffer cache.
+///
+/// MLX hands a recycled buffer to a backward pass that does not fully initialize it, so a gradient
+/// after the first in a process can come back wrong by a factor of about a million, with no
+/// infinity and no not-a-number to give it away. Measured on an M1 Max over 25 backward passes of a
+/// MobileNetV3 stem and four inverted residuals, one of the 25 matched the arbitrated gradient with
+/// the cache left alone, and 25 of 25 matched it with the cache held at zero. The full measurements
+/// are in `Docs/mlx-runtime-hazards.md`.
+public enum NFKMLXTrainingCachePolicy: Sendable {
+
+    /// Holds the buffer cache at zero for the run, and only when the run is on the GPU.
+    ///
+    /// This is the default, because a wrong gradient reports no error. Six-step GPU runs ended above
+    /// where they started 8 times in 60 with the cache left alone, and 0 times in 60 under this
+    /// policy. The cache is a process-wide setting, so a concurrent inference on another thread
+    /// allocates without it until the run returns. Measured cost on a 23.6M-parameter stack is 15%
+    /// to 26% of throughput, against 4.58 GB of buffers the run no longer holds.
+    ///
+    /// A run on the CPU is left alone, because CPU gradients are already accurate and because
+    /// returning buffers to the system raises the rate of a separate MLX crash. See
+    /// `Docs/mlx-runtime-hazards.md`.
+    case disabledOnGPU
+
+    /// Returns the cache to the system before each step, and leaves the limit alone.
+    ///
+    /// This reduces the fault without removing it, because a step refills the cache before its own
+    /// backward pass runs. Six-step GPU runs ended above where they started 4 times in 60 under this
+    /// policy. It changes no process-wide setting, so it cannot affect another thread.
+    case reclaimedEachStep
+
+    /// Leaves the cache exactly as the process configured it.
+    ///
+    /// Appropriate where the graph is known not to trigger the fault, which is common: 14 synthetic
+    /// graphs were exact on both devices, including smooth stacks to depth 16, gated pooling,
+    /// resampling, skip concatenation, and stacks of `relu`, `hardswish`, and `hardsigmoid`. Verify
+    /// a given graph against the CPU before relying on this.
+    case unchanged
+}
+
 /// Runs a supervised training loop over an MLX module.
 public enum NFKMLXTrainer {
 
@@ -77,6 +116,8 @@ public enum NFKMLXTrainer {
     ///     optimizer's own state is not written, because mlx-swift keeps it private: a resumed `SGD`
     ///     run continues exactly, while a resumed `Adam` run rebuilds its moment estimates and shows
     ///     a brief rise in loss.
+    ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
+    ///     gradients correct. See ``NFKMLXTrainingCachePolicy``.
     ///   - observer: receives each step and can end the run early.
     ///
     /// - Throws: `NFKMLXError.trainingDiverged` when a step's loss stops being finite, before that
@@ -98,12 +139,14 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
         observer: Observer? = nil
     ) throws -> [Float] {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { let (input, target) = batch($0); return [input, target] },
                 loss: { model, arrays in loss(model, arrays[0], arrays[1]) },
-                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
+                cachePolicy: cachePolicy, observer: observer)
     }
 
     /// Trains `model` for `steps` steps against a loss that needs no ground truth, and returns the
@@ -122,6 +165,8 @@ public enum NFKMLXTrainer {
     ///   - loss: scores the model on that batch alone.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress.
+    ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
+    ///     gradients correct. See ``NFKMLXTrainingCachePolicy``.
     ///   - observer: receives each step and can end the run early.
     @discardableResult
     public static func train<Model: Module>(
@@ -132,12 +177,14 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
         observer: Observer? = nil
     ) throws -> [Float] {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { [sample($0)] },
                 loss: { model, arrays in loss(model, arrays[0]) },
-                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
+                cachePolicy: cachePolicy, observer: observer)
     }
 
     /// The loop both entry points share, over an arbitrary number of per-step arrays.
@@ -149,6 +196,7 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float?,
         checkpoint: NFKMLXTrainingCheckpoint?,
+        cachePolicy: NFKMLXTrainingCachePolicy,
         observer: Observer?
     ) throws -> [Float] {
         guard !model.trainableParameters().flattened().isEmpty else {
@@ -162,11 +210,33 @@ public enum NFKMLXTrainer {
         enterTrainingMode(model)
         defer { model.train(wasTraining) }
 
+        // The cache limit is process-wide, so it is restored even when a step throws. Reading it and
+        // writing it both trim the buffer cache, and a trim frees buffers that work already sent to
+        // the GPU is still reading, which corrupts whatever runs next rather than this run. The
+        // stream is drained around both changes, and the limit is read only when it is going to be
+        // changed, because mlx-swift's getter writes it twice on its first read in a process.
+        let disablesCache = cachePolicy == .disabledOnGPU && NFKMLXDevice.currentType == .gpu
+        var limitBeforeRun = 0
+        if disablesCache {
+            NFKMLXGPU.synchronize()
+            limitBeforeRun = NFKMLXGPU.cacheLimit
+            NFKMLXGPU.setCacheLimit(0)
+        }
+        defer {
+            if disablesCache {
+                NFKMLXGPU.synchronize()
+                NFKMLXGPU.setCacheLimit(limitBeforeRun)
+            }
+        }
+
         let lossAndGradient = valueAndGrad(model: model) { model, arrays in [loss(model, arrays)] }
         var history: [Float] = []
         history.reserveCapacity(steps)
 
         for step in 0 ..< steps {
+            if cachePolicy == .reclaimedEachStep {
+                NFKMLXGPU.clearCache()
+            }
             let (values, gradients) = lossAndGradient(model, arrays(step))
             let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
             optimizer.update(model: model, gradients: update)
