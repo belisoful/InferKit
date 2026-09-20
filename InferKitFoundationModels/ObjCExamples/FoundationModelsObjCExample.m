@@ -130,9 +130,13 @@
 		NSError *error = nil;
 		XCTAssertNil([backend runInferenceForRequest:request error:&error],
 					 @"a level this OS cannot give is refused rather than dropped");
-		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+		// A machine whose model is unavailable refuses before it reads the level, and says so with
+		// kNFKError_InferenceNotReady. Only a ready backend gets as far as the level.
+		XCTAssertEqual(error.code, backend.isReady ? (NSInteger)kNFKError_InferenceUnsupported
+												   : (NSInteger)kNFKError_InferenceNotReady);
 		return;
 	}
+	XCTSkipIf(!backend.isReady, @"the on-device model is unavailable on this machine");
 	NFKInferenceResult *result = [backend runInferenceForRequest:request error:NULL];
 	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
 	XCTAssertNotNil(usage[NFKUsageInputTokens]);

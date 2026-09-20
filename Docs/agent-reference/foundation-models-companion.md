@@ -143,3 +143,14 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   `sampling`. `setSamplingMode(_:on:)` / `samplingMode(of:)` select the spelling under the same
   compiler check, and tests read the mode through the accessor.
   `GenerationOptions(temperature:maximumResponseTokens:)` resolves without a warning on both.
+- A test that calls `runInferenceForRequest:` assumes a model the CI runner does not have. The
+  runners carry no Apple Intelligence, so `NFKFoundationModelConfiguration.checkAvailability()`
+  refuses first and every generation path returns `kNFKError_InferenceNotReady` before it reads
+  anything about the request. A test asserting a more specific refusal therefore passes on a
+  developer's Mac and fails on CI, which is what
+  `FoundationModelsObjCExample.testObjectiveCAsksForReasoningAndReadsWhatTheTurnCost` did from
+  2026-09-19 until it keyed its expected code on `backend.isReady`. `isReady` is
+  `(try? checkAvailability()) != nil`, so it answers exactly the question of which refusal comes
+  back. The Swift examples avoid the trap a second way, by asserting on a static helper such as
+  `NFKFoundationModelsBackend.reasoningEffort(for:)` that needs no model and then skipping. Prefer
+  the static helper where one exists, and gate on `isReady` where the example has to run inference.
