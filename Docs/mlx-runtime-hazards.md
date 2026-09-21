@@ -157,9 +157,9 @@ and the mitigations rather than the fault.
 **Retire the workaround when mlx-swift ships a release vendoring core 0.32.0 or later.** Run
 `swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process. Measure a training loop with
 the cache on as well, which is the condition the default answers to: at core 0.31.1 the loss rose in
-8 of 60 six-step runs with the cache left alone, and that figure is unmeasured on 0.32.x. When it reports the fault is
-not observed, ``NFKMLXTrainingCachePolicy/unchanged`` becomes the trainer default and this section
-becomes history. Everything below records the defect as it behaves on core 0.31.1.
+8 of 60 six-step runs with the cache left alone, and that figure is unmeasured on 0.32.x. When both
+report the fault is not observed, ``NFKMLXTrainingCachePolicy/unchanged`` becomes the trainer
+default and this section becomes history. Everything below records the defect as it behaves on core 0.31.1.
 
 **The CPU is the accurate device, and this was arbitrated rather than assumed.** On the smallest graph
 that shows the fault, a MobileNetV3-style stem and four inverted residuals at 32x32x3 under a

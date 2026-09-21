@@ -2,10 +2,13 @@
 //  NFKMLXBufferCacheGradientTests.swift
 //  InferKitMLXTests
 //
-//  MLX's Metal buffer cache hands a recycled buffer to a backward pass that does not fully
-//  initialize it, so every gradient after the first in a process can be wrong by orders of
-//  magnitude. Reclaiming the cache first is the workaround. The measurements and the minimal
-//  reproduction are in Docs/agent-reference/mlx-runtime-gotchas.md.
+//  A GPU backward pass after the first in a process can return a gradient wrong by orders of
+//  magnitude. MLX's Metal buffer cache is involved, and reclaiming it first is the workaround.
+//  The mechanism is not identified. The defect belongs to mlx core, which fixes it in 0.32.0;
+//  mlx-swift 0.31.6 vendors core 0.31.1 and is the newest tag, so the workaround still ships.
+//  These tests assert the CPU's accuracy and the mitigations, so they pass on either runtime.
+//  The measurements and the minimal reproduction are in
+//  Docs/agent-reference/mlx-runtime-gotchas.md.
 //
 
 import XCTest
@@ -89,8 +92,8 @@ final class NFKMLXBufferCacheGradientTests: XCTestCase {
 
     /// Reclaiming the buffer cache before each backward keeps the GPU on that same answer. Without
     /// it, the second and later gradients in a process come back wrong by a factor of about a
-    /// million; with it, every one of them is right. The assertion holds whether or not MLX still
-    /// recycles the buffer, so it survives an upstream fix.
+    /// million; with it, every one of them is right. The assertion holds whether or not a later
+    /// backward is still wrong, so it survives an upstream fix.
     func testReclaimingTheCacheKeepsTheGPUGradientCorrect() throws {
         try requireMLXRuntime()
         var reference = 0.0

@@ -104,7 +104,8 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   initialization exactly reproducible, and a test that reads a training loss looks deterministic
   because of it. It is not. Measured 2026-09-19 on an M1 Max (macOS 26.6.2, Xcode 27), seeding
   `20_260_904` and building `NFKMLXRVMNet(.tiny)`: the parameter sum is bit-identical across runs,
-  while six SGD steps from those identical weights land somewhere different on every run. Over 12 seeded GPU runs the final loss ranged 0.13 to 0.54 against that
+  while six SGD steps from those identical weights land somewhere different on every run. Over 12
+  seeded GPU runs the final loss ranged 0.13 to 0.54 against that
   first loss of 0.52, and the run ended higher than it started **5 times out of 12**. The same test
   passed three times out of three in isolation, which is what made it read as order-dependent when
   it is simply a coin flip.
@@ -328,7 +329,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     stepping along the CPU's own gradient direction implies a true norm of at least 0.98, and
     stepping along a GPU run's implies 0.37. Two contradictory bounds mean the function is not
     differentiable at that point, not that one device is right.
-  - **Answered by the entry above.** The cause is the buffer cache and the CPU is the accurate device.
-    Reclaiming the cache makes a lone backward accurate, and holding the cache limit at zero is what a
-    training loop needs. The clamp reading below stands as a separate fact about that test's
+  - **Answered by the entry above.** The CPU is the accurate device, arbitrated on a graph with no
+    clamp and no kink, where central finite differences along the CPU's own gradient direction give
+    ratios of 0.968, 0.9996, and 1.000 at steps of 1e-2, 1e-3, and 1e-4. The defect belongs to mlx
+    core and 0.32.0 fixes it. MLX's buffer cache is involved and the mechanism is not identified:
+    reclaiming the cache makes a lone backward accurate, and holding the cache limit at zero is what
+    a training loop needs. The clamp reading above stands as a separate fact about that test's
     conditioning, and is not what made the gradients move.
