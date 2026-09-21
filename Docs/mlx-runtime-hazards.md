@@ -147,8 +147,17 @@ is published. Which of the 146 commits between 0.31.2 and 0.32.0 carries the fix
 lone grouped strided convolution returns the correct gradient on 0.31.1, so the composed graph is
 still what the fault needs.
 
+**The fix is confirmed in Swift, not only in Python.** Pointing `InferKitMLX/Package.swift` at
+mlx-swift `main`, which vendors core 0.32.2, and running the watch alone in a fresh process reports
+the fault not observed at 20 of 20. The same command against the shipped 0.31.6 pin reports it still
+present at 0 of 20. Same machine, same test, same graph, with the vendored core as the only
+difference. `NFKMLXBufferCacheGradientTests` passes on both, because it asserts the CPU's accuracy
+and the mitigations rather than the fault.
+
 **Retire the workaround when mlx-swift ships a release vendoring core 0.32.0 or later.** Run
-`swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process. When it reports the fault is
+`swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process. Measure a training loop with
+the cache on as well, which is the condition the default answers to: at core 0.31.1 the loss rose in
+8 of 60 six-step runs with the cache left alone, and that figure is unmeasured on 0.32.x. When it reports the fault is
 not observed, ``NFKMLXTrainingCachePolicy/unchanged`` becomes the trainer default and this section
 becomes history. Everything below records the defect as it behaves on core 0.31.1.
 

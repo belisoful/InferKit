@@ -148,6 +148,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     2. The composed graph is still required, which agrees with the kernel survey below.
   - **Nothing is filed upstream for this.** The defect is fixed in the current release, so there is
     no report to make. The drafted report is withdrawn.
+  - **Confirmed in Swift against mlx-swift `main` (2026-09-20).** Pinning the package to mlx-swift
+    `main`, which vendors core 0.32.2, and running the watch alone in a fresh process reports the
+    fault not observed at 20 of 20, against 0 of 20 on the shipped 0.31.6 pin under the same
+    command. The build takes no source change, and `NFKMLXBufferCacheGradientTests` passes on both
+    runtimes. What is still unmeasured on 0.32.x is a training loop with the cache left on, which is
+    the condition the trainer default answers to. Measure that before flipping it.
   - **The exit condition.** mlx-swift's newest tag is 0.31.6, vendoring core 0.31.1. mlx-swift `main`
     vendors core 0.32.2. `InferKitMLX/Package.swift` requires `from: "0.31.6"`, so a 0.32.x tag is
     taken up when one is published. On that bump, run `swift test --filter NFKMLXUpstreamWatchTests`
