@@ -131,8 +131,29 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     something the noise cannot reach, such as parameters moving or a long run's fall on a pinned
     device. Never assert on the shape of a short loss curve.
 
-- **The buffer cache is involved in a wrong backward pass, and the mechanism is not established
-  (2026-09-19).** Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
+- **A wrong backward pass on the GPU, fixed in mlx core 0.32.0 (2026-09-19, resolved 2026-09-20).**
+  Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
+  - **The fault is in mlx core and the current release does not have it.** The graph was transcribed
+    into Python `mlx.nn` and reproduces against `mlx` directly, so it sits below the Swift bindings.
+    The Python CPU reference is 1.425528234774301e-07 against the Swift 1.42553e-07, which is how the
+    transcription is known to be the same graph. GPU readings matching the CPU with the cache
+    untouched: 0 of 25 on core 0.31.1, 2 of 25 on 0.31.2, 25 of 25 on 0.32.0, and 60 of 60 on 0.32.2.
+    `clear_cache()` and `set_cache_limit(0)` each give 25 of 25 on 0.31.1, as they do in Swift.
+    Python's `synchronize()` gives 25 of 25 where Swift measures 1 of 25, which is unexplained and
+    does not change the conclusion.
+  - **The fixing commit is not identified.** 146 commits separate 0.31.2 from 0.32.0. `Fix conv2
+    gradients in grouped strided case on Metal (#3800)` matches by title and lands 2026-07-07, after
+    the mlx-swift 0.31.6 tag of 2026-07-02. It is not confirmed: a lone grouped strided convolution
+    returns the correct gradient on 0.31.1, at 8 of 8 for group counts 1 and 16 against strides 1 and
+    2. The composed graph is still required, which agrees with the kernel survey below.
+  - **Nothing is filed upstream for this.** The defect is fixed in the current release, so there is
+    no report to make. The drafted report is withdrawn.
+  - **The exit condition.** mlx-swift's newest tag is 0.31.6, vendoring core 0.31.1. mlx-swift `main`
+    vendors core 0.32.2. `InferKitMLX/Package.swift` requires `from: "0.31.6"`, so a 0.32.x tag is
+    taken up when one is published. On that bump, run `swift test --filter NFKMLXUpstreamWatchTests`
+    alone in a fresh process, and make ``NFKMLXTrainingCachePolicy/unchanged`` the trainer default
+    once the watch reports the fault is not observed. The bullets below record the defect as it
+    behaves on core 0.31.1.
   - **The CPU is the accurate device, arbitrated rather than assumed.** On the smallest graph that
     shows the fault, central finite differences along the CPU gradient's own direction give ratios of
     0.968, 0.9996, and 1.000 at steps of 1e-2, 1e-3, and 1e-4. The norm is 1.42553e-07, returned on
@@ -245,9 +266,16 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     a performance change with a correctness side effect, gated on its own parity run, and removed
     when `UPSTREAM WATCH cpu grouped convolution` reports `APPEARS FIXED`.
 
-- **Two upstream reports, drafted and not filed (2026-09-19).** Filing publishes under the developer's
-  identity, so both are written out here to paste.
-  - **Wrong gradients from a recycled buffer.** Build `NFKRVMBackbone(NFKMLXRVMConfiguration.tiny)`,
+- **Upstream reports: one withdrawn, one without a reproduction (2026-09-19, revised 2026-09-20).**
+  The gradient report is withdrawn, because mlx core 0.32.0 already fixes what it describes. The
+  convolution crash has no script upstream can run: the same workload in Python, with training mode,
+  depthwise and dilated convolutions, a backward pass and an optimizer step, 12 steps at 256x256 on
+  the CPU stream, killed 0 of 40 processes on core 0.31.1 and 0 of 40 on 0.32.2. Against the Swift
+  rate near 5 in 62, 0 of 40 has a probability near 0.036, which is evidence against a
+  Python-reachable defect rather than noise. It does not say where the fault is. It does say that a
+  report belongs to mlx-swift rather than mlx, and that it waits on a standalone Swift reproduction.
+  The text below is kept for that report.
+  - **Withdrawn, kept for the record.** Build `NFKRVMBackbone(NFKMLXRVMConfiguration.tiny)`,
     call `train(false)`, feed `[1, 32, 32, 3]`, take the stem and the first four blocks, and use
     `(out * out).mean()` as the loss. Call `valueAndGrad` 25 times in one process on the GPU. The
     first norm is 1.42912e-07 and 24 of the remainder take 11 distinct values near 0.127 and 0.377.

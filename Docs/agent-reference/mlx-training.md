@@ -219,5 +219,7 @@ example reaches for internals a consumer does not need.
   training loop: over 60 six-step runs the loss ended above where it started 8 times with the cache
   left alone, 4 times reclaiming it per step, and 0 times under the default policy. The parameter is
   ``NFKMLXTrainingCachePolicy`` and it costs 15% to 26% of throughput on a 23.6M-parameter stack,
-  against 4.58 GB of buffers the run no longer holds. Do not pin a training run to the CPU: a CPU
+  against 4.58 GB of buffers the run no longer holds. mlx core 0.32.0 fixes the defect, and
+  mlx-swift 0.31.6 vendors core 0.31.1, so the policy is retired on the release that brings core
+  0.32.0 into the package. Do not pin a training run to the CPU: a CPU
   training-mode forward kills its process about one time in ten, in MLX's own convolution.

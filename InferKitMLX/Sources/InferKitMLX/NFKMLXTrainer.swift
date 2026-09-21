@@ -57,6 +57,12 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
 /// MobileNetV3 stem and four inverted residuals, one of the 25 matched the arbitrated gradient with
 /// the cache left alone, and 25 of 25 matched it with the cache held at zero. The full measurements
 /// are in `Docs/mlx-runtime-hazards.md`.
+///
+/// The defect belongs to mlx core, which fixes it in 0.32.0. mlx-swift 0.31.6 vendors core 0.31.1
+/// and is the newest tag, so this package still needs the workaround. **Retire this type when
+/// mlx-swift ships a release vendoring core 0.32.0 or later:** run
+/// `swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process, and make ``unchanged``
+/// the trainer default once the watch reports the fault is not observed.
 public enum NFKMLXTrainingCachePolicy: Sendable {
 
     /// Holds the buffer cache at zero for the run, and only when the run is on the GPU.

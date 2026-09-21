@@ -128,6 +128,30 @@ in evaluation mode and 10 in training mode.
 
 A backward pass on the GPU is a separate matter, and it is wrong rather than noisy.
 
+**The defect is in mlx core, and mlx core 0.32.0 fixes it.** The same graph transcribed into Python
+reproduces the fault against `mlx` directly, which places it below the Swift bindings. The Python CPU
+reference is 1.425528234774301e-07, matching the Swift reading. GPU readings matching the CPU with
+the cache untouched, measured on this machine:
+
+| mlx core | Readings matching the CPU |
+| --- | --- |
+| 0.31.1 | 0 of 25 |
+| 0.31.2 | 2 of 25 |
+| 0.32.0 | 25 of 25 |
+| 0.32.2 | 60 of 60 |
+
+mlx-swift 0.31.6 vendors mlx core 0.31.1, which is why this package still carries the workaround.
+0.31.6 is also the newest mlx-swift tag. mlx-swift `main` vendors core 0.32.2.
+`InferKitMLX/Package.swift` requires mlx-swift `from: "0.31.6"`, so a 0.32.x tag is taken up when one
+is published. Which of the 146 commits between 0.31.2 and 0.32.0 carries the fix is not identified. A
+lone grouped strided convolution returns the correct gradient on 0.31.1, so the composed graph is
+still what the fault needs.
+
+**Retire the workaround when mlx-swift ships a release vendoring core 0.32.0 or later.** Run
+`swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process. When it reports the fault is
+not observed, ``NFKMLXTrainingCachePolicy/unchanged`` becomes the trainer default and this section
+becomes history. Everything below records the defect as it behaves on core 0.31.1.
+
 **The CPU is the accurate device, and this was arbitrated rather than assumed.** On the smallest graph
 that shows the fault, a MobileNetV3-style stem and four inverted residuals at 32x32x3 under a
 mean-of-squares loss, central finite differences along the CPU gradient's own direction give ratios

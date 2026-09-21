@@ -3,7 +3,8 @@
 //  InferKitMLXTests
 //
 //  Watches the two MLX defects the package works around, so the workarounds are removed when the
-//  runtime stops needing them rather than carried forever. These tests report and do not fail. A
+//  runtime stops needing them rather than carried forever. The backward defect has a known fix in
+//  mlx core 0.32.0, and the package waits on an mlx-swift release that vendors it. These tests report and do not fail. A
 //  defect that is still present is the expected state, and a test that failed on it would make the
 //  suite red for something no change here can fix. Read the printed lines, or grep a test log for
 //  "UPSTREAM WATCH". The defects are recorded in Docs/agent-reference/mlx-runtime-gotchas.md.
@@ -70,6 +71,11 @@ final class NFKMLXUpstreamWatchTests: XCTestCase {
     /// Run that way, `not observed` means the defect is gone and
     /// ``NFKMLXTrainingCachePolicy/disabledOnGPU`` can stop being the default. Run inside a suite,
     /// `not observed` means only that this process did not reproduce it.
+    ///
+    /// The defect is in mlx core, which fixes it in 0.32.0. Measured in Python against `mlx`
+    /// directly, GPU readings matching the CPU go from 0 of 25 on core 0.31.1 to 25 of 25 on 0.32.0.
+    /// mlx-swift 0.31.6 vendors core 0.31.1. This watch is the check to run on the release that
+    /// brings core 0.32.0 or later into the package.
     func testWhetherTheBufferCacheStillCorruptsABackward() throws {
         try requireMLXRuntime()
         var reference = 0.0

@@ -58,7 +58,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   reclaiming the cache per step, and 0 times under the default. The default costs 15% to 26% of
   throughput on a 23.6M-parameter stack, and returns 4.58 GB of buffers the run previously held.
   Code calling `valueAndGrad` directly wants the same setting; `Docs/mlx-runtime-hazards.md` carries
-  the reproduction, and `NFKMLXUpstreamWatchTests` reports when MLX stops needing it.
+  the reproduction, and `NFKMLXUpstreamWatchTests` reports when MLX stops needing it. The defect is
+  in mlx core and mlx core 0.32.0 fixes it, measured in Python at 0 of 25 correct on core 0.31.1
+  against 25 of 25 on 0.32.0. mlx-swift 0.31.6 vendors core 0.31.1 and is the newest tag, so the
+  workaround stays until a release brings core 0.32.0 into the package, at which point the default
+  becomes `NFKMLXTrainingCachePolicy.unchanged`.
 - **Training runs are no longer pinned to the CPU, which was killing test processes.** A CPU
   training-mode forward pass faults on unmapped memory inside MLX's own convolution about one time in
   ten, with no exception to catch. Evaluation-mode inference on the CPU is unaffected, measured at 0
