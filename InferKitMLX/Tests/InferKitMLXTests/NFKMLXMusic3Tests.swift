@@ -526,6 +526,19 @@ final class NFKMLXMusic3Tests: XCTestCase {
     // The residency decision is arithmetic over the weights and the working set, so it is asserted
     // at fixed numbers: a quantized stack fits with the 4 GB activation/cache reserve, the
     // full-precision stack does not, and the budget is the working set rather than live free memory.
+    // Every factory carries the residency to the backend, which builds without its weights present.
+    func testTheFactoriesCarryTheResidency() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("music3-\(UUID().uuidString)")
+        for residency in [NFKMLXResidency.automatic, .resident, .staged] {
+            let backend = try XCTUnwrap(try NFKMLXMusic3.backend(directoryURL: directory, residency: residency)
+                                        as? NFKMLXMusicBackend)
+            XCTAssertEqual(backend.residency, residency)
+            XCTAssertFalse(backend.isHoldingStagesResident, "nothing is loaded before a run")
+        }
+        let plain = try XCTUnwrap(try NFKMLXMusic3.backend(directoryURL: directory) as? NFKMLXMusicBackend)
+        XCTAssertEqual(plain.residency, .automatic, "the plain factory decides from the weights")
+    }
+
     func testTheResidencyPolicyIsDecidedFromTheWeights() throws {
         let budget = Int(25.0 * 0.85 * Double(1 << 30))          // an M1 Max's working-set budget
         XCTAssertTrue(NFKMLXMusicBackend.keepsStagesResident(weightBytes: 9 << 30,
@@ -862,6 +875,36 @@ final class NFKMLXMusic3Tests: XCTestCase {
 
     // The quantized stack is what makes residency possible: the whole release fits the working set,
     // so the second run skips every load. Both runs must still produce real audio.
+    // The same quantized stack held staged: each stage loads for its turn and is released after, and
+    // the song is the resident backend's to the byte, so staging changes only when stages are loaded.
+    func testAStagedMusicBackendMatchesAResidentOne() throws {
+        try requireMLXRuntime()
+        let release = try quantizedRelease()
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Gentle ambient pad, warm and slow",
+                     NFKInputLyrics: "[verse]\nHello world"],
+            parameters: [NFKParameterDurationSeconds: 2.0,
+                         NFKParameterSteps: 8,
+                         NFKParameterSeed: 7])
+        let output = FileManager.default.temporaryDirectory
+
+        let staged = NFKMLXMusicBackend(directoryURL: release, outputDirectory: output, residency: .staged)
+        let stagedAsset = try XCTUnwrap(try staged.runInference(for: request).output(forKey: NFKOutputAudio)
+                                        as? NFKAudioAsset)
+        XCTAssertFalse(staged.isHoldingStagesResident, "a staged backend holds no stage after a run")
+
+        let resident = NFKMLXMusicBackend(directoryURL: release, outputDirectory: output, residency: .resident)
+        let residentAsset = try XCTUnwrap(try resident.runInference(for: request).output(forKey: NFKOutputAudio)
+                                          as? NFKAudioAsset)
+        XCTAssertTrue(resident.isHoldingStagesResident, "a resident backend holds its stages after a run")
+
+        let stagedURL = try XCTUnwrap(stagedAsset.fileURL), residentURL = try XCTUnwrap(residentAsset.fileURL)
+        let same = FileManager.default.contentsEqual(atPath: stagedURL.path, andPath: residentURL.path)
+        print("VALIDATION music3 staged against resident, quantized stack: identical WAV \(same)")
+        XCTAssertTrue(same, "staging does not change the song")
+        for url in [stagedURL, residentURL] { try? FileManager.default.removeItem(at: url) }
+    }
+
     func testTheMusicBackendKeepsAQuantizedStackResident() throws {
         try requireMLXRuntime()
         let release = try quantizedRelease()

@@ -288,26 +288,63 @@ extension NFKMLXMusic3 {
 
 // MARK: - Backend
 
-/// The loaded stages a music backend retains across runs when the whole stack fits the working
-/// set. Runs serialize on the lock — the weights are GPU-scale, and two concurrent songs would
-/// contend for everything.
+/// The music backend's three stages, which run strictly in turn: the autoregressive language model and
+/// depth decoder, the flow-matching condition encoder and DiT, and the vocoder. They are held between
+/// runs where the stack fits the working set and loaded for their turn otherwise
+/// (``NFKMLXStagedModel``). Runs serialize on the staging lock: the weights are GPU-scale, and two
+/// concurrent songs would contend for everything.
 private final class NFKMusic3StageCache: @unchecked Sendable {
-    let lock = NSLock()
-    var languageModel: NFKMLXLanguageNet?
-    var depthDecoder: NFKMusic3DepthDecoderNet?
-    var conditionEncoder: NFKMusic3ConditionEncoderNet?
-    var transformer: NFKMusic3DiTNet?
-    var vocoder: NFKMusic3VocoderNet?
+    let staging = NFKMLXStagedModel(resident: false)
+    let autoregressive: NFKMLXStage<(NFKMLXLanguageNet, NFKMusic3DepthDecoderNet)>
+    let flowMatching: NFKMLXStage<(NFKMusic3ConditionEncoderNet, NFKMusic3DiTNet)>
+    let vocoder: NFKMLXStage<NFKMusic3VocoderNet>
 
-    func drop() {
-        languageModel = nil
-        depthDecoder = nil
-        conditionEncoder = nil
-        transformer = nil
-        vocoder = nil
+    init(directoryURL: URL) {
+        // The language model loads at the checkpoint's stored precision (bf16, or the quantized
+        // packing); float32 would not fit beside anything else.
+        autoregressive = NFKMLXStage {
+            let languageDirectory = directoryURL.appendingPathComponent("language_model")
+            let configuration = try NFKMLXLanguage.configuration(
+                fromHuggingFace: languageDirectory.appendingPathComponent("config.json"))
+            let languageModel = NFKMLXLanguage.makeNet(configuration)
+            try NFKMLXLanguage.loadWeights(into: languageModel, fromDirectory: languageDirectory,
+                                           precision: .checkpoint)
+            let depthDecoder = NFKMLXMusic3.makeDepthDecoder()
+            try NFKMLXMusic3.loadDepthWeights(
+                into: depthDecoder,
+                from: directoryURL.appendingPathComponent("rvq_depth_decoder/diffusion_pytorch_model.safetensors"),
+                precision: .checkpoint)
+            return (languageModel, depthDecoder)
+        }
+        flowMatching = NFKMLXStage {
+            let conditionEncoder = NFKMLXMusic3.makeConditionEncoder()
+            try NFKMLXMusic3.loadConditionWeights(
+                into: conditionEncoder,
+                from: directoryURL.appendingPathComponent("condition_encoder/diffusion_pytorch_model.safetensors"))
+            let transformer = NFKMLXMusic3.makeDiT()
+            try NFKMLXMusic3.loadDiTWeights(into: transformer,
+                                            from: directoryURL.appendingPathComponent("transformer"))
+            return (conditionEncoder, transformer)
+        }
+        vocoder = NFKMLXStage {
+            let vocoder = NFKMLXMusic3.makeVocoder()
+            try NFKMLXMusic3.loadVocoderWeights(
+                into: vocoder,
+                from: directoryURL.appendingPathComponent("vocoder/diffusion_pytorch_model.safetensors"))
+            return vocoder
+        }
     }
 
-    var isResident: Bool { languageModel != nil && transformer != nil && vocoder != nil }
+    func release() {
+        autoregressive.release()
+        flowMatching.release()
+        vocoder.release()
+    }
+
+    /// Whether the stages are held: resident, and loaded by at least one run.
+    var isResident: Bool {
+        staging.exclusively { staging.resident && autoregressive.isHeld && flowMatching.isHeld && vocoder.isHeld }
+    }
 }
 
 /// MiniMax Music 3 behind the InferKit contract: a music description under `NFKInputPrompt` and
@@ -330,17 +367,30 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
 
     private let directoryURL: URL
     private let outputDirectory: URL
-    private let stages = NFKMusic3StageCache()
+    private let stages: NFKMusic3StageCache
+
+    /// How the backend holds its three stages. ``NFKMLXResidency/automatic`` decides at each run from the
+    /// weights present then, since the backend can be built before its release is downloaded.
+    /// Introduced in InferKit 0.4.0.
+    @objc public let residency: NFKMLXResidency
 
     /// - Parameters:
     ///   - directoryURL: the release tree (`language_model/`, `rvq_depth_decoder/`,
     ///     `condition_encoder/`, `transformer/`, `vocoder/`, and the byte-level tokenizer files
     ///     under `qwen_7B/qwen3-8B-tokenizer-music/`), as `MiniMaxAI/MiniMax-Music3` publishes it.
     ///   - outputDirectory: where the generated WAV files are written.
-    public init(directoryURL: URL,
-                outputDirectory: URL = FileManager.default.temporaryDirectory) {
+    public convenience init(directoryURL: URL,
+                            outputDirectory: URL = FileManager.default.temporaryDirectory) {
+        self.init(directoryURL: directoryURL, outputDirectory: outputDirectory, residency: .automatic)
+    }
+
+    /// The backend over `directoryURL`, holding its stages as `residency` says. Introduced in
+    /// InferKit 0.4.0.
+    public init(directoryURL: URL, outputDirectory: URL, residency: NFKMLXResidency) {
         self.directoryURL = directoryURL
         self.outputDirectory = outputDirectory
+        self.stages = NFKMusic3StageCache(directoryURL: directoryURL)
+        self.residency = residency
         super.init()
     }
 
@@ -376,11 +426,12 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
         let directoryURL = self.directoryURL
         let outputDirectory = self.outputDirectory
         let stages = self.stages
+        let residency = self.residency
         Task.detached(priority: .userInitiated) {
             do {
                 if let result = try NFKMLXMusicBackend.run(request, directoryURL: directoryURL,
                                                            outputDirectory: outputDirectory,
-                                                           stages: stages, job: job) {
+                                                           stages: stages, residency: residency, job: job) {
                     job.finish(with: result)
                 }
             } catch {
@@ -414,25 +465,17 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
     /// budget is the working set Metal recommends, NOT live free memory — a resident backend's own
     /// weights would count against "free" on the next check and evict themselves.
     static func keepsStagesResident(weightBytes: Int, workingSetBudget: Int) -> Bool {
-        weightBytes + (4 << 30) <= workingSetBudget
-    }
-
-    private static func residencyBudget() -> Int {
-        let recommended = NFKHardwareProfile.current.recommendedWorkingSetSize
-        return recommended > 0 ? Int(Double(recommended) * 0.85) : 0
+        NFKMLXResidencyBudget.holds(weightBytes, budget: workingSetBudget)
     }
 
     /// Whether this backend is holding its stages loaded (after at least one run on a stack that
     /// fits). Exposed for tests and for a host deciding when to construct a second heavy backend.
-    public var isHoldingStagesResident: Bool {
-        stages.lock.lock()
-        defer { stages.lock.unlock() }
-        return stages.isResident
-    }
+    public var isHoldingStagesResident: Bool { stages.isResident }
 
     /// Returns nil only when the job was cancelled.
     private static func run(_ request: NFKInferenceRequest, directoryURL: URL, outputDirectory: URL,
-                            stages: NFKMusic3StageCache, job: NFKInferenceJob) throws -> NFKInferenceResult? {
+                            stages: NFKMusic3StageCache, residency: NFKMLXResidency,
+                            job: NFKInferenceJob) throws -> NFKInferenceResult? {
         guard let caption = request.input(forKey: NFKInputPrompt) as? String, !caption.isEmpty,
               let lyrics = request.input(forKey: NFKInputLyrics) as? String, !lyrics.isEmpty else {
             throw NFKMLXError.unsupportedInput
@@ -451,115 +494,71 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
         let textIDs = try NFKMusic3Prompt.textIDs(caption: caption, lyrics: lyrics,
                                                   tokenizer: tokenizer)
 
-        stages.lock.lock()
-        defer { stages.lock.unlock() }
-        let resident = keepsStagesResident(weightBytes: stackWeightBytes(in: directoryURL),
-                                           workingSetBudget: residencyBudget())
-        if !resident { stages.drop() }
+        return try stages.staging.exclusively { () -> NFKInferenceResult? in
+            let resident = try NFKMLXResidencyBudget.holdsResident(
+                stackWeightBytes(in: directoryURL), residency: residency, budget: NFKMLXResidencyBudget.current())
+            stages.staging.setResident(resident, releasing: [stages.release])
 
-        // Stage A — the autoregressive pass, scoped so a non-resident run RELEASES the language
-        // model before the DiT loads (locals live to function exit otherwise, and the bf16 model
-        // plus the float32 DiT together are what does not fit). It loads at the checkpoint's stored
-        // precision (bf16, or the quantized packing); float32 would not fit beside anything else.
-        let generation: NFKMusic3AutoregressiveStage.Generation = try {
-            let languageModel: NFKMLXLanguageNet
-            let depthDecoder: NFKMusic3DepthDecoderNet
-            if let cachedLanguage = stages.languageModel, let cachedDepth = stages.depthDecoder {
-                languageModel = cachedLanguage
-                depthDecoder = cachedDepth
-            } else {
-                let languageDirectory = directoryURL.appendingPathComponent("language_model")
-                let configuration = try NFKMLXLanguage.configuration(
-                    fromHuggingFace: languageDirectory.appendingPathComponent("config.json"))
-                languageModel = NFKMLXLanguage.makeNet(configuration)
-                try NFKMLXLanguage.loadWeights(into: languageModel, fromDirectory: languageDirectory,
-                                               precision: .checkpoint)
-                depthDecoder = NFKMLXMusic3.makeDepthDecoder()
-                try NFKMLXMusic3.loadDepthWeights(
-                    into: depthDecoder,
-                    from: directoryURL.appendingPathComponent("rvq_depth_decoder/diffusion_pytorch_model.safetensors"),
-                    precision: .checkpoint)
-                if resident {
-                    stages.languageModel = languageModel
-                    stages.depthDecoder = depthDecoder
-                }
+            // Stage A, the autoregressive pass. A staged run releases the language model before the DiT
+            // loads: the bf16 model and the float32 DiT together are what does not fit.
+            let generation = try stages.staging.use(stages.autoregressive) { languageModel, depthDecoder in
+                let stage = NFKMusic3AutoregressiveStage(languageModel: languageModel, depthDecoder: depthDecoder)
+                job.reportProgress(0.05)
+                let produced = try stage.generate(textIDs: textIDs, maxFrames: maxFrames, seed: seed)
+                eval(produced.frameHiddens)
+                return produced
             }
-            let stage = NFKMusic3AutoregressiveStage(languageModel: languageModel,
-                                                     depthDecoder: depthDecoder)
-            job.reportProgress(0.05)
-            return try stage.generate(textIDs: textIDs, maxFrames: maxFrames, seed: seed)
-        }()
-        NFKMLXGPU.clearCache()
-        if job.status == .cancelled { return nil }
-        job.reportProgress(0.5)
-
-        // Stage B — windowed flow matching, scoped the same way. The AR stage's fused hidden
-        // states arrive as float32.
-        let denoised: [MLXArray]? = try {
-            let conditionEncoder: NFKMusic3ConditionEncoderNet
-            let transformer: NFKMusic3DiTNet
-            if let cachedCondition = stages.conditionEncoder, let cachedTransformer = stages.transformer {
-                conditionEncoder = cachedCondition
-                transformer = cachedTransformer
-            } else {
-                conditionEncoder = NFKMLXMusic3.makeConditionEncoder()
-                try NFKMLXMusic3.loadConditionWeights(
-                    into: conditionEncoder,
-                    from: directoryURL.appendingPathComponent("condition_encoder/diffusion_pytorch_model.safetensors"))
-                transformer = NFKMLXMusic3.makeDiT()
-                try NFKMLXMusic3.loadDiTWeights(into: transformer,
-                                                from: directoryURL.appendingPathComponent("transformer"))
-                if resident {
-                    stages.conditionEncoder = conditionEncoder
-                    stages.transformer = transformer
-                }
-            }
-            let matcher = NFKMusic3FlowMatcher(transformer: transformer,
-                                               conditionEncoder: conditionEncoder)
-            matcher.guidanceScale = guidance
-            let hiddens = generation.frameHiddens.asType(.float32)
-            return matcher.latentChunks(frameHiddens: hiddens, steps: steps, seed: seed,
-                                        progress: { step, total in
-                job.reportProgress(0.5 + 0.45 * Double(step) / Double(total))
-                return job.status != .cancelled
-            })
-        }()
-        guard let chunks = denoised else { return nil }
-        NFKMLXGPU.clearCache()
-
-        // Stage C — decode, crop, and stitch.
-        let vocoder: NFKMusic3VocoderNet
-        if let cachedVocoder = stages.vocoder {
-            vocoder = cachedVocoder
-        } else {
-            vocoder = NFKMLXMusic3.makeVocoder()
-            try NFKMLXMusic3.loadVocoderWeights(
-                into: vocoder,
-                from: directoryURL.appendingPathComponent("vocoder/diffusion_pytorch_model.safetensors"))
-            if resident { stages.vocoder = vocoder }
-        }
-        let hop = vocoder.configuration.hop
-        var interleaved = [Float]()
-        for (index, latents) in chunks.enumerated() {
-            let wave = vocoder.waveform(latents)                    // [1, samples, 2]
-            eval(wave)
-            let kept = NFKMusic3FlowMatcher.keptRange(chunkIndex: index, chunkCount: chunks.count,
-                                                      samples: wave.shape[1], hop: hop)
-            let span = clip(wave[0..., kept], min: -1, max: 1)
-            interleaved.append(contentsOf: span.reshaped([-1]).asArray(Float.self))
+            NFKMLXGPU.clearCache()
             if job.status == .cancelled { return nil }
-        }
-        NFKMLXGPU.clearCache()
+            job.reportProgress(0.5)
 
-        let sampleRate = vocoder.configuration.samplingRate
-        let url = outputDirectory.appendingPathComponent("minimax-music3-\(UUID().uuidString).wav")
-        try NFKMLXWaveFile.write(samples: interleaved, sampleRate: sampleRate, channels: 2, to: url)
-        let asset = NFKAudioAsset(fileURL: url,
-                                  durationSeconds: Double(interleaved.count / 2) / Double(sampleRate),
-                                  sampleRate: Double(sampleRate),
-                                  channelCount: 2)
-        job.reportProgress(1)
-        return NFKInferenceResult(outputs: [NFKOutputAudio: asset])
+            // Stage B, windowed flow matching. The AR stage's fused hidden states arrive as float32.
+            let denoised: [MLXArray]? = try stages.staging.use(stages.flowMatching) { conditionEncoder, transformer in
+                let matcher = NFKMusic3FlowMatcher(transformer: transformer,
+                                                   conditionEncoder: conditionEncoder)
+                matcher.guidanceScale = guidance
+                let hiddens = generation.frameHiddens.asType(.float32)
+                let chunks = matcher.latentChunks(frameHiddens: hiddens, steps: steps, seed: seed,
+                                                  progress: { step, total in
+                    job.reportProgress(0.5 + 0.45 * Double(step) / Double(total))
+                    return job.status != .cancelled
+                })
+                if let chunks {
+                    eval(chunks)
+                }
+                return chunks
+            }
+            guard let chunks = denoised else { return nil }
+            NFKMLXGPU.clearCache()
+
+            // Stage C, decode, crop, and stitch.
+            let decoded: (samples: [Float], sampleRate: Int)? = try stages.staging.use(stages.vocoder) { vocoder in
+                let hop = vocoder.configuration.hop
+                var interleaved = [Float]()
+                for (index, latents) in chunks.enumerated() {
+                    let wave = vocoder.waveform(latents)                    // [1, samples, 2]
+                    eval(wave)
+                    let kept = NFKMusic3FlowMatcher.keptRange(chunkIndex: index, chunkCount: chunks.count,
+                                                              samples: wave.shape[1], hop: hop)
+                    let span = clip(wave[0..., kept], min: -1, max: 1)
+                    interleaved.append(contentsOf: span.reshaped([-1]).asArray(Float.self))
+                    if job.status == .cancelled { return nil }
+                }
+                return (interleaved, vocoder.configuration.samplingRate)
+            }
+            guard let decoded else { return nil }
+            let (interleaved, sampleRate) = decoded
+            NFKMLXGPU.clearCache()
+
+            let url = outputDirectory.appendingPathComponent("minimax-music3-\(UUID().uuidString).wav")
+            try NFKMLXWaveFile.write(samples: interleaved, sampleRate: sampleRate, channels: 2, to: url)
+            let asset = NFKAudioAsset(fileURL: url,
+                                      durationSeconds: Double(interleaved.count / 2) / Double(sampleRate),
+                                      sampleRate: Double(sampleRate),
+                                      channelCount: 2)
+            job.reportProgress(1)
+            return NFKInferenceResult(outputs: [NFKOutputAudio: asset])
+        }
     }
 }
 
@@ -577,7 +576,80 @@ extension NFKMLXMusic3 {
     /// Introduced in InferKit 0.2.0.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
-        NFKMLXMusicBackend(directoryURL: directoryURL)
+        try backend(directoryURL: directoryURL, residency: .automatic)
+    }
+
+    /// ``backend(directoryURL:)`` holding its stages as `residency` says: ``NFKMLXResidency/automatic``
+    /// holds them where the stack fits the working set, ``NFKMLXResidency/staged`` loads each for its
+    /// turn on every run, and ``NFKMLXResidency/resident`` holds them and fails a run where they do not
+    /// fit. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        NFKMLXMusicBackend(directoryURL: directoryURL, outputDirectory: FileManager.default.temporaryDirectory,
+                           residency: residency)
+    }
+
+    /// The component folders the backend reads when it runs, as a download fetches them.
+    static let releaseComponents = [
+        NFKMLXReleaseComponent(required: ["qwen_7B/qwen3-8B-tokenizer-music/added_tokens.json",
+                                          "qwen_7B/qwen3-8B-tokenizer-music/vocab.json",
+                                          "qwen_7B/qwen3-8B-tokenizer-music/merges.txt"]),
+        NFKMLXReleaseComponent(required: ["language_model/config.json"],
+                               weights: ["language_model/model.safetensors",
+                                         "language_model/model.safetensors.index.json"]),
+        NFKMLXReleaseComponent(required: ["rvq_depth_decoder/diffusion_pytorch_model.safetensors"]),
+        NFKMLXReleaseComponent(required: ["condition_encoder/diffusion_pytorch_model.safetensors"]),
+        NFKMLXReleaseComponent(required: [],
+                               weights: ["transformer/diffusion_pytorch_model.safetensors",
+                                         "transformer/diffusion_pytorch_model.safetensors.index.json"]),
+        NFKMLXReleaseComponent(required: ["vocoder/diffusion_pytorch_model.safetensors"]),
+    ]
+
+    /// Downloads the release's files into the hub cache and returns the snapshot directory.
+    static func releaseDirectory(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
+        try NFKMLXReleaseDownload.directory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                                            components: releaseComponents)
+    }
+
+    /// Downloads the MiniMax Music 3 release and builds the music backend.
+    ///
+    /// @discussion The download is the music tokenizer, the language model, the depth decoder, the
+    /// condition encoder, the flow-matching transformer, and the vocoder, about 29 GB for
+    /// `MiniMaxAI/MiniMax-Music3`, which is public. The repo's `qwen_7B/qwen_7B` checkpoint is not
+    /// read and not fetched. A file already in the cache is not fetched again. The call blocks on the
+    /// network, so run it off the main and render threads. The weights carry the MiniMax-Music3
+    /// Community License. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic)
+    }
+
+    /// ``backend(repo:revision:cacheDirectoryURL:)`` holding its stages as `residency` says.
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:residency:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
+                    residency: residency)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic,
+                completionHandler: completionHandler)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:residency:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               residency: NFKMLXResidency,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: residency)
+        }
     }
 
     /// Registers the factory under ``modelName``. The registry's `weightsURL` is the release

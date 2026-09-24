@@ -200,7 +200,7 @@ final class NFKMusic3DepthAttention: Module {
         func split(_ projected: MLXArray) -> MLXArray {
             projected.reshaped([batch, length, heads, headDimensions]).transposed(0, 2, 1, 3)
         }
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.flashAttention(
             queries: split(toQ(x)), keys: split(toK(x)), values: split(toV(x)),
             scale: 1 / sqrt(Float(headDimensions)), mask: mask.asType(x.dtype))
         return toOut(attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
@@ -228,7 +228,7 @@ final class NFKMusic3DepthBlock: Module {
     func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
         let attended = x + attention(inputNorm(x), mask: mask)
         let normed = postNorm(attended)
-        return attended + down(silu(gate(normed)) * up(normed))
+        return attended + down(NFKReferenceRounding.silu(gate(normed)) * up(normed))
     }
 }
 
