@@ -72,7 +72,8 @@ public struct NFKMLXYOLOConfiguration: Sendable {
 }
 
 /// The reference `Conv`: convolution (no bias) + BatchNorm + SiLU. Ultralytics resets every
-/// BatchNorm to epsilon 1e-3 (`initialize_weights`), so that is built in here.
+/// BatchNorm to epsilon 1e-3 and momentum 0.03 (`initialize_weights`), so both are built in here; the
+/// momentum only matters while a fine-tune updates the running statistics.
 final class NFKYOLOConv: Module {
     @ModuleInfo(key: "conv") var conv: Conv2d
     @ModuleInfo(key: "bn") var bn: BatchNorm
@@ -86,7 +87,7 @@ final class NFKYOLOConv: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair(kernel / 2), groups: groups, bias: bias)
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3)
+        _bn.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3, momentum: 0.03)
         self.activates = activates
     }
 
@@ -219,7 +220,9 @@ final class NFKYOLODetect: Module {
 }
 
 /// The YOLOv8 network: CSPDarknet backbone, PAN-FPN neck, and the decoupled DFL head.
-final class NFKMLXYOLONet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXYOLONet: Module {
     @ModuleInfo(key: "conv0") var conv0: NFKYOLOConv
     @ModuleInfo(key: "conv1") var conv1: NFKYOLOConv
     @ModuleInfo(key: "c2f2") var c2f2: NFKYOLOC2f
@@ -262,6 +265,39 @@ final class NFKMLXYOLONet: Module {
         _c2f21.wrappedValue = NFKYOLOC2f(inChannels: w[3] + w[4], outChannels: w[4], repeats: r[0], shortcut: false)
         _detect.wrappedValue = NFKYOLODetect(channels: [w[2], w[3], w[4]],
                                              classCount: c.classCount, regMax: c.regMax)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
+    }
+
+    /// The head's raw outputs for images `[batch, H, W, 3]` in `0...1` whose sides are multiples of 32:
+    /// box distributions `[batch, anchors, 4 · regMax]` and class logits `[batch, anchors, classes]`,
+    /// scale by scale, with each scale's grid and stride. This is what the objective reads.
+    func headOutputs(_ images: MLXArray) -> (distribution: MLXArray, logits: MLXArray,
+                                             featureSizes: [(height: Int, width: Int)], strides: [Int]) {
+        let batch = images.dim(0)
+        var distributions = [MLXArray](), logits = [MLXArray](), sizes = [(height: Int, width: Int)](), strides = [Int]()
+        for (index, feature) in features(images).enumerated() {
+            let (height, width) = (feature.dim(1), feature.dim(2))
+            distributions.append(detect.cv2[index](feature).reshaped([batch, height * width, 4 * configuration.regMax]))
+            logits.append(detect.cv3[index](feature).reshaped([batch, height * width, configuration.classCount]))
+            sizes.append((height, width))
+            strides.append(images.dim(1) / height)
+        }
+        return (concatenated(distributions, axis: 1), concatenated(logits, axis: 1), sizes, strides)
+    }
+
+    /// ultralytics' `Detect.bias_init`: each box branch's output bias at 2, and each class branch's at
+    /// `log(5 / classes / (640 / stride)²)`, a prior of about one object per 640-pixel image.
+    func initializeHeadBiases(strides: [Int] = [8, 16, 32]) {
+        let classes = Float(configuration.classCount)
+        for (index, stride) in strides.enumerated() where index < detect.cv2.count {
+            let box = detect.cv2[index].out, cls = detect.cv3[index].out
+            let prior = logf(5 / classes / powf(640 / Float(stride), 2))
+            box.update(parameters: ModuleParameters.unflattened(["bias": MLXArray.ones([4 * configuration.regMax]) * 2]))
+            cls.update(parameters: ModuleParameters.unflattened(["bias": MLXArray.ones([configuration.classCount]) * prior]))
+        }
     }
 
     /// Backbone + neck: the three detection scales at strides 8, 16, and 32.
@@ -532,19 +568,14 @@ public final class NFKMLXYOLO: NSObject {
     /// Builds at one of the released sizes. A checkpoint only fits the size it was trained as.
     @objc(backendWithVariant:weightsURL:labels:error:)
     public static func backend(variant: NFKMLXYOLOVariant, weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let geometry: NFKMLXYOLOConfiguration
-        switch variant {
-        case .nano: geometry = .base
-        case .small: geometry = .small
-        case .medium: geometry = .medium
-        case .large: geometry = .large
-        case .extraLarge: geometry = .extraLarge
+        var fitted = geometry(variant)
+        if let weightsURL, let classes = try classCount(in: weightsURL) {
+            fitted.classCount = classes
         }
-        let net = NFKMLXYOLONet(geometry)
+        let net = NFKMLXYOLONet(fitted)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
-        net.train(false)
         return NFKMLXYOLOBackend(net: net, identifier: modelName, labels: labels)
     }
 
@@ -631,12 +662,51 @@ public final class NFKMLXYOLO: NSObject {
     /// Loads a safetensors checkpoint into `net`, remapping the reference's names and transposing 4-D
     /// convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's channels-last
     /// `[out, kH, kW, in]`.
-    static func loadWeights(into net: NFKMLXYOLONet, from url: URL) throws {
+    static func loadWeights(into net: NFKMLXYOLONet, from url: URL, matchingShapesOnly: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
-        let mapped = raw.map { key, value in
+        var mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
+        if matchingShapesOnly {
+            // ultralytics' `intersect_dicts`: a retargeted class count reshapes the class branches, which
+            // keep their fresh initialization while everything shaped alike transfers. Only the class
+            // branches may stay uncovered; anything else means the checkpoint is not this network's.
+            let shapes = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1.shape) })
+            mapped = mapped.filter { shapes[$0.0] == $0.1.shape }
+            try requireCoverage(outsideClassBranches: mapped, of: Array(shapes.keys), source: url)
+            try NFKMLXWeights.apply(mapped, to: net, strict: false)
+            return
+        }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// Throws unless every parameter outside the class branches (`cv3`, `one2one_cv3`) is supplied.
+    static func requireCoverage(outsideClassBranches mapped: [(String, MLXArray)], of expected: [String],
+                                source url: URL) throws {
+        let provided = Set(mapped.map(\.0))
+        let missing = expected.filter { !provided.contains($0) && !$0.contains(".cv3.") && !$0.contains(".one2one_cv3.") }.sorted()
+        guard missing.isEmpty else {
+            throw NFKMLXError.weightsMismatch(
+                "\(url.lastPathComponent) does not cover \(missing.count) parameters outside the class branches: "
+                + missing.prefix(5).joined(separator: ", "))
+        }
+    }
+
+    /// The geometry of a released size.
+    static func geometry(_ variant: NFKMLXYOLOVariant) -> NFKMLXYOLOConfiguration {
+        switch variant {
+        case .nano: return .base
+        case .small: return .small
+        case .medium: return .medium
+        case .large: return .large
+        case .extraLarge: return .extraLarge
+        }
+    }
+
+    /// The class count a checkpoint was trained for, read from its first class branch's output bias.
+    static func classCount(in url: URL) throws -> Int? {
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        return checkpoint.arrays.first { remapReferenceKey($0.key).hasSuffix("cv3.0.out.bias") }?.value.dim(0)
     }
 }

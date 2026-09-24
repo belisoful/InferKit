@@ -86,11 +86,11 @@ final class NFKYOLOAttention: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let (height, width, channels) = (x.shape[1], x.shape[2], x.shape[3])
+        let (batch, height, width, channels) = (x.shape[0], x.shape[1], x.shape[2], x.shape[3])
         let positions = height * width
         // The reference reads `[B, heads, key·2 + head, N]`, so the head axis is the outer one and the
         // three parts are consecutive spans within each head.
-        let projected = qkv(x).reshaped([1, positions, heads, keyDimensions * 2 + headDimensions])
+        let projected = qkv(x).reshaped([batch, positions, heads, keyDimensions * 2 + headDimensions])
             .transposed(0, 2, 3, 1)
         let queries = projected[0..., 0..., 0 ..< keyDimensions, 0...]
         let keys = projected[0..., 0..., keyDimensions ..< (keyDimensions * 2), 0...]
@@ -99,8 +99,8 @@ final class NFKYOLOAttention: Module {
         let scale = 1.0 / sqrtf(Float(keyDimensions))
         let attention = softmax((queries * scale).transposed(0, 1, 3, 2).matmul(keys), axis: -1)
         let attended = values.matmul(attention.transposed(0, 1, 3, 2))
-            .reshaped([1, channels, height, width]).transposed(0, 2, 3, 1)
-        let encoded = values.reshaped([1, channels, height, width]).transposed(0, 2, 3, 1)
+            .reshaped([batch, channels, height, width]).transposed(0, 2, 3, 1)
+        let encoded = values.reshaped([batch, channels, height, width]).transposed(0, 2, 3, 1)
         return proj(attended + pe(encoded))
     }
 }
@@ -367,11 +367,11 @@ final class NFKYOLOAreaAttention: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let (height, width, channels) = (x.shape[1], x.shape[2], x.shape[3])
+        let (batch, height, width, channels) = (x.shape[0], x.shape[1], x.shape[2], x.shape[3])
         let positions = height * width
-        var flattened = qkv(x).reshaped([1, positions, headDimensions * heads * 3])
+        var flattened = qkv(x).reshaped([batch, positions, headDimensions * heads * 3])
         // The reference reshapes the batch axis by `area`, so each slice attends on its own.
-        flattened = flattened.reshaped([area, positions / area, headDimensions * heads * 3])
+        flattened = flattened.reshaped([batch * area, positions / area, headDimensions * heads * 3])
         let slices = flattened.shape[0]
         let count = flattened.shape[1]
 
@@ -385,11 +385,11 @@ final class NFKYOLOAreaAttention: Module {
         let attention = softmax((queries * scale).transposed(0, 1, 3, 2).matmul(keys), axis: -1)
         var attended = values.matmul(attention.transposed(0, 1, 3, 2)).transposed(0, 3, 1, 2)
         var carried = values.transposed(0, 3, 1, 2)
-        attended = attended.reshaped([1, positions, headDimensions * heads])
-        carried = carried.reshaped([1, positions, headDimensions * heads])
+        attended = attended.reshaped([batch, positions, headDimensions * heads])
+        carried = carried.reshaped([batch, positions, headDimensions * heads])
 
-        let map = attended.reshaped([1, height, width, channels])
-        let encoded = carried.reshaped([1, height, width, channels])
+        let map = attended.reshaped([batch, height, width, channels])
+        let encoded = carried.reshaped([batch, height, width, channels])
         return proj(map + pe(encoded))
     }
 }

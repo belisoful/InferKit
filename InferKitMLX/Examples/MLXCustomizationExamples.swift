@@ -764,6 +764,27 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(separator.isReady)
     }
 
+    // Docs/examples.md: Retargeting YOLO to your own classes
+    func testExampleRetargetingYOLOToOwnClasses() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("yolo-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run transfers a release: NFKMLXYOLO.network(classCount: 3, weightsURL: releasedWeights).
+        let net = try NFKMLXYOLO.network(classCount: 3, weightsURL: nil)
+        let images = MLXArray((0 ..< 64 * 64 * 3).map { Float($0 % 97) / 97 }).reshaped([1, 64, 64, 3])
+        let boxes = [[NFKMLXYOLOBox(classIndex: 1, x1: 8, y1: 10, x2: 40, y2: 50)]]
+        let history = try NFKMLXYOLO.fineTune(net, examples: { _ in (images, boxes) }, steps: 2, stepsPerEpoch: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let detector = try NFKMLXYOLO.backend(variant: .nano, weightsURL: tuned,  // reads its three classes
+                                              labels: ["cat", "dog", "fox"])
+        XCTAssertTrue(detector.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint

@@ -97,7 +97,9 @@ final class NFKYOLOGenerationDetect: Module {
 /// A YOLO generation built from its graph rows. Input `[1, H, W, 3]` in `0...1`; `predictions` returns
 /// `[anchors, 4 + classes]` with the boxes in pixels and the class scores already through a sigmoid,
 /// which is the reference's own pre-suppression tensor.
-final class NFKMLXYOLOGenerationNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXYOLOGenerationNet: Module {
     @ModuleInfo(key: "model") var model: [Module]
 
     let nodes: [NFKYOLONode]
@@ -143,6 +145,10 @@ final class NFKMLXYOLOGenerationNet: Module {
         }
         _ = input
         _model.wrappedValue = built
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     private static func scaled(_ value: Int, _ scale: NFKYOLOScale) -> Int {

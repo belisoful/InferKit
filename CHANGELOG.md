@@ -550,6 +550,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### Every YOLO generation retargets to a consumer's own classes
+
+- `NFKMLXYOLO.network(variant:classCount:weightsURL:)` and `NFKMLXYOLOGenerations.network(release:classCount:weightsURL:)`
+  build for the consumer's class count, transfer everything shaped alike from a release, and start the
+  head at ultralytics' bias priors. `fineTune` runs ultralytics 8.4.120's recipe: `v8DetectionLoss`
+  with its task-aligned assigner (`NFKMLXYOLOObjective`), `E2ELoss` for v10 and YOLO26
+  (`NFKMLXYOLOEndToEndObjective`), `optimizer=auto`'s AdamW and decay groups, the warm-up and linear
+  schedule (`NFKMLXLearningRateSchedule.ultralytics`), clipping at 10, and `ModelEMA`. The loss, the
+  end-to-end loss, and the setup each match ultralytics' own code.
+- The backends read a fine-tuned checkpoint's class count. The attention blocks of v10, 11, 12, and
+  YOLO26 follow the input's batch; they had assumed one image.
+
 #### The MarbleNet VAD fine-tunes on a consumer's own audio, and follows NeMo 3.0
 
 - `NFKMLXVAD.network(weightsURL:)`, `frameLabels(speech:frameCount:)`, and `fineTune(_:examples:…)` run

@@ -86,7 +86,7 @@ public final class NFKMLXYOLOGenerations: NSObject {
 
     /// Loads a released ultralytics checkpoint. The graph rows put every module at the reference's own
     /// index, so only the detection head's positional Sequentials need translating.
-    static func loadWeights(into net: NFKMLXYOLOGenerationNet, from url: URL) throws {
+    static func loadWeights(into net: NFKMLXYOLOGenerationNet, from url: URL, matchingShapesOnly: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let head = "model.\(net.nodes.count - 1)."
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
@@ -99,8 +99,28 @@ public final class NFKMLXYOLOGenerations: NSObject {
             return (renamed,
                     checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        if matchingShapesOnly {
+            // ultralytics' `intersect_dicts`, as for YOLOv8: only the class branches may stay fresh.
+            let shapes = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1.shape) })
+            let kept = mapped.filter { shapes[$0.0] == $0.1.shape }
+            try NFKMLXYOLO.requireCoverage(outsideClassBranches: kept, of: Array(shapes.keys), source: url)
+            try NFKMLXWeights.apply(kept, to: net, strict: false)
+        } else {
+            try NFKMLXWeights.apply(mapped, to: net)
+        }
         net.train(false)                                        // BatchNorm running statistics
+    }
+
+    /// The class count a checkpoint was trained for, read from its first class branch's output bias.
+    static func classCount(in url: URL, release: NFKMLXYOLORelease) throws -> Int? {
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let legacy = NFKYOLOGraphs.usesLegacyHead(specs(for: release).generation)
+        return checkpoint.arrays.first { key, _ in
+            let parts = key.split(separator: ".")
+            guard parts.count > 2, parts[0] == "model" else { return false }
+            let head = parts.dropFirst(2).joined(separator: ".")
+            return remapHeadKey(head, legacy: legacy).hasPrefix("cv3.0.out.bias")
+        }?.value.dim(0)
     }
 
     /// Translates one head key. The box branches are three-slot Sequentials; the class branches are
@@ -138,7 +158,8 @@ extension NFKMLXYOLOGenerations {
     @objc(backendWithRelease:weightsURL:labels:error:)
     public static func backend(release: NFKMLXYOLORelease, weightsURL: URL?,
                                labels: [String]?) throws -> any NFKInferenceBackend {
-        let net = makeNet(release)
+        let classes = try weightsURL.flatMap { try classCount(in: $0, release: release) } ?? 80
+        let net = makeNet(release, classCount: classes)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
