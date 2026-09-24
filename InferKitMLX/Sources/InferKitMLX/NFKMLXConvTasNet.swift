@@ -120,7 +120,9 @@ final class NFKTasNetBlock: Module {
 }
 
 /// The Conv-TasNet network: encoder, masking TCN, and a shared decoder.
-final class NFKMLXConvTasNetNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXConvTasNetNet: Module {
     @ModuleInfo(key: "encoder") var encoder: Conv1d
     @ModuleInfo(key: "input_norm") var inputNorm: NFKTasNetGlobalNorm
     @ModuleInfo(key: "bottleneck") var bottleneck: Conv1d
@@ -155,7 +157,7 @@ final class NFKMLXConvTasNetNet: Module {
     }
 
     /// Separates a mono waveform `[samples]` (`-1...1`) into `[speakers, samples]`.
-    func separate(_ waveform: MLXArray) -> MLXArray {
+    public func separate(_ waveform: MLXArray) -> MLXArray {
         let samples = waveform.shape[0]
         // The released model sets `encoder_activation=None`: the filterbank output feeds the masker
         // and the mask multiplication unrectified.
@@ -285,11 +287,39 @@ public final class NFKMLXConvTasNet: NSObject {
     /// Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXConvTasNetNet(.base)
+        let configuration = try weightsURL.map(configuration(matching:)) ?? .base
+        let net = NFKMLXConvTasNetNet(configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
         return NFKMLXConvTasNetBackend(net: net, identifier: modelName)
+    }
+
+    /// The geometry a checkpoint was trained at, read from its own tensors: the filterbank size and
+    /// kernel from the encoder, the speaker count from the mask projection, and the bottleneck and
+    /// hidden widths from the first projections. The loader applies weights
+    /// without checking shapes, so a kernel-32 release built at the default kernel 16 would load and
+    /// separate wrongly without an error.
+    static func configuration(matching url: URL) throws -> NFKMLXConvTasNetConfiguration {
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let named = Dictionary(checkpoint.arrays.map { (remapReferenceKey($0.key), $0.value) },
+                               uniquingKeysWith: { first, _ in first })
+        guard let encoder = named["encoder.weight"], encoder.ndim == 3 else {
+            throw NFKMLXError.malformedCheckpoint("\(url.lastPathComponent) holds no Conv-TasNet encoder")
+        }
+        var configuration = NFKMLXConvTasNetConfiguration.base
+        configuration.filters = encoder.dim(0)
+        configuration.kernel = checkpoint.needsConvTranspose ? encoder.dim(2) : encoder.dim(1)
+        if let mask = named["mask_conv.weight"] {
+            configuration.speakers = mask.dim(0) / configuration.filters
+        }
+        if let bottleneck = named["bottleneck.weight"] {
+            configuration.bottleneck = bottleneck.dim(0)
+        }
+        if let hidden = named["blocks.0.conv1x1.weight"] {
+            configuration.hidden = hidden.dim(0)
+        }
+        return configuration
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.

@@ -562,6 +562,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   first record came from an older NeMo that reflected and counted one more frame; the edges of a clip
   now match the current reference.
 
+#### Conv-TasNet fine-tunes on a consumer's own mixtures
+
+- `NFKMLXConvTasNet.network(weightsURL:)` and `fineTune(_:examples:…)` train every weight with asteroid
+  v0.5.2's Libri2Mix recipe: `NFKMLXConvTasNetObjective` is its permutation-invariant negative SI-SDR,
+  matched on identical tensors (−11.85322 against −11.853218), with Adam at 1e-3 and clipping at 5.
+- `backendWithWeightsURL:error:` reads the network's geometry from the checkpoint. It built the 8 kHz
+  geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
+  without an error.
+
 #### All-In-One fine-tunes on a consumer's own annotated tracks
 
 - `NFKMLXAllInOne.network(weightsURL:)`, `NFKMLXAllInOneTargets`, and `fineTune(_:examples:…)` port the
