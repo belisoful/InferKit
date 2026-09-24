@@ -550,6 +550,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### The MarbleNet VAD fine-tunes on a consumer's own audio, and follows NeMo 3.0
+
+- `NFKMLXVAD.network(weightsURL:)`, `frameLabels(speech:frameCount:)`, and `fineTune(_:examples:…)` run
+  the release's own training configuration: NeMo's masked per-frame cross-entropy, SGD with momentum,
+  and `PolynomialHoldDecayAnnealing`, now `NFKMLXLearningRateSchedule.nemoPolynomialHoldDecay`, with
+  dither, `NFKMLXVADSpecAugment`, and dropout while training. The loss matches the release on its
+  logits and on the port's, and the schedule matches exactly.
+- The front end and encoder follow NeMo 3.0: the transform pads with zeros, the last frame past
+  `floor(samples / hop)` is zeroed, and every convolution masks its input past the valid length. The
+  first record came from an older NeMo that reflected and counted one more frame; the edges of a clip
+  now match the current reference.
+
 #### All-In-One fine-tunes on a consumer's own annotated tracks
 
 - `NFKMLXAllInOne.network(weightsURL:)`, `NFKMLXAllInOneTargets`, and `fineTune(_:examples:…)` port the

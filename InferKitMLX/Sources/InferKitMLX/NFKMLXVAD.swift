@@ -55,6 +55,9 @@ public struct NFKMLXVADConfiguration: Sendable {
     public var classes: Int
     public var threshold: Float
     public var blocks: [NFKMLXVADBlockConfiguration]
+    /// The dropout after every activation in the block stack, the release's `dropout: 0.1`. Active only
+    /// in training.
+    public var dropout: Float = 0.1
 
     public init(mels: Int = 80, sampleRate: Int = 16000, windowSamples: Int = 400, hopSamples: Int = 160,
                 fftSize: Int = 512, preemphasis: Float = 0.97, classes: Int = 2, threshold: Float = 0.5,
@@ -135,6 +138,13 @@ final class NFKVADFrontEnd {
     /// the mel filterbank, and a natural log. The frame count is padded to a multiple of two, as the
     /// reference pads for efficiency.
     func logMel(_ samples: [Float]) -> MLXArray {
+        logMelAndLength(samples).mel
+    }
+
+    /// The log-mel and its valid frame count. NeMo's `get_seq_len` counts `floor(samples / hop)` valid
+    /// frames, one fewer than the centered transform produces, and zeroes the frames past it before
+    /// padding to an even count; the encoder then masks them out of every convolution.
+    func logMelAndLength(_ samples: [Float]) -> (mel: MLXArray, validFrames: Int) {
         let size = configuration.fftSize, hop = configuration.hopSamples
         var signal = samples
         if configuration.preemphasis != 0 {
@@ -143,14 +153,10 @@ final class NFKVADFrontEnd {
             }
         }
 
+        // NeMo 3.0 centers each frame with zeros (`pad_mode="constant"`). The NeMo this port was first
+        // measured against reflected, so a record made with it disagrees at the clip's edges.
         let pad = size / 2
-        var padded: [Float]
-        if signal.count >= pad + 1 {
-            padded = (1 ... pad).reversed().map { signal[$0] } + signal
-                   + (0 ..< pad).map { signal[signal.count - 2 - $0] }
-        } else {
-            padded = [Float](repeating: 0, count: pad) + signal + [Float](repeating: 0, count: pad)
-        }
+        var padded = [Float](repeating: 0, count: pad) + signal + [Float](repeating: 0, count: pad)
         if padded.count < size {
             padded += [Float](repeating: 0, count: size - padded.count)
         }
@@ -168,10 +174,12 @@ final class NFKVADFrontEnd {
 
         // The reference's zero guard is added inside the log, not clamped outside it.
         var mel = log(power.matmul(filterbank.transposed(1, 0)) + MLXArray(powf(2, -24)))
+        let validFrames = min(samples.count / hop, frames)
+        mel = mel * NFKVADSeparableConv.mask(length: frames, valid: validFrames).reshaped([frames, 1])
         if frames % 2 != 0 {
             mel = MLX.padded(mel, widths: [IntOrPair((0, 1)), IntOrPair((0, 0))], mode: .constant)
         }
-        return mel.reshaped([1, mel.shape[0], configuration.mels])
+        return (mel.reshaped([1, mel.shape[0], configuration.mels]), validFrames)
     }
 }
 
@@ -183,6 +191,9 @@ final class NFKVADSeparableConv: Module {
     @ModuleInfo(key: "norm") var norm: BatchNorm
 
     init(_ inChannels: Int, _ outChannels: Int, kernel: Int, stride: Int, dilation: Int, separable: Bool) {
+        self.kernel = kernel
+        self.stride = stride
+        self.dilation = dilation
         // The reference pads to keep the frame count (before striding): `dilation * (kernel - 1) / 2`.
         let padding = dilation * (kernel - 1) / 2
         if separable {
@@ -202,8 +213,36 @@ final class NFKVADSeparableConv: Module {
         _norm.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3)
     }
 
+    let kernel: Int
+    let stride: Int
+    let dilation: Int
+
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        norm(pointwise(depthwise.map { $0(x) } ?? x))
+        callAsFunction(x, validFrames: x.dim(1)).output
+    }
+
+    /// NeMo's `MaskedConv1d` pair: each convolution zeroes its input past the valid length, and the
+    /// strided one shortens it, `(length + 2·padding − dilation·(kernel − 1) − 1) / stride + 1`.
+    func callAsFunction(_ x: MLXArray, validFrames: Int) -> (output: MLXArray, validFrames: Int) {
+        let padding = dilation * (kernel - 1) / 2
+        let strided = (validFrames + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1
+        guard let depthwise else {
+            return (norm(pointwise(Self.masked(x, validFrames))), strided)
+        }
+        let spread = depthwise(Self.masked(x, validFrames))
+        return (norm(pointwise(Self.masked(spread, strided))), strided)
+    }
+
+    /// `[frames]` of ones up to `valid`, zeros after.
+    static func mask(length: Int, valid: Int) -> MLXArray {
+        MLXArray((0 ..< length).map { Float($0 < valid ? 1 : 0) })
+    }
+
+    static func masked(_ x: MLXArray, _ valid: Int) -> MLXArray {
+        guard valid < x.dim(1) else {
+            return x
+        }
+        return x * mask(length: x.dim(1), valid: valid).reshaped([1, x.dim(1), 1])
     }
 }
 
@@ -213,8 +252,10 @@ final class NFKVADSeparableConv: Module {
 final class NFKVADBlock: Module {
     @ModuleInfo(key: "convs") var convs: [NFKVADSeparableConv]
     @ModuleInfo(key: "residual") var residual: NFKVADSeparableConv?
+    let dropout: Dropout
 
-    init(_ inChannels: Int, _ configuration: NFKMLXVADBlockConfiguration) {
+    init(_ inChannels: Int, _ configuration: NFKMLXVADBlockConfiguration, dropout: Float = 0) {
+        self.dropout = Dropout(p: dropout)
         _convs.wrappedValue = (0 ..< configuration.repeats).map { index in
             NFKVADSeparableConv(index == 0 ? inChannels : configuration.filters, configuration.filters,
                                 kernel: configuration.kernel,
@@ -228,22 +269,29 @@ final class NFKVADBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        callAsFunction(x, validFrames: x.dim(1)).output
+    }
+
+    func callAsFunction(_ x: MLXArray, validFrames: Int) -> (output: MLXArray, validFrames: Int) {
         var out = x
+        var valid = validFrames
         for (index, conv) in convs.enumerated() {
-            out = conv(out)
+            (out, valid) = conv(out, validFrames: valid)
             if index < convs.count - 1 {
-                out = relu(out)
+                out = dropout(relu(out))
             }
         }
         if let residual {
-            out = out + residual(x)
+            out = out + residual(x, validFrames: validFrames).output
         }
-        return relu(out)
+        return (dropout(relu(out)), valid)
     }
 }
 
 /// The MarbleNet VAD network: a mel front end, the block stack, and a per-frame class head.
-final class NFKMLXVADNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXVADNet: Module {
     @ModuleInfo(key: "blocks") var blocks: [NFKVADBlock]
     @ModuleInfo(key: "head") var head: Linear
 
@@ -256,16 +304,29 @@ final class NFKMLXVADNet: Module {
         var channels = c.mels
         _blocks.wrappedValue = c.blocks.map { block in
             defer { channels = block.filters }
-            return NFKVADBlock(channels, block)
+            return NFKVADBlock(channels, block, dropout: c.dropout)
         }
         _head.wrappedValue = Linear(c.blocks.last?.filters ?? c.mels, c.classes)
+        super.init()
+        // A module starts in training mode, which would run the dropout and the batch statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Per-frame class logits `[1, frames, classes]` from a log-mel spectrogram `[1, frames, mels]`.
-    func logits(_ mel: MLXArray) -> MLXArray {
+    public func logits(_ mel: MLXArray) -> MLXArray {
+        logits(mel, validFrames: mel.dim(1))
+    }
+
+    /// The logits with every convolution masked past `validFrames` of the mel, as NeMo's encoder masks
+    /// them. The frames past the valid length still get logits; they are the padding's.
+    ///
+    /// Introduced in InferKit 0.5.0.
+    public func logits(_ mel: MLXArray, validFrames: Int) -> MLXArray {
         var x = mel
+        var valid = validFrames
         for block in blocks {
-            x = block(x)
+            (x, valid) = block(x, validFrames: valid)
         }
         return head(x)
     }
@@ -274,7 +335,8 @@ final class NFKMLXVADNet: Module {
     /// so the second class is the one that matters.
     func speechProbabilities(_ samples: [Float], sampleRate: Int) -> [Float] {
         let matched = NFKMLXAudioRate.matched(samples, from: sampleRate, to: configuration.sampleRate)
-        let probabilities = softmax(logits(frontEnd.logMel(matched)), axis: -1)[0..., 0..., 1]
+        let (mel, validFrames) = frontEnd.logMelAndLength(matched)
+        let probabilities = softmax(logits(mel, validFrames: validFrames), axis: -1)[0..., 0..., 1]
         eval(probabilities)
         return probabilities.reshaped([-1]).asArray(Float.self)
     }

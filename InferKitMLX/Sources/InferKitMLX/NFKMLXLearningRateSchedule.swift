@@ -102,6 +102,36 @@ public struct NFKMLXLearningRateSchedule {
         NFKMLXLearningRateSchedule { step in min(1, Float(step + 1) / Float(max(warmupSteps, 1))) }
     }
 
+    /// NeMo's `PolynomialHoldDecayAnnealing` over a run of `steps`: a linear warm-up of
+    /// `int(warmupRatio · steps)` steps at `(k + 1) / (warmup + 1)`, the base rate held until
+    /// `int(holdRatio · steps)` steps past the warm-up, then `(1 − p)^power` toward `minimumScale`,
+    /// where `p` counts from the end of the hold over the steps that remain. Past the run it stays at
+    /// `minimumScale`. The scheduler sets update `k`'s rate at step `k`.
+    ///
+    /// Introduced in InferKit 0.5.0.
+    public static func nemoPolynomialHoldDecay(steps: Int, warmupRatio: Double, holdRatio: Double,
+                                               power: Double, minimumScale: Double) -> NFKMLXLearningRateSchedule {
+        let warmup = Int(warmupRatio * Double(steps))
+        let hold = Int(holdRatio * Double(steps)) + warmup
+        let decaySteps = Double(steps - max(warmup, hold))
+        return NFKMLXLearningRateSchedule { step in
+            if warmup > 0, step <= warmup {
+                return Float(Double(step + 1) / Double(warmup + 1))
+            }
+            if step >= warmup, step < hold {
+                return 1
+            }
+            if step > steps {
+                return Float(minimumScale)
+            }
+            guard decaySteps > 0 else {
+                return 1
+            }
+            let progress = min(Double(step - hold), decaySteps) / decaySteps
+            return Float((1 - minimumScale) * pow(1 - progress, power) + minimumScale)
+        }
+    }
+
     /// The schedule a recipe runs: the caller's when given, the reference's when the recipe builds the
     /// reference optimizer, and a constant rate when the caller chose the optimizer and so the rate.
     static func resolved(_ given: NFKMLXLearningRateSchedule?, optimizer: Optimizer?,

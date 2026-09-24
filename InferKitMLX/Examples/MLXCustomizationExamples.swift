@@ -723,6 +723,47 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(analyzer.isReady)
     }
 
+    // Docs/examples.md: Teaching voice activity detection your own audio
+    func testExampleFineTuningMarbleNetOnOwnAudio() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vad-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the converted release: NFKMLXVAD.network(weightsURL: releasedWeights).
+        let net = try NFKMLXVAD.network(weightsURL: nil)
+        let samples = (0 ..< 16000).map { $0 < 8000 ? sinf(Float($0) * 0.06) * 0.3 : 0 }
+        let labels = NFKMLXVAD.frameLabels(speech: [(0, 0.5)], frameCount: NFKMLXVAD.frameCount(samples: samples.count))
+        let history = try NFKMLXVAD.fineTune(net, examples: { _ in (samples, labels) }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let detector = try NFKMLXVAD.backend(weightsURL: tuned)                // also backendWithWeightsURL:error:
+        XCTAssertTrue(detector.isReady)
+    }
+
+    // Docs/examples.md: Teaching speech separation your own speakers
+    func testExampleFineTuningConvTasNetOnOwnMixtures() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("convtasnet-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXConvTasNet.network(weightsURL: releasedWeights).
+        let net = try NFKMLXConvTasNet.network(weightsURL: nil)
+        let first = (0 ..< 1600).map { 0.4 * sinf(Float($0) * 0.07) }
+        let second = (0 ..< 1600).map { 0.3 * sinf(Float($0) * 0.013) }
+        let history = try NFKMLXConvTasNet.fineTune(net, examples: { _ in (zip(first, second).map(+), [first, second]) },
+                                                    steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let separator = try NFKMLXConvTasNet.backend(weightsURL: tuned)       // also backendWithWeightsURL:error:
+        XCTAssertTrue(separator.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint
