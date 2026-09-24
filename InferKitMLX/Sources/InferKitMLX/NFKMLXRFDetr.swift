@@ -77,6 +77,10 @@ public struct NFKMLXRFDetrConfiguration: Sendable {
     // Decoder.
     public var dModel: Int
     public var decoderLayers: Int
+    /// How far the mask resolution sits below the input's, for the segmentation head only.
+    public var maskDownsampleRatio: Int
+    /// The width of the segmentation head's query feed-forward, for the segmentation head only.
+    public var segmentationIntermediateSize: Int
     public var decoderSelfAttentionHeads: Int
     public var decoderCrossAttentionHeads: Int
     public var decoderNPoints: Int
@@ -107,7 +111,10 @@ public struct NFKMLXRFDetrConfiguration: Sendable {
                 projectorUsesSilu: Bool, dModel: Int, decoderLayers: Int, decoderSelfAttentionHeads: Int,
                 decoderCrossAttentionHeads: Int, decoderNPoints: Int, decoderFFNDim: Int,
                 numFeatureLevels: Int, numQueries: Int, groupDetr: Int, numLabels: Int,
-                layerNormEps: Float, inputResolution: Int) {
+                layerNormEps: Float, inputResolution: Int,
+                maskDownsampleRatio: Int = 4, segmentationIntermediateSize: Int = 1024) {
+        self.maskDownsampleRatio = maskDownsampleRatio
+        self.segmentationIntermediateSize = segmentationIntermediateSize
         self.backboneHiddenSize = backboneHiddenSize
         self.backboneLayers = backboneLayers
         self.backboneHeads = backboneHeads
@@ -185,6 +192,38 @@ public struct NFKMLXRFDetrConfiguration: Sendable {
     public static let medium = laterRelease(resolution: 576, decoderLayers: 4)
     /// The released `Roboflow/rf-detr-large`: 704 pixels, a four-layer decoder.
     public static let large = laterRelease(resolution: 704, decoderLayers: 4)
+
+    /// The segmentation releases (`Roboflow/rf-detr-seg-*`). They share the detector's backbone width
+    /// and depth, a 12-pixel patch, a 256-wide decoder, a mask a quarter of the input's resolution and
+    /// a 1024-wide head feed-forward; the resolution, the window count, the decoder depth and the
+    /// query count are what separate them.
+    static func segmentationRelease(resolution: Int, windows: Int, decoderLayers: Int,
+                                    queries: Int) -> NFKMLXRFDetrConfiguration {
+        var configuration = base
+        configuration.patchSize = 12
+        configuration.backboneImageSize = resolution
+        configuration.numWindows = windows
+        configuration.outIndices = [3, 6, 9, 12]
+        configuration.decoderLayers = decoderLayers
+        configuration.numQueries = queries
+        configuration.inputResolution = resolution
+        return configuration
+    }
+
+    /// The released `Roboflow/rf-detr-seg-nano`: 312 pixels, one window, four decoder layers.
+    public static let segNano = segmentationRelease(resolution: 312, windows: 1, decoderLayers: 4, queries: 100)
+    /// The released `Roboflow/rf-detr-seg-small`: 384 pixels, four decoder layers.
+    public static let segSmall = segmentationRelease(resolution: 384, windows: 2, decoderLayers: 4, queries: 100)
+    /// The released `Roboflow/rf-detr-seg-preview`: 432 pixels, four decoder layers, 200 queries.
+    public static let segPreview = segmentationRelease(resolution: 432, windows: 2, decoderLayers: 4, queries: 200)
+    /// The released `Roboflow/rf-detr-seg-medium`: 432 pixels, five decoder layers, 200 queries.
+    public static let segMedium = segmentationRelease(resolution: 432, windows: 2, decoderLayers: 5, queries: 200)
+    /// The released `Roboflow/rf-detr-seg-large`: 504 pixels, five decoder layers, 300 queries.
+    public static let segLarge = segmentationRelease(resolution: 504, windows: 2, decoderLayers: 5, queries: 300)
+    /// The released `Roboflow/rf-detr-seg-xlarge`: 624 pixels, six decoder layers, 300 queries.
+    public static let segXLarge = segmentationRelease(resolution: 624, windows: 2, decoderLayers: 6, queries: 300)
+    /// The released `Roboflow/rf-detr-seg-xxlarge`: 768 pixels, six decoder layers, 300 queries.
+    public static let segXXLarge = segmentationRelease(resolution: 768, windows: 2, decoderLayers: 6, queries: 300)
 }
 
 // MARK: - DINOv2 windowed backbone
@@ -844,6 +883,13 @@ final class NFKRFDetrDecoder: Module {
     /// encoder features. Returns the decoder's last hidden state `[1, Q, dModel]`.
     func callAsFunction(_ target: MLXArray, value: MLXArray, referencePoints: MLXArray,
                         shapes: [(Int, Int)]) -> MLXArray {
+        states(target, value: value, referencePoints: referencePoints, shapes: shapes)[config.decoderLayers - 1]
+    }
+
+    /// Every layer's normalized output, which is what the reference calls its intermediate hidden
+    /// states. The segmentation head reads one per layer; detection reads only the last.
+    func states(_ target: MLXArray, value: MLXArray, referencePoints: MLXArray,
+                shapes: [(Int, Int)]) -> [MLXArray] {
         // get_reference: valid_ratios are 1 (no padding), so reference_points_inputs = ref broadcast to
         // the feature levels; the query position is the sinusoidal embedding of the first level's coords.
         let q = referencePoints.dim(1)
@@ -853,13 +899,13 @@ final class NFKRFDetrDecoder: Module {
         let queryPos = refPointHead(querySine)
 
         var hidden = target
-        var lastHidden = target
+        var collected = [MLXArray]()
         for layer in layers {
             hidden = layer(hidden, position: queryPos, value: value,
                            referencePoints: referenceInputs, shapes: shapes)
-            lastHidden = layernorm(hidden)
+            collected.append(layernorm(hidden))
         }
-        return lastHidden
+        return collected
     }
 
     /// The DETR sinusoidal embedding of normalized coordinates (`encode_sinusoidal_position_embedding`):
@@ -1011,9 +1057,15 @@ final class NFKRFDetrModel: Module {
 
     /// Runs the decoder over a selection, returning the last hidden state `[1, Q, d_model]`.
     func decode(_ selection: Selection, referenceOverride: MLXArray? = nil) -> MLXArray {
+        decodeStates(selection, referenceOverride: referenceOverride)[config.decoderLayers - 1]
+    }
+
+    /// Every decoder layer's normalized output, for the segmentation head.
+    func decodeStates(_ selection: Selection, referenceOverride: MLXArray? = nil) -> [MLXArray] {
         let reference = (referenceOverride ?? selection.initReference).expandedDimensions(axis: 0)   // [1,Q,4]
         let target = queryFeat.weight[0 ..< config.numQueries].expandedDimensions(axis: 0)           // [1,Q,d]
-        return decoder(target, value: selection.sourceFlatten, referencePoints: reference, shapes: selection.shapes)
+        return decoder.states(target, value: selection.sourceFlatten, referencePoints: reference,
+                              shapes: selection.shapes)
     }
 }
 
@@ -1324,6 +1376,13 @@ public final class NFKMLXRFDetr: NSObject {
         if key.hasPrefix("transformer.enc_") {
             return replacePrefix("transformer.", "model.")
         }
+        // The segmentation head's released names are the module's own, with one exception: its query
+        // feed-forward is a PyTorch `Sequential` whose index 1 is the activation, so its second linear
+        // is `layers.2` where the module's array holds it at `layers.1`.
+        if key.hasPrefix("segmentation_head.") {
+            return key.replacingOccurrences(of: "query_features_block.layers.2.",
+                                            with: "query_features_block.layers.1.")
+        }
         return nil
     }
 
@@ -1331,6 +1390,15 @@ public final class NFKMLXRFDetr: NSObject {
     /// `remapReferenceKey`, splitting the fused `self_attn.in_proj_*` into q/k/v (packed `[q; k; v]`), and
     /// transposing 4-D convolution weights from PyTorch `[out, in, kH, kW]` to MLX `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXRFDetrNet, from url: URL) throws {
+        try loadWeights(intoModule: net, from: url)
+    }
+
+    /// The segmentation release, whose detector keys are the detector's and whose head keys are its own.
+    public static func loadWeights(into net: NFKMLXRFDetrSegmentationNet, from url: URL) throws {
+        try loadWeights(intoModule: net, from: url)
+    }
+
+    private static func loadWeights(intoModule net: Module, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {

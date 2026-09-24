@@ -42,8 +42,14 @@ final class NFKMLXSAM2Tests: XCTestCase {
                        "obj_score_token")
         XCTAssertEqual(NFKMLXSAM2.remapDecoderKey("sam_prompt_encoder.pe_layer.positional_encoding_gaussian_matrix"),
                        "position_encoding.gaussian")
-        XCTAssertNil(NFKMLXSAM2.remapDecoderKey("sam_prompt_encoder.mask_downscaling.0.weight"),
-                     "the mask-prompt downscaler is not part of the point-prompt path")
+        // The mask-prompt downscaler is a numbered Sequential whose activations carry nothing, so
+        // its parameterized slots are 0/1, 3/4, and the projection at 6.
+        XCTAssertEqual(NFKMLXSAM2.remapDecoderKey("sam_prompt_encoder.mask_downscaling.0.weight"),
+                       "mask_embed.conv1.weight")
+        XCTAssertEqual(NFKMLXSAM2.remapDecoderKey("sam_prompt_encoder.mask_downscaling.4.bias"),
+                       "mask_embed.norm2.bias")
+        XCTAssertEqual(NFKMLXSAM2.remapDecoderKey("sam_prompt_encoder.mask_downscaling.6.weight"),
+                       "mask_embed.conv_out.weight")
         XCTAssertNil(NFKMLXSAM2.remapDecoderKey("memory_encoder.out_proj.weight"))
     }
 
@@ -119,7 +125,7 @@ final class NFKMLXSAM2Tests: XCTestCase {
         let decoder = NFKMLXSAM2Decoder(dimensions: dimensions, heads: 2, maskCount: 4, depth: 2)
         decoder.train(false)
         let features = MLXRandom.uniform(low: -1, high: 1, [1, 8, 8, dimensions])
-        let (masks, iou, objectScore) = decoder(
+        let (masks, iou, objectScore, _) = decoder(
             features: features,
             positional: MLXRandom.uniform(low: -1, high: 1, [1, 64, dimensions]),
             sparse: MLXArray.zeros([1, 2, dimensions]),

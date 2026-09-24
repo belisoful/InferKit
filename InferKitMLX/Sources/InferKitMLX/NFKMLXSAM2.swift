@@ -467,9 +467,26 @@ public final class NFKMLXSAM2: NSObject {
             var name = String(key.dropFirst("sam_prompt_encoder.".count))
             name = name.replacingOccurrences(of: "pe_layer.positional_encoding_gaussian_matrix",
                                              with: "position_encoding.gaussian")
-            // The embeddings are `nn.Embedding`s upstream and plain parameters here.
-            name = name.replacingOccurrences(of: ".weight", with: "")
-            return name.hasPrefix("mask_downscaling") ? nil : name
+            // The mask prompt's Sequential: 0 and 3 are the strided convolutions, 1 and 4 their
+            // normalizations, 6 the projection; 2 and 5 are activations carrying nothing.
+            if name.hasPrefix("mask_downscaling.") {
+                for (slot, named) in [("0", "conv1"), ("1", "norm1"), ("3", "conv2"), ("4", "norm2"),
+                                      ("6", "conv_out")] {
+                    name = name.replacingOccurrences(of: "mask_downscaling.\(slot).",
+                                                     with: "mask_embed.\(named).")
+                }
+                return name
+            }
+            // The prompt embeddings are `nn.Embedding`s upstream and plain parameters here, so they
+            // shed the trailing `.weight`. Only those: the rule was once applied to the whole
+            // prompt encoder, which also stripped it from the mask embedder's convolutions and left
+            // a fine-tuned checkpoint unable to reload.
+            for embedding in ["point_embeddings.0", "point_embeddings.1", "point_embeddings.2",
+                              "point_embeddings.3", "not_a_point_embed", "no_mask_embed"]
+                where name == embedding + ".weight" {
+                return embedding
+            }
+            return name
         }
         guard key.hasPrefix("sam_mask_decoder.") else { return nil }
         var name = String(key.dropFirst("sam_mask_decoder.".count))
@@ -610,7 +627,8 @@ final class NFKMLXSAM2Decoder: Module {
     ///   - dense: the dense prompt embedding `[1, H, W, C]`.
     ///   - highResolution: the FPN's two finer levels, finest first.
     func callAsFunction(features: MLXArray, positional: MLXArray, sparse: MLXArray, dense: MLXArray,
-                        highResolution: [MLXArray]) -> (masks: MLXArray, iou: MLXArray, objectScore: MLXArray) {
+                        highResolution: [MLXArray])
+        -> (masks: MLXArray, iou: MLXArray, objectScore: MLXArray, maskTokens: MLXArray) {
         // The object-score token leads, then the IoU token, then the mask tokens, then the prompt.
         let output = concatenated([objScoreToken, iouToken, maskTokens], axis: 0)
         var tokens = concatenated([output.reshaped([1, output.shape[0], output.shape[1]]), sparse], axis: 1)
@@ -646,7 +664,9 @@ final class NFKMLXSAM2Decoder: Module {
         let (uh, uw, uc) = (upscaled.shape[1], upscaled.shape[2], upscaled.shape[3])
         let flat = upscaled.reshaped([1, uh * uw, uc]).transposed(0, 2, 1)
         let masks = matmul(hyperIn, flat).reshaped([1, maskCount, uh, uw])
-        return (masks, iouHead(iouOut), objScoreHead(tokens[0..., 0]))
+        // The mask tokens leave with the masks: the tracker carries the selected one forward as the
+        // frame's object pointer.
+        return (masks, iouHead(iouOut), objScoreHead(tokens[0..., 0]), maskOut)
     }
 }
 
@@ -870,9 +890,15 @@ final class NFKMLXSAM2MemoryEncoderNet: Module {
     }
 
     /// `features` `[1, H, W, C]` and the mask at the full frame resolution `[1, 16H, 16W, 1]` → the memory
-    /// `[1, H, W, outDimensions]`.
+    /// `[1, H, W, outDimensions]`. The mask arrives as logits and is squashed here.
     func callAsFunction(features: MLXArray, maskLogits: MLXArray) -> MLXArray {
-        var mask = sigmoid(maskLogits)
+        callAsFunction(features: features, maskInput: sigmoid(maskLogits))
+    }
+
+    /// The same, taking the mask the reference's tracker prepares: squashed, then scaled and biased.
+    /// The scale and bias are the tracker's, not this network's, so they are applied by the caller.
+    func callAsFunction(features: MLXArray, maskInput: MLXArray) -> MLXArray {
+        var mask = maskInput
         for (conv, norm) in zip(maskConvs, maskNorms) {
             mask = gelu(norm(conv(mask)))
         }

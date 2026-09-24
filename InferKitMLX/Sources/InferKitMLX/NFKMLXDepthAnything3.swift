@@ -1210,6 +1210,7 @@ public final class NFKMLXDepth3Estimator: NSObject {
     /// camera encoder is for.
     ///
     /// - Parameters:
+    ///   - image: the picture the camera took.
     ///   - rotation: the camera-to-world rotation, row-major nine numbers.
     ///   - translation: the camera-to-world translation, three numbers.
     ///   - focalLengthX: the horizontal focal length in pixels.

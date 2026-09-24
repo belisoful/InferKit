@@ -89,10 +89,14 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     }
 
     /// - Parameters:
+    ///   - identifier: The backend identifier it reports.
+    ///   - isReady: Whether the backend has what it needs to run; `false` for random weights.
+    ///   - configuration: How the backend reads inputs, tiles the work, and writes outputs.
     ///   - forwardInputKeys: The request inputs `requestForward` reads beyond the plate and the
     ///     hint. They join `supportedInputKeys`.
     ///   - forwardParameterKeys: The request parameters `requestForward` reads, such as SAM's click
     ///     point. They join `supportedParameterKeys`.
+    ///   - requestForward: The model forward over the plate, the hint, and the request.
     public init(identifier: String = "mlx-matting",
                 isReady: Bool = true,
                 configuration: NFKMattingConfiguration = NFKMattingConfiguration(),

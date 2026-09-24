@@ -257,29 +257,89 @@ final class NFKSAMImageEncoder: Module {
 }
 
 /// The prompt encoder: a click point → sparse tokens; a default dense (no-mask) embedding.
+/// The reference's `mask_downscaling`: two stride-2 convolutions, each normalized over channels and
+/// activated, then a 1x1 projection to the embedding width. It takes a mask at four times the
+/// feature grid, which is the resolution the decoder's own low-resolution output comes back at.
+final class NFKSAMMaskEmbedding: Module {
+    @ModuleInfo(key: "conv1") var conv1: Conv2d
+    @ModuleInfo(key: "norm1") var norm1: LayerNorm
+    @ModuleInfo(key: "conv2") var conv2: Conv2d
+    @ModuleInfo(key: "norm2") var norm2: LayerNorm
+    @ModuleInfo(key: "conv_out") var convOut: Conv2d
+
+    init(embedDimensions: Int, maskChannels: Int = 16) {
+        _conv1.wrappedValue = Conv2d(inputChannels: 1, outputChannels: maskChannels / 4,
+                                     kernelSize: 2, stride: 2)
+        _norm1.wrappedValue = LayerNorm(dimensions: maskChannels / 4, eps: 1e-6)
+        _conv2.wrappedValue = Conv2d(inputChannels: maskChannels / 4, outputChannels: maskChannels,
+                                     kernelSize: 2, stride: 2)
+        _norm2.wrappedValue = LayerNorm(dimensions: maskChannels, eps: 1e-6)
+        _convOut.wrappedValue = Conv2d(inputChannels: maskChannels, outputChannels: embedDimensions,
+                                       kernelSize: 1)
+    }
+
+    func callAsFunction(_ mask: MLXArray) -> MLXArray {
+        convOut(gelu(norm2(conv2(gelu(norm1(conv1(mask)))))))
+    }
+}
+
 final class NFKSAMPromptEncoder: Module {
     @ModuleInfo(key: "position_encoding") var positionEncoding: NFKSAMPositionEncoding
-    @ModuleInfo(key: "point_embeddings") var pointEmbeddings: [MLXArray]   // [negative, positive]
+    /// `[negative, positive, box top-left, box bottom-right]`, as the reference orders its four.
+    @ModuleInfo(key: "point_embeddings") var pointEmbeddings: [MLXArray]
     @ModuleInfo(key: "not_a_point_embed") var notAPointEmbed: MLXArray
     @ModuleInfo(key: "no_mask_embed") var noMaskEmbed: MLXArray
+    @ModuleInfo(key: "mask_embed") var maskEmbed: NFKSAMMaskEmbedding
 
     init(_ c: NFKMLXSAMConfiguration) {
         _positionEncoding.wrappedValue = NFKSAMPositionEncoding(dim: c.embedDim)
-        _pointEmbeddings.wrappedValue = [MLXArray.zeros([1, c.embedDim]), MLXArray.zeros([1, c.embedDim])]
+        _pointEmbeddings.wrappedValue = (0 ..< 4).map { _ in MLXArray.zeros([1, c.embedDim]) }
         _notAPointEmbed.wrappedValue = MLXArray.zeros([1, c.embedDim])
         _noMaskEmbed.wrappedValue = MLXArray.zeros([1, c.embedDim])
+        _maskEmbed.wrappedValue = NFKSAMMaskEmbedding(embedDimensions: c.embedDim)
     }
+
+    /// A box `(x1, y1, x2, y2)` in `0...1` → its two corner tokens `[1, 2, embedDim]`. The corners
+    /// take the third and fourth point embeddings, which is what separates a box from a click.
+    func sparse(box: (Float, Float, Float, Float)) -> MLXArray {
+        let corners = [box.0, box.1, box.2, box.3].withUnsafeBufferPointer { MLXArray($0, [1, 2, 2]) }
+        let encoded = positionEncoding(corners)                 // [1, 2, embedDim]
+        let width = notAPointEmbed.shape[1]
+        return encoded + concatenated([pointEmbeddings[2].reshaped([1, 1, width]),
+                                       pointEmbeddings[3].reshaped([1, 1, width])], axis: 1)
+    }
+
+    /// A low-resolution mask prompt `[1, 4·grid, 4·grid, 1]` → the dense embedding
+    /// `[1, grid, grid, embedDim]`, which replaces `dense(grid:)` when a caller supplies a mask.
+    func dense(mask: MLXArray) -> MLXArray { maskEmbed(mask) }
 
     /// A point at normalized `(x, y)` with `positive` label → the sparse tokens `[1, 2, embedDim]`.
     /// The reference pads every point-only prompt with a second token — `not_a_point_embed`, its
     /// positional encoding zeroed — and the decoder is trained on that pair, so a lone click token
     /// shifts the attention it sees.
     func sparse(pointX: Float, pointY: Float, positive: Bool) -> MLXArray {
-        let coords = [pointX, pointY].withUnsafeBufferPointer { MLXArray($0, [1, 1, 2]) }
-        let encoded = positionEncoding(coords)                  // [1, 1, embedDim]
-        let click = encoded + pointEmbeddings[positive ? 1 : 0]
-        let padding = notAPointEmbed.reshaped([1, 1, notAPointEmbed.shape[1]])
-        return concatenated([click, padding], axis: 1)
+        sparse(points: [(pointX, pointY, positive ? 1 : 0)])
+    }
+
+    /// Several points at normalized `(x, y)` with their labels → the sparse tokens
+    /// `[1, points + 1, embedDim]`.
+    ///
+    /// A label of `-1` marks a position the model is to ignore: it takes `not_a_point_embed` INSTEAD
+    /// of its positional encoding, not in addition to it. A label of 0 or 1 is a negative or positive
+    /// click, and adds that label's point embedding to the encoding. `padded` appends the reference's
+    /// trailing ignored point, which it adds whenever no box accompanies the clicks.
+    func sparse(points: [(x: Float, y: Float, label: Int)], padded: Bool = true) -> MLXArray {
+        let width = notAPointEmbed.shape[1]
+        let padding = notAPointEmbed.reshaped([1, 1, width])
+        var tokens = points.map { point -> MLXArray in
+            guard point.label >= 0 else { return padding }
+            let coords = [point.x, point.y].withUnsafeBufferPointer { MLXArray($0, [1, 1, 2]) }
+            return positionEncoding(coords) + pointEmbeddings[point.label]
+        }
+        if padded {
+            tokens.append(padding)
+        }
+        return concatenated(tokens, axis: 1)
     }
 
     /// The default dense embedding `[1, grid, grid, embedDim]` for "no mask input".
@@ -661,6 +721,12 @@ public final class NFKMLXSAM: NSObject {
                                          with: "prompt_encoder.no_mask_embed")
         name = name.replacingOccurrences(of: "prompt_encoder.not_a_point_embed.weight",
                                          with: "prompt_encoder.not_a_point_embed")
+        // The mask prompt's Sequential: 0 and 3 are the strided convolutions, 1 and 4 their
+        // normalizations, 6 the projection; 2 and 5 are activations carrying nothing.
+        for (slot, named) in [("0", "conv1"), ("1", "norm1"), ("3", "conv2"), ("4", "norm2"), ("6", "conv_out")] {
+            name = name.replacingOccurrences(of: "prompt_encoder.mask_downscaling.\(slot).",
+                                             with: "prompt_encoder.mask_embed.\(named).")
+        }
         if name.hasPrefix("prompt_encoder.point_embeddings."), name.hasSuffix(".weight") {
             name = String(name.dropLast(".weight".count))
         }
