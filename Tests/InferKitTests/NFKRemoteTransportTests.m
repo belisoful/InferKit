@@ -123,6 +123,67 @@ static NSUInteger NFKStubRequestsServed;
 	XCTAssertEqual(NFKStubRequestsServed, 1);
 }
 
+#pragma mark The code a status maps to
+
+- (NSHTTPURLResponse *)responseWithStatus:(NSInteger)status headers:(NSDictionary *)headers
+{
+	return [[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:headers];
+}
+
+// Back off, change the request, or fix the configuration: the three answers an app acts on, read
+// from the status, with the provider's own explanation kept beside the code.
+- (void)testAStatusMapsToTheCodeAnAppActsOn
+{
+	NSData *body = [@"{\"error\":\"why\"}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSDictionary<NSNumber *, NSNumber *> *expected = @{
+		@429: @(kNFKError_InferenceRateLimited), @529: @(kNFKError_InferenceRateLimited), @402: @(kNFKError_InferenceRateLimited),
+		@400: @(kNFKError_InferenceRefused), @413: @(kNFKError_InferenceRefused), @422: @(kNFKError_InferenceRefused),
+		@401: @(kNFKError_InferenceBackendFailure), @403: @(kNFKError_InferenceBackendFailure),
+		@404: @(kNFKError_InferenceBackendFailure), @500: @(kNFKError_InferenceBackendFailure),
+		@503: @(kNFKError_InferenceBackendFailure),
+	};
+	for (NSNumber *status in expected) {
+		NSError *error = [NFKRemoteTransport errorForResponse:[self responseWithStatus:status.integerValue headers:nil] data:body];
+		XCTAssertEqual(error.code, expected[status].integerValue, @"HTTP %@", status);
+		XCTAssertEqualObjects(error.userInfo[NFKRemoteErrorStatusCodeKey], status);
+		XCTAssertEqualObjects(error.userInfo[NFKRemoteErrorBodyKey], @"{\"error\":\"why\"}");
+		XCTAssertTrue([error.localizedDescription containsString:@"why"], @"the provider's explanation is kept");
+	}
+	XCTAssertNil([NFKRemoteTransport errorForResponse:[self responseWithStatus:204 headers:nil] data:nil]);
+}
+
+- (void)testARateLimitCarriesTheProvidersResetDate
+{
+	NSError *seconds = [NFKRemoteTransport errorForResponse:[self responseWithStatus:429 headers:@{ @"Retry-After": @"30" }] data:nil];
+	NSDate *reset = seconds.userInfo[NFKRemoteErrorRetryAfterKey];
+	XCTAssertNotNil(reset);
+	XCTAssertEqualWithAccuracy(reset.timeIntervalSinceNow, 30, 2, @"a delay in seconds is counted from now");
+
+	NSError *dated = [NFKRemoteTransport errorForResponse:[self responseWithStatus:529 headers:@{ @"Retry-After": @"Wed, 21 Oct 2015 07:28:00 GMT" }] data:nil];
+	XCTAssertEqualObjects(dated.userInfo[NFKRemoteErrorRetryAfterKey], [NSDate dateWithTimeIntervalSince1970:1445412480], @"an HTTP-date is read as it stands");
+
+	NSError *bare = [NFKRemoteTransport errorForResponse:[self responseWithStatus:429 headers:nil] data:nil];
+	XCTAssertEqual(bare.code, kNFKError_InferenceRateLimited);
+	XCTAssertNil(bare.userInfo[NFKRemoteErrorRetryAfterKey], @"no header, no date");
+	NSError *refused = [NFKRemoteTransport errorForResponse:[self responseWithStatus:422 headers:@{ @"Retry-After": @"5" }] data:nil];
+	XCTAssertNil(refused.userInfo[NFKRemoteErrorRetryAfterKey], @"a reset date rides only on a rate limit");
+}
+
+// The retried statuses reach the caller as the last answer, so an exhausted rate limit arrives
+// under its own code rather than the generic failure it used to be.
+- (void)testAnExhaustedRateLimitIsReportedAsOne
+{
+	NFKRemoteTransport.retryAttempts = 1;
+	[NFKStubScript addObject:@{ @"status": @429, @"headers": @{ @"Retry-After": @"0" }, @"chunks": @[ @"slow" ] }];
+	[NFKStubScript addObject:@{ @"status": @429, @"headers": @{ @"Retry-After": @"0" }, @"chunks": @[ @"still slow" ] }];
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [NFKRemoteTransport sendRequest:self.request session:self.session response:&response error:NULL];
+	NSError *error = [NFKRemoteTransport errorForResponse:response data:data];
+	XCTAssertEqual(error.code, kNFKError_InferenceRateLimited);
+	XCTAssertNotNil(error.userInfo[NFKRemoteErrorRetryAfterKey]);
+	XCTAssertEqual(NFKStubRequestsServed, 2);
+}
+
 - (void)testAnOrdinaryFailureIsNotRetried
 {
 	[NFKStubScript addObject:@{ @"status": @401, @"chunks": @[ @"bad key" ] }];
@@ -131,6 +192,17 @@ static NSUInteger NFKStubRequestsServed;
 	[NFKRemoteTransport sendRequest:self.request session:self.session response:&response error:NULL];
 	XCTAssertEqual(response.statusCode, 401);
 	XCTAssertEqual(NFKStubRequestsServed, 1, @"a rejected key does not clear by waiting");
+}
+
+// Anthropic and TypeSafe answer 529 when overloaded and ask for a backoff, the way a 503 does.
+- (void)testAnOverloadIsRetriedLikeAGatewayError
+{
+	[NFKStubScript addObject:@{ @"status": @529, @"headers": @{ @"Retry-After": @"0" }, @"chunks": @[ @"overloaded" ] }];
+	[NFKStubScript addObject:@{ @"status": @200, @"chunks": @[ @"ok" ] }];
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [NFKRemoteTransport sendRequest:self.request session:self.session response:&response error:NULL];
+	XCTAssertEqualObjects(data, [@"ok" dataUsingEncoding:NSUTF8StringEncoding]);
+	XCTAssertEqual(NFKStubRequestsServed, 2);
 }
 
 - (void)testAGatewayErrorWithoutRetryAfterBacksOffExponentiallyFromHalfASecond

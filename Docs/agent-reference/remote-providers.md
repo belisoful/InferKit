@@ -11,7 +11,9 @@ preset was added (a 401 or 405 without credentials is what confirms the path).
 - **OpenAI-compatible** — one wire format, so `NFKRemoteBackend` serves them all: `openai`, `xai`
   (Grok), `gemini` (Google's OpenAI-compatible layer), `groq`, `mistral`, `deepseek`, `together`,
   `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`, `vllm`.
-- **`anthropic`** is the exception and has its own backend, `NFKAnthropicBackend`. Four differences a
+- **`typesafe`** (TypeSafe AI's System One API, which serves Jev) has its own backend,
+  `NFKTypeSafeBackend`, because it does not generate text: see "Typed decisions" below.
+- **`anthropic`** is the other exception and has its own backend, `NFKAnthropicBackend`. Four differences a
   URL swap cannot cover: the key is an `x-api-key` header rather than a Bearer token, an
   `anthropic-version` header is required, `max_tokens` is required rather than optional, and a system
   prompt is a top-level field rather than a message with a role. The reply is a list of typed blocks,
@@ -24,7 +26,7 @@ The provider's own list is the source instead: `modelsWithAPIKey:error:` (and a 
 form at user-initiated QoS) returns `NFKRemoteModel`s — identifier, display name, and where the
 provider publishes them `ownedBy` / `createdAt` / `contextLength`, with the entry kept under `raw`.
 Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
-thirteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
+fourteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
 `after_id`, page size raised to 1000 from its default 20), which the catalog follows to the end. The
 list is deliberately not filtered to chat models: the envelope carries no capability field, so any
 filter would be a name heuristic that breaks on the next release. `NFKRemoteModelCatalog` is the
@@ -44,10 +46,22 @@ another port, or on a LAN machine — keeping its identity, protocol, and key re
 
 `NFKRemoteTransport` is the shared plumbing the chat, Anthropic, transcription, and catalog classes
 used to each carry a copy of: the semaphore-blocked send, `authorizeRequest:apiKey:style:` (Bearer,
-or `x-api-key` + `anthropic-version`), and `errorForResponse:data:` (a non-2xx status becomes
-`kNFKError_InferenceBackendFailure` carrying the body, which is where a provider explains a rejected key
-or an unknown model). Each class keeps its own `sendRequest:response:error:` override seam delegating
-there, so a test stubs one class without touching the others. A failure that produced no response
+or `x-api-key` + `anthropic-version`), and `errorForResponse:data:`, which turns a non-2xx status into
+the code an app acts on: 429, 402, and 529 are `kNFKError_InferenceRateLimited` (back off; the
+provider's `Retry-After`, seconds or an HTTP-date, rides as a date under `NFKRemoteErrorRetryAfterKey`),
+400, 413, and 422 are `kNFKError_InferenceRefused` (the request is the problem, which is also where an
+OpenAI-compatible content-policy rejection arrives), and every other status, a rejected key, an
+unknown model, a missing path, a server fault, is `kNFKError_InferenceBackendFailure`; the status and
+the body ride under `NFKRemoteErrorStatusCodeKey` / `NFKRemoteErrorBodyKey` beside the description,
+which is where a provider explains itself. The two chat backends also read the model's own refusal
+from a successful reply: `finish_reason: content_filter` or a `message.refusal` string on the OpenAI
+shape (streamed too, from the chunk's `finish_reason` and `delta.refusal`), and `stop_reason: refusal`
+on the Messages API (streamed as `message_delta`'s `stop_reason`), each `kNFKError_InferenceRefused`;
+an Anthropic stream `error` event maps its `type` (`overloaded_error` / `rate_limit_error` → rate
+limited, `invalid_request_error` → refused). `NFKAsyncGenerationBackend`'s own transport goes through
+the same mapping, so a 429 on submit fails the job under its code instead of being parsed for a job
+id. Each class keeps its own `sendRequest:response:error:` override seam delegating there, so a test
+stubs one class without touching the others. A failure that produced no response
 at all is `kNFKError_RemoteUnreachable` with the URL-loading error under `NSUnderlyingErrorKey` — a
 runner that is not running is a different answer from one that answered with an error or an empty
 list, and an app shows "start Ollama" on that code. It is measured against a refused connection on the
@@ -183,11 +197,314 @@ its spelling for the stops) and has no repetition penalty. **Reasoning and usage
 `NFKParameterReasoningEffort` renames its value as well as its key, so it has its own table,
 `NFKRemoteReasoningEfforts()`: light → `low`, moderate → `medium`, deep → `high` under
 `reasoning_effort`, any other string written as it stands. The Messages API takes a budget rather
-than a level, so `NFKAnthropicThinkingBudgets()` maps the three to 2048 / 8192 / 16384 under
-`thinking: {type: enabled, budget_tokens}`, a numeric string is an exact budget, and anything else
-is refused in `urlRequestForRequest:`. Extended thinking there forbids `temperature` / `top_p` /
-`top_k` and needs `max_tokens` above the budget, so the backend drops the three and raises the
-limit. Coming back: `message.reasoning_content` or `message.reasoning` (both spellings are in use)
+than a level only on models before Claude Opus 4.6, so there `NFKAnthropicThinkingBudgets()` maps the
+three to 2048 / 8192 / 16384 under `thinking: {type: enabled, budget_tokens}`, a numeric string is an
+exact budget, and anything else is refused in `urlRequestForRequest:`. **Model generations
+(2026-09-22):** the Anthropic backend picks the shape from `modelName` by family substring (so
+`anthropic.claude-…` and `claude-…@date` match). `NFKAnthropicBudgetThinkingFamilies()` (claude-3, the
+4.0 / 4.1 / 4.5 models) keeps the budget. Every other name takes `thinking: {type: adaptive}` plus
+`output_config.effort` (light → `low`, moderate → `medium`, deep → `high`, other strings as written,
+a numeric string refused) because Opus 4.6 onward returns 400 on `budget_tokens`. An unknown name is
+treated as current, because every release since 4.6 refuses the budget. Sampling goes out only on the
+budget families and `NFKAnthropicSummarizingFamilies()` (Opus / Sonnet 4.6), and only when the model is
+not thinking: Opus 4.7 onward, Sonnet 5, Fable, and Opus 5 / 5.5 return 400 on `temperature` / `top_p` /
+`top_k`. Outside the 4.6 families the request adds `display: summarized`, since the default display
+from 4.7 on is `omitted` (an empty `thinking` string, now skipped when joining the reasoning).
+Thinking counts toward `max_tokens`, so an effort raises the limit by the same budget table (deep for a
+pass-through level). `NFKAnthropicUnforcedToolFamilies()` (Opus 5.5, Fable 5.1, Mythos 5.1) returns 400 on a forced
+`tool_choice`, so there the schema goes out as `output_config.format` and the reply's JSON text is
+parsed into `NFKOutputStructured`. Every model also refuses a forced tool beside
+`thinking: {type: enabled}`, so a budget-family request that carries both a schema and an effort takes
+`output_config.format` too. Opus 5.5 also always thinks: it refuses `thinking: {type: disabled}`,
+which the backend never sends. Its effort default is `medium`, one level below Opus 5. **OpenAI
+reasoning families (2026-09-22):** `NFKRemoteBackend` spells the limit `max_completion_tokens` when
+`modelName` has the prefix `gpt-5`, `gpt-6`, `o1`, `o3`, or `o4`, because those refuse `max_tokens` on
+Chat Completions. The match is a prefix, so a router's `openai/gpt-…` keeps `max_tokens`. GPT-5.6 Sol
+(`gpt-5.6-sol`) and Luna (`gpt-5.6-luna`, the low-cost tier; Terra sits between them) serve Chat
+Completions with `reasoning_effort` `none` / `low` / `medium` (default) / `high` / `xhigh` / `max`, which
+pass through. OpenAI's latest-model guide says to remove `temperature`, `top_p`, and `top_logprobs`
+(and `logprobs` on Chat Completions) whenever the effort is not `none`, and the families default to
+`medium`, so `removeFieldsTheModelRefusesFromBody:` drops all four for the same prefixes unless the body's
+`reasoning_effort` is `none`.
+
+**Model audit (2026-09-22).** The providers' official model pages were checked against the request
+shapes:
+- **Anthropic:** there is no Claude Opus 5.1. The Opus line runs `claude-opus-5` → `claude-opus-5-5`
+  (released 2026-09-22); "5.1" is Fable 5.1 and Mythos 5.1. The deprecations table and the thinking
+  troubleshooting page are the sources for the family tables above. `claude-mythos-preview` is
+  deprecated but served, accepts a budget, and does not refuse a forced tool.
+- **OpenAI:** `gpt-6-astra` / `-sol` / `-luna`, `gpt-5.6-sol` / `-terra` / `-luna`, `gpt-5.5`, and
+  `gpt-5.4` (+ mini / nano) serve Chat Completions; the `-pro` models and `gpt-5.3-codex` are
+  Responses-only. `gpt-6-astra` has no `none` effort. `max` exists only on the GPT-6 and GPT-5.6 families.
+  None of the model pages says whether `max_tokens` is refused; `max_completion_tokens` is the
+  documented field.
+- **xAI:** "presencePenalty, frequencyPenalty, and stop cannot be used with reasoning models"
+  (grok-4.5 / 4.6 / 4.7, the 4.20 reasoning models). `NFKRemoteModelRefusesStopSequences` covers
+  `grok-4…` and `grok-3-mini…` except names containing `non-reasoning`; the backend drops `stop` and cuts
+  the finished text at the earliest stop (the streamed partials run past it). Chat Completions is
+  xAI's legacy endpoint.
+- **Mistral:** a reasoning reply (`reasoning_effort` set on `mistral-medium-3-5` / `mistral-small-4`)
+  returns `message.content` as chunks, `{type: thinking, thinking: [{type: text, text}]}` then
+  `{type: text, text}`, blocking and streamed; `appendContentChunks:toText:reasoning:` reads both into
+  the text and `NFKOutputReasoning`. Its effort values are `none|minimal|low|medium|high|xhigh`.
+- **Gemini (OpenAI layer):** current `gemini-3.5`–`3.8-flash`, `3.1-pro-preview`, `3.1-flash-lite`; the
+  2.0 models shut down 2026-06-01. 3.x cannot turn reasoning off. `temperature` / `top_p` / `top_k` were
+  deprecated 2026-07-21 with no stated rejection, so the backend still sends them.
+- **DeepSeek:** `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`; effort `none|low|high|max`
+  (`medium` is not listed), and thinking mode ignores `temperature`. Only `json_object` is documented,
+  so a `json_schema` response format may be refused (unverified).
+- **Groq:** `max_tokens` is deprecated for `max_completion_tokens`, not refused; `openai/gpt-oss-*`
+  take `low|medium|high`, `qwen/qwen3.8-27b` `none|default|low|medium|high`.
+- **Together / OpenRouter:** both accept the request shape. OpenRouter lists `anthropic/claude-opus-5.5`,
+  `openai/gpt-5.6-sol`, and `openai/gpt-6-*`, accepts `max_tokens` for OpenAI models, and drops
+  parameters a model does not take rather than refusing them. The prefix match leaves those
+  namespaced names alone on purpose.
+Unknown-field rejection (`top_k`, `repetition_penalty`, `repeat_penalty`) is undocumented for Gemini,
+xAI, Mistral, DeepSeek, and Together; those go out only when a caller sets them.
+
+**Media and retrieval backends audit (2026-09-22).** Every `backendForProvider:` factory below accepts
+any OpenAI-style preset, so a preset that does not serve the path answers 404 at request time.
+- **Video (`NFKRemoteVideoBackend`):** OpenAI removes the Videos API and `sora-2` / `sora-2-pro` on
+  **2026-09-24**, with no replacement named (announced 2026-03-24). The backend now speaks every
+  hosted video API through `apiStyle` (2026-09-22); the per-style contract is below.
+- **Images (`NFKRemoteImageBackend`):** OpenAI `gpt-image-2` (plus `gpt-image-2.5-sunburst` /
+  `-flare`) takes any `WxH` with sides a multiple of 16 and returns `b64_json` only; `seed` and `steps`
+  are undocumented there. `gpt-image-1.5` / `-1-mini` shut down 2026-12-01; DALL·E shut down
+  2026-05-12. xAI takes `aspect_ratio` / `resolution` instead of `size` and edits by JSON only (the
+  multipart edit is refused). Together takes `width` / `height`, `steps`, and `seed` instead of `size`.
+  Gemini ignores unknown fields and documents no edits. OpenRouter's path is `/api/v1/images`, so
+  `images/generations` does not reach it. Groq, Mistral, and DeepSeek serve no images.
+- **Transcription:** `whisper-1` and the `gpt-4o-*-transcribe` models shut down 2027-02-26 for
+  `gpt-transcribe` (same path, no documented `verbose_json` / `segments[]`) or `gpt-live-transcribe`
+  (Realtime only). `whisper-1` is also OpenAI's only `/audio/translations` model. Groq `whisper-large-v3`
+  (+ turbo, no translations) returns the verbose shape with `avg_logprob`; Together's segments lack
+  `avg_logprob` (confidence reads 1); Mistral `voxtral-mini-latest` has no `response_format` field and
+  returns `segments[]` with `speaker`. xAI transcribes on `/v1/stt` and Gemini's layer has no audio path.
+- **Speech:** OpenAI `gpt-4o-mini-tts` (13 voices, `instructions`), `tts-1` / `tts-1-hd` (9 voices);
+  `wav` works everywhere it is served. Groq Orpheus (`canopylabs/orpheus-v1-english`) is wav-only and
+  caps input at 200 characters. xAI speaks on `/v1/tts`.
+- **Embeddings:** served by openai (`text-embedding-3-*`), mistral (`mistral-embed-23-12`,
+  `codestral-embed-25-05`), gemini (`gemini-embedding-2`, `-001`; `embedding-2-preview` shut down
+  2026-08-10), and openrouter; not xai, groq, deepseek, or serverless Together.
+- **Moderation:** openai (`omni-moderation-latest`) and mistral (Moderation 2, written both
+  `mistral-moderation-2603` and `-26-03`; `-2411` retired 2026-06-30). Mistral returns `categories` and
+  `category_scores` without `flagged` and takes strings only, so `verdictWithFlag:` derives the flag
+  from the categories.
+- **Rerank:** together (dedicated endpoints only: `mixedbread-ai/mxbai-rerank-large-v2`,
+  `Salesforce/Llama-Rank-V1`) and openrouter (`cohere/rerank-v3.5` and others). OpenRouter's schema has
+  no `return_documents`; whether it ignores the field is unconfirmed.
+- **TypeSafe:** `jev-latest` and `jev-preview` still resolve to `jev-1.13.0`.
+
+**Audio and image styles (2026-09-22).** The transcription, speech, and image backends choose a wire
+shape the way the video backend does, and their factories return nil for a preset without the path.
+- **Transcription** (`NFKRemoteTranscriptionAPIStyle`): OpenAI style for openai / groq / together /
+  openrouter / vllm (`verbose_json` plus `timestamp_granularities[]`, `diarized_json` +
+  `chunking_strategy: auto` when the model name contains `diarize`, a plain `diarize` field otherwise,
+  `keywords[]` for the vocabulary); Mistral (no `response_format` field at all, repeated
+  `timestamp_granularities`, `diarize`, `context_bias`, segments with `speaker_id` and `score`); xAI
+  `/v1/stt` (`diarize`, `keyterm`, a reply of `words[]` only, grouped into turns at a speaker change or a
+  sentence end). The file part always goes last, because xAI ignores fields after it. A hosted clip
+  travels as `url` (Groq, xAI), `file` (Together), or `file_url` (Mistral); elsewhere it is fetched and
+  uploaded. Streaming (`streams`): OpenAI `transcript.text.delta` / `.done`, Mistral
+  `transcription.text.delta` / `.segment` / `.done`; `whisper-1` refuses `stream`, so it is opt-in.
+- **Speech** (`NFKRemoteSpeechAPIStyle`): OpenAI style for openai / groq / together / openrouter
+  (`stream_format: sse` + `stream` when streamed; OpenRouter's voice clone as `input_references`);
+  Mistral (`voice_id` or `ref_audio`, reply `{audio_data}` base64, stream `speech.audio.delta
+  {audio_data}`); xAI `/v1/tts` (`text`, `voice_id` optional, `language` defaulting to `auto`,
+  `output_format {codec, sample_rate}`). Stream deltas are read from `audio`, `b64`, or `audio_data`.
+  Groq's 200-character cap is `maximumInputLength`; pieces are cut with
+  `NSStringEnumerationBySentences`, which needs a capitalized next sentence to see a break. Voice
+  listing: xAI `/v1/tts/voices`, Mistral `/v1/audio/voices`, Together `/v1/voices?model=`.
+- **Images** (`NFKRemoteImageAPIStyle`): OpenAI (openai; gemini with no edits URL), xAI (JSON edits,
+  `image` for one source and `images[]` for several, `{url: data URI}`, ratio from the size,
+  `response_format: b64_json`), Together (edits on the generations path, `width` / `height`,
+  `image_url` + `reference_images` as data URIs, `response_format: base64`), OpenRouter (`/images`,
+  `input_references`). A mask is OpenAI-only. Streaming reads `*.partial_image` into the partial
+  result and `*.completed` into the final one.
+
+**Chat dialects and reply extras (2026-09-22).** `NFKRemoteBackend.chatDialect` is set by
+`NFKRemoteProvider backendForProvider:` (mistral, openrouter, vllm, llamacpp; every other preset is
+standard). `NFKRemoteAttachments attachmentsForRequest:keepsVideo:error:` keeps a clip whole under
+`videoData` for the OpenRouter / vLLM / llama.cpp dialects unless `NFKParameterVideoFrameCount` is set.
+Whole-clip parts: `video_url {url: data:video/<ext>;base64}` (OpenRouter, vLLM), `input_video {data,
+format}` (llama.cpp; the shape is inferred from its `input_audio` and not yet verified live). Mistral:
+`document_url` + `document_name`, and `input_audio` as a bare base64 string. Documents carry a
+`mediaType`: `text/plain` for an `NSString` or a `.txt` / `.md` / `.markdown` / `.csv` / `.json` /
+`.html` / `.xml` file, which rides as a text part on chat and as a `text` source on Anthropic. Reply
+extras read by `extraOutputsInMessage:` from the blocking reply only: `message.images[]`
+(OpenRouter, data URLs), `message.annotations[].url_citation`, and Groq's `message.executed_tools`.
+Anthropic reads `citations[]` on text blocks (and `citations_delta` when streamed) and pairs
+`server_tool_use` blocks with `*_tool_result` blocks by `tool_use_id`. Gemini embeddings use the native
+`models/{m}:embedContent` with `inline_data` parts and `x-goog-api-key`, `:batchEmbedContents` for
+`embeddingsForTexts:`, `dimensions` → `outputDimensionality`, `task_type` → `taskType`.
+
+**Responses, Interactions, and the single-purpose backends (2026-09-22).**
+- `NFKRemoteResponsesBackend` (`/responses`; openai, xai, groq, deepseek, openrouter, lmstudio, ollama,
+  vllm, llamacpp): a leading system turn → `instructions`; turns → `{role, content: [input_text |
+  output_text]}` with `input_image` (data URL) and `input_file {filename, file_data}` on the last user
+  turn (a text document as `input_text`); audio is refused. Tools flatten to `{type: function, name,
+  description, parameters}`; a wire-shaped tool passes through. `text.format {type: json_schema, name,
+  schema}`, `reasoning {effort, summary: auto}`, `max_output_tokens`, `previous_response_id`. OpenAI's
+  reasoning families lose `temperature` / `top_p` unless the effort is `none`, as on chat. Output items:
+  `message` (text, `url_citation` annotations, `refusal` → kNFKError_InferenceRefused), `reasoning`
+  (`summary[].text`), `function_call` (`call_id`, JSON-string `arguments`), `image_generation_call`
+  (`result` base64), any other `*_call` → server tool results. Background: `background: true`, then
+  `GET /responses/{id}` until `completed` / `failed` / `cancelled` / `incomplete`; cancelling the job
+  posts `/responses/{id}/cancel`. Stream: `response.output_text.delta`, `response.reasoning*.delta`,
+  `response.completed` / `.incomplete` carry the whole response, `response.failed` / `error`.
+- `NFKGeminiInteractionsBackend` (`POST /v1beta/interactions`, `x-goog-api-key`, which Google's curl
+  uses although the reference page shows a Bearer header): a prompt alone goes as the string `input`;
+  otherwise steps `{type: user_input | model_output, content: [blocks]}` with `system_instruction`, and
+  media blocks `{type: image | audio | video | document, mime_type, data}`. `outputModality` picks
+  `response_format`: image (`aspect_ratio`, `image_size`, `mime_type`), audio (`speech_config` is an
+  array of `{voice}` or `{speaker, voice}`), video (`aspect_ratio`, `resolution`), or JSON text
+  (`mime_type: application/json`, `schema`). Transcription: `transcription_config {language_codes,
+  custom_vocabulary, mode: {type: verbatim, diarization_mode: speaker, timestamp_granularities:
+  [word]}}`, read back from `word_info` annotations (`start_offset` / `end_offset` as `"1.2s"` strings
+  or numbers). `thinking_level` + `thinking_summaries: auto`; everything else goes into
+  `generation_config`. Reply steps: `thought` → reasoning, `function_call` (`id`, `name`, object
+  `arguments`), `model_output` blocks → text / image / audio (PCM wrapped in a 24 kHz mono WAV unless
+  the MIME type names mp3 or wav) / video (`uri` fetched with the key on Google's host); other step types
+  → server tool results. Usage fields are `total_input_tokens`, `total_cached_tokens`,
+  `total_output_tokens`, `total_thought_tokens`. Background polls `GET /interactions/{id}` until a
+  terminal status (`requires_action` included). The stream is `?alt=sse` with `event_type` events;
+  `step.delta {delta: {type: text, text}}` grows the text and the finished interaction is read back by
+  the id from `interaction.created`.
+- `NFKRemoteCompletionBackend`: OpenAI style `{prompt, suffix}` → `choices[].text`; DeepSeek's path is
+  `…/beta/completions` off the version root; Mistral `/fim/completions` answers in the chat shape and
+  names the seed `random_seed`; llama.cpp posts `/infill {input_prefix, input_suffix}` or `/completion
+  {prompt}` at the server root with `n_predict`, answered with `content`.
+- `NFKRemoteOCRBackend` (Mistral `/ocr`): `document {type: document_url, document_url}` (a data URI for
+  local bytes) or `{type: image_url, image_url}`; `document_annotation_format {type: json_schema,
+  json_schema: {name, schema}}` from `NFKParameterJSONSchema`, whose reply `document_annotation` is a JSON
+  string; `pages[].markdown` joined by blank lines; `pages[].images[].image_base64` (a data URI) decoded.
+- `NFKRemoteClassifierBackend`: Mistral `results[0]` is `{target: {scores: {label: score}}}` (labels
+  prefixed `target/` when there are several targets), chat input `{messages}` on `/chat/classifications`;
+  vLLM `/classify` at the server root answers `data[0] {label, probs[]}`, only the top class named.
+- `NFKRemoteTokenCounter`: Anthropic `count_tokens` (Messages body, system lifted) → `input_tokens`;
+  Gemini `models/{m}:countTokens` → `totalTokens`; xAI `tokenize-text` → `token_ids[{token_id}]`;
+  llama.cpp `/tokenize {content}` → `tokens`.
+
+**Realtime sessions (`NFKRealtimeSession`, 2026-09-22).** One class, twelve protocols; the socket is
+`NFKRealtimeSocket` (`NFKRealtimeWebSocket` on `NSURLSessionWebSocketTask`, one receive per message),
+and `socketForRequest:` is the test seam. `sessionForProvider:apiStyle:` builds the ws(s) URL from the
+provider's base (`http` → `ws`, else `wss`); Gemini's two sockets are fixed `…/ws/google.ai.
+generativelanguage.v1beta.GenerativeService.BidiGenerateContent` and `….v1alpha.…BidiGenerateMusic`
+with the key as `?key=`; every other style sends `Authorization: Bearer`. Handshake queries: `model`
+(OpenAI conversation and translation, xAI conversation, Mistral), xAI STT `sample_rate`, `encoding=pcm`,
+`interim_results=true`, `language`; xAI TTS `voice`, `language` (default `auto`), `codec=pcm`,
+`sample_rate`; Together STT `model`, `input_audio_format=pcm_s16le_<rate>`; Together TTS `model`,
+`voice`. Configuration on connect: OpenAI / xAI `session.update {session: {type: realtime (OpenAI only),
+instructions, audio: {input: {format: {type: audio/pcm, rate}}, output: {format, voice}}, tools}}`;
+OpenAI transcription `session.update {session: {type: transcription, audio: {input: {format,
+transcription: {model, language}}}}}` (the transcription-session URL shape is inferred, not seen in a
+raw example); OpenAI translation `session.update {session: {audio: {output: {language}}}}`; Mistral
+`session.update {session: {audio_format: {encoding: pcm_s16le, sample_rate}}}` (from the mistralai SDK
+source, which is the only raw spelling Mistral publishes); vLLM `session.update {model}`; Gemini
+`{setup: {model: models/<m>, generationConfig: {responseModalities: [AUDIO], speechConfig},
+systemInstruction, inputAudioTranscription: {}, outputAudioTranscription: {}, tools:
+[{functionDeclarations}]}}`; Lyria `{setup: {model}}`. Sending: audio is `input_audio_buffer.append
+{audio}` (OpenAI, xAI conversation, Together, vLLM), `session.input_audio_buffer.append` (translation),
+`input_audio.append` (Mistral), `realtimeInput.audio {data, mimeType: audio/pcm;rate=N}` (Gemini), or
+binary frames (xAI STT). Commit / finish per style: `input_audio_buffer.commit` (+ `final: true` for
+vLLM), `input_audio.flush` / `input_audio.end` (Mistral), `finalize` / `audio.done` (xAI STT),
+`text.done` (xAI TTS), `input_text_buffer.commit` (Together TTS), `session.close` (translation),
+`realtimeInput.audioStreamEnd` (Gemini). Lyria: `clientContent.weightedPrompts`,
+`musicGenerationConfig`, `playbackControl: PLAY | PAUSE | STOP`. Receiving: any typed event ending
+`audio.delta` (not a transcript) or `conversation.item.audio_output.delta` is audio; text deltas are
+sorted into response text, output transcript, and input transcript (partial or final, including xAI's
+`transcript.partial.is_final`); `response.function_call_arguments.done` and Gemini `toolCall.functionCalls`
+become tool calls with parsed arguments; `response.done`, `audio.done`, `transcription.done`, and Gemini
+`turnComplete` end a turn. Gemini frames may arrive binary; both are parsed as JSON.
+
+**Files, retrieval stores, and usage reports (2026-09-22).** Three storage and reporting objects, none
+of them a backend. Each has a `sendRequest:response:error:` seam and a `…ForProvider:apiKey:` factory
+that returns nil for a preset without the API.
+
+- `NFKRemoteFileStore` styles: OpenAI (openai and deepseek purpose `user_data`, xai `assistants`,
+  mistral `ocr`, groq `batch`, together `fine-tune`; Together's multipart names the part `upload`
+  beside `file_name`; DeepSeek's root is `https://api.deepseek.com/files`, off the `/v1` base),
+  Anthropic (`/v1/files`), and Gemini (resumable two-step upload: `X-Goog-Upload-Protocol: resumable`
+  start, then `upload, finalize`; files are named `files/…`, referenced by `uri`, and wait in
+  `PROCESSING` until `ACTIVE`, which `fileWhenReadyWithIdentifier:timeout:` polls). Listing reads every
+  page. Mistral's signed URL is `GET /files/{id}/url?expiry=`.
+- File references by request shape: Chat Completions `{type: file, file: {file_id}}`; DeepSeek the
+  flat `{type: file, file_id}`; Mistral chat a `document_url` holding the signed URL, fetched through
+  the chat backend's own `sendRequest` so a test stub sees it; Anthropic a `document` or `image` block
+  with source `{type: file, file_id}`; Responses `input_file` / `input_image` with `file_id`; Gemini
+  Interactions `{uri, mime_type}`; Mistral OCR `{type: file, file_id}`; Gemini embeddings
+  `file_data {mime_type, file_uri}`.
+- `NFKRemoteRetrievalStore` styles: OpenAI `/vector_stores` with `OpenAI-Beta: assistants=v2`, files
+  added by id, `POST /vector_stores/{id}/search` (`query`, `max_num_results`, `filters`); xAI
+  collections on `https://management-api.x.ai/v1` with `managementAPIKey`, search on
+  `api.x.ai/v1/documents/search` with `apiKey` and an AIP-160 filter string; Gemini
+  `v1beta/fileSearchStores`, add by `:importFile` (answers an operation), delete with `force=true`, no
+  direct search; Mistral `/libraries`, documents only by multipart upload, no direct search.
+- `NFKRemoteUsageReporter` contracts. Money is normalized to dollars, time to `NSDate`, and every page
+  (`has_more` / `next_page` → `page`) is read.
+  - Anthropic: `x-api-key` + `anthropic-version`; `organizations/usage_report/messages` (`starting_at`
+    / `ending_at` RFC 3339, `bucket_width` 1d / 1h / 1m, repeated `group_by[]`); `cost_report` (1d
+    only, `amount` a decimal string in cents, divided by 100); `usage_report/claude_code` takes
+    `starting_at` as a bare day and answers one record per actor and day.
+  - OpenAI: Bearer admin key; `organization/usage/{report}` (completions, embeddings, images,
+    audio_speeches, audio_transcriptions, moderations, vector_stores, code_interpreter_sessions,
+    web_search_calls, file_search_calls) with Unix-second `start_time` / `end_time`; `organization/costs`
+    answers `amount {value (dollars), currency (lower case)}` and `line_item`. The repeated
+    `group_by` spelling is not confirmed against a live call.
+  - xAI: `POST billing/teams/{team}/usage` with an `analyticsRequest` (`timeRange` in
+    `yyyy-MM-dd HH:mm:ss`, `Etc/GMT`, `TIME_UNIT_DAY`, `usd` summed, `groupBy` default `description`);
+    each `timeSeries[].dataPoints[]` becomes a row. `prepaid/balance` answers `total.val`, read as
+    negative cents (credit); the unit is inferred, not documented.
+  - OpenRouter: `credits` (`total_credits − total_usage`, management key), `activity` (last 30
+    completed days, `usage` in dollars), filtered to the asked span and bucketed by day.
+  - DeepSeek: `user/balance` → one balance per `balance_infos[]` currency. No usage or cost API.
+  - Mistral: `v1/admin/usage?month=&year=` with the admin key as `x-api-key`; the reply shape is
+    undocumented, so it returns whole as one bucket.
+  - No reporting API: Groq, Together, Gemini.
+
+**Video styles (`NFKRemoteVideoAPIStyle`, 2026-09-22).** `backendForProvider:` picks gemini →
+Sora-compatible, openai → OpenAI, xai / together / openrouter → their own, and nil for every other
+preset; `backendForProvider:apiStyle:` reaches Gemini's native Veo. Moving the default between
+services is a change of provider, not of code. Shared behavior: a contract key the service has no
+field for is dropped, every other parameter goes out by name (into Veo's `parameters`), a request the
+style cannot express fails with `kNFKError_InferenceUnsupported` before the submit (`refusalForRequest:`),
+the key goes with a download only to the submit host, and a download whose bytes open with the EBML
+signature is written `.webm`. Width and height become a reduced ratio and a short-side tier
+(`720p`, `1080p`, `4k`) for services that take those.
+- **OpenAI** (`/v1/videos`): JSON `model`, `prompt`, `seconds` (string), `size`; a first frame makes it
+  multipart with an `input_reference` file; edit → `/videos/edits`, extend → `/videos/extensions`, both
+  `{prompt, video: {id}}` from `NFKParameterSourceVideoIdentifier`; clip at `/videos/{id}/content`.
+- **Gemini Sora-compatible** (`v1beta/openai/videos`, the default for `gemini`): always multipart, as
+  Google's curl sample is. `model` and `prompt` are the documented top-level fields; the Veo options
+  (`duration_seconds`, `aspect_ratio`, `resolution`, `frame_rate`, `negative_prompt`, `seed`,
+  `image` base64, `last_frame` base64, `reference_images[]`, `extend_video_id`, `person_generation`,
+  `style`) go out as further form fields, which is where the OpenAI SDKs put `extra_body` on a multipart
+  request. Google shows no wire example of those fields, and the `last_frame` object shape is
+  undocumented; both are unverified live. Status `processing` → `completed` / `failed`; clip at `url`.
+  Edit is refused (Veo extends only).
+- **Gemini Veo native** (`v1beta/models/{model}:predictLongRunning`, `x-goog-api-key`): `instances[0]`
+  carries `prompt`, `image` / `lastFrame` as `{inlineData: {mimeType, data}}`, `referenceImages`
+  (`referenceType: asset`), and `video: {uri}` to extend; `parameters` carries `durationSeconds`,
+  `aspectRatio`, `resolution`, `numberOfVideos`, `negativePrompt`, `seed`, `personGeneration`. The job
+  is the operation `name`, polled at `v1beta/{name}` until `done`; every
+  `generateVideoResponse.generatedSamples[].video.uri` is downloaded. Veo facts: 4/6/8 s (8 for 1080p,
+  4k, references, extension), 16:9 or 9:16, audio always on, clips deleted after 2 days.
+- **xAI** (`/v1/videos/generations`, `/edits`, `/extensions`): JSON `duration`, `aspect_ratio`,
+  `resolution` (480p/720p/1080p), `image` / `last_frame` / `reference_images[]` as `{url: data URI}`,
+  `generate_audio`; edit and extend send `video: {url}` (a local clip inline as a data URI) or
+  `{file_id}`. No seed. Job `request_id`; status `pending` → `done` / `failed` / `expired`, progress
+  0–100; clip at `video.url` on `vidgen.x.ai` (fetched without the key).
+- **Together** (`/v2/videos` on the preset's host): JSON `width`, `height`, `seconds` (string), `fps`,
+  `steps`, `seed`, `guidance_scale`, `output_format` (`MP4` / `WEBM`), `negative_prompt`,
+  `generate_audio`, `resolution` (`720P`), `ratio`, and `media.frame_images` (`{input_image: raw base64,
+  frame: first | last}`), `media.reference_images`, `media.source_video` (edit), `media.frame_videos`
+  (extend). A source clip must be a hosted URL. Status `queued` / `in_progress` → `completed` /
+  `failed` / `cancelled`; clip at `outputs.video_url` (expires).
+- **OpenRouter** (`/api/v1/videos`): JSON `duration`, `size`, `aspect_ratio`, `resolution`, `seed`,
+  `generate_audio`, `frame_images` (`{type: image_url, image_url: {url}, frame_type: first_frame |
+  last_frame}`), `input_references`, `previous_job_id` for edit and extend, `provider` and the rest by
+  name. Status `pending` / `in_progress` → `completed` / `failed` / `cancelled` / `expired`; clips at
+  `unsigned_urls`, relative ones resolved on its host. Coming back: `message.reasoning_content` or `message.reasoning` (both spellings are in use)
 and Anthropic's `thinking` blocks → `NFKOutputReasoning`; `usage` → `NFKOutputUsage` through the
 shared `NFKRemoteUsage(...)`, which leaves out a count the provider did not report. Streaming:
 `reasoning_content` deltas and `thinking_delta` grow the chain on the partial result beside the
@@ -201,7 +518,7 @@ name, so an entry already in wire shape (has `type`, or `input_schema`) passes t
 otherwise a caller who folded OpenAI tools by name gets double-wrapped. **Schema:**
 `NFKParameterJSONSchema` → `response_format: {type: json_schema, json_schema: {name: response, schema}}`
 (no `strict`, which demands `additionalProperties: false` throughout) / Anthropic has no response
-format, so it is a forced tool `structured_output` (`tool_choice: {type: tool, name}`) whose `input` is
+format on most models, so it is a forced tool `structured_output` (`tool_choice: {type: tool, name}`) whose `input` is
 `NFKOutputStructured` and is not listed as a tool call. JSON is promoted to `structured` only when JSON
 was asked for (schema, or a folded `response_format` of type `json_object`/`json_schema`) — JSON-looking
 text is not guessed at. `NFKInputImages` attaches further images after `NFKInputImage`. **Retry:** the
@@ -263,6 +580,42 @@ openrouter verified; results arrive in relevance order and are put back in the d
 `NFKClassification`s most confident first, the verdict under `NFKOutputStructured`). Unverified live:
 audio in/out, PDFs, video generation, rerank, moderation — all need paid keys; their envelopes are
 stub-tested and their paths probe-verified.
+
+**Typed decisions (`NFKTypeSafeBackend`, the `typesafe` preset).** TypeSafe AI released Jev on
+2026-09-15 as a "System One" model: `POST https://api.typesafe.ai/v1/systemone` with a Bearer token
+takes `{model, state, questions}` and answers `{model, answers, usage}`, no text anywhere. `state` is a
+string, an object, or an array; each question is `{type, instructions, criteria}` where `type` is
+`choice` (criteria a map of up to 255 option names to a description or null), `score` (criteria an
+ordered array of 2 to 10 level descriptions), or `noul` (criteria optional, the meanings of `true`
+and `false`); each answer is `{type: choice, choice, probabilities, confidence}`,
+`{type: score, score, legend, probabilities, confidence}`, or `{type: noul, noul}`, where `noul` is the
+probability the statement holds. The model is required; `jev-latest` and `jev-preview` alias
+`jev-1.13.0` at release, and `GET /v1/models` lists them, so the catalog serves the preset through the
+Bearer path (the style is `NFKRemoteAPIStyleSystemOne`, and `authorizeRequest:` treats every style but
+Anthropic's as Bearer). Limits at release: 64k tokens per request, 32k for the state plus the longest
+question; pricing $0.042 per million input tokens, output free. Errors: 401, 422 (invalid body), 429,
+and 529 (overloaded), the last two to be retried with backoff, which is why 529 joined the transport's
+retried statuses (Anthropic uses the same code). The endpoint answered **403** to an unauthenticated
+POST at release, not the 401/405 the other presets answer, so the path exists but the house probe
+rule is not met the same way; the answer shape is asserted only by `testALiveEndpointAnswersATypedDecision`,
+gated on `INFERKIT_TYPESAFE_API_KEY`, which no machine here has had (access is waitlisted). One
+community write-up names `thejevai.com` as the API host; it is not TypeSafe's and is not used.
+
+The core's vocabulary for the shape is engine-neutral, because the open reproduction (Laya,
+`convaiinnovations/laya`, Apache 2.0, ModernBERT-large plus a decision head that scores every option
+at its own mask token) speaks the same request; it ships as `NFKMLXLaya` in InferKitMLX
+(`mlx-models-embeddings-retrieval.md`), so a feature moves between the hosted model and the device by
+swapping the object:
+`NFKInputState` / `NFKInputQuestions` in, `NFKOutputAnswers` out, `NFKDecisionQuestion` (three
+factories; `dictionaryRepresentation` is the wire shape, and a dictionary already in that shape passes
+through) and `NFKDecisionAnswer` (`answerWithDictionary:`, secure coding like the rest of the result
+family, `raw` for what the type does not read). The backend accepts `NFKInputPrompt` and then
+`NFKInputMessages` as the state when `NFKInputState` is absent, folds any other parameter into the
+body under its own name without overriding `model` / `state` / `questions`, declares no supported
+parameter key (nothing is sampled), and puts the whole reply under `NFKOutputStructured` beside
+`NFKOutputUsage`. The Swift importer turns `+answerWithDictionary:` into `NFKDecisionAnswer(dictionary:)`
+and leaves the question factories as static methods (`choiceQuestion(withInstructions:options:)`),
+which the Swift example pins.
 
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
 shipping a preset would imply one exists. `opencode.ai` answers `Not Found` on its API path — it is a

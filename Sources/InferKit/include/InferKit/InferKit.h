@@ -38,6 +38,7 @@
 #import <InferKit/NFKHardwareProfile.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKAnthropicBackend.h>
+#import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKRemoteModel.h>
@@ -49,6 +50,16 @@
 #import <InferKit/NFKVideoSampling.h>
 #import <InferKit/NFKRemoteVideoBackend.h>
 #import <InferKit/NFKRemoteReranker.h>
+#import <InferKit/NFKRemoteCompletionBackend.h>
+#import <InferKit/NFKRemoteOCRBackend.h>
+#import <InferKit/NFKRemoteTokenCounter.h>
+#import <InferKit/NFKRemoteClassifierBackend.h>
+#import <InferKit/NFKRemoteResponsesBackend.h>
+#import <InferKit/NFKGeminiInteractionsBackend.h>
+#import <InferKit/NFKRealtimeSession.h>
+#import <InferKit/NFKRemoteFileStore.h>
+#import <InferKit/NFKRemoteRetrievalStore.h>
+#import <InferKit/NFKRemoteUsageReporter.h>
 #import <InferKit/NFKRemoteModerationBackend.h>
 #import <InferKit/NFKLocalModelRunner.h>
 #import <InferKit/NFKOllamaRunner.h>

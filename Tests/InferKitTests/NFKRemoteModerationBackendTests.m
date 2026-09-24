@@ -74,6 +74,29 @@
 	XCTAssertEqualObjects(self.backend.backendIdentifier, @"remote-moderation");
 }
 
+- (void)testMistralModeratesAConversationWholeOnItsChatPath
+{
+	self.backend.endpointURL = [NSURL URLWithString:@"https://api.mistral.ai/v1/moderations"];
+	self.backend.moderatesConversations = YES;
+	NSArray *messages = @[ @{ @"role": @"user", @"content": @"hi" }, @{ @"role": @"assistant", @"content": @"hello" } ];
+	XCTAssertNotNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputMessages: messages }] error:NULL]);
+	XCTAssertEqualObjects(self.backend.lastRequest.URL.absoluteString, @"https://api.mistral.ai/v1/chat/moderations");
+	XCTAssertEqualObjects([self decodedRequestBody][@"input"], messages);
+	XCTAssertTrue([NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"].moderatesConversations);
+}
+
+- (void)testAMistralVerdictWithoutAFlagIsFlaggedFromItsCategories
+{
+	self.backend.stagedBody = @"{\"results\":[{\"categories\":{\"hate_and_discrimination\":true,\"pii\":false},"
+		"\"category_scores\":{\"hate_and_discrimination\":0.8,\"pii\":0.02}}]}";
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:NULL];
+	XCTAssertEqualObjects(result.structured[@"flagged"], @YES);
+
+	self.backend.stagedBody = @"{\"results\":[{\"categories\":{\"pii\":false},\"category_scores\":{\"pii\":0.02}}]}";
+	result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:NULL];
+	XCTAssertEqualObjects(result.structured[@"flagged"], @NO);
+}
+
 - (void)testAnImageMakesTheInputTheMultimodalPartsList
 {
 	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();

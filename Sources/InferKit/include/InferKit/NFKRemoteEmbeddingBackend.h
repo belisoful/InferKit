@@ -14,14 +14,36 @@ NS_ASSUME_NONNULL_BEGIN
 @class NFKRemoteProvider;
 
 /*!
+	@enum       NFKRemoteEmbeddingAPIStyle
+	@abstract   The wire shape of a hosted embeddings service.
+	@constant   NFKRemoteEmbeddingAPIStyleOpenAI POST /embeddings with input as text, a list of
+				texts, or (OpenRouter) a list of {content: [parts]} for images and audio.
+	@constant   NFKRemoteEmbeddingAPIStyleGeminiNative Gemini's models/{model}:embedContent and
+				:batchEmbedContents, whose content parts take text, images, audio, video, and a
+				PDF, answered with embedding.values.
+	Introduced in InferKit 0.4.0.
+*/
+typedef NS_ENUM(NSInteger, NFKRemoteEmbeddingAPIStyle) {
+	NFKRemoteEmbeddingAPIStyleOpenAI = 0,
+	NFKRemoteEmbeddingAPIStyleGeminiNative,
+};
+
+/*!
 	@class      NFKRemoteEmbeddingBackend
 	@abstract   An inference backend that calls an OpenAI-compatible embeddings endpoint.
-	@discussion POST /embeddings, which the hosted providers and every local runner serve. The
+	@discussion POST /embeddings, which most hosted providers and every local runner serve. The
 				request reads NFKInputPrompt, or joins the content of NFKInputMessages, and returns
 				the vector under NFKOutputEmbedding (NSArray<NSNumber *>) with the parsed body under
 				NFKRemoteBackendRawKey. Request parameters fold into the body, so a caller sets
 				dimensions or encoding_format by name. embeddingsForTexts:error: embeds a batch in
 				one call, which is how a corpus is indexed.
+
+				An image (NFKInputImage, NFKInputImages) or audio (NFKInputAudio) beside the text is
+				embedded with it where the service reads media: OpenRouter's content parts, and
+				Gemini's native style, which also reads NFKInputVideo and a PDF under
+				NFKInputDocument. On the Gemini style, dimensions becomes outputDimensionality and
+				task_type taskType. Media the style cannot carry fails with
+				kNFKError_InferenceUnsupported.
 
 				This is the remote counterpart of the on-device text embedders in InferKitMLX; both
 				answer with the same output key, so a consumer's search or clustering code does not
@@ -32,6 +54,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The embeddings endpoint, for example http://localhost:11434/v1/embeddings. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
+
+/*! The wire shape the backend speaks. Defaults to NFKRemoteEmbeddingAPIStyleOpenAI; for
+	NFKRemoteEmbeddingAPIStyleGeminiNative the endpoint is the models collection
+	(…/v1beta/models) and the model names the path. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NFKRemoteEmbeddingAPIStyle apiStyle;
 
 /*! The bearer token sent as Authorization, when the endpoint needs one. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
@@ -50,9 +77,9 @@ NS_ASSUME_NONNULL_BEGIN
 /*!
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's embeddings endpoint.
-	@discussion Returns nil for Anthropic, which serves no embeddings endpoint. Whether another
-				provider serves one for the named model is the provider's documentation to say;
-				the local runners answer for any embedding model they have.
+	@discussion openai, gemini, mistral, together (dedicated endpoints), openrouter, and the local
+				runners serve one; anthropic, xai, groq, deepseek, and typesafe return nil. The local
+				runners answer for any embedding model they have.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey

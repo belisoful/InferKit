@@ -23,7 +23,7 @@
 									  apiKey:(nullable NSString *)apiKey
 								   modelName:(nullable NSString *)modelName
 {
-	if (provider.apiStyle != NFKRemoteAPIStyleOpenAIChat) {
+	if (![@[ @"together", @"openrouter", @"llamacpp", @"vllm" ] containsObject:provider.identifier]) {
 		return nil;
 	}
 	NFKRemoteReranker *reranker = [self rerankerWithEndpointURL:[provider URLForPath:@"rerank"]];

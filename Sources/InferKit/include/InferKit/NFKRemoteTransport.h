@@ -15,6 +15,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The Anthropic API version the remote classes send when a caller sets no other. */
 extern NSString * const NFKAnthropicAPIVersion;
 
+/*! userInfo keys on an error built from a failing HTTP status. Introduced in InferKit 0.4.0. */
+/*! The HTTP status the provider answered with (NSNumber). */
+extern NSString * const NFKRemoteErrorStatusCodeKey;
+/*! The body the provider sent with the status (NSString), which is where it explains itself. */
+extern NSString * const NFKRemoteErrorBodyKey;
+/*! When the provider says to try again (NSDate), from its Retry-After header; absent when it named
+	none. Present only on kNFKError_InferenceRateLimited. */
+extern NSString * const NFKRemoteErrorRetryAfterKey;
+
 /*! What a streamed request ends with: the response, the body collected when the status was not a
 	success (the provider's explanation), and the transport error when the connection failed. */
 typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response,
@@ -30,9 +39,9 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 				overridable seam that delegates here by default, so a test stubs one class without
 				touching the others. Introduced in InferKit 0.3.0.
 
-				A blocking request is retried on a rate limit or a gateway error (429, 502, 503,
-				504): retryAttempts more tries, each after the Retry-After the provider names or an
-				exponential delay from half a second, and never after a delay above
+				A blocking request is retried on a rate limit, a gateway error, or an overload (429,
+				502, 503, 504, 529): retryAttempts more tries, each after the Retry-After the provider
+				names or an exponential delay from half a second, and never after a delay above
 				maximumRetryDelay, where waiting would cost more than failing. A refused connection
 				is not retried: a server that is not there is an answer in itself.
 */
@@ -98,8 +107,16 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 /*!
 	@method     errorForResponse:data:
 	@abstract   Returns an error for a status outside 200–299, or nil when the response is acceptable.
-	@discussion The description carries the status and the body, which is where a provider explains a
-				rejected key or an unknown model name.
+	@discussion The code says what a caller does about the status. A rate limit, a quota, or an
+				overload (429, 402, 529) is kNFKError_InferenceRateLimited: the request is fine and a
+				later one may succeed, and the provider's Retry-After rides under
+				NFKRemoteErrorRetryAfterKey as a date. A request the provider will not take as written
+				(400, 413, 422) is kNFKError_InferenceRefused: sending it again gives the same answer,
+				which is also where an OpenAI-compatible content-policy rejection arrives. Every other
+				status, a rejected key, an unknown model, a missing path, a server fault, is
+				kNFKError_InferenceBackendFailure. The description carries the status and the body,
+				and both ride under NFKRemoteErrorStatusCodeKey and NFKRemoteErrorBodyKey. Since a
+				blocking send retries 429 and 529 first, the error a caller sees is the last answer.
 */
 + (nullable NSError *)errorForResponse:(nullable NSHTTPURLResponse *)response
 								  data:(nullable NSData *)data;

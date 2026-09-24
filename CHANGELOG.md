@@ -16,6 +16,168 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),
   the audio counterpart of `NFKInputImages`. A backend attaches them in order after `NFKInputAudio`.
 
+#### Current Claude and OpenAI reasoning models take the request shape they accept
+
+- `NFKAnthropicBackend` reads the model's generation from `modelName`. From Claude Opus 4.6 on,
+  `NFKParameterReasoningEffort` goes out as adaptive thinking at an `output_config.effort`
+  (light → `low`, moderate → `medium`, deep → `high`, any other level string as written), because
+  these models refuse a `budget_tokens` thinking budget. A model before 4.6 keeps the budget.
+- From Claude Opus 4.7 on, `temperature`, `top_p`, and `top_k` are dropped, because those models
+  refuse them. The thinking display is asked for as `summarized`, so `NFKOutputReasoning` carries
+  text where the default is omitted. Empty thinking blocks contribute no reasoning.
+- Claude Opus 5.5 (`claude-opus-5-5`), Claude Fable 5.1, and Claude Mythos 5.1 refuse a forced
+  `tool_choice`. On these models `NFKParameterJSONSchema` goes out as
+  `output_config: {format: {type: json_schema, schema}}`, and the JSON reply becomes
+  `NFKOutputStructured`.
+- `NFKRemoteBackend` sends `NFKParameterMaxTokens` as `max_completion_tokens` for a model named
+  `gpt-5…`, `gpt-6…`, `o1…`, `o3…`, or `o4…`, OpenAI's reasoning families, which refuse
+  `max_tokens` on Chat Completions. This covers GPT-5.6 Sol (`gpt-5.6-sol`) and GPT-5.6 Luna
+  (`gpt-5.6-luna`), whose `reasoning_effort` levels (`none` through `max`) already pass through.
+- For the same OpenAI families, `temperature`, `top_p`, `logprobs`, and `top_logprobs` are dropped
+  unless `reasoning_effort` is `none`, because OpenAI refuses them beside reasoning.
+- For xAI's reasoning models (`grok-4…`, `grok-3-mini…`, except `non-reasoning` variants),
+  `NFKParameterStopSequences` is not sent, because xAI refuses `stop` there. The backend cuts the
+  finished reply at the earliest stop instead.
+- A Mistral reasoning reply, whose `content` is a list of `thinking` and `text` chunks, now fills
+  `NFKOutputText` and `NFKOutputReasoning`, blocking and streamed. Before, the text came back empty.
+- `NFKRemoteVideoBackend` speaks every hosted video API through `apiStyle`
+  (`NFKRemoteVideoAPIStyle`): Gemini Veo through its Sora-compatible path (the default for the
+  `gemini` preset) or its native `predictLongRunning` API, xAI, Together, OpenRouter, and OpenAI's
+  videos API, which OpenAI removes on 2026-09-24. `backendForProvider:` picks each preset's style and
+  returns nil for a preset with no video service; `backendForProvider:apiStyle:apiKey:modelName:` names
+  one. First and last frames, reference images, edits and extensions of a source clip, and every
+  service's own options by name are supported; a request a service cannot express fails before the
+  submit.
+- New hosted backends, each with a `backendForProvider:` that returns nil for a preset without the
+  endpoint:
+  - `NFKRemoteResponsesBackend`: the Responses API (`/responses`) on OpenAI, xAI, Groq, DeepSeek,
+    OpenRouter, LM Studio, Ollama, vLLM, and llama.cpp. Input items with images and files, function
+    tools and wire-shaped built-in tools (`web_search`, `code_interpreter`, `image_generation`),
+    `text.format` schemas, reasoning effort with summaries, `previous_response_id` continuation,
+    background jobs polled to their end (`runsInBackground`), and streaming. Replies carry text,
+    reasoning summaries, function calls, citations, generated images, each built-in tool's call, usage,
+    and the reply's id.
+  - `NFKGeminiInteractionsBackend`: Gemini's Interactions API, Google's native surface. Text, images,
+    audio, video, and PDFs in; text, images (Nano Banana), speech (TTS voices, two speakers), music
+    (Lyria), and video (Omni Flash) out, chosen by the request's `outputModality`. Audio in with the
+    transcription keys asks `gemini-3.5-transcribe` for words and speaker turns. Thinking levels,
+    tools, `previous_interaction_id`, background interactions, and streaming.
+  - `NFKRemoteCompletionBackend`: raw text continuation and fill-in-the-middle through `/completions`
+    (Together, vLLM, Ollama, LM Studio, OpenAI's legacy models), DeepSeek's `/beta/completions`,
+    Mistral's `/fim/completions`, and llama.cpp's `/completion` and `/infill`. The code after the gap
+    is the new `NFKInputSuffix`.
+  - `NFKRemoteOCRBackend`: Mistral's `/ocr`, a document or image to markdown per page, a schema filled
+    as a document annotation, and the images cut from the pages.
+  - `NFKRemoteClassifierBackend`: Mistral's `/classifications` and `/chat/classifications`, and vLLM's
+    `/classify`, as `NFKClassification`s.
+  - `NFKRealtimeSession`: live WebSocket sessions behind one set of calls and handlers
+    (`appendAudio:`, `commitAudio`, `finishInput`, `sendText:`, `requestResponse`,
+    `sendToolResult:forCallIdentifier:name:`, the music controls; `audioHandler`, `textHandler` with an
+    `NFKRealtimeTextKind`, `toolCallHandler`, `turnHandler`, `errorHandler`, `eventHandler`). Twelve
+    protocols through `NFKRealtimeAPIStyle`: OpenAI Realtime conversation, transcription, and
+    translation; xAI's Voice Agent, streaming speech-to-text, and streaming speech; Gemini Live and
+    Lyria live music; Mistral's, Together's, and vLLM's realtime transcription; and Together's streaming
+    speech. The transport is the `NFKRealtimeSocket` protocol, shipped as `NFKRealtimeWebSocket` on
+    `NSURLSessionWebSocketTask`. OpenAI's WebRTC-only GPT-Live sessions are out of reach, because WebRTC
+    needs a media stack outside the core's dependencies.
+  - `NFKRemoteTokenCounter`: token counts from Anthropic's `count_tokens`, Gemini's `countTokens`, xAI's
+    `tokenize-text`, and llama.cpp's `/tokenize`, with the ids where the service returns them.
+  - `NFKRemoteFileStore`: upload, list, fetch, download, and delete files through OpenAI's Files API
+    shape (OpenAI, xAI, Mistral, DeepSeek, Groq, Together), Anthropic's, and Gemini's resumable
+    upload. `fileWhenReadyWithIdentifier:timeout:` waits for Gemini to finish processing, and
+    `signedURLForFileWithIdentifier:expiryHours:` asks Mistral for a signed URL. An `NFKRemoteFile`
+    under `NFKInputDocument`, `NFKInputImage`, or their plural keys goes out as a file reference in
+    each backend's own shape: a `file` part on Chat Completions (flat on DeepSeek, a signed
+    `document_url` on Mistral), a `file` source on Anthropic, `input_file` / `input_image` on the
+    Responses API, a `uri` block on Gemini Interactions, `file_data` on Gemini embeddings, and a
+    `file` document on Mistral OCR.
+  - `NFKRemoteRetrievalStore`: hosted retrieval stores with management: OpenAI vector stores, xAI
+    collections (managed on xAI's management host with its own key, searched on the API host),
+    Gemini file search stores, and Mistral libraries. Create, list, fetch, and delete stores; add a
+    file by id or upload bytes; list and remove documents; and search directly where the service has
+    a search endpoint (OpenAI, xAI). Gemini's and Mistral's stores are reached through the model's
+    retrieval tool, whose results return under `NFKOutputServerToolResults`.
+  - `NFKRemoteUsageReporter`: read-only usage, spend, and balance. Anthropic's usage and cost reports
+    (including Claude Code usage), OpenAI's usage per report and costs, xAI's billing usage and
+    prepaid balance, OpenRouter's activity and credits, DeepSeek's balance per currency, and
+    Mistral's monthly admin usage. Money arrives as dollars in an `NSDecimalNumber` and time as
+    `NSDate` whatever the service wrote; every page is read. Member, workspace, and key management
+    are not offered. Most of these calls take an administrative key, which an app takes from its own
+    user at run time.
+- `NFKRemoteTranscriptionBackend` speaks each service's speech-to-text shape through `apiStyle`
+  (`NFKRemoteTranscriptionAPIStyle`): OpenAI's multipart shape (OpenAI, Groq, Together, OpenRouter,
+  vLLM), Mistral's (no `response_format`; `diarize`, `context_bias`, segments with `speaker_id`), and
+  xAI's `POST /v1/stt`, where the backend used to post a path xAI does not serve.
+  `NFKParameterSpeakerDiarization`, `NFKParameterWordTimestamps`, and `NFKParameterVocabulary` map
+  onto each service's fields; OpenAI's diarizing model gets `diarized_json`. Words come back under
+  `NFKOutputWords`, speakers on `NFKAudioSegment.speaker`, and a reply that times only words is grouped
+  into segments by speaker and sentence. A hosted clip goes by URL where the service takes one and is
+  fetched and uploaded where it does not. `streams` reads OpenAI's and Mistral's event streams into the
+  job's partial result. Gemini, DeepSeek, and the local runners without an audio path return nil.
+- `NFKRemoteSpeechBackend` speaks each service's text-to-speech shape through `apiStyle`
+  (`NFKRemoteSpeechAPIStyle`): OpenAI's (OpenAI, Groq, Together, OpenRouter), Mistral's JSON
+  `{audio_data}` reply, which the backend used to write out as audio, and xAI's `POST /v1/tts`.
+  `NFKInputVoiceReference` sends a clip to clone the voice from. `maximumInputLength` (200 on Groq)
+  speaks longer text in pieces cut at sentence and word ends and joins them, WAV pieces by their
+  samples. `streams` reads the services' audio deltas into the job's partial result.
+  `availableVoicesWithError:` lists xAI's, Mistral's, and Together's voices as `NFKRemoteVoice`s.
+- `NFKRemoteImageBackend` speaks each service's image shape through `apiStyle`
+  (`NFKRemoteImageAPIStyle`): OpenAI's (with several sources as repeated `image[]` files), xAI's JSON
+  edits with `images[]` and a ratio in place of a size, Together's single path with width, height,
+  steps, and the source as `image_url`, and OpenRouter's `/images` with `input_references`. Gemini's
+  OpenAI layer generates but does not edit. Every image in a reply is decoded; several land under
+  `NFKOutputImages`. `streams` reports OpenAI's and OpenRouter's partial images.
+- `NFKRemoteBackend` has a `chatDialect` (`NFKRemoteChatDialect`) that `backendForProvider:` sets
+  per preset. Mistral gets `document_url` parts and its bare-string `input_audio`. OpenRouter and vLLM
+  read a whole clip as `video_url`, and llama.cpp as `input_video`, unless the request names
+  `NFKParameterVideoFrameCount`, which still asks for sampled frames. A request whose
+  `outputModality` is `NFKModalityImage` asks for image output, and the reply's `message.images`
+  decode under `NFKOutputImage` and `NFKOutputImages`. `url_citation` annotations come back under
+  the new `NFKOutputCitations`, and Groq's `executed_tools` under the new
+  `NFKOutputServerToolResults`. A plain-text document (an `NSString`, or a `.txt`, `.md`, `.csv`,
+  or `.json` file) under `NFKInputDocument` rides as a text part.
+- `NFKAnthropicBackend` sends a plain-text document as a `text` source, turns on citations for every
+  document when `NFKParameterCitations` is set, and returns the reply's citations under
+  `NFKOutputCitations` and each server tool's call and result (web search, web fetch, code execution)
+  under `NFKOutputServerToolResults`, streamed or not.
+- `NFKRemoteEmbeddingBackend` embeds images and audio beside the text as OpenRouter's content parts,
+  and speaks Gemini's native `embedContent` / `batchEmbedContents` (`apiStyle`
+  `NFKRemoteEmbeddingAPIStyleGeminiNative`, the Gemini preset's default), which also reads a video and
+  a PDF and takes `outputDimensionality`.
+- `NFKRemoteModerationBackend` sends a conversation whole to Mistral's `chat/moderations`
+  (`moderatesConversations`).
+- The embeddings, moderation, and rerank factories return nil for a preset that serves no such
+  endpoint, where they used to hand back a backend that failed at its first call.
+- New contract keys: `NFKInputLastFrame`, `NFKParameterAspectRatio`, `NFKParameterResolution`,
+  `NFKParameterGenerateAudio`, `NFKParameterVideoOperation` (`NFKVideoOperationEdit`,
+  `NFKVideoOperationExtend`), `NFKParameterSourceVideoIdentifier`, `NFKOutputVideos`, `NFKInputVoiceReference`,
+  `NFKParameterSpeakerDiarization`, `NFKParameterWordTimestamps`, `NFKParameterVocabulary`,
+  `NFKOutputWords`, `NFKOutputImages`, `NFKParameterCitations`, `NFKOutputCitations`, and
+  `NFKOutputServerToolResults`, `NFKInputSuffix`, `NFKParameterPreviousResponseIdentifier`, and
+  `NFKOutputResponseIdentifier`. `NFKAudioSegment` gains `speaker`.
+- `NFKAsyncGenerationBackend` exposes `statusRequestForURL:` for a service that authenticates its polls
+  another way.
+- `NFKRemoteModerationBackend` adds `flagged` to a verdict that lacks it, as Mistral's does, from its
+  per-category booleans.
+- `NFKAnthropicBackend` asks for a schema through `output_config.format` when a thinking budget is
+  set on a pre-4.6 model, because every model refuses a forced tool beside `budget_tokens`.
+
+#### Typed decisions from Jev
+
+- `NFKTypeSafeBackend` calls TypeSafe AI's System One API, which serves Jev. Jev does not generate
+  text: a request carries a state and typed questions about it, and the reply carries a typed answer
+  per question with the probabilities behind it. The wire shape shares nothing with the chat
+  protocols, so it is its own backend, and the `typesafe` preset (`NFKRemoteAPIStyleSystemOne`)
+  hands it back from `backendForProvider:apiKey:modelName:`. The model is required, as on Anthropic.
+- `NFKDecisionQuestion` builds the three question types: a choice among named options, a score on an
+  ordered scale, and a noul, which is whether a statement holds. `NFKDecisionAnswer` reads the three
+  answer types, archives with the rest of the result family, and keeps the service's raw answer.
+  Three request keys carry them through the contract: `NFKInputState`, `NFKInputQuestions`, and
+  `NFKOutputAnswers`, with `result.answers` as the typed accessor. The vocabulary is engine-neutral,
+  so an on-device decision model answers through the same keys.
+- `NFKRemoteTransport` retries HTTP 529, the overload status Anthropic and TypeSafe answer with,
+  the way it retries a 503.
+
 - `NFKDetection` gains a nullable `quadrilateral` and an initializer that takes one, deriving the
   bounding box from it. A detection from an engine that reports no corners is unchanged.
 

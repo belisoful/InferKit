@@ -191,6 +191,23 @@
 	XCTAssertEqual(down.error.code, kNFKError_RemoteUnreachable);
 }
 
+- (void)testAStreamStoppedByTheContentFilterFailsTheJobAsARefusal
+{
+	self.backend.stagedLines = @[
+		@"data: {\"choices\":[{\"delta\":{\"content\":\"some\"}}]}",
+		@"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"content_filter\"}]}",
+		@"data: [DONE]",
+	];
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(job.error.code, kNFKError_InferenceRefused);
+
+	self.backend.stagedStatusCode = 429;
+	self.backend.stagedErrorBody = [@"{\"error\":{\"message\":\"slow down\"}}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceJob *limited = [self.backend submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqual(limited.error.code, kNFKError_InferenceRateLimited);
+}
+
 - (void)testCancellingTheJobCancelsTheRequest
 {
 	self.backend.stagedLines = @[ @"data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}" ];
@@ -267,6 +284,23 @@
 	NFKInferenceJob *failed = [self.anthropic submitInferenceJobForRequest:[self prompt:@"hi"]];
 	XCTAssertEqual(failed.status, NFKInferenceJobStatusFailed);
 	XCTAssertEqualObjects(failed.error.localizedDescription, @"Overloaded");
+	XCTAssertEqual(failed.error.code, kNFKError_InferenceRateLimited, @"an overload says back off");
+}
+
+- (void)testAnthropicStreamThatStopsWithARefusalFailsTheJobAsOne
+{
+	self.anthropic.stagedLines = @[
+		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+		@"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}",
+		@"data: {\"type\":\"message_stop\"}",
+	];
+	NFKInferenceJob *job = [self.anthropic submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(job.error.code, kNFKError_InferenceRefused);
+
+	self.anthropic.stagedLines = @[ @"data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"too long\"}}" ];
+	NFKInferenceJob *invalid = [self.anthropic submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqual(invalid.error.code, kNFKError_InferenceRefused);
 }
 
 - (void)testAnthropicStreamsTheForcedStructuredToolIntoTheStructuredOutput
@@ -297,8 +331,8 @@
 		@"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"two \"}}]}",
 		@"data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plus two\"}}]}",
 		@"data: {\"choices\":[{\"delta\":{\"content\":\"four\"}}]}",
-		@"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,"
-		 "\"completion_tokens_details\":{\"reasoning_tokens\":3}}}",
+		(@"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4,"
+		  "\"completion_tokens_details\":{\"reasoning_tokens\":3}}}"),
 		@"data: [DONE]",
 	];
 	self.backend.holdOpen = YES;
@@ -312,6 +346,20 @@
 	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @3);
 }
 
+- (void)testMistralStreamedChunksAssembleTheTextAndTheReasoning
+{
+	self.backend.stagedLines = @[
+		@"data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"two plus \"}]}]}}]}",
+		@"data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"two\"}]}]}}]}",
+		@"data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"four\"}]}}]}",
+		@"data: [DONE]" ];
+	self.backend.holdOpen = YES;
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[self prompt:@"2+2?"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded);
+	XCTAssertEqualObjects(job.result.text, @"four");
+	XCTAssertEqualObjects([job.result outputForKey:NFKOutputReasoning], @"two plus two");
+}
+
 - (void)testAReasoningDeltaReportsThePartialChain
 {
 	self.backend.stagedLines = @[ @"data: {\"choices\":[{\"delta\":{\"reasoning\":\"weighing it\"}}]}" ];
@@ -323,8 +371,8 @@
 - (void)testAnthropicThinkingBlocksBecomeTheReasoningAndTheEventsCarryTheCounts
 {
 	self.anthropic.stagedLines = @[
-		@"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],"
-		 "\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4}}}",
+		(@"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],"
+		  "\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4}}}"),
 		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
 		@"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"two plus two\"}}",
 		@"data: {\"type\":\"content_block_stop\",\"index\":0}",

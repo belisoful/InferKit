@@ -21,12 +21,17 @@ extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
 				so one backend serves them all and a provider is only a URL, a key, and a model name.
 				Anthropic's Messages API differs in its authentication header, its required max-tokens
 				field, its separate system prompt, and its response envelope, so it has its own backend.
+				TypeSafe's System One API answers typed decisions rather than text, so it has its own
+				backend too.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /chat/completions with a Bearer token; the reply carries choices[0].message.content. */
 	NFKRemoteAPIStyleOpenAIChat = 0,
 	/*! POST /messages with an x-api-key header; the reply carries content[0].text. */
 	NFKRemoteAPIStyleAnthropicMessages = 1,
+	/*! POST /systemone with a Bearer token; the reply carries typed answers rather than text.
+		Introduced in InferKit 0.4.0. */
+	NFKRemoteAPIStyleSystemOne = 2,
 };
 
 /*!
@@ -55,7 +60,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! The API base every operation's URL is built on, for example https://api.openai.com/v1. Introduced in InferKit 0.3.0. */
 @property (nonatomic, copy, readonly) NSURL *baseURL;
 
-/*! The chat endpoint the backend posts to: the base plus /chat/completions, or /messages for Anthropic. */
+/*! The endpoint the backend posts to: the base plus /chat/completions, /messages for Anthropic, or
+	/systemone for TypeSafe. */
 @property (nonatomic, copy, readonly) NSURL *endpointURL;
 
 /*! Where the provider lists the models it serves: the base plus /models. */
@@ -186,8 +192,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*!
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   Builds the backend a provider needs, already pointed at its endpoint.
-	@discussion Returns an NFKRemoteBackend for an OpenAI-compatible provider and an
-				NFKAnthropicBackend for Anthropic. The model name is required: see the class discussion.
+	@discussion Returns an NFKRemoteBackend for an OpenAI-compatible provider, an
+				NFKAnthropicBackend for Anthropic, and an NFKTypeSafeBackend for TypeSafe. The model
+				name is required: see the class discussion.
 */
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey
@@ -219,6 +226,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 @property (class, nonatomic, readonly) NFKRemoteProvider *deepSeek;
 @property (class, nonatomic, readonly) NFKRemoteProvider *together;
 @property (class, nonatomic, readonly) NFKRemoteProvider *openRouter;
+/*! TypeSafe AI's System One API, which serves Jev: typed decisions about a state rather than text.
+	Served by NFKTypeSafeBackend. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *typeSafe;
 
 // Local servers. Each is the project's own default address; nothing is assumed to be running.
 @property (class, nonatomic, readonly) NFKRemoteProvider *ollama;

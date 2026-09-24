@@ -219,10 +219,11 @@
 	XCTAssertNil(result.text);
 }
 
-// The Messages API takes a token budget rather than a named level, and refuses a request that sets
-// the sampling beside extended thinking.
+// A model before Claude Opus 4.6 takes a token budget rather than a named level, and refuses a
+// request that sets the sampling beside extended thinking.
 - (void)testAnthropicTurnsAReasoningEffortIntoAThinkingBudget
 {
+	self.anthropic.modelName = @"claude-sonnet-4-5";
 	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"thinking\",\"thinking\":\"two plus two\"},"
 		"{\"type\":\"text\",\"text\":\"four\"}],\"usage\":{\"input_tokens\":9,\"output_tokens\":5}}";
 	NFKInferenceRequest *request = [self prompt:@"2+2?" parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate,
@@ -245,6 +246,7 @@
 
 - (void)testAnthropicTakesAThinkingBudgetInTokensAndRefusesAnythingElse
 {
+	self.anthropic.modelName = @"claude-haiku-4-5";
 	self.anthropic.stagedBody = @"{\"content\":[]}";
 	XCTAssertNotNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"12000" }]
 													 error:NULL]);
@@ -254,6 +256,97 @@
 	XCTAssertNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"exhaustive" }]
 												  error:&error]);
 	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
+// Claude Opus 5.5 refuses a thinking budget, a disabled thinking, sampling, and a forced tool: the
+// effort goes under output_config, a summary is asked for, and a schema is a response format.
+- (void)testAnthropicAsksClaudeOpus55ForAnAdaptiveEffortAndDropsTheSampling
+{
+	self.anthropic.modelName = @"claude-opus-5-5";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"thinking\",\"thinking\":\"two plus two\"},"
+		"{\"type\":\"text\",\"text\":\"four\"}]}";
+	NFKInferenceRequest *request = [self prompt:@"2+2?" parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate,
+																	  NFKParameterTemperature: @0.7,
+																	  NFKParameterTopK: @40 }];
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:request error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"thinking"], (@{ @"type": @"adaptive", @"display": @"summarized" }));
+	XCTAssertEqualObjects(body[@"output_config"], (@{ @"effort": @"medium" }));
+	XCTAssertNil(body[@"temperature"]);
+	XCTAssertNil(body[@"top_k"]);
+	XCTAssertGreaterThan([body[@"max_tokens"] integerValue], 8192, @"the thinking counts toward max_tokens");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputReasoning], @"two plus two");
+}
+
+- (void)testAnthropicSendsClaudeOpus55NoSamplingEvenWithoutAnEffort
+{
+	self.anthropic.modelName = @"claude-opus-5-5";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"thinking\",\"thinking\":\"\"},{\"type\":\"text\",\"text\":\"hi\"}]}";
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterTemperature: @0.2,
+																										 NFKParameterTopP: @0.9 }]
+																  error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertNil(body[@"thinking"], @"the model thinks adaptively when the field is absent");
+	XCTAssertNil(body[@"temperature"]);
+	XCTAssertNil(body[@"top_p"]);
+	XCTAssertNil([result outputForKey:NFKOutputReasoning], @"an omitted display is no reasoning");
+}
+
+- (void)testAnthropicPassesANamedEffortThroughAndRefusesABudgetOnClaudeOpus55
+{
+	self.anthropic.modelName = @"claude-opus-5-5";
+	self.anthropic.stagedBody = @"{\"content\":[]}";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"xhigh" }]
+													 error:NULL]);
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"output_config"][@"effort"], @"xhigh");
+
+	NSError *error = nil;
+	XCTAssertNil([self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: @"12000" }]
+												  error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
+- (void)testAnthropicAsksClaudeOpus55ForASchemaThroughTheResponseFormat
+{
+	self.anthropic.modelName = @"claude-opus-5-5";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\":42}\"}]}";
+	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"the answer?" parameters:@{ NFKParameterJSONSchema: schema }]
+																  error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertNil(body[@"tool_choice"], @"the model refuses a forced tool");
+	XCTAssertNil(body[@"tools"]);
+	XCTAssertEqualObjects(body[@"output_config"][@"format"], (@{ @"type": @"json_schema", @"schema": schema }));
+	XCTAssertEqualObjects(result.structured, (@{ @"answer": @42 }));
+}
+
+- (void)testAnthropicAsksForASchemaBesideAThinkingBudgetThroughTheResponseFormat
+{
+	self.anthropic.modelName = @"claude-sonnet-4-5";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\":42}\"}]}";
+	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"the answer?" parameters:@{ NFKParameterJSONSchema: schema,
+																												  NFKParameterReasoningEffort: NFKReasoningEffortLight }]
+																  error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertNil(body[@"tool_choice"], @"a forced tool is refused beside a thinking budget");
+	XCTAssertEqualObjects(body[@"output_config"][@"format"], (@{ @"type": @"json_schema", @"schema": schema }));
+	XCTAssertEqualObjects(result.structured, (@{ @"answer": @42 }));
+}
+
+- (void)testAnthropicKeepsClaudeOpus46SamplingAndItsDefaultDisplay
+{
+	self.anthropic.modelName = @"claude-opus-4-6";
+	self.anthropic.stagedBody = @"{\"content\":[]}";
+	[self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterTemperature: @0.2 }] error:NULL];
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"temperature"], @0.2);
+
+	[self.anthropic runInferenceForRequest:[self prompt:@"hi" parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortDeep,
+																			NFKParameterTemperature: @0.2 }] error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"thinking"], (@{ @"type": @"adaptive" }));
+	XCTAssertEqualObjects(body[@"output_config"], (@{ @"effort": @"high" }));
+	XCTAssertNil(body[@"temperature"], @"the API refuses sampling beside thinking");
 }
 
 - (void)testAnthropicAttachesSeveralImagesBeforeTheText

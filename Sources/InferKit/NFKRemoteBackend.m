@@ -11,6 +11,8 @@
 #import "NFKInferenceJob.h"
 #import "NFKInferenceKeys.h"
 #import "NFKAudioAsset.h"
+#import "NFKImageCoding.h"
+#import "NFKRemoteFileStore.h"
 #import "NFKErrors.h"
 
 /*! The endpoint's spelling for each core text parameter the contract names. The core keys are
@@ -46,6 +48,47 @@ static NSDictionary<NSString *, NSString *> *NFKRemoteReasoningEfforts(void)
 	return efforts;
 }
 
+/*! The model-name prefixes of OpenAI's reasoning families, which refuse max_tokens on Chat
+	Completions and read the limit as max_completion_tokens. A prefix rather than a substring, so a
+	router's namespaced name (openai/gpt-5.6-sol) keeps the spelling the router reads. */
+static NSArray<NSString *> *NFKRemoteCompletionTokenModelPrefixes(void)
+{
+	return @[ @"gpt-5", @"gpt-6", @"o1", @"o3", @"o4" ];
+}
+
+/*! The sampling fields OpenAI's reasoning families refuse unless the reasoning effort is none. */
+static NSArray<NSString *> *NFKRemoteReasoningRefusedSamplingFields(void)
+{
+	return @[ @"temperature", @"top_p", @"logprobs", @"top_logprobs" ];
+}
+
+/*! Whether xAI serves the model as a reasoning model, which refuses stop sequences: Grok 4 onward
+	and Grok 3 mini, except the variants named non-reasoning. */
+static BOOL NFKRemoteModelRefusesStopSequences(NSString * _Nullable model)
+{
+	if ([model containsString:@"non-reasoning"]) {
+		return NO;
+	}
+	return [model hasPrefix:@"grok-4"] || [model hasPrefix:@"grok-3-mini"];
+}
+
+/*! The text up to the earliest of the stop sequences, which is what the endpoint returns when it
+	applies them itself. */
+static NSString *NFKRemoteTextBeforeStops(NSString *text, NSArray<NSString *> *stops)
+{
+	NSUInteger end = text.length;
+	for (NSString *stop in stops) {
+		if (![stop isKindOfClass:NSString.class] || stop.length == 0) {
+			continue;
+		}
+		NSRange found = [text rangeOfString:stop];
+		if (found.location != NSNotFound && found.location < end) {
+			end = found.location;
+		}
+	}
+	return [text substringToIndex:end];
+}
+
 NSString * const NFKRemoteBackendPromptKey	= @"prompt";
 NSString * const NFKRemoteBackendMessagesKey	= @"messages";
 NSString * const NFKRemoteBackendTextKey		= @"text";
@@ -61,6 +104,9 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableDictionary *> *toolCallsByIndex;
 @property (nonatomic, strong) NSMutableString *audioBase64;
 @property (nonatomic, strong) NSMutableString *transcript;
+@property (nonatomic, copy, nullable) NSString *finishReason;
+@property (nonatomic, copy, nullable) NSString *refusal;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *clientStops;
 @property (nonatomic, assign) BOOL finished;
 @end
 
@@ -176,6 +222,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	[job reportProgress:-1.0];
 
 	NFKRemoteStreamState *state = [[NFKRemoteStreamState alloc] init];
+	state.clientStops = [self clientStopsForRequest:request];
 	BOOL expectsStructured = [self requestExpectsStructuredReply:request];
 	NSString *audioFormat = [self audioOutputFormatForRequest:request];
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
@@ -249,6 +296,14 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	return urlRequest;
 }
 
+- (NSArray<NSString *> *)wireNamesForKey:(NSString *)key among:(NSDictionary<NSString *, NSArray<NSString *> *> *)wireNames
+{
+	if ([key isEqualToString:NFKParameterMaxTokens] && self.isOpenAIReasoningModel) {
+		return @[ @"max_completion_tokens" ];
+	}
+	return wireNames[key];
+}
+
 - (nullable NSDictionary<NSString *, id> *)requestBodyForRequest:(NFKInferenceRequest *)request
 													   streaming:(BOOL)streaming
 														   error:(NSError * _Nullable *)outError
@@ -264,7 +319,9 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		NSString *text = [prompt isKindOfClass:NSString.class] ? prompt : @"";
 		messages = @[ @{ @"role": @"user", @"content": text } ];
 	}
-	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request error:outError];
+	BOOL readsWholeVideo = self.chatDialect == NFKRemoteChatDialectOpenRouter || self.chatDialect == NFKRemoteChatDialectVLLM
+		|| self.chatDialect == NFKRemoteChatDialectLlamaCpp;
+	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request keepsVideo:readsWholeVideo error:outError];
 	if (attachments == nil) {
 		return nil;
 	}
@@ -275,6 +332,9 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		}
 	}
 	body[@"messages"] = messages;
+	if (request.outputModality == NFKModalityImage && request.parameters[@"modalities"] == nil) {
+		body[@"modalities"] = @[ @"image", @"text" ];
+	}
 
 	// The contract's tools and schema become the endpoint's shapes; everything else folds in by name.
 	NSArray *tools = request.parameters[NFKParameterTools];
@@ -315,7 +375,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		if (value == nil) {
 			continue;
 		}
-		for (NSString *wireName in wireNames[key]) {
+		for (NSString *wireName in [self wireNamesForKey:key among:wireNames]) {
 			body[wireName] = value;
 		}
 	}
@@ -336,10 +396,47 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 			body[key] = request.parameters[key];
 		}
 	}
+	[self removeFieldsTheModelRefusesFromBody:body];
 	if (streaming) {
 		body[@"stream"] = @YES;
 	}
 	return body;
+}
+
+/*! Removes what the named model answers with a 400. OpenAI's reasoning families take no sampling
+	unless the effort is none, and their default effort is not none. xAI's reasoning models take no
+	stop sequences, which the backend applies to the reply itself instead. */
+- (void)removeFieldsTheModelRefusesFromBody:(NSMutableDictionary<NSString *, id> *)body
+{
+	if (self.isOpenAIReasoningModel && ![body[@"reasoning_effort"] isEqual:@"none"]) {
+		[body removeObjectsForKeys:NFKRemoteReasoningRefusedSamplingFields()];
+	}
+	if (NFKRemoteModelRefusesStopSequences(self.modelName)) {
+		[body removeObjectForKey:@"stop"];
+	}
+}
+
+- (BOOL)isOpenAIReasoningModel
+{
+	for (NSString *prefix in NFKRemoteCompletionTokenModelPrefixes()) {
+		if ([self.modelName hasPrefix:prefix]) {
+			return YES;
+		}
+	}
+	return NO;
+}
+
+/*! The stop sequences the backend applies to the reply, for a model that refuses them on the wire. */
+- (nullable NSArray<NSString *> *)clientStopsForRequest:(NFKInferenceRequest *)request
+{
+	if (!NFKRemoteModelRefusesStopSequences(self.modelName)) {
+		return nil;
+	}
+	id stops = request.parameters[NFKParameterStopSequences] ?: request.parameters[@"stop"];
+	if ([stops isKindOfClass:NSString.class]) {
+		return @[ stops ];
+	}
+	return [stops isKindOfClass:NSArray.class] ? stops : nil;
 }
 
 // Media rides on the last user turn as content parts beside the text: images inline as data
@@ -362,20 +459,89 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];
 		[parts addObject:@{ @"type": @"image_url", @"image_url": @{ @"url": dataURL } }];
 	}
+	if (attachments.videoData != nil) {
+		[parts addObject:[self videoPartForData:attachments.videoData format:attachments.videoFormat ?: @"mp4"]];
+	}
 	if (attachments.audioData != nil) {
-		[parts addObject:@{ @"type": @"input_audio",
-							@"input_audio": @{ @"data": [attachments.audioData base64EncodedStringWithOptions:0],
-											   @"format": attachments.audioFormat ?: @"wav" } }];
+		NSString *audio = [attachments.audioData base64EncodedStringWithOptions:0];
+		[parts addObject:self.chatDialect == NFKRemoteChatDialectMistral
+			? @{ @"type": @"input_audio", @"input_audio": audio }
+			: @{ @"type": @"input_audio", @"input_audio": @{ @"data": audio, @"format": attachments.audioFormat ?: @"wav" } }];
 	}
 	for (NSDictionary *document in attachments.documents) {
-		NSString *dataURL = [@"data:application/pdf;base64," stringByAppendingString:[document[@"data"] base64EncodedStringWithOptions:0]];
-		[parts addObject:@{ @"type": @"file", @"file": @{ @"filename": document[@"filename"], @"file_data": dataURL } }];
+		NSDictionary *part = [self partForDocument:document error:outError];
+		if (part == nil) {
+			return nil;
+		}
+		[parts addObject:part];
 	}
 	NSMutableDictionary *attached = [message mutableCopy];
 	attached[@"content"] = parts;
 	NSMutableArray *result = [messages mutableCopy];
 	result[index] = attached;
 	return result;
+}
+
+// OpenRouter and vLLM read a whole clip as video_url; llama.cpp reads input_video beside input_audio.
+- (NSDictionary *)videoPartForData:(NSData *)video format:(NSString *)format
+{
+	NSString *encoded = [video base64EncodedStringWithOptions:0];
+	if (self.chatDialect == NFKRemoteChatDialectLlamaCpp) {
+		return @{ @"type": @"input_video", @"input_video": @{ @"data": encoded, @"format": format } };
+	}
+	NSString *dataURL = [NSString stringWithFormat:@"data:video/%@;base64,%@", format, encoded];
+	return @{ @"type": @"video_url", @"video_url": @{ @"url": dataURL } };
+}
+
+// A PDF is a file part (a document_url on Mistral); a plain-text document is a text part, since no
+// chat-completions service reads text files as parts.
+- (nullable NSDictionary *)partForDocument:(NSDictionary *)document error:(NSError * _Nullable *)outError
+{
+	NFKRemoteFile *file = document[@"fileReference"];
+	if (file != nil) {
+		return [self partForFile:file error:outError];
+	}
+	NSData *data = document[@"data"];
+	if ([document[@"mediaType"] isEqual:@"text/plain"]) {
+		NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"";
+		return @{ @"type": @"text", @"text": [NSString stringWithFormat:@"%@:\n%@", document[@"filename"], text] };
+	}
+	NSString *dataURL = [@"data:application/pdf;base64," stringByAppendingString:[data base64EncodedStringWithOptions:0]];
+	if (self.chatDialect == NFKRemoteChatDialectMistral) {
+		return @{ @"type": @"document_url", @"document_url": dataURL, @"document_name": document[@"filename"] };
+	}
+	return @{ @"type": @"file", @"file": @{ @"filename": document[@"filename"], @"file_data": dataURL } };
+}
+
+// A file the service keeps rides by its id; Mistral's chat reads documents by URL only, so its file is
+// named by a signed URL fetched from the files endpoint beside the chat one.
+- (nullable NSDictionary *)partForFile:(NFKRemoteFile *)file error:(NSError * _Nullable *)outError
+{
+	switch (self.chatDialect) {
+		case NFKRemoteChatDialectDeepSeek:
+			return @{ @"type": @"file", @"file_id": file.identifier };
+		case NFKRemoteChatDialectMistral: {
+			NSURL *chatRoot = self.endpointURL.URLByDeletingLastPathComponent.URLByDeletingLastPathComponent;
+			NSURL *signing = [[[chatRoot URLByAppendingPathComponent:@"files"] URLByAppendingPathComponent:file.identifier] URLByAppendingPathComponent:@"url"];
+			NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:signing];
+			request.timeoutInterval = self.timeout;
+			[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+			NSHTTPURLResponse *response = nil;
+			NSError *sendError = nil;
+			NSData *data = [self sendRequest:request response:&response error:&sendError];
+			NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
+			id reply = failure == nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+			NSString *signedURL = [reply isKindOfClass:NSDictionary.class] && [reply[@"url"] isKindOfClass:NSString.class] ? reply[@"url"] : nil;
+			if (signedURL == nil) {
+				[self setError:outError code:kNFKError_InferenceBackendFailure
+						reason:failure.localizedDescription ?: @"Mistral signed no URL for the file"];
+				return nil;
+			}
+			return @{ @"type": @"document_url", @"document_url": signedURL };
+		}
+		default:
+			return @{ @"type": @"file", @"file": @{ @"file_id": file.identifier } };
+	}
 }
 
 - (NSInteger)indexOfLastUserMessageIn:(NSArray *)messages
@@ -423,13 +589,23 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	NSDictionary *responseBody = object;
 	NSDictionary *message = nil;
 	NSString *content = nil;
+	NSMutableString *chunkReasoning = [NSMutableString string];
 	NSArray *choices = responseBody[@"choices"];
 	if ([choices isKindOfClass:NSArray.class] && choices.count > 0) {
 		NSDictionary *choice = choices.firstObject;
 		if ([choice isKindOfClass:NSDictionary.class]) {
 			message = [choice[@"message"] isKindOfClass:NSDictionary.class] ? choice[@"message"] : nil;
+			NSString *refusal = [self refusalInChoice:choice message:message];
+			if (refusal != nil) {
+				[self setError:outError code:kNFKError_InferenceRefused reason:refusal];
+				return nil;
+			}
 			if ([message[@"content"] isKindOfClass:NSString.class]) {
 				content = message[@"content"];
+			} else if ([message[@"content"] isKindOfClass:NSArray.class]) {
+				NSMutableString *text = [NSMutableString string];
+				[self appendContentChunks:message[@"content"] toText:text reasoning:chunkReasoning];
+				content = text;
 			} else if ([choice[@"text"] isKindOfClass:NSString.class]) {
 				content = choice[@"text"];
 			}
@@ -443,15 +619,128 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	if (content == nil && [audio[@"transcript"] isKindOfClass:NSString.class]) {
 		content = audio[@"transcript"];
 	}
-	return [self resultWithText:content
-					  reasoning:[self reasoningInMessage:message]
-						  usage:[self usageInResponseBody:responseBody]
-					  wireCalls:message[@"tool_calls"]
-					audioBase64:audioBase64
-					audioFormat:[self audioOutputFormatForRequest:request]
-			  expectsStructured:[self requestExpectsStructuredReply:request]
-							raw:responseBody
-						  error:outError];
+	NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
+	if (content != nil && clientStops != nil) {
+		content = NFKRemoteTextBeforeStops(content, clientStops);
+	}
+	NFKInferenceResult *result = [self resultWithText:content
+											reasoning:[self reasoningInMessage:message] ?: (chunkReasoning.length > 0 ? chunkReasoning : nil)
+												usage:[self usageInResponseBody:responseBody]
+											wireCalls:message[@"tool_calls"]
+										  audioBase64:audioBase64
+										  audioFormat:[self audioOutputFormatForRequest:request]
+									expectsStructured:[self requestExpectsStructuredReply:request]
+												  raw:responseBody
+												error:outError];
+	NSDictionary<NSString *, id> *extras = [self extraOutputsInMessage:message];
+	if (result == nil || extras.count == 0) {
+		return result;
+	}
+	NSMutableDictionary<NSString *, id> *outputs = [result.outputs mutableCopy];
+	[outputs addEntriesFromDictionary:extras];
+	return [NFKInferenceResult resultWithOutputs:outputs];
+}
+
+// What a reply carries beside its text: generated images (OpenRouter's message.images), the sources
+// its url_citation annotations cite, and the tools the service ran itself (Groq's executed_tools).
+- (NSDictionary<NSString *, id> *)extraOutputsInMessage:(nullable NSDictionary *)message
+{
+	NSMutableDictionary<NSString *, id> *extras = [NSMutableDictionary dictionary];
+	NSMutableArray *images = [NSMutableArray array];
+	for (NSDictionary *entry in [message[@"images"] isKindOfClass:NSArray.class] ? message[@"images"] : @[]) {
+		NSDictionary *imageURL = [entry isKindOfClass:NSDictionary.class] && [entry[@"image_url"] isKindOfClass:NSDictionary.class] ? entry[@"image_url"] : nil;
+		NSString *url = [imageURL[@"url"] isKindOfClass:NSString.class] ? imageURL[@"url"] : nil;
+		NSRange comma = [url rangeOfString:@","];
+		if (![url hasPrefix:@"data:"] || comma.location == NSNotFound) {
+			continue;
+		}
+		NSData *bytes = [[NSData alloc] initWithBase64EncodedString:[url substringFromIndex:comma.location + 1]
+															options:NSDataBase64DecodingIgnoreUnknownCharacters];
+		CVPixelBufferRef pixelBuffer = bytes != nil ? [NFKImageCoding pixelBufferWithImageData:bytes] : NULL;
+		if (pixelBuffer != NULL) {
+			[images addObject:(__bridge id)pixelBuffer];
+			CVPixelBufferRelease(pixelBuffer);
+		}
+	}
+	if (images.count > 0) {
+		extras[NFKOutputImage] = images.firstObject;
+	}
+	if (images.count > 1) {
+		extras[NFKOutputImages] = images;
+	}
+	NSMutableArray<NSDictionary *> *citations = [NSMutableArray array];
+	for (NSDictionary *annotation in [message[@"annotations"] isKindOfClass:NSArray.class] ? message[@"annotations"] : @[]) {
+		NSDictionary *cited = [annotation isKindOfClass:NSDictionary.class] && [annotation[@"url_citation"] isKindOfClass:NSDictionary.class]
+			? annotation[@"url_citation"] : nil;
+		if (cited == nil) {
+			continue;
+		}
+		NSMutableDictionary *citation = [NSMutableDictionary dictionaryWithObject:annotation forKey:@"raw"];
+		citation[@"url"] = cited[@"url"];
+		citation[@"title"] = cited[@"title"];
+		citation[@"text"] = cited[@"content"];
+		citation[@"start"] = cited[@"start_index"];
+		citation[@"end"] = cited[@"end_index"];
+		[citations addObject:citation];
+	}
+	if (citations.count > 0) {
+		extras[NFKOutputCitations] = citations;
+	}
+	NSMutableArray<NSDictionary *> *executed = [NSMutableArray array];
+	for (NSDictionary *tool in [message[@"executed_tools"] isKindOfClass:NSArray.class] ? message[@"executed_tools"] : @[]) {
+		if (![tool isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObject:tool forKey:@"raw"];
+		entry[@"name"] = tool[@"name"] ?: tool[@"type"];
+		entry[@"input"] = tool[@"arguments"];
+		entry[@"output"] = tool[@"output"] ?: tool[@"search_results"] ?: tool[@"code_results"];
+		[executed addObject:entry];
+	}
+	if (executed.count > 0) {
+		extras[NFKOutputServerToolResults] = executed;
+	}
+	return extras;
+}
+
+/*! Why a reply was refused, or nil for one that was not: the provider's content filter ended the
+	reply (finish_reason content_filter), or the model declined and said so under message.refusal,
+	which is where a structured-output refusal arrives instead of content. */
+- (nullable NSString *)refusalInChoice:(nullable NSDictionary *)choice message:(nullable NSDictionary *)message
+{
+	NSString *refusal = [message[@"refusal"] isKindOfClass:NSString.class] ? message[@"refusal"] : nil;
+	if (refusal.length > 0) {
+		return refusal;
+	}
+	if ([choice[@"finish_reason"] isEqual:@"content_filter"]) {
+		return @"the provider's content filter stopped the reply";
+	}
+	return nil;
+}
+
+// Mistral returns a reasoning reply as typed chunks: text chunks carry the answer, and a thinking
+// chunk carries the chain as a list of text chunks of its own.
+- (void)appendContentChunks:(NSArray *)chunks toText:(NSMutableString *)text reasoning:(NSMutableString *)reasoning
+{
+	for (NSDictionary *chunk in chunks) {
+		if (![chunk isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		if ([chunk[@"type"] isEqual:@"text"] && [chunk[@"text"] isKindOfClass:NSString.class]) {
+			[text appendString:chunk[@"text"]];
+			continue;
+		}
+		if (![chunk[@"type"] isEqual:@"thinking"]) {
+			continue;
+		}
+		id thinking = chunk[@"thinking"];
+		if ([thinking isKindOfClass:NSString.class]) {
+			[reasoning appendString:thinking];
+		} else if ([thinking isKindOfClass:NSArray.class]) {
+			NSMutableString *ignored = [NSMutableString string];
+			[self appendContentChunks:thinking toText:reasoning reasoning:ignored];
+		}
+	}
 }
 
 // A reasoning model returns its chain beside the answer. The field has two spellings across the
@@ -578,15 +867,25 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 
 	NSArray *choices = chunk[@"choices"];
 	NSDictionary *choice = [choices isKindOfClass:NSArray.class] && choices.count > 0 ? choices.firstObject : nil;
+	if ([choice isKindOfClass:NSDictionary.class] && [choice[@"finish_reason"] isKindOfClass:NSString.class]) {
+		state.finishReason = choice[@"finish_reason"];
+	}
 	NSDictionary *delta = [choice isKindOfClass:NSDictionary.class] && [choice[@"delta"] isKindOfClass:NSDictionary.class]
 		? choice[@"delta"] : nil;
 	if (delta == nil) {
 		return NO;
 	}
+	if ([delta[@"refusal"] isKindOfClass:NSString.class] && [delta[@"refusal"] length] > 0) {
+		state.refusal = [(state.refusal ?: @"") stringByAppendingString:delta[@"refusal"]];
+	}
 	BOOL carriedText = NO;
 	if ([delta[@"content"] isKindOfClass:NSString.class] && [delta[@"content"] length] > 0) {
 		[state.text appendString:delta[@"content"]];
 		carriedText = YES;
+	} else if ([delta[@"content"] isKindOfClass:NSArray.class]) {
+		NSUInteger before = state.text.length + state.reasoning.length;
+		[self appendContentChunks:delta[@"content"] toText:state.text reasoning:state.reasoning];
+		carriedText = state.text.length + state.reasoning.length > before;
 	}
 	NSString *reasoning = [self reasoningInMessage:delta];
 	if (reasoning != nil) {
@@ -636,12 +935,21 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
  expectsStructured:(BOOL)expectsStructured
 	   audioFormat:(nullable NSString *)audioFormat
 {
+	NSString *refusal = [self refusalInChoice:@{ @"finish_reason": state.finishReason ?: @"" }
+									  message:@{ @"refusal": state.refusal ?: @"" }];
+	if (refusal != nil) {
+		[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceRefused reason:refusal]];
+		return;
+	}
 	NSArray *orderedIndexes = [state.toolCallsByIndex.allKeys sortedArrayUsingSelector:@selector(compare:)];
 	NSMutableArray *wireCalls = [NSMutableArray array];
 	for (NSNumber *index in orderedIndexes) {
 		[wireCalls addObject:state.toolCallsByIndex[index]];
 	}
 	NSString *text = state.text.length > 0 ? [state.text copy] : [state.transcript copy];
+	if (state.clientStops != nil) {
+		text = NFKRemoteTextBeforeStops(text, state.clientStops);
+	}
 	NSMutableDictionary *message = [NSMutableDictionary dictionaryWithObject:@"assistant" forKey:@"role"];
 	message[@"content"] = [state.text copy];
 	if (wireCalls.count > 0) {

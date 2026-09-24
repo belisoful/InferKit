@@ -10,6 +10,7 @@
 #import <XCTest/XCTest.h>
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKAnthropicBackend.h>
+#import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
@@ -190,9 +191,7 @@ static const uint16_t NFKDeadPort = 9;
 		id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:provider
 																		apiKey:@"k"
 																	 modelName:nil];
-		NSString *model = [backend isKindOfClass:NFKAnthropicBackend.class]
-			? [(NFKAnthropicBackend *)backend modelName]
-			: [(NFKRemoteBackend *)backend modelName];
+		NSString *model = [(id)backend modelName];
 		XCTAssertNil(model, @"%@ must not ship a default model name", provider.identifier);
 	}
 }
@@ -223,7 +222,7 @@ static const uint16_t NFKDeadPort = 9;
 - (void)testHostedProvidersRequireAKey
 {
 	for (NSString *identifier in @[ @"openai", @"anthropic", @"xai", @"gemini", @"groq",
-									@"mistral", @"deepseek", @"together", @"openrouter" ]) {
+									@"mistral", @"deepseek", @"together", @"openrouter", @"typesafe" ]) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertNotNil(provider, @"%@ is missing", identifier);
 		XCTAssertTrue(provider.requiresAPIKey, @"%@ is hosted", identifier);
@@ -250,14 +249,17 @@ static const uint16_t NFKDeadPort = 9;
 		@"gemini": @"https://generativelanguage.googleapis.com/v1beta/openai",
 		@"groq": @"https://api.groq.com/openai/v1",
 		@"openrouter": @"https://openrouter.ai/api/v1",
+		@"typesafe": @"https://api.typesafe.ai/v1",
 		@"ollama": @"http://localhost:11434/v1",
 	};
+	NSDictionary<NSNumber *, NSString *> *pathsByStyle = @{ @(NFKRemoteAPIStyleOpenAIChat): @"/chat/completions",
+															@(NFKRemoteAPIStyleAnthropicMessages): @"/messages",
+															@(NFKRemoteAPIStyleSystemOne): @"/systemone" };
 	for (NSString *identifier in bases) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertEqualObjects(provider.baseURL.absoluteString, bases[identifier], @"%@", identifier);
-		NSString *chat = provider.apiStyle == NFKRemoteAPIStyleAnthropicMessages ? @"/messages" : @"/chat/completions";
 		XCTAssertEqualObjects(provider.endpointURL.absoluteString,
-							  [bases[identifier] stringByAppendingString:chat], @"%@", identifier);
+							  [bases[identifier] stringByAppendingString:pathsByStyle[@(provider.apiStyle)]], @"%@", identifier);
 		XCTAssertEqualObjects(provider.modelsURL.absoluteString,
 							  [bases[identifier] stringByAppendingString:@"/models"], @"%@", identifier);
 	}
@@ -302,14 +304,21 @@ static const uint16_t NFKDeadPort = 9;
 						  @"the factory points the backend at the re-based endpoint");
 }
 
-// Anthropic is the one provider that is not OpenAI-compatible, so the factory has to hand back its
-// own backend rather than a repointed remote one.
+// Anthropic and TypeSafe are the providers that are not OpenAI-compatible, so the factory has to
+// hand back their own backends rather than a repointed remote one.
 - (void)testTheFactoryChoosesTheBackendTheProviderNeeds
 {
 	id<NFKInferenceBackend> claude = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.anthropic
 																	apiKey:@"k" modelName:@"m"];
 	XCTAssertTrue([claude isKindOfClass:NFKAnthropicBackend.class]);
 	XCTAssertEqualObjects(claude.backendIdentifier, @"anthropic-messages");
+
+	id<NFKInferenceBackend> jev = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.typeSafe
+																apiKey:@"k" modelName:@"jev-latest"];
+	XCTAssertTrue([jev isKindOfClass:NFKTypeSafeBackend.class]);
+	XCTAssertEqualObjects(jev.backendIdentifier, @"typesafe-systemone");
+	XCTAssertFalse([NFKRemoteProvider backendForProvider:NFKRemoteProvider.typeSafe apiKey:@"k" modelName:nil].isReady,
+				   @"the System One API requires a model, like the Messages API");
 
 	id<NFKInferenceBackend> openAI = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.openAI
 																	apiKey:@"k" modelName:@"m"];
@@ -344,9 +353,11 @@ static const uint16_t NFKDeadPort = 9;
 	XCTAssertEqualObjects([self.anthropic decodedRequestBody][@"max_tokens"], @64);
 }
 
-// The Messages API names these itself, so the core keys reach it rather than being dropped.
+// The Messages API names these itself, so the core keys reach a model that takes sampling rather
+// than being dropped.
 - (void)testTheSamplingKeysReachTheMessagesAPI
 {
+	self.anthropic.modelName = @"claude-sonnet-4-6";
 	self.anthropic.stagedData = [@"{\"content\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
 	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }
 															   parameters:@{ NFKParameterTopP: @0.9,
@@ -399,6 +410,21 @@ static const uint16_t NFKDeadPort = 9;
 				  [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
 	XCTAssertNotNil(error);
 	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+
+	self.anthropic.stagedStatusCode = 429;
+	XCTAssertNil([self.anthropic runInferenceForRequest:
+				  [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceRateLimited);
+}
+
+// The model itself may decline; the Messages API says so with a stop reason on a successful reply.
+- (void)testARefusalStopReasonIsARefusal
+{
+	self.anthropic.stagedData = [@"{\"content\":[],\"stop_reason\":\"refusal\"}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSError *error = nil;
+	XCTAssertNil([self.anthropic runInferenceForRequest:
+				  [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceRefused);
 }
 
 - (void)testAnEmptyRequestIsRejected

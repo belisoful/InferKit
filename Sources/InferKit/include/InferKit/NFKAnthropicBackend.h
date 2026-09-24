@@ -29,6 +29,27 @@ NS_ASSUME_NONNULL_BEGIN
 				NFKParameterTemperature temperature, NFKParameterTopP top_p, NFKParameterTopK top_k,
 				and NFKParameterStopSequences stop_sequences. The API has no repetition penalty.
 
+				The request shape follows the model generation named by modelName:
+
+				- before Claude Opus 4.6 (claude-3…, the 4.0, 4.1, and 4.5 models) →
+				  NFKParameterReasoningEffort is a thinking budget in tokens (light, moderate, and
+				  deep are 2048, 8192, and 16384, or a numeric string), and sampling is sent when
+				  the model is not thinking
+				- Claude Opus 4.6 and Claude Sonnet 4.6 → adaptive thinking at an output_config
+				  effort (low, medium, high, or any level string the API names), and sampling is sent
+				  when the model is not thinking
+				- every later model, and any name outside those families → the same adaptive effort
+				  with a summarized thinking display, and temperature, top_p, and top_k are dropped,
+				  because these models refuse them
+				- Claude Opus 5.5, Claude Fable 5.1, and Claude Mythos 5.1 refuse a forced tool, so
+				  NFKParameterJSONSchema goes out as output_config.format and the reply's JSON text
+				  becomes NFKOutputStructured; every other model answers through a forced tool,
+				  except beside a thinking budget, which refuses one and takes output_config.format
+
+				A numeric thinking budget sent to an adaptive model is refused with
+				kNFKError_InferenceUnsupported. Thinking counts toward max_tokens, so a reasoning
+				effort raises it above the matching budget.
+
 				Inference is synchronous and multi-second: run it off the main or render thread, or
 				submit a job. isReady reports whether an endpoint and a model are set.
 				Introduced in InferKit 0.1.0.

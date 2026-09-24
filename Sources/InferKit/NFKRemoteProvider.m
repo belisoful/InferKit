@@ -6,6 +6,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKAnthropicBackend.h>
+#import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteModelCatalog.h>
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
@@ -90,7 +91,12 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
 - (NSURL *)endpointURL
 {
-	return [self URLForPath:self.apiStyle == NFKRemoteAPIStyleAnthropicMessages ? @"messages" : @"chat/completions"];
+	switch (self.apiStyle) {
+		case NFKRemoteAPIStyleAnthropicMessages: return [self URLForPath:@"messages"];
+		case NFKRemoteAPIStyleSystemOne: return [self URLForPath:@"systemone"];
+		case NFKRemoteAPIStyleOpenAIChat: break;
+	}
+	return [self URLForPath:@"chat/completions"];
 }
 
 - (NSURL *)modelsURL
@@ -164,6 +170,13 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
++ (NFKRemoteProvider *)typeSafe
+{
+	return [self providerWithIdentifier:@"typesafe" displayName:@"TypeSafe AI"
+								   base:@"https://api.typesafe.ai/v1"
+								  style:NFKRemoteAPIStyleSystemOne requiresKey:YES];
+}
+
 #pragma mark Local
 
 + (NFKRemoteProvider *)ollama
@@ -199,7 +212,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 + (NSArray<NFKRemoteProvider *> *)allProviders
 {
 	return @[ self.openAI, self.anthropic, self.xAI, self.googleGemini, self.groq, self.mistral,
-			  self.deepSeek, self.together, self.openRouter,
+			  self.deepSeek, self.together, self.openRouter, self.typeSafe,
 			  self.ollama, self.lmStudio, self.llamaCpp, self.vLLM ];
 }
 
@@ -318,9 +331,21 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 		backend.modelName = modelName;
 		return backend;
 	}
+	if (provider.apiStyle == NFKRemoteAPIStyleSystemOne) {
+		NFKTypeSafeBackend *backend = [NFKTypeSafeBackend backendWithEndpointURL:provider.endpointURL];
+		backend.apiKey = apiKey;
+		backend.modelName = modelName;
+		return backend;
+	}
 	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:provider.endpointURL];
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
+	NSDictionary<NSString *, NSNumber *> *dialects = @{ @"mistral": @(NFKRemoteChatDialectMistral),
+														@"openrouter": @(NFKRemoteChatDialectOpenRouter),
+														@"vllm": @(NFKRemoteChatDialectVLLM),
+														@"llamacpp": @(NFKRemoteChatDialectLlamaCpp),
+														@"deepseek": @(NFKRemoteChatDialectDeepSeek) };
+	backend.chatDialect = dialects[provider.identifier].integerValue;
 	return backend;
 }
 

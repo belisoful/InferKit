@@ -6,6 +6,9 @@
 #import <InferKit/NFKRemoteTransport.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
+NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
+NSString * const NFKRemoteErrorBodyKey = @"NFKRemoteErrorBody";
+NSString * const NFKRemoteErrorRetryAfterKey = @"NFKRemoteErrorRetryAfter";
 
 static NSUInteger NFKRemoteRetryAttempts = 2;
 static NSTimeInterval NFKRemoteMaximumRetryDelay = 8.0;
@@ -197,7 +200,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 + (NSTimeInterval)retryDelayForResponse:(nullable NSHTTPURLResponse *)response attempt:(NSUInteger)attempt
 {
 	NSInteger status = response.statusCode;
-	if (response == nil || (status != 429 && status != 502 && status != 503 && status != 504)) {
+	if (response == nil || (status != 429 && status != 502 && status != 503 && status != 504 && status != 529)) {
 		return -1;
 	}
 	NSString *retryAfter = [response valueForHTTPHeaderField:@"Retry-After"];
@@ -262,11 +265,59 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 	if (response == nil || (response.statusCode >= 200 && response.statusCode < 300)) {
 		return nil;
 	}
+	NSInteger status = response.statusCode;
 	NSString *detail = data.length > 0 ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
 	NSString *reason = detail.length > 0
-		? [NSString stringWithFormat:@"the endpoint returned HTTP %ld: %@", (long)response.statusCode, detail]
-		: [NSString stringWithFormat:@"the endpoint returned HTTP %ld", (long)response.statusCode];
-	return [self errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
+		? [NSString stringWithFormat:@"the endpoint returned HTTP %ld: %@", (long)status, detail]
+		: [NSString stringWithFormat:@"the endpoint returned HTTP %ld", (long)status];
+	NSMutableDictionary *userInfo = [NSMutableDictionary dictionary];
+	userInfo[NSLocalizedDescriptionKey] = reason;
+	userInfo[NFKRemoteErrorStatusCodeKey] = @(status);
+	if (detail != nil) {
+		userInfo[NFKRemoteErrorBodyKey] = detail;
+	}
+	NFKInferenceError code = [self codeForStatus:status];
+	NSDate *retryAfter = code == kNFKError_InferenceRateLimited ? [self retryAfterDateForResponse:response] : nil;
+	if (retryAfter != nil) {
+		userInfo[NFKRemoteErrorRetryAfterKey] = retryAfter;
+	}
+	return [NSError errorWithDomain:NFKInferenceErrorDomain code:code userInfo:userInfo];
+}
+
+// Back off (429, 402, 529), change the request (400, 413, 422), or fix the configuration (the rest).
++ (NFKInferenceError)codeForStatus:(NSInteger)status
+{
+	switch (status) {
+		case 429: case 402: case 529:
+			return kNFKError_InferenceRateLimited;
+		case 400: case 413: case 422:
+			return kNFKError_InferenceRefused;
+		default:
+			return kNFKError_InferenceBackendFailure;
+	}
+}
+
+/*! The Retry-After header as a date: a delay in seconds from now, or an HTTP-date as it stands. */
++ (nullable NSDate *)retryAfterDateForResponse:(NSHTTPURLResponse *)response
+{
+	NSString *retryAfter = [response valueForHTTPHeaderField:@"Retry-After"];
+	if (retryAfter.length == 0) {
+		return nil;
+	}
+	NSScanner *scanner = [NSScanner scannerWithString:retryAfter];
+	double seconds = 0;
+	if ([scanner scanDouble:&seconds] && scanner.atEnd) {
+		return [NSDate dateWithTimeIntervalSinceNow:MAX(seconds, 0)];
+	}
+	static NSDateFormatter *httpDate;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		httpDate = [[NSDateFormatter alloc] init];
+		httpDate.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+		httpDate.timeZone = [NSTimeZone timeZoneWithAbbreviation:@"GMT"];
+		httpDate.dateFormat = @"EEE, dd MMM yyyy HH:mm:ss zzz";
+	});
+	return [httpDate dateFromString:retryAfter];
 }
 
 + (NSError *)errorWithCode:(NFKInferenceError)code reason:(NSString *)reason

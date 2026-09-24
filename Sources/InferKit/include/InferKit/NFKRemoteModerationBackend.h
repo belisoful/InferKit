@@ -30,6 +30,11 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The moderation endpoint, for example https://api.openai.com/v1/moderations. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
 
+/*! Sends a request's NFKInputMessages whole to the sibling chat/moderations path, which judges the
+	conversation rather than joined text. backendForProvider: sets it for Mistral, the one service
+	with that path. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) BOOL moderatesConversations;
+
 /*! The bearer token sent as Authorization. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
@@ -44,7 +49,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)backendWithEndpointURL:(nullable NSURL *)endpointURL;
 
-/*! A backend pointed at the provider's moderation endpoint, or nil for Anthropic. */
+/*! A backend pointed at the provider's moderation endpoint: openai and mistral serve one; every
+	other preset returns nil. */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName;

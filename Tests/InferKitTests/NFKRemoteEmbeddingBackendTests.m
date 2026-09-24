@@ -153,6 +153,69 @@
 	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
 }
 
+#pragma mark Media and Gemini's native style
+
+- (CGImageRef)newSquare CF_RETURNS_RETAINED
+{
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 4, 4, 8, 16, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGImageRef square = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	return square;
+}
+
+- (void)testGeminiEmbedsTextAndAnImageAsNativePartsUnderItsOwnKey
+{
+	NFKRemoteEmbeddingBackend *made = [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.googleGemini apiKey:@"AIza" modelName:@"gemini-embedding-2"];
+	XCTAssertEqual(made.apiStyle, NFKRemoteEmbeddingAPIStyleGeminiNative);
+	NFKStubEmbeddingBackend *gemini = [[NFKStubEmbeddingBackend alloc] init];
+	gemini.endpointURL = made.endpointURL;
+	gemini.apiStyle = made.apiStyle;
+	gemini.apiKey = @"AIza";
+	gemini.modelName = @"gemini-embedding-2";
+	gemini.stagedData = [@"{\"embedding\":{\"values\":[0.1,0.2,0.3]}}" dataUsingEncoding:NSUTF8StringEncoding];
+	CGImageRef square = [self newSquare];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a red square", NFKInputImage: (__bridge id)square }
+															   parameters:@{ @"dimensions": @768 }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [gemini runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqualObjects(gemini.lastRequest.URL.absoluteString,
+						  @"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent");
+	XCTAssertEqualObjects([gemini.lastRequest valueForHTTPHeaderField:@"x-goog-api-key"], @"AIza");
+	NSDictionary *body = [gemini decodedRequestBody];
+	XCTAssertEqualObjects(body[@"outputDimensionality"], @768);
+	NSArray *parts = body[@"content"][@"parts"];
+	XCTAssertEqualObjects(parts[0], (@{ @"text": @"a red square" }));
+	XCTAssertEqualObjects(parts[1][@"inline_data"][@"mime_type"], @"image/png");
+	XCTAssertEqualObjects(result.embedding, (@[ @0.1, @0.2, @0.3 ]));
+	CGImageRelease(square);
+
+	gemini.stagedData = [@"{\"embeddings\":[{\"values\":[1]},{\"values\":[2]}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSArray *vectors = [gemini embeddingsForTexts:@[ @"a", @"b" ] error:&error];
+	XCTAssertEqualObjects(vectors, (@[ @[ @1 ], @[ @2 ] ]));
+	XCTAssertTrue([gemini.lastRequest.URL.absoluteString hasSuffix:@"gemini-embedding-2:batchEmbedContents"]);
+	XCTAssertEqualObjects([gemini decodedRequestBody][@"requests"][1][@"model"], @"models/gemini-embedding-2");
+}
+
+- (void)testAnImageRidesAsOpenRoutersContentPartsAndAVideoIsRefusedThere
+{
+	self.backend.stagedData = [@"{\"data\":[{\"index\":0,\"embedding\":[0.5]}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	CGImageRef square = [self newSquare];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"caption", NFKInputImage: (__bridge id)square }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSArray *parts = [self.backend decodedRequestBody][@"input"][0][@"content"];
+	XCTAssertEqualObjects(parts[0][@"type"], @"text");
+	XCTAssertEqualObjects(parts[1][@"type"], @"image_url");
+	CGImageRelease(square);
+
+	NFKInferenceRequest *document = [NFKInferenceRequest requestWithInputs:@{ NFKInputDocument: [@"%PDF" dataUsingEncoding:NSUTF8StringEncoding] }];
+	NSError *error = nil;
+	XCTAssertNil([self.backend runInferenceForRequest:document error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
 #pragma mark The provider factory
 
 - (void)testTheFactoryDerivesTheEmbeddingsURLAndDeclinesAnthropic
@@ -162,10 +225,13 @@
 	XCTAssertEqualObjects(ollama.endpointURL.absoluteString, @"http://localhost:11434/v1/embeddings");
 	XCTAssertEqualObjects(ollama.modelName, @"m");
 
-	NFKRemoteEmbeddingBackend *groq = [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.groq
-																			  apiKey:@"k" modelName:@"m"];
-	XCTAssertEqualObjects(groq.endpointURL.absoluteString, @"https://api.groq.com/openai/v1/embeddings");
-	XCTAssertEqualObjects(groq.apiKey, @"k");
+	NFKRemoteEmbeddingBackend *mistral = [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.mistral
+																				 apiKey:@"k" modelName:@"m"];
+	XCTAssertEqualObjects(mistral.endpointURL.absoluteString, @"https://api.mistral.ai/v1/embeddings");
+	XCTAssertEqualObjects(mistral.apiKey, @"k");
+	for (NFKRemoteProvider *provider in @[ NFKRemoteProvider.groq, NFKRemoteProvider.xAI, NFKRemoteProvider.deepSeek ]) {
+		XCTAssertNil([NFKRemoteEmbeddingBackend backendForProvider:provider apiKey:@"k" modelName:@"m"], @"%@ serves no embeddings", provider.identifier);
+	}
 
 	XCTAssertNil([NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"],
 				 @"Anthropic serves no embeddings endpoint");

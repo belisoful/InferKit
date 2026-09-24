@@ -12,6 +12,7 @@
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import "NFKRemoteMediaSupport.h"
+#import <InferKit/NFKRemoteFileStore.h>
 #import "NFK_ARC.h"
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
@@ -33,11 +34,59 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	return budgets;
 }
 
+/*! The output_config effort each reasoning effort the contract names asks for, on a model that
+	thinks adaptively. */
+static NSDictionary<NSString *, NSString *> *NFKAnthropicEffortLevels(void)
+{
+	static NSDictionary<NSString *, NSString *> *levels;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		levels = @{ NFKReasoningEffortLight: @"low",
+					NFKReasoningEffortModerate: @"medium",
+					NFKReasoningEffortDeep: @"high" };
+	});
+	return levels;
+}
+
+/*! The families that take a thinking budget and sampling: every model released before Claude Opus
+	4.6. A family is matched anywhere in the name, so a cloud spelling (anthropic.claude-…,
+	claude-…@date) matches too. */
+static NSArray<NSString *> *NFKAnthropicBudgetThinkingFamilies(void)
+{
+	return @[ @"claude-3", @"claude-opus-4-0", @"claude-sonnet-4-0", @"claude-opus-4-2025",
+			  @"claude-sonnet-4-2025", @"claude-opus-4@", @"claude-sonnet-4@", @"claude-opus-4-1",
+			  @"claude-opus-4-5", @"claude-sonnet-4-5", @"claude-haiku-4-5" ];
+}
+
+/*! The families that think adaptively and still take sampling, and whose thinking display already
+	defaults to a summary: Claude Opus 4.6 and Claude Sonnet 4.6. */
+static NSArray<NSString *> *NFKAnthropicSummarizingFamilies(void)
+{
+	return @[ @"claude-opus-4-6", @"claude-sonnet-4-6" ];
+}
+
+/*! The families that refuse a forced tool_choice, so a schema goes through output_config.format. */
+static NSArray<NSString *> *NFKAnthropicUnforcedToolFamilies(void)
+{
+	return @[ @"claude-opus-5-5", @"claude-fable-5-1", @"claude-mythos-5-1" ];
+}
+
+static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NSString *> *families)
+{
+	for (NSString *family in families) {
+		if ([model containsString:family]) {
+			return YES;
+		}
+	}
+	return NO;
+}
+
 /*! What a streamed reply assembles into: content blocks by index, each text, thinking, or a tool
 	use, and the token counts the message events report. */
 @interface NFKAnthropicStreamState : NSObject
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableDictionary *> *blocksByIndex;
 @property (nonatomic, copy, nullable) NSDictionary<NSString *, NSNumber *> *usage;
+@property (nonatomic, copy, nullable) NSString *stopReason;
 @property (nonatomic, assign) BOOL finished;
 @end
 
@@ -50,6 +99,16 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	}
 	return self;
 }
+@end
+
+@interface NFKAnthropicBackend ()
+/*! Whether the model takes a thinking budget in tokens rather than an adaptive effort. */
+@property (nonatomic, readonly) BOOL usesThinkingBudget;
+/*! Whether the model takes temperature, top_p, and top_k when it is not thinking. */
+@property (nonatomic, readonly) BOOL acceptsSampling;
+/*! Whether the model takes a forced tool_choice. */
+@property (nonatomic, readonly) BOOL acceptsForcedTool;
+- (nullable NSString *)effortLevelForEffort:(nullable id)effort;
 @end
 
 @implementation NFKAnthropicBackend
@@ -128,6 +187,9 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 					  description:@"the endpoint returned a body that is not a JSON object"
 							error:outError];
 	}
+	if ([responseBody[@"stop_reason"] isEqual:@"refusal"]) {
+		return [self failWithCode:kNFKError_InferenceRefused description:@"the model declined to answer" error:outError];
+	}
 	NSArray *content = [responseBody[@"content"] isKindOfClass:NSArray.class] ? responseBody[@"content"] : @[];
 	return [self resultForContentBlocks:content
 								  usage:[self usageInMessageBody:responseBody]
@@ -163,14 +225,14 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 		NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : @"";
 		if ([type isEqualToString:@"message_stop"]) {
 			state.finished = YES;
-			[job finishWithResult:[self resultFromStreamState:state expectsStructured:expectsStructured]];
+			[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
 			return;
 		}
 		if ([type isEqualToString:@"error"]) {
 			state.finished = YES;
 			NSDictionary *detail = [event[@"error"] isKindOfClass:NSDictionary.class] ? event[@"error"] : @{};
 			NSString *message = [detail[@"message"] isKindOfClass:NSString.class] ? detail[@"message"] : @"the stream reported an error";
-			[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:message]];
+			[job finishWithError:[NFKRemoteTransport errorWithCode:[self codeForStreamErrorType:detail[@"type"]] reason:message]];
 			return;
 		}
 		if ([self applyStreamEvent:event type:type toState:state]) {
@@ -192,10 +254,33 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 			[job finishWithError:failure];
 			return;
 		}
-		[job finishWithResult:[self resultFromStreamState:state expectsStructured:expectsStructured]];
+		[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
 	}];
 	job.cancellationHandler = cancel;
 	return job;
+}
+
+/*! A stream that ended with a refusal fails the job as one; any other end delivers what streamed. */
+- (void)finishJob:(NFKInferenceJob *)job fromStreamState:(NFKAnthropicStreamState *)state expectsStructured:(BOOL)expectsStructured
+{
+	if ([state.stopReason isEqual:@"refusal"]) {
+		[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceRefused reason:@"the model declined to answer"]];
+		return;
+	}
+	[job finishWithResult:[self resultFromStreamState:state expectsStructured:expectsStructured]];
+}
+
+/*! The core code a streamed error event's type maps to: an overload or a rate limit says back off, an
+	invalid request says change it, and the rest is the backend's failure. */
+- (NFKInferenceError)codeForStreamErrorType:(nullable id)type
+{
+	if ([type isEqual:@"overloaded_error"] || [type isEqual:@"rate_limit_error"]) {
+		return kNFKError_InferenceRateLimited;
+	}
+	if ([type isEqual:@"invalid_request_error"]) {
+		return kNFKError_InferenceRefused;
+	}
+	return kNFKError_InferenceBackendFailure;
 }
 
 #pragma mark Request
@@ -222,9 +307,14 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 		return nil;
 	}
 	id effort = [request parameterForKey:NFKParameterReasoningEffort];
-	if (effort != nil && [self thinkingBudgetForEffort:effort] == nil) {
+	if (effort != nil && self.usesThinkingBudget && [self thinkingBudgetForEffort:effort] == nil) {
 		[self failWithCode:kNFKError_InferenceUnsupported
 			   description:@"NFKParameterReasoningEffort is light, moderate, deep, or a thinking budget in tokens" error:outError];
+		return nil;
+	}
+	if (effort != nil && !self.usesThinkingBudget && [self effortLevelForEffort:effort] == nil) {
+		[self failWithCode:kNFKError_InferenceUnsupported
+			   description:@"this model takes a named effort level, not a thinking budget in tokens" error:outError];
 		return nil;
 	}
 	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request error:outError];
@@ -270,29 +360,25 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	NSNumber *maxTokens = [request parameterForKey:NFKParameterMaxTokens];
 	body[@"max_tokens"] = [maxTokens isKindOfClass:NSNumber.class] ? maxTokens : @(self.maxTokens);
 
-	// Extended thinking rules the sampling: the API refuses a request that sets temperature, top_p,
-	// or top_k beside it, so those three are dropped where a reasoning effort is asked for. The
-	// budget must also leave room under max_tokens for the answer itself.
-	NSNumber *budget = [self thinkingBudgetForEffort:[request parameterForKey:NFKParameterReasoningEffort]];
-	if (budget != nil) {
-		body[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": budget };
-		if ([body[@"max_tokens"] integerValue] <= budget.integerValue) {
-			body[@"max_tokens"] = @(budget.integerValue + self.maxTokens);
-		}
-	}
+	NSMutableDictionary *outputConfig = [NSMutableDictionary dictionary];
+	BOOL thinks = [self addThinkingForEffort:[request parameterForKey:NFKParameterReasoningEffort]
+									  toBody:body outputConfig:outputConfig];
 
+	// Thinking rules the sampling: the API refuses temperature, top_p, or top_k beside it, and the
+	// models from Claude Opus 4.7 on refuse them outright, so the three are dropped there.
+	BOOL samples = !thinks && self.acceptsSampling;
 	NSNumber *temperature = [request parameterForKey:NFKParameterTemperature];
-	if ([temperature isKindOfClass:NSNumber.class] && budget == nil) {
+	if ([temperature isKindOfClass:NSNumber.class] && samples) {
 		body[@"temperature"] = temperature;
 	}
 
 	// The Messages API names these three itself, so the core keys are renamed rather than dropped.
 	NSNumber *topP = [request parameterForKey:NFKParameterTopP];
-	if ([topP isKindOfClass:NSNumber.class] && budget == nil) {
+	if ([topP isKindOfClass:NSNumber.class] && samples) {
 		body[@"top_p"] = topP;
 	}
 	NSNumber *topK = [request parameterForKey:NFKParameterTopK];
-	if ([topK isKindOfClass:NSNumber.class] && budget == nil) {
+	if ([topK isKindOfClass:NSNumber.class] && samples) {
 		body[@"top_k"] = topK;
 	}
 	NSArray<NSString *> *stopSequences = [request parameterForKey:NFKParameterStopSequences];
@@ -317,7 +403,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	if (conversation.count == 0) {
 		return nil;
 	}
-	if (!attachments.isEmpty && ![self attach:attachments toLastUserTurnIn:conversation]) {
+	if (!attachments.isEmpty && ![self attach:attachments toLastUserTurnIn:conversation citing:[[request parameterForKey:NFKParameterCitations] boolValue]]) {
 		return nil;
 	}
 	body[@"messages"] = conversation;
@@ -331,17 +417,94 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 			}
 		}
 	}
+	// Every model refuses a forced tool beside a thinking budget, so a budgeted request takes the
+	// response format as well.
+	BOOL forcesTool = self.acceptsForcedTool && !(thinks && self.usesThinkingBudget);
 	NSDictionary *schema = request.parameters[NFKParameterJSONSchema];
-	if ([schema isKindOfClass:NSDictionary.class]) {
+	if ([schema isKindOfClass:NSDictionary.class] && forcesTool) {
 		[tools addObject:@{ @"name": NFKAnthropicStructuredToolName,
 							@"description": @"Record the structured reply.",
 							@"input_schema": schema }];
 		body[@"tool_choice"] = @{ @"type": @"tool", @"name": NFKAnthropicStructuredToolName };
+	} else if ([schema isKindOfClass:NSDictionary.class]) {
+		outputConfig[@"format"] = @{ @"type": @"json_schema", @"schema": schema };
 	}
 	if (tools.count > 0) {
 		body[@"tools"] = tools;
 	}
+	if (outputConfig.count > 0) {
+		body[@"output_config"] = outputConfig;
+	}
 	return body;
+}
+
+/*! Writes the thinking a reasoning effort asks for and returns whether it wrote any. A model before
+	Claude Opus 4.6 takes a token budget, which must leave room under max_tokens for the answer. A
+	later model thinks adaptively at a named effort; max_tokens is raised by the same table, since
+	the thinking counts toward it. From Claude Opus 4.7 on the thinking display defaults to omitted,
+	so a summary is asked for to fill NFKOutputReasoning. */
+- (BOOL)addThinkingForEffort:(nullable id)effort
+					  toBody:(NSMutableDictionary *)body
+				outputConfig:(NSMutableDictionary *)outputConfig
+{
+	if (effort == nil) {
+		return NO;
+	}
+	NSNumber *budget = self.usesThinkingBudget
+		? [self thinkingBudgetForEffort:effort]
+		: (NFKAnthropicThinkingBudgets()[effort] ?: NFKAnthropicThinkingBudgets()[NFKReasoningEffortDeep]);
+	if (self.usesThinkingBudget) {
+		body[@"thinking"] = @{ @"type": @"enabled", @"budget_tokens": budget };
+	} else if (NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicSummarizingFamilies())) {
+		body[@"thinking"] = @{ @"type": @"adaptive" };
+		outputConfig[@"effort"] = [self effortLevelForEffort:effort];
+	} else {
+		body[@"thinking"] = @{ @"type": @"adaptive", @"display": @"summarized" };
+		outputConfig[@"effort"] = [self effortLevelForEffort:effort];
+	}
+	if ([body[@"max_tokens"] integerValue] <= budget.integerValue) {
+		body[@"max_tokens"] = @(budget.integerValue + self.maxTokens);
+	}
+	return YES;
+}
+
+#pragma mark Model generations
+
+// A name outside the known earlier families is taken as a current model: every model Anthropic has
+// released since Claude Opus 4.6 refuses a thinking budget.
+- (BOOL)usesThinkingBudget
+{
+	return NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicBudgetThinkingFamilies());
+}
+
+- (BOOL)acceptsSampling
+{
+	return self.usesThinkingBudget || NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicSummarizingFamilies());
+}
+
+- (BOOL)acceptsForcedTool
+{
+	return !NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicUnforcedToolFamilies());
+}
+
+// The three levels the contract names come from the table; a numeric string is a budget, which an
+// adaptive model has no field for, so it is nil and refused. Any other string passes through, which
+// is how a caller reaches xhigh or max.
+- (nullable NSString *)effortLevelForEffort:(nullable id)effort
+{
+	if (![effort isKindOfClass:NSString.class] || [effort length] == 0) {
+		return nil;
+	}
+	NSString *named = NFKAnthropicEffortLevels()[effort];
+	if (named != nil) {
+		return named;
+	}
+	NSScanner *scanner = [NSScanner scannerWithString:effort];
+	NSInteger tokens = 0;
+	if ([scanner scanInteger:&tokens] && scanner.isAtEnd) {
+		return nil;
+	}
+	return effort;
 }
 
 // The three levels the contract names come from the table; a numeric string is a budget in tokens,
@@ -382,7 +545,31 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 
 // The media goes before the text, as the API's own examples order the blocks: images and sampled
 // frames as base64 image blocks, documents as base64 PDF document blocks.
-- (BOOL)attach:(NFKRemoteAttachments *)attachments toLastUserTurnIn:(NSMutableArray *)conversation
+// A PDF goes as base64; a plain-text document goes as its text, which the Messages API reads and cites
+// by character range.
+- (NSDictionary *)documentBlockFor:(NSDictionary *)document citing:(BOOL)citing
+{
+	NFKRemoteFile *file = document[@"fileReference"];
+	if (file != nil && [file.mimeType hasPrefix:@"image/"]) {
+		return @{ @"type": @"image", @"source": @{ @"type": @"file", @"file_id": file.identifier } };
+	}
+	NSMutableDictionary *block = [NSMutableDictionary dictionaryWithObjectsAndKeys:@"document", @"type", document[@"filename"], @"title", nil];
+	if (file != nil) {
+		block[@"source"] = @{ @"type": @"file", @"file_id": file.identifier };
+	} else if ([document[@"mediaType"] isEqual:@"text/plain"]) {
+		NSString *text = [[NSString alloc] initWithData:document[@"data"] encoding:NSUTF8StringEncoding] ?: @"";
+		block[@"source"] = @{ @"type": @"text", @"media_type": @"text/plain", @"data": text };
+	} else {
+		block[@"source"] = @{ @"type": @"base64", @"media_type": @"application/pdf",
+							  @"data": [document[@"data"] base64EncodedStringWithOptions:0] };
+	}
+	if (citing) {
+		block[@"citations"] = @{ @"enabled": @YES };
+	}
+	return block;
+}
+
+- (BOOL)attach:(NFKRemoteAttachments *)attachments toLastUserTurnIn:(NSMutableArray *)conversation citing:(BOOL)citing
 {
 	for (NSInteger index = (NSInteger)conversation.count - 1; index >= 0; index--) {
 		NSDictionary *message = conversation[index];
@@ -396,10 +583,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 											   @"data": [png base64EncodedStringWithOptions:0] } }];
 		}
 		for (NSDictionary *document in attachments.documents) {
-			[blocks addObject:@{ @"type": @"document",
-								 @"source": @{ @"type": @"base64", @"media_type": @"application/pdf",
-											   @"data": [document[@"data"] base64EncodedStringWithOptions:0] },
-								 @"title": document[@"filename"] }];
+			[blocks addObject:[self documentBlockFor:document citing:citing]];
 		}
 		if ([message[@"content"] isKindOfClass:NSString.class]) {
 			[blocks addObject:@{ @"type": @"text", @"text": message[@"content"] }];
@@ -444,18 +628,33 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
 	NSMutableArray<NSString *> *reasoning = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *toolCalls = [NSMutableArray array];
+	NSMutableArray<NSDictionary *> *citations = [NSMutableArray array];
+	NSMutableArray<NSDictionary *> *serverCalls = [NSMutableArray array];
+	NSMutableArray<NSDictionary *> *serverResults = [NSMutableArray array];
 	for (NSDictionary *block in content) {
 		if (![block isKindOfClass:NSDictionary.class]) {
 			continue;
 		}
 		if ([block[@"type"] isEqualToString:@"text"] && [block[@"text"] isKindOfClass:NSString.class]) {
 			[pieces addObject:block[@"text"]];
+			[self addCitationsOfTextBlock:block to:citations];
+			continue;
+		}
+		if ([block[@"type"] isEqualToString:@"server_tool_use"]) {
+			[serverCalls addObject:block];
+			continue;
+		}
+		if ([block[@"type"] hasSuffix:@"_tool_result"]) {
+			[serverResults addObject:block];
 			continue;
 		}
 		// A thinking block carries the chain; a redacted one carries encrypted bytes with nothing
-		// to read, so it contributes no reasoning text.
-		if ([block[@"type"] isEqualToString:@"thinking"] && [block[@"thinking"] isKindOfClass:NSString.class]) {
-			[reasoning addObject:block[@"thinking"]];
+		// to read, and one whose display was omitted carries an empty string, so neither
+		// contributes reasoning text.
+		if ([block[@"type"] isEqualToString:@"thinking"]) {
+			if ([block[@"thinking"] isKindOfClass:NSString.class] && [block[@"thinking"] length] > 0) {
+				[reasoning addObject:block[@"thinking"]];
+			}
 			continue;
 		}
 		if (![block[@"type"] isEqualToString:@"tool_use"] || ![block[@"name"] isKindOfClass:NSString.class]) {
@@ -475,6 +674,14 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	if (pieces.count > 0) {
 		outputs[NFKRemoteBackendTextKey] = [pieces componentsJoinedByString:@""];
 	}
+	// A schema asked for through output_config.format comes back as the text of the reply.
+	if (expectsStructured && outputs[NFKOutputStructured] == nil && pieces.count > 0) {
+		NSData *text = [outputs[NFKRemoteBackendTextKey] dataUsingEncoding:NSUTF8StringEncoding];
+		id structured = [NSJSONSerialization JSONObjectWithData:text options:0 error:NULL];
+		if ([structured isKindOfClass:NSDictionary.class]) {
+			outputs[NFKOutputStructured] = structured;
+		}
+	}
 	if (reasoning.count > 0) {
 		outputs[NFKOutputReasoning] = [reasoning componentsJoinedByString:@"\n"];
 	}
@@ -484,8 +691,54 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	if (usage != nil) {
 		outputs[NFKOutputUsage] = usage;
 	}
+	if (citations.count > 0) {
+		outputs[NFKOutputCitations] = citations;
+	}
+	NSArray<NSDictionary *> *ran = [self serverToolResultsPairing:serverCalls with:serverResults];
+	if (ran.count > 0) {
+		outputs[NFKOutputServerToolResults] = ran;
+	}
 	outputs[NFKRemoteBackendRawKey] = raw;
 	return [NFKInferenceResult resultWithOutputs:outputs];
+}
+
+// A text block's citations name the span they support, as a character range, a page range, a block
+// range, or a search result, beside the cited text itself.
+- (void)addCitationsOfTextBlock:(NSDictionary *)block to:(NSMutableArray<NSDictionary *> *)citations
+{
+	NSArray *entries = [block[@"citations"] isKindOfClass:NSArray.class] ? block[@"citations"] : @[];
+	for (NSDictionary *entry in entries) {
+		if (![entry isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		NSMutableDictionary *citation = [NSMutableDictionary dictionaryWithObject:entry forKey:@"raw"];
+		citation[@"text"] = entry[@"cited_text"];
+		citation[@"url"] = entry[@"url"];
+		citation[@"title"] = entry[@"title"] ?: entry[@"document_title"];
+		citation[@"documentIndex"] = entry[@"document_index"] ?: entry[@"search_result_index"];
+		citation[@"start"] = entry[@"start_char_index"] ?: entry[@"start_page_number"] ?: entry[@"start_block_index"];
+		citation[@"end"] = entry[@"end_char_index"] ?: entry[@"end_page_number"] ?: entry[@"end_block_index"];
+		[citations addObject:citation];
+	}
+}
+
+// A server tool's call and its result are separate blocks joined by the call's id.
+- (NSArray<NSDictionary *> *)serverToolResultsPairing:(NSArray<NSDictionary *> *)calls with:(NSArray<NSDictionary *> *)results
+{
+	NSMutableArray<NSDictionary *> *ran = [NSMutableArray array];
+	for (NSDictionary *call in calls) {
+		NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObject:call forKey:@"raw"];
+		entry[@"name"] = call[@"name"];
+		entry[@"input"] = call[@"input"];
+		for (NSDictionary *result in results) {
+			if ([result[@"tool_use_id"] isEqual:call[@"id"]]) {
+				entry[@"output"] = result[@"content"];
+				break;
+			}
+		}
+		[ran addObject:entry];
+	}
+	return ran;
 }
 
 #pragma mark Streaming
@@ -496,6 +749,12 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 {
 	// message_start opens with what the request cost; message_delta closes with what the reply cost,
 	// so the two together are the turn's counts.
+	if ([type isEqualToString:@"message_delta"]) {
+		NSDictionary *delta = [event[@"delta"] isKindOfClass:NSDictionary.class] ? event[@"delta"] : nil;
+		if ([delta[@"stop_reason"] isKindOfClass:NSString.class]) {
+			state.stopReason = delta[@"stop_reason"];
+		}
+	}
 	if ([type isEqualToString:@"message_start"] || [type isEqualToString:@"message_delta"]) {
 		NSDictionary *carrier = [event[@"message"] isKindOfClass:NSDictionary.class] ? event[@"message"] : event;
 		NSDictionary<NSString *, NSNumber *> *reported = [self usageInMessageBody:carrier];
@@ -535,6 +794,11 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 		block[@"thinking"] = [(block[@"thinking"] ?: @"") stringByAppendingString:delta[@"thinking"]];
 		return [delta[@"thinking"] length] > 0;
 	}
+	if ([delta[@"type"] isEqual:@"citations_delta"] && [delta[@"citation"] isKindOfClass:NSDictionary.class]) {
+		NSArray *existing = [block[@"citations"] isKindOfClass:NSArray.class] ? block[@"citations"] : @[];
+		block[@"citations"] = [existing arrayByAddingObject:delta[@"citation"]];
+		return NO;
+	}
 	if ([delta[@"type"] isEqual:@"input_json_delta"] && [delta[@"partial_json"] isKindOfClass:NSString.class]) {
 		block[@"partial_json"] = [(block[@"partial_json"] ?: @"") stringByAppendingString:delta[@"partial_json"]];
 	}
@@ -548,7 +812,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
 	for (NSNumber *index in [state.blocksByIndex.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
 		NSDictionary *block = state.blocksByIndex[index];
-		if ([block[@"type"] isEqual:type] && [block[type] isKindOfClass:NSString.class]) {
+		if ([block[@"type"] isEqual:type] && [block[type] isKindOfClass:NSString.class] && [block[type] length] > 0) {
 			[pieces addObject:block[type]];
 		}
 	}
@@ -572,7 +836,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKAnthropicThinkingBudgets(void)
 	NSMutableArray *content = [NSMutableArray array];
 	for (NSNumber *index in [state.blocksByIndex.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
 		NSMutableDictionary *block = [state.blocksByIndex[index] mutableCopy];
-		if ([block[@"type"] isEqual:@"tool_use"]) {
+		if ([block[@"type"] isEqual:@"tool_use"] || [block[@"type"] isEqual:@"server_tool_use"]) {
 			NSString *partial = block[@"partial_json"];
 			id input = partial.length > 0
 				? [NSJSONSerialization JSONObjectWithData:[partial dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] : nil;

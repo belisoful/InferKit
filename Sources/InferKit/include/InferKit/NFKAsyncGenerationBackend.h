@@ -57,6 +57,10 @@ NS_ASSUME_NONNULL_BEGIN
 	reads error.message, then error. Introduced in InferKit 0.3.0. */
 - (nullable NSString *)failureReasonFromStatusResponse:(NSDictionary *)response;
 
+/*! The status poll for a status URL. The default GETs it with the key as a bearer token; a service
+	that authenticates another way overrides it. Introduced in InferKit 0.4.0. */
+- (NSURLRequest *)statusRequestForURL:(NSURL *)url;
+
 /*! The provider job id from a submit response. The default reads the "id" key. */
 - (nullable NSString *)jobIdentifierFromResponse:(NSDictionary *)response;
 

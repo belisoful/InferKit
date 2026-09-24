@@ -11,6 +11,8 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteMediaSupport.h"
+#import <InferKit/NFKRemoteFileStore.h>
 
 @implementation NFKRemoteEmbeddingBackend
 
@@ -27,10 +29,16 @@
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName
 {
-	if (provider.apiStyle != NFKRemoteAPIStyleOpenAIChat) {
+	NSArray<NSString *> *serving = @[ @"openai", @"gemini", @"mistral", @"together", @"openrouter",
+									  @"ollama", @"lmstudio", @"llamacpp", @"vllm" ];
+	if (![serving containsObject:provider.identifier]) {
 		return nil;
 	}
 	NFKRemoteEmbeddingBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"embeddings"]];
+	if ([provider.identifier isEqualToString:@"gemini"]) {
+		backend.endpointURL = [provider.baseURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"models"];
+		backend.apiStyle = NFKRemoteEmbeddingAPIStyleGeminiNative;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;
@@ -69,11 +77,19 @@
 												  error:(NSError * _Nullable *)outError
 {
 	NSString *text = [self textForRequest:request];
-	if (text == nil) {
-		return [self failWithCode:kNFKError_InferenceMissingInput
-						   reason:@"the request carries neither a prompt nor messages" error:outError];
+	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request keepsVideo:YES error:outError];
+	if (attachments == nil) {
+		return nil;
 	}
-	NSDictionary *body = [self responseForInput:text parameters:request.parameters error:outError];
+	if (text == nil && attachments.isEmpty) {
+		return [self failWithCode:kNFKError_InferenceMissingInput
+						   reason:@"the request carries neither text nor media" error:outError];
+	}
+	id input = [self inputForText:text attachments:attachments error:outError];
+	if (input == nil) {
+		return nil;
+	}
+	NSDictionary *body = [self responseForInput:input parameters:request.parameters error:outError];
 	if (body == nil) {
 		return nil;
 	}
@@ -109,6 +125,101 @@
 
 #pragma mark Request and response
 
+// Text alone goes as it stands. Media goes as OpenRouter's content parts, or, on the Gemini style,
+// as the native parts that style always sends.
+- (nullable id)inputForText:(nullable NSString *)text attachments:(NFKRemoteAttachments *)attachments error:(NSError * _Nullable *)outError
+{
+	if (self.apiStyle == NFKRemoteEmbeddingAPIStyleGeminiNative) {
+		NSMutableArray *parts = [NSMutableArray array];
+		if (text.length > 0) {
+			[parts addObject:@{ @"text": text }];
+		}
+		for (NSData *png in attachments.imagePNGs) {
+			[parts addObject:[self inlinePart:png mimeType:@"image/png"]];
+		}
+		if (attachments.audioData != nil) {
+			[parts addObject:[self inlinePart:attachments.audioData mimeType:[@"audio/" stringByAppendingString:attachments.audioFormat ?: @"wav"]]];
+		}
+		if (attachments.videoData != nil) {
+			[parts addObject:[self inlinePart:attachments.videoData mimeType:[@"video/" stringByAppendingString:attachments.videoFormat ?: @"mp4"]]];
+		}
+		for (NSDictionary *document in attachments.documents) {
+			NFKRemoteFile *file = document[@"fileReference"];
+			if (file != nil) {
+				[parts addObject:@{ @"file_data": @{ @"mime_type": file.mimeType ?: @"application/pdf",
+													 @"file_uri": file.uri.absoluteString ?: file.identifier } }];
+				continue;
+			}
+			[parts addObject:[self inlinePart:document[@"data"] mimeType:document[@"mediaType"] ?: @"application/pdf"]];
+		}
+		return @{ @"parts": parts };
+	}
+	if (attachments.isEmpty) {
+		return text;
+	}
+	if (attachments.videoData != nil || attachments.documents.count > 0) {
+		[self failWithCode:kNFKError_InferenceUnsupported
+					reason:@"this embeddings service reads text, images, and audio; video and documents need Gemini's native style" error:outError];
+		return nil;
+	}
+	NSMutableArray *parts = [NSMutableArray array];
+	if (text.length > 0) {
+		[parts addObject:@{ @"type": @"text", @"text": text }];
+	}
+	for (NSData *png in attachments.imagePNGs) {
+		NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];
+		[parts addObject:@{ @"type": @"image_url", @"image_url": @{ @"url": dataURL } }];
+	}
+	if (attachments.audioData != nil) {
+		[parts addObject:@{ @"type": @"input_audio", @"input_audio": @{ @"data": [attachments.audioData base64EncodedStringWithOptions:0],
+																		@"format": attachments.audioFormat ?: @"wav" } }];
+	}
+	return @[ @{ @"content": parts } ];
+}
+
+- (NSDictionary *)inlinePart:(NSData *)data mimeType:(NSString *)mimeType
+{
+	return @{ @"inline_data": @{ @"mime_type": mimeType, @"data": [data base64EncodedStringWithOptions:0] } };
+}
+
+// Gemini names the model in the path, embeds one content per call and several through
+// batchEmbedContents, and spells two of OpenAI's fields its own way.
+- (NSMutableURLRequest *)geminiRequestForInput:(id)input parameters:(nullable NSDictionary<NSString *, id> *)parameters
+{
+	NSMutableDictionary<NSString *, id> *options = [NSMutableDictionary dictionary];
+	for (NSString *key in parameters) {
+		NSString *name = [key isEqualToString:@"dimensions"] ? @"outputDimensionality"
+					   : [key isEqualToString:@"task_type"] ? @"taskType" : key;
+		options[name] = parameters[key];
+	}
+	NSString *model = [@"models/" stringByAppendingString:self.modelName ?: @""];
+	NSDictionary *body = nil;
+	NSString *action = nil;
+	if ([input isKindOfClass:NSArray.class]) {
+		NSMutableArray *requests = [NSMutableArray array];
+		for (NSString *text in input) {
+			NSMutableDictionary *each = [NSMutableDictionary dictionaryWithDictionary:options];
+			each[@"model"] = model;
+			each[@"content"] = @{ @"parts": @[ @{ @"text": text } ] };
+			[requests addObject:each];
+		}
+		body = @{ @"requests": requests };
+		action = @":batchEmbedContents";
+	} else {
+		NSMutableDictionary *single = [NSMutableDictionary dictionaryWithDictionary:options];
+		single[@"content"] = [input isKindOfClass:NSString.class] ? @{ @"parts": @[ @{ @"text": input } ] } : input;
+		body = single;
+		action = @":embedContent";
+	}
+	NSURL *url = [self.endpointURL URLByAppendingPathComponent:[(self.modelName ?: @"") stringByAppendingString:action]];
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:url];
+	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+	if (self.apiKey.length > 0) {
+		[urlRequest setValue:self.apiKey forHTTPHeaderField:@"x-goog-api-key"];
+	}
+	return urlRequest;
+}
+
 - (nullable NSString *)textForRequest:(NFKInferenceRequest *)request
 {
 	NSString *prompt = request.prompt;
@@ -132,29 +243,32 @@
 		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
 		return nil;
 	}
-	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionary];
-	if (self.modelName.length > 0) {
-		body[@"model"] = self.modelName;
+	NSMutableURLRequest *urlRequest = nil;
+	if (self.apiStyle == NFKRemoteEmbeddingAPIStyleGeminiNative) {
+		urlRequest = [self geminiRequestForInput:input parameters:parameters];
+	} else {
+		NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionary];
+		if (self.modelName.length > 0) {
+			body[@"model"] = self.modelName;
+		}
+		body[@"input"] = input;
+		// Parameters fold into the body so a caller sets dimensions, encoding_format, and similar.
+		for (NSString *key in parameters) {
+			body[key] = parameters[key];
+		}
+		NSError *encodeError = nil;
+		NSData *payload = [NSJSONSerialization dataWithJSONObject:body options:0 error:&encodeError];
+		if (payload == nil) {
+			if (outError != NULL) { *outError = encodeError; }
+			return nil;
+		}
+		urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
+		urlRequest.HTTPBody = payload;
+		[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
 	}
-	body[@"input"] = input;
-	// Parameters fold into the body so a caller sets dimensions, encoding_format, and similar.
-	for (NSString *key in parameters) {
-		body[key] = parameters[key];
-	}
-
-	NSError *encodeError = nil;
-	NSData *payload = [NSJSONSerialization dataWithJSONObject:body options:0 error:&encodeError];
-	if (payload == nil) {
-		if (outError != NULL) { *outError = encodeError; }
-		return nil;
-	}
-
-	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
 	urlRequest.HTTPMethod = @"POST";
 	urlRequest.timeoutInterval = self.timeout;
-	urlRequest.HTTPBody = payload;
 	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
 
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
@@ -177,8 +291,24 @@
 }
 
 // The envelope is data[] of {index, embedding}; the vectors are ordered by index, not by position.
+// Gemini's is embedding.values for one content and embeddings[].values for a batch, in order.
 - (nullable NSArray<NSArray<NSNumber *> *> *)vectorsInBody:(NSDictionary *)body error:(NSError * _Nullable *)outError
 {
+	if ([body[@"embedding"] isKindOfClass:NSDictionary.class] && [body[@"embedding"][@"values"] isKindOfClass:NSArray.class]) {
+		return @[ body[@"embedding"][@"values"] ];
+	}
+	if ([body[@"embeddings"] isKindOfClass:NSArray.class]) {
+		NSMutableArray<NSArray<NSNumber *> *> *vectors = [NSMutableArray array];
+		for (NSDictionary *entry in body[@"embeddings"]) {
+			NSArray *values = [entry isKindOfClass:NSDictionary.class] ? entry[@"values"] : nil;
+			if (![values isKindOfClass:NSArray.class]) {
+				[self failWithCode:kNFKError_InferenceBackendFailure reason:@"an embedding entry carries no vector" error:outError];
+				return nil;
+			}
+			[vectors addObject:values];
+		}
+		return vectors;
+	}
 	NSArray *entries = body[@"data"];
 	if (![entries isKindOfClass:NSArray.class] || entries.count == 0) {
 		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no embeddings" error:outError];

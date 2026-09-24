@@ -16,11 +16,13 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKInferenceJob.h>
 
 @interface NFKStubImageBackend : NFKRemoteImageBackend
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
 @property (nonatomic, copy) NSDictionary<NSString *, NSData *> *bodiesByURL;
 @property (nonatomic, assign) NSInteger stagedStatusCode;
+@property (nonatomic, copy, nullable) NSArray<NSString *> *stagedLines;
 @end
 
 @implementation NFKStubImageBackend
@@ -36,6 +38,21 @@
 												  HTTPVersion:@"HTTP/1.1" headerFields:nil];
 	}
 	return self.bodiesByURL[request.URL.absoluteString] ?: [@"{}" dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+- (void (^)(void))streamRequest:(NSURLRequest *)request
+					lineHandler:(void (^)(NSString *))lineHandler
+			  completionHandler:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completionHandler
+{
+	if (self.requests == nil) {
+		self.requests = [NSMutableArray array];
+	}
+	[self.requests addObject:request];
+	for (NSString *line in self.stagedLines) {
+		lineHandler(line);
+	}
+	completionHandler([[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil], nil, nil);
+	return ^{};
 }
 
 @end
@@ -200,7 +217,7 @@
 	self.backend.bodiesByURL = @{ @"https://api.openai.com/v1/images/generations":
 									  [@"{\"error\":{\"message\":\"size not supported\"}}" dataUsingEncoding:NSUTF8StringEncoding] };
 	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:&error]);
-	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertEqual(error.code, kNFKError_InferenceRefused, @"a 400 is the request's problem");
 	XCTAssertTrue([error.localizedDescription containsString:@"size not supported"]);
 
 	self.backend.stagedStatusCode = 200;
@@ -210,6 +227,128 @@
 }
 
 #pragma mark The provider factory
+
+#pragma mark Provider styles
+
+- (NFKStubImageBackend *)stubFor:(NFKRemoteProvider *)provider model:(NSString *)model entries:(NSUInteger)entries
+{
+	NFKRemoteImageBackend *made = [NFKRemoteImageBackend backendForProvider:provider apiKey:@"k" modelName:model];
+	NFKStubImageBackend *stub = [NFKStubImageBackend backendWithGenerationsURL:made.generationsURL editsURL:made.editsURL];
+	stub.apiStyle = made.apiStyle;
+	stub.modelName = model;
+	NSMutableArray<NSString *> *data = [NSMutableArray array];
+	for (NSUInteger index = 0; index < entries; index++) {
+		[data addObject:[NSString stringWithFormat:@"{\"b64_json\":\"%@\"}", [self.squarePNG base64EncodedStringWithOptions:0]]];
+	}
+	NSData *envelope = [[NSString stringWithFormat:@"{\"data\":[%@]}", [data componentsJoinedByString:@","]] dataUsingEncoding:NSUTF8StringEncoding];
+	NSMutableDictionary *bodies = [NSMutableDictionary dictionary];
+	if (made.generationsURL != nil) {
+		bodies[made.generationsURL.absoluteString] = envelope;
+	}
+	if (made.editsURL != nil) {
+		bodies[made.editsURL.absoluteString] = envelope;
+	}
+	stub.bodiesByURL = bodies;
+	return stub;
+}
+
+- (void)testEachProviderGetsItsOwnPathsAndTheImagelessOnesNone
+{
+	NFKRemoteImageBackend *router = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.openRouter apiKey:@"k" modelName:@"m"];
+	XCTAssertEqualObjects(router.generationsURL.absoluteString, @"https://openrouter.ai/api/v1/images");
+	NFKRemoteImageBackend *together = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.together apiKey:@"k" modelName:@"m"];
+	XCTAssertEqualObjects(together.editsURL, together.generationsURL, @"Together edits on its generations path");
+	XCTAssertNil([NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.googleGemini apiKey:@"k" modelName:@"m"].editsURL);
+	for (NFKRemoteProvider *provider in @[ NFKRemoteProvider.groq, NFKRemoteProvider.mistral, NFKRemoteProvider.deepSeek, NFKRemoteProvider.ollama ]) {
+		XCTAssertNil([NFKRemoteImageBackend backendForProvider:provider apiKey:@"k" modelName:@"m"], @"%@", provider.identifier);
+	}
+}
+
+// xAI edits by JSON: several sources as images[] of data-URI objects, a size as a ratio.
+- (void)testXAIEditsSeveralImagesByJSONAndDerivesTheRatio
+{
+	NFKStubImageBackend *xai = [self stubFor:NFKRemoteProvider.xAI model:@"grok-imagine-image-2.0" entries:2];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"merge", NFKInputImage: (__bridge id)self.square,
+																			  NFKInputImages: @[ (__bridge id)self.square ] }
+															   parameters:@{ NFKParameterWidth: @1920, NFKParameterHeight: @1080, NFKParameterSampleCount: @2 }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [xai runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	NSURLRequest *sent = xai.requests.firstObject;
+	XCTAssertEqualObjects(sent.URL.absoluteString, @"https://api.x.ai/v1/images/edits");
+	XCTAssertEqualObjects([sent valueForHTTPHeaderField:@"Content-Type"], @"application/json");
+	NSDictionary *body = [self decodedBodyOfRequest:sent];
+	XCTAssertEqual([body[@"images"] count], 2);
+	XCTAssertTrue([body[@"images"][0][@"url"] hasPrefix:@"data:image/png;base64,"]);
+	XCTAssertEqualObjects(body[@"aspect_ratio"], @"16:9");
+	XCTAssertEqualObjects(body[@"n"], @2);
+	XCTAssertEqualObjects(body[@"response_format"], @"b64_json");
+	XCTAssertEqual([[result outputForKey:NFKOutputImages] count], 2);
+
+	NFKInferenceRequest *masked = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x", NFKInputImage: (__bridge id)self.square,
+																			 NFKInputMask: (__bridge id)self.square }];
+	XCTAssertNil([xai runInferenceForRequest:masked error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
+// Together generates and edits on one path, with width and height and the source as image_url.
+- (void)testTogetherSendsWidthHeightAndTheSourceOnItsGenerationsPath
+{
+	NFKStubImageBackend *together = [self stubFor:NFKRemoteProvider.together model:@"black-forest-labs/FLUX.1-kontext-pro" entries:1];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"night", NFKInputImage: (__bridge id)self.square,
+																			  NFKInputNegativePrompt: @"blur" }
+															   parameters:@{ NFKParameterWidth: @1024, NFKParameterHeight: @768, NFKParameterSteps: @28,
+																			 NFKParameterSeed: @3, NFKParameterGuidanceScale: @3.5 }];
+	XCTAssertNotNil([together runInferenceForRequest:request error:NULL]);
+	NSURLRequest *sent = together.requests.firstObject;
+	XCTAssertEqualObjects(sent.URL.absoluteString, @"https://api.together.xyz/v1/images/generations");
+	NSDictionary *body = [self decodedBodyOfRequest:sent];
+	XCTAssertEqualObjects(body[@"width"], @1024);
+	XCTAssertEqualObjects(body[@"height"], @768);
+	XCTAssertNil(body[@"size"]);
+	XCTAssertEqualObjects(body[@"steps"], @28);
+	XCTAssertEqualObjects(body[@"guidance_scale"], @3.5);
+	XCTAssertEqualObjects(body[@"negative_prompt"], @"blur");
+	XCTAssertEqualObjects(body[@"response_format"], @"base64");
+	XCTAssertTrue([body[@"image_url"] hasPrefix:@"data:image/png;base64,"]);
+}
+
+- (void)testOpenRouterPostsToImagesWithInputReferences
+{
+	NFKStubImageBackend *router = [self stubFor:NFKRemoteProvider.openRouter model:@"google/gemini-3.1-flash-image" entries:1];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a fox", NFKInputImage: (__bridge id)self.square }
+															   parameters:@{ NFKParameterAspectRatio: @"1:1", NFKParameterResolution: @"2K", @"quality": @"high" }];
+	XCTAssertNotNil([router runInferenceForRequest:request error:NULL]);
+	NSDictionary *body = [self decodedBodyOfRequest:router.requests.firstObject];
+	XCTAssertEqualObjects(router.requests.firstObject.URL.absoluteString, @"https://openrouter.ai/api/v1/images");
+	XCTAssertEqual([body[@"input_references"] count], 1);
+	XCTAssertEqualObjects(body[@"resolution"], @"2K");
+	XCTAssertEqualObjects(body[@"quality"], @"high");
+}
+
+- (void)testOpenAIEditsSeveralImagesAsRepeatedImageFields
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"collage", NFKInputImage: (__bridge id)self.square,
+																			  NFKInputImages: @[ (__bridge id)self.square, (__bridge id)self.square ] }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSString *body = [self multipartBodyOfRequest:self.backend.requests.firstObject];
+	XCTAssertEqual([body componentsSeparatedByString:@"name=\"image[]\""].count, 4, @"three sources, each an image[] file");
+}
+
+- (void)testAStreamedGenerationReportsPartialImagesAndFinishesWithTheCompletedOne
+{
+	self.backend.streams = YES;
+	NSString *encoded = [self.squarePNG base64EncodedStringWithOptions:0];
+	self.backend.stagedLines = @[ [NSString stringWithFormat:@"data: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"%@\",\"partial_image_index\":0}", encoded],
+								  [NSString stringWithFormat:@"data: {\"type\":\"image_generation.completed\",\"b64_json\":\"%@\"}", encoded] ];
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a square" }]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertNotNil([job.partialResult outputForKey:NFKOutputImage], @"the partial image arrived before the completed one");
+	XCTAssertNotNil([job.result outputForKey:NFKOutputImage]);
+	NSDictionary *body = [self decodedBodyOfRequest:self.backend.requests.firstObject];
+	XCTAssertEqualObjects(body[@"stream"], @YES);
+	XCTAssertEqualObjects(body[@"partial_images"], @2);
+}
 
 - (void)testTheFactoryDerivesBothURLsAndDeclinesAnthropic
 {

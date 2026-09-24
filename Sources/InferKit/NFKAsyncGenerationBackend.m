@@ -4,6 +4,7 @@
 //
 
 #import "NFKAsyncGenerationBackend.h"
+#import "NFKRemoteTransport.h"
 #import "NFKInferenceRequest.h"
 #import "NFKInferenceResult.h"
 #import "NFKInferenceKeys.h"
@@ -235,11 +236,13 @@
 - (nullable NSDictionary *)sendJSONRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
 {
 	__block NSData *resultData = nil;
+	__block NSHTTPURLResponse *resultResponse = nil;
 	__block NSError *resultError = nil;
 	dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
 	NSURLSessionDataTask *task = [self.session dataTaskWithRequest:request
 												completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
 		resultData = data;
+		resultResponse = [response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)response : nil;
 		resultError = error;
 		dispatch_semaphore_signal(semaphore);
 	}];
@@ -249,6 +252,15 @@
 	if (resultData == nil) {
 		if (outError != NULL) {
 			*outError = resultError ?: [self errorWithReason:@"the request returned no data"];
+		}
+		return nil;
+	}
+	// A failing status is the provider's answer, not a job to parse: its code says back off, change
+	// the request, or fix the configuration.
+	NSError *statusError = [NFKRemoteTransport errorForResponse:resultResponse data:resultData];
+	if (statusError != nil) {
+		if (outError != NULL) {
+			*outError = statusError;
 		}
 		return nil;
 	}

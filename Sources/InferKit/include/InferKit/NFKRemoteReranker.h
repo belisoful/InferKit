@@ -42,7 +42,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (instancetype)rerankerWithEndpointURL:(nullable NSURL *)endpointURL;
 
-/*! A reranker pointed at the provider's rerank endpoint, or nil for Anthropic. */
+/*! A reranker pointed at the provider's rerank endpoint: together (dedicated endpoints),
+	openrouter, llamacpp, and vllm serve one; every other preset returns nil. */
 + (nullable instancetype)rerankerForProvider:(NFKRemoteProvider *)provider
 									  apiKey:(nullable NSString *)apiKey
 								   modelName:(nullable NSString *)modelName;

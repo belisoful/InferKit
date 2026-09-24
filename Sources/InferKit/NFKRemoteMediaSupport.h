@@ -28,7 +28,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The audio's container from its file extension (wav, mp3), wav for in-memory samples. */
 @property (nonatomic, copy, readonly, nullable) NSString *audioFormat;
 
-/*! NFKInputDocument then NFKInputDocuments, each {data, filename}. */
+/*! The bytes of NFKInputVideo when it was kept whole rather than sampled, or nil. */
+@property (nonatomic, copy, readonly, nullable) NSData *videoData;
+
+/*! The video's container from its file extension (mp4, mov), when videoData is set. */
+@property (nonatomic, copy, readonly, nullable) NSString *videoFormat;
+
+/*! NFKInputDocument then NFKInputDocuments, each {data, filename, mediaType}: application/pdf for a
+	PDF, text/plain for an NSString or a .txt/.md/.csv/.json file, whose data is its UTF-8 text. An
+	NFKRemoteFile is {fileReference, filename, mediaType}, a file the service keeps, with no data. */
 @property (nonatomic, copy, readonly) NSArray<NSDictionary<NSString *, id> *> *documents;
 
 /*! Whether anything at all is attached. */
@@ -36,6 +44,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! Gathers the request's media, or nil with kNFKError_InferenceMissingInput naming what could not be read. */
 + (nullable instancetype)attachmentsForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError;
+
+/*! As attachmentsForRequest:error:, keeping NFKInputVideo whole under videoData rather than sampling
+	its frames when keepsVideo is set and the request names no NFKParameterVideoFrameCount. */
++ (nullable instancetype)attachmentsForRequest:(NFKInferenceRequest *)request
+									keepsVideo:(BOOL)keepsVideo
+										 error:(NSError * _Nullable *)outError;
 
 @end
 

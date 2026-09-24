@@ -28,10 +28,11 @@
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName
 {
-	if (provider.apiStyle != NFKRemoteAPIStyleOpenAIChat) {
+	if (![@[ @"openai", @"mistral" ] containsObject:provider.identifier]) {
 		return nil;
 	}
 	NFKRemoteModerationBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"moderations"]];
+	backend.moderatesConversations = [provider.identifier isEqualToString:@"mistral"];
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;
@@ -82,8 +83,14 @@
 	if (self.modelName.length > 0) {
 		body[@"model"] = self.modelName;
 	}
-	// Text alone goes as a string; with an image the input is the multimodal parts list.
-	if (image == nil) {
+	// A conversation goes whole to chat/moderations where the service has that path; text alone goes
+	// as a string; with an image the input is the multimodal parts list.
+	NSURL *url = self.endpointURL;
+	BOOL conversation = self.moderatesConversations && request.messages.count > 0 && request.prompt.length == 0 && image == nil;
+	if (conversation) {
+		url = [[self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"chat"] URLByAppendingPathComponent:@"moderations"];
+		body[@"input"] = request.messages;
+	} else if (image == nil) {
 		body[@"input"] = text;
 	} else {
 		NSString *dataURL = [NFKImageCoding dataURLForImage:image];
@@ -108,7 +115,7 @@
 		if (outError != NULL) { *outError = encodeError; }
 		return nil;
 	}
-	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:url];
 	urlRequest.HTTPMethod = @"POST";
 	urlRequest.timeoutInterval = self.timeout;
 	urlRequest.HTTPBody = payload;
@@ -134,7 +141,27 @@
 		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no moderation result" error:outError];
 	}
 	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputClassifications: [self classificationsInVerdict:verdict],
-													NFKOutputStructured: verdict }];
+													NFKOutputStructured: [self verdictWithFlag:verdict] }];
+}
+
+// Mistral's verdict carries the per-category booleans without the flag OpenAI adds, so the flag is
+// derived from them: the input is flagged when any category tripped.
+- (NSDictionary *)verdictWithFlag:(NSDictionary *)verdict
+{
+	if (verdict[@"flagged"] != nil) {
+		return verdict;
+	}
+	NSDictionary *categories = [verdict[@"categories"] isKindOfClass:NSDictionary.class] ? verdict[@"categories"] : @{};
+	BOOL tripped = NO;
+	for (id value in categories.allValues) {
+		if ([value isKindOfClass:NSNumber.class] && [value boolValue]) {
+			tripped = YES;
+			break;
+		}
+	}
+	NSMutableDictionary *flagged = [verdict mutableCopy];
+	flagged[@"flagged"] = @(tripped);
+	return flagged;
 }
 
 - (nullable NSString *)textForRequest:(NFKInferenceRequest *)request

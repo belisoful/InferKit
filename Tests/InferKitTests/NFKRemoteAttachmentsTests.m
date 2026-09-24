@@ -17,6 +17,8 @@
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKRemoteProvider.h>
+#import <InferKit/NFKImageCoding.h>
 #import "NFKTestClip.h"
 
 @interface NFKAttachStubRemoteBackend : NFKRemoteBackend
@@ -48,6 +50,7 @@
 
 @interface NFKAttachStubAnthropicBackend : NFKAnthropicBackend
 @property (nonatomic, strong) NSURLRequest *lastRequest;
+@property (nonatomic, copy, nullable) NSString *stagedBody;
 @end
 
 @implementation NFKAttachStubAnthropicBackend
@@ -57,7 +60,7 @@
 	if (outResponse != NULL) {
 		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil];
 	}
-	return [@"{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	return [(self.stagedBody ?: @"{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}") dataUsingEncoding:NSUTF8StringEncoding];
 }
 @end
 
@@ -198,6 +201,127 @@
 }
 
 #pragma mark Audio out
+
+#pragma mark Dialects
+
+- (void)testMistralReadsAPDFAsADocumentURLAndAudioAsABareString
+{
+	self.backend.chatDialect = NFKRemoteChatDialectMistral;
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"summarize",
+																			  NFKInputDocument: self.pdf,
+																			  NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:self.wav] }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSArray *parts = [self userPartsOf:self.backend.lastRequest];
+	NSDictionary *audio = parts[1];
+	XCTAssertEqualObjects(audio[@"input_audio"], [self.wavBytes base64EncodedStringWithOptions:0]);
+	NSDictionary *document = parts[2];
+	XCTAssertEqualObjects(document[@"type"], @"document_url");
+	XCTAssertTrue([document[@"document_url"] hasPrefix:@"data:application/pdf;base64,"]);
+}
+
+- (void)testAPlainTextDocumentRidesAsTextEverywhereAndAsATextSourceOnAnthropic
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"what does it say?",
+																			  NFKInputDocument: @"The launch is Tuesday." }
+															   parameters:@{ NFKParameterCitations: @YES }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSDictionary *part = [self userPartsOf:self.backend.lastRequest][1];
+	XCTAssertEqualObjects(part[@"type"], @"text");
+	XCTAssertTrue([part[@"text"] containsString:@"The launch is Tuesday."]);
+
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:request error:NULL]);
+	NSDictionary *block = [self bodyOf:self.anthropic.lastRequest][@"messages"][0][@"content"][0];
+	XCTAssertEqualObjects(block[@"source"], (@{ @"type": @"text", @"media_type": @"text/plain", @"data": @"The launch is Tuesday." }));
+	XCTAssertEqualObjects(block[@"citations"], (@{ @"enabled": @YES }));
+}
+
+// OpenRouter and vLLM read a whole clip as video_url, llama.cpp as input_video; naming a frame
+// count asks for sampled frames instead.
+- (void)testAWholeClipRidesAsAVideoPartWhereTheDialectReadsOne
+{
+	NSError *error = nil;
+	NSURL *clip = [NFKTestClip writeClipWithColors:@[ @[ @1, @0, @0 ], @[ @0, @0, @1 ] ] error:&error];
+	XCTAssertNotNil(clip, @"%@", error);
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"what happens?",
+																			  NFKInputVideo: [NFKVideoAsset videoAssetWithFileURL:clip] }];
+	self.backend.chatDialect = NFKRemoteChatDialectOpenRouter;
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSArray *parts = [self userPartsOf:self.backend.lastRequest];
+	XCTAssertEqual(parts.count, 2);
+	XCTAssertEqualObjects(parts[1][@"type"], @"video_url");
+	XCTAssertTrue([parts[1][@"video_url"][@"url"] hasPrefix:@"data:video/"]);
+
+	self.backend.chatDialect = NFKRemoteChatDialectLlamaCpp;
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	XCTAssertEqualObjects([self userPartsOf:self.backend.lastRequest][1][@"type"], @"input_video");
+
+	NFKInferenceRequest *sampled = [NFKInferenceRequest requestWithInputs:request.inputs parameters:@{ NFKParameterVideoFrameCount: @2 }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:sampled error:NULL]);
+	XCTAssertEqualObjects([self userPartsOf:self.backend.lastRequest][1][@"type"], @"image_url", @"a frame count asks for frames");
+	[NSFileManager.defaultManager removeItemAtURL:clip error:NULL];
+}
+
+#pragma mark Reply extras
+
+- (void)testAnImageRequestAsksForImageOutputAndDecodesTheReplysImages
+{
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 4, 4, 8, 16, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGImageRef square = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	NSString *png = [[NFKImageCoding PNGDataForImage:(__bridge id)square] base64EncodedStringWithOptions:0];
+	CGImageRelease(square);
+	self.backend.stagedBody = [NSString stringWithFormat:@"{\"choices\":[{\"message\":{\"content\":\"here\","
+							   "\"images\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,%@\"}}]}}]}", png];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"draw a square" } parameters:@{}
+														   outputModality:NFKModalityImage];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertEqualObjects([self bodyOf:self.backend.lastRequest][@"modalities"], (@[ @"image", @"text" ]));
+	XCTAssertNotNil([result outputForKey:NFKOutputImage]);
+	XCTAssertEqualObjects(result.text, @"here");
+}
+
+- (void)testURLCitationsAndExecutedToolsComeBackBesideTheText
+{
+	self.backend.stagedBody = @"{\"choices\":[{\"message\":{\"content\":\"Rain today.\","
+		"\"annotations\":[{\"type\":\"url_citation\",\"url_citation\":{\"url\":\"https://weather.example\",\"title\":\"Forecast\",\"start_index\":0,\"end_index\":11}}],"
+		"\"executed_tools\":[{\"index\":0,\"type\":\"browser_search\",\"arguments\":\"{\\\"query\\\":\\\"weather\\\"}\",\"output\":\"rain\"}]}}]}";
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"weather?" }] error:NULL];
+	NSDictionary *citation = [[result outputForKey:NFKOutputCitations] firstObject];
+	XCTAssertEqualObjects(citation[@"url"], @"https://weather.example");
+	XCTAssertEqualObjects(citation[@"end"], @11);
+	NSDictionary *ran = [[result outputForKey:NFKOutputServerToolResults] firstObject];
+	XCTAssertEqualObjects(ran[@"name"], @"browser_search");
+	XCTAssertEqualObjects(ran[@"output"], @"rain");
+}
+
+- (void)testAnthropicCitationsAndServerToolsComeBackPaired
+{
+	self.anthropic.stagedBody = @"{\"content\":["
+		"{\"type\":\"server_tool_use\",\"id\":\"srv_1\",\"name\":\"web_search\",\"input\":{\"query\":\"launch\"}},"
+		"{\"type\":\"web_search_tool_result\",\"tool_use_id\":\"srv_1\",\"content\":[{\"type\":\"web_search_result\",\"url\":\"https://news.example\",\"title\":\"News\"}]},"
+		"{\"type\":\"text\",\"text\":\"It launches Tuesday.\",\"citations\":[{\"type\":\"char_location\",\"cited_text\":\"The launch is Tuesday.\",\"document_index\":0,\"start_char_index\":0,\"end_char_index\":22}]}]}";
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"when?" }] error:NULL];
+	XCTAssertEqualObjects(result.text, @"It launches Tuesday.");
+	NSDictionary *citation = [[result outputForKey:NFKOutputCitations] firstObject];
+	XCTAssertEqualObjects(citation[@"text"], @"The launch is Tuesday.");
+	XCTAssertEqualObjects(citation[@"end"], @22);
+	NSDictionary *ran = [[result outputForKey:NFKOutputServerToolResults] firstObject];
+	XCTAssertEqualObjects(ran[@"name"], @"web_search");
+	XCTAssertEqualObjects(ran[@"input"], (@{ @"query": @"launch" }));
+	XCTAssertEqual([ran[@"output"] count], 1);
+}
+
+- (void)testTheProviderFactorySetsEachPresetsDialect
+{
+	NFKRemoteBackend *mistral = (NFKRemoteBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"];
+	XCTAssertEqual(mistral.chatDialect, NFKRemoteChatDialectMistral);
+	NFKRemoteBackend *vllm = (NFKRemoteBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.vLLM apiKey:nil modelName:@"m"];
+	XCTAssertEqual(vllm.chatDialect, NFKRemoteChatDialectVLLM);
+	NFKRemoteBackend *openAI = (NFKRemoteBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"];
+	XCTAssertEqual(openAI.chatDialect, NFKRemoteChatDialectStandard);
+}
 
 - (void)testASpokenReplyIsAskedForThroughModalitiesAndComesBackAsAnAudioAsset
 {

@@ -21,6 +21,31 @@ extern NSString * const NFKRemoteBackendTextKey;
 extern NSString * const NFKRemoteBackendRawKey;
 
 /*!
+	@enum       NFKRemoteChatDialect
+	@abstract   How a chat-completions service spells the media parts it reads.
+	@constant   NFKRemoteChatDialectStandard OpenAI's parts: image_url, input_audio {data, format},
+				file {filename, file_data} for a PDF; a video is sampled into frames.
+	@constant   NFKRemoteChatDialectMistral Mistral's: document_url for a PDF, and input_audio as a
+				bare base64 string.
+	@constant   NFKRemoteChatDialectOpenRouter OpenRouter's: the standard parts, with a whole video as
+				video_url.
+	@constant   NFKRemoteChatDialectVLLM vLLM's: the standard parts, with a whole video as video_url.
+	@constant   NFKRemoteChatDialectLlamaCpp llama.cpp's: the standard parts, with a whole video as
+				input_video.
+	@constant   NFKRemoteChatDialectDeepSeek DeepSeek's: the standard parts, with an uploaded file as a
+				flat {type: file, file_id}.
+	Introduced in InferKit 0.4.0.
+*/
+typedef NS_ENUM(NSInteger, NFKRemoteChatDialect) {
+	NFKRemoteChatDialectStandard = 0,
+	NFKRemoteChatDialectMistral,
+	NFKRemoteChatDialectOpenRouter,
+	NFKRemoteChatDialectVLLM,
+	NFKRemoteChatDialectLlamaCpp,
+	NFKRemoteChatDialectDeepSeek,
+};
+
+/*!
 	@class      NFKRemoteBackend
 	@abstract   An inference backend that calls an OpenAI-compatible chat-completions endpoint.
 	@discussion Depends only on Foundation, so InferKit ships it. One
@@ -44,6 +69,16 @@ extern NSString * const NFKRemoteBackendRawKey;
 				written in the endpoint's spelling keeps the value the caller wrote. The result exposes the assistant text under
 				NFKRemoteBackendTextKey and the parsed body under NFKRemoteBackendRawKey.
 
+				chatDialect names how the service spells its media parts. A dialect that reads a
+				whole video sends NFKInputVideo as one part unless the request names
+				NFKParameterVideoFrameCount, which asks for sampled frames. A request whose
+				outputModality is NFKModalityImage asks for image output, and the images in the
+				reply come back under NFKOutputImage (and NFKOutputImages). A reply's url_citation
+				annotations come back under NFKOutputCitations, and the tools a service ran itself
+				(Groq's executed_tools) under NFKOutputServerToolResults. A plain-text document
+				under NFKInputDocument rides as a text part, and an NFKRemoteFile as the service's file
+				reference ({type: file, file: {file_id}}; on Mistral, a document_url signed for it).
+
 				runInferenceForRequest: blocks until the whole reply is back, so a caller runs it
 				off the render thread. submitInferenceJobForRequest: streams instead: the text so
 				far arrives in the job's partialResult as each token does, and cancelling the job
@@ -53,6 +88,10 @@ extern NSString * const NFKRemoteBackendRawKey;
 
 /*! The chat-completions endpoint, for example a localhost server or a hosted API URL. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
+
+/*! How the service spells its media parts. Defaults to NFKRemoteChatDialectStandard;
+	NFKRemoteProvider's backendForProvider: sets the preset's dialect. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NFKRemoteChatDialect chatDialect;
 
 /*! The bearer token sent as Authorization, when the endpoint needs one. */
 @property (nonatomic, copy, nullable) NSString *apiKey;

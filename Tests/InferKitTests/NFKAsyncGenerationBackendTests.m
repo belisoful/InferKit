@@ -9,6 +9,8 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKVideoAsset.h>
+#import <InferKit/NFKRemoteTransport.h>
+#import <InferKit/NFKErrors.h>
 
 /*! A generation backend whose transport replays scripted JSON responses in order. */
 @interface NFKAsyncTestBackend : NFKAsyncGenerationBackend
@@ -43,6 +45,28 @@
 	return next;
 }
 
+@end
+
+/*! Answers every request to async.test with one status and body, so the base's own transport is
+	exercised without a network. */
+@interface NFKAsyncStubProtocol : NSURLProtocol
+@end
+
+static NSInteger NFKAsyncStubStatus = 200;
+static NSString *NFKAsyncStubBody = @"{}";
+
+@implementation NFKAsyncStubProtocol
++ (BOOL)canInitWithRequest:(NSURLRequest *)request { return [request.URL.host isEqualToString:@"async.test"]; }
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request { return request; }
+- (void)startLoading
+{
+	NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL statusCode:NFKAsyncStubStatus
+															 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Retry-After": @"7" }];
+	[self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+	[self.client URLProtocol:self didLoadData:[NFKAsyncStubBody dataUsingEncoding:NSUTF8StringEncoding]];
+	[self.client URLProtocolDidFinishLoading:self];
+}
+- (void)stopLoading {}
 @end
 
 @interface NFKAsyncGenerationBackendTests : XCTestCase
@@ -106,6 +130,28 @@
 
 	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
 	XCTAssertNotNil(job.error);
+}
+
+// The base's own transport treats a failing status as the provider's answer rather than a body to
+// read a job id from: a rate limit fails the job under its code with the reset date beside it.
+- (void)testAFailingStatusOnSubmitFailsTheJobUnderItsCode
+{
+	NFKAsyncGenerationBackend *backend = [[NFKAsyncGenerationBackend alloc] init];
+	backend.submitURL = [NSURL URLWithString:@"https://async.test/jobs"];
+	NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+	configuration.protocolClasses = @[ NFKAsyncStubProtocol.class ];
+	backend.session = [NSURLSession sessionWithConfiguration:configuration];
+	NFKAsyncStubStatus = 429;
+	NFKAsyncStubBody = @"{\"id\":\"job_1\",\"error\":\"slow down\"}";
+
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }]];
+	XCTestExpectation *ended = [self expectationWithDescription:@"job ended"];
+	job.completionHandler = ^(NFKInferenceJob *j) { [ended fulfill]; };
+	[self waitForExpectations:@[ ended ] timeout:10];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(job.error.code, kNFKError_InferenceRateLimited);
+	XCTAssertNotNil(job.error.userInfo[NFKRemoteErrorRetryAfterKey]);
+	NFKAsyncStubStatus = 200;
 }
 
 - (void)testAnUnconfiguredBackendFailsTheJobImmediately

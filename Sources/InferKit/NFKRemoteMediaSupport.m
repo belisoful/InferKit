@@ -4,6 +4,7 @@
 //
 
 #import "NFKRemoteMediaSupport.h"
+#import <InferKit/NFKRemoteFileStore.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKImageCoding.h>
@@ -20,11 +21,20 @@ static const NSUInteger NFKRemoteDefaultVideoFrameCount = 8;
 @property (nonatomic, copy, readwrite, nullable) NSData *audioData;
 @property (nonatomic, copy, readwrite, nullable) NSString *audioFormat;
 @property (nonatomic, copy, readwrite) NSArray<NSDictionary<NSString *, id> *> *documents;
+@property (nonatomic, copy, readwrite, nullable) NSData *videoData;
+@property (nonatomic, copy, readwrite, nullable) NSString *videoFormat;
 @end
 
 @implementation NFKRemoteAttachments
 
 + (nullable instancetype)attachmentsForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self attachmentsForRequest:request keepsVideo:NO error:outError];
+}
+
++ (nullable instancetype)attachmentsForRequest:(NFKInferenceRequest *)request
+									keepsVideo:(BOOL)keepsVideo
+										 error:(NSError * _Nullable *)outError
 {
 	NFKRemoteAttachments *attachments = [[self alloc] init];
 
@@ -54,23 +64,46 @@ static const NSUInteger NFKRemoteDefaultVideoFrameCount = 8;
 			return [self fail:outError reason:@"the video under NFKInputVideo has no file to read"];
 		}
 		NSNumber *requested = request.parameters[NFKParameterVideoFrameCount];
-		NSUInteger count = [requested isKindOfClass:NSNumber.class] && requested.integerValue > 0
-			? (NSUInteger)requested.integerValue : NFKRemoteDefaultVideoFrameCount;
-		NSError *sampleError = nil;
-		NSArray *frames = [NFKVideoSampling framesOfVideoAtURL:videoURL count:count error:&sampleError];
-		if (frames == nil) {
-			return [self fail:outError reason:[NSString stringWithFormat:@"the video under NFKInputVideo could not be sampled: %@",
-											   sampleError.localizedDescription ?: @"unknown"]];
-		}
-		for (id frame in frames) {
-			NSData *png = [NFKImageCoding PNGDataForImage:frame];
-			if (png != nil) {
-				[images addObject:png];
+		if (keepsVideo && ![requested isKindOfClass:NSNumber.class]) {
+			attachments.videoData = [NSData dataWithContentsOfURL:videoURL];
+			if (attachments.videoData == nil) {
+				return [self fail:outError reason:@"the video under NFKInputVideo could not be read"];
 			}
+			attachments.videoFormat = videoURL.pathExtension.length > 0 ? videoURL.pathExtension.lowercaseString : @"mp4";
+		} else if (![self addFramesOfVideoAtURL:videoURL requested:requested to:images error:outError]) {
+			return nil;
 		}
 	}
 	attachments.imagePNGs = images;
+	return [self attachmentsFinishingAudioAndDocuments:attachments request:request error:outError];
+}
 
++ (BOOL)addFramesOfVideoAtURL:(NSURL *)videoURL
+					requested:(nullable NSNumber *)requested
+						   to:(NSMutableArray<NSData *> *)images
+						error:(NSError * _Nullable *)outError
+{
+	NSUInteger count = [requested isKindOfClass:NSNumber.class] && requested.integerValue > 0
+		? (NSUInteger)requested.integerValue : NFKRemoteDefaultVideoFrameCount;
+	NSError *sampleError = nil;
+	NSArray *frames = [NFKVideoSampling framesOfVideoAtURL:videoURL count:count error:&sampleError];
+	if (frames == nil) {
+		return [self fail:outError reason:[NSString stringWithFormat:@"the video under NFKInputVideo could not be sampled: %@",
+										   sampleError.localizedDescription ?: @"unknown"]] != nil;
+	}
+	for (id frame in frames) {
+		NSData *png = [NFKImageCoding PNGDataForImage:frame];
+		if (png != nil) {
+			[images addObject:png];
+		}
+	}
+	return YES;
+}
+
++ (nullable instancetype)attachmentsFinishingAudioAndDocuments:(NFKRemoteAttachments *)attachments
+													   request:(NFKInferenceRequest *)request
+														 error:(NSError * _Nullable *)outError
+{
 	id audio = [request inputForKey:NFKInputAudio];
 	if (audio != nil) {
 		if ([audio isKindOfClass:NFKAudioAsset.class]) {
@@ -100,6 +133,7 @@ static const NSUInteger NFKRemoteDefaultVideoFrameCount = 8;
 	if ([moreDocuments isKindOfClass:NSArray.class]) {
 		[documentSources addObjectsFromArray:moreDocuments];
 	}
+	NSSet<NSString *> *textExtensions = [NSSet setWithArray:@[ @"txt", @"md", @"markdown", @"csv", @"json", @"html", @"xml" ]];
 	for (id source in documentSources) {
 		if ([source isKindOfClass:NSURL.class]) {
 			NSData *data = [NSData dataWithContentsOfURL:source];
@@ -107,11 +141,20 @@ static const NSUInteger NFKRemoteDefaultVideoFrameCount = 8;
 				return [self fail:outError reason:[NSString stringWithFormat:@"the document at %@ could not be read", [source path]]];
 			}
 			NSString *name = [(NSURL *)source lastPathComponent];
-			[documents addObject:@{ @"data": data, @"filename": name.length > 0 ? name : @"document.pdf" }];
+			BOOL isText = [textExtensions containsObject:[(NSURL *)source pathExtension].lowercaseString];
+			[documents addObject:@{ @"data": data, @"filename": name.length > 0 ? name : @"document.pdf",
+									@"mediaType": isText ? @"text/plain" : @"application/pdf" }];
 		} else if ([source isKindOfClass:NSData.class]) {
-			[documents addObject:@{ @"data": source, @"filename": @"document.pdf" }];
+			[documents addObject:@{ @"data": source, @"filename": @"document.pdf", @"mediaType": @"application/pdf" }];
+		} else if ([source isKindOfClass:NFKRemoteFile.class]) {
+			NFKRemoteFile *file = source;
+			[documents addObject:@{ @"fileReference": file, @"filename": file.filename ?: file.identifier,
+									@"mediaType": file.mimeType ?: @"application/pdf" }];
+		} else if ([source isKindOfClass:NSString.class]) {
+			[documents addObject:@{ @"data": [(NSString *)source dataUsingEncoding:NSUTF8StringEncoding],
+									@"filename": @"document.txt", @"mediaType": @"text/plain" }];
 		} else {
-			return [self fail:outError reason:@"a document under NFKInputDocument or NFKInputDocuments is not an NSURL or NSData"];
+			return [self fail:outError reason:@"a document under NFKInputDocument or NFKInputDocuments is not an NSURL, NSData, NSString, or NFKRemoteFile"];
 		}
 	}
 	attachments.documents = documents;
@@ -120,7 +163,7 @@ static const NSUInteger NFKRemoteDefaultVideoFrameCount = 8;
 
 - (BOOL)isEmpty
 {
-	return self.imagePNGs.count == 0 && self.audioData == nil && self.documents.count == 0;
+	return self.imagePNGs.count == 0 && self.audioData == nil && self.videoData == nil && self.documents.count == 0;
 }
 
 + (nullable instancetype)fail:(NSError * _Nullable *)outError reason:(NSString *)reason
