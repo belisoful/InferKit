@@ -63,4 +63,30 @@
 			self.position.x, self.position.y, self.confidence];
 }
 
+#pragma mark NSSecureCoding
+
++ (BOOL)supportsSecureCoding
+{
+	return YES;
+}
+
+- (void)encodeWithCoder:(NSCoder *)coder
+{
+	[coder encodeObject:self.name forKey:@"name"];
+	[coder encodeInteger:self.index forKey:@"index"];
+	// The point goes out as two numbers, which every platform decodes the same way.
+	[coder encodeDouble:self.position.x forKey:@"x"];
+	[coder encodeDouble:self.position.y forKey:@"y"];
+	[coder encodeDouble:self.confidence forKey:@"confidence"];
+}
+
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
+{
+	CGPoint position = CGPointMake([coder decodeDoubleForKey:@"x"], [coder decodeDoubleForKey:@"y"]);
+	return [self initWithName:[coder decodeObjectOfClass:NSString.class forKey:@"name"]
+						index:[coder decodeIntegerForKey:@"index"]
+					 position:position
+				   confidence:[coder decodeDoubleForKey:@"confidence"]];
+}
+
 @end

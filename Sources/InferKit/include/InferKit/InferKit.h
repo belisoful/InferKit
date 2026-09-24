@@ -16,10 +16,16 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKAudioAsset.h>
+#import <InferKit/NFKQuadrilateral.h>
 #import <InferKit/NFKDetection.h>
 #import <InferKit/NFKKeypoint.h>
 #import <InferKit/NFKClassification.h>
+#import <InferKit/NFKDecisionQuestion.h>
+#import <InferKit/NFKDecisionAnswer.h>
 #import <InferKit/NFKAudioSegment.h>
+#import <InferKit/NFKMIDINote.h>
+#import <InferKit/NFKMIDISequence.h>
+#import <InferKit/NFKMusicBeat.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceJob.h>

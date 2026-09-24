@@ -69,4 +69,54 @@
 	XCTAssertNil([NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"x" }].segments);
 }
 
+#pragma mark Archiving
+
+- (void)testAClassificationSurvivesASecureRoundTrip
+{
+	NFKClassification *classification = [NFKClassification classificationWithLabel:@"speech"
+																		classIndex:3
+																		confidence:0.75];
+	NSError *error = nil;
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:classification requiringSecureCoding:YES error:&error];
+	XCTAssertNotNil(data, @"%@", error);
+
+	NFKClassification *read = [NSKeyedUnarchiver unarchivedObjectOfClass:NFKClassification.class
+																fromData:data
+																   error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqualObjects(read.label, @"speech");
+	XCTAssertEqual(read.classIndex, 3);
+	XCTAssertEqual(read.confidence, 0.75);
+	XCTAssertEqualObjects(read, classification);
+}
+
+- (void)testAnAudioSegmentSurvivesASecureRoundTrip
+{
+	NFKAudioSegment *segment = [NFKAudioSegment segmentWithStartSeconds:15.25
+															 endSeconds:45.5
+																  label:@"verse"
+															 confidence:0.9];
+	NSError *error = nil;
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:segment requiringSecureCoding:YES error:&error];
+	XCTAssertNotNil(data, @"%@", error);
+
+	NFKAudioSegment *read = [NSKeyedUnarchiver unarchivedObjectOfClass:NFKAudioSegment.class fromData:data error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqual(read.startSeconds, 15.25);
+	XCTAssertEqual(read.endSeconds, 45.5);
+	XCTAssertEqualObjects(read.label, @"verse");
+	XCTAssertEqual(read.confidence, 0.9);
+	XCTAssertEqualObjects(read, segment);
+}
+
+- (void)testATranscriptsSegmentsArchiveAsOneArray
+{
+	NSArray<NFKAudioSegment *> *segments = @[
+		[NFKAudioSegment segmentWithStartSeconds:0 endSeconds:1.5 label:nil confidence:0.7],
+		[NFKAudioSegment segmentWithStartSeconds:1.5 endSeconds:3 label:@"speech" confidence:0.8],
+	];
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:segments requiringSecureCoding:YES error:NULL];
+	NSSet *classes = [NSSet setWithObjects:NSArray.class, NFKAudioSegment.class, nil];
+	XCTAssertEqualObjects([NSKeyedUnarchiver unarchivedObjectOfClasses:classes fromData:data error:NULL], segments);
+}
 @end

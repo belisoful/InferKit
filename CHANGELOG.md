@@ -16,6 +16,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),
   the audio counterpart of `NFKInputImages`. A backend attaches them in order after `NFKInputAudio`.
 
+- `NFKDetection` gains a nullable `quadrilateral` and an initializer that takes one, deriving the
+  bounding box from it. A detection from an engine that reports no corners is unchanged.
+
+#### More of Vision behind the contract
+
+- `NFKVisionClassificationBackend` names what an image shows from Vision's taxonomy, filtered by a
+  confidence floor or by Vision's own precision-recall curve.
+- `NFKVisionAnimalBackend` finds cats and dogs, and reports which animals the installed revision
 #### Two error codes an app can act on
 
 - `kNFKError_InferenceRefused` and `kNFKError_InferenceRateLimited` join `NFKInferenceError`. A
@@ -31,6 +39,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the model declined as a refusal: a content-filter stop or a `refusal` message on the OpenAI shape,
   and the `refusal` stop reason on the Messages API, streamed or not; an Anthropic stream error event
   maps its type the same way.
+
+  transcribes a recording.
+- Vision normalizes from the lower left and the contract from the top left, so every box and point
+  is flipped on the way out and a face landmark is mapped out of its face box first.
+- The frame processors take pixel formats of their own (`420v` for interpolation, `RGhA` for flow),
+  so a frame is transferred into the format the processor publishes and the result comes back as
+  BGRA. A flow field arrives at the processor's own smaller resolution, packed the way
+  `NFKMLXRAFT` packs one, so either engine reads the same. The upscaler's scale factor defaults to
+  the smallest the machine offers, and one it does not offer is refused by name.
+- Each engine is an alternative rather than a replacement: the MLX models keep chosen weights, finer
+  mattes, translation, word timestamps, and a training path. `Docs/inference-guide.md` lists which
+  overlaps which.
 
 - The contract's text parameters reach a remote service. The core keys are camelCase
   (`maxTokens`, `topP`, `topK`, `stopSequences`) and `NFKRemoteBackend` folded every untranslated
@@ -69,6 +89,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Every mixture of experts pages its routed experts
 - **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
   in a process can come back wrong by a factor of about a million, silently and with no infinity or
   not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not

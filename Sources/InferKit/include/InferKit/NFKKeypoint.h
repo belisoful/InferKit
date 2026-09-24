@@ -21,8 +21,12 @@ NS_ASSUME_NONNULL_BEGIN
 				pose, 0 is the nose); name is the human-readable joint name when the backend has a
 				joint list, nil when it returns indices only. A low confidence marks an occluded or
 				uncertain joint.
+
+				The type archives: a consumer that records a result per frame writes an array of them
+				through NSKeyedArchiver with secure coding on, and reads it back with
+				unarchivedObjectOfClasses:. Conformance introduced in InferKit 0.4.0.
 */
-@interface NFKKeypoint : NSObject <NSCopying>
+@interface NFKKeypoint : NSObject <NSCopying, NSSecureCoding>
 
 /*! The joint name, or nil when the backend returns a joint index only. */
 @property (nonatomic, readonly, nullable, copy) NSString *name;

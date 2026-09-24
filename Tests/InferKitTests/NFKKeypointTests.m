@@ -50,4 +50,35 @@
 	XCTAssertNil(empty.pose);
 }
 
+#pragma mark Archiving
+
+- (void)testAKeypointSurvivesASecureRoundTrip
+{
+	NFKKeypoint *keypoint = [NFKKeypoint keypointWithName:@"left_wrist"
+													index:9
+												 position:CGPointMake(0.25, 0.75)
+											   confidence:0.875];
+	NSError *error = nil;
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:keypoint requiringSecureCoding:YES error:&error];
+	XCTAssertNotNil(data, @"%@", error);
+
+	NFKKeypoint *read = [NSKeyedUnarchiver unarchivedObjectOfClass:NFKKeypoint.class fromData:data error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqualObjects(read.name, @"left_wrist");
+	XCTAssertEqual(read.index, 9);
+	XCTAssertTrue(CGPointEqualToPoint(read.position, CGPointMake(0.25, 0.75)));
+	XCTAssertEqual(read.confidence, 0.875);
+	XCTAssertEqualObjects(read, keypoint);
+}
+
+- (void)testAPoseArchivesAsOneArray
+{
+	NSArray<NFKKeypoint *> *pose = @[
+		[NFKKeypoint keypointWithName:nil index:0 position:CGPointMake(0.5, 0.1) confidence:0.6],
+		[NFKKeypoint keypointWithName:@"nose" index:1 position:CGPointMake(0.5, 0.2) confidence:0.7],
+	];
+	NSData *data = [NSKeyedArchiver archivedDataWithRootObject:pose requiringSecureCoding:YES error:NULL];
+	NSSet *classes = [NSSet setWithObjects:NSArray.class, NFKKeypoint.class, nil];
+	XCTAssertEqualObjects([NSKeyedUnarchiver unarchivedObjectOfClasses:classes fromData:data error:NULL], pose);
+}
 @end

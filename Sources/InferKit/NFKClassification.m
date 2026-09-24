@@ -58,4 +58,25 @@
 			NSStringFromClass(self.class), self.label ?: @"?", (long)self.classIndex, self.confidence];
 }
 
+#pragma mark NSSecureCoding
+
++ (BOOL)supportsSecureCoding
+{
+	return YES;
+}
+
+- (void)encodeWithCoder:(NSCoder *)coder
+{
+	[coder encodeObject:self.label forKey:@"label"];
+	[coder encodeInteger:self.classIndex forKey:@"classIndex"];
+	[coder encodeDouble:self.confidence forKey:@"confidence"];
+}
+
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
+{
+	return [self initWithLabel:[coder decodeObjectOfClass:NSString.class forKey:@"label"]
+					classIndex:[coder decodeIntegerForKey:@"classIndex"]
+					confidence:[coder decodeDoubleForKey:@"confidence"]];
+}
+
 @end

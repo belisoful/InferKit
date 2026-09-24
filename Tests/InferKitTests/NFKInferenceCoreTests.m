@@ -166,4 +166,19 @@
 	}
 }
 
+#pragma mark Error codes
+
+- (void)testTheErrorCodesKeepTheirNumbers
+{
+	// The numbers reach logs, crash reports, and an Objective-C switch, so renumbering one silently
+	// changes what an old record means.
+	XCTAssertEqual((NSInteger)kNFKError_InferenceNotReady, 1);
+	XCTAssertEqual((NSInteger)kNFKError_InferenceMissingInput, 2);
+	XCTAssertEqual((NSInteger)kNFKError_InferenceBackendFailure, 3);
+	XCTAssertEqual((NSInteger)kNFKError_InferenceUnsupported, 4);
+	XCTAssertEqual((NSInteger)kNFKError_RemoteUnreachable, 5);
+	XCTAssertEqual((NSInteger)kNFKError_InferenceRefused, 6);
+	XCTAssertEqual((NSInteger)kNFKError_InferenceRateLimited, 7);
+}
+
 @end

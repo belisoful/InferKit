@@ -17,8 +17,12 @@ NS_ASSUME_NONNULL_BEGIN
 				classification) returns an NSArray<NFKClassification *> under NFKOutputClassifications,
 				ordered most-confident first. classIndex is the model's raw class id; label is the
 				human-readable name when the backend has a class list, nil when it returns indices only.
+
+				The type archives: a consumer that records a result per frame writes an array of them
+				through NSKeyedArchiver with secure coding on, and reads it back with
+				unarchivedObjectOfClasses:. Conformance introduced in InferKit 0.4.0.
 */
-@interface NFKClassification : NSObject <NSCopying>
+@interface NFKClassification : NSObject <NSCopying, NSSecureCoding>
 
 /*! The class name, or nil when the backend returns a class index only. */
 @property (nonatomic, readonly, nullable, copy) NSString *label;
