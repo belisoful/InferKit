@@ -162,6 +162,37 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKAnthropicBackend` asks for a schema through `output_config.format` when a thinking budget is
   set on a pre-4.6 model, because every model refuses a forced tool beside `budget_tokens`.
 
+#### Gated models download from an app
+
+- `NFKHFHub.defaultAccessToken` is the token every hub without its own sends, process-wide. The
+  download-and-build factories make their own hubs, so this is how an app, which has no `HF_TOKEN`
+  environment, reaches a gated repository through them. A hub's own `accessToken` still wins, and
+  `HF_TOKEN` is the fallback.
+
+#### The model cache has a size limit and stays out of backups
+
+- `NFKHFHub.cacheSizeLimit` caps the bytes the cache holds; `NFKHFHubUnlimitedCacheSize` (-1), the
+  default, is no cap. Over the limit, a download evicts whole `<repo>/<revision>` snapshots, least
+  recently used first. The snapshot just requested stays even when it alone exceeds the limit.
+- Only a snapshot the hub owns is evicted: the hub marks every snapshot it downloads into with an
+  `.inferkit-owned` file, so other files in a shared folder are never deleted. A snapshot cached
+  before this release becomes owned on its next download or cache hit, or through
+  `adoptCachedRepo:revision:error:`.
+- `pinCachedRepo:revision:error:` keeps a snapshot through every eviction, before or after its first
+  download; `unpinCachedRepo:revision:error:` and `isCachedRepoPinned:revision:` go with it.
+- `excludesCacheFromBackup` defaults to `YES`: the first download excludes the cache folder from
+  Time Machine on macOS and from iCloud backup on iOS and tvOS. This changes the default behavior; a
+  cache already on disk is excluded on its next download or cache hit.
+- `defaultCacheSizeLimit` and `defaultExcludesCacheFromBackup` are process-wide class defaults that
+  every new hub starts from, including the hubs the companion factories create.
+- `+setExcludedFromBackup:forURL:error:`, `+isExcludedFromBackup:`, `cacheSize`,
+  `trimCacheToSizeLimitWithError:`, and `removeCachedRepo:revision:error:` manage the cache directly.
+- `Tools/validation-assets/fetch.py` excludes its asset root and the Hugging Face cache from Time
+  Machine (`--keep-in-backup` skips it).
+- The asynchronous `downloadRepo:revision:path:sha256:completionHandler:` runs at user-initiated
+  quality of service, like every other core queue. It ran at utility, which Apple Silicon schedules
+  on the efficiency cores.
+
 #### Typed decisions from Jev
 
 - `NFKTypeSafeBackend` calls TypeSafe AI's System One API, which serves Jev. Jev does not generate

@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The default revision resolved when none is given: "main". */
 extern NSString * const NFKHFHubDefaultRevision;
 
+/*! A cache size limit of -1: the cache grows without bound. Introduced in InferKit 0.4.0. */
+extern const long long NFKHFHubUnlimitedCacheSize;
+
 /*!
 	@class      NFKHFHub
 	@abstract   Resolves and downloads public Hugging Face model files into a local cache.
@@ -33,6 +36,19 @@ extern NSString * const NFKHFHubDefaultRevision;
 
 				downloadRepo:revision:path:sha256:error: blocks until the file is ready, so a
 				caller runs it off the main thread.
+
+				The cache is managed in snapshots, one per repository revision
+				(<cache>/<repo>/<revision>). A snapshot the hub downloads into is owned by the hub,
+				which marks it with an .inferkit-owned file; only an owned snapshot is ever evicted.
+				A pinned snapshot carries an .inferkit-keep file as well and is never evicted. Two
+				policies apply to the cache:
+				- cacheSizeLimit → after each download the least recently used snapshots are removed
+				  until the cache fits. A snapshot is used when a download fetches into it or finds a
+				  file already cached there.
+				- excludesCacheFromBackup → the cache folder is excluded from Time Machine and iCloud
+				  backup, because everything in it can be downloaded again.
+				Each policy has a process-wide class default that a new hub starts from, so hubs a
+				companion package creates internally follow it too.
 */
 @interface NFKHFHub : NSObject
 
@@ -48,13 +64,146 @@ extern NSString * const NFKHFHubDefaultRevision;
 /*!
 	@property   accessToken
 	@abstract   The token a gated or private repository is fetched with, sent as a bearer credential.
-	@discussion Defaults to the HF_TOKEN environment variable, which is
-				where the tooling around Hugging Face conventionally keeps it, and is nil when that is
-				unset. A public repository needs none.
+	@discussion Unset, a request uses defaultAccessToken, then the HF_TOKEN environment variable,
+				which is where the tooling around Hugging Face conventionally keeps it; nil when neither
+				is set. A public repository needs none.
 */
 @property (nonatomic, copy, nullable) NSString *accessToken;
 
+/*!
+	@property   defaultAccessToken
+	@abstract   The token every hub without its own accessToken sends, process-wide. Defaults to nil.
+	@discussion The way an app reaches a gated repository through a factory that makes its own hub,
+				such as the InferKitMLX download-and-build factories: set it once, from the app's own
+				secure storage, before the first download. An app has no HF_TOKEN environment. Read on
+				each request, so setting it later applies to hubs that already exist.
+				Introduced in InferKit 0.4.0.
+*/
+@property (class, nonatomic, copy, nullable) NSString *defaultAccessToken;
+
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL;
+
+#pragma mark Cache policy
+
+/*!
+	@property   defaultCacheSizeLimit
+	@abstract   The cache size limit, in bytes, that a new hub starts with. Defaults to
+				NFKHFHubUnlimitedCacheSize (-1).
+	@discussion Process-wide. A hub reads it once, at initialization; changing it later leaves existing
+				hubs unchanged. A negative value means no limit. Introduced in InferKit 0.4.0.
+*/
+@property (class, nonatomic, assign) long long defaultCacheSizeLimit;
+
+/*!
+	@property   defaultExcludesCacheFromBackup
+	@abstract   Whether a new hub excludes its cache folder from backup. Defaults to YES.
+	@discussion Process-wide. A hub reads it once, at initialization. Introduced in InferKit 0.4.0.
+*/
+@property (class, nonatomic, assign) BOOL defaultExcludesCacheFromBackup;
+
+/*!
+	@property   cacheSizeLimit
+	@abstract   The most bytes the cache folder holds on disk before snapshots are evicted; negative
+				for no limit.
+	@discussion Starts from defaultCacheSizeLimit. Size is the space allocated on disk for every file
+				under cacheDirectoryURL, including files the hub did not download. Eviction:
+				- Unit → a whole <repo>/<revision> snapshot, so a model split across files is never
+				  left partial.
+				- Order → least recently used first.
+				- Kept → the snapshot of the file just requested, even when it alone exceeds the
+				  limit. The limit is a target, and the requested file is always returned.
+				- Kept → a snapshot holding an in-flight .download file.
+				- Kept → a pinned snapshot (pinCachedRepo:revision:error:).
+				- Kept → anything the hub does not own. Only snapshots carrying the .inferkit-owned
+				  marker are eligible, so a shared or user-chosen folder loses nothing else. A
+				  snapshot cached before the marker existed becomes owned when next downloaded into
+				  or read from the cache, or through adoptCachedRepo:revision:error:.
+				A backend holding a memory-mapped file from an evicted snapshot keeps working; the
+				next load downloads the file again. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) long long cacheSizeLimit;
+
+/*!
+	@property   excludesCacheFromBackup
+	@abstract   Whether a download marks cacheDirectoryURL as excluded from backup. Starts from
+				defaultExcludesCacheFromBackup.
+	@discussion YES → the first download that finds the folder included excludes it, through
+				NSURLIsExcludedFromBackupKey: the sticky exclusion `tmutil addexclusion` sets on
+				macOS, and the iCloud backup exclusion on iOS and tvOS. The whole folder is
+				excluded, so every snapshot under it is too. NO → the hub leaves the setting as it
+				finds it; setExcludedFromBackup:forURL:error: reverses an exclusion.
+				Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) BOOL excludesCacheFromBackup;
+
+/*!
+	@method     setExcludedFromBackup:forURL:error:
+	@abstract   Excludes a file or folder from backup, or includes it again; YES on success.
+	@discussion Sets NSURLIsExcludedFromBackupKey. The setting travels with the item when it moves.
+				Works on any location, including folders the hub does not manage.
+				Introduced in InferKit 0.4.0.
+*/
++ (BOOL)setExcludedFromBackup:(BOOL)excluded forURL:(NSURL *)url error:(NSError * _Nullable *)outError;
+
+/*! YES when the file or folder is excluded from backup. Introduced in InferKit 0.4.0. */
++ (BOOL)isExcludedFromBackup:(NSURL *)url;
+
+/*!
+	@method     cacheSize
+	@abstract   The bytes allocated on disk for every file under cacheDirectoryURL; 0 without one.
+	@discussion Walks the folder, so it costs time in proportion to the number of files.
+				Introduced in InferKit 0.4.0.
+*/
+- (long long)cacheSize;
+
+/*!
+	@method     trimCacheToSizeLimitWithError:
+	@abstract   Evicts least recently used snapshots until the cache fits cacheSizeLimit; YES on
+				success.
+	@discussion A download calls it after each fetch; a caller calls it after lowering the limit.
+				A negative limit evicts nothing. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)trimCacheToSizeLimitWithError:(NSError * _Nullable *)outError;
+
+/*!
+	@method     adoptCachedRepo:revision:error:
+	@abstract   Marks an existing snapshot as owned by the hub, which makes it eligible for eviction;
+				YES on success.
+	@discussion For a snapshot cached before the hub marked ownership. A download or cache hit
+				adopts a snapshot on its own; this adopts one without touching its files. The
+				snapshot counts as just used. Fails when nothing is cached for the repo and revision.
+				A nil revision is "main". Introduced in InferKit 0.4.0.
+*/
+- (BOOL)adoptCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     pinCachedRepo:revision:error:
+	@abstract   Protects a snapshot from eviction; YES on success.
+	@discussion Writes an .inferkit-keep file into the snapshot folder, creating the folder when the
+				repo is not downloaded yet, so a model can be pinned before its first download.
+				removeCachedRepo:revision:error: still removes a pinned snapshot. A nil revision is
+				"main". Introduced in InferKit 0.4.0.
+*/
+- (BOOL)pinCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     unpinCachedRepo:revision:error:
+	@abstract   Makes a pinned snapshot eligible for eviction again; YES on success, including when it
+				was not pinned.
+	@discussion A nil revision is "main". Introduced in InferKit 0.4.0.
+*/
+- (BOOL)unpinCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
+
+/*! YES when the snapshot is pinned. A nil revision is "main". Introduced in InferKit 0.4.0. */
+- (BOOL)isCachedRepoPinned:(NSString *)repo revision:(nullable NSString *)revision;
+
+/*!
+	@method     removeCachedRepo:revision:error:
+	@abstract   Removes one cached snapshot and any folder it leaves empty; YES on success, including
+				when nothing was cached.
+	@discussion A nil revision is "main". Introduced in InferKit 0.4.0.
+*/
+- (BOOL)removeCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
 
 /*!
 	@method     defaultCacheDirectoryURL
