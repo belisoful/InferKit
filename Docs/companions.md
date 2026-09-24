@@ -33,6 +33,32 @@ on the session's own channels. The model reports what the backend declares throu
 `supportedParameterKeys` and `supportedInputKeys`.
 It needs macOS 27 / iOS 27 and a build with the macOS 27 SDK; the package floor stays at 26.
 
+## InferKitAppleSwift (optional companion)
+
+`InferKitAppleSwift/` is a separate SwiftPM package (macOS 26 / iOS 26) holding the Apple inference
+APIs that ship in Swift alone. The core wraps every Apple framework an Objective-C target can call;
+four APIs it cannot, because `SpeechAnalyzer` is an actor whose results arrive as an
+`AsyncSequence`, Vision's `RecognizeDocumentsRequest` and `DetectLensSmudgeRequest` live in Vision's
+Swift module with no `VN*` header, and the Translation framework is Swift-only throughout.
+
+- `NFKVisionDocumentBackend` turns a photographed page into a transcript under `NFKOutputText` and
+  its structure under `NFKOutputStructured`: paragraphs, lists, and tables as rows of cells.
+- `NFKVisionSmudgeBackend` judges whether the lens was dirty, as one classification labeled `smudge`.
+- `NFKSpeechAnalyzerBackend` transcribes on Apple's newer speech stack, with a segment per reported
+  range. `prepare()` reserves the locale and installs its assets; `isReady` answers from what it
+  found, because the system reports installed locales asynchronously.
+
+- `NFKTranslationBackend` translates on device. Text arrives under `NFKInputPrompt`,
+  `NFKParameterTargetLanguage` names the language to translate into, `NFKParameterSourceLanguage` is
+  optional because Apple detects it, and the translation comes back under `NFKOutputText`. A pair the
+  system will not translate reports `kNFKError_InferenceUnsupported`; a pair whose model is not
+  installed reports `kNFKError_InferenceNotReady`. Every wait on the framework is bounded by
+  `responseTimeout`, because it does not always answer.
+
+Every type is `@objc`, which is the package's purpose. Linking it puts `NFKSpeechAnalyzerProvider`
+ahead of the core's own recognizer for `NFKCapabilityTranscription`, and `NFKTranslationProvider`
+behind any MLX translator for `NFKCapabilityTranslation`.
+
 ## InferKitMLX (optional companion)
 
 `InferKitMLX/` is a separate SwiftPM package (Apple Silicon, macOS 14 / iOS 17) that keeps MLX out

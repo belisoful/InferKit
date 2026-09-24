@@ -9,6 +9,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ## [Unreleased]
 
+### InferKitAppleSwift (companion)
+
+#### Apple's Swift-only APIs, reachable from Objective-C
+
+- A third companion package hosts the Apple inference APIs the core cannot: `SpeechAnalyzer` is an
+  actor whose results arrive as an `AsyncSequence`, and Vision's `RecognizeDocumentsRequest` and
+  `DetectLensSmudgeRequest` ship with no `VN*` header. The core is a pure Objective-C target, so it
+  can reach none of them. Every type the package adds is `@objc`, which is its purpose.
+- `NFKVisionDocumentBackend` reads a page into a transcript and a structure: paragraphs, lists, and
+  tables as rows of cells. `NFKVisionSmudgeBackend` judges the lens. `NFKSpeechAnalyzerBackend`
+  transcribes with a segment per reported range.
+- `isReady` on the analyzer answers from what `prepare()` found, because the system reports
+  availability and installed locales asynchronously and the property cannot wait.
+- Linking the package names `NFKSpeechAnalyzerProvider` for `NFKCapabilityTranscription`, between
+  `NFKMLXWhisperProvider` and the core's own recognizer.
+- `NFKTranslationBackend` translates on device through Apple's Translation framework, which is
+  Swift-only. Text arrives under `NFKInputPrompt`, `NFKParameterTargetLanguage` names the language to
+  translate into, and `NFKParameterSourceLanguage` is optional because Apple detects it. The
+  translation comes back under `NFKOutputText`. A pair Apple does not translate reports
+  `kNFKError_InferenceUnsupported`, and a pair whose model is not installed reports
+  `kNFKError_InferenceNotReady`, which are different answers.
+- `NFKTranslationProvider` answers `NFKCapabilityTranslation`, behind `NFKMLXTranslationProvider` in
+  the core's default chain.
+
 ### Core (`InferKit`)
 
 #### Several clips in one request
