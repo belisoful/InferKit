@@ -19,12 +19,9 @@ import MLXNN
 
 /// Turns a `CGImage` into the flattened patches and grid the Qwen3-VL vision tower reads. The image is
 /// smart-resized so both sides are a multiple of `patchSize · mergeSize` and the pixel budget stays in
-/// range, rescaled and normalized to `-1 … 1`, the single frame doubled to the temporal patch, and
-/// patchified in the reference's `(t, h, w)` order.
-///
-/// The resize is CoreGraphics rather than the reference's bicubic, so the patch pixels are a close
-/// approximation, the documented difference the SmolVLM processor also carries; the grid and the patch
-/// layout are the reference's exactly.
+/// range, rescaled and normalized, the single frame doubled to the temporal patch, and patchified in the
+/// reference's `(t, h, w)` order. The resize is the releases' `resample: 3` as `Qwen2VLImageProcessorFast`
+/// runs it: torchvision's antialiased bicubic on the 8-bit image, PIL's filter with `int16` weights.
 public struct NFKMLXQwen3VLImageProcessor {
     public let patchSize: Int
     public let temporalPatchSize: Int
@@ -92,18 +89,20 @@ public struct NFKMLXQwen3VLImageProcessor {
     /// The flattened patches `[grid_t·grid_h·grid_w, 3·temporalPatch·patch²]` and the `(t, h, w)` grid.
     public func process(_ image: CGImage) -> (pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int)) {
         let (height, width) = smartResize(height: image.height, width: image.width)
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,
-                                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        context?.interpolationQuality = .high
-        context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let source = NFKMLXImageBridge.rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var rgb = [UInt8](repeating: 0, count: source.width * source.height * 3)
+        for pixel in 0 ..< source.width * source.height {
+            for channel in 0 ..< 3 { rgb[pixel * 3 + channel] = source.bytes[pixel * 4 + channel] }
+        }
+        let bytes = NFKMLXPILResample.resampled(rgb, width: source.width, height: source.height,
+                                                toWidth: width, toHeight: height, filter: .bicubic,
+                                                precision: .torchvision)
 
         // Channel-first pixels, normalized by the processor's mean and std.
         var planar = [Float](repeating: 0, count: 3 * height * width)
         for y in 0 ..< height {
             for x in 0 ..< width {
-                let base = (y * width + x) * 4
+                let base = (y * width + x) * 3
                 for channel in 0 ..< 3 {
                     planar[channel * height * width + y * width + x] =
                         (Float(bytes[base + channel]) / 255 - mean[channel]) / std[channel]
@@ -570,15 +569,20 @@ public final class NFKMLXQwen3VL: NSObject {
     }
 
     /// The decoder configuration of a release that nests Qwen3-VL under `outerPrefix` (Sa2VA's
-    /// `model.`); its `text_config` sits in the same `config.json`.
-    static func decoderConfiguration(directoryURL: URL, outerPrefix: String) throws -> NFKMLXLanguageConfiguration {
+    /// `model.`); its `text_config` sits in the same `config.json`. `shipsHead` states whether the
+    /// weights carry an untied head; nil reads it from the release's weight files.
+    static func decoderConfiguration(directoryURL: URL, outerPrefix: String,
+                                     shipsHead: Bool? = nil) throws -> NFKMLXLanguageConfiguration {
         let data = try Data(contentsOf: directoryURL.appendingPathComponent("config.json"))
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let text = json["text_config"] as? [String: Any] else {
+              var text = json["text_config"] as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("the config carries no text_config")
         }
+        // transformers 4.56 writes the wrapper's name into `text_config.architectures`
+        // (`Qwen2_5_VLForConditionalGeneration`); the text config states the decoder regardless.
+        text["architectures"] = nil
         var configuration = try NFKMLXLanguage.configuration(fromJSON: text)
-        configuration.tiesWordEmbeddings = !(try releaseShipsHead(directoryURL: directoryURL, outerPrefix: outerPrefix))
+        configuration.tiesWordEmbeddings = !(try shipsHead ?? releaseShipsHead(directoryURL: directoryURL, outerPrefix: outerPrefix))
         return configuration
     }
 

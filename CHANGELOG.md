@@ -657,6 +657,141 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   SegFormer, Zero-DCE, Whisper, and CLIP entries name the recipes they ship, and BigVGAN and Mimi are
   offline on their unshipped discriminators.
 
+#### Florence-2
+
+- `NFKMLXFlorence2` ports Florence-2 (Microsoft, MIT): a DaViT image tower, a projector, and a BART
+  encoder-decoder that caption, caption in detail, read text, and detect objects from one image, the
+  task named by its prompt token. All four releases run at reference parity against each release's own
+  remote code, the geometry read from its `config.json`: `Florence-2-large` (vision tower 0.99999976,
+  encoder 1.0000001, first-step logits 0.9999998), `Florence-2-base` (1.0000002 at the projector,
+  encoder, and logits), and the fine-tuned `-base-ft` and `-large-ft`. Under each release's generation
+  settings (three beams, early stopping, no repeated 3-gram) every task matches the reference token for
+  token, and detection returns the reference's objects and boxes as `NFKDetection`s.
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and its `completionHandler:` peer.
+- Customization: `NFKMLXFlorence2.network(directoryURL:)`, `NFKMLXFlorence2Objective` (the release's own
+  `labels=` loss, 0.4842833 through the port's forward against 0.48428318 in float64), and `fineTune`
+  (LoRA rank 8 on the decoder's query and value projections, or the language model and projector
+  with the vision tower frozen). Microsoft publishes no fine-tuning script, so the default optimizer,
+  AdamW at 1e-4, is this package's choice. `save(_:toDirectoryURL:release:)` writes a directory the
+  factory loads.
+
+#### TrOCR
+
+- `NFKMLXTrOCR` ports TrOCR (Microsoft, MIT): a ViT encoder and a transformer decoder that
+  read one line of printed, handwritten, or scene text. All eleven releases run at reference parity
+  against transformers' `VisionEncoderDecoderModel`: the processor bit-exact on every release, the
+  first-step logits within 1e-6 of 1, and greedy transcription token for token. The stage-1 releases
+  and `trocr-large-printed` use sinusoidal positions; the small releases read XLM-R's SentencePiece
+  vocabulary.
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and its `completionHandler:` peer. `maximumTokens` and `beams` bound the decode.
+- Customization follows the authors' fairseq recipe: `NFKMLXTrOCR.network(directoryURL:)`,
+  `NFKMLXTrOCRTrainable` (`.everything` or `.decoder`), `NFKMLXTrOCRObjective` (cross-entropy
+  normalized by tokens), and `fineTune` (AdamW 2e-5, weight decay 1e-4, fairseq's inverse square root
+  with 500 warm-up updates, `NFKMLXLearningRateSchedule.fairseqInverseSquareRoot`). On identical logits
+  the loss is 0.27900872 against 0.27900857 in float64 (small-handwritten) and 0.17066547 against
+  0.17066573 (base-printed). transformers 4.57's own `labels=` loss for this model shifts the labels
+  twice, so the recipe follows fairseq. `save(_:toDirectoryURL:release:)` writes a directory the
+  factory loads.
+
+#### Table Transformer
+
+- `NFKMLXTableTransformer` ports Table Transformer (Microsoft, MIT), the pre-norm DETR that finds
+  tables in a page and the rows, columns, and headers of a table, returned as `NFKDetection`s. All five
+  releases run at reference parity against transformers' `TableTransformerForObjectDetection`: table
+  detection (15 queries, two classes; logits 0.99999976, boxes 1.0) and structure recognition v1.0 and
+  v1.1 (`-all`, `-fin`, `-pub`; every seam within 3e-7 of 1). The v1.1 releases' transformers ResNet
+  loads through the timm layout, and each release's `preprocessor_config.json` sets its input size
+  (`NFKMLXTableTransformerSizing`).
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and their `completionHandler:` peers. `confidenceThreshold` (0.6 by default) sets which detections
+  are returned.
+- Customization is the authors' DETR recipe: `NFKMLXTableTransformer.network(directoryURL:labels:)`
+  (a new label set starts a fresh classifier), `NFKMLXTableTransformerTrainable` (`.heads`,
+  `.transformer`, or `.everything`), `NFKMLXTableTransformerObjective` (Hungarian matching over
+  `NFKMLXHungarian`, then class cross-entropy with the no-object weight 0.4, L1, and GIoU at 1, 5, and
+  2), and `fineTune` (AdamW 5e-5, the backbone at a fifth of that, weight decay 1e-4, clip 0.1, and a
+  0.9 step decay per epoch). Against the authors' `HungarianMatcher` and `SetCriterion` the matching is
+  equal and the totals are 10.560086 against 10.560085 (detection) and 3.6116304 against 3.6116302
+  (v1.1 structure). `save(_:toDirectoryURL:release:)` writes a directory the factory loads.
+
+#### V-JEPA 2
+
+- `NFKMLXVJEPA2` ports V-JEPA 2 (Meta, MIT), a self-supervised video encoder: a clip or an image in, a
+  mean-pooled feature vector out under `NFKOutputEmbedding`, and, from the four classification
+  releases, every class ranked under `NFKOutputClassifications`. The position signal is a 3D rotary
+  embedding whose cosine and sine tables tile as two halves, which the port reproduces. All eight
+  releases run at reference parity against transformers' `VJEPA2Model` and
+  `VJEPA2ForVideoClassification`: ViT-L, ViT-H, and ViT-g at 256 and 384, and the SSv2 and Diving-48
+  classifiers. Every seam of every release is within 1e-6 of 1, the attentive pooler and class logits
+  included.
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and their `completionHandler:` peers. `frameLimit` sets how many frames are sampled from a video.
+- Customization is Meta's frozen-encoder probe: `NFKMLXVJEPA2.network(directoryURL:labels:)` (a release
+  without a pooler gets a fresh one initialized as the reference's `AttentivePooler`),
+  `NFKMLXVJEPA2Trainable` (`.probe` or `.classifier`), `NFKMLXVJEPA2Objective` (cross-entropy, 2.8547907
+  against 2.8547912 on identical logits), `NFKMLXVJEPA2Processor.clip(frames:configuration:)`, and
+  `fineTune` (AdamW 5e-3, weight decay 0.01, a cosine to zero, `NFKMLXLearningRateSchedule.warmupCosine`,
+  equal to the reference's at every step). `save(_:toDirectoryURL:)` writes a directory, labels included,
+  that the factory loads.
+
+#### Sa2VA
+
+- `NFKMLXSa2VA` ports Sa2VA (ByteDance, Apache-2.0), a segmentation VLM: one image and a referring
+  prompt in, the answer under `NFKOutputText`, and a mask under `NFKOutputMask` when the answer carries
+  `[SEG]`. The decoder's hidden state at `[SEG]` becomes a SAM prompt. One directory factory serves the
+  four families the releases span, read from `config.json`: InternVL (`NFKMLXSa2VANet`, InternViT-300M or
+  InternViT-6B under a qwen2, phi3, or InternLM2 decoder), Qwen-VL (`NFKMLXSa2VAQwenNet`, Qwen3-VL or
+  Qwen2.5-VL), LLaVA-1.5 (`NFKMLXSa2VALLaVANet`), and SAM 3 grounding (`Sa2VA-Qwen3-VL-4B-SAM3`); the rest
+  ground with SAM 2's tracker. Each release's chat template (`NFKMLXSa2VATemplate`), end token, and
+  tokenizer come from its directory; `NFKMLXInternLM2Tokenizer` reads InternLM2's SentencePiece model.
+- At reference parity at float32 against the repo's own `Sa2VAChatModel`: `Sa2VA-4B` (InternViT
+  1.0000001, `[SEG]` bridge 1.0, mask 0.9999997, IoU 1.0), `Sa2VA-1B`, and `Sa2VA-InternVL3-2B`, each
+  with greedy generation token for token and the backend returning the reference's answer; four-layer
+  cuts of `Sa2VA-8B`, `-26B`, `Sa2VA-InternVL3-8B`, `-14B`, `Sa2VA-LLaVA-1.5-7B`, and
+  `Sa2VA-Qwen2_5-VL-7B`, every seam within
+  1e-6 of 1; and `Sa2VA-Qwen3-VL-2B`, `-4B`, `-4B-SAM3` (SAM 3 grounding), and `Sa2VA-Qwen2_5-VL-3B`,
+  token for token with every seam within 5e-6 of 1 and mask IoU 1.0. That is every released size. On Qwen3-VL the `[SEG]` bridge reads the last decoder layer's
+  output before the final norm, as the reference does under transformers 4.57.
+  `NFKMLXSa2VANet.loadWeights(fromDirectory:dtype:)` loads at bfloat16, the dtype the releases declare,
+  or at float32; the bfloat16 load measures InternViT 0.99959 and mask IoU 0.99981 against float32.
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and its `completionHandler:` peer.
+- Customization is the authors' own recipe: LoRA (rank 128, alpha 256) on the language model's linear
+  layers, the embeddings and head, the `[SEG]` bridge, the mask decoder, and InternVL's projector
+  trained. `NFKMLXSa2VAObjective` is the language model's cross-entropy over the answer plus 2 × sigmoid
+  cross-entropy and 0.5 × dice on 12,544 uncertainty-sampled points of each of five masks. Against the
+  authors' `_compute_loss` on Sa2VA-1B: mask term 0.34273592 against 0.34273607, dice 0.14848039
+  against 0.1484804, language 0.26715532 against 0.26715347 in float64. `fineTune` (one overload per
+  family) runs AdamW 4e-5, weight decay 0.05, clip 1, under mmengine's linear warm-up and cosine
+  (`NFKMLXLearningRateSchedule.mmengineWarmupCosine`, equal to mmengine's at every step). `NFKMLXSa2VAExample`
+  carries a training sample; `NFKMLXLoRA.merge(into:)` then `save(_:toDirectoryURL:release:)` writes a
+  directory the factory loads.
+
+#### Cosmos Tokenizer
+
+- `NFKMLXCosmosTokenizer` ports NVIDIA's Cosmos Tokenizer (weights under the NVIDIA Open Model License,
+  code Apache-2.0): all ten `Cosmos-0.1-Tokenizer-*` releases, continuous and discrete, image and causal
+  video, one per `NFKMLXCosmosTokenizerVariant`. An image or clip becomes a latent grid or FSQ tokens
+  (`NFKMLXCosmosTokenizerCode`, `codeForImage:error:`, `codeForFrames:error:`) and back
+  (`framesForCode:error:`); the backend reconstructs an image or a clip. The loader reads the
+  release's TorchScript directly.
+- At reference parity against NVIDIA's own `cosmos_predict1.tokenizer` modules at float32, seam by seam
+  on every variant: encoder output 0.9999999999961 or closer, reconstructions 0.99999999999911 or
+  closer, every discrete token equal. The four releases whose `autoencoder.jit` holds different
+  weights from their encoder and decoder pair carry a second record each. The releases store the Haar
+  taps as a bfloat16 buffer, so the port computes them.
+- Factories: `backendWithVariant:weightsURL:error:`, the download
+  `backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:` and its `completionHandler:`
+  peer, `tokenizerWithVariant:weightsURL:error:`, `tokenizerWithVariant:encoderWeightsURL:decoderWeightsURL:error:`,
+  and `register()` (all ten under `cosmos-tokenizer-<variant>`).
+- Customization is NVIDIA's post-training objective: `NFKMLXCosmosTokenizerObjective` (L1 plus 0.1 × a
+  VGG-16 perceptual term over `NFKMLXVGG16Features`, with the optional Gram term), measured against
+  `ColorLoss` and `PerceptualLoss` on identical tensors (perceptual 1.052784 against 1.0527844);
+  `NFKMLXCosmosTokenizerTrainable` (`.everything`, or `.decoder`, which keeps every latent and token the
+  release's); and `fineTune` (AdamW 1e-4, betas 0.5 and 0.999, weight decay 0.01, a 5,000-step linear
+  warm-up).
 
 #### Typed decisions on device
 

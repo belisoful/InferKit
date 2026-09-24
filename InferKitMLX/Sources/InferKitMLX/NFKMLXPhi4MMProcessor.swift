@@ -320,12 +320,25 @@ enum NFKMLXPILResample {
         }
     }
 
+    /// How the filter weights are quantized before the fixed-point sum.
+    enum Precision: Sendable {
+        /// PIL's: 22 fractional bits.
+        case pil
+        /// torchvision's 8-bit antialiased resize (`F.resize` on a `uint8` tensor): every weight of an
+        /// axis held in an `int16`, at the most fractional bits that axis's largest weight allows.
+        case torchvision
+    }
+
     private static let precisionBits = 32 - 8 - 2
 
+    /// Resamples the width first, then the height, skipping an axis whose size does not change, as PIL
+    /// and torchvision's 8-bit resize both do.
     static func resampled(_ pixels: [UInt8], width: Int, height: Int, toWidth: Int, toHeight: Int,
-                          filter: Filter = .bilinear) -> [UInt8] {
+                          filter: Filter = .bilinear, precision: Precision = .pil) -> [UInt8] {
         var image = pixels
-        if toWidth != width { image = pass(image, rows: height, columns: width, toColumns: toWidth, filter: filter) }
+        if toWidth != width {
+            image = pass(image, rows: height, columns: width, toColumns: toWidth, filter: filter, precision: precision)
+        }
         guard toHeight != height else { return image }
         let columns = toWidth
         var transposed = [UInt8](repeating: 0, count: columns * height * 3)
@@ -336,7 +349,8 @@ enum NFKMLXPILResample {
                 }
             }
         }
-        let scaled = pass(transposed, rows: columns, columns: height, toColumns: toHeight, filter: filter)
+        let scaled = pass(transposed, rows: columns, columns: height, toColumns: toHeight, filter: filter,
+                          precision: precision)
         var result = [UInt8](repeating: 0, count: columns * toHeight * 3)
         for column in 0 ..< columns {
             for row in 0 ..< toHeight {
@@ -348,9 +362,10 @@ enum NFKMLXPILResample {
         return result
     }
 
-    private static func pass(_ pixels: [UInt8], rows: Int, columns: Int, toColumns: Int, filter: Filter) -> [UInt8] {
-        let weights = coefficients(from: columns, to: toColumns, filter: filter)
-        let half = 1 << (precisionBits - 1)
+    private static func pass(_ pixels: [UInt8], rows: Int, columns: Int, toColumns: Int, filter: Filter,
+                             precision: Precision) -> [UInt8] {
+        let (weights, bits) = quantizedCoefficients(from: columns, to: toColumns, filter: filter, precision: precision)
+        let half = 1 << (bits - 1)
         var result = [UInt8](repeating: 0, count: rows * toColumns * 3)
         for row in 0 ..< rows {
             for column in 0 ..< toColumns {
@@ -363,24 +378,31 @@ enum NFKMLXPILResample {
                     sums.2 += Int(pixels[source + 2]) * weight
                 }
                 let destination = (row * toColumns + column) * 3
-                result[destination] = clipped(sums.0)
-                result[destination + 1] = clipped(sums.1)
-                result[destination + 2] = clipped(sums.2)
+                result[destination] = clipped(sums.0, bits: bits)
+                result[destination + 1] = clipped(sums.1, bits: bits)
+                result[destination + 2] = clipped(sums.2, bits: bits)
             }
         }
         return result
     }
 
-    private static func clipped(_ accumulated: Int) -> UInt8 {
-        UInt8(Swift.max(0, Swift.min(255, accumulated >> precisionBits)))
+    private static func clipped(_ accumulated: Int, bits: Int) -> UInt8 {
+        UInt8(Swift.max(0, Swift.min(255, accumulated >> bits)))
     }
 
     static func coefficients(from inSize: Int, to outSize: Int,
                              filter: Filter = .bilinear) -> [(start: Int, weights: [Int])] {
+        quantizedCoefficients(from: inSize, to: outSize, filter: filter, precision: .pil).spans
+    }
+
+    /// The normalized filter weights of each output sample, quantized as `precision` does, with the
+    /// number of fractional bits they carry.
+    static func quantizedCoefficients(from inSize: Int, to outSize: Int, filter: Filter,
+                                      precision: Precision) -> (spans: [(start: Int, weights: [Int])], bits: Int) {
         let scale = Double(inSize) / Double(outSize)
         let filterScale = Swift.max(scale, 1)
         let support = filter.support * filterScale
-        return (0 ..< outSize).map { index in
+        let normalized: [(Int, [Double])] = (0 ..< outSize).map { index in
             let center = scale * (Double(index) + 0.5)
             let start = Swift.max(Int(center - support + 0.5), 0)
             let end = Swift.min(Int(center + support + 0.5), inSize)
@@ -391,11 +413,22 @@ enum NFKMLXPILResample {
                 raw.append(weight)
                 total += weight
             }
-            let quantized = raw.map { weight -> Int in
-                let scaled = (total != 0 ? weight / total : weight) * Double(1 << precisionBits)
-                return Int(scaled < 0 ? scaled - 0.5 : scaled + 0.5)
-            }
-            return (start, quantized)
+            return (start, raw.map { total != 0 ? $0 / total : $0 })
         }
+        var bits = precisionBits
+        if precision == .torchvision {
+            let largest = normalized.flatMap(\.1).max() ?? 0
+            bits = 0
+            while bits < 22, Int(0.5 + largest * Double(1 << (bits + 1))) < 1 << 15 {
+                bits += 1
+            }
+        }
+        let spans = normalized.map { start, weights in
+            (start, weights.map { weight -> Int in
+                let scaled = weight * Double(1 << bits)
+                return Int(scaled < 0 ? scaled - 0.5 : scaled + 0.5)
+            })
+        }
+        return (spans, bits)
     }
 }
