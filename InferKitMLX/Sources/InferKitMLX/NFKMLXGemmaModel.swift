@@ -39,6 +39,13 @@ public struct NFKMLXGemmaConfiguration: Sendable {
     public var rmsEpsilon: Float
     public var headCount: Int
     public var keyValueHeadCount: Int
+    /// The key-value head count of the FULL-attention layers, which a release that shares keys and
+    /// values states separately (`num_global_key_value_heads`). Nil leaves every layer on
+    /// `keyValueHeadCount`.
+    public var globalKeyValueHeadCount: Int?
+    /// Whether a FULL-attention layer reuses its key projection as its value projection. The
+    /// checkpoint of such a release carries no `v_proj` on those layers.
+    public var attentionKeyEqualsValue: Bool
     public var headDimensions: Int
     /// A FULL-attention layer runs wider heads than a sliding one. The config names this separately
     /// (`global_head_dim`), and using `head_dim` for both makes seven of the layers the wrong size.
@@ -84,7 +91,8 @@ public struct NFKMLXGemmaConfiguration: Sendable {
 
     public init(hiddenSize: Int = 1536, layerCount: Int = 35, intermediateSize: Int = 6144,
                 vocabularySize: Int = 262_144, rmsEpsilon: Float = 1e-6, headCount: Int = 8,
-                keyValueHeadCount: Int = 1, headDimensions: Int = 256,
+                keyValueHeadCount: Int = 1, globalKeyValueHeadCount: Int? = nil,
+                attentionKeyEqualsValue: Bool = false, headDimensions: Int = 256,
                 globalHeadDimensions: Int = 512, slidingWindow: Int = 512,
                 ropeTheta: Float = 10_000, globalRopeTheta: Float = 1_000_000,
                 globalPartialRotaryFactor: Float = 0.25, perLayerInputSize: Int = 256,
@@ -100,6 +108,8 @@ public struct NFKMLXGemmaConfiguration: Sendable {
         self.rmsEpsilon = rmsEpsilon
         self.headCount = headCount
         self.keyValueHeadCount = keyValueHeadCount
+        self.globalKeyValueHeadCount = globalKeyValueHeadCount
+        self.attentionKeyEqualsValue = attentionKeyEqualsValue
         self.headDimensions = headDimensions
         self.globalHeadDimensions = globalHeadDimensions
         self.slidingWindow = slidingWindow
@@ -117,8 +127,8 @@ public struct NFKMLXGemmaConfiguration: Sendable {
         self.moeIntermediateSize = moeIntermediateSize
     }
 
-    /// The released `google/gemma-4-E2B-it` text decoder.
-    public static let e2b = NFKMLXGemmaConfiguration()
+    /// The released `google/gemma-4-E2B-it` text decoder: every fifth layer attends globally.
+    public static let e2b = NFKMLXGemmaConfiguration(layerTypes: (0 ..< 35).map { $0 % 5 == 4 ? .full : .sliding })
 
     /// A tiny mixture-of-experts geometry, matching the `gemma4_moe` reference record. It exercises the
     /// routed branch beside the dense feed-forward without a released checkpoint.
@@ -137,10 +147,25 @@ public struct NFKMLXGemmaConfiguration: Sendable {
         globalPartialRotaryFactor: 0.25, perLayerInputSize: 0, sharedKeyValueLayers: 0,
         finalLogitSoftcap: 0, layerTypes: [.sliding, .sliding, .full])
 
-    /// The released `google/gemma-4-12B-it` text decoder.
+    /// A tiny geometry whose FULL-attention layer shares its key and value projections
+    /// (`attention_k_eq_v`) and runs its own key-value head count, which is what the 26B-A4B, the
+    /// 12B unified, and the 31B releases all do. The two counts are set apart so a net that ignores
+    /// the override builds the wrong shape rather than the right one by coincidence.
+    public static let sharedKeyValueTiny = NFKMLXGemmaConfiguration(
+        hiddenSize: 64, layerCount: 2, intermediateSize: 96, vocabularySize: 131, headCount: 4,
+        keyValueHeadCount: 2, globalKeyValueHeadCount: 1, attentionKeyEqualsValue: true,
+        headDimensions: 16, globalHeadDimensions: 32, slidingWindow: 64,
+        globalPartialRotaryFactor: 0.25, perLayerInputSize: 0, sharedKeyValueLayers: 0,
+        finalLogitSoftcap: 0, layerTypes: [.sliding, .full], perLayerVocabularySize: 131)
+
+    /// The released `google/gemma-4-12B-it` unified text decoder: every sixth layer attends globally
+    /// through one key-value head whose keys are its values, and no layer takes a per-layer input or
+    /// shares another layer's keys and values.
     public static let twelveB = NFKMLXGemmaConfiguration(
         hiddenSize: 3840, layerCount: 48, intermediateSize: 15360, headCount: 16,
-        keyValueHeadCount: 8, slidingWindow: 1024)
+        keyValueHeadCount: 8, globalKeyValueHeadCount: 1, attentionKeyEqualsValue: true,
+        slidingWindow: 1024, perLayerInputSize: 0, sharedKeyValueLayers: 0,
+        layerTypes: (0 ..< 48).map { $0 % 6 == 5 ? .full : .sliding })
 
     /// The first layer that shares keys and values with an earlier one.
     var firstSharedLayer: Int { layerCount - sharedKeyValueLayers }
@@ -167,8 +192,30 @@ public struct NFKMLXGemmaConfiguration: Sendable {
         kind == .full ? globalHeadDimensions : headDimensions
     }
 
+    /// The key-value head count a layer of this kind runs.
+    ///
+    /// The separate full-attention count is gated on `attention_k_eq_v`: the reference applies the
+    /// override only for a release that also shares the two projections.
+    func keyValueHeadCount(for kind: NFKMLXGemmaAttentionKind) -> Int {
+        guard kind == .full, attentionKeyEqualsValue, let global = globalKeyValueHeadCount else {
+            return keyValueHeadCount
+        }
+        return global
+    }
+
+    /// Whether a layer of this kind reuses its key projection as its value projection.
+    func sharesKeyAndValue(for kind: NFKMLXGemmaAttentionKind) -> Bool {
+        attentionKeyEqualsValue && kind == .full
+    }
+
     /// The width of the second embedding, which holds every layer's own input.
     var perLayerEmbeddingWidth: Int { layerCount * perLayerInputSize }
+
+    /// Whether the release carries a per-layer input embedding at all.
+    ///
+    /// The E-series sets `hidden_size_per_layer_input`; the larger releases (the 26B-A4B, the 12B,
+    /// the 31B) set it to zero and their checkpoints carry none of the per-layer tensors.
+    var hasPerLayerInput: Bool { perLayerInputSize > 0 }
 }
 
 /// Gemma 4's normalization: a plain RMS scale, `x · w`, with the weight initialized to one.
@@ -187,8 +234,7 @@ final class NFKGemmaNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon)
-        return normalized * weight
+        NFKReferenceRounding.scaledNorm(x, weight: weight, eps: epsilon)
     }
 }
 
@@ -196,7 +242,7 @@ final class NFKGemmaNorm: Module {
 final class NFKGemmaAttention: Module {
     @ModuleInfo(key: "q_proj") var queryProjection: Linear
     @ModuleInfo(key: "k_proj") var keyProjection: Linear
-    @ModuleInfo(key: "v_proj") var valueProjection: Linear
+    @ModuleInfo(key: "v_proj") var valueProjection: Linear?
     @ModuleInfo(key: "o_proj") var outputProjection: Linear
     @ModuleInfo(key: "q_norm") var queryNorm: NFKGemmaNorm
     @ModuleInfo(key: "k_norm") var keyNorm: NFKGemmaNorm
@@ -219,9 +265,13 @@ final class NFKGemmaAttention: Module {
             ? NFKGemmaRotary(width: width, theta: c.globalRopeTheta,
                              proportion: c.globalPartialRotaryFactor)
             : nil
+        inverseFrequencies = proportionalRope?.frequencies
+            ?? (0 ..< width / 2).map { 1 / powf(c.ropeTheta(for: kind), Float(2 * $0) / Float(width)) }
         _queryProjection.wrappedValue = Linear(c.hiddenSize, c.headCount * width, bias: false)
-        _keyProjection.wrappedValue = Linear(c.hiddenSize, c.keyValueHeadCount * width, bias: false)
-        _valueProjection.wrappedValue = Linear(c.hiddenSize, c.keyValueHeadCount * width, bias: false)
+        let keyValueHeads = c.keyValueHeadCount(for: kind)
+        _keyProjection.wrappedValue = Linear(c.hiddenSize, keyValueHeads * width, bias: false)
+        _valueProjection.wrappedValue = c.sharesKeyAndValue(for: kind)
+            ? nil : Linear(c.hiddenSize, keyValueHeads * width, bias: false)
         _outputProjection.wrappedValue = Linear(c.headCount * width, c.hiddenSize, bias: false)
         _queryNorm.wrappedValue = NFKGemmaNorm(dimensions: width, eps: c.rmsEpsilon)
         _keyNorm.wrappedValue = NFKGemmaNorm(dimensions: width, eps: c.rmsEpsilon)
@@ -229,8 +279,14 @@ final class NFKGemmaAttention: Module {
         super.init()
     }
 
+    /// This layer's rotary inverse frequencies `[width / 2]`, zero past a proportional rotary's turned pairs.
+    let inverseFrequencies: [Float]
+
     /// Applies the rotary to the leading channels only, which is what a partial factor means.
     private func turned(_ x: MLXArray) -> MLXArray {
+        if NFKReferenceRounding.isReduced(x) {
+            return NFKReferenceRounding.rotary(x, inverseFrequencies: MLXArray(inverseFrequencies), offset: 0)
+        }
         if let proportionalRope { return proportionalRope(x) }
         return rope(x, offset: 0)
     }
@@ -256,11 +312,18 @@ final class NFKGemmaAttention: Module {
             keys = shared.keys
             values = shared.values
         } else {
-            keys = keyNorm(keyProjection(x)
-                .reshaped([batch, length, c.keyValueHeadCount, width])).transposed(0, 2, 1, 3)
+            let heads = c.keyValueHeadCount(for: kind)
+            let projected = keyProjection(x).reshaped([batch, length, heads, width])
+            keys = keyNorm(projected).transposed(0, 2, 1, 3)
             keys = turned(keys)
-            var v = valueProjection(x).reshaped([batch, length, c.keyValueHeadCount, width])
-            v = v * rsqrt((v * v).mean(axis: -1, keepDims: true) + valueEpsilon)
+            // A sharing layer takes the key PROJECTION as its value, before the norm and the rotary.
+            var v: MLXArray
+            if let valueProjection {
+                v = valueProjection(x).reshaped([batch, length, heads, width])
+            } else {
+                v = projected
+            }
+            v = NFKReferenceRounding.scaledNorm(v, weight: nil, eps: valueEpsilon)
             values = v.transposed(0, 2, 1, 3)
         }
 
@@ -273,10 +336,9 @@ final class NFKGemmaAttention: Module {
         // the fused attention refuses a mask that does not promote to its own type, so the mask takes
         // the queries' dtype. Invisible at float32, which is why no float32 run ever raised it.
         effective = effective.map { $0.asType(queries.dtype) }
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values,
-            // The queries are already per-head normalized, so the reference attends at scale 1.
-            scale: 1, mask: effective)
+        // The queries are already per-head normalized, so the reference attends at scale 1.
+        let attended = NFKReferenceRounding.attention(queries: queries, keys: keys, values: values,
+                                                      scale: 1, mask: effective)
         let output = outputProjection(attended.transposed(0, 2, 1, 3)
             .reshaped([batch, length, c.headCount * width]))
         return (output, keys, values)
@@ -291,9 +353,9 @@ final class NFKGemmaBlock: Module {
     @ModuleInfo(key: "post_attention_layernorm") var postAttentionNorm: NFKGemmaNorm
     @ModuleInfo(key: "pre_feedforward_layernorm") var preFeedForwardNorm: NFKGemmaNorm
     @ModuleInfo(key: "post_feedforward_layernorm") var postFeedForwardNorm: NFKGemmaNorm
-    @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerNorm: NFKGemmaNorm
-    @ModuleInfo(key: "per_layer_input_gate") var perLayerGate: Linear
-    @ModuleInfo(key: "per_layer_projection") var perLayerProjection: Linear
+    @ModuleInfo(key: "post_per_layer_input_norm") var postPerLayerNorm: NFKGemmaNorm?
+    @ModuleInfo(key: "per_layer_input_gate") var perLayerGate: Linear?
+    @ModuleInfo(key: "per_layer_projection") var perLayerProjection: Linear?
     @ParameterInfo(key: "layer_scalar") var layerScalar: MLXArray
 
     // The routed-expert branch, present only in a mixture release. It runs BESIDE the dense feed-forward
@@ -316,9 +378,11 @@ final class NFKGemmaBlock: Module {
         _postAttentionNorm.wrappedValue = NFKGemmaNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _preFeedForwardNorm.wrappedValue = NFKGemmaNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _postFeedForwardNorm.wrappedValue = NFKGemmaNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _postPerLayerNorm.wrappedValue = NFKGemmaNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _perLayerGate.wrappedValue = Linear(c.hiddenSize, c.perLayerInputSize, bias: false)
-        _perLayerProjection.wrappedValue = Linear(c.perLayerInputSize, c.hiddenSize, bias: false)
+        if c.hasPerLayerInput {
+            _postPerLayerNorm.wrappedValue = NFKGemmaNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
+            _perLayerGate.wrappedValue = Linear(c.hiddenSize, c.perLayerInputSize, bias: false)
+            _perLayerProjection.wrappedValue = Linear(c.perLayerInputSize, c.hiddenSize, bias: false)
+        }
         _layerScalar.wrappedValue = MLXArray.ones([1])
         if c.isMixtureOfExperts {
             _router.wrappedValue = NFKGemmaRouter(hiddenSize: c.hiddenSize, expertCount: c.expertCount,
@@ -332,7 +396,7 @@ final class NFKGemmaBlock: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray, perLayerInput: MLXArray, mask: MLXArray?,
+    func callAsFunction(_ x: MLXArray, perLayerInput: MLXArray?, mask: MLXArray?,
                         shared: (keys: MLXArray, values: MLXArray)?)
         -> (output: MLXArray, keys: MLXArray, values: MLXArray) {
         let (mixed, keys, values) = attention(inputNorm(x), mask: mask, shared: shared)
@@ -343,8 +407,11 @@ final class NFKGemmaBlock: Module {
 
         // This layer's own slice of the second embedding. The activation sits on the GATE, not on the
         // slice, and the projection's result is added back before the layer's scalar applies.
-        let gated = geluApproximate(perLayerGate(lifted)) * perLayerInput
-        let folded = lifted + postPerLayerNorm(perLayerProjection(gated))
+        var folded = lifted
+        if let perLayerInput, let perLayerGate, let perLayerProjection, let postPerLayerNorm {
+            let gated = NFKReferenceRounding.geluTanh(perLayerGate(lifted)) * perLayerInput
+            folded = lifted + postPerLayerNorm(perLayerProjection(gated))
+        }
 
         // `layer_scalar` scales the WHOLE layer output, not only the folded term.
         return (folded * layerScalar, keys, values)
@@ -379,6 +446,8 @@ final class NFKGemmaRotary {
     private let cosines: MLXArray
     private let sines: MLXArray
     let width: Int
+    /// The inverse frequency of each of the `width / 2` pairs, zero past the turned ones.
+    let frequencies: [Float]
 
     init(width: Int, theta: Float, proportion: Float, maximumPositions: Int = 4096) {
         self.width = width
@@ -389,6 +458,7 @@ final class NFKGemmaRotary {
             // The exponent divides by the FULL head width, not by the turned part.
             frequencies[pair] = 1 / powf(theta, Float(2 * pair) / Float(width))
         }
+        self.frequencies = frequencies
         let positions = MLXArray((0 ..< maximumPositions).map(Float.init)).reshaped([maximumPositions, 1])
         let angles = positions * MLXArray(frequencies).reshaped([1, pairs])
         cosines = cos(angles)
@@ -425,7 +495,7 @@ final class NFKGemmaFeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        down(geluApproximate(gate(x)) * up(x))
+        down(NFKReferenceRounding.geluTanh(gate(x)) * up(x))
     }
 }
 
@@ -457,13 +527,17 @@ final class NFKGemmaRouter: Module {
 
     /// `x` `[tokens, hidden]` → the kept routing weights and expert indices, each `[tokens, k]`.
     func callAsFunction(_ x: MLXArray) -> (weights: MLXArray, indices: MLXArray) {
-        let normed = x * rsqrt(mean(x * x, axis: -1, keepDims: true) + epsilon)
-        let scored = proj(normed * scale * rootSize)
-        let probabilities = softmax(scored, axis: -1, precise: true)
+        let normed = NFKReferenceRounding.isReduced(x)
+            ? NFKReferenceRounding.scaledNorm(x, weight: nil, eps: epsilon)
+            : x * rsqrt(mean(x * x, axis: -1, keepDims: true) + epsilon)
+        let scored = proj(NFKReferenceRounding.scaled(normed * scale, by: rootSize))
+        // The reference keeps the probabilities, their renormalization, and the per-expert scale in
+        // float32, so the weights reach the experts unrounded.
+        let probabilities = softmax(scored.asType(.float32), axis: -1, precise: true)
         let chosen = argPartition(-probabilities, kth: activeExperts - 1, axis: -1)[.ellipsis, 0 ..< activeExperts]
         var weights = takeAlong(probabilities, chosen, axis: -1)
         weights = weights / weights.sum(axis: -1, keepDims: true)
-        weights = weights * take(perExpertScale, chosen, axis: 0)
+        weights = weights * take(perExpertScale, chosen, axis: 0).asType(.float32)
         return (weights, chosen)
     }
 }
@@ -472,9 +546,11 @@ final class NFKGemmaRouter: Module {
 /// stacked `[experts, …]` tensor and dispatched through `gatherMM`. The output is the routing-weighted
 /// sum of the selected experts, so the router's weights are applied here rather than by the block.
 final class NFKGemmaExperts: Module {
-    @ParameterInfo(key: "gate_up_proj") var gateUp: MLXArray
-    @ParameterInfo(key: "down_proj") var down: MLXArray
+    /// Nil where the experts are paged: each projection is then read from ``pagers``.
+    @ParameterInfo(key: "gate_up_proj") var gateUp: MLXArray?
+    @ParameterInfo(key: "down_proj") var down: MLXArray?
     let moeIntermediateSize: Int
+    private(set) var pagers: (gateUp: NFKMLXExpertPager, down: NFKMLXExpertPager)?
 
     init(expertCount: Int, hiddenSize: Int, moeIntermediateSize: Int) {
         _gateUp.wrappedValue = MLXArray.ones([expertCount, 2 * moeIntermediateSize, hiddenSize])
@@ -483,37 +559,54 @@ final class NFKGemmaExperts: Module {
         super.init()
     }
 
+    /// The paged form: no parameters, both projections read from `store` under `path`, this module's
+    /// own key path.
+    init(pagedFrom store: NFKMLXExpertStore, path: String, moeIntermediateSize: Int) {
+        pagers = (NFKMLXExpertPager(store: store, group: path + ".gate_up_proj"),
+                  NFKMLXExpertPager(store: store, group: path + ".down_proj"))
+        self.moeIntermediateSize = moeIntermediateSize
+        super.init()
+    }
+
     /// `x` `[tokens, hidden]` with `indices`/`weights` `[tokens, k]` → `[tokens, hidden]`.
     func callAsFunction(_ x: MLXArray, indices: MLXArray, weights: MLXArray) -> MLXArray {
         let expanded = x.expandedDimensions(axes: [-2, -3])
-        let fused = gatherMM(expanded, gateUp.swappedAxes(-1, -2), rhsIndices: indices)
+        let fused = pagers?.gateUp.gatherMM(expanded, experts: indices)
+            ?? gatherMM(expanded, gateUp!.swappedAxes(-1, -2), rhsIndices: indices)
         let gate = fused[.ellipsis, 0 ..< moeIntermediateSize]
         let up = fused[.ellipsis, moeIntermediateSize...]
-        let activated = geluApproximate(gate) * up
-        let outputs = gatherMM(activated, down.swappedAxes(-1, -2), rhsIndices: indices).squeezed(axis: -2)
-        return (outputs * weights.expandedDimensions(axis: -1)).sum(axis: -2)
+        let activated = NFKReferenceRounding.geluTanh(gate) * up
+        let projected = pagers?.down.gatherMM(activated, experts: indices)
+            ?? gatherMM(activated, down!.swappedAxes(-1, -2), rhsIndices: indices)
+        return NFKReferenceRounding.combined(projected.squeezed(axis: -2), weights: weights, chosen: indices)
     }
 }
 
 /// The Gemma 4 text decoder.
 public final class NFKMLXGemmaNet: Module {
     @ModuleInfo(key: "embed_tokens") var embedTokens: Embedding
-    @ModuleInfo(key: "embed_tokens_per_layer") var embedPerLayer: Embedding
-    @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Linear
-    @ModuleInfo(key: "per_layer_projection_norm") var perLayerProjectionNorm: NFKGemmaNorm
+    @ModuleInfo(key: "embed_tokens_per_layer") var embedPerLayer: Embedding?
+    @ModuleInfo(key: "per_layer_model_projection") var perLayerModelProjection: Linear?
+    @ModuleInfo(key: "per_layer_projection_norm") var perLayerProjectionNorm: NFKGemmaNorm?
     @ModuleInfo(key: "layers") var layers: [NFKGemmaBlock]
     @ModuleInfo(key: "norm") var norm: NFKGemmaNorm
 
     let configuration: NFKMLXGemmaConfiguration
 
+    /// The routed experts of a paged load, which the mixture layers read in place of parameters; nil
+    /// where every expert is resident. Introduced in InferKit 0.4.0.
+    public internal(set) var expertStore: NFKMLXExpertStore?
+
     init(_ c: NFKMLXGemmaConfiguration) {
         configuration = c
         _embedTokens.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.hiddenSize)
-        _embedPerLayer.wrappedValue = Embedding(embeddingCount: c.perLayerVocabularySize,
-                                                dimensions: c.perLayerEmbeddingWidth)
-        _perLayerModelProjection.wrappedValue = Linear(c.hiddenSize, c.perLayerEmbeddingWidth, bias: false)
-        _perLayerProjectionNorm.wrappedValue = NFKGemmaNorm(dimensions: c.perLayerInputSize,
-                                                            eps: c.rmsEpsilon)
+        if c.hasPerLayerInput {
+            _embedPerLayer.wrappedValue = Embedding(embeddingCount: c.perLayerVocabularySize,
+                                                    dimensions: c.perLayerEmbeddingWidth)
+            _perLayerModelProjection.wrappedValue = Linear(c.hiddenSize, c.perLayerEmbeddingWidth, bias: false)
+            _perLayerProjectionNorm.wrappedValue = NFKGemmaNorm(dimensions: c.perLayerInputSize,
+                                                                eps: c.rmsEpsilon)
+        }
         _layers.wrappedValue = (0 ..< c.layerCount).map {
             NFKGemmaBlock(c, kind: c.layerTypes[$0], layer: $0)
         }
@@ -555,22 +648,29 @@ public final class NFKMLXGemmaNet: Module {
         return forward(embed(tokens), tokens: tokens, trace: &trace)
     }
 
-    private func forward(_ embeddings: MLXArray, tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
+    /// Each layer's per-layer input `[batch, length, layers, width]`, or nil for a release without one.
+    /// The context projection is scaled DOWN by the model width, reshaped per layer, and normalized
+    /// before it meets the token's own slice of the second embedding; the sum is scaled by 1/sqrt(2).
+    func perLayerInputs(embeddings: MLXArray, tokens: MLXArray) -> MLXArray? {
+        guard let embedPerLayer, let perLayerModelProjection, let perLayerProjectionNorm else { return nil }
         let c = configuration
         let (batch, length) = (tokens.shape[0], tokens.shape[1])
+        let identity = (embedPerLayer(tokens) * sqrt(Float(c.perLayerInputSize)))
+            .reshaped([batch, length, c.layerCount, c.perLayerInputSize])
+        let projected = perLayerProjectionNorm(
+            NFKReferenceRounding.scaled(perLayerModelProjection(embeddings), by: 1 / sqrt(Float(c.hiddenSize)))
+                .reshaped([batch, length, c.layerCount, c.perLayerInputSize]))
+        return NFKReferenceRounding.scaled(projected + identity, by: 1 / sqrt(Float(2)))
+    }
+
+    private func forward(_ embeddings: MLXArray, tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
+        let c = configuration
+        let length = tokens.shape[1]
 
         // The main stream is the supplied embeddings (already scaled, with any multimodal soft tokens
         // spliced in); the per-layer identity is the token's own slice of the second embedding.
         var hidden = embeddings
-        let identity = (embedPerLayer(tokens) * sqrt(Float(c.perLayerInputSize)))
-            .reshaped([batch, length, c.layerCount, c.perLayerInputSize])
-
-        // The context projection is scaled DOWN by the model width, reshaped per layer, and normalized
-        // before it meets the token's own slice; the sum is then scaled by 1/sqrt(2).
-        let projected = perLayerProjectionNorm(
-            (perLayerModelProjection(hidden) * (1 / sqrt(Float(c.hiddenSize))))
-                .reshaped([batch, length, c.layerCount, c.perLayerInputSize]))
-        let normalized = (projected + identity) * (1 / sqrt(Float(2)))
+        let normalized = perLayerInputs(embeddings: embeddings, tokens: tokens)
 
         trace.append(hidden)
         let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
@@ -580,7 +680,7 @@ public final class NFKMLXGemmaNet: Module {
         for (index, layer) in layers.enumerated() {
             let kind = c.layerTypes[index]
             let shared = index >= c.firstSharedLayer ? latest[kind] : nil
-            let (next, keys, values) = layer(hidden, perLayerInput: normalized[0..., 0..., index],
+            let (next, keys, values) = layer(hidden, perLayerInput: normalized?[0..., 0..., index],
                                              mask: mask, shared: shared)
             hidden = next
             trace.append(hidden)
@@ -596,7 +696,7 @@ public final class NFKMLXGemmaNet: Module {
         // Tied embeddings, then the soft cap the release applies to its logits.
         var logits = embedTokens.asLinear(hidden)
         if c.finalLogitSoftcap > 0 {
-            logits = tanh(logits / c.finalLogitSoftcap) * c.finalLogitSoftcap
+            logits = NFKReferenceRounding.wide(logits / c.finalLogitSoftcap) { tanh($0) } * c.finalLogitSoftcap
         }
         return logits
     }
@@ -667,6 +767,8 @@ public final class NFKMLXGemmaLanguage: NSObject {
             rmsEpsilon: real("rms_norm_eps", 1e-6),
             headCount: integer("num_attention_heads", 8),
             keyValueHeadCount: integer("num_key_value_heads", 1),
+            globalKeyValueHeadCount: (text["num_global_key_value_heads"] as? NSNumber)?.intValue,
+            attentionKeyEqualsValue: (text["attention_k_eq_v"] as? NSNumber)?.boolValue ?? false,
             headDimensions: integer("head_dim", 256),
             globalHeadDimensions: integer("global_head_dim", 512),
             slidingWindow: integer("sliding_window", 512),
@@ -675,6 +777,8 @@ public final class NFKMLXGemmaLanguage: NSObject {
             globalPartialRotaryFactor: globalFactor,
             perLayerInputSize: integer("hidden_size_per_layer_input", 256),
             sharedKeyValueLayers: integer("num_kv_shared_layers", 20),
+            sharedLayerIntermediateSize: (text["use_double_wide_mlp"] as? NSNumber)?.boolValue == false
+                ? integer("intermediate_size", 6144) : nil,
             finalLogitSoftcap: real("final_logit_softcapping", 30),
             layerTypes: (text["layer_types"] as? [String])?
                 .compactMap { NFKMLXGemmaAttentionKind(rawValue: $0) },
@@ -695,11 +799,38 @@ public final class NFKMLXGemmaLanguage: NSObject {
     /// every larger size splits across a shard index, so a loader reading only the single file covers
     /// the smallest model and nothing else.
     static func loadWeights(into net: NFKMLXGemmaNet, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision = .float32) throws {
+                            precision: NFKMLXWeightPrecision = .float32,
+                            skipping skipped: (String) -> Bool = { _ in false }) throws {
         let prefix = "model.language_model."
         let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
-            $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil
+            $0.hasPrefix(prefix) && !skipped($0) ? String($0.dropFirst(prefix.count)) : nil
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// Loads the decoder with its routed experts held as `residency` plans them. The 26B-A4B mixture
+    /// stores each projection stacked in the module's own layout, so an expert pages as the release
+    /// stores it; the E-series has no experts and loads resident under every residency.
+    static func loadWeights(into net: NFKMLXGemmaNet, fromDirectory directory: URL,
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws {
+        let prefix = "model.language_model."
+        net.expertStore = try NFKMLXExpertInventory.load(
+            directory: directory, precision: precision, residency: residency,
+            classify: NFKMLXExpertInventory.stacked(projections: ["gate_up_proj", "down_proj"]) {
+                $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil
+            },
+            install: { store in
+                try net.layers.enumerated().flatMap { index, block in
+                    guard let experts = block.experts, let count = experts.gateUp?.dim(0) else {
+                        return [(group: String, experts: Int, parts: [String])]()
+                    }
+                    let path = "layers.\(index).experts"
+                    let paged = NFKGemmaExperts(pagedFrom: store, path: path,
+                                                moeIntermediateSize: experts.moeIntermediateSize)
+                    try block.update(modules: ModuleChildren.unflattened([("experts", paged)]), verify: .noUnusedKeys)
+                    return [(path + ".gate_up_proj", count, ["weight"]), (path + ".down_proj", count, ["weight"])]
+                }
+            },
+            load: { try loadWeights(into: net, fromDirectory: directory, precision: precision, skipping: $0) })
     }
 }

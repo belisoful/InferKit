@@ -160,6 +160,8 @@ public extension NFKMLXGemmaLanguage {
             rmsEpsilon: real("rms_norm_eps", 1e-6),
             headCount: heads,
             keyValueHeadCount: integer("num_key_value_heads", heads),
+            globalKeyValueHeadCount: (text["num_global_key_value_heads"] as? NSNumber)?.intValue,
+            attentionKeyEqualsValue: (text["attention_k_eq_v"] as? NSNumber)?.boolValue ?? false,
             headDimensions: integer("head_dim", hidden / max(heads, 1)),
             globalHeadDimensions: integer("global_head_dim", 512),
             slidingWindow: integer("sliding_window", 1024),

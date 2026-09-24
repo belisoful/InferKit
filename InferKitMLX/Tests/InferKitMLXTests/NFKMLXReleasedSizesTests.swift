@@ -133,6 +133,31 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         }
     }
 
+    // Mistral-Small 3 is the text stack FLUX.2 [dev] conditions on, inside a multimodal release whose
+    // decoder sits under `text_config` and whose tensors carry a `language_model.` prefix. The vision
+    // tower and its connector are named as dropped: this reads the decoder only.
+    func testMistralSmall3MatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("mistral-small-3.2-24b")
+        let configuration = try NFKMLXLanguage.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.hiddenSize, NFKMLXLanguageConfiguration.mistralSmall3.hiddenSize)
+        XCTAssertEqual(configuration.layerCount, NFKMLXLanguageConfiguration.mistralSmall3.layerCount)
+        XCTAssertEqual(configuration.headCount, NFKMLXLanguageConfiguration.mistralSmall3.headCount)
+        // 5120 over 32 heads divides to 160; the release states 128, so a reader that infers the head
+        // width from the residual builds projections the checkpoint does not fit.
+        XCTAssertEqual(configuration.headDimensions, 128)
+        XCTAssertEqual(configuration.keyValueHeadCount, 8)
+        XCTAssertFalse(configuration.tiesWordEmbeddings)
+        XCTAssertFalse(configuration.normalizesQueryAndKey)
+        XCTAssertFalse(configuration.attentionBias)
+        let net = NFKMLXLanguage.makeNet(configuration)
+        assertStructure("mistral-small-3.2-24b",
+                        built: inventory(net, rename: { "language_model." + $0 }),
+                        released: release.shapes,
+                        named: { $0.hasPrefix("vision_tower.")
+                                 || $0.hasPrefix("multi_modal_projector.") })
+    }
+
     // The two Qwen3-Embedding sizes above the ported 0.6B. The release is the base model — no `model.`
     // prefix and no head — so the module's names shed the prefix and the head; the 8B says it is
     // untied, which for an embedder is moot, since the head is never built or read.
@@ -180,6 +205,38 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
                 + inventory(vision, rename: { "vision." + $0 }, reshape: { _, shape in self.convLayout(shape) })
                 + inventory(projector) { "projector." + $0 }
             assertStructure(name, built: built, released: released)
+        }
+    }
+
+    // Gemma 4's three large sizes, none of which fits this machine. They are the releases that set
+    // `attention_k_eq_v`, so they are the only ones whose full-attention layers drop `v_proj`, run
+    // `num_global_key_value_heads`, and carry no per-layer input embedding at all. The E-series that
+    // the numeric tests measure does none of those things, which is why this check exists: the
+    // decoder was previously built for the E-series shape at every size, and nothing held it against
+    // a released inventory.
+    func testGemma4LargerSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        // The 12B is `gemma4_unified_text`, a different stack that the dense reader deliberately
+        // refuses, so it is read and built through the unified pair.
+        for (name, layers, unified) in [("gemma-4-31b", 60, false), ("gemma-4-26b-a4b", 30, false),
+                                        ("gemma-4-12b", 48, true)] {
+            let release = try shapes(name)
+            let configuration = unified
+                ? try NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace: release.config)
+                : try NFKMLXGemmaLanguage.configuration(fromHuggingFace: release.config)
+            XCTAssertEqual(configuration.layerCount, layers, "\(name) layer count")
+            XCTAssertTrue(configuration.attentionKeyEqualsValue, "\(name) shares keys and values")
+            XCTAssertFalse(configuration.hasPerLayerInput, "\(name) carries no per-layer input")
+
+            let prefix = "model.language_model."
+            var released = [String: [Int]]()
+            for (key, shape) in release.shapes where key.hasPrefix(prefix) {
+                released[String(key.dropFirst(prefix.count))] = shape
+            }
+            let built = unified
+                ? inventory(NFKMLXGemmaLanguage.makeUnifiedNet(configuration))
+                : inventory(NFKMLXGemmaLanguage.makeNet(configuration))
+            assertStructure(name, built: built, released: released) { $0 == "lm_head.weight" }
         }
     }
 
@@ -316,6 +373,61 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
                     } else {
                         released[name] = shape
                     }
+                } else {
+                    released[key] = shape
+                }
+            }
+            let built = inventory(vision) { "vision." + $0 } + inventory(decoder)
+            assertStructure(name, built: built, released: released)
+        }
+    }
+
+    // The released Qwen-Image 2.1 transformer, 7.1B over 297 tensors. The arithmetic is measured at a
+    // tiny configuration against diffusers; this holds the module the released checkpoint builds to
+    // every tensor the release ships, which a tiny oracle cannot catch because it builds the reference
+    // from the port's own parameters.
+    func testQwenImageTransformerMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("qwen-image-2.1-transformer")
+        let configuration = try NFKMLXQwenImage.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.layers, 32)
+        XCTAssertEqual(configuration.dimensions, 4096)
+        let net = NFKMLXQwenImage.makeNet(configuration)
+
+        var released = [String: [Int]]()
+        for (key, shape) in release.shapes {
+            guard let name = NFKMLXQwenImage.remapReferenceKey(key) else { continue }
+            released[name] = shape
+        }
+        assertStructure("qwen-image-2.1-transformer", built: inventory(net), released: released)
+    }
+
+    // The Qwen3-VL retrieval pair's 8B sizes, which are the same architecture as the measured 2B at
+    // the deeper 27-block tower. The 8B reranker ships `lm_head.weight` although its config says the
+    // embeddings are tied, which is why the port settles the tie from the weights rather than the
+    // config; the 8B embedder ships none, one tensor fewer.
+    func testQwen3VLRetrievalSizesMatchTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        for name in ["qwen3-vl-embedding-8b", "qwen3-vl-reranker-8b"] {
+            let release = try shapes(name)
+            let visionConfiguration = try NFKMLXQwen3VLVisionConfiguration.configuration(fromHuggingFace: release.config)
+            XCTAssertEqual(visionConfiguration.depth, 27)
+            let vision = NFKMLXQwen3VLVisionNet(visionConfiguration)
+
+            let data = try Data(contentsOf: release.config)
+            let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            var decoderConfiguration = try NFKMLXLanguage.configuration(
+                fromJSON: try XCTUnwrap(json["text_config"] as? [String: Any]))
+            decoderConfiguration.tiesWordEmbeddings = release.shapes["lm_head.weight"] == nil
+            let decoder = NFKMLXLanguageNet(decoderConfiguration)
+
+            var released = [String: [Int]]()
+            for (key, shape) in release.shapes {
+                if key.hasPrefix("model.visual.") {
+                    let name = "vision." + key.dropFirst("model.visual.".count)
+                    released[name] = shape.count == 5 ? [shape[0], shape[1] * shape[2] * shape[3] * shape[4]] : shape
+                } else if key.hasPrefix("model.language_model.") {
+                    released["model." + key.dropFirst("model.language_model.".count)] = shape
                 } else {
                     released[key] = shape
                 }
@@ -790,6 +902,48 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         assertStructure("sd35-medium", built: inventory(net, reshape: { convLayout($1) }), released: release.shapes)
     }
 
+    // Every released SAM 2 and SAM 2.1 size, loaded whole into the tracker. The parity tests measure
+    // the networks; this is the coverage claim — a release's checkpoint holds exactly what the module
+    // declares, so nothing in it goes unread and nothing the module builds is left random. 2.1 carries
+    // three tensors 2.0 does not: the occlusion spatial embedding and the object pointers' temporal
+    // projection.
+    func testSAM2SizesLoadTheirWholeCheckpoint() throws {
+        try requireMLXRuntime()
+        let releases: [(String, String, NFKMLXSAM2Variant, NFKMLXSAM2Release, Int)] = [
+            ("sam2-tiny", "IK_VAL_SAM2", .tiny, .sam2, 468),
+            ("sam2-small", "IK_VAL_SAM2_SMALL", .small, .sam2, 516),
+            ("sam2-base-plus", "IK_VAL_SAM2_BASE_PLUS", .basePlus, .sam2, 612),
+            ("sam2-large", "IK_VAL_SAM2_LARGE", .large, .sam2, 900),
+            ("sam2.1-tiny", "IK_VAL_SAM2_1_TINY", .tiny, .sam21, 471),
+        ]
+        for (name, key, variant, release, tensors) in releases {
+            guard let url = try? weights(key) else { print("SKIP \(name): no \(key)"); continue }
+            let net = NFKMLXSAM2.makeTracker(variant: variant, release: release)
+            let declared = net.parameters().flattened().count
+            XCTAssertEqual(declared, tensors, "\(name): the module declares the release's tensor count")
+            try NFKMLXSAM2.loadWeights(into: net, from: url)
+            print("VALIDATION sam2 coverage \(name): \(declared) tensors loaded strictly")
+        }
+    }
+
+    // Wan 2.2 Animate 2 (14B): the DiT the tiny config is at parity on, held to the released
+    // `wan_animate_2_bf16.safetensors` header. The release ships the original Wan naming, so the
+    // inventory is renamed through `releaseKey(forModule:)`; the patch-embedding convolution is the
+    // only 5-D tensor and is compared in the release's `[out, in, kT, kH, kW]` layout. The model is
+    // 32.8 GB in bf16 and its pipeline about 50 GB, so the shapes are all this machine can hold it to.
+    func testWanAnimateMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("wan-animate-2-14b")
+        let net = NFKMLXWanAnimateNet(.base)
+        let built = inventory(net, rename: { NFKMLXWanAnimate.releaseKey(forModule: $0) },
+                              reshape: { _, shape in
+                                  shape.count == 5
+                                      ? [shape[0], shape[4], shape[1], shape[2], shape[3]] : shape
+                              })
+        XCTAssertEqual(release.shapes.count, 1303, "the released inventory")
+        assertStructure("wan-animate-2-14b", built: built, released: release.shapes)
+    }
+
     // FLUX.1 [schnell] (12B): the double- and single-stream transformer the tiny config is at parity
     // on, read by the configuration reader and held to the released transformer's headers. Every
     // tensor is at most 2-D, so no layout change is needed. Ungated mirrors of the transformer are
@@ -814,6 +968,159 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         XCTAssertTrue(configuration.guidanceEmbeds, "dev carries a guidance embedding")
         let net = NFKMLXFluxTransformerNet(configuration)
         assertStructure("flux-dev", built: inventory(net), released: release.shapes)
+    }
+
+    // FLUX.2 [klein] base 4B: the un-distilled sibling of klein 4B, also ungated. Its transformer
+    // config is identical to klein 4B's, so what this checks is that the same declared geometry reads
+    // a SECOND release rather than having been fitted to one.
+    func testFlux2KleinBase4BMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux2-klein-base-4b")
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 5)
+        XCTAssertEqual(configuration.numSingleLayers, 20)
+        XCTAssertEqual(release.shapes.count, 169, "the released inventory")
+        assertStructure("flux2-klein-base-4b", built: inventory(NFKMLXFlux2TransformerNet(configuration)),
+                        released: release.shapes)
+    }
+
+    // FLUX.2's small decoder: the same encoder at a narrower decoder, which is the first release here
+    // whose autoencoder is ASYMMETRIC. The `bn` buffers belong to the latent codec rather than the
+    // autoencoder, so they are named as read elsewhere.
+    func testFlux2SmallDecoderMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux2-small-decoder")
+        XCTAssertEqual(release.shapes.count, 251, "the released inventory")
+        // The inverse of `NFKMLXStableDiffusionModels.remapVAEKey`, which turns release names into
+        // module names; a structural check needs module names back in the release's spelling.
+        func releaseName(_ module: String) -> String {
+            var name = module.replacingOccurrences(of: ".to_out.", with: ".to_out.0.")
+            for part in ["norm1", "conv1", "norm2", "conv2", "conv_shortcut"] {
+                for index in 0 ... 2 {
+                    name = name.replacingOccurrences(of: ".resnets.\(index).block.\(part).",
+                                                     with: ".resnets.\(index).\(part).")
+                }
+            }
+            return name
+        }
+        let vae = NFKMLXSDAutoencoder(configuration: .flux2SmallDecoder)
+        let built = inventory(vae, rename: { releaseName($0) },
+                              reshape: { _, shape in convLayout(shape) })
+        assertStructure("flux2-small-decoder", built: built, released: release.shapes,
+                        named: { $0.hasPrefix("bn.") })
+    }
+
+    // LTX-2.3 22B: the released audio-video transformer this port is held to structurally. LTX-2.5's
+    // own repositories are gated, so the inventory comes from the LTX-2.3 release, which is the same
+    // `LTX2VideoTransformer3DModel` at the arrangement its `config.json` declares. Every tensor is at
+    // most 2-D, so no layout change is needed.
+    func testLTX2MatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("ltx2-23-22b")
+        let configuration = try NFKMLXLTX2TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 48)
+        XCTAssertEqual(configuration.innerDim, 4096)
+        XCTAssertEqual(configuration.audioInnerDim, 2048)
+        XCTAssertFalse(configuration.usesPromptEmbeddings,
+                       "the text is projected by the pipeline's connectors, not the transformer")
+        XCTAssertTrue(configuration.usesPromptAdaptiveNorm, "LTX-2.3 modulates the text key and value")
+        XCTAssertEqual(release.shapes.count, 4186, "the released inventory")
+        let net = NFKMLXLTX2TransformerNet(configuration)
+        assertStructure("ltx2-23-22b", built: inventory(net), released: release.shapes)
+    }
+
+    // The LTX-2 configuration reader refuses every arrangement it does not build, rather than
+    // ignoring the field. A release with the attention gates off ships no `to_gate_logits`, and
+    // without this the failure would surface as a missing tensor at load rather than as the
+    // configuration that asked for it.
+    func testTheLTX2ReaderNamesWhatItDoesNotBuild() throws {
+        try requireMLXRuntime()
+        let base: [String: Any] = ["_class_name": "LTX2VideoTransformer3DModel", "rope_type": "split"]
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ltx2-reader-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        func read(_ overrides: [String: Any]) throws -> NFKMLXLTX2Configuration {
+            var json = base
+            overrides.forEach { json[$0.key] = $0.value }
+            let url = directory.appendingPathComponent("config.json")
+            try JSONSerialization.data(withJSONObject: json).write(to: url)
+            return try NFKMLXLTX2TransformerNet.configuration(fromHuggingFace: url)
+        }
+
+        XCTAssertNoThrow(try read([:]), "the arrangement both releases carry is read")
+        for refused: [String: Any] in [["rope_type": "interleaved"], ["cross_attn_mod": false],
+                                       ["audio_cross_attn_mod": false], ["gated_attn": false],
+                                       ["audio_gated_attn": false], ["qk_norm": "rms_norm"],
+                                       ["norm_elementwise_affine": true],
+                                       ["activation_fn": "gelu"],
+                                       ["_class_name": "LTXVideoTransformer3DModel"]] {
+            XCTAssertThrowsError(try read(refused), "\(refused.keys.first!) is refused by name")
+        }
+    }
+
+    // FLUX.2 [klein] 4B: the released transformer this port is held to structurally. It is the one
+    // FLUX.2 release that is NOT gated, so the inventory comes from Black Forest Labs' own repository
+    // rather than a mirror. Every tensor is at most 2-D, so no layout change is needed.
+    func testFlux2Klein4BMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux2-klein-4b")
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, 5)
+        XCTAssertEqual(configuration.numSingleLayers, 20)
+        XCTAssertEqual(configuration.jointAttentionDim, 7680, "three Qwen3 layers wide")
+        XCTAssertFalse(configuration.guidanceEmbeds, "the klein releases are step-distilled")
+        XCTAssertEqual(release.shapes.count, 169, "the released inventory")
+        let net = NFKMLXFlux2TransformerNet(configuration)
+        assertStructure("flux2-klein-4b", built: inventory(net), released: release.shapes)
+    }
+
+    // FLUX.2 [dev] (32B) is behind Black Forest Labs' gate, so its headers cannot be walked here. Its
+    // published parameter total can be, and it pins the geometry exactly: the declared `.dev` shape
+    // reproduces 32,223,281,152 parameters to the tensor, the qk-norm vectors included. The same sum
+    // over `.klein4B` reproduces that release's total, which is independently confirmed by the shape
+    // walk above, so the arithmetic is checked against a measured case before it is trusted here.
+    func testFlux2DevParameterTotalMatchesTheRelease() throws {
+        try requireMLXRuntime()
+        func total(_ configuration: NFKMLXFlux2Configuration) -> Int {
+            NFKMLXFlux2TransformerNet(configuration).parameters().flattened()
+                .reduce(0) { $0 + $1.1.size }
+        }
+        XCTAssertEqual(total(.klein4B), 3_875_544_576, "the FLUX.2 [klein] 4B release's own total")
+        XCTAssertEqual(total(.dev), 32_223_281_152, "the FLUX.2 [dev] release's own total")
+        XCTAssertEqual(total(.klein9B), 9_078_581_248, "the FLUX.2 [klein] 9B release's own total")
+    }
+
+    // The 9B split is the one thing the parameter total could not pin, because a double block costs
+    // exactly two single blocks. It is read from the release rather than chosen.
+    func testFlux2Klein9BMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux2-klein-base-9b")
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, NFKMLXFlux2Configuration.klein9B.numLayers)
+        XCTAssertEqual(configuration.numSingleLayers,
+                       NFKMLXFlux2Configuration.klein9B.numSingleLayers)
+        XCTAssertEqual(configuration.numAttentionHeads, 32)
+        XCTAssertEqual(configuration.jointAttentionDim, 12288)
+        XCTAssertFalse(configuration.guidanceEmbeds)
+        // Seventeen splits reach the same total; only the release says which one it is.
+        XCTAssertEqual(configuration.numLayers * 2 + configuration.numSingleLayers, 40)
+        let net = NFKMLXFlux2TransformerNet(.klein9B)
+        assertStructure("flux2-klein-base-9b", built: inventory(net), released: release.shapes)
+    }
+
+    // FLUX.2 [klein] 9B KV is trained for the reference cache, which is an inference mechanism, not
+    // an architecture: its transformer is the base 9B's to the tensor, so `.klein9B` reads it too.
+    func testFlux2Klein9BKVMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("flux2-klein-9b-kv")
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.numLayers, NFKMLXFlux2Configuration.klein9B.numLayers)
+        XCTAssertEqual(configuration.numSingleLayers, NFKMLXFlux2Configuration.klein9B.numSingleLayers)
+        XCTAssertEqual(configuration.jointAttentionDim, NFKMLXFlux2Configuration.klein9B.jointAttentionDim)
+        let net = NFKMLXFlux2TransformerNet(.klein9B)
+        assertStructure("flux2-klein-9b-kv", built: inventory(net), released: release.shapes)
     }
 
     // MARK: - Weight-free structure
@@ -921,5 +1228,68 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         XCTAssertEqual(NFKMLXSwinIR.remapReferenceKey("conv_after_body.2.weight"), "conv_after_body_3conv.2.weight")
         XCTAssertEqual(NFKMLXSwinIR.remapReferenceKey("layers.2.conv.weight"), "layers.2.conv.weight")
         XCTAssertEqual(NFKMLXSwinIR.remapReferenceKey("conv_before_upsample.0.weight"), "conv_before_upsample.weight")
+    }
+
+    // Qwen3.8-Flash-Next is the released Qwen4-Exp: 180B of bfloat16 across 131 shards, 360 GB, so
+    // the decoder is held to the release by shape and its arithmetic rests on the oracle's size. The
+    // n-gram table is the one parameter with no single counterpart — the release splits it into
+    // `split_ngram_parts` shards so the saved layout matches the trained one — so the shards are
+    // named as dropped and checked to sum to the one table this module looks up.
+    func testQwen4ExpMatchesTheReleasedShapes() throws {
+        try requireMLXRuntime()
+        let release = try shapes("qwen3.8-flash-next")
+        let configuration = try NFKMLXQwen4Exp.configuration(fromHuggingFace: release.config)
+        XCTAssertEqual(configuration.layerCount, 48)
+        XCTAssertEqual(configuration.expertCount, 512)
+        XCTAssertEqual(configuration.hyperConnectionCount, 4)
+        XCTAssertEqual(configuration.pleLayerIDs, [2])
+        // Every `full_attention` entry the release states is a layer that carries an indexer.
+        XCTAssertEqual(configuration.layerTypes.filter { $0 == .sparseAttention }.count, 12)
+
+        let net = NFKMLXQwen4Exp.makeNet(configuration)
+        let table = try XCTUnwrap(net.model.languageModel.layers[1].ple).embedding.table.weight
+        assertStructure(
+            "qwen3.8-flash-next",
+            built: inventory(net,
+                             rename: { $0.hasSuffix(".ngram_embedding.weight") ? nil : $0 },
+                             reshape: { name, shape in
+                                 name.hasSuffix("conv1d.weight") && shape.count == 3
+                                     ? [shape[0], shape[2], shape[1]] : shape
+                             }),
+            released: release.shapes,
+            named: { NFKMLXQwen4Exp.isDropped(key: $0) || $0.contains(".ngram_embedding.shard_") })
+
+        let sharded = release.shapes.filter { $0.key.contains(".ngram_embedding.shard_") }
+        XCTAssertEqual(sharded.count, 128, "the release splits the table into its configured parts")
+        XCTAssertEqual(sharded.values.reduce(0) { $0 + $1[0] }, table.dim(0),
+                       "the shards' rows sum to the table this module derives")
+        XCTAssertEqual(Set(sharded.values.map { $0[1] }), [table.dim(1)],
+                       "every shard is one n-gram head's width")
+        print("VALIDATION structure qwen3.8-flash-next: n-gram table \(table.dim(0)) rows "
+              + "across \(sharded.count) shards")
+    }
+
+    // The converse of the shape check: what the port leaves out is named rather than overlooked.
+    func testQwen4ExpNamesWhatItDoesNotImplement() throws {
+        let release = try shapes("qwen3.8-flash-next")
+        let decoder = release.shapes.keys.filter {
+            ($0.hasPrefix("model.language_model.") || $0 == "lm_head.weight")
+                && !NFKMLXQwen4Exp.isDropped(key: $0)
+        }
+        let vision = release.shapes.keys.filter { $0.hasPrefix("model.visual.") }
+        let prediction = release.shapes.keys.filter { $0.hasPrefix("mtp.") }
+        let derived = release.shapes.keys.filter {
+            $0.hasPrefix("model.language_model.") && NFKMLXQwen4Exp.isDropped(key: $0)
+        }
+        // The decoder's count includes the n-gram table's 128 shards, which the shape check names.
+        print("VALIDATION structure qwen3.8-flash-next parts: decoder \(decoder.count), "
+              + "vision tower \(vision.count), multi-token head \(prediction.count), "
+              + "derived hash tables \(derived.count)")
+        XCTAssertEqual(vision.count, 333, "the release is multimodal")
+        XCTAssertEqual(prediction.count, 31, "and carries a multi-token-prediction head")
+        XCTAssertEqual(derived.count, 3, "the hash buffers come from the configuration, not the file")
+        XCTAssertEqual(decoder.count + vision.count + prediction.count + derived.count,
+                       release.shapes.count,
+                       "every tensor is either the decoder's or a named unimplemented part")
     }
 }

@@ -2,10 +2,10 @@
 //  NFKMLXHybridLanguageTests.swift
 //  InferKitMLXTests
 //
-//  The hybrid decoder (Qwen3.5 / 3.6 / 3.8). The smallest release is 27B, about 54 GB at the precision
-//  it ships in, so nothing here loads weights or measures numerics. What these tests establish is that
-//  the module the code builds IS the model the release describes: every parameter is checked against
-//  the released checkpoint's own safetensors headers, name by name and shape by shape.
+//  The hybrid decoder (Qwen3.5 / 3.6 / 3.8). The numerics are measured elsewhere, on the released
+//  Qwen3.5-4B, by the parity tests in `NFKMLXReferenceParityTests`. What these tests establish is
+//  that the module the code builds IS the model the larger releases describe: every parameter is
+//  checked against the released checkpoint's own safetensors headers, name by name and shape by shape.
 //
 //  A structural match is not a numeric one. Nothing here says the arithmetic is right.
 //

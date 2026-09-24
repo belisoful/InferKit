@@ -8,12 +8,11 @@
 //  state instead of a growing key-value cache — and the remaining quarter is full attention whose
 //  output is gated.
 //
-//  BUILT BUT NOT MEASURED. The smallest release in this family is 27B, which is about 54 GB at the
-//  precision it ships in, so no forward pass against real weights has been run on this machine and
-//  there is no parity record. What IS verified is structural: every parameter this module declares is
-//  checked against the released checkpoint's own safetensors header, name by name and shape by shape,
-//  and a small configuration runs end to end with random weights. Treat the numerics as unverified
-//  until a machine that can hold the weights measures them.
+//  At reference parity on the released Qwen3.5-4B, the smallest release of the family and the only
+//  size this machine holds: logit cosine 0.9999999999962, with every one of the 33 hidden states
+//  matched layer by layer. The larger sizes are covered structurally instead — every parameter this
+//  module declares is checked against the released checkpoint's own safetensors header, name by name
+//  and shape by shape — so their numerics rest on the 4B measurement rather than on a run of their own.
 //
 //  Scope: the language model. A release in this family also carries a vision tower (`model.visual`)
 //  and a multi-token-prediction head (`mtp`), which are separate features rather than parts of the
@@ -131,8 +130,7 @@ final class NFKHybridNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon)
-        return normalized * (1 + weight)
+        NFKReferenceRounding.gemmaNorm(x, weight: weight, eps: epsilon)
     }
 }
 
@@ -201,7 +199,10 @@ final class NFKHybridAttention: Module {
 
         // Partial rotary: only the leading channels turn, the rest are carried through untouched.
         let turned = c.rotaryDimensions
-        if turned > 0 && turned < c.headDimensions {
+        if turned > 0 && NFKReferenceRounding.isReduced(queries) {
+            queries = NFKReferenceRounding.rotary(queries, dimensions: turned, base: c.ropeTheta, offset: 0)
+            keys = NFKReferenceRounding.rotary(keys, dimensions: turned, base: c.ropeTheta, offset: 0)
+        } else if turned > 0 && turned < c.headDimensions {
             queries = concatenated([rope(queries[.ellipsis, 0 ..< turned], offset: 0),
                                     queries[.ellipsis, turned...]], axis: -1)
             keys = concatenated([rope(keys[.ellipsis, 0 ..< turned], offset: 0),
@@ -213,14 +214,14 @@ final class NFKHybridAttention: Module {
 
         // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
         // a float32 mask that does not promote to its own type — invisible at float32.
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.attention(
             queries: queries, keys: keys, values: values,
             scale: 1 / sqrt(Float(c.headDimensions)), mask: mask.map { $0.asType(queries.dtype) })
         var result = attended.transposed(0, 2, 1, 3).reshaped([batch, length, width])
         if let gate {
             // The config field is named `output_gate_type: swish`, and the implementation applies a
             // plain sigmoid. The implementation is what the weights were trained against.
-            result = result * sigmoid(gate)
+            result = result * NFKReferenceRounding.sigmoid(gate)
         }
         return outputProjection(result)
     }
@@ -265,49 +266,43 @@ final class NFKHybridLinearAttention: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let c = configuration
-        let (batch, length) = (x.shape[0], x.shape[1])
-
-        // Causal short convolution: pad on the left so a position sees only itself and its history.
-        let projected = qkvProjection(x)
+    /// The fused projection through the causal short convolution and its SiLU, `[batch, length, width]`.
+    func convolved(_ projected: MLXArray) -> MLXArray {
+        // Pad on the left so a position sees only itself and its history.
         let padded = padded(projected, widths: [IntOrPair((0, 0)),
-                                                IntOrPair((c.linearConvolutionKernel - 1, 0)),
+                                                IntOrPair((configuration.linearConvolutionKernel - 1, 0)),
                                                 IntOrPair((0, 0))])
-        let mixed = silu(convolution(padded))
+        return NFKReferenceRounding.silu(convolution(padded))
+    }
 
-        let keyWidth = c.linearKeyHeadCount * c.linearKeyHeadDimensions
-        var queries = mixed[0..., 0..., 0 ..< keyWidth]
-        var keys = mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
-        let values = mixed[0..., 0..., (2 * keyWidth)...]
+    /// The delta rule reads and writes a unit-norm key space: `x · rsqrt(Σx² + ε)` in the input's type,
+    /// as the reference normalizes before widening, with torch's half-precision `rsqrt`.
+    static func unitNorm(_ x: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else {
+            return x * rsqrt((x * x).sum(axis: -1, keepDims: true) + 1e-6)
+        }
+        // The products round to the input's type and sum in float32, as torch's reduction does.
+        let squares = (x * x).asType(.float32).sum(axis: -1, keepDims: true)
+        return x * NFKReferenceRounding.rsqrt((squares.asType(x.dtype).asType(.float32) + Float(1e-6)).asType(x.dtype))
+    }
 
-        queries = queries.reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions])
-        keys = keys.reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions])
-        let shaped = values.reshaped([batch, length, c.linearValueHeadCount, c.linearValueHeadDimensions])
-
-        // The delta rule reads and writes a unit-norm key space.
-        queries = queries / sqrt((queries * queries).sum(axis: -1, keepDims: true) + 1e-6)
-        keys = keys / sqrt((keys * keys).sum(axis: -1, keepDims: true) + 1e-6)
-
-        // Per-head decay and write strength. `A_log` is stored as a log so the rate stays positive;
-        // the reference keeps `g` as a LOG rate and exponentiates it inside the recurrence.
-        let decay = exp(-exp(decayLog) * softplus(decayProjection(x) + stepBias))
-        let write = sigmoid(writeProjection(x))
-
-        // Key heads are shared across a group of value heads, as grouped-query attention shares them.
-        let group = c.linearValueHeadCount / c.linearKeyHeadCount
+    /// The gated delta-rule recurrence over float32 `[batch, length, value heads, width]` queries and keys
+    /// (already unit-normed and repeated to the value heads), values, per-step decay `exp(g)`, and write
+    /// strength, returning the float32 read `[batch, length, value heads, value width]`.
+    func recurrence(queries: MLXArray, keys: MLXArray, values: MLXArray, decay: MLXArray,
+                    write: MLXArray) -> MLXArray {
+        let c = configuration
+        let (batch, length) = (queries.dim(0), queries.dim(1))
         var state = MLXArray.zeros([batch, c.linearValueHeadCount,
                                     c.linearKeyHeadDimensions, c.linearValueHeadDimensions])
         var outputs = [MLXArray]()
         outputs.reserveCapacity(length)
-
         // The reference scales the queries by the key width before the recurrence, once.
         let scale = 1 / sqrt(Float(c.linearKeyHeadDimensions))
-
         for step in 0 ..< length {
-            let q = repeated(queries[0..., step], count: group, axis: 1) * scale
-            let k = repeated(keys[0..., step], count: group, axis: 1)
-            let v = shaped[0..., step]                                     // [batch, value heads, value dims]
+            let q = queries[0..., step] * scale
+            let k = keys[0..., step]
+            let v = values[0..., step]                                     // [batch, value heads, value dims]
             let g = decay[0..., step].reshaped([batch, c.linearValueHeadCount, 1, 1])
             let b = write[0..., step].reshaped([batch, c.linearValueHeadCount, 1])
 
@@ -319,11 +314,41 @@ final class NFKHybridLinearAttention: Module {
             state = state + k.expandedDimensions(axis: -1) * correction.expandedDimensions(axis: 2)
             outputs.append((state * q.expandedDimensions(axis: -1)).sum(axis: 2))
         }
+        return stacked(outputs, axis: 1)
+    }
 
-        let read = stacked(outputs, axis: 1)      // [batch, length, value heads, value dims]
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let c = configuration
+        let (batch, length) = (x.shape[0], x.shape[1])
+        let mixed = convolved(qkvProjection(x))
+
+        let keyWidth = c.linearKeyHeadCount * c.linearKeyHeadDimensions
+        let queries = mixed[0..., 0..., 0 ..< keyWidth]
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions])
+        let keys = mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions])
+        let values = mixed[0..., 0..., (2 * keyWidth)...]
+            .reshaped([batch, length, c.linearValueHeadCount, c.linearValueHeadDimensions])
+
+        // Per-head decay and write strength. `A_log` is stored as a log so the rate stays positive;
+        // the reference keeps `g` as a LOG rate, formed in float32, and exponentiates it inside the
+        // recurrence. The recurrence runs in float32 and its output rounds once to the input's type.
+        let decay = exp(-exp(decayLog.asType(.float32))
+                        * softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
+        let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
+
+        // Key heads are shared across a group of value heads, as grouped-query attention shares them.
+        let group = c.linearValueHeadCount / c.linearKeyHeadCount
+        let read = recurrence(
+            queries: Self.unitNorm(repeated(queries, count: group, axis: 2)).asType(.float32),
+            keys: Self.unitNorm(repeated(keys, count: group, axis: 2)).asType(.float32),
+            values: values.asType(.float32), decay: decay, write: write).asType(x.dtype)
+
         let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
                                                c.linearValueHeadDimensions])
-        let gated = norm(read) * sigmoid(gate) * gate
+        // The normalized read times `silu(gate)`, formed in float32 and rounded once.
+        let wideGate = gate.asType(.float32)
+        let gated = (norm(read).asType(.float32) * (wideGate * sigmoid(wideGate))).asType(x.dtype)
         return outputProjection(gated.reshaped([batch, length, c.linearValueWidth]))
     }
 }
@@ -497,10 +522,18 @@ public final class NFKMLXHybridLanguage: NSObject {
             guard let name = moduleKey(forReference: $0) else { return nil }
             return tied && name.hasPrefix("lm_head.") ? nil : name
         }
+        // The releases store `A_log` and the recurrence's norm weight in float32 beside bf16 elsewhere,
+        // and the reference loads every tensor in the release's own type. At `.checkpoint` those take
+        // the type most tensors carry, so the decay reads the same rounded `A_log` the reference does.
+        let counts = Dictionary(grouping: read.map(\.1.dtype), by: { $0 }).mapValues(\.count)
+        let released = counts.max { $0.value < $1.value }?.key
         // A depthwise convolution is stored [channels, 1, kernel] and wanted [channels, kernel, 1].
         let merged = read.map { name, value in
-            (name, name.hasSuffix("conv1d.weight") && value.ndim == 3
-                 ? value.transposed(0, 2, 1) : value)
+            var tensor = name.hasSuffix("conv1d.weight") && value.ndim == 3 ? value.transposed(0, 2, 1) : value
+            if precision == .checkpoint, let released, tensor.dtype != released, tensor.dtype.isFloatingPoint {
+                tensor = tensor.asType(released)
+            }
+            return (name, tensor)
         }
         try NFKMLXWeights.apply(merged, to: net)
     }

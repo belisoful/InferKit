@@ -44,6 +44,11 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// The rotary scaling the release declares, or `nil` for none. Read from the checkpoint's own
     /// `rope_scaling`; see ``NFKMLXRoPEScaling``.
     public var ropeScaling: NFKMLXRoPEScaling?
+    /// How many of each head's channels the rotary embedding turns, or `nil` for all of them. Fewer
+    /// than ``headDimensions`` is partial rotary (Phi rotates the first `partial_rotary_factor · head_dim`
+    /// channels and passes the rest through unrotated). Defaulting to the full head keeps every model
+    /// that does not set it byte-identical.
+    public var rotaryDimensions: Int?
     /// Each layer's sliding window, or nil for full attention; empty when every layer attends fully.
     ///
     /// @discussion gpt-oss alternates a 128-position sliding window with full attention. A sliding
@@ -111,6 +116,20 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     public static let qwen3_32B = NFKMLXLanguageConfiguration(
         hiddenSize: 5120, layerCount: 64, headCount: 64, keyValueHeadCount: 8,
         headDimensions: 128, intermediateSize: 25600, tiesWordEmbeddings: false)
+
+    /// The released `mistralai/Mistral-Small-3.1/3.2-24B` decoder geometry, which is the text stack of
+    /// a `Mistral3ForConditionalGeneration` release and what FLUX.2 [dev] reads for conditioning.
+    ///
+    /// @discussion Its head width is stated rather than implied: 5120 over 32 heads divides to 160,
+    /// while the release sets `head_dim` 128, so the attention projections are 4096 wide and narrower
+    /// than the residual. The 24 billion parameters are 48 GB at the released bf16, above what a 32 GB
+    /// machine holds, so the structural check reads the released headers and the numeric check runs a
+    /// small configuration of the same shape.
+    public static let mistralSmall3 = NFKMLXLanguageConfiguration(
+        hiddenSize: 5120, layerCount: 40, headCount: 32, keyValueHeadCount: 8,
+        headDimensions: 128, intermediateSize: 32768, vocabularySize: 131_072,
+        ropeTheta: 1_000_000_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: false,
+        normalizesQueryAndKey: false)
 
     /// How many experts each feed-forward holds, or 0 for the dense feed-forward.
     ///
@@ -677,25 +696,66 @@ struct NFKLMRotary {
     let base: Float
     let periods: MLXArray?
     let attentionFactor: Float
+    /// LongRoPE's alternate period table, used once the sequence passes the trained window, with the
+    /// length that triggers the switch. Nil for every other rotary.
+    let longPeriods: MLXArray?
+    let longRoPEThreshold: Int
 
     init(dimensions: Int, base: Float, scaling: NFKMLXRoPEScaling?) {
         self.dimensions = dimensions
         self.base = base
         if let scaling {
-            periods = MLXArray(scaling.rotaryPeriods(dimensions: dimensions, base: base))
             attentionFactor = scaling.attentionFactor
+            if scaling.kind == .longrope {
+                periods = MLXArray(scaling.longRoPEPeriods(dimensions: dimensions, base: base, useLongTable: false))
+                longPeriods = MLXArray(scaling.longRoPEPeriods(dimensions: dimensions, base: base, useLongTable: true))
+                longRoPEThreshold = scaling.originalMaxPositionEmbeddings
+            } else {
+                periods = MLXArray(scaling.rotaryPeriods(dimensions: dimensions, base: base))
+                longPeriods = nil
+                longRoPEThreshold = 0
+            }
         } else {
             periods = nil
             attentionFactor = 1
+            longPeriods = nil
+            longRoPEThreshold = 0
         }
     }
 
     func callAsFunction(_ x: MLXArray, offset: Int) -> MLXArray {
-        let scaled = attentionFactor == 1 ? x : x * attentionFactor
+        if NFKReferenceRounding.isReduced(x) {
+            var active = periods
+            if let longPeriods, offset + x.dim(x.ndim - 2) > longRoPEThreshold {
+                active = longPeriods
+            }
+            let exponents = MLXArray(stride(from: 0, to: dimensions, by: 2).map { Float($0) / Float(dimensions) })
+            let inverse = active.map { 1 / $0 } ?? 1 / pow(MLXArray(base), exponents)
+            return NFKReferenceRounding.rotary(x, inverseFrequencies: inverse, offset: offset, factor: attentionFactor)
+        }
+        // The attention factor multiplies the rotated queries and keys. Scaling the input before the
+        // rotation is equivalent because the rotation is linear, but ONLY the rotated channels may be
+        // scaled: a partial rotary passes the tail channels through unrotated, and the reference leaves
+        // those untouched (the factor rides on the cosines and sines, which the tail never sees).
+        var scaled = x
+        if attentionFactor != 1 {
+            if dimensions < x.dim(x.ndim - 1) {
+                let rotated = x[.ellipsis, 0 ..< dimensions] * attentionFactor
+                scaled = concatenated([rotated, x[.ellipsis, dimensions...]], axis: -1)
+            } else {
+                scaled = x * attentionFactor
+            }
+        }
+        // LongRoPE swaps to the long table once the sequence reaches past the trained window; the two
+        // tables are the only per-length choice, applied uniformly across positions as the reference does.
+        var active = periods
+        if let longPeriods, offset + x.dim(x.ndim - 2) > longRoPEThreshold {
+            active = longPeriods
+        }
         return MLXFast.RoPE(scaled, dimensions: dimensions, traditional: false,
                             // The periods replace the base entirely; passing both would be ambiguous.
-                            base: periods == nil ? base : nil,
-                            scale: 1, offset: offset, freqs: periods)
+                            base: active == nil ? base : nil,
+                            scale: 1, offset: offset, freqs: active)
     }
 }
 
@@ -723,7 +783,7 @@ final class NFKLMAttention: Module {
         keyValueHeads = c.keyValueHeadCount
         headDimensions = c.headDimensions
         scale = 1 / sqrt(Float(c.headDimensions))
-        rope = NFKLMRotary(dimensions: c.headDimensions, base: c.ropeTheta,
+        rope = NFKLMRotary(dimensions: c.rotaryDimensions ?? c.headDimensions, base: c.ropeTheta,
                            scaling: c.ropeScaling)
         slidingWindow = layer < c.slidingWindows.count ? c.slidingWindows[layer] : nil
         _sinks.wrappedValue = c.attentionSinks ? MLXArray.zeros([c.headCount]) : nil
@@ -773,8 +833,10 @@ final class NFKLMAttention: Module {
             // A vision-language model supplies per-position 3-D rotary tables (M-RoPE); the rotation is
             // the ordinary rotate-half, only the cosines and sines differ from the 1-D case. The head
             // axis broadcasts.
-            let cos = multimodalRope.cos.expandedDimensions(axis: 1)
-            let sin = multimodalRope.sin.expandedDimensions(axis: 1)
+            // The tables take the queries' type, as transformers rounds its cosines and sines; float32
+            // tables would promote a half-precision layer to float32 from here on.
+            let cos = multimodalRope.cos.expandedDimensions(axis: 1).asType(queries.dtype)
+            let sin = multimodalRope.sin.expandedDimensions(axis: 1).asType(queries.dtype)
             queries = queries * cos + NFKLMAttention.rotateHalf(queries) * sin
             keys = keys * cos + NFKLMAttention.rotateHalf(keys) * sin
         } else {
@@ -793,7 +855,7 @@ final class NFKLMAttention: Module {
         } else {
             // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
             // a float32 mask that does not promote to its own type — invisible at float32.
-            attention = MLXFast.scaledDotProductAttention(
+            attention = NFKReferenceRounding.attention(
                 queries: queries, keys: keys, values: values, scale: scale,
                 mask: mask.map { $0.asType(queries.dtype) })
         }
@@ -829,12 +891,20 @@ final class NFKLMAttention: Module {
             return broadcast(x.expandedDimensions(axis: 2), to: [batch, keyValueHeads, groups, x.dim(2), headDimensions])
                 .reshaped([batch, heads, x.dim(2), headDimensions])
         }
-        var scores = matmul(queries, spread(keys).transposed(0, 1, 3, 2)) * scale
+        var scores = NFKReferenceRounding.scaled(matmul(queries, spread(keys).transposed(0, 1, 3, 2)), by: scale)
         if let combined { scores = scores + combined }
         let probabilities: MLXArray
         if let sinks {
             let column = broadcast(sinks.reshaped([1, heads, 1, 1]).asType(scores.dtype), to: [batch, heads, length, 1])
-            probabilities = softmax(concatenated([scores, column], axis: -1), axis: -1, precise: true)[.ellipsis, 0 ..< totalKeys]
+            var logits = concatenated([scores, column], axis: -1)
+            if NFKReferenceRounding.isReduced(logits) {
+                // The reference subtracts the row maximum in the logits' own type, a rounded step, before
+                // a softmax that widens and rounds once.
+                logits = logits - logits.max(axis: -1, keepDims: true)
+                probabilities = softmax(logits.asType(.float32), axis: -1).asType(logits.dtype)[.ellipsis, 0 ..< totalKeys]
+            } else {
+                probabilities = softmax(logits, axis: -1, precise: true)[.ellipsis, 0 ..< totalKeys]
+            }
         } else {
             probabilities = softmax(scores, axis: -1, precise: true)
         }
@@ -869,7 +939,25 @@ final class NFKLMFeedForward: NFKLMMLP {
         super.init()
     }
 
-    override func callAsFunction(_ x: MLXArray) -> MLXArray { down(silu(gate(x)) * up(x)) }
+    override func callAsFunction(_ x: MLXArray) -> MLXArray { down(NFKReferenceRounding.silu(gate(x)) * up(x)) }
+}
+
+/// One linear map per expert, applied to each token by the experts its router chose.
+///
+/// @discussion The resident form is ``NFKLMSwitchLinear``; the paged form,
+/// ``NFKLMPagedSwitchLinear``, holds no parameters and reads its experts from an
+/// ``NFKMLXExpertStore``. A mixture declares its projections as this type so a load can put either
+/// form in place.
+class NFKLMExpertLinear: Module {
+    var expertCount: Int { fatalError("an expert linear subclass implements this") }
+    var outputSize: Int { fatalError("an expert linear subclass implements this") }
+    var inputSize: Int { fatalError("an expert linear subclass implements this") }
+
+    /// Applies expert `experts[..., j]` to `x[..., j, :]`: `x` is `[..., 1, in]` broadcast against
+    /// `experts` `[..., k]`, giving `[..., k, out]`.
+    func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+        fatalError("an expert linear subclass implements this")
+    }
 }
 
 /// One weight per expert, applied to each token by the experts its router chose.
@@ -878,7 +966,7 @@ final class NFKLMFeedForward: NFKLMMLP {
 /// as separate layers, so a step runs ONE gathered matrix multiplication over the chosen experts
 /// instead of one multiplication per expert per token. The released checkpoints store each expert
 /// separately; the loader stacks them.
-class NFKLMSwitchLinear: Module {
+class NFKLMSwitchLinear: NFKLMExpertLinear {
     @ParameterInfo(key: "weight") var weight: MLXArray
 
     init(experts: Int, inputSize: Int, outputSize: Int) {
@@ -892,14 +980,12 @@ class NFKLMSwitchLinear: Module {
         super.init()
     }
 
-    var expertCount: Int { weight.dim(0) }
-    var outputSize: Int { weight.dim(1) }
+    override var expertCount: Int { weight.dim(0) }
+    override var outputSize: Int { weight.dim(1) }
     /// The input width, which a quantized subclass derives from its packing.
-    var inputSize: Int { weight.dim(2) }
+    override var inputSize: Int { weight.dim(2) }
 
-    /// Applies expert `experts[..., j]` to `x[..., j, :]`: `x` is `[..., 1, in]` broadcast against
-    /// `experts` `[..., k]`, giving `[..., k, out]`.
-    func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+    override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
         gatherMM(x, weight.swappedAxes(-1, -2), rhsIndices: experts)
     }
 
@@ -950,6 +1036,38 @@ final class NFKLMQuantizedSwitchLinear: NFKLMSwitchLinear, Quantized {
     }
 }
 
+/// A switch linear whose experts stay in an ``NFKMLXExpertStore`` and are materialized as the
+/// router reaches them.
+///
+/// @discussion The layer holds no parameters. Each call reads the experts its indices name, stacks
+/// them, and runs the gathered multiply the resident form runs over that stack, so each routed token
+/// meets the matrix it meets resident. A quantized group is stored packed and multiplied packed.
+final class NFKLMPagedSwitchLinear: NFKLMExpertLinear {
+    let pager: NFKMLXExpertPager
+    let quantization: NFKMLXWeights.Quantization?
+    /// Whether the store holds each expert `[in, out]`; see ``NFKMLXExpertSlice/inputMajor``.
+    let inputMajor: Bool
+    private let geometry: (experts: Int, output: Int, input: Int)
+
+    init(pager: NFKMLXExpertPager, experts: Int, outputSize: Int, inputSize: Int,
+         quantization: NFKMLXWeights.Quantization? = nil, inputMajor: Bool = false) {
+        self.pager = pager
+        self.quantization = quantization
+        self.inputMajor = inputMajor
+        geometry = (experts, outputSize, inputSize)
+        super.init()
+    }
+
+    override var expertCount: Int { geometry.experts }
+    override var outputSize: Int { geometry.output }
+    override var inputSize: Int { geometry.input }
+
+    override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
+        guard let quantization else { return pager.gatherMM(x, experts: experts, inputMajor: inputMajor) }
+        return pager.gatherQuantizedMM(x, experts: experts, quantization: quantization)
+    }
+}
+
 /// The experts a routed feed-forward holds, in either released form.
 class NFKLMExperts: Module {
     /// Builds the form the configuration asks for.
@@ -963,9 +1081,9 @@ class NFKLMExperts: Module {
 
 /// The experts' SwiGLU, run for each token through the experts chosen for it.
 final class NFKLMSwitchGLU: NFKLMExperts {
-    @ModuleInfo(key: "gate_proj") var gate: NFKLMSwitchLinear
-    @ModuleInfo(key: "up_proj") var up: NFKLMSwitchLinear
-    @ModuleInfo(key: "down_proj") var down: NFKLMSwitchLinear
+    @ModuleInfo(key: "gate_proj") var gate: NFKLMExpertLinear
+    @ModuleInfo(key: "up_proj") var up: NFKLMExpertLinear
+    @ModuleInfo(key: "down_proj") var down: NFKLMExpertLinear
 
     init(_ c: NFKMLXLanguageConfiguration) {
         _gate.wrappedValue = NFKLMSwitchLinear(experts: c.expertCount, inputSize: c.hiddenSize,
@@ -979,7 +1097,7 @@ final class NFKLMSwitchGLU: NFKLMExperts {
 
     override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
         let expanded = x.expandedDimensions(axes: [-2, -3])
-        let hidden = silu(gate(expanded, experts: experts)) * up(expanded, experts: experts)
+        let hidden = NFKReferenceRounding.silu(gate(expanded, experts: experts)) * up(expanded, experts: experts)
         return down(hidden, experts: experts).squeezed(axis: -2)
     }
 }
@@ -992,9 +1110,9 @@ final class NFKLMSwitchGLU: NFKLMExperts {
 /// `[experts, 2 · width, hidden]` and keeps the interleave, which is read back with a stride-2 slice,
 /// so a checkpoint this module saves round-trips through the same loader unchanged.
 final class NFKLMFusedSwitchGLU: NFKLMExperts {
-    @ModuleInfo(key: "gate_up_proj") var gateUp: NFKLMSwitchLinear
+    @ModuleInfo(key: "gate_up_proj") var gateUp: NFKLMExpertLinear
     @ParameterInfo(key: "gate_up_proj_bias") var gateUpBias: MLXArray
-    @ModuleInfo(key: "down_proj") var down: NFKLMSwitchLinear
+    @ModuleInfo(key: "down_proj") var down: NFKLMExpertLinear
     @ParameterInfo(key: "down_proj_bias") var downBias: MLXArray
     let activation: NFKMLXClampedSwiGLU
 
@@ -1015,7 +1133,7 @@ final class NFKLMFusedSwitchGLU: NFKLMExperts {
             + take(gateUpBias, experts, axis: 0).expandedDimensions(axis: -2).asType(x.dtype)
         let gate = clip(fused[.ellipsis, .stride(from: 0, by: 2)], max: activation.limit)
         let up = clip(fused[.ellipsis, .stride(from: 1, by: 2)], min: -activation.limit, max: activation.limit)
-        let gated = (up + 1) * (gate * sigmoid(gate * activation.alpha))
+        let gated = (up + 1) * (gate * NFKReferenceRounding.sigmoid(NFKReferenceRounding.scaled(gate, by: activation.alpha)))
         let out = down(gated, experts: experts)
             + take(downBias, experts, axis: 0).expandedDimensions(axis: -2).asType(x.dtype)
         return out.squeezed(axis: -2)
@@ -1038,12 +1156,15 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
 
     let activeExpertCount: Int
     let normalizesWeights: Bool
+    /// gpt-oss ranks the raw logits and softmaxes only the kept ones, in the logits' own type.
+    let softmaxesKeptLogits: Bool
 
     init(_ c: NFKMLXLanguageConfiguration) {
         precondition(c.activeExpertCount > 0 && c.activeExpertCount <= c.expertCount,
                      "a mixture routes each token to between one and every expert")
         activeExpertCount = c.activeExpertCount
         normalizesWeights = c.normalizesExpertWeights
+        softmaxesKeptLogits = c.clampedSwiGLU != nil
         _router.wrappedValue = Linear(c.hiddenSize, c.expertCount, bias: c.routerBias)
         _experts.wrappedValue = NFKLMExperts.make(c)
         _sharedExpert.wrappedValue = c.sharedExpertIntermediateSize > 0
@@ -1054,18 +1175,30 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let scores = softmax(router(x), axis: -1, precise: true)
-        let chosen = argPartition(-scores, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
-        var weights = takeAlong(scores, chosen, axis: -1)
-        if normalizesWeights {
-            weights = weights / weights.sum(axis: -1, keepDims: true)
-        }
-        let outputs = experts(x, experts: chosen)
-        var routed = (outputs * weights.expandedDimensions(axis: -1).asType(outputs.dtype)).sum(axis: -2)
+        let (weights, chosen) = route(x)
+        var routed = NFKReferenceRounding.combined(experts(x, experts: chosen), weights: weights, chosen: chosen)
         if let sharedExpert, let sharedExpertGate {
-            routed = routed + sigmoid(sharedExpertGate(x)) * sharedExpert(x)
+            routed = routed + NFKReferenceRounding.sigmoid(sharedExpertGate(x)) * sharedExpert(x)
         }
         return routed
+    }
+
+    /// The routing weights and chosen experts, `[..., active]` each, as the reference's router forms them.
+    func route(_ x: MLXArray) -> (weights: MLXArray, chosen: MLXArray) {
+        let logits = router(x)
+        let weights: MLXArray, chosen: MLXArray
+        if softmaxesKeptLogits && NFKReferenceRounding.isReduced(logits) {
+            chosen = argPartition(-logits, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
+            weights = softmax(takeAlong(logits, chosen, axis: -1).asType(.float32), axis: -1).asType(logits.dtype)
+        } else if NFKReferenceRounding.isReduced(logits) {
+            (weights, chosen) = NFKReferenceRounding.routed(logits, active: activeExpertCount, normalize: normalizesWeights)
+        } else {
+            let scores = softmax(logits, axis: -1, precise: true)
+            chosen = argPartition(-scores, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
+            let kept = takeAlong(scores, chosen, axis: -1)
+            weights = normalizesWeights ? kept / kept.sum(axis: -1, keepDims: true) : kept
+        }
+        return (weights, chosen)
     }
 }
 
@@ -1124,6 +1257,10 @@ public final class NFKMLXLanguageNet: Module {
 
     let configuration: NFKMLXLanguageConfiguration
 
+    /// The routed experts of a paged load, which the mixture layers read in place of parameters; nil
+    /// where every expert is resident. Introduced in InferKit 0.4.0.
+    public internal(set) var expertStore: NFKMLXExpertStore?
+
     init(_ c: NFKMLXLanguageConfiguration) {
         configuration = c
         _model.wrappedValue = NFKLMCore(c)
@@ -1145,9 +1282,15 @@ public final class NFKMLXLanguageNet: Module {
 
     /// Runs the stack over already-embedded inputs and returns the post-norm hidden states
     /// `[batch, length, hidden]` — what conditions synthesis in a hidden-state-driven pipeline.
+    ///
+    /// `applyFinalNorm` false returns the last layer's output before the final normalization, which is
+    /// what a consumer of the decoder's features rather than its logits sometimes reads: Qwen-Image's
+    /// transformer is trained on the UN-normalized states, and its reference neutralizes the norm with
+    /// a forward hook to get them.
     func hiddenStates(fromEmbeddings embeddings: MLXArray,
                       cache: NFKMLXKeyValueCache? = nil,
-                      multimodal: NFKLMMultimodal? = nil) -> MLXArray {
+                      multimodal: NFKLMMultimodal? = nil,
+                      applyFinalNorm: Bool = true) -> MLXArray {
         var hidden = embeddings
         let length = embeddings.shape[1]
         // A single token attends to everything cached, so it needs no mask; a prefill does. The mask
@@ -1168,16 +1311,24 @@ public final class NFKMLXLanguageNet: Module {
             }
         }
         cache?.advance(by: length)
-        return model.norm(hidden)
+        return applyFinalNorm ? model.norm(hidden) : hidden
     }
 
     /// The state entering the stack and the state each layer produces, with the final norm applied
     /// to the last — the reference's `output_hidden_states` convention, so a divergence is located
     /// to a layer rather than guessed at from the logits.
-    func layerStates(_ tokens: MLXArray) -> [MLXArray] {
+    /// `keyPadding` marks the positions that may be ATTENDED TO, one flag per column. A right-padded
+    /// batch needs it: a pad position attends to the real tokens and to the pads before it, so masking
+    /// the pad keys changes the pad positions' own states. Those states reach a caller that reads the
+    /// whole padded sequence, which is why the flag is not an optimization.
+    func layerStates(_ tokens: MLXArray, keyPadding: MLXArray? = nil) -> [MLXArray] {
         var hidden = model.embedTokens(tokens)
         var states = [hidden]
-        let mask = NFKMLXLanguageNet.causalMask(tokens.shape[1], offset: 0)
+        var mask = NFKMLXLanguageNet.causalMask(tokens.shape[1], offset: 0)
+        if let keyPadding {
+            mask = mask + MLX.where(keyPadding.reshaped([1, -1]), MLXArray(Float(0)),
+                                    MLXArray(Float(-1e9)))
+        }
         for (index, layer) in model.layers.enumerated() {
             hidden = layer(hidden, mask: mask, cache: nil, layer: index)
             states.append(hidden)

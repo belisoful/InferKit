@@ -28,7 +28,13 @@ import MLX
 /// bit arithmetic a per-element decode would need.
 public enum NFKMLXDeepSeekQuantization {
 
-    /// The block a scale covers in an fp8 weight, along each of the two axes.
+    /// The block a scale covers in an fp8 weight, along each of the two axes, where a release does
+    /// not state its own.
+    ///
+    /// @discussion This is NOT a property of the format. V4 blocks at 128 and V4.1 at 32, each
+    /// stating it as `quantization_config.weight_block_size`, so a caller passes the release's own
+    /// number and this default serves only a caller that has none. Assuming it reads a quarter of
+    /// the scale rows and columns for a V4.1 weight and decodes wrong values with no error.
     public static let fp8BlockSize = 128
 
     /// The run of values a scale covers in a 4-bit weight, along the last axis.
@@ -69,15 +75,24 @@ public enum NFKMLXDeepSeekQuantization {
 
     // MARK: - Dequantization
 
-    /// Decodes an fp8 weight and its 128×128 block scales into float.
+    /// Decodes an fp8 weight and its square block scales into float.
     ///
     /// - Parameters:
     ///   - bytes: the stored weight, one byte a value, of the weight's own shape.
-    ///   - scaleBytes: one `e8m0` byte per block, so `ceil(rows / 128) × ceil(columns / 128)`.
-    public static func dequantizeFP8(bytes: MLXArray, scaleBytes: MLXArray) -> MLXArray {
+    ///   - scaleBytes: one `e8m0` byte per block, so `ceil(rows / block) × ceil(columns / block)`.
+    ///   - blockSize: the release's `weight_block_size`, 128 for V4 and 32 for V4.1.
+    public static func dequantizeFP8(bytes: MLXArray, scaleBytes: MLXArray,
+                                     blockSize: Int = fp8BlockSize) -> MLXArray {
         let values = decoded(bytes, table: fp8Values)
         let scales = decoded(scaleBytes, table: scaleValues)
-        return values * expanded(scales, toShape: values.shape, blockSize: fp8BlockSize)
+        // Two blockings, told apart by the scale's own shape. An attention weight carries one scale
+        // per SQUARE block, so its scale is smaller on both axes. The n-gram table carries one per
+        // run of columns within EVERY row, so its scale has as many rows as the weight has; sharing
+        // a scale down 32 rows of that table would decode 31 of them against another row's range.
+        if scales.ndim == 2, values.ndim == 2, scales.dim(0) == values.dim(0) {
+            return values * expandedLastAxis(scales, toWidth: values.dim(1), blockSize: blockSize)
+        }
+        return values * expanded(scales, toShape: values.shape, blockSize: blockSize)
     }
 
     /// Decodes a 4-bit weight packed two values to a byte, with its 32-value block scales.
@@ -103,6 +118,97 @@ public enum NFKMLXDeepSeekQuantization {
         let scales = decoded(scaleBytes, table: scaleValues)
         return values * expandedLastAxis(scales, toWidth: shape[shape.count - 1],
                                          blockSize: fp4BlockSize)
+    }
+
+    // MARK: - Activation round trips
+
+    /// The release's in-place `act_quant`: block-wise fp8 with power-of-two scales.
+    ///
+    /// @discussion Transcribed from `kernel.py`. A block's absolute maximum, floored at 1e-4, times
+    /// 1/448 and raised to the next power of two is the scale; the value is divided by it, clamped
+    /// to ±448, rounded to e4m3 and multiplied back. The reciprocal is a MULTIPLY, as the kernel
+    /// has it, because at an exact power of two a divide and a multiply can land either side of it.
+    static func roundTripFP8(_ x: MLXArray, blockSize: Int) -> MLXArray {
+        let (blocks, restore) = inBlocks(x, blockSize: blockSize)
+        let amax = maximum(abs(blocks).max(axis: -1, keepDims: true), MLXArray(Float(1e-4)))
+        let scale = nextPowerOfTwo(amax * MLXArray(Float(1.0 / 448.0)))
+        let narrow = roundedE4M3(clip(blocks / scale, min: -448, max: 448))
+        return restore(narrow * scale)
+    }
+
+    /// The release's in-place `fp4_act_quant` with power-of-two scales, which the indexer uses.
+    static func roundTripFP4(_ x: MLXArray, blockSize: Int) -> MLXArray {
+        let (blocks, restore) = inBlocks(x, blockSize: blockSize)
+        let floor = MLXArray(Float(6) * powf(2, -126))
+        let amax = maximum(abs(blocks).max(axis: -1, keepDims: true), floor)
+        let scale = nextPowerOfTwo(amax * MLXArray(Float(1.0 / 6.0)))
+        return restore(roundedE2M1(clip(blocks / scale, min: -6, max: 6)) * scale)
+    }
+
+    /// The same fp4 with an E4M3 scale, which the compressed latent uses.
+    ///
+    /// @discussion The scale here is not a power of two: the kernel DIVIDES the maximum by 6 and
+    /// rounds the quotient to e4m3, so the division of each value by it is inexact and has to be the
+    /// same division. The maximum is floored at 6·2⁻⁹ so an all-zero group keeps a nonzero scale,
+    /// and the quotient is held to e4m3's range, which no activation approaches and where an
+    /// overflowing cast is the one place the kernel and torch could disagree.
+    static func roundTripFP4WithE4M3Scale(_ x: MLXArray, blockSize: Int) -> MLXArray {
+        let (blocks, restore) = inBlocks(x, blockSize: blockSize)
+        let floor = MLXArray(Float(6) * powf(2, -9))
+        let amax = maximum(abs(blocks).max(axis: -1, keepDims: true), floor)
+        let scale = roundedE4M3(minimum(amax / 6, MLXArray(Float(448))))
+        return restore(roundedE2M1(clip(blocks / scale, min: -6, max: 6)) * scale)
+    }
+
+    /// Splits the last axis into blocks, and the inverse, back to the input's own dtype.
+    private static func inBlocks(_ x: MLXArray, blockSize: Int)
+        -> (MLXArray, (MLXArray) -> MLXArray) {
+        let shape = x.shape
+        let width = shape[shape.count - 1]
+        // The kernel asserts this. A configuration that quantizes is checked for it at
+        // `makeNet`, so reaching here without it is a caller that built the decoder by hand.
+        precondition(width % blockSize == 0,
+                     "a row of \(width) does not divide into blocks of \(blockSize)")
+        let blocks = x.asType(.float32)
+            .reshaped(Array(shape.dropLast()) + [width / blockSize, blockSize])
+        return (blocks, { $0.reshaped(shape).asType(x.dtype) })
+    }
+
+    /// `⌊log₂|v|⌋` from the exponent field, which is exact where a float `log2` is not.
+    private static func binade(_ v: MLXArray) -> MLXArray {
+        let bits = abs(v).asType(.float32).view(dtype: .int32)
+        return ((bits >> MLXArray(Int32(23))) & MLXArray(Int32(0xFF))) - MLXArray(Int32(127))
+    }
+
+    /// `2^e` for an integer exponent, built from the bits so it is exact.
+    private static func powerOfTwo(_ exponent: MLXArray) -> MLXArray {
+        ((exponent + MLXArray(Int32(127))) << MLXArray(Int32(23))).view(dtype: .float32)
+    }
+
+    /// `2^⌈log₂ v⌉` for a positive normal `v`: the kernel's `fast_log2_ceil` then `fast_pow2`, which
+    /// is the exponent plus one when any mantissa bit is set, so a power of two is its own ceiling.
+    static func nextPowerOfTwo(_ v: MLXArray) -> MLXArray {
+        let bits = v.asType(.float32).view(dtype: .int32)
+        let hasMantissa = ((bits & MLXArray(Int32(0x7F_FFFF))) .!= MLXArray(Int32(0))).asType(.int32)
+        return powerOfTwo(binade(v) + hasMantissa)
+    }
+
+    /// Rounds to the nearest e4m3 value, ties to even, for a value already within ±448.
+    ///
+    /// @discussion MLX has no fp8 type, so this is the format's spacing made explicit: `2^(e−3)` in
+    /// binade `e`, never finer than the subnormal step `2⁻⁹`. Dividing by a power of two is exact,
+    /// and MLX's `round` is `rint`, which is ties-to-even; an integer multiple of the spacing with
+    /// even parity is exactly an even mantissa, because a normal's integer is its mantissa plus 8.
+    static func roundedE4M3(_ v: MLXArray) -> MLXArray {
+        let quantum = powerOfTwo(maximum(binade(v), MLXArray(Int32(-6))) - MLXArray(Int32(3)))
+        return round(v / quantum) * quantum
+    }
+
+    /// Rounds to the nearest e2m1 value, ties to even, for a value already within ±6: the
+    /// spacing is `2^(e−1)` in binade `e`, never finer than the subnormal step `0.5`.
+    static func roundedE2M1(_ v: MLXArray) -> MLXArray {
+        let quantum = powerOfTwo(maximum(binade(v), MLXArray(Int32(0))) - MLXArray(Int32(1)))
+        return round(v / quantum) * quantum
     }
 
     // MARK: - Helpers

@@ -69,6 +69,37 @@ public struct NFKMLXGemma2Configuration: Sendable {
 
     /// Gemma 2 alternates sliding-window and full attention, the even layers sliding.
     func isSliding(_ layer: Int) -> Bool { layer % 2 == 0 }
+
+    /// Reads a Gemma 2 geometry from a release's `config.json`. Rejects a config whose `model_type` is
+    /// not `gemma2`.
+    public static func configuration(fromHuggingFace url: URL) throws -> NFKMLXGemma2Configuration {
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
+        }
+        let modelType = json["model_type"] as? String
+        guard modelType == "gemma2" else {
+            throw NFKMLXError.unsupportedConfiguration("expected model_type gemma2, found \(modelType ?? "nil")")
+        }
+        func int(_ key: String) throws -> Int {
+            guard let value = (json[key] as? NSNumber)?.intValue else {
+                throw NFKMLXError.unsupportedConfiguration("the config carries no \(key)")
+            }
+            return value
+        }
+        func float(_ key: String, _ fallback: Float) -> Float {
+            (json[key] as? NSNumber)?.floatValue ?? fallback
+        }
+        let defaults = NFKMLXGemma2Configuration()
+        return NFKMLXGemma2Configuration(
+            hiddenSize: try int("hidden_size"), layerCount: try int("num_hidden_layers"),
+            headCount: try int("num_attention_heads"), kvHeadCount: try int("num_key_value_heads"),
+            headDim: try int("head_dim"), intermediateSize: try int("intermediate_size"),
+            vocabularySize: try int("vocab_size"),
+            queryPreAttnScalar: float("query_pre_attn_scalar", defaults.queryPreAttnScalar),
+            attnLogitSoftcap: float("attn_logit_softcapping", defaults.attnLogitSoftcap),
+            slidingWindow: (json["sliding_window"] as? NSNumber)?.intValue ?? defaults.slidingWindow,
+            ropeTheta: float("rope_theta", defaults.ropeTheta), rmsEps: float("rms_norm_eps", defaults.rmsEps))
+    }
 }
 
 /// Gemma's RMS normalization: `x · rsqrt(mean(x²) + eps) · (1 + weight)`.
@@ -82,8 +113,7 @@ final class NFKGemma2RMSNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normed = x * rsqrt(mean(x * x, axis: -1, keepDims: true) + eps)
-        return normed * (1 + weight)
+        NFKReferenceRounding.gemmaNorm(x, weight: weight, eps: eps)
     }
 }
 
@@ -99,17 +129,7 @@ final class NFKGemma2MLP: Module {
         _down.wrappedValue = Linear(config.intermediateSize, config.hiddenSize, bias: false)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { down(geluApproximate(gate(x)) * up(x)) }
-}
-
-/// Applies the rotate-half rotary to `x` `[N, heads, headDim]` given `cos`/`sin` `[N, headDim]`.
-private func gemma2Rope(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArray {
-    let headDim = x.dim(2)
-    let half = headDim / 2
-    let x1 = x[0..., 0..., 0 ..< half]
-    let x2 = x[0..., 0..., half ..< headDim]
-    let rotated = concatenated([-x2, x1], axis: -1)
-    return x * c.expandedDimensions(axis: 1) + rotated * s.expandedDimensions(axis: 1)
+    func callAsFunction(_ x: MLXArray) -> MLXArray { down(NFKReferenceRounding.geluTanh(gate(x)) * up(x)) }
 }
 
 /// Gemma 2 grouped-query attention with logit soft-capping and (per layer) a sliding window.
@@ -124,6 +144,7 @@ final class NFKGemma2Attention: Module {
     let headDim: Int
     let scaling: Float
     let softcap: Float
+    let ropeTheta: Float
 
     init(_ config: NFKMLXGemma2Configuration) {
         self.heads = config.headCount
@@ -131,6 +152,7 @@ final class NFKGemma2Attention: Module {
         self.headDim = config.headDim
         self.scaling = pow(config.queryPreAttnScalar, -0.5)
         self.softcap = config.attnLogitSoftcap
+        self.ropeTheta = config.ropeTheta
         _qProj.wrappedValue = Linear(config.hiddenSize, heads * headDim, bias: false)
         _kProj.wrappedValue = Linear(config.hiddenSize, kvHeads * headDim, bias: false)
         _vProj.wrappedValue = Linear(config.hiddenSize, kvHeads * headDim, bias: false)
@@ -138,22 +160,17 @@ final class NFKGemma2Attention: Module {
     }
 
     /// `x` `[N, hidden]` (batch 1), `mask` `[N, N]` additive → `[N, hidden]`.
-    func callAsFunction(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray, mask: MLXArray) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
         let n = x.dim(0)
-        var q = gemma2Rope(qProj(x).reshaped([n, heads, headDim]), cos: c, sin: s)
-        var k = gemma2Rope(kProj(x).reshaped([n, kvHeads, headDim]), cos: c, sin: s)
-        var v = vProj(x).reshaped([n, kvHeads, headDim])
-        // [heads, N, headDim], repeating the KV heads to the query-head count.
-        let repeats = heads / kvHeads
-        q = q.transposed(1, 0, 2)
-        k = repeated(k.transposed(1, 0, 2), count: repeats, axis: 0)
-        v = repeated(v.transposed(1, 0, 2), count: repeats, axis: 0)
-        var scores = matmul(q, k.transposed(0, 2, 1)) * scaling             // [heads, N, N]
-        scores = tanh(scores / softcap) * softcap                          // logit soft-cap
-        scores = scores + mask.reshaped([1, n, n])
-        let attn = softmax(scores, axis: -1)
-        let out = matmul(attn, v).transposed(1, 0, 2).reshaped([n, heads * headDim])
-        return oProj(out)
+        func heads(_ projected: MLXArray, _ count: Int) -> MLXArray {
+            projected.reshaped([1, n, count, headDim]).transposed(0, 2, 1, 3)
+        }
+        let q = NFKReferenceRounding.rotary(heads(qProj(x), self.heads), dimensions: headDim, base: ropeTheta, offset: 0)
+        let k = NFKReferenceRounding.rotary(heads(kProj(x), kvHeads), dimensions: headDim, base: ropeTheta, offset: 0)
+        let v = heads(vProj(x), kvHeads)
+        let out = NFKReferenceRounding.attention(queries: q, keys: k, values: v, scale: scaling,
+                                                 mask: mask, softcap: softcap)
+        return oProj(out[0].transposed(1, 0, 2).reshaped([n, self.heads * headDim]))
     }
 }
 
@@ -175,8 +192,8 @@ final class NFKGemma2Layer: Module {
         _postFeedForwardNorm.wrappedValue = NFKGemma2RMSNorm(config.hiddenSize, eps: config.rmsEps)
     }
 
-    func callAsFunction(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray, mask: MLXArray) -> MLXArray {
-        var h = x + postAttentionNorm(attention(inputNorm(x), cos: c, sin: s, mask: mask))
+    func callAsFunction(_ x: MLXArray, mask: MLXArray) -> MLXArray {
+        var h = x + postAttentionNorm(attention(inputNorm(x), mask: mask))
         h = h + postFeedForwardNorm(mlp(preFeedForwardNorm(h)))
         return h
     }
@@ -197,34 +214,52 @@ public final class NFKMLXGemma2Net: Module {
         _norm.wrappedValue = NFKGemma2RMSNorm(config.hiddenSize, eps: config.rmsEps)
     }
 
+    /// A released Gemma 2 decoder from its directory: the geometry from `config.json`, the weights from
+    /// its safetensors, the `lm_head` (tied to the embedding) left unread. `precision` `.checkpoint`
+    /// keeps the released bf16. Introduced in InferKit 0.4.0.
+    public static func load(directoryURL directory: URL,
+                            precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXGemma2Net {
+        let net = NFKMLXGemma2Net(try NFKMLXGemma2Configuration.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+            key.hasPrefix("model.") ? String(key.dropFirst("model.".count)) : nil
+        }
+        try NFKMLXWeights.apply(mapped, to: net)
+        return net
+    }
+
     /// `tokens` `[N]` (int32) → last hidden state `[N, hidden]`.
     public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
+        var trace = [MLXArray]()
+        return forward(tokens, trace: &trace)
+    }
+
+    /// The embedding, each block's output, and the normalized last state, `[N, hidden]` each.
+    func layerStates(_ tokens: MLXArray) -> [MLXArray] {
+        var trace = [MLXArray]()
+        _ = forward(tokens, trace: &trace)
+        return trace
+    }
+
+    private func forward(_ tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
         let n = tokens.dim(0)
         var h = embedTokens(tokens) * sqrt(Float(config.hiddenSize))
+        trace.append(h)
 
-        let (cos, sin) = rotaryTable(positions: n)
         let causal = causalMask(n, window: nil)
         let sliding = causalMask(n, window: config.slidingWindow)
 
         for (index, layer) in layers.enumerated() {
-            h = layer(h, cos: cos, sin: sin, mask: config.isSliding(index) ? sliding : causal)
+            h = layer(h, mask: config.isSliding(index) ? sliding : causal)
+            trace.append(h)
         }
-        return norm(h)
-    }
-
-    /// The rotary `cos`/`sin` tables `[N, headDim]` (rotate-half layout: frequencies repeated twice).
-    private func rotaryTable(positions n: Int) -> (MLXArray, MLXArray) {
-        let half = config.headDim / 2
-        let k = MLXArray(stride(from: 0, to: config.headDim, by: 2).map { Float($0) })
-        let invFreq = pow(MLXArray(config.ropeTheta), -(k / Float(config.headDim)))   // [half]
-        let pos = MLXArray((0 ..< n).map { Float($0) }).reshaped([n, 1])
-        let angles = pos * invFreq.reshaped([1, half])                    // [N, half]
-        let full = concatenated([angles, angles], axis: -1)               // [N, headDim]
-        return (cos(full), sin(full))
+        h = norm(h)
+        trace[trace.count - 1] = h
+        return h
     }
 
     /// An additive causal mask `[N, N]`; a finite `window` also masks positions further back than it.
-    private func causalMask(_ n: Int, window: Int?) -> MLXArray {
+    func causalMask(_ n: Int, window: Int?) -> MLXArray {
         var rows: [Float] = []
         for i in 0 ..< n {
             for j in 0 ..< n {

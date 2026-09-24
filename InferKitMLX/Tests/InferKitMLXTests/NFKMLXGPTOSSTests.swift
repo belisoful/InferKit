@@ -49,7 +49,8 @@ final class NFKMLXGPTOSSTests: XCTestCase {
         for block in net.model.layers {
             let fused = try XCTUnwrap((block.feedForward as! NFKLMMixtureFeedForward).experts as? NFKLMFusedSwitchGLU)
             for (name, layer) in [("gate_up_proj", fused.gateUp), ("down_proj", fused.down)] {
-                let (packed, scales, biases) = MLX.quantized(layer.weight, groupSize: 32, bits: 4, mode: .mxfp4)
+                let stack = try XCTUnwrap(layer as? NFKLMSwitchLinear).weight
+                let (packed, scales, biases) = MLX.quantized(stack, groupSize: 32, bits: 4, mode: .mxfp4)
                 let quantized = NFKLMQuantizedSwitchLinear(packed: packed, scales: scales, biases: biases,
                                                            groupSize: 32, bits: 4, mode: .mxfp4)
                 try fused.update(modules: ModuleChildren.unflattened([(name, quantized)]), verify: .noUnusedKeys)

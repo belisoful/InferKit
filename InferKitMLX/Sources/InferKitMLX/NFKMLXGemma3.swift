@@ -125,8 +125,7 @@ final class NFKGemma3Norm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon)
-        return normalized * (1 + weight)
+        NFKReferenceRounding.gemmaNorm(x, weight: weight, eps: epsilon)
     }
 }
 
@@ -187,10 +186,10 @@ final class NFKGemma3Attention: Module {
         values = values.transposed(0, 2, 1, 3)
 
         let offset = cache?.offset ?? 0
-        queries = MLXFast.RoPE(queries, dimensions: headDimensions, traditional: false, base: ropeBase,
-                               scale: ropeScale, offset: offset)
-        keys = MLXFast.RoPE(keys, dimensions: headDimensions, traditional: false, base: ropeBase,
-                            scale: ropeScale, offset: offset)
+        queries = NFKReferenceRounding.rotary(queries, dimensions: headDimensions, base: ropeBase,
+                                              scale: ropeScale, offset: offset)
+        keys = NFKReferenceRounding.rotary(keys, dimensions: headDimensions, base: ropeBase,
+                                           scale: ropeScale, offset: offset)
 
         if let cache {
             (keys, values) = cache.update(layer: layer, keys: keys, values: values)
@@ -200,30 +199,9 @@ final class NFKGemma3Attention: Module {
         // fused attention refuses a mask that does not promote to its own type, so the mask takes the
         // queries' dtype.
         let typedMask = mask.map { $0.asType(queries.dtype) }
-        let attended: MLXArray
-        if softcap > 0 {
-            attended = softcappedAttention(queries: queries, keys: keys, values: values, mask: typedMask)
-        } else {
-            attended = MLXFast.scaledDotProductAttention(
-                queries: queries, keys: keys, values: values, scale: scale, mask: typedMask)
-        }
+        let attended = NFKReferenceRounding.attention(queries: queries, keys: keys, values: values,
+                                                      scale: scale, mask: typedMask, softcap: softcap)
         return outputProjection(attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
-    }
-
-    /// Attention with the softmax written out, for the `tanh` soft-cap the fused kernel has no slot for.
-    private func softcappedAttention(queries: MLXArray, keys: MLXArray, values: MLXArray,
-                                     mask: MLXArray?) -> MLXArray {
-        let batch = queries.dim(0), keyCount = keys.dim(2)
-        let groups = heads / keyValueHeads
-        func spread(_ x: MLXArray) -> MLXArray {
-            guard groups > 1 else { return x }
-            return broadcast(x.expandedDimensions(axis: 2), to: [batch, keyValueHeads, groups, keyCount, headDimensions])
-                .reshaped([batch, heads, keyCount, headDimensions])
-        }
-        var scores = matmul(queries, spread(keys).transposed(0, 1, 3, 2)) * scale
-        scores = tanh(scores / softcap) * softcap
-        if let mask { scores = scores + mask }
-        return matmul(softmax(scores, axis: -1, precise: true), spread(values))
     }
 }
 
@@ -241,7 +219,7 @@ final class NFKGemma3FeedForward: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { down(geluApproximate(gate(x)) * up(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { down(NFKReferenceRounding.geluTanh(gate(x)) * up(x)) }
 }
 
 /// One Gemma 3 block: the sandwich normalization, a norm before AND after each of attention and the
@@ -389,7 +367,8 @@ public final class NFKMLXGemma3Net: Module {
     public func logits(fromHidden hidden: MLXArray) -> MLXArray {
         var logits = embedTokens.asLinear(hidden)
         if configuration.finalLogitSoftcap > 0 {
-            logits = tanh(logits / configuration.finalLogitSoftcap) * configuration.finalLogitSoftcap
+            logits = NFKReferenceRounding.wide(logits / configuration.finalLogitSoftcap) { tanh($0) }
+                * configuration.finalLogitSoftcap
         }
         return logits
     }

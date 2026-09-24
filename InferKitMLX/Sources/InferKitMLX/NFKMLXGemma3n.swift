@@ -178,13 +178,7 @@ final class NFKGemma3nNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let wide = x.asType(.float32)
-        // `mean(x²) + eps` then `^-0.5`, the reference's spelling of the reciprocal square root.
-        var normalized = wide * rsqrt((wide * wide).mean(axis: -1, keepDims: true) + epsilon)
-        if let weight {
-            normalized = normalized * weight.asType(.float32)
-        }
-        return normalized.asType(x.dtype)
+        NFKReferenceRounding.scaledNorm(x, weight: weight, eps: epsilon)
     }
 }
 
@@ -233,15 +227,17 @@ final class NFKGemma3nFeedForward: Module {
         if let standardDeviations {
             gated = sparsified(gated, standardDeviations: standardDeviations)
         }
-        return down(geluApproximate(gated) * up(x))
+        return down(NFKReferenceRounding.geluTanh(gated) * up(x))
     }
 
     /// Everything below `mean + k·sd` of the token's own gate held at zero, the reference's
-    /// `_gaussian_topk`. The deviation is the POPULATION one (the reference passes `unbiased=False`).
+    /// `_gaussian_topk`. The deviation is the POPULATION one (the reference passes `unbiased=False`),
+    /// formed in float32 and rounded once, as `torch.std` rounds a half-precision input.
     private func sparsified(_ x: MLXArray, standardDeviations k: Float) -> MLXArray {
-        let mean = x.mean(axis: -1, keepDims: true)
-        let centered = x - mean
-        let deviation = sqrt((centered * centered).mean(axis: -1, keepDims: true))
+        let mean = NFKReferenceRounding.mean(x, axis: -1)
+        let wide = x.asType(.float32)
+        let centered = wide - wide.mean(axis: -1, keepDims: true)
+        let deviation = sqrt((centered * centered).mean(axis: -1, keepDims: true)).asType(x.dtype)
         return maximum(x - (mean + deviation * k), 0)
     }
 }
@@ -409,8 +405,7 @@ final class NFKGemma3nAttention: Module {
 
         var queries = queryNorm(queryProjection(x).reshaped([batch, length, heads, headDimensions]))
             .transposed(0, 2, 1, 3)
-        queries = MLXFast.RoPE(queries, dimensions: headDimensions, traditional: false, base: ropeBase,
-                               scale: 1, offset: offset)
+        queries = NFKReferenceRounding.rotary(queries, dimensions: headDimensions, base: ropeBase, offset: offset)
 
         var keys: MLXArray, values: MLXArray
         if sharesKeyValues, let shared {
@@ -423,8 +418,7 @@ final class NFKGemma3nAttention: Module {
             }
             var k = keyNorm(keyProjection(x).reshaped([batch, length, keyValueHeads, headDimensions]))
                 .transposed(0, 2, 1, 3)
-            k = MLXFast.RoPE(k, dimensions: headDimensions, traditional: false, base: ropeBase,
-                             scale: 1, offset: offset)
+            k = NFKReferenceRounding.rotary(k, dimensions: headDimensions, base: ropeBase, offset: offset)
             keys = k
             values = valueNorm(valueProjection(x).reshaped([batch, length, keyValueHeads, headDimensions]))
                 .transposed(0, 2, 1, 3)
@@ -436,8 +430,8 @@ final class NFKGemma3nAttention: Module {
         // The masks are built float32; a `.checkpoint`-precision load makes this a bf16 module and the
         // fused attention refuses a mask that does not promote to its own type.
         let typedMask = mask.map { $0.asType(queries.dtype) }
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: 1, mask: typedMask)
+        let attended = NFKReferenceRounding.attention(queries: queries, keys: keys, values: values,
+                                                      scale: 1, mask: typedMask)
         let output = outputProjection(
             attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
         return (output, keys, values)
@@ -495,7 +489,7 @@ final class NFKGemma3nBlock: Module {
 
         let gated = active + postAttentionNorm(attended)
         // The two residual paths are averaged rather than summed.
-        let withLaurel = (gated + laurelOutput) / Float(2).squareRoot()
+        let withLaurel = NFKReferenceRounding.divided(gated + laurelOutput, by: Float(2).squareRoot())
 
         let projected = postFeedForwardNorm(feedForward(preFeedForwardNorm(withLaurel)))
         var corrected = altup.correct(predictions: predictions, activated: withLaurel + projected)
@@ -504,7 +498,8 @@ final class NFKGemma3nBlock: Module {
         if correctScale {
             first = altup.scaleCorrectedOutput(first)
         }
-        first = postPerLayerInputNorm(perLayerProjection(geluApproximate(perLayerInputGate(first)) * perLayerInput))
+        first = postPerLayerInputNorm(perLayerProjection(
+            NFKReferenceRounding.geluTanh(perLayerInputGate(first)) * perLayerInput))
 
         // The per-layer input reaches the INACTIVE copies only. Built by concatenation rather than a
         // slice assignment, which MLX treats as an update on the array rather than a rebinding.
@@ -605,9 +600,10 @@ public final class NFKMLXGemma3nNet: Module {
 
     /// One hidden state expanded into AltUp's parallel copies, each projected then rescaled to the
     /// magnitude of the first — the reference's initialization, which keeps the copies comparable.
-    private func expanded(_ hidden: MLXArray) -> MLXArray {
+    func expanded(_ hidden: MLXArray) -> MLXArray {
         var copies = [hidden]
-        let target = sqrt((hidden * hidden).mean(axis: -1, keepDims: true))
+        // `mean(x²) ** 0.5`, the reference's spelling, which rounds unlike `sqrt` in the last bit.
+        let target = NFKReferenceRounding.wide(NFKReferenceRounding.mean(hidden * hidden, axis: -1)) { pow($0, Float(0.5)) }
         for projection in altupProjections {
             copies.append(matched(projection(hidden), to: target, like: hidden))
         }
@@ -616,13 +612,17 @@ public final class NFKMLXGemma3nNet: Module {
 
     private func matched(_ x: MLXArray, to target: MLXArray, like reference: MLXArray) -> MLXArray {
         let current = x.asType(reference.dtype)
-        let magnitude = sqrt(maximum((current * current).mean(axis: -1, keepDims: true), MLXArray(Float(1e-5))))
+        // The floor takes the stream's type, as torch's `maximum` keeps the dimensioned operand's; a
+        // float32 floor would promote a half-precision stream to float32 from here on.
+        let magnitude = NFKReferenceRounding.wide(maximum(NFKReferenceRounding.mean(current * current, axis: -1),
+                                                          MLXArray(Float(1e-5)).asType(current.dtype))) { sqrt($0) }
         return current * target / magnitude
     }
 
     /// The post-norm hidden states over already-embedded inputs.
     ///
     /// - Parameters:
+    ///   - embeddings: `[batch, length, hidden]`, the embedded prompt with any media written in.
     ///   - perLayerInputs: `[batch, length, layers, perLayerInput]` from
     ///     ``projectedPerLayerInputs(embeddings:perLayer:)``.
     ///   - cache: the key-value cache, or nil to run the whole sequence in one pass.
@@ -637,7 +637,8 @@ public final class NFKMLXGemma3nNet: Module {
     public func logits(fromHidden hidden: MLXArray) -> MLXArray {
         var logits = embedTokens.asLinear(hidden)
         if configuration.finalLogitSoftcap > 0 {
-            logits = tanh(logits / configuration.finalLogitSoftcap) * configuration.finalLogitSoftcap
+            logits = NFKReferenceRounding.wide(logits / configuration.finalLogitSoftcap) { tanh($0) }
+                * configuration.finalLogitSoftcap
         }
         return logits
     }
@@ -697,11 +698,11 @@ public final class NFKMLXGemma3nNet: Module {
 
         // The copies are projected back together, rescaled to the first one's magnitude, and averaged.
         var copies = [hidden[0]]
-        let target = sqrt((hidden[0] * hidden[0]).mean(axis: -1, keepDims: true))
+        let target = NFKReferenceRounding.wide(NFKReferenceRounding.mean(hidden[0] * hidden[0], axis: -1)) { pow($0, Float(0.5)) }
         for (index, projection) in altupUnembedProjections.enumerated() {
             copies.append(matched(projection(hidden[index + 1]), to: target, like: hidden[0]))
         }
-        let merged = norm(stacked(copies, axis: 0).mean(axis: 0))
+        let merged = norm(NFKReferenceRounding.mean(stacked(copies, axis: 0), axis: 0, keepDims: false))
         cache?.advance(by: length)
         return merged
     }

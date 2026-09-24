@@ -332,7 +332,16 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         super.init()
     }
 
-    public var isReady: Bool { true }
+    /// Whether the backend can answer: it reads text prompts only, so it needs a tokenizer.
+    public var isReady: Bool { holder.tokenizer != nil }
+
+    /// Whether the model's routed experts are paged: left in the release and read as the router
+    /// reaches them, through ``expertStore``. Introduced in InferKit 0.4.0.
+    @objc public var pagesExperts: Bool { holder.net.expertStore != nil }
+
+    /// The store a paged model reads its routed experts from, or nil where they are resident. Its
+    /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
+    public var expertStore: NFKMLXExpertStore? { holder.net.expertStore }
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads: the core sampling keys, the schema and the two
@@ -644,6 +653,9 @@ public final class NFKMLXLanguage: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "qwen3"
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
+    static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja"]
+    static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
     static func makeNet(_ configuration: NFKMLXLanguageConfiguration = .qwen3_0_6B) -> NFKMLXLanguageNet {
         NFKMLXLanguageNet(configuration)
@@ -661,7 +673,10 @@ public final class NFKMLXLanguage: NSObject {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
         }
-        return try configuration(fromJSON: json)
+        // A multimodal release states the decoder under `text_config` and names the WRAPPER in its
+        // top-level `architectures` (Mistral-Small 3 is `Mistral3ForConditionalGeneration`), which the
+        // causal-model guard below would reject for a decoder this network does implement.
+        return try configuration(fromJSON: (json["text_config"] as? [String: Any]) ?? json)
     }
 
     /// The configuration a parsed `config.json` object describes. A multimodal release's `text_config`
@@ -710,10 +725,10 @@ public final class NFKMLXLanguage: NSObject {
                 .floatValue ?? real("rope_theta", 1_000_000),
             rmsEpsilon: real("rms_norm_eps", 1e-6),
             tiesWordEmbeddings: (json["tie_word_embeddings"] as? NSNumber)?.boolValue ?? false,
-            // Qwen2 and Qwen2-MoE carry query/key/value biases and spell the flag `qkv_bias`, absent
-            // from their released configs because true is its default; Qwen3 and Llama carry none.
+            // Qwen2, Qwen2-MoE, and Qwen2.5-VL's text decoder carry query/key/value biases and leave
+            // the flag unset (or null) because true is its default; Qwen3 and Llama carry none.
             attentionBias: ((json["attention_bias"] ?? json["qkv_bias"]) as? NSNumber)?.boolValue
-                ?? (modelType == "qwen2" || modelType == "qwen2_moe"))
+                ?? ["qwen2", "qwen2_moe", "qwen2_5_vl_text", "qwen2_vl_text"].contains(modelType))
         // Qwen3 normalizes queries and keys per head; Qwen2 and Llama do not. The model type is what
         // says so — the config carries no flag for it.
         configuration.normalizesQueryAndKey = modelType.hasPrefix("qwen3")
@@ -900,6 +915,131 @@ public final class NFKMLXLanguage: NSObject {
         return rest
     }
 
+    private static let stackedExpertPattern = try! NSRegularExpression(
+        pattern: #"^(.*\.experts)\.(gate_proj|up_proj|down_proj|gate_up_proj)\.(weight|scales|biases)$"#)
+
+    /// The expert slices a release tensor feeds on a paged load, or none for a tensor the load keeps.
+    ///
+    /// @discussion Four layouts arrive: one tensor per expert (Qwen2-MoE, Qwen3-MoE, Mixtral), a
+    /// stacked `[experts, in, out]` tensor transposed per expert (gpt-oss at bf16), MXFP4 blocks viewed
+    /// as words (gpt-oss as released), and a stacked `[experts, out, in]` tensor in the module's own
+    /// layout (a checkpoint this package saved, float or quantized). Each slice ends in the layout the
+    /// resident loader gives the whole tensor. The expert biases gpt-oss carries stay resident: they
+    /// are one row per expert.
+    static func expertSlices(forRelease key: String, entry: NFKMLXSafetensorsEntry) -> [NFKMLXExpertSlice] {
+        let name = moduleKey(forRelease: key)
+        let range = NSRange(name.startIndex..., in: name)
+        if let match = expertPattern.firstMatch(in: name, range: range),
+           let prefix = Range(match.range(at: 1), in: name),
+           let index = Range(match.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
+           let projection = Range(match.range(at: 3), in: name) {
+            return [NFKMLXExpertSlice(group: "\(name[prefix]).\(name[projection])", part: "weight", expert: index)]
+        }
+        guard entry.shape.count >= 3, let match = stackedExpertPattern.firstMatch(in: name, range: range),
+              let prefix = Range(match.range(at: 1), in: name),
+              let projection = Range(match.range(at: 2), in: name),
+              let part = Range(match.range(at: 3), in: name) else { return [] }
+        var slice = NFKMLXExpertSlice(group: "\(name[prefix]).\(name[projection])", part: String(name[part]),
+                                      expert: nil)
+        if key.hasSuffix(".mlp.experts.gate_up_proj") || key.hasSuffix(".mlp.experts.down_proj") {
+            slice.inputMajor = true
+        } else if key.hasSuffix("_proj_blocks"), entry.dtype == "U8" {
+            slice.transform = { blocks in
+                let words = blocks.view(dtype: .uint32)
+                return words.reshaped([words.dim(0), -1])
+            }
+        }
+        return [slice]
+    }
+
+    /// Replaces every mixture projection with a paged one reading from `store`, and returns what
+    /// each must find there.
+    ///
+    /// - Parameters:
+    ///   - quantization: how a group's experts are packed, or nil where they are floats.
+    ///   - inputMajor: whether a group's experts are stored `[in, out]`.
+    static func installPagedExperts(into net: NFKMLXLanguageNet, store: NFKMLXExpertStore,
+                                    quantization: (String) -> NFKMLXWeights.Quantization?,
+                                    inputMajor: (String) -> Bool) throws
+        -> [(group: String, experts: Int, parts: [String])] {
+        var layers = [(group: String, experts: Int, parts: [String])]()
+        for (index, block) in net.model.layers.enumerated() {
+            guard let mixture = block.feedForward as? NFKLMMixtureFeedForward else { continue }
+            let projections: [(String, NFKLMExpertLinear)]
+            if let glu = mixture.experts as? NFKLMSwitchGLU {
+                projections = [("gate_proj", glu.gate), ("up_proj", glu.up), ("down_proj", glu.down)]
+            } else if let fused = mixture.experts as? NFKLMFusedSwitchGLU {
+                projections = [("gate_up_proj", fused.gateUp), ("down_proj", fused.down)]
+            } else {
+                continue
+            }
+            for (name, layer) in projections {
+                let group = "model.layers.\(index).mlp.experts.\(name)"
+                let packing = quantization(group)
+                let paged = NFKLMPagedSwitchLinear(
+                    pager: NFKMLXExpertPager(store: store, group: group), experts: layer.expertCount,
+                    outputSize: layer.outputSize, inputSize: layer.inputSize, quantization: packing,
+                    inputMajor: inputMajor(group))
+                try mixture.experts.update(modules: ModuleChildren.unflattened([(name, paged)]),
+                                           verify: .noUnusedKeys)
+                let parts = packing.map { $0.mode == .affine ? ["weight", "scales", "biases"] : ["weight", "scales"] }
+                layers.append((group, layer.expertCount, parts ?? ["weight"]))
+            }
+        }
+        return layers
+    }
+
+    /// Loads a release with its routed experts paged: every other tensor loads as a resident load
+    /// takes it, and the experts are filed in a new store as byte ranges of the mapped release.
+    static func loadPagedWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                                 precision: NFKMLXWeightPrecision, inventory: NFKMLXExpertInventory,
+                                 cacheByteBudget: Int) throws {
+        let tied = net.lmHead == nil
+        let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
+        var recorded: NFKMLXWeights.Quantization?
+        var stored = precision
+        let kept: [(String, MLXArray)]
+        if files.count == 1 {
+            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: files[0])
+            NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+            recorded = checkpoint.quantization
+            if checkpoint.quantization != nil {
+                stored = .checkpoint
+            }
+            kept = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
+                if (tied && key.hasPrefix("lm_head.")) || inventory.isExpert(key) { return nil }
+                let keeps = stored == .checkpoint || (value.dtype != .float16 && value.dtype != .bfloat16)
+                return (key, keeps ? value : value.asType(.float32))
+            }
+        } else {
+            kept = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+                (tied && $0.hasPrefix("lm_head.")) || inventory.isExpert($0) ? nil : $0
+            }
+        }
+        var packedGroups = [String: Bool]()
+        var inputMajorGroups = Set<String>()
+        for tensor in inventory.experts.values {
+            for slice in tensor.slices {
+                if slice.part == "scales" {
+                    packedGroups[slice.group] = tensor.entry.dtype == "U8"
+                }
+                if slice.inputMajor {
+                    inputMajorGroups.insert(slice.group)
+                }
+            }
+        }
+        let store = NFKMLXExpertStore(cacheByteBudget: cacheByteBudget)
+        let layers = try installPagedExperts(into: net, store: store, quantization: { group in
+            guard let mxfp4 = packedGroups[group] else { return nil }
+            return mxfp4 ? mxfp4Quantization : recorded
+        }, inputMajor: inputMajorGroups.contains)
+        try inventory.register(into: store, precision: stored)
+        let prepared = releaseWeights(kept)
+        try NFKMLXWeights.apply(prepared, to: net, verifyShapes: true)
+        try NFKMLXExpertInventory.verifyComplete(store, layers: layers)
+        net.expertStore = store
+    }
+
     /// Loads a released checkpoint. The module's keys are the checkpoint's, so nothing is remapped
     /// beyond stacking a mixture's per-expert tensors.
     ///
@@ -985,11 +1125,28 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// Builds from a downloaded release directory holding the weights, `config.json`, and the
-    /// tokenizer files.
+    /// tokenizer files. A directory whose tokenizer cannot be read is refused: the backend reads text
+    /// prompts only, so it could answer none.
     public static func backend(directoryURL: URL,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedRelease(at: directoryURL)
+        try backend(directoryURL: directoryURL, residency: .automatic, options: options)
+    }
+
+    /// Builds from a release directory, holding its routed experts as `residency` says.
+    ///
+    /// @discussion A mixture of experts is one stage, so the residencies differ only in paging:
+    /// ``NFKMLXResidency/paged`` leaves the routed experts in the release and reads each as the router
+    /// reaches it, ``NFKMLXResidency/resident`` loads them and fails where the release is known not to
+    /// fit, and ``NFKMLXResidency/automatic`` pages only where the release is known not to fit whole.
+    /// ``NFKMLXResidency/staged`` loads the model resident. A dense release has nothing to page and
+    /// loads resident under every residency. ``NFKMLXLanguageBackend/pagesExperts`` reports the
+    /// placement. The release directory has to stay in place for the life of a paged backend.
+    /// Introduced in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency,
+                               options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
+        throws -> any NFKInferenceBackend {
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, residency: residency)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: options)
     }
@@ -1004,7 +1161,7 @@ public final class NFKMLXLanguage: NSObject {
     public static func backend(directoryURL: URL, draftDirectoryURL: URL,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedRelease(at: directoryURL)
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL)
         let (draft, _) = try loadedRelease(at: draftDirectoryURL)
         guard draft.configuration.vocabularySize == net.configuration.vocabularySize else {
             throw NFKMLXError.unsupportedConfiguration(
@@ -1029,7 +1186,23 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// The network and tokenizer a release directory describes.
-    static func loadedRelease(at directoryURL: URL) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
+    /// The network and tokenizer of a release a backend will read text through: a directory whose
+    /// tokenizer cannot be read is refused.
+    static func loadedReleaseWithTokenizer(at directoryURL: URL, residency: NFKMLXResidency = .automatic)
+        throws -> (NFKMLXLanguageNet, NFKTokenizer) {
+        let (net, tokenizer) = try loadedRelease(at: directoryURL, requiringTokenizer: true, residency: residency)
+        guard let tokenizer else { throw NFKMLXError.unsupportedConfiguration("unreachable: the tokenizer was required") }
+        return (net, tokenizer)
+    }
+
+    /// The network and tokenizer a release directory describes. A caller that reads text sets
+    /// `requiringTokenizer`; a caller that feeds the network embeddings (the FLUX.2 text encoder) does not.
+    /// `precision` nil loads at float32, or as stored for a release whose experts are packed; a caller
+    /// whose release is too large at float32 passes `.checkpoint` (the Qwen3-8B inside FLUX.2 [klein]
+    /// 9B is 30.5 GB at float32 and 15.3 GB as released).
+    static func loadedRelease(at directoryURL: URL, requiringTokenizer: Bool = false,
+                              precision: NFKMLXWeightPrecision? = nil,
+                              residency: NFKMLXResidency = .automatic) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         let configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         // Qwen ships a byte-level BPE vocabulary trained on its OWN pre-tokenization splits — a
@@ -1040,8 +1213,34 @@ public final class NFKMLXLanguage: NSObject {
         let tokenizer = releaseTokenizer(inDirectory: directoryURL)
         let net = makeNet(configuration)
         let packed = storesExpertsMXFP4(configURL: directoryURL.appendingPathComponent("config.json"))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: packed ? .checkpoint : .float32)
+        try loadWeights(into: net, fromDirectory: directoryURL,
+                        precision: precision ?? (packed ? .checkpoint : .float32), residency: residency)
+        // Checked after the load, whose memory check refuses a release the machine cannot hold before
+        // reading any weight: that refusal is the one a caller can act on, so it comes first.
+        if requiringTokenizer && tokenizer == nil {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(directoryURL.lastPathComponent) has no readable tokenizer (tokenizer.json, or vocab.json and merges.txt)")
+        }
         return (net, tokenizer)
+    }
+
+    /// Loads a release held as `residency` plans it: paged where the plan pages the routed experts,
+    /// and resident otherwise.
+    ///
+    /// @discussion The plan weighs the release from its shard headers. A model without routed
+    /// experts has nothing to page and loads resident under every residency.
+    static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws {
+        let inventory = try NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision,
+                                                           classify: expertSlices(forRelease:entry:))
+        let plan = try NFKMLXResidencyBudget.plan([inventory.footprint], residency: residency,
+                                                  budget: NFKMLXResidencyBudget.current())
+        guard plan.pagesExperts else {
+            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            return
+        }
+        try loadPagedWeights(into: net, fromDirectory: directory, precision: precision,
+                             inventory: inventory, cacheByteBudget: plan.expertCacheBytes)
     }
 
     /// The tokenizer a release directory describes, built without loading the weights.
@@ -1056,10 +1255,13 @@ public final class NFKMLXLanguage: NSObject {
                                                      "pretokenizer": pretokenizationName(inDirectory: directory),
                                                      "specialTokens": specials]]
         if let endToken { manifest["eosTokenId"] = endToken }
-        // A release that ships only tokenizer.json (gpt-oss) has its vocabulary and merges extracted
-        // into the vocab.json / merges.txt pair the core reader takes.
+        // A release that ships only tokenizer.json (gpt-oss), or a vocab.json without the matching
+        // merges.txt (Granite Speech), has its vocabulary and merges extracted from tokenizer.json into
+        // the vocab.json / merges.txt pair the core reader takes.
         var files = directory
-        if !FileManager.default.fileExists(atPath: directory.appendingPathComponent("vocab.json").path) {
+        let hasVocab = FileManager.default.fileExists(atPath: directory.appendingPathComponent("vocab.json").path)
+        let hasMerges = FileManager.default.fileExists(atPath: directory.appendingPathComponent("merges.txt").path)
+        if !(hasVocab && hasMerges) {
             guard let extracted = byteLevelFiles(fromTokenizerJSON: directory.appendingPathComponent("tokenizer.json")) else {
                 return nil
             }
@@ -1070,7 +1272,8 @@ public final class NFKMLXLanguage: NSObject {
 
     /// The pre-tokenization a release's tokenizer.json declares, read from its `Split` regex: the
     /// o200k pattern (gpt-oss) matches words by their case pattern, spelled with the `\p{Lu}\p{Lt}…`
-    /// classes no other family uses; everything else here is Qwen's, the previous default.
+    /// classes no other family uses; Qwen3.5's letter runs take combining marks (`[\p{L}\p{M}]+`);
+    /// everything else here is Qwen2's, the previous default.
     static func pretokenizationName(inDirectory directory: URL) -> String {
         guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1081,6 +1284,10 @@ public final class NFKMLXLanguage: NSObject {
             if let pattern = step["pattern"] as? [String: Any], let regex = pattern["Regex"] as? String,
                regex.contains("\\p{Lu}\\p{Lt}") {
                 return "o200k"
+            }
+            if let pattern = step["pattern"] as? [String: Any], let regex = pattern["Regex"] as? String,
+               regex.contains("[\\p{L}\\p{M}]+") {
+                return "qwen35"
             }
         }
         return "qwen2"
@@ -1144,6 +1351,13 @@ public final class NFKMLXLanguage: NSObject {
         try backend(directoryURL: directoryURL, options: NFKMLXGenerationOptions())
     }
 
+    /// The Objective-C entry holding the release's routed experts as `residency` says; see
+    /// ``backend(directoryURL:residency:options:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, residency: residency, options: NFKMLXGenerationOptions())
+    }
+
     /// The Objective-C entry for speculative decoding: a release directory and a smaller release
     /// of the same family as the draft. `NFKMLXGenerationParameterKey.draftTokens` sets the
     /// proposals per round on a request.
@@ -1151,5 +1365,87 @@ public final class NFKMLXLanguage: NSObject {
     public static func backend(directoryURL: URL, draftDirectoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL,
                     options: NFKMLXGenerationOptions())
+    }
+
+    /// The release directory a download of `repo` fills: `config.json`, `tokenizer.json`,
+    /// `tokenizer_config.json`, whichever of `vocab.json`, `merges.txt`, `added_tokens.json`, and
+    /// `chat_template.jinja` the repo serves, and the weights, single-file or sharded.
+    static func releaseDirectory(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
+        try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles)
+    }
+
+    /// Downloads a release and builds the backend.
+    ///
+    /// @discussion The download fetches `config.json`, the tokenizer files, and the weights (a single
+    /// `model.safetensors` or every shard a `model.safetensors.index.json` names) into the hub cache
+    /// under `cacheDirectoryURL`, or the default cache when nil. A cached file is not fetched again.
+    /// The call blocks on the network; call it off the render thread. It serves the Qwen3, Qwen2,
+    /// Qwen2-MoE, Qwen3-MoE, and gpt-oss releases the directory factory reads, such as
+    /// `Qwen/Qwen3-0.6B`, `Qwen/Qwen3-4B`, and `openai/gpt-oss-20b`, none of which is gated. A gated
+    /// repo needs `NFKHFHub.defaultAccessToken` set before the first download. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// ``backend(repo:revision:cacheDirectoryURL:)`` holding the release's routed experts as
+    /// `residency` says; see ``backend(directoryURL:residency:options:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:residency:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
+                    residency: residency)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:residency:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               residency: NFKMLXResidency,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: residency)
+        }
+    }
+
+    /// Downloads a release and a smaller release of the same family as the draft, and builds the
+    /// speculative-decoding backend.
+    ///
+    /// @discussion Each repo downloads as ``backend(repo:revision:cacheDirectoryURL:)`` describes,
+    /// into the same cache; a cached file is not fetched again. The call blocks on the network; call
+    /// it off the render thread. `Qwen/Qwen3-0.6B` drafting for `Qwen/Qwen3-4B` is the intended
+    /// pairing. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:draftRepo:draftRevision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, draftRepo: String, draftRevision: String?,
+                               cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let directory = try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        let draftDirectory = try releaseDirectory(repo: draftRepo, revision: draftRevision,
+                                                  cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(directoryURL: directory, draftDirectoryURL: draftDirectory)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:draftRepo:draftRevision:cacheDirectoryURL:)``.
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:draftRepo:draftRevision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, draftRepo: String, draftRevision: String?,
+                               cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, draftRepo: draftRepo, draftRevision: draftRevision,
+                        cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 }

@@ -488,8 +488,32 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     func testTheBackendReportsAMissingTokenizer() throws {
         try requireMLXRuntime()
         let backend = try NFKMLXLanguage.backend(weightsURL: nil, tokenizer: nil, configuration: .tiny)
+        XCTAssertFalse(backend.isReady, "a backend that reads text prompts is not ready without a tokenizer")
         XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputPrompt: "hello"])))
+    }
+
+    // A release whose tokenizer is missing is refused when it is built, not at its first prompt.
+    func testAReleaseWithoutATokenizerIsRefused() throws {
+        try requireMLXRuntime()
+        guard let store = NFKMLXValidationConfig.environment["IK_VAL_QWEN3"] else { throw XCTSkip("set IK_VAL_QWEN3") }
+        let partial = try release(store, without: ["tokenizer.json", "vocab.json", "merges.txt"])
+        defer { try? FileManager.default.removeItem(at: partial) }
+        XCTAssertThrowsError(try NFKMLXLanguage.backend(directoryURL: partial)) { error in
+            XCTAssertTrue("\(error)".contains("no readable tokenizer"), "\(error)")
+        }
+    }
+
+    /// A copy of a release directory with some files left out, linked file by file.
+    private func release(_ store: String, without omitted: Set<String>) throws -> URL {
+        let source = URL(fileURLWithPath: store)
+        let copy = FileManager.default.temporaryDirectory.appendingPathComponent("partial-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        for name in try FileManager.default.contentsOfDirectory(atPath: source.path) where !omitted.contains(name) {
+            try FileManager.default.createSymbolicLink(at: copy.appendingPathComponent(name),
+                                                       withDestinationURL: source.appendingPathComponent(name))
+        }
+        return copy
     }
 
     func testTheBackendFlattensAMessageList() {

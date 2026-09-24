@@ -424,6 +424,85 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   and Granite 4.0-H's mixture sizes (`NFKMLXGraniteHybrid.loadWeights(into:fromDirectory:precision:residency:)`)
   page the same way.
 
+#### DeepSeek V4.1 generates
+
+- `NFKMLXDeepSeekCache` carries what a decode step cannot recompute: each layer's sliding window,
+  the compressed key-value its four source layers publish, the index keys those sources publish, the
+  partial group a compressor has pooled but not emitted, and the n-gram memory's id history. All of
+  them are indexed by absolute position, which is what makes a step equal to the same position
+  inside a longer prefill. `NFKMLXDeepSeekNet.generate(prompt:options:onToken:)` runs the prompt as
+  one chunk and each token as a chunk of one.
+- `NFKMLXDeepSeekBackend` (`@objc`) answers `NFKInputPrompt` and `NFKInputMessages` with
+  `NFKOutputText`, honoring temperature, top-p, max-tokens, seed, a JSON schema, and the release's
+  own chat template. A context window, a quantized key-value cache and speculative verification are
+  deliberately absent: the first two would be a second policy over state this architecture already
+  bounds, and the third would mean rolling all five buffers back.
+- `NFKMLXDeepSeek.backend(directoryURL:)` (`@objc` `deepSeekBackendWithDirectoryURL:error:`) builds
+  from a release directory, reading its `config.json` and `tokenizer.json`, deriving the collapsed
+  token map the n-gram memory addresses through, and decoding the weights a shard at a time. A
+  machine that cannot hold the decoded weights is told so, with the shortfall, before any are read:
+  the released 763B decodes to 1.39 TiB of bf16 parameters.
+- `NFKMLXDeepSeekExpertStore` and `backend(directoryURL:paging:options:)`
+  (`@objc` `deepSeekPagedBackendWithDirectoryURL:expertCacheBytes:error:`) hold the routed experts in
+  the form the release stores them and decode one as the router reaches it, which takes the fit
+  figure from 1423.0 GiB of bf16 parameters to 679.4 GiB. A paged mixture groups a chunk's tokens by the
+  expert they route to, so an expert decodes once for the chunk, and applies it one token at a time,
+  so a paged decoder produces the same logits as a resident one rather than close ones. Paging the
+  n-gram tables as well takes it to 502.0 GiB.
+- `NFKMLXDeepSeekPaging.mapsNgramTables` / `.mapsRoutedExperts` leave a group in the release and copy
+  out the bytes a step reads, so its resident cost becomes the page cache. Measured on V4.1 Flash,
+  what the decoder allocates goes 1396.4 GiB resident, 475.5 held stored, 286.6 with the tables
+  mapped, and 17.7 GiB with every group mapped. A mapped decoder produces the same logits as a held
+  one: the mapping never becomes an `MLXArray`, so the same bytes reach the same dequantizer.
+- `NFKMLXDeepSeekNet.generate(prompt:draft:options:report:onToken:)` verifies a DSpark block at
+  decode: the draft stack proposes `dsparkBlockSize` tokens, the decoder scores the block in one
+  pass, and the leading proposals matching its own argmax are kept. A greedy speculative run is the
+  greedy run token for token. `NFKMLXDeepSeekCache.Snapshot` is what makes a rejection possible —
+  the sliding window is a ring and cannot be trimmed back — and it copies the compressor's parked
+  group, the one buffer a step writes through rather than replaces.
+- `NFKMLXDeepSeekConfiguration.quantizesActivations` (default off) rounds activations where the
+  release's own `inference/model.py` rounds them: the window key-value, the compressed latent, the
+  indexer's keys and queries, the draft stack's two key-values, the n-gram rows, and the input of
+  every GEMM whose weight the release stores fp8 or fp4. Measured against that code with its
+  quantizers running, the decoder's logits agree at 0.9999946 with the round trips and 0.99994
+  without them; the one layer that differs does so at an exact tie in the reference's own top-k
+  scores. Off, the decoder is the unquantized model, as before.
+- A DeepSeek decoder computes in bf16, the dtype every V4 and V4.1 release declares and its own
+  inference code runs in (`NFKMLXDeepSeekConfiguration.computesInBFloat16`, read from `config.json`). It holds float32
+  exactly the parameters the reference's constructor holds float32, and it halves what the decoder
+  holds and what a step reads for every parameter not already stored narrow: a fully mapped V4.1
+  Flash decoder is 17.7 GiB, where float32 is 32.7. Measured against the release's code built in
+  bf16, every stream is identical, bit for bit: every decoder layer at prefill, with and without
+  `quantizesActivations`, every buffer a decode step carries, the draft stack, the image tower and
+  the image router. V4 and V4 Pro, measured against their own releases' code the same way, are
+  bit-exact at every layer, at prefill and at decode. `computesInFloat32:` opts out.
+- V4 Pro 0813's DSpark draft stack is built, loaded from the release's own tensor names, and
+  measured against its code: three stages over the decoder's experts, reading the target layers'
+  outputs and collapsing through the last stage's own learned head. The release's `config.json`
+  says one draft stage where its checkpoint holds three, so the stage count is read from the
+  checkpoint's index. A greedy speculative run on V4 Pro is the plain run token for token.
+- V4 and V4 Pro are measured against their releases' own `inference/model.py`, which reaches both
+  compression ratios, the overlapping pool, the indexer and YaRN: logits 0.99999999999998 at prefill
+  and every token the reference's over five decode steps. The comparison with transformers covered
+  only an all-sliding configuration.
+- `NFKMLXDeepSeekLoadOptions` carries every load choice to Objective-C through
+  `deepSeekBackendWithDirectoryURL:options:error:`: paging (`NFKMLXDeepSeekPagingMode`), the expert
+  cache, speculation, activation rounding, and the float32 opt-out.
+- `NFKDeepSeekStoredTable` holds the n-gram tables as the release stores them and decodes a row as
+  it is looked up, which is what their per-row scales exist for. `NFKMLXDeepSeekPaging` selects the
+  groups; `.all` holds both. A paged decoder produces the same logits as a resident one.
+- `NFKMLXDeepSeekNet.prefill(_:embeddings:images:cache:chunkSize:)` feeds a prompt in chunks through
+  the cache, bounding the peak by the chunk rather than by the prompt, and
+  `NFKMLXGenerationParameterKey.prefillChunkSize` reaches it from a request. A chunk boundary can
+  land inside a ratio-2 compressor's group, which the cache's parked partial carries across.
+- `NFKMLXDeepSeekImageProcessor` and `NFKMLXDeepSeekImageStack` turn a picture into the span the
+  decoder reads, and `NFKMLXDeepSeekBackend` accepts `NFKInputImage` where the release carries a
+  tower. The patches match the release's own `image_processor.py` exactly, including PIL's two-pass
+  8-bit resample.
+- Measured against the release's own `inference/model.py`: a prefill of 11 tokens then three
+  single-token steps, with every carried buffer compared after each, match at 0.99999999999999 and
+  0.99999999999999 at each step, every token the reference's.
+
 #### Learning-rate schedules
 
 - `NFKMLXTrainer.train(…learningRateSchedule:)` scales every parameter group's rate by an
