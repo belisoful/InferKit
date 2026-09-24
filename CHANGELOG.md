@@ -550,6 +550,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### NU-Wave 2 fine-tunes on a consumer's own wide-band audio
+
+- `NFKMLXNUWave2.network(weightsURL:)`, `trainingPair(wideband:narrowbandRate:)`, and
+  `fineTune(_:examples:…)` train every weight of the bandwidth extender with the reference's Adam
+  (2e-4, betas 0.9 and 0.99, epsilon 1e-9), its random gain, and its stratified diffusion-time draw.
+  The result loads through the released factories.
+- `NFKMLXNUWave2Objective` is `NuWave2.common_step`'s noise-prediction L1 along the continuous logSNR
+  schedule, measured on the official checkpoint with the time and noise fixed: 0.025521424 against the
+  reference's 0.025521573, the noise estimate at cosine 0.9999999999995.
+
 #### GTCRN fine-tunes on a consumer's own recordings
 
 - `NFKMLXGTCRNFactory.network(weightsURL:)`, `spectrogram(for:)`, and `fineTune(_:examples:…)` train

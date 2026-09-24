@@ -680,6 +680,26 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(denoiser.isReady)
     }
 
+    // Docs/examples.md: Teaching bandwidth extension your own audio
+    func testExampleFineTuningNUWave2OnOwnAudio() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nuwave2-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the official checkpoint: NFKMLXNUWave2.network(weightsURL: releasedWeights).
+        let net = try NFKMLXNUWave2.network(weightsURL: nil)
+        let wideband = (0 ..< 4096).map { sinf(2 * .pi * 440 * Float($0) / 48000) * 0.5 }
+        let pair = NFKMLXNUWave2.trainingPair(wideband: wideband, narrowbandRate: 16000)
+        let history = try NFKMLXNUWave2.fineTune(net, examples: { _ in pair }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let extender = try NFKMLXNUWave2.backend(weightsURL: tuned)            // also backendWithWeightsURL:error:
+        XCTAssertTrue(extender.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint
