@@ -267,10 +267,14 @@ extension NFKMLXSAM2 {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        apply(trainable, to: net)
         let prompt = NFKMLXSAM2Prompt()
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer ?? referenceOptimizer(for: net), steps: steps,
+        return try NFKMLXFineTune.run(
+            net,
+            freezing: { apply(trainable, to: net) },
+            optimizer: optimizer,
+            reference: { referenceOptimizer(for: net) },
+            referenceSchedule: { .cosine(steps: steps, endScale: 0.1) },
+            steps: steps,
             batch: { step in
                 let example = examples(step)
                 prompt.points = example.points
@@ -278,9 +282,7 @@ extension NFKMLXSAM2 {
             },
             loss: { net, image, target in objective(net, image, points: prompt.points, target) },
             clipGradientNorm: clipGradientNorm,
-            learningRateSchedule: .resolved(learningRateSchedule, optimizer: optimizer) {
-                .cosine(steps: steps, endScale: 0.1)
-            },
+            learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
 

@@ -443,13 +443,18 @@ extension NFKMLXSAM3 {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        apply(trainable, to: detector)
         let carried = NFKMLXSAM3Batch()
-        return try NFKMLXTrainer.train(
-            detector, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(
-                learningRate: 8e-5, weightDecay: 0.1,
-                exempting: NFKMLXReferenceOptimizers.biasOrLayerNorm(
-                    NFKMLXReferenceOptimizers.layerNormPrefixes(in: detector))),
+        return try NFKMLXFineTune.run(
+            detector,
+            freezing: { apply(trainable, to: detector) },
+            optimizer: optimizer,
+            reference: {
+                NFKMLXReferenceOptimizers.adamW(
+                    learningRate: 8e-5, weightDecay: 0.1,
+                    exempting: NFKMLXReferenceOptimizers.biasOrLayerNorm(
+                        NFKMLXReferenceOptimizers.layerNormPrefixes(in: detector)))
+            },
+            referenceSchedule: { .inverseSquareRoot(steps: steps, timescale: 20, warmupSteps: 20, cooldownSteps: 20) },
             steps: steps,
             sample: { step in
                 let example = examples(step)
@@ -464,9 +469,7 @@ extension NFKMLXSAM3 {
                           prompt: carried.prompt, promptValid: carried.promptValid, targets: boxes)
             },
             clipGradientNorm: clipGradientNorm,
-            learningRateSchedule: .resolved(learningRateSchedule, optimizer: optimizer) {
-                .inverseSquareRoot(steps: steps, timescale: 20, warmupSteps: 20, cooldownSteps: 20)
-            },
+            learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
 
