@@ -192,8 +192,10 @@ extension NFKMLXQwen3VLEmbedder {
                          objective: NFKMLXQwen3VLEmbeddingObjective = NFKMLXQwen3VLEmbeddingObjective(),
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         let stacked = stacked(documents, axis: 0)
-        return try NFKMLXTrainer.train(
-            adapter, optimizer: Adam(learningRate: learningRate, biasCorrection: true), steps: steps,
+        return try NFKMLXFineTune.run(
+            adapter, freezing: {}, optimizer: nil,
+            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            referenceSchedule: { .constant }, steps: steps,
             batch: { _ in (queries, stacked) },
             loss: { model, queries, documents in objective(model, queries: queries, documents: documents) },
             clipGradientNorm: 1, observer: observer)
@@ -236,8 +238,10 @@ extension NFKMLXQwen3VLReranker {
                          steps: Int, learningRate: Float = 1e-3,
                          objective: NFKMLXQwen3VLRerankerObjective = NFKMLXQwen3VLRerankerObjective(),
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
-        try NFKMLXTrainer.train(
-            head, optimizer: Adam(learningRate: learningRate, biasCorrection: true), steps: steps,
+        try NFKMLXFineTune.run(
+            head, freezing: {}, optimizer: nil,
+            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            referenceSchedule: { .constant }, steps: steps,
             batch: { _ in (hidden, labels) },
             loss: { model, hidden, labels in objective(model, hidden: hidden, labels: labels) },
             clipGradientNorm: 1, observer: observer)

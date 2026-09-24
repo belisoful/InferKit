@@ -114,16 +114,23 @@ public extension NFKMLXNemotronH {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        if let rank {
-            let adapted = try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in
-                isAttentionProjection(path)
-            }
-            guard adapted > 0 else {
-                throw NFKMLXError.trainingDataMismatch("no attention projections were found to adapt, so nothing would train")
-            }
-        }
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(learningRate: 1e-4, weightDecay: 0), steps: steps,
+        try NFKMLXFineTune.run(
+            net,
+            freezing: {
+                guard let rank else {
+                    return
+                }
+                let adapted = try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in
+                    isAttentionProjection(path)
+                }
+                guard adapted > 0 else {
+                    throw NFKMLXError.trainingDataMismatch("no attention projections were found to adapt, so nothing would train")
+                }
+            },
+            optimizer: optimizer,
+            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: 1e-4, weightDecay: 0) },
+            referenceSchedule: { .constant },
+            steps: steps,
             sample: examples, loss: objective.callAsFunction,
             clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
     }

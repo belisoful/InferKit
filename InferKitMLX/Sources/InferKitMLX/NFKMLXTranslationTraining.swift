@@ -75,14 +75,21 @@ enum NFKMLXTranslationTraining {
         loss: @escaping (Net, MLXArray, MLXArray) -> MLXArray, optimizer: Optimizer?, steps: Int,
         clipGradientNorm: Float?, checkpoint: NFKMLXTrainingCheckpoint?, observer: NFKMLXTrainer.Observer?
     ) throws -> [Float] {
-        if let rank {
-            let adapted = try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in predicate(path) }
-            guard adapted > 0 else {
-                throw NFKMLXError.trainingDataMismatch("no decoder attention projections were found to adapt, so nothing would train")
-            }
-        }
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(learningRate: 1e-4, weightDecay: 0), steps: steps,
+        try NFKMLXFineTune.run(
+            net,
+            freezing: {
+                guard let rank else {
+                    return
+                }
+                let adapted = try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in predicate(path) }
+                guard adapted > 0 else {
+                    throw NFKMLXError.trainingDataMismatch("no decoder attention projections were found to adapt, so nothing would train")
+                }
+            },
+            optimizer: optimizer,
+            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: 1e-4, weightDecay: 0) },
+            referenceSchedule: { .constant },
+            steps: steps,
             batch: { let example = examples($0); return (example.source, example.target) },
             loss: loss, clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
     }
