@@ -486,6 +486,27 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   under `NFKFoundationModelsErrorKey.resetDate`.
   `variantDisplayName` (macOS 27 / iOS 27) names the on-device model's variant. All of it is `@objc`.
 
+#### Failures read like every other engine's
+
+- A Foundation Models failure becomes an error in `NFKInferenceErrorDomain`, so a consumer reads it
+  the way it reads one from a remote endpoint or an MLX model, with the framework's own error under
+  `NSUnderlyingErrorKey`. A guardrail violation or a refusal is `kNFKError_InferenceRefused`; a rate
+  limit or a reached Private Cloud Compute quota is `kNFKError_InferenceRateLimited`, carrying the
+  reset date; a context overflow, an unsupported capability, guide, or locale is
+  `kNFKError_InferenceUnsupported`; missing assets are `kNFKError_InferenceNotReady`; a Private Cloud
+  Compute network failure is `kNFKError_RemoteUnreachable`.
+- On macOS 27 a context overflow also carries the two counts under `NFKFoundationModelsErrorKey`,
+  which the macOS 26 error does not report; the backend's own preflight is what supplies them there.
+
+#### What stays Swift is written down
+
+- The companion's documentation names the six parts of Foundation Models that carry no request key,
+  because they are result builders, macros, or generics: dynamic instructions, profiles,
+  `@Generable(name:)`, `ImageReference`, the session's own properties, and
+  `transcriptErrorHandlingPolicy`. Each entry names what the contract offers instead, so an
+  Objective-C caller knows what it is missing and a Swift caller knows when to open a session
+  directly.
+
 #### The provider bridge
 
 - `NFKInferKitLanguageModel` adopts Apple's provider protocols (`LanguageModel` /

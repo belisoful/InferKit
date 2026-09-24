@@ -182,8 +182,12 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         try configuration.checkAvailability()
         #if compiler(>=6.4)
         if configuration.model == .privateCloudCompute, #available(macOS 27, iOS 27, *) {
-            let size = try Self.readCloudContextSize()
-            lock.withLock { cloudContextSize = size }
+            do {
+                let size = try Self.readCloudContextSize()
+                lock.withLock { cloudContextSize = size }
+            } catch {
+                throw NFKFoundationModelsFailure.coreError(for: error)
+            }
         }
         #endif
         let warm = lock.withLock { prewarmedConfiguration == configuration }
@@ -312,7 +316,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                 if Task.isCancelled {
                     job.cancel()
                 } else {
-                    job.finish(withError: error)
+                    job.finish(withError: NFKFoundationModelsFailure.coreError(for: error))
                 }
             }
         }

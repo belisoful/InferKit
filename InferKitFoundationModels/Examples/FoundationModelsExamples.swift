@@ -138,4 +138,23 @@ final class FoundationModelsExamples: XCTestCase {
         throw XCTSkip("built with an SDK before macOS 27")
         #endif
     }
+
+    // Docs/examples.md: What a failure means — the code says what to do about it.
+    func testExampleReadingAFailure() {
+        let refusal = LanguageModelSession.GenerationError.guardrailViolation(.init(debugDescription: "blocked"))
+        let error = NFKFoundationModelsFailure.coreError(for: refusal)
+
+        switch NFKInferenceError(rawValue: error.code) {
+        case .error_InferenceRefused:
+            break                                    // change the request; retrying gives the same answer
+        case .error_InferenceRateLimited:
+            _ = error.userInfo[NFKFoundationModelsErrorKey.resetDate] as? Date   // back off until then
+        case .error_InferenceNotReady:
+            break                                    // the model is unavailable; prepare() says why
+        default:
+            break
+        }
+        XCTAssertEqual(error.code, NFKInferenceError.error_InferenceRefused.rawValue)
+        XCTAssertEqual(error.domain, NFKInferenceErrorDomain)
+    }
 }

@@ -128,6 +128,32 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   - Unmeasured on this host (macOS 26.6.2): every one of these paths needs OS 27, so the tests
     assert the refusal and the declaration instead, through a `reachesOS27` helper that is true only
     when both gates pass.
+- Errors map to the contract in `NFKFoundationModelsErrors.swift` (2026-09-21).
+  `NFKFoundationModelsFailure.coreError(for:)` is the one seam, called from the job's catch and from
+  `prepare()`'s cloud read; an error already in `NFKInferenceErrorDomain` passes through untouched, so
+  the backend's own refusals are not double-wrapped. Mapping: guardrail violation and refusal →
+  `kNFKError_InferenceRefused`; rate limit and a reached Private Cloud Compute quota →
+  `kNFKError_InferenceRateLimited` with `NFKFoundationModelsErrorKey.resetDate`; context overflow and
+  the four unsupported cases → `kNFKError_InferenceUnsupported`; missing assets →
+  `kNFKError_InferenceNotReady`; Private Cloud Compute network failure and service unavailable →
+  `kNFKError_RemoteUnreachable`; everything else → `kNFKError_InferenceBackendFailure`. Two facts
+  worth keeping:
+  - **The 26 error carries no counts.** `LanguageModelSession.GenerationError.exceededContextWindowSize`
+    has only a `Context` with a debug description, where 27's `LanguageModelError.ContextSizeExceeded`
+    has `tokenCount` and `contextSize`. That asymmetry is why the backend's own token preflight
+    (item 1) still earns its place below 27.
+  - **The 26 mapping is testable and the 27 mapping is not, for a reason that is not the OS.**
+    `GenerationError.Context` has a public initializer, so every 26 case is constructed in
+    `NFKFoundationModelsErrorTests`. The 27 payloads have initializers too, but the types need
+    macOS 27 at run time, so those tests skip on a 26 host and the mapping is compile-verified.
+- What stays Swift is a closed list, documented in the companion DocC article `SwiftOnly.md`
+  (2026-09-21): `DynamicInstructions` and `LanguageModelSession.Profile` (result-builder protocols
+  with an associated `Body`), `@Generable(name:)` (a macro on a declaration), `ImageReference` (a
+  generable type), the session's own properties (`isResponding`, `transcript`, `usage`,
+  `prewarm(promptPrefix:)`), and `transcriptErrorHandlingPolicy`. None can be a request key, and each
+  has a contract path named in the article. The rule for a future SDK: if a new API can be expressed
+  as a key, it gets one; the article grows only when the framework adds something that genuinely
+  cannot bridge.
 - Gotchas: SwiftPM tools 5.9 spells the platform `.macOS("26.0")` (`.v26` needs newer tools); the
   `NFKInferenceError` cases import into Swift as `.error_InferenceNotReady` style.
 - Two SDKs, one source: CI's `macos-latest` image builds this package with an Xcode 26 SDK while the

@@ -128,6 +128,24 @@ rather than dropped. `NFKParameterChoices` constrains the reply to exactly one o
 schema. Verified live: a name / age / traits schema returns `["name": "Elara Windrider", "age": 28,
 "traits": […]]`, and `["yes", "no", "unsure"]` returns `yes`.
 
+## What a failure means
+
+Every failure arrives as an `NSError` in `NFKInferenceErrorDomain`, the way a remote endpoint's does,
+with the framework's own error under `NSUnderlyingErrorKey`. The code carries the decision:
+
+| Foundation Models | Code | What an app does |
+|---|---|---|
+| `guardrailViolation`, `refusal` | `kNFKError_InferenceRefused` | Change the request. Retrying gives the same answer. |
+| `rateLimited`, a reached Private Cloud Compute quota | `kNFKError_InferenceRateLimited` | Back off. The reset date is under `NFKFoundationModelsErrorKey.resetDate` when the service names one. |
+| `contextSizeExceeded`, `unsupportedCapability`, `unsupportedGenerationGuide`, `unsupportedLanguageOrLocale` | `kNFKError_InferenceUnsupported` | Shorten or simplify the request. |
+| `assetsUnavailable` | `kNFKError_InferenceNotReady` | Wait for the model, and ask `prepare()` why. |
+| A Private Cloud Compute network failure | `kNFKError_RemoteUnreachable` | Retry, or fall back to the on-device model. |
+| Anything else | `kNFKError_InferenceBackendFailure` | Report it. |
+
+On macOS 27 a context overflow carries the tokens the request needed and the tokens the context holds
+under `NFKFoundationModelsErrorKey`. The macOS 26 error reports neither, which is why the backend
+counts tokens itself before the session runs.
+
 ## Provider bridge (macOS 27 / iOS 27)
 
 `NFKInferKitLanguageModel` runs the bridge the other way: an InferKit backend stands behind
@@ -160,6 +178,25 @@ The provider protocols are in the macOS 27 / iOS 27 SDK and not in 26, so the ty
 and a build with the macOS 27 SDK. The package floor stays at 26. The token counts are the turn's
 totals, which arrive when the turn is over, so each appended fragment carries a count of zero and a
 backend that reports no counts sends none.
+
+## What stays Swift
+
+Every option the backend supports is a core request key, so an Objective-C app configures the model
+the way it configures any other engine. Six parts of the framework cannot become a key, because a
+result builder is a closure over types, a macro runs at compile time, and a generic needs a type the
+caller names:
+
+| Swift-only | What the contract offers instead |
+|---|---|
+| `DynamicInstructions`, `LanguageModelSession.Profile` | A `system` message in `NFKInputMessages`, with `NFKParameterTools` and the sampling keys |
+| `@Generable(name:)` | `NFKParameterJSONSchema`, named in the JSON, parsed under `NFKOutputStructured` |
+| `ImageReference` | `NFKInputImage` and `NFKInputImages` carry the pictures; naming one in a reply needs Swift |
+| Session properties (`isResponding`, `transcript`, `usage`, `prewarm(promptPrefix:)`) | The job's `partialResult`, the messages the caller holds, `NFKOutputUsage`, and `prepare()` |
+| `transcriptErrorHandlingPolicy` | The caller owns the conversation and decides what to resend after a failure |
+
+The list is closed: anything else the framework offers has a key. A Swift app that wants these uses
+`LanguageModelSession` directly and loses nothing, because the provider bridge puts an InferKit
+backend behind that same session.
 
 ## Build & test
 

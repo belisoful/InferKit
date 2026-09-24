@@ -41,6 +41,12 @@ let reply = try backend.runInference(for: request).text
   See <doc:ToolsAndStructuredOutput>.
 - **The provider bridge** — ``NFKInferKitLanguageModel`` presents any `NFKInferenceBackend` to
   `LanguageModelSession` (macOS 27 / iOS 27). See <doc:ProviderBridge>.
+- **Failures** — the framework's errors become the contract's, so `kNFKError_InferenceRefused` means
+  change the request and `kNFKError_InferenceRateLimited` means wait. The framework's own error stays
+  under `NSUnderlyingErrorKey`.
+- **What stays Swift** — dynamic instructions, profiles, `@Generable`, `ImageReference`, and the
+  session's own properties are result builders, macros, and generics, so they carry no request key.
+  What each one does and what the contract offers instead: <doc:SwiftOnly>.
 
 ### Activates the core's text-generation capability
 
@@ -64,6 +70,7 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 
 - <doc:ToolsAndStructuredOutput>
 - <doc:ProviderBridge>
+- <doc:SwiftOnly>
 
 ### Choosing the model
 

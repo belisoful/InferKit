@@ -160,4 +160,34 @@
 	XCTAssertTrue([remote.supportedInputKeys containsObject:NFKInputImage]);
 }
 
+- (void)testObjectiveCTellsARefusalFromARateLimit
+{
+	// Every engine reports failure through NFKInferenceErrorDomain, and the code carries the decision:
+	// a refusal is the request's fault and a rate limit is not, so one is changed and the other waits.
+	NFKFoundationModelsBackend *backend = [[NFKFoundationModelsBackend alloc] init];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello." }];
+
+	NSError *error = nil;
+	NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+	if (result != nil) {
+		return;                                       // the model answered; nothing to handle
+	}
+
+	XCTAssertEqualObjects(error.domain, NFKInferenceErrorDomain);
+	switch (error.code) {
+		case kNFKError_InferenceRefused:
+			break;                                    // change the request, do not retry it
+		case kNFKError_InferenceRateLimited: {
+			NSDate *resetDate = error.userInfo[NFKFoundationModelsErrorKey.resetDate];
+			(void)resetDate;                          // back off until then
+			break;
+		}
+		case kNFKError_InferenceNotReady:
+			XCTAssertFalse(backend.isReady, @"the machine has no model, which is the usual case here");
+			break;
+		default:
+			break;
+	}
+}
+
 @end

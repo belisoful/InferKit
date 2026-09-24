@@ -422,6 +422,29 @@ object lands under `NFKOutputStructured`; the JSON under `NFKOutputText`. A keyw
 is refused by path rather than dropped. `NFKParameterChoices` constrains the reply to exactly one of
 its strings; `NFKParameterOutputFormat` is refused, because guided generation needs a schema.
 
+### What a failure means
+
+The framework's errors become the contract's, so one `switch` covers Apple's model, a remote
+endpoint, and an MLX model. A guardrail violation or a refusal is `kNFKError_InferenceRefused`, which
+an app does not retry. A rate limit or a reached Private Cloud Compute quota is
+`kNFKError_InferenceRateLimited`, with the reset date under `NFKFoundationModelsErrorKey.resetDate`
+when the service names one. A context overflow and an unsupported capability, guide, or locale are
+`kNFKError_InferenceUnsupported`; missing assets are `kNFKError_InferenceNotReady`; a Private Cloud
+Compute network failure is `kNFKError_RemoteUnreachable`. The framework's own error stays under
+`NSUnderlyingErrorKey`.
+
+On macOS 27 a context overflow carries both token counts under `NFKFoundationModelsErrorKey`. The
+macOS 26 error carries neither, which is why the backend counts the request itself first.
+
+### What stays Swift
+
+Dynamic instructions, profiles, `@Generable(name:)`, `ImageReference`, the session's own properties,
+and `transcriptErrorHandlingPolicy` are result builders, macros, and generics, so no request key can
+carry them and an Objective-C app cannot reach them. Each has a path in the contract instead: a
+system message for instructions, `NFKParameterJSONSchema` for a named schema, `NFKInputImage` for
+pictures, `NFKOutputUsage` for what a turn cost, and the caller's own message array for the history a
+transcript policy would govern. The companion's documentation lists them one by one.
+
 ### The provider bridge
 
 The bridge runs the other way as well. `NFKInferKitLanguageModel` adopts Apple's provider protocols
