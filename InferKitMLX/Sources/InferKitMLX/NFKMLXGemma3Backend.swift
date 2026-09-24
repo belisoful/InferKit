@@ -160,6 +160,7 @@ public final class NFKMLXGemma3: NSObject {
     /// Loads a release: `config.json`, the weights (single-file or sharded), `tokenizer.json`, and the
     /// chat template. A multimodal release's vision tower and projector load beside the decoder.
     ///
+    /// - Parameter directory: the release directory.
     /// - Parameter precision: `.float32` (the default, what the parity records were measured at) or
     ///   `.checkpoint` to keep the released bf16, which halves the memory.
     public static func load(directoryURL directory: URL,
@@ -196,6 +197,64 @@ public final class NFKMLXGemma3: NSObject {
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, precision: .float32)
+    }
+
+    static let requiredFiles = ["config.json", "tokenizer.json"]
+    static let optionalFiles = ["chat_template.jinja", "tokenizer_config.json"]
+    static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
+
+    /// The release directory a download of `repo` fills.
+    static func releaseDirectory(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
+        try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles)
+    }
+
+    /// Downloads a Gemma 3 release and loads it.
+    ///
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, the chat template
+    /// (`chat_template.jinja`, or `tokenizer_config.json` where the template lives there), and the
+    /// weights (a single `model.safetensors` or every shard a `model.safetensors.index.json` names)
+    /// into the hub cache under `cacheDirectoryURL`, or the default cache when nil. A cached file is
+    /// not fetched again. The call blocks on the network; call it off the render thread. It serves
+    /// the Gemma 3 releases, such as `google/gemma-3-270m-it`, `google/gemma-3-1b-it`, and
+    /// `google/gemma-3-4b-it`. The `google/gemma-3-*` repos are gated: the caller
+    /// sets `NFKHFHub.defaultAccessToken` before the first download, or names the ungated mirrors
+    /// such as `unsloth/gemma-3-270m-it`. Introduced in InferKit 0.4.0.
+    @objc(gemma3WithRepo:revision:cacheDirectoryURL:error:)
+    public static func gemma3(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXGemma3 {
+        try load(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+    }
+
+    /// The asynchronous form of ``gemma3(repo:revision:cacheDirectoryURL:)``, delivered on a
+    /// background queue. Introduced in InferKit 0.4.0.
+    @objc(gemma3WithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func gemma3(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                              completionHandler: @escaping (NFKMLXGemma3?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try gemma3(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
+    /// Downloads a Gemma 3 release, as ``gemma3(repo:revision:cacheDirectoryURL:)`` describes, and
+    /// builds the backend. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// Whether a release's `config.json` names a Gemma 3 (`gemma3` or `gemma3_text`).

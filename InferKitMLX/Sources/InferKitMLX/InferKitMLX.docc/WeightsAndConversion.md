@@ -45,6 +45,23 @@ NFKMLXRealESRGAN.backend(variant: .x4, repo: "your-org/real-esrgan",
 }
 ```
 
+A model that builds from a whole release directory downloads the release too. Its directory factory
+has a peer that takes the Hugging Face repository instead: `DirectoryURL:` becomes
+`Repo:revision:cacheDirectoryURL:` in the selector, with the same `…completionHandler:` form. The peer
+fetches exactly the files the model reads (the configuration, the tokenizer files, and the weights,
+with every shard a `*.index.json` names) into the hub cache, then builds from the snapshot folder. A
+cached file is not fetched again.
+
+```swift
+let backend = try NFKMLXLanguage.backend(repo: "Qwen/Qwen3-0.6B", revision: nil, cacheDirectoryURL: nil)
+let voice = try NFKMLXKokoro.backend(repo: "hexgrad/Kokoro-82M", revision: nil, cacheDirectoryURL: nil,
+                                     voiceName: "af_heart")        // fetches that one voice
+```
+
+A gated repository (the Gemma family, FLUX, EmbeddingGemma) needs an access token. The factories make
+their own hubs, so the token goes on `NFKHFHub.defaultAccessToken`, set once from the app's own secure
+storage before the first download; a command-line tool can leave it unset and export `HF_TOKEN`.
+
 ### Loading safetensors, with the conv transpose
 
 `loadWeights(into:from:)` reads a safetensors checkpoint (`loadArrays` → `update(parameters:)`),

@@ -408,6 +408,31 @@ public final class NFKMLXMossFormer2SRFactory: NSObject {
         return NFKMLXMossFormer2SRBackend(net: net, identifier: modelName)
     }
 
+    static let requiredFiles = [backboneFile]
+    static let optionalFiles: [String] = []
+    static let weightFiles = [generatorFile]
+
+    /// Downloads the release (`alibabasglab/MossFormer2_SR_48K`, public) and builds the backend.
+    ///
+    /// @discussion The download is the backbone and generator checkpoints, about 440 MB. A file
+    /// already in the cache is not fetched again. The call blocks on the network, so run it off the
+    /// main and render threads. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
     /// Registers `mossformer2-sr` with `NFKMLXModelRegistry` (the weights URL is the release directory).
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { directoryURL in try backend(directoryURL: directoryURL) }

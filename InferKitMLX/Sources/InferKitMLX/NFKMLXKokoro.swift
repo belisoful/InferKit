@@ -992,13 +992,13 @@ extension NFKMLXKokoro {
         return vocab
     }
 
-    /// Loads a Kokoro voicepack (`[styles, 1, 256]`). A released `.pt` voicepack is a bare tensor the
-    /// native checkpoint reader does not interpret, so it converts to safetensors offline (a single
-    /// `voice` tensor); this reads that. A sibling `<name>.safetensors` is used when present.
+    /// Loads a Kokoro voicepack (`[styles, 1, 256]`): the release's `.pt`, a bare tensor the native
+    /// checkpoint reader takes as its root, or, when that file is absent, a converted `<name>.safetensors`
+    /// beside it (a single `voice` tensor).
     public static func loadVoice(url: URL) throws -> MLXArray {
-        let safetensorsURL = url.pathExtension == "safetensors"
-            ? url : url.deletingPathExtension().appendingPathExtension("safetensors")
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: safetensorsURL)
+        let converted = url.deletingPathExtension().appendingPathExtension("safetensors")
+        let source = FileManager.default.fileExists(atPath: url.path) ? url : converted
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: source)
         guard let voice = checkpoint.arrays["voice"] ?? checkpoint.arrays.values.first else {
             throw NFKMLXError.unsupportedConfiguration("expected a single voicepack tensor")
         }
@@ -1053,5 +1053,43 @@ extension NFKMLXKokoro {
     @objc(kokoroBackendWithDirectoryURL:voiceName:error:)
     public static func backend(directoryURL: URL, voiceName: String) throws -> NFKMLXSpeechBackend {
         try speechBackend(directoryURL: directoryURL, voiceName: voiceName)
+    }
+
+    /// The release files a voice needs: the configuration and that voice's voicepack, then the weights.
+    static func releaseFiles(voiceName: String) -> (required: [String], weights: [String]) {
+        // The configuration comes last: the download returns the folder of the last required file.
+        (["voices/\(voiceName).pt", "config.json"], ["kokoro-v1_0.pth"])
+    }
+
+    /// Downloads a Kokoro release's configuration, weights, and one voicepack into the hub cache and
+    /// builds the backend. `hexgrad/Kokoro-82M` (Apache-2.0) is the release; `voiceName` names one of
+    /// its `voices/` files, such as `af_heart`, and only that voice is fetched. About 330 MB. A cached
+    /// file is not fetched again. Blocks on the network; run it off the render thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               voiceName: String) throws -> NFKMLXSpeechBackend {
+        let files = releaseFiles(voiceName: voiceName)
+        let directory = try NFKMLXReleaseDownload.directory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                                                            required: files.required, optional: [], weights: files.weights)
+        return try speechBackend(directoryURL: directory, voiceName: voiceName)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:voiceName:)``; the handler
+    /// runs on a background queue.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, voiceName: String,
+                               completionHandler: @escaping (NFKMLXSpeechBackend?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                                              voiceName: voiceName), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 }

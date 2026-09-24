@@ -101,6 +101,34 @@ extension NFKMLXResembleEnhanceFactory {
         return NFKMLXResembleEnhanceBackend(net: net, identifier: modelName, lambd: 0.5, tau: 0.5, nfe: 32)
     }
 
+    /// The released checkpoint's path in the repo. The build reads it alone; the hyperparameters are
+    /// the release's `hparams.yaml` values, compiled in.
+    static let checkpointFile = "enhancer_stage2/ds/G/default/mp_rank_00_model_states.pt"
+
+    /// Downloads the `enhancer_stage2` checkpoint (`ResembleAI/resemble-enhance`, public) and builds
+    /// the backend.
+    ///
+    /// @discussion The download is the one DeepSpeed model-states file, about 713 MB. A file already
+    /// in the cache is not fetched again. The call blocks on the network, so run it off the main and
+    /// render threads. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let checkpoint = try NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+            .downloadRepo(repo, revision: revision, path: checkpointFile, sha256: nil)
+        let stageDirectory = checkpointFile.split(separator: "/").dropFirst()
+            .reduce(checkpoint) { folder, _ in folder.deletingLastPathComponent() }
+        return try backend(directoryURL: stageDirectory)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
     /// Registers the backend under `resemble-enhance` for the by-name registry.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { url in try backend(directoryURL: url) }

@@ -181,4 +181,39 @@ extension NFKMLXVoiceRestoreFactory {
         }
         return NFKMLXVoiceRestoreBackend(net: net, vocoder: vocoder, identifier: modelName, steps: 32, cfgStrength: 0.5)
     }
+
+    /// The transformer checkpoint's candidate names in the transformer repo, in preference order.
+    static let weightFiles = ["voicerestore.safetensors", "pytorch_model.bin"]
+    /// The repo that publishes the BigVGAN v2 vocoder the transformer's mel is decoded with.
+    static let vocoderRepo = "nvidia/bigvgan_v2_24khz_100band_256x"
+    static let vocoderFile = "bigvgan_generator.pt"
+
+    /// Downloads the transformer checkpoint from `repo` (`jadechoghari/VoiceRestore`) and the vocoder
+    /// from `nvidia/bigvgan_v2_24khz_100band_256x`, then builds the backend as
+    /// ``backend(directoryURL:)`` does.
+    ///
+    /// @discussion The download is `pytorch_model.bin` (about 1.2 GB) and `bigvgan_generator.pt`
+    /// (about 450 MB); both repos are public. `revision` applies to `repo`; the vocoder comes from
+    /// its repo's `main`. A file already in the cache is not fetched again. The call blocks on the
+    /// network, so run it off the main and render threads. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+        let transformer = weightFiles.lazy
+            .compactMap { try? hub.downloadRepo(repo, revision: revision, path: $0, sha256: nil) }.first
+        guard let transformer else {
+            throw NFKMLXError.unsupportedConfiguration("\(repo) serves none of \(weightFiles.joined(separator: ", "))")
+        }
+        let vocoder = try hub.downloadRepo(vocoderRepo, revision: nil, path: vocoderFile, sha256: nil)
+        return try backend(weightsURL: transformer, vocoderURL: vocoder, steps: 32, cfgStrength: 0.5)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
 }

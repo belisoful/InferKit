@@ -40,9 +40,19 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let endOfTurn: Int?
     private let stopTokens: Set<Int>
 
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String) {
+    /// The store a paged mixture reads its routed experts from, or nil where they are resident. Its
+    /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
+    public let expertStore: NFKMLXExpertStore?
+
+    /// Whether the 26B-A4B mixture's routed experts are paged: left in the release and read as the
+    /// router reaches them. Introduced in InferKit 0.4.0.
+    @objc public var pagesExperts: Bool { expertStore != nil }
+
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String,
+         expertStore: NFKMLXExpertStore? = nil) {
         self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.expertStore = expertStore
         beginOfSequence = tokenizer.id(forToken: "<bos>")
         startOfTurn = tokenizer.id(forToken: "<start_of_turn>")
         endOfTurn = tokenizer.id(forToken: "<end_of_turn>")
@@ -143,6 +153,17 @@ public extension NFKMLXGemmaLanguage {
     /// ``NFKMLXGemma3``'s backend. Run inference off the render thread.
     static func backend(directoryURL: URL,
                         precision: NFKMLXWeightPrecision = .float32) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
+    }
+
+    /// ``backend(directoryURL:precision:)`` with the 26B-A4B mixture's routed experts held as
+    /// `residency` plans them: ``NFKMLXResidency/paged`` leaves them in the release and reads each as
+    /// the router reaches it, and ``NFKMLXResidency/automatic`` pages only where the release is known
+    /// not to fit whole. The dense decoders have nothing to page and load resident under every
+    /// residency. The release directory has to stay in place for the life of a paged backend.
+    /// Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
+                        residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         let configURL = directoryURL.appendingPathComponent("config.json")
         // A Gemma 3 release (`gemma3` / `gemma3_text`) has its own decoder and a cached generation loop.
         if NFKMLXGemma3.isGemma3(configURL: configURL) {
@@ -151,23 +172,84 @@ public extension NFKMLXGemmaLanguage {
         guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
         }
-        let logits: (MLXArray) -> MLXArray
         if try isUnified(configURL) {
             let net = makeUnifiedNet(try unifiedConfiguration(fromHuggingFace: configURL))
             try loadUnifiedWeights(into: net, fromDirectory: directoryURL, precision: precision)
-            logits = { net($0) }
-        } else {
-            let net = makeNet(try configuration(fromHuggingFace: configURL))
-            try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
-            logits = { net($0) }
+            return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName)
         }
-        return NFKMLXGemmaBackend(logits: logits, tokenizer: tokenizer, identifier: modelName)
+        let net = makeNet(try configuration(fromHuggingFace: configURL))
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
+        return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
+                                  expertStore: net.expertStore)
     }
 
     /// The Objective-C entry: builds a Gemma text-generation backend from a release directory.
     @objc(gemmaBackendWithDirectoryURL:error:)
     static func gemmaBackend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL)
+    }
+
+    /// The Objective-C entry holding the mixture's routed experts as `residency` says; see
+    /// ``backend(directoryURL:precision:residency:)``. Introduced in InferKit 0.4.0.
+    @objc(gemmaBackendWithDirectoryURL:residency:error:)
+    static func gemmaBackend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, residency: residency)
+    }
+
+    // The optional files are the chat template a Gemma 3 release carries, which the dispatch to
+    // ``NFKMLXGemma3`` reads.
+    internal static let requiredFiles = ["config.json", "tokenizer.json"]
+    internal static let optionalFiles = ["chat_template.jinja", "tokenizer_config.json"]
+    internal static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
+
+    /// Downloads a Gemma release and builds its text-generation backend.
+    ///
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, the chat template where the
+    /// repo serves one, and the weights (a single `model.safetensors` or every shard a
+    /// `model.safetensors.index.json` names) into the hub cache under `cacheDirectoryURL`, or the
+    /// default cache when nil. A cached file is not fetched again. The call blocks on the network;
+    /// call it off the render thread. It serves the Gemma 4 releases, such as `google/gemma-4-E2B-it`
+    /// and `google/gemma-4-E4B-it`, which are not gated, and the Gemma 3 releases the directory
+    /// factory dispatches to ``NFKMLXGemma3``. The `google/gemma-3-*` repos are gated: the caller
+    /// sets `NFKHFHub.defaultAccessToken` before the first download, or names the ungated
+    /// `unsloth/gemma-3-*` mirrors. Introduced in InferKit 0.4.0.
+    @objc(gemmaBackendWithRepo:revision:cacheDirectoryURL:error:)
+    static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``gemmaBackend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(gemmaBackendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                             completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try gemmaBackend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// ``gemmaBackend(repo:revision:cacheDirectoryURL:)`` holding the mixture's routed experts as
+    /// `residency` says. Introduced in InferKit 0.4.0.
+    @objc(gemmaBackendWithRepo:revision:cacheDirectoryURL:residency:error:)
+    static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                             residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles), residency: residency)
+    }
+
+    /// The asynchronous form of ``gemmaBackend(repo:revision:cacheDirectoryURL:residency:)``.
+    /// Introduced in InferKit 0.4.0.
+    @objc(gemmaBackendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:)
+    static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                             residency: NFKMLXResidency,
+                             completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try gemmaBackend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                             residency: residency)
+        }
     }
 
     /// The registry name a Gemma backend reports.

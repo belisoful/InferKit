@@ -209,6 +209,11 @@ public final class NFKMLXEmbeddingGemma: NSObject {
     /// A name for the backend the factories produce.
     @objc public static let modelName = "embeddinggemma-300m"
 
+    // The download's directory is the last required file's folder, so a root file stays last.
+    static let requiredFiles = ["2_Dense/model.safetensors", "3_Dense/model.safetensors", "tokenizer.json"]
+    static let optionalFiles = [String]()
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
+
     /// Formats a retrieval query the way EmbeddingGemma is trained to read it.
     @objc public static func query(_ text: String) -> String { "task: search result | query: \(text)" }
 
@@ -295,6 +300,43 @@ public final class NFKMLXEmbeddingGemma: NSObject {
         try backend(directoryURL: directoryURL, dimensions: dimensions > 0 ? dimensions : nil)
     }
 
+    /// Downloads an EmbeddingGemma release into the hub cache and builds the backend.
+    ///
+    /// @discussion The download fetches the backbone weights, the `2_Dense` and `3_Dense` projections,
+    /// and `tokenizer.json`. A file already in the cache is not fetched again. The call blocks on the
+    /// network; run it off the render thread. `google/embeddinggemma-300m` is gated: accept its license
+    /// on the model page and set `NFKHFHub.defaultAccessToken` before the first download.
+    /// `unsloth/embeddinggemma-300m` is a public mirror of the same files.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: 0)
+    }
+
+    /// Downloads an EmbeddingGemma release and builds a backend that truncates each embedding to a
+    /// Matryoshka width (0 keeps the full width).
+    @objc(backendWithRepo:revision:cacheDirectoryURL:outputDimensions:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               outputDimensions dimensions: Int) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles), outputDimensions: dimensions)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) { try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL) }
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:outputDimensions:)``.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:outputDimensions:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, outputDimensions dimensions: Int,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: dimensions)
+        }
+    }
 }
 
 /// Gemma's tokenizer, read directly from a release's `tokenizer.json`.

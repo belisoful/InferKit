@@ -316,6 +316,10 @@ public final class NFKMLXModernBERTReranker: NSObject {
     /// A name for the reranker the factories produce.
     @objc public static let modelName = "gte-reranker-modernbert-base"
 
+    static let requiredFiles = ["tokenizer.json"]
+    static let optionalFiles = [String]()
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
+
     private let holder: NFKRerankerHolder
 
     init(net: NFKMLXModernBertRerankerNet, tokenizer: NFKTokenizer?,
@@ -367,6 +371,32 @@ public final class NFKMLXModernBERTReranker: NSObject {
         try loadWeights(into: net, fromDirectory: directoryURL)
         let tokenizer = byteLevelTokenizer(inDirectory: directoryURL)
         return NFKMLXModernBERTReranker(net: net, tokenizer: tokenizer, configuration: .gteReranker)
+    }
+
+    /// Downloads the reranker release into the hub cache and builds the reranker.
+    ///
+    /// @discussion The download fetches `tokenizer.json` and the weights. A file already in the cache is
+    /// not fetched again. The call blocks on the network; run it off the render thread. The public
+    /// release is `Alibaba-NLP/gte-reranker-modernbert-base`.
+    @objc(rerankerWithRepo:revision:cacheDirectoryURL:error:)
+    public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXModernBERTReranker {
+        try reranker(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``reranker(repo:revision:cacheDirectoryURL:)``. The handler runs on a
+    /// background queue.
+    @objc(rerankerWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                                completionHandler: @escaping (NFKMLXModernBERTReranker?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 
     /// Builds a reranker from optional local weights and a tokenizer, for a caller not loading a whole

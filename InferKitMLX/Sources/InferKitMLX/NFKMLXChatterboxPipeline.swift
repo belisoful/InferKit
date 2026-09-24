@@ -37,14 +37,30 @@ public final class NFKMLXChatterboxTTS {
     /// How much of the prompt conditions S3Gen (`DEC_COND_LEN`, at 24 kHz).
     public static let decoderConditionSeconds = 10
 
-    /// Loads `tokenizer.json`, `ve.safetensors`, `t3_cfg.safetensors`, and `s3gen.safetensors`.
+    /// Loads `ve.safetensors` and, preferring the MULTILINGUAL file of each pair when the release
+    /// carries it, `grapheme_mtl_merged_expanded_v1.json` over `tokenizer.json`,
+    /// `t3_mtl23ls_v3.safetensors` over `t3_cfg.safetensors`, and `s3gen_v3.safetensors` over
+    /// `s3gen.safetensors`.
+    ///
+    /// The grapheme file is the multilingual tokenizer, and the release's `mtl_tokenizer.json` is NOT:
+    /// the grapheme file holds 2454 entries, which is exactly the multilingual text embedding's width,
+    /// where `mtl_tokenizer.json` stops at 2352 and pads with placeholders in the positions the
+    /// grapheme file gives real characters.
+    ///
+    /// The two T3 checkpoints hold the same 292 tensors and differ only in the text embedding's width,
+    /// so the release's own file sizes the model. `s3gen_v3` drops the one `tokenizer._mel_filters`
+    /// buffer, which this package computes rather than reads.
     public init(directoryURL: URL) throws {
-        textTokenizer = try NFKMLXChatterboxTextTokenizer(url: directoryURL.appendingPathComponent("tokenizer.json"))
+        func preferred(_ names: [String]) -> URL {
+            let urls = names.map { directoryURL.appendingPathComponent($0) }
+            return urls.first { FileManager.default.fileExists(atPath: $0.path) } ?? urls[urls.count - 1]
+        }
+        textTokenizer = try NFKMLXChatterboxTextTokenizer(
+            url: preferred(["grapheme_mtl_merged_expanded_v1.json", "tokenizer.json"]))
         voiceEncoder = NFKMLXChatterboxVoiceEncoderNet(.released)
         try NFKMLXChatterbox.loadVoiceEncoderWeights(into: voiceEncoder, from: directoryURL.appendingPathComponent("ve.safetensors"))
-        t3 = NFKMLXT3Net(.released)
-        try NFKMLXChatterbox.loadT3Weights(into: t3, from: directoryURL.appendingPathComponent("t3_cfg.safetensors"))
-        let s3genURL = directoryURL.appendingPathComponent("s3gen.safetensors")
+        t3 = try NFKMLXChatterbox.makeT3(from: preferred(["t3_mtl23ls_v3.safetensors", "t3_cfg.safetensors"]))
+        let s3genURL = preferred(["s3gen_v3.safetensors", "s3gen.safetensors"])
         speechTokenizer = NFKMLXS3TokenizerNet(.released)
         try NFKMLXChatterbox.loadTokenizerWeights(into: speechTokenizer, from: s3genURL)
         s3gen = NFKMLXS3GenNet()
@@ -94,11 +110,24 @@ public final class NFKMLXChatterboxTTS {
 
     /// The S3 speech codes T3 samples for `text` (`punc_norm`, tokenize, start and stop tokens, sample,
     /// drop anything that is not a speech code).
+    /// - Parameter text: the text to speak.
+    /// - Parameter conditionals: the voice, from ``conditionals(voice:sampleRate:exaggeration:)`` or
+    ///   ``builtinConditionals(url:exaggeration:)``.
+    /// - Parameter options: T3's sampling settings.
+    /// - Parameter language: a `NFKMLXChatterbox.supportedLanguages` id for a MULTILINGUAL release,
+    ///   which tags the text and applies that language's rewriting. Nil is the English release's own
+    ///   path, which neither lowercases nor normalizes, and is what the English checkpoint was
+    ///   measured on.
+    /// - Parameter shouldContinue: asked before each sampled token; returning false ends the run with
+    ///   the codes produced so far.
     public func speechTokens(text: String, conditionals: NFKMLXChatterboxConditionals,
                              options: NFKMLXT3SamplingOptions = NFKMLXT3SamplingOptions(),
+                             language: String? = nil,
                              shouldContinue: () -> Bool = { true }) -> [Int] {
         let normalized = NFKMLXChatterboxTextTokenizer.normalizedPunctuation(text)
-        let textTokens = textTokenizer.encodeForSynthesis(normalized)
+        let textTokens = language == nil
+            ? textTokenizer.encodeForSynthesis(normalized)
+            : textTokenizer.encodeForSynthesis(normalized, language: language)
         return t3.generate(condition: conditionals.t3, textTokens: textTokens, options: options,
                            shouldContinue: shouldContinue)
             .filter { $0 < t3.configuration.startSpeechToken }
@@ -107,8 +136,10 @@ public final class NFKMLXChatterboxTTS {
     /// Text → 24 kHz samples in the prompt's voice.
     public func synthesize(text: String, conditionals: NFKMLXChatterboxConditionals,
                            t3Options: NFKMLXT3SamplingOptions = NFKMLXT3SamplingOptions(),
-                           flowOptions: NFKS3FlowOptions = NFKS3FlowOptions()) -> [Float] {
-        let codes = speechTokens(text: text, conditionals: conditionals, options: t3Options)
+                           flowOptions: NFKS3FlowOptions = NFKS3FlowOptions(),
+                           language: String? = nil) -> [Float] {
+        let codes = speechTokens(text: text, conditionals: conditionals, options: t3Options,
+                                 language: language)
         guard !codes.isEmpty else { return [] }
         return s3gen.synthesize(tokens: codes, prompt: conditionals.s3gen, options: flowOptions)
     }
@@ -153,5 +184,46 @@ extension NFKMLXChatterbox {
     @objc(chatterboxBackendWithDirectoryURL:voiceURL:error:)
     public static func backend(directoryURL: URL, voiceURL: URL?) throws -> NFKMLXSpeechBackend {
         try speechBackend(directoryURL: directoryURL, voiceURL: voiceURL)
+    }
+
+    /// The English release's files. The repo also serves the multilingual set, which a download
+    /// leaves alone: the backend runs the English text path, which is what the English checkpoint
+    /// was measured on.
+    static let requiredFiles = ["ve.safetensors", "tokenizer.json", "s3gen.safetensors"]
+    static let optionalFiles: [String] = []
+    static let weightFiles = ["t3_cfg.safetensors"]
+    /// The release's built-in voice, fetched when no voice WAV is given.
+    static let builtinVoiceFile = "conds.pt"
+
+    /// Downloads the English Chatterbox release (`ResembleAI/chatterbox`, public) and builds the
+    /// backend in one voice, as ``backend(directoryURL:voiceURL:)`` does.
+    ///
+    /// @discussion The download is the voice encoder, the text tokenizer, T3, and S3Gen, about
+    /// 3.2 GB, plus the built-in voice `conds.pt` when `voiceURL` is nil. A file already in the cache
+    /// is not fetched again. The call blocks on the network, so run it off the main and render
+    /// threads. Introduced in InferKit 0.4.0.
+    @objc(chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               voiceURL: URL?) throws -> NFKMLXSpeechBackend {
+        let directory = try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles + (voiceURL == nil ? [builtinVoiceFile] : []),
+            optional: optionalFiles, weights: weightFiles)
+        return try backend(directoryURL: directory, voiceURL: voiceURL)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:voiceURL:)``. The handler
+    /// runs on a background queue. Introduced in InferKit 0.4.0.
+    @objc(chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, voiceURL: URL?,
+                               completionHandler: @escaping (NFKMLXSpeechBackend?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                                              voiceURL: voiceURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 }

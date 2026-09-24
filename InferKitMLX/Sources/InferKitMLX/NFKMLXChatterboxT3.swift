@@ -381,6 +381,11 @@ public struct NFKMLXT3Sampler {
 /// before encoding, as the reference does.
 public final class NFKMLXChatterboxTextTokenizer {
     private let vocabulary: [String: Int]
+
+    /// One past the largest id the table assigns, which is the text embedding width the matching
+    /// checkpoint carries. Holding the two against each other catches a tokenizer paired with the
+    /// wrong release.
+    public var vocabularySize: Int { (vocabulary.values.max() ?? -1) + 1 }
     private let ranks: [String: Int]
     private let addedTokens: [(content: String, id: Int)]
     private let unknown: Int
@@ -388,8 +393,19 @@ public final class NFKMLXChatterboxTextTokenizer {
     public let startToken: Int
     public let stopToken: Int
     public let spaceToken: Int
+    /// The directory the table was read from, which is where the Cangjie table sits beside it.
+    let sourceDirectory: URL
+
+    /// Built on first Chinese text, from `Cangjie5_TC.json` beside the vocabulary. Nil when the
+    /// release carries no table, which is every English-only release.
+    lazy var cangjie: NFKMLXChatterboxCangjie? = {
+        let url = sourceDirectory.appendingPathComponent("Cangjie5_TC.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try? NFKMLXChatterboxCangjie(url: url)
+    }()
 
     public init(url: URL) throws {
+        sourceDirectory = url.deletingLastPathComponent()
         let data = try Data(contentsOf: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let model = root["model"] as? [String: Any], let vocab = model["vocab"] as? [String: Int],
@@ -427,7 +443,13 @@ public final class NFKMLXChatterboxTextTokenizer {
             text = text.replacingOccurrences(of: old, with: new)
         }
         while text.hasSuffix(" ") { text.removeLast() }
-        if !text.hasSuffix(".") && !text.hasSuffix("!") && !text.hasSuffix("?") && !text.hasSuffix("-") && !text.hasSuffix(",") {
+        // The reference's enders include the CJK marks, so a line already closed by one of them does
+        // not take a second, Latin full stop. Latin text is unaffected.
+        let enders: Set<Character> = [".", "!", "?", "-", ",",
+                                      "\u{3001}", "\u{ff0c}", "\u{3002}", "\u{ff1f}", "\u{ff01}"]
+        if let last = text.last, !enders.contains(last) {
+            text += "."
+        } else if text.isEmpty {
             text += "."
         }
         return text
@@ -498,9 +520,28 @@ extension NFKMLXChatterbox {
     /// `tfmr.model.` here (the shared decoder keeps the transformers `model.` prefix); nothing needs a
     /// transpose.
     public static func loadT3Weights(into net: NFKMLXT3Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        try applyT3(try NFKMLXWeights.loadCheckpoint(url: url).arrays, to: net)
+    }
+
+    /// Builds the T3 at the CHECKPOINT's own text vocabulary and loads it.
+    ///
+    /// The English release embeds 704 text tokens and the multilingual one 2454; every other
+    /// dimension is shared, and the speech vocabulary is 8194 in both. Reading the width from the
+    /// checkpoint is what lets one entry load either release.
+    public static func makeT3(from url: URL) throws -> NFKMLXT3Net {
+        let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        var configuration = NFKMLXT3Configuration.released
+        if let embedding = arrays["text_emb.weight"] {
+            configuration.textVocabulary = embedding.dim(0)
+        }
+        let net = NFKMLXT3Net(configuration)
+        try applyT3(arrays, to: net)
+        return net
+    }
+
+    private static func applyT3(_ arrays: [String: MLXArray], to net: NFKMLXT3Net) throws {
         var mapped = [(String, MLXArray)]()
-        for (key, value) in checkpoint.arrays {
+        for (key, value) in arrays {
             var name = key
             if name.hasPrefix("tfmr.") { name = "tfmr.model." + name.dropFirst("tfmr.".count) }
             mapped.append((name, value))

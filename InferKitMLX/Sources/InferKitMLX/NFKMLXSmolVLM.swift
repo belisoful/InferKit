@@ -92,7 +92,7 @@ final class NFKSigLIPEmbeddings: Module {
 
     init(_ c: NFKMLXSigLIPConfiguration) {
         positionCount = c.positionCount
-        _patchEmbedding.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.hiddenSize,
+        _patchEmbedding.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.hiddenSize,
                                               kernelSize: IntOrPair(c.patchSize),
                                               stride: IntOrPair(c.patchSize), bias: true)
         _positionEmbedding.wrappedValue = Embedding(embeddingCount: c.positionCount, dimensions: c.hiddenSize)
@@ -144,7 +144,9 @@ final class NFKSigLIPAttention: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
+    /// `mask` is an optional additive key mask `[batch, 1, 1, patches]`, used by a tower whose crops carry
+    /// padded patches (Phi-4-multimodal's NaViT tower). Without one every patch attends to every patch.
+    func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil) -> MLXArray {
         let (batch, length) = (x.shape[0], x.shape[1])
         let shape = { (t: MLXArray) in
             t.reshaped([batch, length, self.heads, self.headDimensions]).transposed(0, 2, 1, 3)
@@ -152,8 +154,10 @@ final class NFKSigLIPAttention: Module {
         let queries = shape(queryProjection(x))
         let keys = shape(keyProjection(x))
         let values = shape(valueProjection(x))
-        let attention = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: scale, mask: nil)
+        let attention = NFKReferenceRounding.isReduced(queries)
+            ? NFKReferenceRounding.attention(queries: queries, keys: keys, values: values, scale: scale, mask: mask)
+            : MLXFast.scaledDotProductAttention(
+                queries: queries, keys: keys, values: values, scale: scale, mask: mask.map { $0.asType(queries.dtype) })
         return outputProjection(attention.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
     }
 }
@@ -169,7 +173,7 @@ final class NFKSigLIPMLP: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(geluApproximate(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.geluTanh(fc1(x))) }
 }
 
 /// One SigLIP encoder layer: pre-normalized attention and feed-forward, each added back.
@@ -180,15 +184,15 @@ final class NFKSigLIPLayer: Module {
     @ModuleInfo(key: "mlp") var mlp: NFKSigLIPMLP
 
     init(_ c: NFKMLXSigLIPConfiguration) {
-        _norm1.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _norm1.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _attention.wrappedValue = NFKSigLIPAttention(c)
-        _norm2.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _norm2.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _mlp.wrappedValue = NFKSigLIPMLP(c)
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let attended = x + attention(norm1(x))
+    func callAsFunction(_ x: MLXArray, mask: MLXArray? = nil) -> MLXArray {
+        let attended = x + attention(norm1(x), mask: mask)
         return attended + mlp(norm2(attended))
     }
 }
@@ -216,7 +220,7 @@ public final class NFKMLXSigLIPNet: Module {
         configuration = c
         _embeddings.wrappedValue = NFKSigLIPEmbeddings(c)
         _encoder.wrappedValue = NFKSigLIPEncoder(c)
-        _postLayerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _postLayerNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         super.init()
     }
 
@@ -457,6 +461,9 @@ public final class NFKMLXSmolVLM: NSObject {
 
     /// A name for the model the factories produce.
     @objc public static let modelName = "smolvlm2-500m"
+    static let requiredFiles = ["config.json", "tokenizer.json"]
+    static let optionalFiles = ["preprocessor_config.json"]
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
     private let holder: NFKSmolVLMHolder
     private let endToken: Int
@@ -470,13 +477,51 @@ public final class NFKMLXSmolVLM: NSObject {
     }
 
     /// Builds the model from a downloaded release directory, ready to answer questions about an image.
+    /// A directory whose `tokenizer.json` is missing or unreadable is refused before the weights load:
+    /// without it every answer would be empty.
     @objc(smolVLMWithDirectoryURL:error:)
     public static func load(directoryURL: URL) throws -> NFKMLXSmolVLM {
         let release = try release(directoryURL: directoryURL)
+        guard let tokenizer = tokenizer(inDirectory: directoryURL) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(directoryURL.lastPathComponent) has no readable tokenizer.json, so the model could answer nothing")
+        }
         let net = try model(directoryURL: directoryURL)
-        let tokenizer = tokenizer(inDirectory: directoryURL)
         let end = specialToken("<end_of_utterance>", inDirectory: directoryURL) ?? 49_279
         return NFKMLXSmolVLM(net: net, tokenizer: tokenizer, endToken: end, release: release)
+    }
+
+    /// Downloads a release into the hub cache and builds the model.
+    ///
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, `preprocessor_config.json`
+    /// when the repo serves it, and the weights, single-file or sharded. A file the cache already holds
+    /// is not fetched again. The call blocks on the network; call it off the render thread. The public
+    /// releases are `HuggingFaceTB/SmolVLM2-256M-Video-Instruct`,
+    /// `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`, and `HuggingFaceTB/SmolVLM2-2.2B-Instruct`; none is
+    /// gated.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(smolVLMWithRepo:revision:cacheDirectoryURL:error:)
+    public static func load(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXSmolVLM {
+        try load(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``load(repo:revision:cacheDirectoryURL:)``. The download and the build
+    /// run at user-initiated quality of service off the calling thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(smolVLMWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func load(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                            completionHandler: @escaping (NFKMLXSmolVLM?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try load(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 
     /// Answers `question` about `image`, greedily decoding up to `maxTokens` tokens.

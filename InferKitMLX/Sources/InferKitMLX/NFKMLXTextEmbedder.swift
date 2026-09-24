@@ -243,6 +243,10 @@ public final class NFKMLXQwen3Embedding: NSObject {
     /// A name for the backend the factories produce.
     @objc public static let modelName = "qwen3-embedding-0.6b"
 
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
+    static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json"]
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
+
     /// Formats a retrieval query the way Qwen3-Embedding is trained to read it: a one-sentence task
     /// description, then the query. A document is embedded as-is, with no instruction.
     @objc public static func instruct(task: String, query: String) -> String {
@@ -321,5 +325,42 @@ public final class NFKMLXQwen3Embedding: NSObject {
     public static func backend(directoryURL: URL, outputDimensions dimensions: Int)
         throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, dimensions: dimensions > 0 ? dimensions : nil)
+    }
+
+    /// Downloads a Qwen3-Embedding release into the hub cache and builds the backend.
+    ///
+    /// @discussion The download fetches `config.json`, the tokenizer files, and the weights, following
+    /// a shard index. A file already in the cache is not fetched again. The call blocks on the network;
+    /// run it off the render thread. The public releases are `Qwen/Qwen3-Embedding-0.6B`,
+    /// `Qwen/Qwen3-Embedding-4B`, and `Qwen/Qwen3-Embedding-8B`.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: 0)
+    }
+
+    /// Downloads a Qwen3-Embedding release and builds a backend that truncates each embedding to a
+    /// Matryoshka width. A `dimensions` of 0 keeps the full width.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:outputDimensions:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               outputDimensions dimensions: Int) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles), outputDimensions: dimensions)
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) { try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL) }
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:outputDimensions:)``.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:outputDimensions:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, outputDimensions dimensions: Int,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: dimensions)
+        }
     }
 }

@@ -11,7 +11,9 @@ import InferKit
 import MLX
 import MLXNN
 
-/// The BigVGAN generator configuration (`bigvgan_v2_24khz_100band_256x.json`).
+/// The BigVGAN generator configuration (`bigvgan_v2_24khz_100band_256x.json`). The generator geometry is
+/// the `upsample*`/`resblock*`/`initialChannel` set; `sampleRate`/`nFFT`/`hop`/`fMax` are the released
+/// mel front end's parameters, carried here so the copy-synthesis backend reproduces the training mel.
 public struct NFKMLXBigVGANConfiguration: Sendable {
     public var numMels: Int
     public var upsampleRates: [Int]
@@ -19,17 +21,26 @@ public struct NFKMLXBigVGANConfiguration: Sendable {
     public var initialChannel: Int
     public var resblockKernels: [Int]
     public var resblockDilations: [[Int]]
+    public var sampleRate: Int
+    public var nFFT: Int
+    public var hop: Int
+    public var fMax: Float
 
     public init(numMels: Int = 100, upsampleRates: [Int] = [4, 4, 2, 2, 2, 2],
                 upsampleKernels: [Int] = [8, 8, 4, 4, 4, 4], initialChannel: Int = 1536,
                 resblockKernels: [Int] = [3, 7, 11],
-                resblockDilations: [[Int]] = [[1, 3, 5], [1, 3, 5], [1, 3, 5]]) {
+                resblockDilations: [[Int]] = [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                sampleRate: Int = 24000, nFFT: Int = 1024, hop: Int = 256, fMax: Float = 12000) {
         self.numMels = numMels
         self.upsampleRates = upsampleRates
         self.upsampleKernels = upsampleKernels
         self.initialChannel = initialChannel
         self.resblockKernels = resblockKernels
         self.resblockDilations = resblockDilations
+        self.sampleRate = sampleRate
+        self.nFFT = nFFT
+        self.hop = hop
+        self.fMax = fMax
     }
 }
 
@@ -246,10 +257,125 @@ public final class NFKMLXBigVGAN: Module {
     }
 }
 
-/// Registration and weight loading for the BigVGAN vocoder.
+// MARK: - Standalone vocoder backend (audio → BigVGAN mel → waveform)
+
+private final class NFKBigVGANHolder: @unchecked Sendable {
+    let net: NFKMLXBigVGAN
+    let mel: NFKMLXVoiceRestoreMel
+    init(_ net: NFKMLXBigVGAN, mel: NFKMLXVoiceRestoreMel) { self.net = net; self.mel = mel }
+}
+
+/// BigVGAN copy-synthesis (audio → BigVGAN mel → waveform) as an InferKit backend, reading
+/// `NFKInputAudio` and returning the resynthesized clip under `NFKOutputAudio`. A vocoder is a pure
+/// function of its mel, so the round trip is the lossy mel followed by the generator, which is the
+/// standard copy-synthesis evaluation. The generator alone (mel → waveform) is `NFKMLXBigVGAN`.
+///
+/// - Since: InferKit 0.4.0
+@objc(NFKMLXBigVGANBackend)
+public final class NFKMLXBigVGANBackend: NSObject, NFKInferenceBackend {
+
+    private let holder: NFKBigVGANHolder
+    private let identifier: String
+    private let sampleRate: Int
+    private let outputDirectory: URL
+
+    init(net: NFKMLXBigVGAN, identifier: String, outputDirectory: URL = FileManager.default.temporaryDirectory) {
+        let c = net.config
+        sampleRate = c.sampleRate
+        holder = NFKBigVGANHolder(net, mel: NFKMLXVoiceRestoreMel(sampleRate: c.sampleRate, nFFT: c.nFFT,
+                                                                  hop: c.hop, numMels: c.numMels, fMax: c.fMax))
+        self.identifier = identifier
+        self.outputDirectory = outputDirectory
+        super.init()
+    }
+
+    @objc public var isReady: Bool { true }
+    @objc public var backendIdentifier: String { identifier }
+
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [] }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
+
+    @objc(runInferenceForRequest:error:)
+    public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        guard let (samples, inputRate) = Self.audio(from: request) else { throw NFKMLXError.unsupportedInput }
+        let input = inputRate == sampleRate ? samples : NFKMLXAudioRate.matched(samples, from: inputRate, to: sampleRate)
+        let mel = holder.mel(input)                                       // [1, frames, numMels]
+        let wav = holder.net(mel)                                         // [1, frames·∏rates, 1]
+        eval(wav)
+        let stream = wav[0][0..., 0].asArray(Float.self)
+        let url = outputDirectory.appendingPathComponent("bigvgan-\(UUID().uuidString).wav")
+        try NFKMLXWaveFile.write(samples: stream, sampleRate: sampleRate, to: url)
+        let asset = NFKAudioAsset(fileURL: url, durationSeconds: Double(stream.count) / Double(sampleRate),
+                                  sampleRate: Double(sampleRate), channelCount: 1)
+        return NFKInferenceResult(outputs: [NFKOutputAudio: asset])
+    }
+
+    @objc(submitInferenceJobForRequest:)
+    public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
+        let job = NFKInferenceJob()
+        Task.detached(priority: .userInitiated) {
+            do { job.finish(with: try self.runInference(for: request)) }
+            catch { job.finish(withError: error as NSError) }
+        }
+        return job
+    }
+
+    private static func audio(from request: NFKInferenceRequest) -> (samples: [Float], sampleRate: Int)? {
+        guard let value = request.input(forKey: NFKInputAudio) else { return nil }
+        if let asset = value as? NFKAudioAsset, let url = asset.fileURL, let data = try? Data(contentsOf: url) {
+            return NFKMLXWaveFile.read(data)
+        }
+        if let data = value as? Data { return NFKMLXWaveFile.read(data) }
+        return nil
+    }
+}
+
+/// Registration, construction, and weight loading for the BigVGAN v2 vocoder.
 @objc(NFKMLXBigVGAN_Factory)
 public final class NFKMLXBigVGANFactory: NSObject {
+
+    /// The registry name the model builds under (`nvidia/bigvgan_v2_24khz_100band_256x`).
+    @objc public static let modelName = "bigvgan-v2-24khz"
+
     static func makeNet(_ config: NFKMLXBigVGANConfiguration = .init()) -> NFKMLXBigVGAN {
         NFKMLXBigVGAN(config)
+    }
+
+    /// Builds a BigVGAN copy-synthesis backend from optional local weights — no registry required. A nil
+    /// `weightsURL` builds random weights (`isReady` is true). Run off the render thread.
+    ///
+    /// - Since: InferKit 0.4.0
+    @objc(backendWithWeightsURL:error:)
+    public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
+        let net = makeNet()
+        if let weightsURL { try net.loadWeights(from: weightsURL) }
+        return NFKMLXBigVGANBackend(net: net, identifier: modelName)
+    }
+
+    /// Downloads the generator checkpoint from Hugging Face, then builds — no registry required. Blocking
+    /// on the network; run off the render thread.
+    @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(weightsURL: url)
+    }
+
+    /// The asynchronous form of the download factory.
+    @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
+    /// Registers BigVGAN v2 (`bigvgan-v2-24khz`) with `NFKMLXModelRegistry`, delegating to
+    /// `backend(weightsURL:)`.
+    @objc public static func register() {
+        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
     }
 }

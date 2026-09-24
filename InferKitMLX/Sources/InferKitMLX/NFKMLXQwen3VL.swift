@@ -26,13 +26,50 @@ import MLXNN
 /// approximation, the documented difference the SmolVLM processor also carries; the grid and the patch
 /// layout are the reference's exactly.
 public struct NFKMLXQwen3VLImageProcessor {
-    public let patchSize = 16
-    public let temporalPatchSize = 2
-    public let mergeSize = 2
-    public let minPixels = 65_536
-    public let maxPixels = 16_777_216
+    public let patchSize: Int
+    public let temporalPatchSize: Int
+    public let mergeSize: Int
+    public let minPixels: Int
+    public let maxPixels: Int
+    /// The per-channel normalization: Qwen3-VL's 0.5 / 0.5, or Qwen2.5-VL's CLIP constants.
+    public let mean: [Float]
+    public let std: [Float]
 
-    public init() {}
+    /// The defaults are `Qwen/Qwen3-VL-2B-Instruct`'s. A release that bounds the pixel count
+    /// differently is read with ``processor(inDirectory:)`` rather than constructed here.
+    public init(patchSize: Int = 16, temporalPatchSize: Int = 2, mergeSize: Int = 2,
+                minPixels: Int = 65_536, maxPixels: Int = 16_777_216,
+                mean: [Float] = [0.5, 0.5, 0.5], std: [Float] = [0.5, 0.5, 0.5]) {
+        self.patchSize = patchSize
+        self.temporalPatchSize = temporalPatchSize
+        self.mergeSize = mergeSize
+        self.minPixels = minPixels
+        self.maxPixels = maxPixels
+        self.mean = mean
+        self.std = std
+    }
+
+    /// The processor a release's `preprocessor_config.json` describes.
+    ///
+    /// @discussion The pixel bounds decide the resized grid, so they decide how many tokens an image
+    /// occupies, and the releases disagree on them: the instruct model holds an image between 65,536
+    /// and 16,777,216 pixels, while the retrieval models start at 4,096 and stop at 1,310,720. A
+    /// release that names neither `min_pixels` nor `size.shortest_edge` keeps the instruct bounds.
+    public static func processor(inDirectory directory: URL) -> NFKMLXQwen3VLImageProcessor {
+        let url = directory.appendingPathComponent("preprocessor_config.json")
+        guard let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return NFKMLXQwen3VLImageProcessor()
+        }
+        let size = json["size"] as? [String: Any]
+        let defaults = NFKMLXQwen3VLImageProcessor()
+        return NFKMLXQwen3VLImageProcessor(
+            patchSize: json["patch_size"] as? Int ?? defaults.patchSize,
+            temporalPatchSize: json["temporal_patch_size"] as? Int ?? defaults.temporalPatchSize,
+            mergeSize: json["merge_size"] as? Int ?? defaults.mergeSize,
+            minPixels: json["min_pixels"] as? Int ?? size?["shortest_edge"] as? Int ?? defaults.minPixels,
+            maxPixels: json["max_pixels"] as? Int ?? size?["longest_edge"] as? Int ?? defaults.maxPixels)
+    }
 
     /// The reference `smart_resize`: both sides a multiple of `patchSize · mergeSize`, the pixel count
     /// held within `[minPixels, maxPixels]`, the aspect ratio kept as closely as possible.
@@ -62,13 +99,14 @@ public struct NFKMLXQwen3VLImageProcessor {
         context?.interpolationQuality = .high
         context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Channel-first pixels normalized to -1...1 (mean/std 0.5).
+        // Channel-first pixels, normalized by the processor's mean and std.
         var planar = [Float](repeating: 0, count: 3 * height * width)
         for y in 0 ..< height {
             for x in 0 ..< width {
                 let base = (y * width + x) * 4
                 for channel in 0 ..< 3 {
-                    planar[channel * height * width + y * width + x] = Float(bytes[base + channel]) / 255 * 2 - 1
+                    planar[channel * height * width + y * width + x] =
+                        (Float(bytes[base + channel]) / 255 - mean[channel]) / std[channel]
                 }
             }
         }
@@ -83,6 +121,14 @@ public struct NFKMLXQwen3VLImageProcessor {
                                           3 * temporalPatchSize * patchSize * patchSize])
         return (flattened, (gridT, gridH, gridW))
     }
+}
+
+/// How M-RoPE assigns the rotary frequency pairs to the temporal, height, and width positions.
+public enum NFKMLXMRoPELayout: Sendable, Equatable {
+    /// Qwen3-VL's interleaved assignment (`apply_interleaved_mrope`).
+    case interleaved
+    /// Qwen2-VL's and Qwen2.5-VL's contiguous runs of the `mrope_section` widths.
+    case chunked([Int])
 }
 
 /// The geometry of the Qwen3-VL vision encoder.
@@ -401,19 +447,23 @@ public final class NFKMLXQwen3VL: NSObject {
 
     /// A name for the model the factories produce.
     @objc public static let modelName = "qwen3-vl-2b"
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
+    static let optionalFiles = ["preprocessor_config.json", "vocab.json", "merges.txt", "added_tokens.json"]
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
     private let visionNet: NFKMLXQwen3VLVisionNet
     private let textDecoder: NFKMLXLanguageNet
     private let tokenizer: NFKTokenizer
-    private let processor = NFKMLXQwen3VLImageProcessor()
+    private let processor: NFKMLXQwen3VLImageProcessor
     private let endTokens: Set<Int>
 
     init(visionNet: NFKMLXQwen3VLVisionNet, decoder: NFKMLXLanguageNet, tokenizer: NFKTokenizer,
-         endTokens: Set<Int>) {
+         endTokens: Set<Int>, processor: NFKMLXQwen3VLImageProcessor = NFKMLXQwen3VLImageProcessor()) {
         self.visionNet = visionNet
         self.textDecoder = decoder
         self.tokenizer = tokenizer
         self.endTokens = endTokens
+        self.processor = processor
         super.init()
     }
 
@@ -430,7 +480,41 @@ public final class NFKMLXQwen3VL: NSObject {
         let (specials, endToken) = NFKMLXLanguage.specialTokens(inDirectory: directoryURL)
         var stops = Set([specials["<|im_end|>"], endToken].compactMap { $0 })
         if stops.isEmpty { stops = [151_645] }
-        return NFKMLXQwen3VL(visionNet: vision, decoder: decoder, tokenizer: tokenizer, endTokens: stops)
+        return NFKMLXQwen3VL(visionNet: vision, decoder: decoder, tokenizer: tokenizer, endTokens: stops,
+                             processor: NFKMLXQwen3VLImageProcessor.processor(inDirectory: directoryURL))
+    }
+
+    /// Downloads a release into the hub cache and loads the whole model.
+    ///
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, `tokenizer_config.json`, the
+    /// `preprocessor_config.json`, `vocab.json`, `merges.txt`, and `added_tokens.json` the repo serves,
+    /// and the weights, single-file or sharded. A file the cache already holds is not fetched again.
+    /// The call blocks on the network; call it off the render thread. The public releases are
+    /// `Qwen/Qwen3-VL-2B-Instruct`, `Qwen/Qwen3-VL-4B-Instruct`, `Qwen/Qwen3-VL-8B-Instruct`,
+    /// `Qwen/Qwen3-VL-32B-Instruct`, and `Qwen/Qwen3-VL-30B-A3B-Instruct`; none is gated.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(modelWithRepo:revision:cacheDirectoryURL:error:)
+    public static func model(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXQwen3VL {
+        try model(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``model(repo:revision:cacheDirectoryURL:)``. The download and the build
+    /// run at user-initiated quality of service off the calling thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(modelWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func model(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                             completionHandler: @escaping (NFKMLXQwen3VL?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try model(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 
     /// Answers `question` about `image`: the image processor tiles the image, the vision tower and its
@@ -465,9 +549,11 @@ public final class NFKMLXQwen3VL: NSObject {
     /// Loads the `model.visual.` subtree, single-file or sharded. The patch-embedding convolution weight
     /// is stored 5-D (`[out, channels, temporal, patch, patch]`) and flattens to a linear weight
     /// `[out, patchInput]`.
-    static func loadVisionWeights(into net: NFKMLXQwen3VLVisionNet, directoryURL: URL) throws {
+    /// `outerPrefix` is the path a model that wraps Qwen3-VL nests it under (Sa2VA's `model.`).
+    static func loadVisionWeights(into net: NFKMLXQwen3VLVisionNet, directoryURL: URL, outerPrefix: String = "") throws {
+        let prefix = outerPrefix + "model.visual."
         let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
-            key.hasPrefix("model.visual.") ? String(key.dropFirst("model.visual.".count)) : nil
+            key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
         }
         let mapped = arrays.map { key, value -> (String, MLXArray) in
             key == "patch_embed.proj.weight" && value.ndim == 5 ? (key, value.reshaped([value.dim(0), -1])) : (key, value)
@@ -480,27 +566,34 @@ public final class NFKMLXQwen3VL: NSObject {
     /// same stack runs). Whether the head is tied is settled by the weights rather than the config,
     /// which the 8B and 32B leave unstated: a release that ships `lm_head.weight` is untied.
     public static func decoderConfiguration(directoryURL: URL) throws -> NFKMLXLanguageConfiguration {
+        try decoderConfiguration(directoryURL: directoryURL, outerPrefix: "")
+    }
+
+    /// The decoder configuration of a release that nests Qwen3-VL under `outerPrefix` (Sa2VA's
+    /// `model.`); its `text_config` sits in the same `config.json`.
+    static func decoderConfiguration(directoryURL: URL, outerPrefix: String) throws -> NFKMLXLanguageConfiguration {
         let data = try Data(contentsOf: directoryURL.appendingPathComponent("config.json"))
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text_config"] as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("the config carries no text_config")
         }
         var configuration = try NFKMLXLanguage.configuration(fromJSON: text)
-        configuration.tiesWordEmbeddings = !(try releaseShipsHead(directoryURL: directoryURL))
+        configuration.tiesWordEmbeddings = !(try releaseShipsHead(directoryURL: directoryURL, outerPrefix: outerPrefix))
         return configuration
     }
 
     /// Whether the release's weight files carry `lm_head.weight`, read from the shard index or the
     /// single file's header without materializing anything.
-    static func releaseShipsHead(directoryURL: URL) throws -> Bool {
+    static func releaseShipsHead(directoryURL: URL, outerPrefix: String = "") throws -> Bool {
+        let head = outerPrefix + "lm_head.weight"
         let index = directoryURL.appendingPathComponent("model.safetensors.index.json")
         if let data = try? Data(contentsOf: index),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let map = json["weight_map"] as? [String: String] {
-            return map["lm_head.weight"] != nil
+            return map[head] != nil
         }
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: directoryURL.appendingPathComponent("model.safetensors"))
-        return checkpoint.arrays["lm_head.weight"] != nil
+        return checkpoint.arrays[head] != nil
     }
 
     // The token ids and geometry the decoder integration needs. The text decoder is the Qwen3 1.7B
@@ -528,16 +621,70 @@ public final class NFKMLXQwen3VL: NSObject {
     /// `[experts, hidden, 2·width]` (the gate half first, then the up half) and `down_proj`
     /// `[experts, width, hidden]`; those split and transpose into the stacked `[experts, out, in]`
     /// projections the routed feed-forward holds.
-    public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
-        let configuration = try decoderConfiguration(directoryURL: directoryURL)
-        let net = NFKMLXLanguageNet(configuration)
-        let prefix = "model.language_model."
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
-            if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
-            return key == "lm_head.weight" && !configuration.tiesWordEmbeddings ? key : nil
-        }
-        try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
+    /// `precision` `.checkpoint` keeps the release's own element type, which is how an 8B encoder fits
+    /// beside another model; `.float32` upcasts it.
+    ///
+    /// `residency` ``NFKMLXResidency/paged`` leaves the 30B-A3B's routed experts in the release and
+    /// reads each as the router reaches it; ``NFKMLXResidency/automatic`` pages only where the release
+    /// is known not to fit whole. The dense sizes load resident under every residency.
+    public static func decoder(directoryURL: URL,
+                               precision: NFKMLXWeightPrecision = .float32,
+                               residency: NFKMLXResidency = .automatic) throws -> NFKMLXLanguageNet {
+        let net = NFKMLXLanguageNet(try decoderConfiguration(directoryURL: directoryURL))
+        try loadDecoderWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
         return net
+    }
+
+    /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them.
+    static func loadDecoderWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                                   precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                   outerPrefix: String = "") throws {
+        let prefix = outerPrefix + "model.language_model."
+        let head = outerPrefix + "lm_head.weight"
+        let untied = !net.configuration.tiesWordEmbeddings
+        net.expertStore = try NFKMLXExpertInventory.load(
+            directory: directory, precision: precision, residency: residency,
+            classify: { key, entry in
+                guard key.hasPrefix(prefix) else { return [] }
+                return expertSlices(forModuleKey: "model." + String(key.dropFirst(prefix.count)), entry: entry)
+            },
+            install: { store in
+                try NFKMLXLanguage.installPagedExperts(into: net, store: store, quantization: { _ in nil },
+                                                       inputMajor: { _ in true })
+            },
+            load: { skipped in
+                let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+                    if skipped(key) { return nil }
+                    if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
+                    return key == head && untied ? "lm_head.weight" : nil
+                }
+                try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
+            })
+    }
+
+    /// The expert slices a fused 30B-A3B tensor feeds on a paged load, keyed by its module path.
+    ///
+    /// @discussion `gate_up_proj` `[experts, hidden, 2·width]` feeds two layers, the gate from its first
+    /// half of columns and the lift from its second; `down_proj` `[experts, width, hidden]` feeds one.
+    /// Each slice stays `[in, out]`, the layout the resident split multiplies.
+    static func expertSlices(forModuleKey name: String, entry: NFKMLXSafetensorsEntry) -> [NFKMLXExpertSlice] {
+        guard entry.shape.count == 3 else { return [] }
+        let fused = ".mlp.experts.gate_up_proj", down = ".mlp.experts.down_proj"
+        if name.hasSuffix(fused) {
+            let base = String(name.dropLast("gate_up_proj".count))
+            let width = entry.shape[2] / 2
+            var gate = NFKMLXExpertSlice(group: base + "gate_proj", part: "weight", expert: nil,
+                                         transform: { $0[0..., 0 ..< width] })
+            var up = NFKMLXExpertSlice(group: base + "up_proj", part: "weight", expert: nil,
+                                       transform: { $0[0..., width...] })
+            gate.inputMajor = true
+            up.inputMajor = true
+            return [gate, up]
+        }
+        guard name.hasSuffix(down) else { return [] }
+        var slice = NFKMLXExpertSlice(group: name, part: "weight", expert: nil)
+        slice.inputMajor = true
+        return [slice]
     }
 
     /// Splits fused expert tensors into the module's stacked projections; every other pair passes through.
@@ -599,8 +746,11 @@ public final class NFKMLXQwen3VL: NSObject {
     /// are assigned to the three axes in an interleaved layout — channel `c` takes height when
     /// `c % 3 == 1`, width when `c % 3 == 2`, and temporal otherwise — matching the reference's
     /// `apply_interleaved_mrope`, and the rotation is the ordinary rotate-half over the doubled table.
-    static func mropeCosSin(positionIds: [[Int]], headDimensions: Int,
-                            theta: Float) -> (cos: MLXArray, sin: MLXArray) {
+    ///
+    /// `layout` ``NFKMLXMRoPELayout/chunked(_:)`` is Qwen2-VL's and Qwen2.5-VL's older assignment instead:
+    /// the frequency pairs split into contiguous temporal, height, and width runs of the section widths.
+    static func mropeCosSin(positionIds: [[Int]], headDimensions: Int, theta: Float,
+                            layout: NFKMLXMRoPELayout = .interleaved) -> (cos: MLXArray, sin: MLXArray) {
         let half = headDimensions / 2
         let sequence = positionIds[0].count
         let inverseFrequencies = (0 ..< half).map { 1 / powf(theta, Float(2 * $0) / Float(headDimensions)) }
@@ -609,7 +759,9 @@ public final class NFKMLXQwen3VL: NSObject {
         for position in 0 ..< sequence {
             for channel in 0 ..< half {
                 let axis: Int
-                if channel < lengthHeight && channel % 3 == 1 {
+                if case .chunked(let sections) = layout {
+                    axis = channel < sections[0] ? 0 : channel < sections[0] + sections[1] ? 1 : 2
+                } else if channel < lengthHeight && channel % 3 == 1 {
                     axis = 1
                 } else if channel < lengthWidth && channel % 3 == 2 {
                     axis = 2
@@ -631,6 +783,22 @@ public final class NFKMLXQwen3VL: NSObject {
     /// positions drive the rotary, and the deepstack features add to the first three layers.
     public static func logits(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray,
                               deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int) -> MLXArray {
+        let hidden = hiddenStates(decoder: decoder, inputIds: inputIds, visionFeatures: visionFeatures,
+                                  deepstack: deepstack, gridT: gridT, gridH: gridH, gridW: gridW)
+        return decoder.logits(fromHidden: hidden)
+    }
+
+    /// The decoder hidden states over a fused image-and-text sequence, `[1, sequence, hidden]`, read
+    /// after the final norm and before the output projection. The retrieval models pool these; the
+    /// generative path projects them.
+    ///
+    /// @discussion A nil `visionFeatures` is a text-only sequence: nothing splices into the input
+    /// embeddings, the deepstack has nothing to add to, and the M-RoPE axes advance together, which is
+    /// the ordinary 1-D rotary.
+    public static func hiddenStates(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray?,
+                                    deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
+                                    applyFinalNorm: Bool = true,
+                                    layout: NFKMLXMRoPELayout = .interleaved) -> MLXArray {
         let sequence = inputIds.count
         let width = decoder.configuration.hiddenSize
         var embeddings = decoder.embed(MLXArray(inputIds.map(Int32.init)).reshaped([1, sequence]))[0]
@@ -645,17 +813,21 @@ public final class NFKMLXQwen3VL: NSObject {
         }
         let indexArray = MLXArray(featureIndex)
         let flatMask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
-        let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
-        embeddings = MLX.where(flatMask, gathered, embeddings).reshaped([1, sequence, width])
+        if let visionFeatures, counter > 0 {
+            let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
+            embeddings = MLX.where(flatMask, gathered, embeddings)
+        }
+        embeddings = embeddings.reshaped([1, sequence, width])
 
         let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)
         let rope = mropeCosSin(positionIds: positions,
                                headDimensions: decoder.configuration.headDimensions,
-                               theta: decoder.configuration.ropeTheta)
-        let multimodal = NFKLMMultimodal(rope: rope, features: deepstack, featureIndex: indexArray,
+                               theta: decoder.configuration.ropeTheta, layout: layout)
+        let multimodal = NFKLMMultimodal(rope: rope, features: counter > 0 ? deepstack : [],
+                                         featureIndex: indexArray,
                                          mask: flatMask.reshaped([1, sequence, 1]))
-        let hidden = decoder.hiddenStates(fromEmbeddings: embeddings, multimodal: multimodal)
-        return decoder.logits(fromHidden: hidden)
+        return decoder.hiddenStates(fromEmbeddings: embeddings, multimodal: multimodal,
+                                    applyFinalNorm: applyFinalNorm)
     }
 
     /// Greedy continuation from a fused image-and-text prompt, cached: an M-RoPE prefill with the
@@ -664,7 +836,19 @@ public final class NFKMLXQwen3VL: NSObject {
     /// deepstack applies only to the image tokens of the prompt.
     public static func generate(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray,
                                 deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
-                                maxTokens: Int, endTokens: Set<Int>) -> [Int] {
+                                maxTokens: Int, endTokens: Set<Int>,
+                                layout: NFKMLXMRoPELayout = .interleaved) -> [Int] {
+        generateToEnd(decoder: decoder, inputIds: inputIds, visionFeatures: visionFeatures, deepstack: deepstack,
+                      gridT: gridT, gridH: gridH, gridW: gridW, maxTokens: maxTokens, endTokens: endTokens,
+                      layout: layout).tokens
+    }
+
+    /// ``generate(decoder:inputIds:visionFeatures:deepstack:gridT:gridH:gridW:maxTokens:endTokens:layout:)``,
+    /// also reporting the end token generation stopped on, or nil when it ran to `maxTokens`.
+    static func generateToEnd(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray,
+                              deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
+                              maxTokens: Int, endTokens: Set<Int>,
+                              layout: NFKMLXMRoPELayout) -> (tokens: [Int], ending: Int?) {
         let sequence = inputIds.count
         let width = decoder.configuration.hiddenSize
         let headDimensions = decoder.configuration.headDimensions
@@ -686,7 +870,8 @@ public final class NFKMLXQwen3VL: NSObject {
 
         let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)
         var nextPosition = (positions.flatMap { $0 }.max() ?? (sequence - 1)) + 1
-        let prefillRope = mropeCosSin(positionIds: positions, headDimensions: headDimensions, theta: theta)
+        let prefillRope = mropeCosSin(positionIds: positions, headDimensions: headDimensions, theta: theta,
+                                      layout: layout)
         let multimodal = NFKLMMultimodal(rope: prefillRope, features: deepstack, featureIndex: indexArray,
                                          mask: flatMask.reshaped([1, sequence, 1]))
 
@@ -699,10 +884,10 @@ public final class NFKMLXQwen3VL: NSObject {
         for _ in 0 ..< maxTokens {
             let lastHidden = hidden[0..., (hidden.dim(1) - 1)...]
             let next = decoder.logits(fromHidden: lastHidden).reshaped([-1]).argMax().item(Int.self)
-            if endTokens.contains(next) { break }
+            if endTokens.contains(next) { return (produced, next) }
             produced.append(next)
             let rope = mropeCosSin(positionIds: [[nextPosition], [nextPosition], [nextPosition]],
-                                   headDimensions: headDimensions, theta: theta)
+                                   headDimensions: headDimensions, theta: theta, layout: layout)
             nextPosition += 1
             let decodeMultimodal = NFKLMMultimodal(rope: rope, features: [], featureIndex: dummyIndex,
                                                    mask: dummyMask)
@@ -710,6 +895,6 @@ public final class NFKMLXQwen3VL: NSObject {
                 fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])),
                 cache: cache, multimodal: decodeMultimodal)
         }
-        return produced
+        return (produced, nil)
     }
 }

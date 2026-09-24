@@ -297,6 +297,62 @@ extension NFKMLXGemma3n {
         try backend(directoryURL: directoryURL, precision: .float32)
     }
 
+    static let requiredFiles = ["config.json", "tokenizer.json"]
+    static let optionalFiles = [String]()
+    static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
+
+    /// The release directory a download of `repo` fills.
+    static func releaseDirectory(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
+        try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles)
+    }
+
+    /// Downloads a Gemma 3n release and loads it.
+    ///
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, and every shard the
+    /// release's `model.safetensors.index.json` names into the hub cache under `cacheDirectoryURL`,
+    /// or the default cache when nil. A cached file is not fetched again. The call blocks on the
+    /// network; call it off the render thread. It serves the E2B and E4B releases. The
+    /// `google/gemma-3n-*` repos are gated: the caller sets `NFKHFHub.defaultAccessToken` before the
+    /// first download, or names the ungated mirrors `unsloth/gemma-3n-E2B-it` and
+    /// `unsloth/gemma-3n-E4B-it`. Introduced in InferKit 0.4.0.
+    @objc(gemma3nWithRepo:revision:cacheDirectoryURL:error:)
+    public static func gemma3n(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXGemma3n {
+        try load(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+    }
+
+    /// The asynchronous form of ``gemma3n(repo:revision:cacheDirectoryURL:)``, delivered on a
+    /// background queue. Introduced in InferKit 0.4.0.
+    @objc(gemma3nWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func gemma3n(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping (NFKMLXGemma3n?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try gemma3n(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
+    /// Downloads a Gemma 3n release, as ``gemma3n(repo:revision:cacheDirectoryURL:)`` describes, and
+    /// builds the backend. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
     /// Whether a release directory's `config.json` names Gemma 3n.
     public static func isGemma3n(configURL: URL) -> Bool {
         guard let data = try? Data(contentsOf: configURL),
