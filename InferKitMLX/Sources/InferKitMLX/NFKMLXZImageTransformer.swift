@@ -100,9 +100,12 @@ func zImageApplyRope(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArra
     let xi = pairs[0..., 0..., 0..., 1]
     let cc = c.reshaped([n, 1, headDim / 2])
     let ss = s.reshaped([n, 1, headDim / 2])
-    let outR = xr * cc - xi * ss
-    let outI = xr * ss + xi * cc
-    return stacked([outR, outI], axis: -1).reshaped([n, heads, headDim])
+    // The reference rotates a half-precision input in float32 and rounds once.
+    guard NFKReferenceRounding.isReduced(x) else {
+        return stacked([xr * cc - xi * ss, xr * ss + xi * cc], axis: -1).reshaped([n, heads, headDim])
+    }
+    let (wr, wi, wc, ws) = (xr.asType(.float32), xi.asType(.float32), cc.asType(.float32), ss.asType(.float32))
+    return stacked([wr * wc - wi * ws, wr * ws + wi * wc], axis: -1).reshaped([n, heads, headDim]).asType(x.dtype)
 }
 
 /// The single-stream attention: fused q/k/v, per-head RMS query/key norm, complex rotary, softmax SDPA.

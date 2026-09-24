@@ -90,8 +90,8 @@ final class NFKWanAttention: Module {
     func callAsFunction(_ x: MLXArray, context: MLXArray?, cos c: MLXArray?, sin s: MLXArray?) -> MLXArray {
         let source = context ?? x
         let n = x.dim(0), m = source.dim(0)
-        var q = normQ(toQ(x)).reshaped([n, heads, headDim])
-        var k = normK(toK(source)).reshaped([m, heads, headDim])
+        var q = Self.normalized(toQ(x), normQ).reshaped([n, heads, headDim])
+        var k = Self.normalized(toK(source), normK).reshaped([m, heads, headDim])
         let v = toV(source).reshaped([m, heads, headDim])
         if let c, let s {
             q = zImageApplyRope(q, cos: c, sin: s)
@@ -101,9 +101,16 @@ final class NFKWanAttention: Module {
         let kh = k.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let vh = v.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let scale = 1.0 / sqrt(Float(headDim))
-        let out = MLXFast.scaledDotProductAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: .none)
+        let out = NFKReferenceRounding.flashAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: nil)
         let merged = out[0].transposed(1, 0, 2).reshaped([n, heads * headDim])
         return (toOut[0] as! Linear)(merged)
+    }
+
+    /// The query and key norm, torch's `nn.RMSNorm`: on a half-precision input it normalizes and scales
+    /// in float32 and rounds once.
+    static func normalized(_ x: MLXArray, _ norm: RMSNorm) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else { return norm(x) }
+        return NFKReferenceRounding.scaledNorm(x, weight: norm.weight, eps: norm.eps)
     }
 }
 
@@ -111,7 +118,7 @@ final class NFKWanAttention: Module {
 final class NFKWanGELU: Module {
     @ModuleInfo(key: "proj") var proj: Linear
     init(_ dim: Int, _ hidden: Int) { _proj.wrappedValue = Linear(dim, hidden) }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { geluApproximate(proj(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.geluTanh(proj(x)) }
 }
 
 /// The feed-forward: `net.0` is the gelu projection, `net.2` the output linear.
@@ -138,8 +145,10 @@ final class NFKWanBlock: Module {
 
     let norm1: LayerNorm
     let norm3: LayerNorm
+    let eps: Float
 
     init(_ config: NFKMLXWanConfiguration) {
+        eps = config.eps
         _attn1.wrappedValue = NFKWanAttention(config)
         _attn2.wrappedValue = NFKWanAttention(config)
         _norm2.wrappedValue = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: true)
@@ -152,6 +161,9 @@ final class NFKWanBlock: Module {
     /// `x` `[N, inner]`, `context` `[Lc, inner]`, `temb` `[6, inner]`.
     func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArray {
         let inner = x.dim(1)
+        if NFKReferenceRounding.isReduced(x) {
+            return reduced(x, context: context, temb: temb, cos: c, sin: s)
+        }
         let mod = scaleShiftTable[0] + temb                               // [6, inner]
         let shiftMSA = mod[0].reshaped([1, inner]), scaleMSA = mod[1].reshaped([1, inner])
         let gateMSA = mod[2].reshaped([1, inner])
@@ -162,6 +174,24 @@ final class NFKWanBlock: Module {
         h = h + attn2(norm2(h), context: context, cos: nil, sin: nil)
         h = h + ffn(norm3(h) * (1.0 + cScaleMSA) + cShiftMSA) * cGateMSA
         return h
+    }
+
+    /// The block on a half-precision stream, rounded where the reference rounds: the modulation, the
+    /// norms, and the gated residual sums are float32, each step rounded once to the stream's type.
+    private func reduced(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArray {
+        let inner = x.dim(1), dtype = x.dtype
+        let mod = scaleShiftTable[0].asType(.float32) + temb.asType(.float32)
+        func row(_ index: Int) -> MLXArray { mod[index].reshaped([1, inner]) }
+        func normed(_ y: MLXArray) -> MLXArray {
+            MLXFast.layerNorm(y.asType(.float32), weight: nil, bias: nil, eps: eps)
+        }
+        let attended = attn1((normed(x) * (1 + row(1)) + row(0)).asType(dtype), context: nil, cos: c, sin: s)
+        var h = (x.asType(.float32) + attended.asType(.float32) * row(2)).asType(dtype)
+        let crossNormed = MLXFast.layerNorm(h.asType(.float32), weight: norm2.weight?.asType(.float32),
+                                            bias: norm2.bias?.asType(.float32), eps: eps).asType(dtype)
+        h = h + attn2(crossNormed, context: context, cos: nil, sin: nil)
+        let fed = ffn((normed(h) * (1 + row(4)) + row(3)).asType(dtype))
+        return (h.asType(.float32) + fed.asType(.float32) * row(5)).asType(dtype)
     }
 }
 
@@ -179,9 +209,10 @@ final class NFKWanConditionEmbedder: Module {
 
     /// `t` scalar, `text` `[Lc, textDim]` → `(temb [inner], timestepProj [6·inner], context [Lc, inner])`.
     func callAsFunction(_ t: MLXArray, text: MLXArray, freqDim: Int) -> (temb: MLXArray, proj: MLXArray, context: MLXArray) {
+        // The float32 sinusoids take the embedder's type, and its output the text's, as the reference casts them.
         let sinusoid = ltxTimestepEmbedding(t, channels: freqDim)         // cos-first
-        let temb = timeEmbedder(sinusoid)                                 // [1, inner]
-        let proj = timeProj(silu(temb))                                   // [1, 6·inner]
+        let temb = timeEmbedder(sinusoid.asType(timeEmbedder.linear1.weight.dtype)).asType(text.dtype)  // [1, inner]
+        let proj = timeProj(NFKReferenceRounding.silu(temb))              // [1, 6·inner]
         let context = textEmbedder(text)                                  // [Lc, inner]
         return (temb[0], proj[0], context)
     }
@@ -212,6 +243,15 @@ public final class NFKMLXWanTransformerNet: Module {
         self.normOut = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: false)
     }
 
+    /// The patch embedding; on a half-precision input the convolution and its bias are summed in float32
+    /// and rounded once, as torch's `conv3d` does.
+    private func embedded(_ x: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x), let bias = patchEmbedding.bias else { return patchEmbedding(x) }
+        let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
+        return (conv3d(x.asType(.float32), patchEmbedding.weight.asType(.float32), stride: .init((pt, ph, pw)))
+            + bias.asType(.float32)).asType(x.dtype)
+    }
+
     /// Velocity prediction. `x` `[C, F, H, W]`, `text` `[Lc, textDim]`, `t` scalar.
     public func callAsFunction(_ x: MLXArray, text: MLXArray, t: MLXArray) -> MLXArray {
         let c = x.dim(0), f = x.dim(1), h = x.dim(2), w = x.dim(3)
@@ -221,7 +261,7 @@ public final class NFKMLXWanTransformerNet: Module {
 
         // Patch embed: NCTHW -> NDHWC Conv3d -> [N, inner].
         let ndhwc = x.transposed(1, 2, 3, 0).expandedDimensions(axis: 0)   // [1, F, H, W, C]
-        var hidden = patchEmbedding(ndhwc).reshaped([ft * ht * wt, inner])
+        var hidden = embedded(ndhwc).reshaped([ft * ht * wt, inner])
 
         // Position grid (frame, height, width), no offset.
         var pf = [Float](), phh = [Float](), pww = [Float]()
@@ -248,7 +288,13 @@ public final class NFKMLXWanTransformerNet: Module {
         // Output modulation from the shared timestep embedding.
         let outMod = scaleShiftTable[0] + temb.reshaped([1, inner])       // [2, inner]
         let shift = outMod[0].reshaped([1, inner]), scale = outMod[1].reshaped([1, inner])
-        hidden = normOut(hidden) * (1.0 + scale) + shift
+        if NFKReferenceRounding.isReduced(hidden) {
+            // The reference normalizes in float32 and rounds the modulated result once.
+            hidden = (MLXFast.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: config.eps)
+                * (1.0 + scale) + shift).asType(hidden.dtype)
+        } else {
+            hidden = normOut(hidden) * (1.0 + scale) + shift
+        }
         let out = projOut(hidden)                                         // [N, C·pt·ph·pw]
 
         // Unpatchify: [ft·ht·wt, C·pt·ph·pw] -> [C, F, H, W].

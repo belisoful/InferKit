@@ -104,7 +104,9 @@ func applyFluxRotary(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArra
     let real = pairs[0..., 0..., 0..., 0..., 0]
     let imag = pairs[0..., 0..., 0..., 0..., 1]
     let rotated = stacked([-imag, real], axis: -1).reshaped(x.shape)
-    return x * cc + rotated * ss
+    // The reference rotates a half-precision input in float32 and rounds once.
+    guard NFKReferenceRounding.isReduced(x) else { return x * cc + rotated * ss }
+    return (x.asType(.float32) * cc.asType(.float32) + rotated.asType(.float32) * ss.asType(.float32)).asType(x.dtype)
 }
 
 /// The FLUX attention: query/key/value projections with per-head RMS query/key norm and rotary, over
@@ -173,7 +175,7 @@ final class NFKFluxAttention: Module {
         }
         q = applyFluxRotary(q, cos: c, sin: s)
         k = applyFluxRotary(k, cos: c, sin: s)
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.flashAttention(
             queries: q, keys: k, values: v, scale: 1 / sqrt(Float(headDim)), mask: nil)
         let merged = attended.transposed(0, 2, 1, 3).reshaped([b, -1, heads * headDim])
         if let encoder, hasAdded, let toOut {
@@ -269,7 +271,7 @@ final class NFKFluxSingleBlock: Module {
         let scale = mod[0..., dim ..< 2 * dim][0..., .newAxis, 0...]
         let gate = mod[0..., 2 * dim ..< 3 * dim][0..., .newAxis, 0...]
         let normed = sd3AffineFreeLayerNorm(joined) * (1 + scale) + shift
-        let mlp = geluApproximate(projMLP(normed))
+        let mlp = NFKReferenceRounding.geluTanh(projMLP(normed))
         let (attnOut, _) = attn(normed, encoder: nil, cos: c, sin: s)
         let combined = concatenated([attnOut, mlp], axis: 2)              // [B, seq, dim + mlpHidden]
         let out = residual + gate * projOut(combined)
@@ -292,9 +294,11 @@ final class NFKFluxTimeTextEmbed: Module {
     }
 
     func callAsFunction(timestep: MLXArray, guidance: MLXArray?, pooled: MLXArray) -> MLXArray {
-        var conditioning = timestepEmbedder(sd3TimestepEmbedding(timestep, dimensions: 256))
+        // The float32 sinusoids take the pooled projection's type, as the reference casts them.
+        var conditioning = timestepEmbedder(sd3TimestepEmbedding(timestep, dimensions: 256).asType(pooled.dtype))
         if let guidance, let guidanceEmbedder {
-            conditioning = conditioning + guidanceEmbedder(sd3TimestepEmbedding(guidance, dimensions: 256))
+            conditioning = conditioning
+                + guidanceEmbedder(sd3TimestepEmbedding(guidance, dimensions: 256).asType(pooled.dtype))
         }
         return conditioning + textEmbedder(pooled)
     }
@@ -338,7 +342,9 @@ public final class NFKMLXFluxTransformerNet: Module {
                                controlnetBlockSamples: [MLXArray]? = nil,
                                controlnetSingleBlockSamples: [MLXArray]? = nil) -> MLXArray {
         var image = xEmbedder(hiddenStates)                                // [B, imgSeq, inner]
-        let temb = timeTextEmbed(timestep: timestep * 1000, guidance: guidance.map { $0 * 1000 }, pooled: pooled)
+        // The reference takes the timestep and guidance in the latents' type before scaling them.
+        let temb = timeTextEmbed(timestep: timestep.asType(hiddenStates.dtype) * 1000,
+                                 guidance: guidance.map { $0.asType(hiddenStates.dtype) * 1000 }, pooled: pooled)
         var context = contextEmbedder(encoderHidden)                       // [B, txtSeq, inner]
 
         // Axial rope over the concatenated [text, image] token ids (text ids are all zero).

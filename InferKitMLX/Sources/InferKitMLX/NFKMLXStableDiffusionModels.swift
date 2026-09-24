@@ -131,6 +131,10 @@ public struct NFKSDAddedConditioning {
 public struct NFKMLXSDVAEConfiguration: Sendable {
     public var latentChannels: Int = 4
     public var blockChannels: [Int] = [128, 256, 512, 512]
+    /// The decoder's widths where they differ from the encoder's, the reference's
+    /// `decoder_block_out_channels`. Nil means the decoder mirrors the encoder, which every release
+    /// before FLUX.2's small decoder does.
+    public var decoderBlockChannels: [Int]?
     public var layersPerBlock: Int = 2
     public var normalizationGroups: Int = 32
     /// Multiplies an encoded latent (and divides before decoding) so its variance suits the UNet —
@@ -152,6 +156,28 @@ public struct NFKMLXSDVAEConfiguration: Sendable {
         var c = NFKMLXSDVAEConfiguration()
         c.blockChannels = [128, 256, 512]
         c.scaleFactor = 0.08333
+        return c
+    }()
+
+    /// FLUX.2's SMALL DECODER (`black-forest-labs/FLUX.2-small-decoder`): the same encoder at a
+    /// narrower decoder, which is what `decoder_block_out_channels` expresses. 62M parameters against
+    /// the full autoencoder's, for a cheaper decode at the same latent.
+    public static let flux2SmallDecoder: NFKMLXSDVAEConfiguration = {
+        var c = NFKMLXSDVAEConfiguration.flux2
+        c.decoderBlockChannels = [96, 192, 384, 384]
+        return c
+    }()
+
+    /// FLUX.2's autoencoder: 32 latent channels, the quantization convolutions kept, and no scalar
+    /// scale or shift. FLUX.2 whitens its latent with a BatchNorm's running statistics after a 2x2
+    /// patching instead, which ``NFKMLXFlux2LatentCodec`` carries. Architecturally the same
+    /// `AutoencoderKL` as Stable Diffusion's.
+    public static let flux2: NFKMLXSDVAEConfiguration = {
+        var c = NFKMLXSDVAEConfiguration()
+        c.latentChannels = 32
+        c.scaleFactor = 1
+        c.shiftFactor = 0
+        c.useQuantConv = true
         return c
     }()
 
@@ -246,12 +272,16 @@ final class NFKSDResnetBlock: Module {
     @ModuleInfo(key: "conv2") var conv2: Conv2d
     @ModuleInfo(key: "conv_shortcut") var shortcut: Conv2d?
 
-    init(inputChannels: Int, outputChannels: Int, timeChannels: Int?, groups: Int) {
-        self._norm1.wrappedValue = NFKSDGroupNorm(groups: groups, channels: inputChannels, eps: 1e-5)
+    /// `eps` is the UNet's `1e-5` by default. The autoencoder's reference passes `resnet_eps=1e-6`
+    /// to every block it builds, and the two normalizations are otherwise identical, so the value is
+    /// the caller's rather than a constant here.
+    init(inputChannels: Int, outputChannels: Int, timeChannels: Int?, groups: Int,
+         eps: Float = 1e-5) {
+        self._norm1.wrappedValue = NFKSDGroupNorm(groups: groups, channels: inputChannels, eps: eps)
         self._conv1.wrappedValue = Conv2d(inputChannels: inputChannels, outputChannels: outputChannels,
                                           kernelSize: 3, padding: 1)
         self._timeProjection.wrappedValue = timeChannels.map { Linear($0, outputChannels) }
-        self._norm2.wrappedValue = NFKSDGroupNorm(groups: groups, channels: outputChannels, eps: 1e-5)
+        self._norm2.wrappedValue = NFKSDGroupNorm(groups: groups, channels: outputChannels, eps: eps)
         self._conv2.wrappedValue = Conv2d(inputChannels: outputChannels, outputChannels: outputChannels,
                                           kernelSize: 3, padding: 1)
         self._shortcut.wrappedValue = inputChannels == outputChannels
@@ -732,9 +762,11 @@ final class NFKSDVAEResnet: Module {
     @ModuleInfo(key: "block") var block: NFKSDResnetBlock
 
     init(inputChannels: Int, outputChannels: Int, groups: Int) {
+        // diffusers builds every autoencoder block with `resnet_eps=1e-6`, where the UNet's blocks
+        // take 1e-5. The difference is invisible at the released widths and shows at a small one.
         self._block.wrappedValue = NFKSDResnetBlock(inputChannels: inputChannels,
                                                     outputChannels: outputChannels,
-                                                    timeChannels: nil, groups: groups)
+                                                    timeChannels: nil, groups: groups, eps: 1e-6)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { block(x, time: nil) }
@@ -869,8 +901,9 @@ final class NFKSDVAEDecoder: Module {
     @ModuleInfo(key: "conv_out") var convOut: Conv2d
 
     init(_ c: NFKMLXSDVAEConfiguration) {
-        let levels = c.blockChannels.count
-        let reversed = c.blockChannels.reversed().map { $0 }
+        let widths = c.decoderBlockChannels ?? c.blockChannels
+        let levels = widths.count
+        let reversed = widths.reversed().map { $0 }
         self._convIn.wrappedValue = Conv2d(inputChannels: c.latentChannels,
                                            outputChannels: reversed[0], kernelSize: 3, padding: 1)
         self._midBlock.wrappedValue = NFKSDVAEMidBlock(channels: reversed[0],

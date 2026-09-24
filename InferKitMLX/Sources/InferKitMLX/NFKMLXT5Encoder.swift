@@ -223,15 +223,22 @@ final class NFKMLXT5EncoderNet: Module {
     }
 
     /// Token ids `[B, S]` → the text embedding `[B, S, dModel]`.
-    func callAsFunction(_ tokens: MLXArray) -> MLXArray {
+    ///
+    /// `mask` `[B, S]` is 1 for a token the attention reads and 0 for padding, which transformers adds
+    /// to the position bias as `(1 − mask) · float32.min`; nil reads every position, as a caller that
+    /// passes no attention mask to `T5EncoderModel` does.
+    func callAsFunction(_ tokens: MLXArray, mask: MLXArray? = nil) -> MLXArray {
         var hidden = shared(tokens)
         let length = tokens.shape[1]
+        let padding = mask.map {
+            ((1 - $0.asType(.float32)) * -Float.greatestFiniteMagnitude).reshaped([$0.dim(0), 1, 1, length])
+        }
         // umT5 gives every layer its own bias; plain T5 shares block 0's across the stack.
         let sharedBias = configuration.perLayerBias ? nil
             : encoder.block[0].selfAttention.attention.computeBias(length)
         for block in encoder.block {
             let bias = sharedBias ?? block.selfAttention.attention.computeBias(length)
-            hidden = block(hidden, bias: bias)
+            hidden = block(hidden, bias: padding.map { bias + $0 } ?? bias)
         }
         return encoder.finalLayerNorm(hidden)
     }
@@ -265,14 +272,37 @@ public final class NFKMLXT5Encoder: NSObject {
         return NFKMLXT5Encoder(net: net)
     }
 
+    /// The encoder geometry a Hugging Face `config.json` describes: T5 (`t5`) or umT5 (`umt5`), whose
+    /// every layer carries its own relative-position bias.
+    static func configuration(fromHuggingFace url: URL) throws -> NFKMLXT5Configuration {
+        guard let json = try JSONSerialization.jsonObject(with: try Data(contentsOf: url)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not an object")
+        }
+        let base = NFKMLXT5Configuration.xxl
+        return NFKMLXT5Configuration(
+            dModel: json["d_model"] as? Int ?? base.dModel, layers: json["num_layers"] as? Int ?? base.layers,
+            heads: json["num_heads"] as? Int ?? base.heads, keyDim: json["d_kv"] as? Int ?? base.keyDim,
+            ffDim: json["d_ff"] as? Int ?? base.ffDim, vocabularySize: json["vocab_size"] as? Int ?? base.vocabularySize,
+            relativeBuckets: json["relative_attention_num_buckets"] as? Int ?? base.relativeBuckets,
+            relativeMaxDistance: json["relative_attention_max_distance"] as? Int ?? base.relativeMaxDistance,
+            layerNormEps: (json["layer_norm_epsilon"] as? NSNumber)?.floatValue ?? base.layerNormEps,
+            perLayerBias: json["model_type"] as? String == "umt5")
+    }
+
     static func makeNet(_ configuration: NFKMLXT5Configuration = .xxl) -> NFKMLXT5EncoderNet {
         NFKMLXT5EncoderNet(configuration)
     }
 
     /// Loads a checkpoint. All weights are at most 2-D, so no transpose applies; the module keys mirror
     /// the reference's `T5EncoderModel`.
-    static func loadWeights(into net: NFKMLXT5EncoderNet, from directory: URL) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory) { $0 }
+    ///
+    /// - Parameter dtype: a floating type to hold the weights in, in place of `precision`'s: a release
+    ///   stored at float32 (umT5-XXL, 22.7 GB) loads at bfloat16 in half the memory, the precision the
+    ///   reference pipelines run it at.
+    static func loadWeights(into net: NFKMLXT5EncoderNet, from directory: URL,
+                            precision: NFKMLXWeightPrecision = .float32, dtype: DType? = nil) throws {
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: dtype == nil ? precision : .checkpoint)
+            .map { key, value in (key, dtype.map { value.dtype.isFloatingPoint ? value.asType($0) : value } ?? value) }
         try NFKMLXWeights.apply(arrays, to: net)
     }
 }

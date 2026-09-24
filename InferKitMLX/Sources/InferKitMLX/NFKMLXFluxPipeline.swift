@@ -72,21 +72,24 @@ public final class NFKMLXFluxPipeline {
     /// `[pooledDim]` the CLIP-L pooled projection.
     public func generate(promptEmbeds: MLXArray, pooled: MLXArray, latentHeight: Int, latentWidth: Int,
                          steps: Int = 28, guidance: Float = 3.5, seed: UInt64 = 0) -> MLXArray {
+        // The reference runs the latents and the conditioning in the transformer's type.
+        let dtype = NFKReferenceRounding.parameterType(of: holder.transformer)
         MLXRandom.seed(seed)
-        let latent = MLXRandom.normal([1, latentChannels, latentHeight, latentWidth])
+        let latent = MLXRandom.normal([1, latentChannels, latentHeight, latentWidth]).asType(dtype)
         var packed = Self.pack(latent)                                     // [1, seq, 64]
         let sequence = (latentHeight / 2) * (latentWidth / 2)
         let imageIds = NFKMLXFluxTransformerNet.imageIds(height: latentHeight / 2, width: latentWidth / 2)
         var scheduler = self.scheduler
         scheduler.setTimesteps(steps, sequenceLength: sequence)
 
-        let cond = promptEmbeds.expandedDimensions(axis: 0)
-        let condPooled = pooled.expandedDimensions(axis: 0)
+        let cond = promptEmbeds.expandedDimensions(axis: 0).asType(dtype)
+        let condPooled = pooled.expandedDimensions(axis: 0).asType(dtype)
         let guidanceValue = guidanceEmbeds ? MLXArray([guidance]) : nil
 
         for index in 0 ..< scheduler.timesteps.count {
             // The transformer scales the timestep by 1000 internally, so it takes the sigma directly.
-            let t = MLXArray([scheduler.sigmas[index]])
+            let t = dtype == .float32 ? MLXArray([scheduler.sigmas[index]])
+                : NFKReferenceRounding.flowFraction(scheduler.timesteps[index], dtype: dtype)
             let prediction = holder.transformer(packed, encoderHidden: cond, pooled: condPooled,
                                                 timestep: t, guidance: guidanceValue, imageIds: imageIds)
             packed = scheduler.step(velocity: prediction, sample: packed, index: index)

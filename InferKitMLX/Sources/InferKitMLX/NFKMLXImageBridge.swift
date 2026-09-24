@@ -167,6 +167,30 @@ enum NFKMLXImageBridge {
         throw BridgeError.unsupportedInput
     }
 
+    /// The picture's own pixels as RGB bytes, at its own size.
+    ///
+    /// @discussion A preprocessor whose reference is PIL works in 8 bits and rounds between its
+    /// resampling passes, so it needs the bytes rather than the floats `tensor(from:…)` produces:
+    /// converting to float first and back would round twice.
+    static func rgbBytes(from value: Any, colorSpace: CGColorSpace) throws
+        -> (bytes: [UInt8], width: Int, height: Int) {
+        let rgba: (bytes: [UInt8], width: Int, height: Int)
+        if let texture = value as? MTLTexture {
+            rgba = try rgbaBytes(from: texture)
+        } else {
+            let cf = value as CFTypeRef
+            guard CFGetTypeID(cf) == CGImage.typeID else { throw BridgeError.unsupportedInput }
+            rgba = rgbaBytes(from: cf as! CGImage, colorSpace: colorSpace)
+        }
+        var rgb = [UInt8](repeating: 0, count: rgba.width * rgba.height * 3)
+        for pixel in 0 ..< (rgba.width * rgba.height) {
+            rgb[pixel * 3] = rgba.bytes[pixel * 4]
+            rgb[pixel * 3 + 1] = rgba.bytes[pixel * 4 + 1]
+            rgb[pixel * 3 + 2] = rgba.bytes[pixel * 4 + 2]
+        }
+        return (rgb, rgba.width, rgba.height)
+    }
+
     static func tensor(from value: Any, channels: Int, colorSpace: CGColorSpace) throws -> MLXArray {
         if let texture = value as? MTLTexture {
             let (bytes, width, height) = try rgbaBytes(from: texture)

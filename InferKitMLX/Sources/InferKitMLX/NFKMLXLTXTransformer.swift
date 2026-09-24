@@ -188,7 +188,10 @@ final class NFKLTXAttention: Module {
         _normK.wrappedValue = RMSNorm(dimensions: inner, eps: 1e-5)
     }
 
-    func callAsFunction(_ x: MLXArray, context: MLXArray?, rotary: (MLXArray, MLXArray)?) -> MLXArray {
+    /// - Parameter bias: an additive attention bias broadcast over `[B, heads, queries, keys]`, which is
+    ///   how the cross-attention masks the caption's padding.
+    func callAsFunction(_ x: MLXArray, context: MLXArray?, rotary: (MLXArray, MLXArray)?,
+                        bias: MLXArray? = nil) -> MLXArray {
         let kv = context ?? x
         var query = normQ(toQ(x))
         var key = normK(toK(kv))
@@ -202,7 +205,7 @@ final class NFKLTXAttention: Module {
         }
         let attended = MLXFast.scaledDotProductAttention(
             queries: split(query), keys: split(key), values: split(value),
-            scale: 1 / sqrt(Float(headDim)), mask: nil)
+            scale: 1 / sqrt(Float(headDim)), mask: bias)
         let merged = attended.transposed(0, 2, 1, 3).reshaped([x.shape[0], x.shape[1], heads * headDim])
         return toOut[0](merged)
     }
@@ -251,7 +254,8 @@ final class NFKLTXBlock: Module {
         _scaleShiftTable.wrappedValue = MLXArray.zeros([6, c.innerDim])
     }
 
-    func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, rotary: (MLXArray, MLXArray)) -> MLXArray {
+    func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, rotary: (MLXArray, MLXArray),
+                        textBias: MLXArray? = nil) -> MLXArray {
         // temb is [B, 1, 6·inner]; the block adds its table and splits into the six modulation tensors.
         let ada = scaleShiftTable.reshaped([1, 1, 6, scaleShiftTable.shape[1]])
             + temb.reshaped([temb.shape[0], temb.shape[1], 6, -1])
@@ -261,7 +265,7 @@ final class NFKLTXBlock: Module {
         var hidden = x
         var normed = norm1(hidden) * (1 + scaleMSA) + shiftMSA
         hidden = hidden + attn1(normed, context: nil, rotary: rotary) * gateMSA
-        hidden = hidden + attn2(hidden, context: context, rotary: nil)
+        hidden = hidden + attn2(hidden, context: context, rotary: nil, bias: textBias)
         normed = norm2(hidden) * (1 + scaleMLP) + shiftMLP
         return hidden + ff(normed) * gateMLP
     }
@@ -300,15 +304,23 @@ final class NFKMLXLTXTransformerNet: Module {
 
     /// Latent tokens `[B, S, inChannels]`, text `[B, L, captionChannels]`, a timestep, and the latent grid
     /// `(frames, height, width)` → the predicted velocity `[B, S, inChannels]`.
+    ///
+    /// `textMask` `[B, L]` is 1 for a caption token and 0 for padding. The reference turns it into an
+    /// additive `(1 − mask) · −10000` bias on the cross-attention, and so does this; nil attends to every
+    /// caption position.
     func callAsFunction(_ latent: MLXArray, text: MLXArray, timestep: MLXArray,
-                        grid: (Int, Int, Int), ropeScale: (Float, Float, Float)) -> MLXArray {
+                        grid: (Int, Int, Int), ropeScale: (Float, Float, Float),
+                        textMask: MLXArray? = nil) -> MLXArray {
         let rope = rotary.embedding(frames: grid.0, height: grid.1, width: grid.2, scale: ropeScale)
         var hidden = projIn(latent)
         let (temb, embedded) = timeEmbed(timestep)
         let tembTokens = temb.reshaped([latent.shape[0], 1, temb.shape[temb.ndim - 1]])
         let context = captionProjection(text)
+        let textBias = textMask.map {
+            ((1 - $0.asType(.float32)) * -10000).reshaped([$0.dim(0), 1, 1, $0.dim(-1)]).asType(hidden.dtype)
+        }
         for block in blocks {
-            hidden = block(hidden, context: context, temb: tembTokens, rotary: rope)
+            hidden = block(hidden, context: context, temb: tembTokens, rotary: rope, textBias: textBias)
         }
         let ada = scaleShiftTable.reshaped([1, 1, 2, configuration.innerDim])
             + embedded.reshaped([latent.shape[0], 1, 1, configuration.innerDim])

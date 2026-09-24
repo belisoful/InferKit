@@ -72,7 +72,7 @@ final class NFKSANATimestepMLP: Module {
         _linear2.wrappedValue = Linear(innerDim, innerDim)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
 }
 
 /// `PixArtAlphaCombinedTimestepSizeEmbeddings` with no additional conditions: a sinusoidal projection.
@@ -112,7 +112,7 @@ final class NFKSANATextProjection: Module {
         _linear2.wrappedValue = Linear(hidden, hidden)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(geluApproximate(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.geluTanh(linear1(x))) }
 }
 
 /// SANA's ReLU linear attention: `O = ((V·1̂) @ ReLU(K)) @ ReLU(Q)`, normalized by the ones row.

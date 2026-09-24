@@ -424,6 +424,45 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   and Granite 4.0-H's mixture sizes (`NFKMLXGraniteHybrid.loadWeights(into:fromDirectory:precision:residency:)`)
   page the same way.
 
+#### FLUX.1 stages
+
+- `NFKMLXFlux` holds its release as `NFKMLXResidency` says (`fluxWithDirectoryURL:residency:error:` and
+  the download and async `residency:` forms). A staged release loads CLIP-L and T5-XXL, encodes,
+  releases them, and loads the transformer and the autoencoder, for every image, so a machine that
+  cannot hold the 43 GB together runs it. `holdsStagesResident` reports the placement.
+- `image(forPrompt:width:height:seed:)` and `encode(prompt:)` now throw, since a staged image loads its
+  stages.
+
+#### Qwen-Image, LTX-Video and Wan run end to end, staged
+
+- `NFKMLXQwenImageGenerator`, `NFKMLXLTXVideoGenerator` and `NFKMLXWanVideoGenerator` (`@objc`) assemble
+  a model from its diffusers release directory (`generatorWithDirectoryURL:residency:error:`) or download
+  it (`generatorWithRepo:revision:cacheDirectoryURL:residency:error:` and the async form). Each holds its
+  text encoder and its transformer and autoencoder as `NFKMLXResidency` says, so `.automatic` stages a
+  release that does not fit whole. `holdsStagesResident` reports the placement.
+- Qwen-Image 2.1 (`Qwen/Qwen-Image-2.1`) returns an RGBA image, the four channels its autoencoder
+  decodes. On a 32 GB machine it runs staged: a 256×256 image at 4 steps took 29 s end to end on the
+  released weights.
+- LTX-Video 0.9.0 (`Lightricks/LTX-Video`) pads the prompt to 128 T5 tokens and masks the padding out
+  of the transformer's cross-attention (`textMask:`, new), runs the pipeline's own
+  `linspace(1, 1 / steps)` ramp (`NFKMLXFlowMatchConfiguration.ltxVideoPipeline`, new), scales the
+  rotary by `(8 / frameRate, 32, 32)`, and denormalizes the latents by the autoencoder's stored
+  statistics before the decode. Measured against diffusers' `LTXPipeline` at a tiny geometry: prompt
+  features 0.99999999999999, final latents 0.9999999999986, video 0.9999999999989. A 0.9.1 or later
+  autoencoder conditions its decode on a timestep, which is not ported; its config is refused.
+- Wan 2.1 T2V and Wan 2.2 TI2V-5B gained release loaders for the transformer, the autoencoder (its
+  latent statistics and geometry read from `vae/config.json`) and umT5. The prompt is cleaned, padded
+  to 512, encoded through umT5 WITH its attention mask (`NFKMLXT5EncoderNet` takes `mask:`, new), cut
+  at its length and zero-padded; the UniPC flow shift comes from `scheduler/scheduler_config.json`.
+  Measured against diffusers' `WanPipeline`: prompt features 0.9999999999999956, final latents
+  0.9999999999993 (and against Wan 2.2's per-token timestep form), video 0.99999999999999. The
+  release's umT5 tokenizer reproduces the reference's ids on 9 of 9 prompts across several scripts. Every
+  tensor of the released Wan 2.1 1.3B and Wan 2.2 5B transformer, autoencoder and umT5, and of
+  LTX-Video's transformer and autoencoder, is held to its loader by shape.
+- `NFKMLXLTXPipeline` and `NFKMLXWanPipeline` split into `denoise` and `decode`. `NFKMLXLTXPipeline` no
+  longer holds the text encoder, and `NFKMLXWanPipeline`'s `latentsStd` is the release's standard
+  deviation, multiplied in as the reference does.
+
 #### DeepSeek V4.1 generates
 
 - `NFKMLXDeepSeekCache` carries what a decode step cannot recompute: each layer's sliding window,

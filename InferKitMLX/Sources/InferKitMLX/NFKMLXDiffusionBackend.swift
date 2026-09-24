@@ -143,10 +143,17 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     private let encodedParameterKeys: Set<String>
 
     /// - Parameters:
+    ///   - identifier: The backend identifier it reports.
+    ///   - isReady: Whether the backend has what it needs to run; `false` for random weights.
+    ///   - configuration: The step count, guidance, and output key a request starts from.
+    ///   - scheduler: The noise schedule the loop steps through.
     ///   - encodedInputKeys: The request inputs `encode` reads beyond the image and the mask, such
     ///     as the prompt of a text-to-image model. They join `supportedInputKeys`.
     ///   - encodedParameterKeys: The request parameters `encode` reads beyond the sampling keys the
     ///     loop itself reads, such as an output size. They join `supportedParameterKeys`.
+    ///   - encode: Maps the request and its bridged image and mask to the diffusion context.
+    ///   - denoise: The model forward for one step.
+    ///   - decode: Maps the final latent to an image tensor; the identity by default.
     public init(identifier: String = "mlx-diffusion",
                 isReady: Bool = true,
                 configuration: NFKDiffusionConfiguration = NFKDiffusionConfiguration(),

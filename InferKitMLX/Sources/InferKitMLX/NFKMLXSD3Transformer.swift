@@ -88,8 +88,12 @@ public struct NFKMLXSD3Configuration: Sendable {
     var patchOutputDim: Int { patchSize * patchSize * outChannels }
 }
 
-/// An affine-free layer normalization over the last axis (the reference's `elementwise_affine=False`).
+/// An affine-free layer normalization over the last axis (the reference's `elementwise_affine=False`),
+/// computed in float32 and rounded once on a half-precision input, as torch's `layer_norm` is.
 func sd3AffineFreeLayerNorm(_ x: MLXArray, eps: Float = 1e-6) -> MLXArray {
+    if NFKReferenceRounding.isReduced(x) {
+        return MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: eps).asType(x.dtype)
+    }
     let mean = x.mean(axis: -1, keepDims: true)
     let variance = (x - mean).square().mean(axis: -1, keepDims: true)
     return (x - mean) * rsqrt(variance + eps)
@@ -127,7 +131,7 @@ final class NFKSD3FeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        (net[2] as! Linear)(geluApproximate((net[0] as! NFKSD3GELUProj)(x)))
+        (net[2] as! Linear)(NFKReferenceRounding.geluTanh((net[0] as! NFKSD3GELUProj)(x)))
     }
 }
 
@@ -175,7 +179,7 @@ final class NFKSD3MLP: Module {
         _linear2.wrappedValue = Linear(hiddenDim, outDim)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
 }
 
 /// The combined timestep + pooled-text embedding: the sinusoidal timestep through an MLP, plus the
@@ -201,7 +205,7 @@ final class NFKSD3TimeTextEmbed: Module {
 final class NFKSD3AdaLinear: Module {
     @ModuleInfo(key: "linear") var linear: Linear
     init(_ inDim: Int, _ outDim: Int) { _linear.wrappedValue = Linear(inDim, outDim) }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear(silu(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear(NFKReferenceRounding.silu(x)) }
 }
 
 /// The joint (MMDiT) attention: separate query/key/value projections for the image stream, optional

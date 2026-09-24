@@ -37,11 +37,20 @@ public struct NFKMLXWanVAEConfiguration: Sendable {
     /// Wan 2.2 uses residual down/up blocks (AvgDown3D / DupUp3D shortcuts); Wan 2.1 uses a flat
     /// down-block list and a halving upsampler.
     public var isResidual: Bool
+    /// Whether every convolution is a single-frame one.
+    ///
+    /// @discussion Qwen-Image 2.1's autoencoder is this architecture specialized to one frame: its
+    /// causal convolution subclasses `nn.Conv2d`, folds the temporal axis away, and refuses a feature
+    /// cache, so its checkpoint's convolution weights are 4-D and every temporal kernel is 1. The
+    /// temporal branches of the resamplers then never execute, because a single chunk leaves their
+    /// cache slots empty.
+    public var imageOnly: Bool
 
     public init(baseDim: Int = 160, decoderBaseDim: Int = 256, zDim: Int = 48,
                 dimMult: [Int] = [1, 2, 4, 4], numResBlocks: Int = 2,
                 temporalDownsample: [Bool] = [false, true, true], patchSize: Int = 2, inChannels: Int = 3,
-                isResidual: Bool = true) {
+                isResidual: Bool = true, imageOnly: Bool = false) {
+        self.imageOnly = imageOnly
         self.baseDim = baseDim
         self.decoderBaseDim = decoderBaseDim
         self.zDim = zDim
@@ -63,6 +72,18 @@ public struct NFKMLXWanVAEConfiguration: Sendable {
     public static let tiny = NFKMLXWanVAEConfiguration(
         baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [2, 2], numResBlocks: 1,
         temporalDownsample: [true], patchSize: 2, inChannels: 3)
+
+    /// Qwen-Image 2.1's autoencoder: 64 latent channels over four spatial halvings, no patchify, and
+    /// every convolution single-frame.
+    public static let qwenImage21 = NFKMLXWanVAEConfiguration(
+        baseDim: 96, decoderBaseDim: 144, zDim: 64, dimMult: [1, 2, 4, 8, 8], numResBlocks: 2,
+        temporalDownsample: [false, true, true, true], patchSize: 1, inChannels: 4, isResidual: true,
+        imageOnly: true)
+
+    /// A small single-frame configuration in Qwen-Image's shape, for tests.
+    public static let qwenImage21Tiny = NFKMLXWanVAEConfiguration(
+        baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [2, 2], numResBlocks: 1,
+        temporalDownsample: [true], patchSize: 1, inChannels: 4, isResidual: true, imageOnly: true)
 
     public static let tiny21 = NFKMLXWanVAEConfiguration(
         baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [1, 2], numResBlocks: 1,
@@ -105,12 +126,16 @@ final class NFKWanCausalConv3d: Module {
     let spatialPad: Int
     let strideT: Int
 
-    init(_ inChannels: Int, _ outChannels: Int, kernel: (Int, Int, Int), stride: Int = 1, padTime: Int = 0, padSpatial: Int = 0) {
-        _weight.wrappedValue = MLXArray.zeros([outChannels, kernel.0, kernel.1, kernel.2, inChannels])
+    init(_ inChannels: Int, _ outChannels: Int, kernel: (Int, Int, Int), stride: Int = 1,
+         padTime: Int = 0, padSpatial: Int = 0, imageOnly: Bool = false) {
+        // A single-frame release collapses every temporal kernel, pad, and stride to one, which is what
+        // its 4-D convolution weights describe.
+        let kernelT = imageOnly ? 1 : kernel.0
+        _weight.wrappedValue = MLXArray.zeros([outChannels, kernelT, kernel.1, kernel.2, inChannels])
         _bias.wrappedValue = MLXArray.zeros([outChannels])
-        self.causalPad = 2 * padTime
+        self.causalPad = imageOnly ? 0 : 2 * padTime
         self.spatialPad = padSpatial
-        self.strideT = stride
+        self.strideT = imageOnly ? 1 : stride
     }
 
     /// `x` NDHWC, `cache` the previous chunk's stored frames (or none). Prepends the cache and left-pads
@@ -178,13 +203,15 @@ final class NFKWanResidualBlock: Module {
     @ModuleInfo(key: "conv2") var conv2: NFKWanCausalConv3d
     @ModuleInfo(key: "conv_shortcut") var convShortcut: NFKWanCausalConv3d?
 
-    init(_ inDim: Int, _ outDim: Int) {
+    init(_ inDim: Int, _ outDim: Int, imageOnly: Bool = false) {
         _norm1.wrappedValue = NFKWanRMSNorm(inDim)
-        _conv1.wrappedValue = NFKWanCausalConv3d(inDim, outDim, kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
+        _conv1.wrappedValue = NFKWanCausalConv3d(inDim, outDim, kernel: (3, 3, 3), padTime: 1,
+                                                 padSpatial: 1, imageOnly: imageOnly)
         _norm2.wrappedValue = NFKWanRMSNorm(outDim)
-        _conv2.wrappedValue = NFKWanCausalConv3d(outDim, outDim, kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
+        _conv2.wrappedValue = NFKWanCausalConv3d(outDim, outDim, kernel: (3, 3, 3), padTime: 1,
+                                                 padSpatial: 1, imageOnly: imageOnly)
         _convShortcut.wrappedValue = inDim != outDim
-            ? NFKWanCausalConv3d(inDim, outDim, kernel: (1, 1, 1)) : nil
+            ? NFKWanCausalConv3d(inDim, outDim, kernel: (1, 1, 1), imageOnly: imageOnly) : nil
     }
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
@@ -229,9 +256,10 @@ final class NFKWanMidBlock: Module {
     @ModuleInfo(key: "attentions") var attentions: [NFKWanAttentionBlock]
     @ModuleInfo(key: "resnets") var resnets: [NFKWanResidualBlock]
 
-    init(_ dim: Int) {
+    init(_ dim: Int, imageOnly: Bool = false) {
         _attentions.wrappedValue = [NFKWanAttentionBlock(dim)]
-        _resnets.wrappedValue = [NFKWanResidualBlock(dim, dim), NFKWanResidualBlock(dim, dim)]
+        _resnets.wrappedValue = [NFKWanResidualBlock(dim, dim, imageOnly: imageOnly),
+                                 NFKWanResidualBlock(dim, dim, imageOnly: imageOnly)]
     }
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
@@ -287,7 +315,7 @@ final class NFKWanResample: Module {
     let mode: String
     let dim: Int
 
-    init(dim: Int, mode: String, upsampleOutDim: Int? = nil) {
+    init(dim: Int, mode: String, upsampleOutDim: Int? = nil, imageOnly: Bool = false) {
         self.mode = mode
         self.dim = dim
         let outDim = upsampleOutDim ?? dim / 2
@@ -295,11 +323,11 @@ final class NFKWanResample: Module {
         case "upsample2d", "upsample3d":
             _resample.wrappedValue = [Module(), Conv2d(inputChannels: dim, outputChannels: outDim, kernelSize: 3, padding: 1)]
             _timeConv.wrappedValue = mode == "upsample3d"
-                ? NFKWanCausalConv3d(dim, dim * 2, kernel: (3, 1, 1), padTime: 1) : nil
+                ? NFKWanCausalConv3d(dim, dim * 2, kernel: (3, 1, 1), padTime: 1, imageOnly: imageOnly) : nil
         case "downsample2d", "downsample3d":
             _resample.wrappedValue = [Module(), Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, stride: 2)]
             _timeConv.wrappedValue = mode == "downsample3d"
-                ? NFKWanCausalConv3d(dim, dim, kernel: (3, 1, 1), stride: 2) : nil
+                ? NFKWanCausalConv3d(dim, dim, kernel: (3, 1, 1), stride: 2, imageOnly: imageOnly) : nil
         default:
             _resample.wrappedValue = []
             _timeConv.wrappedValue = nil
@@ -374,17 +402,23 @@ final class NFKWanResidualDownBlock: Module {
     let factorS: Int
     let outDim: Int
 
-    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalDownsample: Bool, downFlag: Bool) {
+    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalDownsample: Bool, downFlag: Bool,
+         imageOnly: Bool = false) {
         self.factorT = temporalDownsample ? 2 : 1
         self.factorS = downFlag ? 2 : 1
         self.outDim = outDim
         _avgShortcut.wrappedValue = NFKWanAvgShortcut()
         var blocks: [NFKWanResidualBlock] = []
         var dim = inDim
-        for _ in 0 ..< numResBlocks { blocks.append(NFKWanResidualBlock(dim, outDim)); dim = outDim }
+        for _ in 0 ..< numResBlocks {
+            blocks.append(NFKWanResidualBlock(dim, outDim, imageOnly: imageOnly))
+            dim = outDim
+        }
         _resnets.wrappedValue = blocks
         if downFlag {
-            _downsampler.wrappedValue = NFKWanResample(dim: outDim, mode: temporalDownsample ? "downsample3d" : "downsample2d")
+            _downsampler.wrappedValue = NFKWanResample(
+                dim: outDim, mode: temporalDownsample ? "downsample3d" : "downsample2d",
+                imageOnly: imageOnly)
         } else {
             _downsampler.wrappedValue = nil
         }
@@ -409,7 +443,8 @@ final class NFKWanResidualUpBlock: Module {
     let inDim: Int
     let outDim: Int
 
-    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalUpsample: Bool, upFlag: Bool) {
+    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalUpsample: Bool, upFlag: Bool,
+         imageOnly: Bool = false) {
         self.factorT = temporalUpsample ? 2 : 1
         self.factorS = upFlag ? 2 : 1
         self.inDim = inDim
@@ -417,10 +452,15 @@ final class NFKWanResidualUpBlock: Module {
         _avgShortcut.wrappedValue = upFlag ? NFKWanAvgShortcut() : nil
         var blocks: [NFKWanResidualBlock] = []
         var dim = inDim
-        for _ in 0 ..< (numResBlocks + 1) { blocks.append(NFKWanResidualBlock(dim, outDim)); dim = outDim }
+        for _ in 0 ..< (numResBlocks + 1) {
+            blocks.append(NFKWanResidualBlock(dim, outDim, imageOnly: imageOnly))
+            dim = outDim
+        }
         _resnets.wrappedValue = blocks
         if upFlag {
-            _upsampler.wrappedValue = NFKWanResample(dim: outDim, mode: temporalUpsample ? "upsample3d" : "upsample2d", upsampleOutDim: outDim)
+            _upsampler.wrappedValue = NFKWanResample(
+                dim: outDim, mode: temporalUpsample ? "upsample3d" : "upsample2d",
+                upsampleOutDim: outDim, imageOnly: imageOnly)
         } else {
             _upsampler.wrappedValue = nil
         }
@@ -445,13 +485,18 @@ final class NFKWanUpBlock: Module {
     @ModuleInfo(key: "resnets") var resnets: [NFKWanResidualBlock]
     @ModuleInfo(key: "upsamplers") var upsamplers: [NFKWanResample]?
 
-    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalUpsample: Bool, upFlag: Bool) {
+    init(_ inDim: Int, _ outDim: Int, numResBlocks: Int, temporalUpsample: Bool, upFlag: Bool,
+         imageOnly: Bool = false) {
         var blocks: [NFKWanResidualBlock] = []
         var dim = inDim
-        for _ in 0 ..< (numResBlocks + 1) { blocks.append(NFKWanResidualBlock(dim, outDim)); dim = outDim }
+        for _ in 0 ..< (numResBlocks + 1) {
+            blocks.append(NFKWanResidualBlock(dim, outDim, imageOnly: imageOnly))
+            dim = outDim
+        }
         _resnets.wrappedValue = blocks
         _upsamplers.wrappedValue = upFlag
-            ? [NFKWanResample(dim: outDim, mode: temporalUpsample ? "upsample3d" : "upsample2d")] : nil
+            ? [NFKWanResample(dim: outDim, mode: temporalUpsample ? "upsample3d" : "upsample2d",
+                              imageOnly: imageOnly)] : nil
     }
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
@@ -481,31 +526,37 @@ final class NFKWanEncoder3d: Module {
     init(_ config: NFKMLXWanVAEConfiguration, zDim: Int) {
         let dims = [1] + config.dimMult
         let base = config.baseDim
-        _convIn.wrappedValue = NFKWanCausalConv3d(config.patchedInChannels, base * dims[0], kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
+        let image = config.imageOnly
+        _convIn.wrappedValue = NFKWanCausalConv3d(config.patchedInChannels, base * dims[0],
+                                                  kernel: (3, 3, 3), padTime: 1, padSpatial: 1,
+                                                  imageOnly: image)
         var blocks: [Module] = []
         let last = config.dimMult.count - 1
         for i in 0 ..< config.dimMult.count {
             if config.isResidual {
                 blocks.append(NFKWanResidualDownBlock(
                     base * dims[i], base * dims[i + 1], numResBlocks: config.numResBlocks,
-                    temporalDownsample: i != last ? config.temporalDownsample[i] : false, downFlag: i != last))
+                    temporalDownsample: i != last ? config.temporalDownsample[i] : false,
+                    downFlag: i != last, imageOnly: image))
             } else {
                 var inDim = base * dims[i]
                 for _ in 0 ..< config.numResBlocks {
-                    blocks.append(NFKWanResidualBlock(inDim, base * dims[i + 1]))
+                    blocks.append(NFKWanResidualBlock(inDim, base * dims[i + 1], imageOnly: image))
                     inDim = base * dims[i + 1]
                 }
                 if i != last {
                     blocks.append(NFKWanResample(dim: base * dims[i + 1],
-                                                 mode: config.temporalDownsample[i] ? "downsample3d" : "downsample2d"))
+                                                 mode: config.temporalDownsample[i] ? "downsample3d" : "downsample2d",
+                                                 imageOnly: image))
                 }
             }
         }
         _downBlocks.wrappedValue = blocks
         let outDim = base * dims[config.dimMult.count]
-        _midBlock.wrappedValue = NFKWanMidBlock(outDim)
+        _midBlock.wrappedValue = NFKWanMidBlock(outDim, imageOnly: image)
         _normOut.wrappedValue = NFKWanRMSNorm(outDim)
-        _convOut.wrappedValue = NFKWanCausalConv3d(outDim, zDim, kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
+        _convOut.wrappedValue = NFKWanCausalConv3d(outDim, zDim, kernel: (3, 3, 3), padTime: 1,
+                                                   padSpatial: 1, imageOnly: image)
     }
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
@@ -528,8 +579,10 @@ final class NFKWanDecoder3d: Module {
     init(_ config: NFKMLXWanVAEConfiguration, zDim: Int) {
         let base = config.decoderBaseDim
         let dims = [config.dimMult.last!] + config.dimMult.reversed()
-        _convIn.wrappedValue = NFKWanCausalConv3d(zDim, base * dims[0], kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
-        _midBlock.wrappedValue = NFKWanMidBlock(base * dims[0])
+        let image = config.imageOnly
+        _convIn.wrappedValue = NFKWanCausalConv3d(zDim, base * dims[0], kernel: (3, 3, 3), padTime: 1,
+                                                  padSpatial: 1, imageOnly: image)
+        _midBlock.wrappedValue = NFKWanMidBlock(base * dims[0], imageOnly: image)
         var blocks: [Module] = []
         let up = config.temporalUpsample
         let last = config.dimMult.count - 1
@@ -538,19 +591,20 @@ final class NFKWanDecoder3d: Module {
             if config.isResidual {
                 blocks.append(NFKWanResidualUpBlock(
                     base * dims[i], base * dims[i + 1], numResBlocks: config.numResBlocks,
-                    temporalUpsample: upFlag ? up[i] : false, upFlag: upFlag))
+                    temporalUpsample: upFlag ? up[i] : false, upFlag: upFlag, imageOnly: image))
             } else {
                 // The non-residual upsampler halves the channels, so an inner stage's input is halved.
                 let inDim = i > 0 ? base * dims[i] / 2 : base * dims[i]
                 blocks.append(NFKWanUpBlock(
                     inDim, base * dims[i + 1], numResBlocks: config.numResBlocks,
-                    temporalUpsample: upFlag ? up[i] : false, upFlag: upFlag))
+                    temporalUpsample: upFlag ? up[i] : false, upFlag: upFlag, imageOnly: image))
             }
         }
         _upBlocks.wrappedValue = blocks
         let outDim = base * dims[config.dimMult.count]
         _normOut.wrappedValue = NFKWanRMSNorm(outDim)
-        _convOut.wrappedValue = NFKWanCausalConv3d(outDim, config.patchedInChannels, kernel: (3, 3, 3), padTime: 1, padSpatial: 1)
+        _convOut.wrappedValue = NFKWanCausalConv3d(outDim, config.patchedInChannels, kernel: (3, 3, 3),
+                                                   padTime: 1, padSpatial: 1, imageOnly: image)
     }
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache, firstChunk: Bool) -> MLXArray {
@@ -576,8 +630,10 @@ public final class NFKMLXWanVideoVAENet: Module {
     public init(_ configuration: NFKMLXWanVAEConfiguration) {
         self.configuration = configuration
         _encoder.wrappedValue = NFKWanEncoder3d(configuration, zDim: configuration.zDim * 2)
-        _quantConv.wrappedValue = NFKWanCausalConv3d(configuration.zDim * 2, configuration.zDim * 2, kernel: (1, 1, 1))
-        _postQuantConv.wrappedValue = NFKWanCausalConv3d(configuration.zDim, configuration.zDim, kernel: (1, 1, 1))
+        _quantConv.wrappedValue = NFKWanCausalConv3d(configuration.zDim * 2, configuration.zDim * 2,
+                                                     kernel: (1, 1, 1), imageOnly: configuration.imageOnly)
+        _postQuantConv.wrappedValue = NFKWanCausalConv3d(configuration.zDim, configuration.zDim,
+                                                         kernel: (1, 1, 1), imageOnly: configuration.imageOnly)
         _decoder.wrappedValue = NFKWanDecoder3d(configuration, zDim: configuration.zDim)
     }
 
