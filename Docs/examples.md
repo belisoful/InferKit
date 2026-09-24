@@ -149,7 +149,9 @@ NFKInferenceRequest *request =
 NSDictionary *object = [backend runInferenceForRequest:request error:&error].structured;
 
 // A classification: the answer is exactly one of the choices.
-parameters:@{ NFKParameterChoices: @[ @"yes", @"no" ] }
+NFKInferenceRequest *pick =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Is the sky blue? Answer yes or no." }
+                                parameters:@{ NFKParameterChoices: @[ @"yes", @"no" ] }];
 
 // The grammar can be inspected on its own, over any byte-level vocabulary:
 NFKJSONConstraint *json = [[NFKJSONConstraint alloc] initWithVocabulary:vocabulary root:NFKJSONRootObject];
@@ -697,13 +699,220 @@ A count the provider leaves out is absent from the dictionary rather than zero, 
 need and treat a missing one as unreported. A streamed reply carries the chain as it grows under
 `NFKOutputReasoning` on the partial result, beside the text.
 
+Reading a failure. The code is the decision, and it is the same code from any engine.
+
+```objc
+NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+if (result == nil) {
+    switch (error.code) {
+        case kNFKError_InferenceRefused:      /* change the request; retrying gives the same answer */ break;
+        case kNFKError_InferenceRateLimited: {
+            NSDate *reset = error.userInfo[NFKFoundationModelsErrorKey.resetDate];   // back off until then
+            break;
+        }
+        case kNFKError_InferenceNotReady:     /* the model is unavailable; prepare() says why */ break;
+        default: break;
+    }
+}
+```
+
+## Apple's own engines
+
+The core wraps the Apple frameworks that overlap the model gallery, so a consumer reaches them
+through the same contract with nothing to download. Each is an alternative to a shipped model rather
+than a replacement for it: the models keep chosen weights, finer mattes, translation, and training.
+
+Reading the text in an image. Vision does this on device at the core's floor, and the toolkit ships
+no text-recognition model, so this is the one capability that arrives only here.
+
+```objc
+NFKVisionTextBackend *reader = [NFKVisionTextBackend backend];
+reader.languages = @[ @"en-US" ];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image }];
+NFKInferenceResult *result = [reader runInferenceForRequest:request error:&error];
+NSString *text = result.text;                       // the lines, in reading order
+NFKDetection *first = result.detections.firstObject; // the first line, boxed
+```
+
+A mask, a pose, a face, or an image embedding, each from the same shape of request:
+
+```objc
+NFKVisionSegmentationBackend *subject =
+    [NFKVisionSegmentationBackend backendWithKind:NFKVisionSegmentationKindForegroundInstance];
+CVPixelBufferRef matte = (__bridge CVPixelBufferRef)[[subject runInferenceForRequest:request error:NULL]
+                                                     outputForKey:NFKOutputMask];
+
+NSArray<NFKKeypoint *> *joints = [[[NFKVisionPoseBackend backend] runInferenceForRequest:request error:NULL]
+                                  outputForKey:NFKOutputPose];
+NSArray<NFKDetection *> *faces = [[[NFKVisionFaceBackend backend] runInferenceForRequest:request error:NULL]
+                                  outputForKey:NFKOutputDetections];
+NSArray<NSNumber *> *print = [[[NFKVisionFeaturePrintBackend backend] runInferenceForRequest:request error:NULL] embedding];
+```
+
+Every box and joint is normalized 0...1 with the origin at the top left, the contract's geometry,
+which is not Vision's; the backend converts.
+
+A shape a box cannot describe arrives as four corners. A barcode's payload is its label, so reading
+one is a detection like any other:
+
+```objc
+NFKVisionRectangleBackend *codes = [NFKVisionRectangleBackend backendWithKind:NFKVisionRectangleKindBarcode];
+NFKDetection *code = [[codes runInferenceForRequest:request error:NULL] detections].firstObject;
+NSString *payload = code.label;
+NFKQuadrilateral *corners = code.quadrilateral;     // nil from an engine that reports no corners
+CGPoint topLeft = corners.topLeft;                  // normalized, origin top left, like the box
+```
+
+Following a region across frames is the one stateful backend in the toolkit. It takes the region
+once and a frame per run:
+
+```objc
+NFKVisionTrackingBackend *tracker = [NFKVisionTrackingBackend backend];
+[tracker startTrackingBoundingBox:CGRectMake(0.4, 0.4, 0.2, 0.2)];
+for (id frame in frames) {
+    NFKInferenceRequest *step = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: frame }];
+    NFKDetection *now = [[tracker runInferenceForRequest:step error:NULL] detections].firstObject;
+}
+[tracker reset];                                    // ends the sequence
+```
+
+The readings Vision puts a name to arrive under `NFKOutputStructured`: the aesthetics score, whether
+a photograph is a utility shot, the horizon, the contours it traced, and the alignment between two
+frames.
+
+```objc
+NSDictionary *reading = [[[NFKVisionMeasurementBackend backendWithKind:NFKVisionMeasurementKindAesthetics]
+                          runInferenceForRequest:request error:NULL] structured];
+NSNumber *score = reading[@"overallScore"];
+```
+
+A Core ML model can run through Vision instead of through `NFKCoreMLBackend`, which is the choice
+between letting Vision resize and crop the image the model's way and handing the model tensors the
+caller built:
+
+```objc
+NFKVisionCoreMLBackend *backend = [NFKVisionCoreMLBackend backendWithCompiledModelURL:url error:&error];
+NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+```
+
+Three of Apple's APIs ship only in Swift, so `InferKitAppleSwift/` hosts them and every type there
+is `@objc`. A photographed page becomes a transcript and a structure:
+
+```swift
+let read = try NFKVisionDocumentBackend()
+    .runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: page]))
+read.text                                   // the whole transcript
+read.structured?["tables"]                  // rows of cells, as strings
+read.structured?["paragraphs"]              // and the paragraphs and lists beside them
+
+let speech = NFKSpeechAnalyzerBackend(locale: Locale(identifier: "en-US"))
+try speech.prepare()                        // reserves the locale and installs its assets
+let words = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
+```
+
+From Objective-C, which is why the package exists:
+
+```objc
+NFKVisionDocumentBackend *reader = [[NFKVisionDocumentBackend alloc] init];
+NFKInferenceResult *read = [reader runInferenceForRequest:request error:&error];
+NSDictionary *structure = read.structured;   // paragraphs, lists, tables
+```
+
+Apple's neural video processors. Upscaling and interpolation need macOS 26 on Apple silicon, and
+upscaling runs a model the system downloads once, which `prepare` asks for.
+
+```swift
+let upscaler = NFKVideoToolboxBackend(task: .superResolution)
+guard upscaler.isReady else { return }
+try upscaler.prepare()                              // starts the model download, or throws notReady
+let larger = try upscaler.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: frame]))
+
+let flow = NFKVideoToolboxBackend(task: .opticalFlow)
+let field = try flow.runInference(for: NFKInferenceRequest(inputs: [NFKInputImages: [previous, next]]))
+// Packed as NFKMLXRAFT packs it: decode a channel with (value - 0.5) * 2 * flowScale.
+```
+
+Apple's field is smaller than the frame, where RAFT's is frame-sized, and how much smaller is the
+processor's business rather than a fixed ratio. The values decode the same way from either, so read
+the map's own dimensions, sample it in normalized coordinates, and scale to the destination rather
+than pairing a pixel of the map with a pixel of the frame.
+
+Transcribing with Apple's recognizer, which needs the user's consent once and keeps the audio on the
+machine:
+
+```swift
+NFKSpeechRecognitionBackend.requestAuthorization { authorized in
+    guard authorized else { return }
+    let backend = NFKSpeechRecognitionBackend()
+    backend.requiresOnDeviceRecognition = true
+    let job = NFKInferenceSubmit(backend, NFKInferenceRequest(inputs: [NFKInputAudio: asset]), nil)
+    job.completionHandler = { finished in
+        let text = finished.result?.text
+        let words = finished.result?.segments        // one per word, with its time range
+    }
+}
+```
+
+Apple classifies several hundred everyday sounds with nothing to download. Each analysis window
+becomes a segment, and the clip's best guesses arrive beside them:
+
+```objc
+NFKSoundClassificationBackend *sounds = [NFKSoundClassificationBackend backend];
+sounds.minimumConfidence = 0.05;                    // 0.3 by default, which a short clip may not clear
+NFKInferenceResult *heard = [sounds runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: asset }] error:&error];
+NSArray<NFKAudioSegment *> *windows = heard.segments;          // labeled, with time ranges
+NSArray<NFKClassification *> *overall = heard.classifications; // the whole clip
+```
+
+Speaking text answers the same contract as the remote and MLX voices, from voices already on the
+machine:
+
+```objc
+NFKSpeechSynthesisBackend *voice = [NFKSpeechSynthesisBackend backend];
+voice.language = @"en-US";                          // or voiceIdentifier, from +availableVoices
+NFKInferenceResult *spoken = [voice runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"The plate is ready." }] error:&error];
+NFKAudioAsset *audio = [spoken outputForKey:NFKOutputAudio];   // a WAV file on disk
+```
+
+The utterance is written on the main run loop, which is where Apple delivers its buffers. A caller
+on the main thread has its own timers and sources run during the write; a caller off it, which is
+what the contract asks for, needs the program's main run loop to be running.
+
+Word and sentence vectors come from NaturalLanguage, with no model to ship:
+
+```objc
+NFKTextEmbeddingBackend *embedder = [NFKTextEmbeddingBackend backend];
+NSArray<NSNumber *> *vector = [[embedder runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dawn" }]
+    error:&error] embedding];
+```
+
+Translating on device is Swift-only in Apple's framework, so it lives in `InferKitAppleSwift/` and
+reads the same keys the MLX translators read:
+
+```swift
+let backend = NFKTranslationBackend(sourceLanguage: "en", targetLanguage: "es")
+backend.responseTimeout = 30                        // every wait on the framework is bounded
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Good morning."],
+    parameters: [NFKParameterTargetLanguage: "es"]) // the request's pair wins over the backend's
+let translated = try backend.runInference(for: request).text
+```
+
+A pair Apple does not translate reports `kNFKError_InferenceUnsupported`. A pair whose model is not
+installed reports `kNFKError_InferenceNotReady`, and so does a framework that does not answer, which
+is why the wait has a bound rather than hanging the calling thread.
+
 ## Text → image and image → image
 
 `NFKMLXBackend` runs a bundled Stable Diffusion release (Swift; Apple Silicon, macOS and iOS). No
 image input runs text-to-image; a `CGImage` under `NFKInputImage` runs image-to-image. Three releases
 are bundled: `.stableDiffusion15`, `.stableDiffusion21Base`, and `.sdxlTurbo`. The release's files
 download from Hugging Face on first use; Stable Diffusion 2.1 base is a gated repository, so it needs
-an access token (`NFKHFHub.accessToken`, or `HF_TOKEN` in the environment).
+an access token: set `NFKHFHub.defaultAccessToken` before the first download (the backend makes its own
+hub), or `HF_TOKEN` in the environment.
 
 ```swift
 import InferKit
@@ -1979,18 +2188,85 @@ NSArray<NFKAudioSegment *> *segments = [ears runInferenceForRequest:request erro
 Three more services round out the remote surface:
 
 ```objc
-// Text/image → video, the job-style shape (OpenAI's videos API): submit, poll, download.
-NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.openAI
-                                                                     apiKey:key modelName:@"sora-2"];
+// Text/image → video, the job-style shape: submit, poll, download. Gemini's Veo through its
+// Sora-compatible path; naming xAI, Together, or OpenRouter instead reaches their video APIs with
+// the same request, and apiStyle:NFKRemoteVideoAPIStyleGeminiVeo reaches Veo's native API.
+NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.googleGemini
+                                                                     apiKey:key modelName:@"veo-3.1-generate-preview"];
 NFKInferenceJob *shoot = [director submitInferenceJobForRequest:
     [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dusk",
-                                              NFKInputImage: (__bridge id)referenceFrame }   // optional
+                                              NFKInputImage: (__bridge id)firstFrame,        // optional
+                                              NFKInputLastFrame: (__bridge id)lastFrame }    // optional
                                 parameters:@{ NFKParameterDurationSeconds: @8,
-                                              NFKParameterWidth: @1280, NFKParameterHeight: @720 }
+                                              NFKParameterAspectRatio: @"16:9",
+                                              NFKParameterResolution: @"1080p",
+                                              @"person_generation": @"allow_adult" }         // a Veo option, by name
                             outputModality:NFKModalityVideo]];
 shoot.completionHandler = ^(NFKInferenceJob *job) {
     NFKVideoAsset *clip = [job.result outputForKey:NFKOutputVideo];       // an .mp4 on disk
 };
+
+// The Responses API: a wire-shaped tool asks for a service-run one; the reply's id continues the
+// conversation on the next request under NFKParameterPreviousResponseIdentifier.
+NFKRemoteResponsesBackend *responses = [NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.openAI
+                                                                              apiKey:key modelName:@"gpt-5.6-sol"];
+NFKInferenceResult *answer = [responses runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What changed in Swift 7?" }
+                                parameters:@{ NFKParameterTools: @[ @{ @"type": @"web_search" } ] }] error:&error];
+NSArray *sources = [answer outputForKey:NFKOutputCitations];            // url_citation annotations
+NSString *next = [answer outputForKey:NFKOutputResponseIdentifier];
+
+// Gemini's Interactions API: the output modality picks speech, an image, music, or video.
+NFKGeminiInteractionsBackend *gemini = [NFKGeminiInteractionsBackend backendWithAPIKey:key
+                                                                             modelName:@"gemini-3.1-flash-tts-preview"];
+gemini.voice = @"Kore";
+NFKAudioAsset *spoken = [[gemini runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Say cheerfully: good morning!" }
+                                parameters:@{} outputModality:NFKModalityAudio] error:&error] outputForKey:NFKOutputAudio];
+
+// Fill-in-the-middle, OCR, and a token count before sending.
+NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
+                                                                             apiKey:key modelName:@"codestral-latest"];
+NSString *middle = [infill runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"def add(a, b):\n", NFKInputSuffix: @"\nprint(add(1, 2))" }]
+                                            error:&error].text;
+NFKRemoteOCRBackend *reader = [NFKRemoteOCRBackend backendForProvider:NFKRemoteProvider.mistral apiKey:key modelName:@"mistral-ocr-latest"];
+NSString *markdown = [reader runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputDocument: pdfURL }] error:&error].text;
+NFKRemoteTokenCounter *counter = [NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.anthropic apiKey:key modelName:@"claude-opus-5-5"];
+NSNumber *tokens = [counter tokenCountForRequest:request error:&error];
+
+// A live spoken conversation over a WebSocket; the same calls reach xAI, Gemini Live, and the
+// streaming transcription and speech sockets through apiStyle.
+NFKRealtimeSession *live = [NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI
+                                                         apiStyle:NFKRealtimeAPIStyleOpenAIConversation
+                                                           apiKey:key modelName:@"gpt-realtime-2.1"];
+live.voice = @"marin";
+live.audioHandler = ^(NSData *pcm) { /* 16-bit PCM at live.outputSampleRate, on the socket's queue */ };
+live.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { NSLog(@"%@", text); };
+[live connect];
+[live appendAudio:microphonePCM];          // 16-bit mono at live.inputSampleRate
+[live commitAudio];
+[live requestResponse];
+
+// Files: upload once, then name the file in any request that takes a document or image.
+NFKRemoteFileStore *files = [NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.anthropic apiKey:key];
+NFKRemoteFile *contract = [files uploadFileAtURL:pdfURL purpose:nil error:&error];
+NFKInferenceResult *summary = [claude runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize the termination clause.",
+                                              NFKInputDocument: contract }] error:&error];
+
+// A hosted retrieval store: create it, add the uploaded file, search it.
+NFKRemoteRetrievalStore *library = [NFKRemoteRetrievalStore retrievalStoreForProvider:NFKRemoteProvider.openAI apiKey:key];
+NFKRetrievalStoreRecord *store = [library createStoreNamed:@"Contracts" options:nil error:&error];
+[library uploadData:pdfData filename:@"contract.pdf" toStore:store.identifier error:&error];
+NSArray<NFKRetrievalMatch *> *matches = [library searchStores:@[ store.identifier ] query:@"notice period"
+                                                        limit:5 filter:nil error:&error];
+
+// Usage and spend. The admin key comes from the app's user at run time, never from the binary.
+NFKRemoteUsageReporter *usage = [NFKRemoteUsageReporter reporterForProvider:NFKRemoteProvider.anthropic apiKey:userAdminKey];
+NSArray<NFKCostEntry *> *spend = [usage costsFromDate:monthStart toDate:nil groupBy:@[ @"description" ] error:&error];
+NSDecimalNumber *total = [spend valueForKeyPath:@"@sum.amount"];   // dollars
 
 // Rerank, the same shape as the on-device NFKMLXModernBERTReranker (Together and OpenRouter serve it):
 NFKRemoteReranker *ranker = [NFKRemoteReranker rerankerForProvider:NFKRemoteProvider.together
@@ -2005,6 +2281,60 @@ NFKInferenceResult *verdict = [gate runInferenceForRequest:
 BOOL flagged = [verdict.structured[@"flagged"] boolValue];
 NFKClassification *top = verdict.classifications.firstObject;           // e.g. "harassment" 0.91
 ```
+
+### Typed decisions (`NFKTypeSafeBackend`, Jev)
+
+Jev, TypeSafe AI's System One model, answers typed questions about a state instead of generating text:
+a choice among named options, a score on an ordered scale, or a noul, which is the probability that a
+statement holds. The wire shape shares nothing with the chat protocols, so the `typesafe` preset has
+its own backend; the factory hands it back. The model is required, and `jev-latest` is the alias of the
+current release.
+
+```objc
+NFKTypeSafeBackend *jev = (NFKTypeSafeBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.typeSafe
+                                                                               apiKey:key modelName:@"jev-latest"];
+
+NSDictionary<NSString *, NFKDecisionQuestion *> *questions = @{
+    @"department": [NFKDecisionQuestion choiceQuestionWithInstructions:@"Which team should handle this?"
+                                                               options:@[ @"billing", @"technical", @"sales" ]
+                                                          descriptions:@{ @"billing": @"Payments, invoicing, refunds",
+                                                                          @"technical": @"Bugs, outages, integrations" }],
+    @"severity": [NFKDecisionQuestion scoreQuestionWithInstructions:@"How severe is the problem?"
+                                                             levels:@[ @"low", @"medium", @"high" ]],
+    @"urgent":   [NFKDecisionQuestion noulQuestionWithInstructions:@"The customer needs an answer today."],
+};
+
+// The state is a string, or a JSON-serializable record or conversation. The answers come back keyed
+// as the questions were, each carrying the fields its type has and the probabilities behind it.
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [jev answersForState:@"Help! My payouts have been failing for 3 days." questions:questions error:&error];
+answers[@"department"].choice;                          // "technical"
+answers[@"department"].probabilities[@"technical"];     // 0.85
+answers[@"severity"].score;                             // 1.6, between "medium" and "high"
+answers[@"urgent"].probability;                         // 0.91
+
+// The same through the contract: NFKInputState + NFKInputQuestions in, NFKOutputAnswers out, the
+// whole reply under NFKOutputStructured and the token count under NFKOutputUsage.
+NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{ NFKInputState: record,
+                                                                    NFKInputQuestions: questions }];
+NFKInferenceResult *decided = [jev runInferenceForRequest:ask error:&error];
+decided.answers[@"urgent"].probability;
+```
+
+```swift
+let jev = NFKRemoteProvider.backend(for: .typeSafe, apiKey: key, modelName: "jev-latest") as! NFKTypeSafeBackend
+let questions = [
+    "department": NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team should handle this?",
+                                                     options: ["billing", "technical", "sales"]),
+    "urgent": NFKDecisionQuestion.noulQuestion(withInstructions: "The customer needs an answer today."),
+]
+let answers = try jev.answers(forState: "Help! My payouts have been failing for 3 days.", questions: questions)
+answers["department"]?.choice        // "technical"
+```
+
+A question already in the service's own shape (`{type, instructions, criteria}`) goes under
+`NFKInputQuestions` as a dictionary and passes through. A rate limit or an overload (429, 529) is
+retried through `NFKRemoteTransport` like every other blocking remote call.
 
 Midjourney has no official public API, so there is no preset for it; `opencode.ai` is a coding agent
 rather than an inference service; and Codex is OpenAI's agent using the OpenAI API, so it is the
@@ -2657,6 +2987,28 @@ NSURL *localURL = [hub downloadRepo:@"Qwen/Qwen2.5-0.5B-Instruct"
 // Or asynchronously (background queue; Swift imports it as `try await hub.downloadRepo(...)`):
 [hub downloadRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil path:@"tokenizer.json" sha256:nil
 completionHandler:^(NSURL *url, NSError *asyncError) { /* ready */ }];
+```
+
+The cache has a size limit and a backup setting. Each has a process-wide class default that every new
+hub starts from, the hubs the companion factories create included, and a per-hub override. The limit
+defaults to `NFKHFHubUnlimitedCacheSize` (-1). Over the limit, a download evicts whole
+`<repo>/<revision>` snapshots, least recently used first, and keeps the one it just fetched. Only a
+snapshot the hub owns is evicted: one it downloaded into, or one adopted from an older cache. A
+pinned snapshot is never evicted. Backup
+exclusion defaults to `YES`, because the cache can always be downloaded again: the first download
+marks the folder with `NSURLIsExcludedFromBackupKey`, which is Time Machine's sticky exclusion on
+macOS and the iCloud backup exclusion on iOS.
+
+```objc
+NFKHFHub.defaultCacheSizeLimit = 20LL * 1024 * 1024 * 1024;   // every new hub, companions' included
+hub.cacheSizeLimit = NFKHFHubUnlimitedCacheSize;              // this hub only
+
+[NFKHFHub setExcludedFromBackup:YES forURL:folder error:&error];   // any folder, managed or not
+[hub pinCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error];    // never evicted
+[hub adoptCachedRepo:@"org/older-model" revision:nil error:&error];  // cached before 0.4.0
+[hub trimCacheToSizeLimitWithError:&error];                   // after lowering a limit
+[hub removeCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error];
+long long bytes = [hub cacheSize];
 ```
 
 ### Converting a model (`Tools/inferkit-convert`)

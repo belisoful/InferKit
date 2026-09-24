@@ -10,6 +10,8 @@
 //
 
 #import <XCTest/XCTest.h>
+#import <CoreText/CoreText.h>
+#import <CoreImage/CoreImage.h>
 #import <InferKit/InferKit.h>
 #import <CoreML/CoreML.h>
 
@@ -173,6 +175,30 @@
 	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:nil];
 	NSURL *remote = [hub remoteURLForRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil path:@"tokenizer.json"];
 	XCTAssertTrue([remote.absoluteString containsString:@"Qwen/Qwen2.5-0.5B-Instruct"]);   // no network: builds the URL
+}
+
+- (void)testExampleHuggingFaceHubCachePolicy
+{
+	NSURL *cache = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"NFKExamplesHubCache"]];
+	[NSFileManager.defaultManager createDirectoryAtURL:cache withIntermediateDirectories:YES attributes:nil error:NULL];
+	long long savedLimit = NFKHFHub.defaultCacheSizeLimit;
+
+	NFKHFHub.defaultCacheSizeLimit = 20LL * 1024 * 1024 * 1024;         // every new hub, companions' included
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cache];
+	hub.cacheSizeLimit = NFKHFHubUnlimitedCacheSize;                    // this hub only
+	XCTAssertTrue(hub.excludesCacheFromBackup);                         // the default
+
+	NSError *error = nil;
+	XCTAssertTrue([NFKHFHub setExcludedFromBackup:YES forURL:cache error:&error]);
+	XCTAssertTrue([NFKHFHub isExcludedFromBackup:cache]);
+	XCTAssertTrue([hub pinCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error]);   // never evicted
+	XCTAssertTrue([hub isCachedRepoPinned:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil]);
+	XCTAssertTrue([hub trimCacheToSizeLimitWithError:&error]);          // after lowering a limit
+	XCTAssertTrue([hub removeCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error]);
+	XCTAssertEqual([hub cacheSize], 0LL);
+
+	NFKHFHub.defaultCacheSizeLimit = savedLimit;
+	[NSFileManager.defaultManager removeItemAtURL:cache error:NULL];
 }
 
 #pragma mark Backend contracts (Docs/examples.md: Text → text, Image → image)
@@ -484,6 +510,15 @@
 															 parameters:@{ NFKParameterAudioOutput: @{ @"voice": @"alloy" } }
 														 outputModality:NFKModalityAudio];
 	XCTAssertEqualObjects([spoken parameterForKey:NFKParameterAudioOutput][@"voice"], @"alloy");
+
+	// A clip rides the same request, sampled into evenly spaced frames for a vision model.
+	NFKVideoAsset *clip = [NFKVideoAsset videoAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/clip.mp4"]];
+	NFKInferenceRequest *watched = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What happens in this clip?",
+																			 NFKInputVideo: clip }
+																parameters:@{ NFKParameterVideoFrameCount: @8 }
+															outputModality:NFKModalityText];
+	XCTAssertEqualObjects([watched inputForKey:NFKInputVideo], clip);
+	XCTAssertEqualObjects([watched parameterForKey:NFKParameterVideoFrameCount], @8);
 	[NSFileManager.defaultManager removeItemAtURL:pdf error:NULL];
 
 	// The transcription backend gains what the on-device Whisper backend has: timed segments under
@@ -494,9 +529,17 @@
 	XCTAssertEqualObjects(ears.endpointURL.absoluteString, @"https://api.groq.com/openai/v1/audio/transcriptions");
 
 	// Three more services: video generation as a job, rerank, and moderation.
-	NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"sk-…" modelName:@"sora-2"];
-	XCTAssertEqualObjects(director.submitURL.absoluteString, @"https://api.openai.com/v1/videos");
+	NFKRemoteVideoBackend *director = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.googleGemini
+																		 apiKey:@"AIza…" modelName:@"veo-3.1-generate-preview"];
+	XCTAssertEqualObjects(director.submitURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/openai/videos");
+	XCTAssertEqual(director.apiStyle, NFKRemoteVideoAPIStyleGeminiSoraCompatible);
 	XCTAssertTrue([director isKindOfClass:NFKAsyncGenerationBackend.class], @"submit, poll, download");
+	// The same request reaches another service by naming it; the backend speaks each one's shape.
+	NFKRemoteVideoBackend *grok = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.xAI apiKey:@"xai-…" modelName:@"grok-imagine-video-1.5"];
+	XCTAssertEqual(grok.apiStyle, NFKRemoteVideoAPIStyleXAI);
+	NFKRemoteVideoBackend *veo = [NFKRemoteVideoBackend backendForProvider:NFKRemoteProvider.googleGemini apiStyle:NFKRemoteVideoAPIStyleGeminiVeo
+																	apiKey:@"AIza…" modelName:@"veo-3.1-generate-preview"];
+	XCTAssertEqualObjects(veo.submitURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/models");
 
 	NFKRemoteReranker *ranker = [NFKRemoteReranker rerankerForProvider:NFKRemoteProvider.together apiKey:@"k" modelName:@"Salesforce/Llama-Rank-V1"];
 	XCTAssertEqualObjects(ranker.endpointURL.absoluteString, @"https://api.together.xyz/v1/rerank");
@@ -504,6 +547,115 @@
 	NFKRemoteModerationBackend *gate = [NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"sk-…" modelName:@"omni-moderation-latest"];
 	XCTAssertEqualObjects(gate.endpointURL.absoluteString, @"https://api.openai.com/v1/moderations");
 	XCTAssertNil([NFKRemoteModerationBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"]);
+}
+
+- (void)testExampleEveryHostedMode
+{
+	// The Responses API, where the service-run tools and the -pro models live. A wire-shaped tool
+	// asks for a built-in one; the reply's id continues the conversation on the next request.
+	NFKRemoteResponsesBackend *responses = [NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.openAI
+																				  apiKey:@"sk-…" modelName:@"gpt-5.6-sol"];
+	XCTAssertEqualObjects(responses.endpointURL.absoluteString, @"https://api.openai.com/v1/responses");
+	NFKInferenceRequest *research = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What changed in Swift 7?" }
+																parameters:@{ NFKParameterTools: @[ @{ @"type": @"web_search" } ],
+																			  NFKParameterReasoningEffort: NFKReasoningEffortDeep }];
+	XCTAssertNotNil(research);
+
+	// Gemini's Interactions API: the output modality picks what comes back from one endpoint.
+	NFKGeminiInteractionsBackend *gemini = [NFKGeminiInteractionsBackend backendWithAPIKey:@"AIza…" modelName:@"gemini-3.1-flash-tts-preview"];
+	gemini.voice = @"Kore";
+	NFKInferenceRequest *speak = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Say cheerfully: good morning!" }
+															 parameters:@{} outputModality:NFKModalityAudio];
+	XCTAssertEqual(speak.outputModality, NFKModalityAudio);
+	XCTAssertTrue(gemini.isReady);
+
+	// Fill-in-the-middle: the code before the gap is the prompt, the code after it the suffix.
+	NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
+																				 apiKey:@"k" modelName:@"codestral-latest"];
+	XCTAssertEqualObjects(infill.endpointURL.absoluteString, @"https://api.mistral.ai/v1/fim/completions");
+	NFKInferenceRequest *gap = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"def add(a, b):\n", NFKInputSuffix: @"\nprint(add(1, 2))" }];
+	XCTAssertEqualObjects([gap inputForKey:NFKInputSuffix], @"\nprint(add(1, 2))");
+
+	// OCR, classification, and a token count before sending.
+	XCTAssertNotNil([NFKRemoteOCRBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"mistral-ocr-latest"]);
+	XCTAssertNotNil([NFKRemoteClassifierBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"ft:classifier"]);
+	NFKRemoteTokenCounter *counter = [NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"claude-opus-5-5"];
+	XCTAssertEqualObjects(counter.endpointURL.absoluteString, @"https://api.anthropic.com/v1/messages/count_tokens");
+
+	// Transcription with speakers and word times, the same keys on every service that has them.
+	NFKRemoteTranscriptionBackend *ears = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.xAI
+																					 apiKey:@"xai-…" modelName:@"grok-voice-transcribe-2.0"];
+	XCTAssertEqualObjects(ears.endpointURL.absoluteString, @"https://api.x.ai/v1/stt");
+	NFKInferenceRequest *meeting = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/meeting.m4a"]] }
+															   parameters:@{ NFKParameterSpeakerDiarization: @YES, NFKParameterWordTimestamps: @YES }];
+	XCTAssertEqualObjects([meeting parameterForKey:NFKParameterSpeakerDiarization], @YES);
+
+	// A live spoken conversation: the same calls and handlers on every provider's realtime socket.
+	NFKRealtimeSession *live = [NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI
+															 apiStyle:NFKRealtimeAPIStyleOpenAIConversation
+															   apiKey:@"sk-…" modelName:@"gpt-realtime-2.1"];
+	live.voice = @"marin";
+	live.audioHandler = ^(NSData *pcm) { /* 24 kHz 16-bit PCM to play */ };
+	live.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { /* transcripts as they grow */ };
+	XCTAssertEqualObjects(live.endpointURL.absoluteString, @"wss://api.openai.com/v1/realtime");
+	XCTAssertEqual(live.inputSampleRate, 24000);
+
+	// A file uploaded once and named by reference in later requests, on every service with a Files API.
+	NFKRemoteFileStore *files = [NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.anthropic apiKey:@"sk-ant-…"];
+	XCTAssertEqual(files.apiStyle, NFKRemoteFileStoreAPIStyleAnthropic);
+	NFKRemoteFile *contract = [NFKRemoteFile fileWithIdentifier:@"file_011C…" mimeType:@"application/pdf"];
+	NFKInferenceRequest *review = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize the termination clause.",
+																			NFKInputDocument: contract }];
+	XCTAssertEqualObjects([review inputForKey:NFKInputDocument], contract);
+
+	// A hosted retrieval store, filled with uploaded files and searched directly.
+	NFKRemoteRetrievalStore *library = [NFKRemoteRetrievalStore retrievalStoreForProvider:NFKRemoteProvider.openAI apiKey:@"sk-…"];
+	XCTAssertEqual(library.apiStyle, NFKRemoteRetrievalAPIStyleOpenAI);
+	XCTAssertNotNil(library.fileStore);
+
+	// Usage, spend, and balance, read with a key the app's own user supplies at run time.
+	NFKRemoteUsageReporter *usage = [NFKRemoteUsageReporter reporterForProvider:NFKRemoteProvider.anthropic apiKey:@"sk-ant-admin…"];
+	XCTAssertEqualObjects(usage.endpointURL.absoluteString, @"https://api.anthropic.com/v1");
+	XCTAssertNil([NFKRemoteUsageReporter reporterForProvider:NFKRemoteProvider.groq apiKey:@"k"]);
+}
+
+- (void)testExampleTypedDecisions
+{
+	// Jev, TypeSafe's System One model, answers typed questions about a state instead of generating
+	// text. The factory hands back its backend; the model is required and jev-latest is the alias of
+	// the current release.
+	NFKTypeSafeBackend *jev = (NFKTypeSafeBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.typeSafe
+																				   apiKey:@"ts-…" modelName:@"jev-latest"];
+	XCTAssertEqualObjects(jev.endpointURL.absoluteString, @"https://api.typesafe.ai/v1/systemone");
+	XCTAssertTrue(jev.isReady);
+
+	// Three question types: a choice among named options, a score on an ordered scale, and a noul,
+	// which is whether a statement holds. The state is a string, or a JSON-serializable record.
+	NSDictionary<NSString *, NFKDecisionQuestion *> *questions = @{
+		@"department": [NFKDecisionQuestion choiceQuestionWithInstructions:@"Which team should handle this?"
+																   options:@[ @"billing", @"technical", @"sales" ]
+															  descriptions:@{ @"billing": @"Payments, invoicing, refunds",
+																			  @"technical": @"Bugs, outages, integrations" }],
+		@"severity": [NFKDecisionQuestion scoreQuestionWithInstructions:@"How severe is the problem?"
+																 levels:@[ @"low", @"medium", @"high" ]],
+		@"urgent": [NFKDecisionQuestion noulQuestionWithInstructions:@"The customer needs an answer today."],
+	};
+	NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{ NFKInputState: @"Help! My payouts have been failing for 3 days.",
+																		 NFKInputQuestions: questions }];
+	XCTAssertEqualObjects([ask inputForKey:NFKInputQuestions][@"severity"], questions[@"severity"]);
+	XCTAssertEqualObjects(questions[@"department"].dictionaryRepresentation[@"criteria"][@"sales"], NSNull.null);
+
+	// What comes back (needs network): jev.answersForState:questions:error: is the same call without
+	// a request. Each answer carries the fields its type has and the probabilities behind it.
+	NFKDecisionAnswer *department = [NFKDecisionAnswer answerWithDictionary:@{
+		@"type": @"choice", @"choice": @"technical",
+		@"probabilities": @{ @"billing": @0.08, @"technical": @0.85, @"sales": @0.07 }, @"confidence": @0.82 }];
+	XCTAssertEqualObjects(department.choice, @"technical");
+	XCTAssertEqualWithAccuracy(department.probabilities[@"technical"].doubleValue, 0.85, 1e-9);
+	NFKDecisionAnswer *urgent = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"noul", @"noul": @0.91 }];
+	XCTAssertEqualWithAccuracy(urgent.probability, 0.91, 1e-9);
+	NFKInferenceResult *decided = [NFKInferenceResult resultWithOutputs:@{ NFKOutputAnswers: @{ @"department": department, @"urgent": urgent } }];
+	XCTAssertEqualObjects(decided.answers[@"department"].choice, @"technical");
 }
 
 - (void)testExampleAsyncGenerationBackendContract
@@ -580,6 +732,300 @@
 	// Readings degrade rather than throwing, so a machine this was never run on still reports.
 	XCTAssertNotNil(machine.chipName);
 	XCTAssertNotNil(machine.graphicsArchitecture);
+}
+
+// Docs/examples.md: Audio → notes and structure. A music-transcription backend returns its notes as
+// an NFKMIDISequence under NFKOutputMIDI; a music-structure backend returns labeled spans under
+// NFKOutputSegments, beats under NFKOutputBeats, and the tempo under NFKOutputTempo. Both are core
+// value types, so this runs without weights.
+- (void)testExampleATranscriptionIsNotesYouCanWrite
+{
+	NFKMIDINote *root = [NFKMIDINote noteWithPitch:60 startSeconds:0.0 endSeconds:0.5 velocity:100];
+	NFKMIDINote *third = [[NFKMIDINote alloc] initWithPitch:64
+											   startSeconds:0.5
+												 endSeconds:1.0
+												   velocity:90
+													program:4
+												 percussion:NO
+												  pitchBend:@[ @0.0, @0.25, @0.5 ]];
+	NFKMIDISequence *sequence = [NFKMIDISequence sequenceWithNotes:@[ third, root ] tempoBPM:96.0];
+
+	// The notes are ordered by time whatever order they arrive in.
+	XCTAssertEqual(sequence.notes.firstObject.pitch, 60);
+	XCTAssertEqualWithAccuracy(sequence.durationSeconds, 1.0, 1e-9);
+
+	// A Standard MIDI File a DAW opens: the pitch bend rides on the note that carries it.
+	NSData *midi = [sequence standardMIDIFileData];
+	XCTAssertEqualObjects([midi subdataWithRange:NSMakeRange(0, 4)],
+						  [@"MThd" dataUsingEncoding:NSASCIIStringEncoding]);
+
+	NFKInferenceResult *result = [NFKInferenceResult resultWithOutputs:@{ NFKOutputMIDI: sequence }];
+	XCTAssertEqual(result.midi.notes.count, 2);
+}
+
+- (void)testExampleAStructureAnalysisIsSectionsAndBeats
+{
+	NSArray<NFKAudioSegment *> *sections = @[
+		[NFKAudioSegment segmentWithStartSeconds:0.0 endSeconds:15.2 label:@"intro" confidence:0.82],
+		[NFKAudioSegment segmentWithStartSeconds:15.2 endSeconds:45.6 label:@"verse" confidence:0.91],
+	];
+	NSArray<NFKMusicBeat *> *beats = @[
+		[NFKMusicBeat beatWithTimeSeconds:0.50 positionInBar:1],
+		[NFKMusicBeat beatWithTimeSeconds:1.00 positionInBar:2],
+	];
+	NFKInferenceResult *result = [NFKInferenceResult resultWithOutputs:@{
+		NFKOutputSegments: sections,
+		NFKOutputBeats: beats,
+		NFKOutputTempo: @120.0,
+	}];
+
+	XCTAssertEqualObjects(result.segments.firstObject.label, @"intro");
+	// Position 1 is the downbeat, so a bar starts here.
+	XCTAssertTrue(result.beats.firstObject.isDownbeat);
+	XCTAssertFalse(result.beats.lastObject.isDownbeat);
+	XCTAssertEqualWithAccuracy([[result outputForKey:NFKOutputTempo] doubleValue], 120.0, 1e-9);
+}
+
+#pragma mark Apple's own engines
+
+// Docs/examples.md: Reading the text in an image (Vision, no weights)
+- (void)testExampleReadingTextInAnImage
+{
+	// Vision performs text recognition on device with nothing to download, so this runs anywhere
+	// the core runs. The picture is drawn here so the example is self-contained.
+	CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 600, 160, 8, 0, space,
+												 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(space);
+	CGContextSetRGBFillColor(context, 1.0, 1.0, 1.0, 1.0);
+	CGContextFillRect(context, CGRectMake(0, 0, 600, 160));
+	CTFontRef font = CTFontCreateWithName(CFSTR("Helvetica"), 72.0, NULL);
+	NSAttributedString *text =
+		[[NSAttributedString alloc] initWithString:@"INFERKIT"
+										attributes:@{ (__bridge NSString *)kCTFontAttributeName: (__bridge id)font }];
+	CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)text);
+	CGContextSetTextPosition(context, 24.0, 48.0);
+	CTLineDraw(line, context);
+	CFRelease(line);
+	CFRelease(font);
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+
+	NFKVisionTextBackend *backend = [NFKVisionTextBackend backend];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+	CGImageRelease(image);
+
+	XCTAssertEqualObjects(result.text, @"INFERKIT", @"%@", error);
+	// Each line also arrives as a detection, so a caller can box what it read.
+	XCTAssertEqualObjects(result.detections.firstObject.label, @"INFERKIT");
+}
+
+// Docs/examples.md: Apple's own engines — a mask, a pose, a face, or an image embedding
+- (void)testExampleMaskPoseFaceAndFeaturePrint
+{
+	CGImageRef image = [self exampleSquareImage];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image }];
+	NSError *error = nil;
+
+	NFKVisionSegmentationBackend *subject =
+		[NFKVisionSegmentationBackend backendWithKind:NFKVisionSegmentationKindForegroundInstance];
+	if (subject.isReady) {
+		// Vision decides what counts as a subject, so a plate may have none; the run says which.
+		NSError *maskError = nil;
+		NFKInferenceResult *masked = [subject runInferenceForRequest:request error:&maskError];
+		CVPixelBufferRef matte = (__bridge CVPixelBufferRef)[masked outputForKey:NFKOutputMask];
+		XCTAssertTrue(matte != NULL || maskError.code == kNFKError_InferenceBackendFailure, @"%@", maskError);
+	}
+
+	NSArray<NFKKeypoint *> *joints = [[[NFKVisionPoseBackend backend] runInferenceForRequest:request error:&error]
+									  outputForKey:NFKOutputPose];
+	XCTAssertEqualObjects(joints, @[], @"nobody in the plate: %@", error);
+	NSArray<NFKDetection *> *faces = [[[NFKVisionFaceBackend backend] runInferenceForRequest:request error:&error]
+									  outputForKey:NFKOutputDetections];
+	XCTAssertEqualObjects(faces, @[], @"no face in the plate: %@", error);
+	NSArray<NSNumber *> *print = [[[NFKVisionFeaturePrintBackend backend] runInferenceForRequest:request error:&error] embedding];
+	XCTAssertGreaterThan(print.count, (NSUInteger)0, @"%@", error);
+	CGImageRelease(image);
+}
+
+// Docs/examples.md: Apple's own engines — a barcode is a detection with four corners
+- (void)testExampleReadingABarcode
+{
+	CGImageRef image = [self exampleQRCodeImageWithPayload:@"INFERKIT"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image }];
+	NSError *error = nil;
+	NFKVisionRectangleBackend *codes = [NFKVisionRectangleBackend backendWithKind:NFKVisionRectangleKindBarcode];
+	NFKDetection *code = [[codes runInferenceForRequest:request error:&error] detections].firstObject;
+	CGImageRelease(image);
+
+	NSString *payload = code.label;
+	XCTAssertEqualObjects(payload, @"INFERKIT", @"%@", error);
+	NFKQuadrilateral *corners = code.quadrilateral;
+	XCTAssertNotNil(corners);
+	CGPoint topLeft = corners.topLeft;
+	XCTAssertLessThan(topLeft.y, corners.bottomLeft.y, @"normalized, origin top left, like the box");
+}
+
+// Docs/examples.md: Apple's frame processors (VideoToolbox)
+- (void)testExampleUpscalingAFrameWithVideoToolbox
+{
+	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskSuperResolution];
+	if (!backend.isReady) {
+		// The processors need Apple silicon and a recent OS, which isReady answers before a run.
+		return;
+	}
+	NSError *error = nil;
+	if (![backend prepareWithError:&error]) {
+		// Upscaling runs a model the system downloads once; prepare starts it and says so.
+		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceNotReady);
+		return;
+	}
+	XCTAssertGreaterThan(backend.scaleFactor + 1, (NSInteger)0, @"0 takes the machine's smallest factor");
+}
+
+// Docs/examples.md: Transcribing with Apple's recognizer
+- (void)testExampleTranscribingWithApplesRecognizer
+{
+	NFKSpeechRecognitionBackend *backend = [NFKSpeechRecognitionBackend backend];
+	backend.requiresOnDeviceRecognition = YES;   // the audio never leaves the machine
+
+	if (!NFKSpeechRecognitionBackend.isAuthorized) {
+		// An app asks once, and the system remembers. Until then the backend says it is not ready.
+		XCTAssertFalse(backend.isReady);
+		return;
+	}
+	NFKAudioAsset *asset = [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/interview.wav"]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: asset }];
+	NFKInferenceJob *job = NFKInferenceSubmit(backend, request, NULL);
+	XCTAssertNotNil(job, @"the words arrive under NFKOutputText and each one under NFKOutputSegments");
+}
+
+// Docs/examples.md: Apple's own engines — following a region across frames
+- (void)testExampleFollowingARegionAcrossFrames
+{
+	// The tracker is the one backend in the toolkit that holds state: the region is named once and
+	// each run advances it by a frame.
+	NFKVisionTrackingBackend *tracker = [NFKVisionTrackingBackend backend];
+	XCTAssertFalse(tracker.isTracking);
+	[tracker startTrackingBoundingBox:CGRectMake(0.4, 0.4, 0.2, 0.2)];
+	XCTAssertTrue(tracker.isTracking);
+
+	CGImageRef frame = [self exampleSquareImage];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)frame }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [tracker runInferenceForRequest:request error:&error];
+	CGImageRelease(frame);
+
+	NFKDetection *now = result.detections.firstObject;
+	XCTAssertEqualObjects(now.label, @"tracked", @"%@", error);
+	XCTAssertTrue(CGRectContainsRect(CGRectMake(0, 0, 1, 1), now.boundingBox),
+				  @"normalized, origin top left, like every other box");
+	[tracker reset];
+	XCTAssertFalse(tracker.isTracking);
+}
+
+// Docs/examples.md: Apple's own engines — the readings Vision puts a name to
+- (void)testExampleMeasuringAnImage
+{
+	CGImageRef image = [self exampleSquareImage];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image }];
+	NSError *error = nil;
+	NFKVisionMeasurementBackend *backend =
+		[NFKVisionMeasurementBackend backendWithKind:NFKVisionMeasurementKindAesthetics];
+	NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+	CGImageRelease(image);
+
+	// A named number belongs under NFKOutputStructured, which is where every reading arrives.
+	NSDictionary *reading = result.structured;
+	XCTAssertNotNil(reading[@"overallScore"], @"%@", error);
+	XCTAssertNotNil(reading[@"isUtility"], @"a flat plate is a utility shot, which the flag reports");
+}
+
+// Docs/examples.md: Apple's own engines — a Core ML model through Vision
+- (void)testExampleRunningACoreMLModelThroughVision
+{
+	// The factory loads the compiled model before it returns, so a path with no model behind it is
+	// refused at construction with an error that says why.
+	NSURL *url = [NSURL fileURLWithPath:@"/models/classifier.mlmodelc"];
+	NSError *error = nil;
+	NFKVisionCoreMLBackend *backend = [NFKVisionCoreMLBackend backendWithCompiledModelURL:url error:&error];
+	XCTAssertNil(backend);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceNotReady);
+}
+
+// Docs/examples.md: Apple's own engines — speaking text
+- (void)testExampleSpeakingText
+{
+	NFKSpeechSynthesisBackend *voice = [NFKSpeechSynthesisBackend backend];
+	voice.language = @"en-US";
+	NSError *error = nil;
+	NFKInferenceResult *spoken =
+		[voice runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"The plate is ready." }]
+								error:&error];
+	NFKAudioAsset *audio = [spoken outputForKey:NFKOutputAudio];
+	XCTAssertNotNil(audio, @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:audio.fileURL.path]);
+}
+
+// Docs/examples.md: Apple's own engines — classifying a sound
+- (void)testExampleClassifyingASound
+{
+	// The clip is spoken here so the example carries its own audio.
+	NFKInferenceResult *spoken =
+		[[NFKSpeechSynthesisBackend backend]
+		 runInferenceForRequest:[NFKInferenceRequest requestWithInputs:
+								 @{ NFKInputPrompt: @"The quick brown fox jumps over the lazy dog." }]
+						  error:NULL];
+	NFKAudioAsset *asset = [spoken outputForKey:NFKOutputAudio];
+	XCTAssertNotNil(asset);
+
+	NFKSoundClassificationBackend *classifier = [NFKSoundClassificationBackend backend];
+	// The floor is 0.3 by default, which a short clip of one sound does not always clear.
+	classifier.minimumConfidence = 0.05;
+	NSError *error = nil;
+	NFKInferenceResult *heard =
+		[classifier runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: asset }]
+									 error:&error];
+	XCTAssertGreaterThan(heard.segments.count, (NSUInteger)0, @"%@", error);
+	XCTAssertNotNil(heard.classifications.firstObject.label, @"the clip's best guess");
+}
+
+// Docs/examples.md: Apple's own engines — word and sentence vectors
+- (void)testExampleEmbeddingTextWithNaturalLanguage
+{
+	NSError *error = nil;
+	NFKInferenceResult *result =
+		[[NFKTextEmbeddingBackend backend]
+		 runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dawn" }]
+						  error:&error];
+	XCTAssertGreaterThan(result.embedding.count, (NSUInteger)0, @"%@", error);
+}
+
+// A QR code carrying the payload, for the examples that read one.
+- (CGImageRef)exampleQRCodeImageWithPayload:(NSString *)payload CF_RETURNS_RETAINED
+{
+	CIFilter *generator = [CIFilter filterWithName:@"CIQRCodeGenerator"];
+	[generator setValue:[payload dataUsingEncoding:NSUTF8StringEncoding] forKey:@"inputMessage"];
+	CIImage *code = [generator.outputImage imageByApplyingTransform:CGAffineTransformMakeScale(8.0, 8.0)];
+	return [[CIContext contextWithOptions:nil] createCGImage:code fromRect:code.extent];
+}
+
+// A plain plate, for the examples that only need an image to hand an engine.
+- (CGImageRef)exampleSquareImage CF_RETURNS_RETAINED
+{
+	CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 240, 240, 8, 0, space,
+												 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(space);
+	CGContextSetRGBFillColor(context, 0.9, 0.9, 0.9, 1.0);
+	CGContextFillRect(context, CGRectMake(0, 0, 240, 240));
+	CGContextSetRGBFillColor(context, 0.1, 0.2, 0.6, 1.0);
+	CGContextFillRect(context, CGRectMake(96, 96, 48, 48));
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	return image;
 }
 
 @end

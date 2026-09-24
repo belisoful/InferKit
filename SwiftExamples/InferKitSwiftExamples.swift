@@ -12,6 +12,7 @@
 //  level (construct, read identity), so their example code keeps compiling without weights or a server.
 //
 
+import CoreText
 import XCTest
 import CoreML
 import InferKit
@@ -134,6 +135,29 @@ final class InferKitSwiftExamples: XCTestCase {
         let remote = hub.remoteURL(forRepo: "Qwen/Qwen2.5-0.5B-Instruct", revision: nil,
                                    path: "tokenizer.json")
         XCTAssertEqual(remote?.absoluteString.contains("Qwen/Qwen2.5-0.5B-Instruct"), true)
+    }
+
+    func testExampleHuggingFaceHubCachePolicy() throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("NFKSwiftExamplesHubCache")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        let savedLimit = NFKHFHub.defaultCacheSizeLimit
+        defer {
+            NFKHFHub.defaultCacheSizeLimit = savedLimit
+            try? FileManager.default.removeItem(at: cache)
+        }
+
+        NFKHFHub.defaultCacheSizeLimit = 20 * 1024 * 1024 * 1024    // every new hub, companions' included
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+        hub.cacheSizeLimit = NFKHFHubUnlimitedCacheSize             // this hub only
+        XCTAssertTrue(hub.excludesCacheFromBackup)                  // the default
+
+        try NFKHFHub.setExcludedFromBackup(true, for: cache)
+        XCTAssertTrue(NFKHFHub.isExcluded(fromBackup: cache))
+        try hub.pinCachedRepo("Qwen/Qwen2.5-0.5B-Instruct", revision: nil)   // never evicted
+        XCTAssertTrue(hub.isCachedRepoPinned("Qwen/Qwen2.5-0.5B-Instruct", revision: nil))
+        try hub.trimCacheToSizeLimit()                              // after lowering a limit
+        try hub.removeCachedRepo("Qwen/Qwen2.5-0.5B-Instruct", revision: nil)
+        XCTAssertEqual(hub.cacheSize(), 0)
     }
 
     // MARK: Backend contracts (Docs/examples.md: Text → text, Image → image)
@@ -362,8 +386,11 @@ final class InferKitSwiftExamples: XCTestCase {
         ears?.translates = true
         XCTAssertEqual(ears?.endpointURL?.absoluteString, "https://api.groq.com/openai/v1/audio/transcriptions")
 
-        let director = NFKRemoteVideoBackend(for: .openAI, apiKey: "sk-…", modelName: "sora-2")
-        XCTAssertEqual(director?.submitURL?.absoluteString, "https://api.openai.com/v1/videos")
+        let director = NFKRemoteVideoBackend(for: .googleGemini, apiKey: "AIza…", modelName: "veo-3.1-generate-preview")
+        XCTAssertEqual(director?.submitURL?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/openai/videos")
+        XCTAssertEqual(director?.apiStyle, .geminiSoraCompatible)
+        let veo = NFKRemoteVideoBackend(for: .googleGemini, apiStyle: .geminiVeo, apiKey: "AIza…", modelName: "veo-3.1-generate-preview")
+        XCTAssertEqual(veo?.submitURL?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models")
         let ranker = NFKRemoteReranker(for: .together, apiKey: "k", modelName: "Salesforce/Llama-Rank-V1")
         XCTAssertEqual(ranker?.endpointURL?.absoluteString, "https://api.together.xyz/v1/rerank")
         let gate = NFKRemoteModerationBackend(for: .mistral, apiKey: "k", modelName: "mistral-moderation-latest")
@@ -379,6 +406,38 @@ final class InferKitSwiftExamples: XCTestCase {
 
     // One contract key asks a reasoning model how hard to think; each backend maps the three levels
     // to its provider's control. What came back is the chain and what the turn cost.
+    // Every hosted mode reaches through the same request type; the backend names the service.
+    func testEveryHostedMode() {
+        let responses = NFKRemoteResponsesBackend(for: .openAI, apiKey: "sk-…", modelName: "gpt-5.6-sol")
+        XCTAssertEqual(responses?.endpointURL?.absoluteString, "https://api.openai.com/v1/responses")
+
+        let gemini = NFKGeminiInteractionsBackend(apiKey: "AIza…", modelName: "gemini-3.1-flash-image")
+        let draw = NFKInferenceRequest(inputs: [NFKInputPrompt: "a lighthouse"],
+                                       parameters: [NFKParameterAspectRatio: "16:9"],
+                                       outputModality: .image)
+        XCTAssertTrue(gemini.isReady)
+        XCTAssertEqual(draw.outputModality, .image)
+
+        let infill = NFKRemoteCompletionBackend(for: .mistral, apiKey: "k", modelName: "codestral-latest")
+        XCTAssertEqual(infill?.apiStyle, .mistral)
+        let counter = NFKRemoteTokenCounter(for: .anthropic, apiKey: "k", modelName: "claude-opus-5-5")
+        XCTAssertEqual(counter?.apiStyle, .anthropic)
+        XCTAssertNotNil(NFKRemoteOCRBackend(for: .mistral, apiKey: "k", modelName: "mistral-ocr-latest"))
+        XCTAssertNotNil(NFKRemoteClassifierBackend(for: .vLLM, apiKey: nil, modelName: "m"))
+
+        let live = NFKRealtimeSession(for: .googleGemini, apiStyle: .geminiLive, apiKey: "AIza…", modelName: "gemini-3.8-live")
+        live?.textHandler = { text, kind in _ = (text, kind) }
+        XCTAssertEqual(live?.inputSampleRate, 16000)
+
+        let files = NFKRemoteFileStore(for: .googleGemini, apiKey: "AIza…")
+        XCTAssertEqual(files?.apiStyle, .gemini)
+        let library = NFKRemoteRetrievalStore(for: .xAI, apiKey: "xai-…")
+        library?.managementAPIKey = "xai-mgmt-…"
+        XCTAssertEqual(library?.apiStyle, .XAI)
+        let usage = NFKRemoteUsageReporter(for: .openAI, apiKey: "sk-admin-…")
+        XCTAssertEqual(usage?.apiStyle, .openAI)
+    }
+
     func testReasoningEffortAndWhatTheTurnCost() {
         let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Why is the sky blue?"],
                                           parameters: [NFKParameterReasoningEffort: NFKReasoningEffortDeep])
@@ -422,5 +481,124 @@ final class InferKitSwiftExamples: XCTestCase {
         let absent = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("inferkit-example-absent.mlmodelc")
         XCTAssertThrowsError(try NFKComputePlan(forCompiledModelAt: absent, computeUnits: .all))
+    }
+
+    /// Docs/examples.md: Audio → notes and structure, through the importer's Swift spelling. The core
+    /// value types need no weights, and `standardMIDIFileData()` is a method here rather than the
+    /// property Objective-C sees.
+    func testExampleTranscriptionAndStructureResults() {
+        let notes = [NFKMIDINote(pitch: 64, startSeconds: 0.5, endSeconds: 1.0, velocity: 90,
+                                 program: 4, percussion: false, pitchBend: [0.0, 0.25, 0.5]),
+                     NFKMIDINote(pitch: 60, startSeconds: 0.0, endSeconds: 0.5, velocity: 100)]
+        let sequence = NFKMIDISequence(notes: notes, tempoBPM: 96)
+        XCTAssertEqual(sequence.notes.first?.pitch, 60)
+        XCTAssertEqual(sequence.standardMIDIFileData().prefix(4), Data("MThd".utf8))
+
+        let result = NFKInferenceResult(outputs: [
+            NFKOutputMIDI: sequence,
+            NFKOutputSegments: [NFKAudioSegment(startSeconds: 0, endSeconds: 15.2, label: "intro", confidence: 0.82)],
+            NFKOutputBeats: [NFKMusicBeat(timeSeconds: 0.5, positionInBar: 1)],
+            NFKOutputTempo: 120.0,
+        ])
+        XCTAssertEqual(result.midi?.notes.count, 2)
+        XCTAssertEqual(result.segments?.first?.label, "intro")
+        XCTAssertEqual(result.beats?.first?.isDownbeat, true)
+    }
+
+    // Typed decisions from Swift: the question factories import as static methods, the convenience
+    // as `answers(forState:questions:)` throwing, and the result's typed accessor as `answers`.
+    func testTypedDecisions() throws {
+        let jev = NFKRemoteProvider.backend(for: .typeSafe, apiKey: "ts-…", modelName: "jev-latest") as? NFKTypeSafeBackend
+        XCTAssertEqual(jev?.endpointURL?.absoluteString, "https://api.typesafe.ai/v1/systemone")
+
+        let questions = [
+            "department": NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team should handle this?",
+                                                             options: ["billing", "technical", "sales"]),
+            "severity": NFKDecisionQuestion.scoreQuestion(withInstructions: "How severe?", levels: ["low", "medium", "high"]),
+            "urgent": NFKDecisionQuestion.noulQuestion(withInstructions: "The customer needs an answer today."),
+        ]
+        let ask = NFKInferenceRequest(inputs: [NFKInputState: "Help! My payouts have been failing for 3 days.",
+                                               NFKInputQuestions: questions])
+        XCTAssertEqual((ask.input(forKey: NFKInputQuestions) as? [String: NFKDecisionQuestion])?["urgent"]?.type, .noul)
+        XCTAssertEqual(questions["severity"]?.dictionaryRepresentation()["criteria"] as? [String], ["low", "medium", "high"])
+
+        // What comes back (needs network): `try jev.answers(forState: state, questions: questions)`.
+        let severity = NFKDecisionAnswer(dictionary: ["type": "score", "score": 1.6,
+                                                      "legend": ["0": "low", "1": "medium", "2": "high"], "confidence": 0.61])
+        XCTAssertEqual(severity?.score, 1.6)
+        let decided = NFKInferenceResult(outputs: [NFKOutputAnswers: ["severity": severity!]])
+        XCTAssertEqual(decided.answers?["severity"]?.legend?["2"], "high")
+    }
+
+    // MARK: Apple's own engines
+
+    // Docs/examples.md: Reading the text in an image (Vision, no weights)
+    func testExampleReadingTextInAnImage() throws {
+        let image = try XCTUnwrap(Self.imageOfText("INFERKIT"))
+        let backend = NFKVisionTextBackend()   // +backend imports as init()
+        // Swift gets the throwing form of runInferenceForRequest:error:.
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))
+        XCTAssertEqual(result.text, "INFERKIT")
+        XCTAssertEqual(result.detections?.first?.label, "INFERKIT")
+    }
+
+    // Docs/examples.md: Apple's frame processors (VideoToolbox)
+    func testExampleUpscalingAFrameWithVideoToolbox() {
+        let backend = NFKVideoToolboxBackend(task: .superResolution)
+        guard backend.isReady else {
+            return   // the processors need Apple silicon and a recent OS
+        }
+        // 0 takes the smallest factor the machine offers, and a factor it lacks is refused by name.
+        XCTAssertEqual(backend.scaleFactor, 0)
+    }
+
+    // Docs/examples.md: Transcribing with Apple's recognizer
+    func testExampleTranscribingWithApplesRecognizer() {
+        let backend = NFKSpeechRecognitionBackend()
+        backend.requiresOnDeviceRecognition = true
+        backend.locale = Locale(identifier: "en-US")
+        XCTAssertEqual(backend.locale.identifier, "en-US")
+        if !NFKSpeechRecognitionBackend.isAuthorized {
+            XCTAssertFalse(backend.isReady)
+        }
+    }
+
+    // Docs/examples.md: Apple's own engines — speaking text, and classifying what was spoken
+    func testExampleSpeakingAndClassifying() throws {
+        let voice = NFKSpeechSynthesisBackend()
+        voice.language = "en-US"
+        let spoken = try voice.runInference(
+            for: NFKInferenceRequest(inputs: [NFKInputPrompt: "The quick brown fox jumps over the lazy dog."]))
+        let asset = try XCTUnwrap(spoken.output(forKey: NFKOutputAudio) as? NFKAudioAsset)
+
+        let sounds = NFKSoundClassificationBackend()
+        sounds.minimumConfidence = 0.05
+        let heard = try sounds.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
+        XCTAssertGreaterThan(try XCTUnwrap(heard.segments).count, 0)
+    }
+
+    // Docs/examples.md: Apple's own engines — word and sentence vectors
+    func testExampleEmbeddingTextWithNaturalLanguage() throws {
+        let result = try NFKTextEmbeddingBackend().runInference(
+            for: NFKInferenceRequest(inputs: [NFKInputPrompt: "a lighthouse at dawn"]))
+        XCTAssertGreaterThan(try XCTUnwrap(result.embedding).count, 0)
+    }
+
+    private static func imageOfText(_ text: String) -> CGImage? {
+        let space = CGColorSpaceCreateDeviceRGB()
+        guard let context = CGContext(data: nil, width: 600, height: 160, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                                          | CGBitmapInfo.byteOrder32Little.rawValue) else {
+            return nil
+        }
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: 600, height: 160))
+        let font = CTFontCreateWithName("Helvetica" as CFString, 72, nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text,
+                                                                       attributes: [.font: font]))
+        context.textPosition = CGPoint(x: 24, y: 48)
+        CTLineDraw(line, context)
+        return context.makeImage()
     }
 }
