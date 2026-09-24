@@ -259,6 +259,28 @@
       ]
     },
     {
+      "key": "MIMI",
+      "file": "mimi/model.safetensors",
+      "bytes": 384649828,
+      "url": "https://huggingface.co/kyutai/mimi/resolve/main/model.safetensors",
+      "note": "Kyutai Mimi (kyutai/mimi, CC-BY-4.0), the transformer-in-codec neural audio codec (SEANet enc/dec + a RoPE transformer on each side + a split residual vector quantizer, 24 kHz -> 12.5 Hz). The released `model.safetensors` loads directly through the native safetensors reader; the loader folds each codebook's EMA `embed_sum`/`cluster_usage` into `embed`, squeezes the k1 projection convolutions to Linear, transposes the Conv1d weights to NLC, and assembles each transposed convolution from a flipped-kernel forward convolution (MLX's grouped ConvTransposed1d disagrees with PyTorch). The parity record is `run_reference.py mimi` under the llmvenv oracle (transformers' `MimiModel`, loaded from the Hub; no --checkpoint).",
+      "config": [
+        "IK_VAL_MIMI",
+        "IK_PARITY_MIMI"
+      ]
+    },
+    {
+      "key": "CHRONOS",
+      "file": "chronos/model.safetensors",
+      "bytes": 821203576,
+      "url": "https://huggingface.co/amazon/chronos-bolt-base/resolve/main/model.safetensors",
+      "note": "Amazon Chronos-Bolt base (amazon/chronos-bolt-base, Apache-2.0), a patched T5 encoder-decoder time-series forecaster (a Swift NFKMLXChronos object, not a backend). The released model.safetensors loads directly through the native safetensors reader: the module keys mirror the HF T5 names, nothing is transposed, and the tied embed_tokens aliases plus the unused lm_head/quantiles buffer are dropped. Parity record: `run_reference.py chronos` under the llmvenv oracle with `chronos-forecasting` installed (--no-deps, plus pandas), which loads the ChronosBoltPipeline from the Hub; no --checkpoint.",
+      "config": [
+        "IK_VAL_CHRONOS",
+        "IK_PARITY_CHRONOS"
+      ]
+    },
+    {
       "key": "SNAC",
       "file": "snac.safetensors",
       "raw": "snac_24khz.bin",
@@ -348,6 +370,47 @@
         "IK_TRIAGE_SAM2MEMORY"
       ],
       "note": "The .pt wraps the state dict under a `model` key; names pass through."
+    },
+    {
+      "key": "SAM2_TRAINING_SOURCE",
+      "file": "reference-sources/sam2/loss_fns.py",
+      "url": "https://raw.githubusercontent.com/facebookresearch/sam2/main/training/loss_fns.py",
+      "config": [
+        "IK_SAM2_SRC"
+      ],
+      "note": "SAM 2's training objective, curled rather than cloned. `run_reference.py sam2_loss` executes it with `training.trainer` and `training.utils.distributed` stubbed in `sys.modules`; neither is arithmetic the loss depends on. The weights it is scored at come from the repository's own `sam2.1_hiera_b+_MOSE_finetune.yaml`."
+    },
+    {
+      "key": "SAM3_TRAINING_SOURCE",
+      "file": "reference-sources/sam3/",
+      "url": "https://raw.githubusercontent.com/facebookresearch/sam3/main/sam3/",
+      "config": [
+        "IK_SAM3_SRC"
+      ],
+      "note": "SAM 3's training objective and matcher as an importable tree: `sam3/train/loss/loss_fns.py`, `sam3/train/loss/mask_sampling.py`, `sam3/train/matcher.py`, and `sam3/model/box_ops.py`, each curled from the repository, under package `__init__.py` files. Three leaves are stand-ins and none of them is arithmetic the loss depends on: `sam3/train/utils/distributed.py` (single process), `torchmetrics` (the metric the loss reports and never trains on), and `sam3/train/loss/sigmoid_focal_loss.py`, whose Triton kernel needs CUDA and is replaced by the eager form the reference's own file falls back to. `run_reference.py sam3_loss` scores it at the settings of `configs/odinw13/odinw_text_only_train.yaml`."
+    },
+    {
+      "key": "SAM3",
+      "file": "sam3/model.safetensors",
+      "bytes": 3439938512,
+      "url": "https://huggingface.co/facebook/sam3/resolve/main/model.safetensors",
+      "config": [
+        "IK_VAL_SAM3"
+      ],
+      "note": "SAM 3 (facebook/sam3, 1797 tensors, float32). GATED behind Meta's SAM License, accepted for this project's token, so HF_TOKEN must be set to fetch it. `config.json` from the same repo goes beside it. The vision encoder is `detector_model.vision_encoder.` (538 tensors) and the prompt side `detector_model.text_encoder.` plus `detector_model.text_projection.` (390); the detector and the video tracker are the rest. SAM 3.1 (facebook/sam3.1) ships a byte-identical config and differs only in its checkpoint. Records: `run_reference.py sam3_vision` -> IK_PARITY_SAM3_VISION, `run_reference.py sam3_text` -> IK_PARITY_SAM3_TEXT."
+    },
+    {
+      "key": "SAM2_1_TINY",
+      "file": "sam2.1-tiny.safetensors",
+      "raw": "sam2.1_hiera_tiny.pt",
+      "bytes": 156008466,
+      "url": "https://huggingface.co/facebook/sam2.1-hiera-tiny/resolve/main/sam2.1_hiera_tiny.pt",
+      "converter": "sam2-to-safetensors",
+      "config": [
+        "IK_VAL_SAM2_1_TINY",
+        "IK_RAW_SAM2_1_TINY"
+      ],
+      "note": "SAM 2.1 hiera_tiny: the same geometry as 2.0 plus `no_obj_embed_spatial` and `obj_ptr_tpos_proj`, 471 tensors against 2.0's 468. `run_reference.py sam2_video` under the wananimate oracle env records the video parity; it downloads the same release in its transformers form -> IK_PARITY_SAM2_VIDEO."
     },
     {
       "key": "SAM2_BASE_PLUS",
@@ -1102,6 +1165,64 @@
       "config": [
         "IK_VAL_YOLO26X"
       ]
+    },
+    {
+      "key": "BASIC_PITCH",
+      "file": "basic-pitch/basic-pitch.safetensors",
+      "raw": "nmp.onnx",
+      "bytes": 230444,
+      "url": "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx",
+      "converter": "basic-pitch-to-safetensors",
+      "note": "Basic Pitch (spotify/basic-pitch, Apache-2.0), the ICASSP 2022 note-transcription model. The released artifact is an ONNX graph holding the whole pipeline: the converter lifts the CQT's two quadrature kernels, its anti-aliasing filter, its per-bin scale, the folded normalization, and the six convolutions out of the graph's initializers (20 tensors, 35,736 parameters). The Keras batch normalizations are already folded into the convolutions, so the module has none. The reference (IK_PARITY_BASIC_PITCH) comes from `run_reference.py basic_pitch --checkpoint <this raw file>` under the bpvenv interpreter; it records the CQT magnitude, the normalized log, the harmonic stack, the three per-window posteriorgrams, the stitched posteriorgrams, and the notes the reference's own note_creation reads, with their pitch-bend curves.",
+      "config": [
+        "IK_VAL_BASIC_PITCH"
+      ]
+    },
+    {
+      "key": "ALLIN1",
+      "file": "allin1/allin1-harmonix-fold0.safetensors",
+      "raw": "harmonix-fold0-0vra4ys2.pth",
+      "bytes": 1400571,
+      "url": "https://huggingface.co/taejunkim/allinone/resolve/main/harmonix-fold0-0vra4ys2.pth",
+      "converter": "allin1-to-safetensors",
+      "note": "All-In-One music structure analysis (mir-aidj/all-in-one, MIT), the harmonix-fold0 release. The .pth holds a state_dict and the training config; every tensor transfers unchanged and the Swift loader transposes only the three embedding convolutions. The converter adds two tensors the checkpoint does not carry: frontend.filterbank, madmom's logarithmic filterbank as a [1024, 81] matrix (taken from madmom itself, so the band edges are the trained ones), and postprocess.thresholds, the checkpoint's own tuned beat and downbeat thresholds — the downbeat one trims the track before the beat decoder runs, and the released folds disagree (0.21 against 0.22), so it travels with the weights. The reference (IK_PARITY_ALLIN1) comes from `run_reference.py allin1 --checkpoint <this raw file>` under the allin1 oracle environment with IK_ALLIN1_SRC pointing at the vendored sources; it records the madmom spectrograms, the embedding, blocks 0/5/10, the four logits, the decoded bar-tracker path, and the sections and beats the reference's own post-processing reads.",
+      "config": [
+        "IK_VAL_ALLIN1"
+      ]
+    },
+    {
+      "key": "MUSCRIPTOR_MEDIUM",
+      "file": "muscriptor/medium/model.safetensors",
+      "bytes": 1228144472,
+      "url": "https://huggingface.co/MuScriptor/muscriptor-medium/resolve/main/model.safetensors",
+      "gated": true,
+      "note": "MuScriptor medium (307M), the multi-instrument audio-to-MIDI transcriber. GATED and CC BY-NC 4.0: the account behind HF_TOKEN / NFKHFHub.accessToken must have accepted the license on the model page, and the weights are non-commercial. Gating is auto-approve, so acceptance is immediate. The release is already safetensors in the module's own naming, so no converter runs; `config.json` beside it carries dim/num_heads/num_layers/card, which match NFKMLXMuScriptorConfiguration.medium (1024/16/24/1395). Two references: `run_reference.py muscriptor` needs no weights and measures the architecture at a tiny random configuration, carrying the tiny parameters in the record under `w::`; `run_reference.py muscriptor_real --checkpoint <this directory>` records the released seams. Both run under the muscriptor oracle environment.",
+      "config": [
+        "IK_VAL_MUSCRIPTOR"
+      ]
+    },
+    {
+      "key": "HFT_TRANSFORMER",
+      "file": "hft/hft-transformer-maestro.safetensors",
+      "raw": "checkpoint.zip",
+      "bytes": 20540269,
+      "url": "https://github.com/sony/hFT-Transformer/releases/download/ismir2023/checkpoint.zip",
+      "extract": "checkpoint/MAESTRO-V3/model_016_003.pkl",
+      "converter": "hft-transformer-to-safetensors",
+      "note": "hFT-Transformer (sony/hFT-Transformer, MIT), the ISMIR 2023 piano transcriber, 5.5M parameters. The release is NOT a torch.save archive: it is a plain pickle of the live Model_SPEC2MIDI, saved on CUDA with an old torch that pickles storages by value, so reading it needs the model's classes on the path (IK_HFT_SRC) and a patch of torch.storage._load_from_bytes onto the CPU. The pickled module also remembers its CUDA device and builds position indices there, so the oracle corrects module.device after loading. The converter shortens encoder_spec2midi.*/decoder_spec2midi.* to encoder.*/decoder.* and adds the two tensors the reference builds at runtime from torchaudio: the analysis window and the Slaney-normalized HTK mel filterbank. The reference (IK_PARITY_HFT) comes from `run_reference.py hft --checkpoint <the .pkl>` under the hft oracle environment; it records the log-mel, one segment's encoder output, both output levels with the decoder's note-to-frequency attention, the stitched posteriorgrams, and the notes mpe2note reads.",
+      "config": [
+        "IK_VAL_HFT"
+      ]
+    },
+    {
+      "key": "FLUX2_KLEIN_TOKENIZER",
+      "file": "flux2-klein-tokenizer/tokenizer.json",
+      "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-4B/resolve/main/tokenizer/",
+      "note": "FLUX.2 [klein] 4B's tokenizer directory (tokenizer.json, vocab.json, merges.txt, added_tokens.json, special_tokens_map.json, tokenizer_config.json, chat_template.jinja). klein-4B is the one UNGATED FLUX.2 release, so this is Black Forest Labs' own rather than a mirror. It backs `run_reference.py flux2_prompt --checkpoint <dir>`, which records the rendered chat template and its token ids for three prompts: at `enable_thinking=False` a Qwen3 template appends an EMPTY think block after the assistant header, so a port that fed the encoder a bare prompt would read a third of the right sequence.",
+      "config": [
+        "IK_VAL_FLUX2_TOKENIZER",
+        "IK_PARITY_FLUX2_PROMPT"
+      ]
     }
   ],
   "unresolved": [
@@ -1116,7 +1237,7 @@
     }
   ],
   "sources": {
-    "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the three models whose reference is a whole small package get their own variable. Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py.",
+    "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the models whose reference is a whole small package get their own variable (the Cosmos Tokenizer's is NVIDIA's `cosmos_predict1.tokenizer`, pinned to one commit, with its package markers empty). Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py. The V-JEPA 2 probe oracle reads facebookresearch/vjepa2's attentive pooler and its frozen-evaluation `eval.py` (`IK_VJEPA2_SRC`), pinned to one commit. TrOCR's loss oracle runs fairseq's own `inverse_sqrt` scheduler file (`IK_FAIRSEQ_SRC`), pinned to one commit, with its fairseq imports stubbed. Table Transformer's loss oracle runs microsoft/table-transformer's vendored DETR matcher and SetCriterion (`IK_TABLE_TRANSFORMER_SRC`), pinned to one commit, with empty package markers in place of the modules' __init__ files. Sa2VA's loss oracle runs bytedance/Sa2VA's own training code and vendored mmdet losses, and mmengine's param_scheduler.py (`IK_SA2VA_SRC`), each pinned to one commit; the oracle extracts the functions it needs and stubs the framework imports.",
     "root_var": "IK_REF_SRC",
     "files": [
       [
@@ -1262,17 +1383,324 @@
       [
         "taesd.py",
         "https://raw.githubusercontent.com/madebyollin/taesd/main/taesd.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/__init__.py",
+        null
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/__init__.py",
+        null
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/__init__.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/__init__.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/distributions.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/distributions.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/layers2d.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/layers2d.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/layers3d.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/layers3d.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/patching.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/patching.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/quantizers.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/quantizers.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/modules/utils.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/modules/utils.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/__init__.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/__init__.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/configs.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/configs.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/continuous_image.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/continuous_image.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/continuous_video.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/continuous_video.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/discrete_image.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/discrete_image.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/networks/discrete_video.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/networks/discrete_video.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/__init__.py",
+        null
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/datasets/__init__.py",
+        null
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/datasets/utils.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/training/datasets/utils.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/losses/__init__.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/training/losses/__init__.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/losses/continuous.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/training/losses/continuous.py"
+      ],
+      [
+        "cosmos-tokenizer-src/cosmos_predict1/tokenizer/training/losses/lpips.py",
+        "https://raw.githubusercontent.com/nvidia-cosmos/cosmos-predict1/724daa1b2df5ec96bdf111bb947479d2216b3b08/cosmos_predict1/tokenizer/training/losses/lpips.py"
+      ],
+      [
+        "vjepa2/src/models/attentive_pooler.py",
+        "https://raw.githubusercontent.com/facebookresearch/vjepa2/204698b45b3712590f06245fbfba32d3be539812/src/models/attentive_pooler.py"
+      ],
+      [
+        "vjepa2/src/models/utils/modules.py",
+        "https://raw.githubusercontent.com/facebookresearch/vjepa2/204698b45b3712590f06245fbfba32d3be539812/src/models/utils/modules.py"
+      ],
+      [
+        "vjepa2/src/utils/tensors.py",
+        "https://raw.githubusercontent.com/facebookresearch/vjepa2/204698b45b3712590f06245fbfba32d3be539812/src/utils/tensors.py"
+      ],
+      [
+        "vjepa2/evals/video_classification_frozen/eval.py",
+        "https://raw.githubusercontent.com/facebookresearch/vjepa2/204698b45b3712590f06245fbfba32d3be539812/evals/video_classification_frozen/eval.py"
+      ],
+      [
+        "vjepa2/src/__init__.py",
+        null
+      ],
+      [
+        "vjepa2/src/models/__init__.py",
+        null
+      ],
+      [
+        "vjepa2/src/models/utils/__init__.py",
+        null
+      ],
+      [
+        "vjepa2/src/utils/__init__.py",
+        null
+      ],
+      [
+        "fairseq/inverse_square_root_schedule.py",
+        "https://raw.githubusercontent.com/facebookresearch/fairseq/3d262bb25690e4eb2e7d3c1309b1e9c406ca4b99/fairseq/optim/lr_scheduler/inverse_square_root_schedule.py"
+      ],
+      [
+        "table-transformer/detr/models/detr.py",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/detr/models/detr.py"
+      ],
+      [
+        "table-transformer/detr/models/matcher.py",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/detr/models/matcher.py"
+      ],
+      [
+        "table-transformer/detr/util/box_ops.py",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/detr/util/box_ops.py"
+      ],
+      [
+        "table-transformer/detr/util/misc.py",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/detr/util/misc.py"
+      ],
+      [
+        "table-transformer/src/structure_config.json",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/src/structure_config.json"
+      ],
+      [
+        "table-transformer/src/detection_config.json",
+        "https://raw.githubusercontent.com/microsoft/table-transformer/16d124f616109746b7785f03085100f1f6247575/src/detection_config.json"
+      ],
+      [
+        "table-transformer/detr/models/__init__.py",
+        null
+      ],
+      [
+        "table-transformer/detr/util/__init__.py",
+        null
+      ],
+      [
+        "sa2va/projects/sa2va/configs/sa2va_finetune.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/configs/sa2va_finetune.py"
+      ],
+      [
+        "sa2va/projects/sa2va/configs/sa2va_qwen_finetune.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/configs/sa2va_qwen_finetune.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/sa2va.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/sa2va.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/sam2_train.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/sam2_train.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/extension/sam2_base.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/extension/sam2_base.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/mllm/internvl.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/mllm/internvl.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/mllm/qwenvl.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/mllm/qwenvl.py"
+      ],
+      [
+        "sa2va/projects/sa2va/models/mllm/llava.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/projects/sa2va/models/mllm/llava.py"
+      ],
+      [
+        "sa2va/third_parts/mmdet/models/losses/dice_loss.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/third_parts/mmdet/models/losses/dice_loss.py"
+      ],
+      [
+        "sa2va/third_parts/mmdet/models/losses/cross_entropy_loss.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/third_parts/mmdet/models/losses/cross_entropy_loss.py"
+      ],
+      [
+        "sa2va/third_parts/mmdet/models/losses/utils.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/third_parts/mmdet/models/losses/utils.py"
+      ],
+      [
+        "sa2va/third_parts/mmdet/models/utils/point_sample.py",
+        "https://raw.githubusercontent.com/bytedance/Sa2VA/b6fed1a7928ad4adfa124f1fe79031c1f58ec7a1/third_parts/mmdet/models/utils/point_sample.py"
+      ],
+      [
+        "sa2va/mmengine/param_scheduler.py",
+        "https://raw.githubusercontent.com/open-mmlab/mmengine/f8a8b1b3b3051175a8babe5df9c753a981919087/mmengine/optim/scheduler/param_scheduler.py"
       ]
     ],
     "env": {
       "IK_REF_SRC": "refsrc",
       "IK_SWINIR_SRC": "swinir",
       "IK_DEMUCS_SRC": "demucs_v2",
-      "IK_DENOISER_SRC": "denoiser"
+      "IK_DENOISER_SRC": "denoiser",
+      "IK_COSMOS_TOKENIZER_SRC": "cosmos-tokenizer-src",
+      "IK_VJEPA2_SRC": "vjepa2",
+      "IK_FAIRSEQ_SRC": "fairseq",
+      "IK_TABLE_TRANSFORMER_SRC": "table-transformer",
+      "IK_SA2VA_SRC": "sa2va"
     }
   },
   "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place — the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
   "releases": [
+    {
+      "key": "MAMBA_CODESTRAL",
+      "repo": "mistralai/Mamba-Codestral-7B-v0.1",
+      "directory": "mamba-codestral-7b",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00003.safetensors",
+        "model-00002-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_MAMBA2": ""
+      },
+      "note": "Codestral-Mamba-7B (Mamba2ForCausalLM, Mistral, Apache-2.0, 14 GB bf16, released 2024), the toolkit's first state-space model. Download the SHARDED weights only (not the duplicate consolidated.safetensors). Records: run_reference.py mamba2 (tiny random config, needs a dummy --checkpoint) -> IK_PARITY_MAMBA2_TINY; run_reference.py mamba2_real (--checkpoint this directory, bf16 both sides since 7B does not fit float32) -> IK_PARITY_MAMBA2_REAL; structural shapes via Tools/validation-assets/shapes.py mistralai/Mamba-Codestral-7B-v0.1 -> IK_SHAPES_MAMBA2 / IK_CONFIG_MAMBA2. All modes use the llm oracle interpreter."
+    },
+    {
+      "key": "GRANITE_HYBRID",
+      "repo": "ibm-granite/granite-4.0-h-1b",
+      "directory": "granite-4.0-h-1b",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_GRANITE": ""
+      },
+      "note": "Granite 4.0-H (GraniteMoeHybridForCausalLM, IBM, Apache-2.0), the first hybrid Mamba-attention decoder, reusing the Codestral SSD mixer. granite-4.0-h-1b is the DENSE hybrid (a single model.safetensors ~2.7 GB, TIED word embeddings so no lm_head), small enough for a full float32 numeric oracle. config.json may not come down through `hf download --include` -- confirm it is present. Records: run_reference.py granite_hybrid (tiny random DENSE config, tie=False so safetensors does not refuse the aliased lm_head, multipliers set to non-defaults, dummy --checkpoint) -> IK_PARITY_GRANITE_HYBRID_TINY; run_reference.py granite_hybrid_moe (tiny WITH routed experts) -> IK_PARITY_GRANITE_MOE_TINY; run_reference.py granite_hybrid_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_GRANITE_LOSS; run_reference.py granite_hybrid_real (--checkpoint this directory, float32) -> IK_PARITY_GRANITE_REAL; structural shapes via Tools/validation-assets/shapes.py ibm-granite/granite-4.0-h-1b -> IK_SHAPES_GRANITE / IK_CONFIG_GRANITE. All modes use the llm oracle interpreter (transformers 4.57.6: the OLD block_sparse_moe.input_linear/output_linear/router.layer MoE layout, which is what the released MoE checkpoints carry)."
+    },
+    {
+      "key": "NEMOTRON_H",
+      "repo": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+      "directory": "nemotron-nano-9b-v2",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "config": {
+        "IK_VAL_NEMOTRON_H": ""
+      },
+      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory -> IK_PARITY_NEMOTRON_H_REAL, then IK_VAL_NEMOTRON_H = the directory) needs the ~17.8 GB download and is run when disk permits; the tiny numeric + structural records carry the shipped parity claim otherwise. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
+    },
+    {
+      "key": "GRANITE_SPEECH",
+      "repo": "ibm-granite/granite-speech-3.3-2b",
+      "directory": "granite-speech-3.3-2b",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "adapter_config.json",
+        "adapter_model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "added_tokens.json",
+        "special_tokens_map.json",
+        "chat_template.jinja"
+      ],
+      "config": {
+        "IK_VAL_GRANITE_SPEECH": ""
+      },
+      "note": "Granite Speech 3.3-2b (GraniteSpeechForConditionalGeneration, IBM, Apache-2.0), the first speech language model: a Conformer CTC encoder (Shaw relative-position block-local attention, macaron feed-forward, GLU convolution with BatchNorm, mid-stack CTC skip), a BLIP-2 Q-former projector (windowed, learned queries, self- then cross-attention; cross_attention_frequency 1), and a DENSE Granite decoder (granite model_type, Llama + Granite's four multipliers: embed x12, residual x0.22, attention scale 1/64, logits /8; NOT the 4.0-H hybrid). Audio features scatter into the prompt at the <|audio|> (49159) positions before the embedding multiplier. The released model ships a trained audio LoRA adapter (r64 a32, decoder q/v); from_pretrained auto-loads it and the Swift loader folds it in (W += 0.5 B A). Download the 4-shard set the index names plus adapter_model.safetensors. The tokenizer ships vocab.json WITHOUT merges.txt, so the release-tokenizer reader extracts the byte-level pair from tokenizer.json. Records: run_reference.py granite_speech (tiny random config, dummy --checkpoint, tie=False so safetensors saves) -> IK_PARITY_GRANITE_SPEECH_TINY; run_reference.py granite_speech_real (--checkpoint this directory, float32, adapter enabled) -> IK_PARITY_GRANITE_SPEECH_REAL; structural shapes via Tools/validation-assets/shapes.py -> IK_SHAPES_GRANITE_SPEECH / IK_CONFIG_GRANITE_SPEECH. The mel front-end is checked against the release's torchaudio feature extractor on inputs/speech.wav -> IK_PARITY_GRANITE_SPEECH_FEATURES / IK_SPEECH_WAV. All modes use the llm oracle interpreter (transformers 4.57.6 + peft + torchaudio)."
+    },
+    {
+      "key": "VOXTRAL",
+      "repo": "mistralai/Voxtral-Mini-3B-2507",
+      "directory": "voxtral-mini-3b",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "tekken.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "params.json"
+      ],
+      "config": {
+        "IK_VAL_VOXTRAL": ""
+      },
+      "note": "Voxtral-Mini 3B (VoxtralForConditionalGeneration, Mistral, Apache-2.0), a speech language model built from reused parts: the Whisper large-v3 audio encoder (reused NFKWhisperEncoder; the released audio_tower is that encoder in transformers naming, remapped to openai names; embed_positions dropped, the encoder computes Whisper sinusoids), a 2-linear projector that GROUPS 4 encoder frames (reshape(-1, 4*1280=intermediate_size) -> linear_1 -> gelu -> linear_2), and a Llama (Ministral 3B) decoder (reused NFKMLXGraniteTextNet with Granite's 4 multipliers set to IDENTITY; head_dim 128 > hidden/heads). Audio embeds scatter at the [AUDIO] (24) positions. Tokenizer is Mistral tekken (tekken.json, tiktoken ranks; NFKMLXTekkenTokenizer). Backend mel = Whisper 128-mel (NFKMLXMel.logMel), 30s window -> 375 audio embeds; transcription prompt <s>[INST][BEGIN_AUDIO][AUDIO]*N[/INST]lang:<code>[TRANSCRIBE]. Download the 2-shard set + tekken.json + preprocessor_config.json. Records: run_reference.py voxtral (tiny random, dummy --checkpoint; the oracle sets embed_positions to Whisper sinusoids) -> IK_PARITY_VOXTRAL_TINY; run_reference.py voxtral_real (--checkpoint this directory, float32) -> IK_PARITY_VOXTRAL_REAL; structural shapes via shapes.py -> IK_SHAPES_VOXTRAL / IK_CONFIG_VOXTRAL. The tekken tokenizer + prompt are validated against mistral-common (installed to a scratch --target dir, NOT the shared llmvenv). All modes use the llm oracle interpreter (transformers 4.57.6)."
+    },
     {
       "key": "SD15",
       "directory": "sd15",
@@ -1438,6 +1866,34 @@
       "note": "gte-reranker-modernbert-base, 0.6 GB. A ModernBertForSequenceClassification cross-encoder reranker: a bidirectional ModernBERT encoder over a [CLS] query [SEP] document [SEP] pair, mean-pooled, through a prediction head (dense + gelu + LayerNorm) and a single-logit classifier -> a relevance score. ModernBERT is RoPE (global theta 160000 every 3rd layer, local theta 10000 with a 128 sliding window elsewhere), GeGLU (Wi -> input,gate; act(input)*gate), LayerNorm throughout (norm_bias false), bias-free attention/mlp, no absolute position embeddings; layer 0's attn_norm is Identity (embeddings are pre-normed). Tokenizer is byte-level BPE (GPT-2 family), which the core NFKByteLevelBPETokenizer reads; the release ships only tokenizer.json, so vocab.json/merges.txt are extracted from it."
     },
     {
+      "key": "LAYA",
+      "repo": "convaiinnovations/laya",
+      "directory": "laya",
+      "files": [
+        "rl_agent_config.json",
+        "encoder/config.json",
+        "model.safetensors",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "rl_common.py",
+        "rl_agent_api.py",
+        "typed-decisions/rl_agent_config.json",
+        "typed-decisions/encoder/config.json",
+        "typed-decisions/model.safetensors",
+        "typed-decisions/tokenizer/tokenizer.json",
+        "typed-decisions/tokenizer/tokenizer_config.json",
+        "multilingual/rl_agent_config.json",
+        "multilingual/encoder/config.json",
+        "multilingual/model.safetensors",
+        "multilingual/tokenizer/tokenizer.json",
+        "multilingual/tokenizer/tokenizer_config.json"
+      ],
+      "config": {
+        "IK_VAL_LAYA": ""
+      },
+      "note": "Laya (convaiinnovations/laya, Apache-2.0), the open reproduction of TypeSafe's Jev: a typed-decision model that answers choice / score / noul questions about a state in one bidirectional pass. 2.4 GB for the three variants: the root (ModernBERT-large encoder + a 2-layer decision head, 421M, fp16), typed-decisions (the same geometry fine-tuned on that benchmark), and multilingual (mmBERT-base, 22 layers, 256k Gemma vocabulary, 322M). Each variant is its own directory holding rl_agent_config.json (temperatures, max_len, head_max_len), encoder/config.json (a transformers 5.x config: the rope thetas sit under rope_parameters, which a 4.x ModernBertConfig ignores, so the oracle copies them into global_rope_theta / local_rope_theta; mmBERT's local theta is 160000, not the 10000 default), tokenizer/tokenizer.json, and model.safetensors under encoder./head./scorer./act_head./type_emb. keys. rl_common.py and rl_agent_api.py are the reference inference code the oracle imports."
+    },
+    {
       "key": "SMOLVLM2_500M",
       "repo": "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
       "directory": "smolvlm2-500m",
@@ -1487,11 +1943,997 @@
       "note": "Qwen3-VL-2B-Instruct, 4.25 GB. Qwen3VLForConditionalGeneration: a qwen3_vl ViT (depth 24, hidden 1024, 2D rotary, spatial_merge_size 2, deepstack layers 5/11/17) + a qwen3_vl_text decoder (Qwen3 blocks, hidden 2048/28 layers, but M-RoPE interleaved mrope_section [24,20,20] and deepstack injection at decoder layers 0/1/2). image_token_id 151655. Far more than SmolVLM: M-RoPE 3D positions and deepstack are real additions to the reused Qwen3 decoder."
     },
     {
+      "key": "PIXTRAL",
+      "repo": "mistral-experimental/pixtral-12b",
+      "directory": "pixtral-12b",
+      "files": [
+        "config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00006.safetensors",
+        "model-00002-of-00006.safetensors",
+        "model-00003-of-00006.safetensors",
+        "model-00004-of-00006.safetensors",
+        "model-00005-of-00006.safetensors",
+        "model-00006-of-00006.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_PIXTRAL": "",
+        "IK_PARITY_PIXTRAL": "pixtral-12b/record.safetensors"
+      },
+      "note": "Pixtral 12B (mistral-experimental/pixtral-12b, formerly mistral-community/pixtral-12b, which redirects there; Apache-2.0), ~24 GB. LlavaForConditionalGeneration: a from-scratch PixtralVisionModel 2D-rotary ViT (hidden 1024, 24 layers, 16 heads, patch 16, rope_theta 10000, image_size 1024) + a multi_modal_projector (two biased Linears around exact GELU) + a Mistral-Nemo dense decoder (hidden 5120, 40 layers, head_dim 128, 32 heads, 8 kv heads, rope_theta 1e9). image_token_index 10. The text_config omits num_attention_heads; the transformers MistralConfig default (32) applies, which decoderConfiguration sets. Vision seams recorded in float32, the fused logits in bfloat16: `run_reference.py pixtral --checkpoint <dir>` under the llmvenv oracle. IK_VAL_PIXTRAL is the release directory; IK_PARITY_PIXTRAL is the record written alongside it. The tiny full-pipeline oracle (`run_reference.py pixtral_tiny --checkpoint <writable-dir>`, keys IK_VAL_PIXTRAL_TINY / IK_PARITY_PIXTRAL_TINY) saves a tiny Llava release and measures vision + connector + fusion + Mistral decoder in float32; the 12B released fused-logit test runs behind the IK_PIXTRAL_FUSED opt-in (~24 GB resident)."
+    },
+    {
+      "key": "FLORENCE2",
+      "repo": "microsoft/Florence-2-large",
+      "directory": "florence2",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "preprocessor_config.json"
+      ],
+      "config": {
+        "IK_VAL_FLORENCE2": "florence2/model.safetensors",
+        "IK_PARITY_FLORENCE2": "florence2/record.safetensors",
+        "IK_PARITY_FLORENCE2_GENERATE": "florence2/generate_record.safetensors"
+      },
+      "note": "Florence-2-large (microsoft/Florence-2-large, Microsoft, MIT), ~1.5 GB, a unified vision model (DaViT vision tower + multi-modal projector + BART encoder-decoder). The transformers-NATIVE Florence2 does NOT load the released original-davit checkpoint (all-random), so the oracle is the repo's OWN code via trust_remote_code (needs timm in the llm env): `run_reference.py florence2 --checkpoint <dir> --image inputs/face960.jpg` records the DaViT seams (conv0/block0/vision), the projector output, the encoder output, the first-step logits, and the greedy `<OD>` generation. IK_VAL_FLORENCE2 is the model.safetensors; IK_PARITY_FLORENCE2 is the record alongside it. Ported at reference parity (all seams >0.9999, greedy `<OD>` token-exact); the backend detects objects end to end. Generation follows the release's text_config (three beams, early stopping, no repeated 3-gram, <s> forced first, </s> forced at the limit): `run_reference.py florence2_generate <dir>/generate_record.safetensors --checkpoint <dir> --image inputs/face960.jpg` records the release's own generate (uncached, as the remote code's cache fails under transformers 4.57) per task (<CAPTION>, <DETAILED_CAPTION>, <MORE_DETAILED_CAPTION>, <OCR>, <OD>), a 16-token cut, and greedy <CAPTION> under the same constraints; IK_PARITY_FLORENCE2_GENERATE is that record. The raw-argmax greedy in record.safetensors has none of the release's constraints, which is why its captions degenerate to a run of <s>."
+    },
+    {
+      "key": "FLORENCE2_BASE",
+      "repo": "microsoft/Florence-2-base",
+      "revision": "5ca5edf5bd017b9919c05d08aebef5e4c7ac3bac",
+      "directory": "florence2-base",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "preprocessor_config.json"
+      ],
+      "config": {
+        "IK_VAL_FLORENCE2_BASE": "",
+        "IK_PARITY_FLORENCE2_BASE": "record.safetensors",
+        "IK_PARITY_FLORENCE2_BASE_GENERATE": "generate_record.safetensors"
+      },
+      "note": "Florence-2-base (microsoft/Florence-2-base, Microsoft, MIT), 463 MB: the large model's DaViT tower at half the widths (dim_embed 128-1024, heads and groups 4-32, a 768-wide projection) and BART-base (6+6 layers, d_model 768, 12 heads, 1024 positions), all read from config.json. The record is `FLORENCE2_REPO=microsoft/Florence-2-base run_reference.py florence2 <this directory>/record.safetensors --checkpoint <this directory>` under llmvenv, the same remote-code oracle as the large release. The generation record is `FLORENCE2_REPO=microsoft/Florence-2-base run_reference.py florence2_generate <this directory>/generate_record.safetensors --checkpoint <this directory> --image inputs/face960.jpg` (IK_PARITY_FLORENCE2_BASE_GENERATE)."
+    },
+    {
+      "key": "FLORENCE2_BASE_FT",
+      "repo": "microsoft/Florence-2-base-ft",
+      "directory": "florence2-base-ft",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "preprocessor_config.json",
+        "configuration_florence2.py",
+        "modeling_florence2.py",
+        "processing_florence2.py"
+      ],
+      "config": {
+        "IK_VAL_FLORENCE2_BASE_FT": "",
+        "IK_PARITY_FLORENCE2_BASE_FT": "record.safetensors",
+        "IK_PARITY_FLORENCE2_BASE_FT_GENERATE": "generate_record.safetensors",
+        "IK_PARITY_FLORENCE2_BASE_FT_LOSS": "loss_record.safetensors"
+      },
+      "note": "Florence-2-base-ft (microsoft/Florence-2-base-ft, Microsoft, MIT): the base release fine-tuned on the downstream task collection, the same geometry and generation settings. The directory carries the repo's own remote code, so the oracle loads it in place: `FLORENCE2_REPO=<dir> run_reference.py florence2 <dir>/record.safetensors --checkpoint <dir> --image inputs/face960.jpg` and `FLORENCE2_REPO=<dir> run_reference.py florence2_generate <dir>/generate_record.safetensors --checkpoint <dir> --image inputs/face960.jpg`, under llmvenv. The fine-tuning objective's record: `FLORENCE2_REPO=<dir> run_reference.py florence2_loss <dir>/loss_record.safetensors --checkpoint <dir> --image inputs/face960.jpg`."
+    },
+    {
+      "key": "FLORENCE2_LARGE_FT",
+      "repo": "microsoft/Florence-2-large-ft",
+      "directory": "florence2-large-ft",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "preprocessor_config.json",
+        "configuration_florence2.py",
+        "modeling_florence2.py",
+        "processing_florence2.py"
+      ],
+      "config": {
+        "IK_VAL_FLORENCE2_LARGE_FT": "",
+        "IK_PARITY_FLORENCE2_LARGE_FT": "record.safetensors",
+        "IK_PARITY_FLORENCE2_LARGE_FT_GENERATE": "generate_record.safetensors"
+      },
+      "note": "Florence-2-large-ft (microsoft/Florence-2-large-ft, Microsoft, MIT): the large release fine-tuned on the downstream task collection, the same geometry and generation settings. The directory carries the repo's own remote code, so the oracle loads it in place: `FLORENCE2_REPO=<dir> run_reference.py florence2 <dir>/record.safetensors --checkpoint <dir> --image inputs/face960.jpg` and `FLORENCE2_REPO=<dir> run_reference.py florence2_generate <dir>/generate_record.safetensors --checkpoint <dir> --image inputs/face960.jpg`, under llmvenv."
+    },
+    {
+      "key": "TROCR",
+      "repo": "microsoft/trocr-base-handwritten",
+      "directory": "trocr",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR": "trocr",
+        "IK_PARITY_TROCR": "trocr/record.safetensors",
+        "IK_VAL_TROCR_IMAGE": "trocr_line.png"
+      },
+      "note": "TrOCR (microsoft/trocr-base-handwritten, Microsoft, MIT), ~1.3 GB float32, a handwriting-line reader (VisionEncoderDecoder: a google/vit image encoder + a BART-style trocr decoder). The oracle is the transformers-NATIVE VisionEncoderDecoderModel (no trust_remote_code): `run_reference.py trocr --checkpoint <dir> --size 384 --image trocr_line.png` records the pixels, the ViT embeddings, the first encoder block, the encoder last hidden state (the decoder memory), the first-step logits, and the greedy transcription ids. IK_VAL_TROCR is the release directory; IK_PARITY_TROCR is the record. IK_VAL_TROCR_IMAGE is a locally rendered text line (any single-line image works; the backend test asserts the port reads the same string the reference does, not ground truth). Ported at reference parity (embeddings 1.0, first block 0.99999976, encoder 0.999999, first-step logits 0.9999999, greedy token-exact); the backend reads the line end to end. Offline-only to customize."
+    },
+    {
+      "key": "TROCR_BASE_PRINTED",
+      "repo": "microsoft/trocr-base-printed",
+      "directory": "trocr-base-printed",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR_BASE_PRINTED": "",
+        "IK_PARITY_TROCR_BASE_PRINTED": "record.safetensors",
+        "IK_PARITY_TROCR_BASE_PRINTED_LOSS": "loss_record.safetensors"
+      },
+      "note": "TrOCR base-printed (microsoft/trocr-base-printed, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv. The fine-tuning objective's record: `run_reference.py trocr_loss <dir>/loss_record.safetensors --checkpoint <dir> --size 500 --image trocr_line.png`."
+    },
+    {
+      "key": "TROCR_BASE_STR",
+      "repo": "microsoft/trocr-base-str",
+      "directory": "trocr-base-str",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_TROCR_BASE_STR": "",
+        "IK_PARITY_TROCR_BASE_STR": "record.safetensors"
+      },
+      "note": "TrOCR base-str (microsoft/trocr-base-str, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_BASE_STAGE1",
+      "repo": "microsoft/trocr-base-stage1",
+      "directory": "trocr-base-stage1",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR_BASE_STAGE1": "",
+        "IK_PARITY_TROCR_BASE_STAGE1": "record.safetensors"
+      },
+      "note": "TrOCR base-stage1 (microsoft/trocr-base-stage1, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_LARGE_HANDWRITTEN",
+      "repo": "microsoft/trocr-large-handwritten",
+      "directory": "trocr-large-handwritten",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_TROCR_LARGE_HANDWRITTEN": "",
+        "IK_PARITY_TROCR_LARGE_HANDWRITTEN": "record.safetensors"
+      },
+      "note": "TrOCR large-handwritten (microsoft/trocr-large-handwritten, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_LARGE_PRINTED",
+      "repo": "microsoft/trocr-large-printed",
+      "directory": "trocr-large-printed",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR_LARGE_PRINTED": "",
+        "IK_PARITY_TROCR_LARGE_PRINTED": "record.safetensors"
+      },
+      "note": "TrOCR large-printed (microsoft/trocr-large-printed, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_LARGE_STR",
+      "repo": "microsoft/trocr-large-str",
+      "directory": "trocr-large-str",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_TROCR_LARGE_STR": "",
+        "IK_PARITY_TROCR_LARGE_STR": "record.safetensors"
+      },
+      "note": "TrOCR large-str (microsoft/trocr-large-str, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_LARGE_STAGE1",
+      "repo": "microsoft/trocr-large-stage1",
+      "directory": "trocr-large-stage1",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR_LARGE_STAGE1": "",
+        "IK_PARITY_TROCR_LARGE_STAGE1": "record.safetensors"
+      },
+      "note": "TrOCR large-stage1 (microsoft/trocr-large-stage1, Microsoft, MIT). Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv."
+    },
+    {
+      "key": "TROCR_SMALL_HANDWRITTEN",
+      "repo": "microsoft/trocr-small-handwritten",
+      "directory": "trocr-small-handwritten",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "sentencepiece.bpe.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_TROCR_SMALL_HANDWRITTEN": "",
+        "IK_PARITY_TROCR_SMALL_HANDWRITTEN": "record.safetensors",
+        "IK_PARITY_TROCR_SMALL_HANDWRITTEN_LOSS": "loss_record.safetensors"
+      },
+      "note": "TrOCR small-handwritten (microsoft/trocr-small-handwritten, Microsoft, MIT). A DeiT-small encoder (a distillation token after the class token, query/key/value bias) and a 256-wide 6-layer decoder over XLM-R's SentencePiece vocabulary (64,044 ids); the processor resamples bicubic. Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv. The fine-tuning objective's record: `run_reference.py trocr_loss <dir>/loss_record.safetensors --checkpoint <dir> --size 500 --image trocr_line.png`. The oracle needs protobuf >= 3.20 (transformers converts the slow XLM-R tokenizer to a fast one) and the llm env pins 3.19.6 for descript-audiotools: run it with PYTHONPATH=<root>/protobuf-4 (`pip install --target <root>/protobuf-4 protobuf==4.25.3`)."
+    },
+    {
+      "key": "TROCR_SMALL_PRINTED",
+      "repo": "microsoft/trocr-small-printed",
+      "directory": "trocr-small-printed",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "sentencepiece.bpe.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TROCR_SMALL_PRINTED": "",
+        "IK_PARITY_TROCR_SMALL_PRINTED": "record.safetensors"
+      },
+      "note": "TrOCR small-printed (microsoft/trocr-small-printed, Microsoft, MIT). A DeiT-small encoder (a distillation token after the class token, query/key/value bias) and a 256-wide 6-layer decoder over XLM-R's SentencePiece vocabulary (64,044 ids); the processor resamples bicubic. Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv. The oracle needs protobuf >= 3.20 (transformers converts the slow XLM-R tokenizer to a fast one) and the llm env pins 3.19.6 for descript-audiotools: run it with PYTHONPATH=<root>/protobuf-4 (`pip install --target <root>/protobuf-4 protobuf==4.25.3`)."
+    },
+    {
+      "key": "TROCR_SMALL_STAGE1",
+      "repo": "microsoft/trocr-small-stage1",
+      "directory": "trocr-small-stage1",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "generation_config.json",
+        "sentencepiece.bpe.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_TROCR_SMALL_STAGE1": "",
+        "IK_PARITY_TROCR_SMALL_STAGE1": "record.safetensors"
+      },
+      "note": "TrOCR small-stage1 (microsoft/trocr-small-stage1, Microsoft, MIT). A DeiT-small encoder (a distillation token after the class token, query/key/value bias) and a 256-wide 6-layer decoder over XLM-R's SentencePiece vocabulary (64,044 ids); the processor resamples bicubic. Record: `run_reference.py trocr <dir>/record.safetensors --checkpoint <dir> --size 384 --image <line image>` under llmvenv. The oracle needs protobuf >= 3.20 (transformers converts the slow XLM-R tokenizer to a fast one) and the llm env pins 3.19.6 for descript-audiotools: run it with PYTHONPATH=<root>/protobuf-4 (`pip install --target <root>/protobuf-4 protobuf==4.25.3`)."
+    },
+    {
+      "key": "TABLE_TRANSFORMER",
+      "repo": "microsoft/table-transformer-structure-recognition",
+      "directory": "table-transformer",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TABLE_TRANSFORMER": "table-transformer",
+        "IK_PARITY_TABLE_TRANSFORMER": "table-transformer/record.safetensors",
+        "IK_VAL_TABLE_TRANSFORMER_IMAGE": "table_structure.png"
+      },
+      "note": "Table Transformer (microsoft/table-transformer-structure-recognition, Microsoft, MIT), ~110 MB float32, table-structure recognition (a vanilla DETR: a timm ResNet-18 backbone with frozen batch norm, a normalized 2D sine position embedding, a pre-norm encoder-decoder over 125 object queries, and the class / box heads). The oracle is the transformers-NATIVE TableTransformerForObjectDetection with its DETR image processor: `run_reference.py table_transformer --checkpoint <dir> --size 800 --image table_structure.png` records the preprocessed pixels, the ResNet-18 feature map, the encoder and decoder outputs, the class logits, the predicted boxes, and the post-processed detections. IK_VAL_TABLE_TRANSFORMER is the release directory; IK_PARITY_TABLE_TRANSFORMER is the record. IK_VAL_TABLE_TRANSFORMER_IMAGE is a locally rendered grid table (any table crop works; the backend test asserts the port finds a table with its rows and columns). Ported at reference parity (backbone 1.0000001, encoder 0.9999998, decoder 1.0, logits 0.9999999, boxes 0.99999994); the pre-norm placement is the one difference from post-norm DETR. Offline-only to customize."
+    },
+    {
+      "key": "TABLE_TRANSFORMER_DETECTION",
+      "repo": "microsoft/table-transformer-detection",
+      "directory": "table-transformer-detection",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TABLE_TRANSFORMER_DETECTION": "",
+        "IK_PARITY_TABLE_TRANSFORMER_DETECTION": "record.safetensors",
+        "IK_PARITY_TABLE_TRANSFORMER_DETECTION_LOSS": "loss_record.safetensors"
+      },
+      "note": "Table Transformer detection (microsoft/table-transformer-detection, Microsoft, MIT), ~110 MB: the structure model's DETR with 15 queries and two classes (table, table rotated), a timm ResNet-18 backbone, and a preprocessor that caps both edges at 800. Record: `run_reference.py table_transformer <dir>/record.safetensors --checkpoint <dir> --size 800 --image table_structure.png`. The fine-tuning objective's record: `run_reference.py table_transformer_loss <dir>/loss_record.safetensors --checkpoint <dir> --image table_structure.png` (IK_TABLE_TRANSFORMER_SRC set)."
+    },
+    {
+      "key": "TABLE_TRANSFORMER_V11_ALL",
+      "repo": "microsoft/table-transformer-structure-recognition-v1.1-all",
+      "directory": "table-transformer-v11-all",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TABLE_TRANSFORMER_V11_ALL": "",
+        "IK_PARITY_TABLE_TRANSFORMER_V11_ALL": "record.safetensors",
+        "IK_PARITY_TABLE_TRANSFORMER_V11_ALL_LOSS": "loss_record.safetensors"
+      },
+      "note": "Table Transformer structure recognition v1.1 (all; microsoft/table-transformer-structure-recognition-v1.1-all, Microsoft, MIT), ~110 MB: the v1.0 structure model's geometry (125 queries, six classes) with transformers' own ResNet-18 backbone (`use_timm_backbone` false, keys under `embedder` / `encoder.stages`) and a preprocessor of `longest_edge` 800 only, which transformers 4.57's DetrImageProcessor rejects; the port resizes the longest edge to 800 as the official repo's MaxResize does. Record: `run_reference.py table_transformer <dir>/record.safetensors --checkpoint <dir> --size 800 --image table_structure.png`. The fine-tuning objective's record: `run_reference.py table_transformer_loss <dir>/loss_record.safetensors --checkpoint <dir> --image table_structure.png` (IK_TABLE_TRANSFORMER_SRC set)."
+    },
+    {
+      "key": "TABLE_TRANSFORMER_V11_FIN",
+      "repo": "microsoft/table-transformer-structure-recognition-v1.1-fin",
+      "directory": "table-transformer-v11-fin",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TABLE_TRANSFORMER_V11_FIN": "",
+        "IK_PARITY_TABLE_TRANSFORMER_V11_FIN": "record.safetensors"
+      },
+      "note": "Table Transformer structure recognition v1.1 (fin; microsoft/table-transformer-structure-recognition-v1.1-fin, Microsoft, MIT), ~110 MB: the v1.0 structure model's geometry (125 queries, six classes) with transformers' own ResNet-18 backbone (`use_timm_backbone` false, keys under `embedder` / `encoder.stages`) and a preprocessor of `longest_edge` 800 only, which transformers 4.57's DetrImageProcessor rejects; the port resizes the longest edge to 800 as the official repo's MaxResize does. Record: `run_reference.py table_transformer <dir>/record.safetensors --checkpoint <dir> --size 800 --image table_structure.png`."
+    },
+    {
+      "key": "TABLE_TRANSFORMER_V11_PUB",
+      "repo": "microsoft/table-transformer-structure-recognition-v1.1-pub",
+      "directory": "table-transformer-v11-pub",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TABLE_TRANSFORMER_V11_PUB": "",
+        "IK_PARITY_TABLE_TRANSFORMER_V11_PUB": "record.safetensors"
+      },
+      "note": "Table Transformer structure recognition v1.1 (pub; microsoft/table-transformer-structure-recognition-v1.1-pub, Microsoft, MIT), ~110 MB: the v1.0 structure model's geometry (125 queries, six classes) with transformers' own ResNet-18 backbone (`use_timm_backbone` false, keys under `embedder` / `encoder.stages`) and a preprocessor of `longest_edge` 800 only, which transformers 4.57's DetrImageProcessor rejects; the port resizes the longest edge to 800 as the official repo's MaxResize does. Record: `run_reference.py table_transformer <dir>/record.safetensors --checkpoint <dir> --size 800 --image table_structure.png`."
+    },
+    {
+      "key": "VJEPA2",
+      "repo": "facebook/vjepa2-vitl-fpc64-256",
+      "directory": "vjepa2",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2": "vjepa2",
+        "IK_PARITY_VJEPA2": "vjepa2/record.safetensors",
+        "IK_PARITY_VJEPA2_PROBE": "probe_record.safetensors"
+      },
+      "note": "V-JEPA 2 (facebook/vjepa2-vitl-fpc64-256, Meta, MIT), ~1.3 GB float32, a self-supervised video encoder (a ViT-L: a 3D tubelet Conv3d patch embedding, 24 pre-norm blocks with 3D rotary attention, and a final layer norm; no class token and no learned position table). The oracle is the transformers-NATIVE VJEPA2Model with skip_predictor=True: `run_reference.py vjepa2 --checkpoint <dir>` builds a small deterministic 8-frame clip (so the token count stays light while all three rotary axes vary) and records the clip, the patch embedding, a middle block's hidden state, and the final normed token features. IK_VAL_VJEPA2 is the release directory; IK_PARITY_VJEPA2 is the record. The 3D rotary bands tile the cosine and sine tables as two halves, which is the one departure from a standard interleaved rotation. Ported at reference parity (patch embedding 0.9999998, middle block 1.0000001, final features 1.0000004); the backend embeds a video or an image into a mean-pooled feature vector. Offline-only to customize (the released checkpoint is the SSL encoder without a task head). The probe recipe's record: `run_reference.py vjepa2_probe <dir>/probe_record.safetensors` (IK_VJEPA2_SRC set), which scores the loss, steps the reference's WarmupCosineLRSchedule, and builds AttentiveClassifier(depth=4) for its initialization statistics."
+    },
+    {
+      "key": "VJEPA2_VITH_FPC64_256",
+      "repo": "facebook/vjepa2-vith-fpc64-256",
+      "directory": "vjepa2-vith-fpc64-256",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITH_FPC64_256": "",
+        "IK_PARITY_VJEPA2_VITH_FPC64_256": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vith-fpc64-256 (facebook/vjepa2-vith-fpc64-256, Meta, MIT). An encoder release. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITG_FPC64_256",
+      "repo": "facebook/vjepa2-vitg-fpc64-256",
+      "directory": "vjepa2-vitg-fpc64-256",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITG_FPC64_256": "",
+        "IK_PARITY_VJEPA2_VITG_FPC64_256": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitg-fpc64-256 (facebook/vjepa2-vitg-fpc64-256, Meta, MIT). An encoder release. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITG_FPC64_384",
+      "repo": "facebook/vjepa2-vitg-fpc64-384",
+      "directory": "vjepa2-vitg-fpc64-384",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITG_FPC64_384": "",
+        "IK_PARITY_VJEPA2_VITG_FPC64_384": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitg-fpc64-384 (facebook/vjepa2-vitg-fpc64-384, Meta, MIT). An encoder release. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITL_FPC16_256_SSV2",
+      "repo": "facebook/vjepa2-vitl-fpc16-256-ssv2",
+      "directory": "vjepa2-vitl-fpc16-256-ssv2",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITL_FPC16_256_SSV2": "",
+        "IK_PARITY_VJEPA2_VITL_FPC16_256_SSV2": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitl-fpc16-256-ssv2 (facebook/vjepa2-vitl-fpc16-256-ssv2, Meta, MIT). A video-classification release (`VJEPA2ForVideoClassification`): the encoder under `vjepa2.`, a 3-layer attentive pooler, and a linear classifier over Something-Something v2's 174 classes. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITL_FPC32_256_DIVING48",
+      "repo": "facebook/vjepa2-vitl-fpc32-256-diving48",
+      "directory": "vjepa2-vitl-fpc32-256-diving48",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITL_FPC32_256_DIVING48": "",
+        "IK_PARITY_VJEPA2_VITL_FPC32_256_DIVING48": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitl-fpc32-256-diving48 (facebook/vjepa2-vitl-fpc32-256-diving48, Meta, MIT). A video-classification release (`VJEPA2ForVideoClassification`): the encoder under `vjepa2.`, a 3-layer attentive pooler, and a linear classifier over Diving48's 48 classes. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITG_FPC64_384_SSV2",
+      "repo": "facebook/vjepa2-vitg-fpc64-384-ssv2",
+      "directory": "vjepa2-vitg-fpc64-384-ssv2",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITG_FPC64_384_SSV2": "",
+        "IK_PARITY_VJEPA2_VITG_FPC64_384_SSV2": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitg-fpc64-384-ssv2 (facebook/vjepa2-vitg-fpc64-384-ssv2, Meta, MIT). A video-classification release (`VJEPA2ForVideoClassification`): the encoder under `vjepa2.`, a 3-layer attentive pooler, and a linear classifier over Something-Something v2's 174 classes. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "VJEPA2_VITG_FPC32_384_DIVING48",
+      "repo": "facebook/vjepa2-vitg-fpc32-384-diving48",
+      "directory": "vjepa2-vitg-fpc32-384-diving48",
+      "files": [
+        "config.json",
+        "video_preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VJEPA2_VITG_FPC32_384_DIVING48": "",
+        "IK_PARITY_VJEPA2_VITG_FPC32_384_DIVING48": "record.safetensors"
+      },
+      "note": "V-JEPA 2 vitg-fpc32-384-diving48 (facebook/vjepa2-vitg-fpc32-384-diving48, Meta, MIT). A video-classification release (`VJEPA2ForVideoClassification`): the encoder under `vjepa2.`, a 3-layer attentive pooler, and a linear classifier over Diving48's 48 classes. Record: `run_reference.py vjepa2 <dir>/record.safetensors --checkpoint <dir>` under llmvenv (an 8-frame seeded clip at the release's crop; a classification release adds the pooler output and the logits)."
+    },
+    {
+      "key": "SA2VA",
+      "repo": "ByteDance/Sa2VA-4B",
+      "directory": "sa2va",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "vocab.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "configuration_sa2va_chat.py",
+        "configuration_intern_vit.py",
+        "configuration_internlm2.py",
+        "configuration_phi3.py",
+        "modeling_sa2va_chat.py",
+        "modeling_intern_vit.py",
+        "modeling_internlm2.py",
+        "modeling_phi3.py",
+        "sam2.py",
+        "templates.py",
+        "flash_attention.py",
+        "tokenization_internlm2.py",
+        "tokenization_internlm2_fast.py"
+      ],
+      "config": {
+        "IK_VAL_SA2VA": "sa2va",
+        "IK_PARITY_SA2VA": "sa2va/record.safetensors"
+      },
+      "oracle_environments": "The llm env plus `peft` and `timm` (installed --no-deps): the repo's custom code imports peft at module load and InternViT uses timm. The custom .py files must be present in the directory for trust_remote_code.",
+      "note": "Sa2VA-4B (ByteDance/Sa2VA-4B, ByteDance, Apache-2.0), ~15 GB float32, a segmentation VLM (an InternViT-300M image encoder with per-channel LayerScale, an InternVL pixel-shuffle + 2-layer MLP projector, a Qwen2.5-3B decoder, and a SAM 2 Hiera-Large grounding encoder driven by the decoder's `[SEG]` hidden state). The oracle is the repo's OWN code via trust_remote_code: `run_reference.py sa2va --checkpoint <dir>` synthesizes a deterministic quadrant plate with a bright disk, asks the model to segment it, and records the pixel values, the grounding image, the input ids and generated sequence, the InternViT last hidden state, the projected vision tokens, the fused embeddings, the `[SEG]` embedding, the conditioned SAM feature, and the three multimask logits. The SAM branch is replicated through the first-frame glue (the released video predictor hardcodes CUDA), which is the conditioning-frame path a single image takes. IK_VAL_SA2VA is the release directory; IK_PARITY_SA2VA is the record. Ported at reference parity (measured bf16 against the fp32 oracle: InternViT 0.99959, projector 0.99973, fusion 0.99973, `[SEG]` bridge 0.99995, mask 0.99999 / IoU 0.99981, greedy token-exact); the backend answers in text and returns the mask when the answer carries `[SEG]`. The model loads bfloat16 (its declared dtype). Offline-only to customize (a full VLM plus SAM 2)."
+    },
+    {
+      "key": "SA2VA_1B",
+      "repo": "ByteDance/Sa2VA-1B",
+      "directory": "sa2va-1b",
+      "files": [
+        "added_tokens.json",
+        "config.json",
+        "configuration_intern_vit.py",
+        "configuration_internlm2.py",
+        "configuration_phi3.py",
+        "configuration_sa2va_chat.py",
+        "flash_attention.py",
+        "generation_config.json",
+        "merges.txt",
+        "model.safetensors",
+        "modeling_intern_vit.py",
+        "modeling_internlm2.py",
+        "modeling_phi3.py",
+        "modeling_sa2va_chat.py",
+        "sam2.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenization_internlm2.py",
+        "tokenization_internlm2_fast.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_1B": "",
+        "IK_PARITY_SA2VA_1B": "record.safetensors",
+        "IK_PARITY_SA2VA_1B_LOSS": "loss_record.safetensors"
+      },
+      "note": "Sa2VA-1B (ByteDance/Sa2VA-1B, Apache-2.0): Sa2VA-4B's architecture (InternViT-300M, the pixel-shuffle projector, a qwen2 decoder, the [SEG] bridge, and SAM 2 Hiera-Large grounding) with its own decoder size and the `qwen_chat` template. The directory carries the repo's remote code; record: `run_reference.py sa2va <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU. The fine-tuning objective's record: `run_reference.py sa2va_loss <dir>/loss_record.safetensors --checkpoint <dir>` (IK_SA2VA_SRC set)."
+    },
+    {
+      "key": "SA2VA_INTERNVL3_2B",
+      "repo": "ByteDance/Sa2VA-InternVL3-2B",
+      "directory": "sa2va-internvl3-2b",
+      "files": [
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_intern_vit.py",
+        "configuration_internlm2.py",
+        "configuration_phi3.py",
+        "configuration_sa2va_chat.py",
+        "flash_attention.py",
+        "merges.txt",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+        "modeling_intern_vit.py",
+        "modeling_internlm2.py",
+        "modeling_phi3.py",
+        "modeling_sa2va_chat.py",
+        "sam2.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenization_internlm2.py",
+        "tokenization_internlm2_fast.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_INTERNVL3_2B": "",
+        "IK_PARITY_SA2VA_INTERNVL3_2B": "record.safetensors"
+      },
+      "note": "Sa2VA-InternVL3-2B (ByteDance/Sa2VA-InternVL3-2B, Apache-2.0): Sa2VA-4B's architecture (InternViT-300M, the pixel-shuffle projector, a qwen2 decoder, the [SEG] bridge, and SAM 2 Hiera-Large grounding) with its own decoder size and the `qwen_chat` template. The directory carries the repo's remote code; record: `run_reference.py sa2va <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU."
+    },
+    {
+      "key": "SA2VA_QWEN3_VL_2B",
+      "repo": "ByteDance/Sa2VA-Qwen3-VL-2B",
+      "directory": "sa2va-qwen3-vl-2b",
+      "files": [
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_sa2va_chat.py",
+        "merges.txt",
+        "model-00001-of-00003.safetensors",
+        "model-00002-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+        "model.safetensors.index.json",
+        "modeling_sa2va_qwen.py",
+        "preprocessor_config.json",
+        "sam2.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_QWEN3_VL_2B": "",
+        "IK_PARITY_SA2VA_QWEN3_VL_2B": "record.safetensors"
+      },
+      "note": "Sa2VA-Qwen3-VL-2B (ByteDance/Sa2VA-Qwen3-VL-2B, Apache-2.0): transformers' Qwen3-VL-2B under `model.`, the [SEG] bridge, and SAM 2 Hiera-Large grounding. Record: `run_reference.py sa2va_qwen <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU (the remote code's `qwen_vl_utils` import is stubbed)."
+    },
+    {
+      "key": "SA2VA_QWEN3_VL_4B",
+      "repo": "ByteDance/Sa2VA-Qwen3-VL-4B",
+      "directory": "sa2va-qwen3-vl-4b",
+      "files": [
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_sa2va_chat.py",
+        "merges.txt",
+        "model-00001-of-00005.safetensors",
+        "model-00002-of-00005.safetensors",
+        "model-00003-of-00005.safetensors",
+        "model-00004-of-00005.safetensors",
+        "model-00005-of-00005.safetensors",
+        "model.safetensors.index.json",
+        "modeling_sa2va_qwen.py",
+        "preprocessor_config.json",
+        "sam2.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_QWEN3_VL_4B": "",
+        "IK_PARITY_SA2VA_QWEN3_VL_4B": "record.safetensors"
+      },
+      "note": "Sa2VA-Qwen3-VL-4B (ByteDance/Sa2VA-Qwen3-VL-4B, Apache-2.0): transformers' Qwen3-VL-4B under `model.`, the [SEG] bridge, and SAM 2 Hiera-Large grounding. Record: `run_reference.py sa2va_qwen <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU."
+    },
+    {
+      "key": "SA2VA_QWEN3_VL_4B_SAM3",
+      "repo": "ByteDance/Sa2VA-Qwen3-VL-4B-SAM3",
+      "directory": "sa2va-qwen3-vl-4b-sam3",
+      "files": [
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_sa2va_chat.py",
+        "merges.txt",
+        "model-00001-of-00005.safetensors",
+        "model-00002-of-00005.safetensors",
+        "model-00003-of-00005.safetensors",
+        "model-00004-of-00005.safetensors",
+        "model-00005-of-00005.safetensors",
+        "model.safetensors.index.json",
+        "modeling_sa2va_qwen.py",
+        "preprocessor_config.json",
+        "sam3.py",
+        "sam3pkg_build_sam3_tracker.py",
+        "sam3pkg_ext_sam3_base.py",
+        "sam3pkg_model_act_ckpt_utils.py",
+        "sam3pkg_model_box_ops.py",
+        "sam3pkg_model_data_misc.py",
+        "sam3pkg_model_decoder.py",
+        "sam3pkg_model_memory.py",
+        "sam3pkg_model_model_misc.py",
+        "sam3pkg_model_necks.py",
+        "sam3pkg_model_position_encoding.py",
+        "sam3pkg_model_sam3_tracker_base.py",
+        "sam3pkg_model_sam3_tracker_utils.py",
+        "sam3pkg_model_sam3_tracking_predictor.py",
+        "sam3pkg_model_utils_sam2_utils.py",
+        "sam3pkg_model_vitdet.py",
+        "sam3pkg_model_vl_combiner.py",
+        "sam3pkg_perflib_compile.py",
+        "sam3pkg_perflib_fused.py",
+        "sam3pkg_sam_common.py",
+        "sam3pkg_sam_mask_decoder.py",
+        "sam3pkg_sam_prompt_encoder.py",
+        "sam3pkg_sam_rope.py",
+        "sam3pkg_sam_transformer.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_QWEN3_VL_4B_SAM3": "",
+        "IK_PARITY_SA2VA_QWEN3_VL_4B_SAM3": "record.safetensors"
+      },
+      "note": "Sa2VA-Qwen3-VL-4B-SAM3 (ByteDance/Sa2VA-Qwen3-VL-4B-SAM3, Apache-2.0): Sa2VA-Qwen3-VL-4B grounding with SAM 3's tracker instead of SAM 2 (the SAM 3 ViT at 1008, the neck's `sam2_convs` branch, and SAM 2-style heads; the repo vendors the `sam3` package as `sam3pkg_*.py`). Record: `run_reference.py sa2va_qwen <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU."
+    },
+    {
+      "key": "SA2VA_QWEN2_5_VL_3B",
+      "repo": "ByteDance/Sa2VA-Qwen2_5-VL-3B",
+      "directory": "sa2va-qwen2_5-vl-3b",
+      "files": [
+        "added_tokens.json",
+        "chat_template.jinja",
+        "config.json",
+        "configuration_sa2va_chat.py",
+        "merges.txt",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "model.safetensors.index.json",
+        "modeling_sa2va_qwen.py",
+        "preprocessor_config.json",
+        "sam2.py",
+        "special_tokens_map.json",
+        "templates.py",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_SA2VA_QWEN2_5_VL_3B": "",
+        "IK_PARITY_SA2VA_QWEN2_5_VL_3B": "record.safetensors"
+      },
+      "note": "Sa2VA-Qwen2_5-VL-3B (ByteDance/Sa2VA-Qwen2_5-VL-3B, Apache-2.0): transformers' Qwen2.5-VL-3B (the windowed RMSNorm vision tower and a Qwen2 decoder under contiguous-section M-RoPE) under `model.`, the [SEG] bridge, and SAM 2 grounding. Record: `run_reference.py sa2va_qwen <dir>/record.safetensors --checkpoint <dir>` under llmvenv, float32 on the CPU."
+    },
+    {
+      "key": "COSMOS_TOKENIZER_CI8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-CI8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "CI8x8/encoder.jit",
+        "CI8x8/decoder.jit",
+        "CI8x8/autoencoder.jit"
+      ],
+      "config": {
+        "IK_VAL_COSMOS_TOKENIZER": "",
+        "IK_PARITY_COSMOS_TOKENIZER": "",
+        "IK_PARITY_COSMOS_TOKENIZER_LOSS": "loss_record.safetensors"
+      },
+      "oracle_environments": "The llm env (torch, torchvision, einops, loguru) with NVIDIA's `cosmos_predict1.tokenizer` modules on IK_COSMOS_TOKENIZER_SRC (the `sources` entries, pinned to cosmos-predict1 724daa1b). The older NVIDIA/Cosmos-Tokenizer package does not build the releases.",
+      "note": "Cosmos Tokenizer (nvidia/Cosmos-0.1-Tokenizer-*, NVIDIA, NVIDIA Open Model License; code Apache-2.0), ten releases of ~60–130 MB per half, stored bfloat16 as TorchScript: CI8x8, CI16x16 (continuous image), DI8x8, DI16x16 (discrete image, FSQ), CV4x8x8, CV8x8x8, CV8x16x16 (continuous causal video), DV4x8x8, DV8x8x8, DV8x16x16 (discrete causal video). Each config.json is empty; the geometry is fixed per variant. One entry per repository; every variant lands in <root>/cosmos-tokenizer/<variant>/, which is what IK_VAL_COSMOS_TOKENIZER names. The records are written beside each release: `run_reference.py cosmos_tokenizer <dir>/<variant>/record.safetensors --checkpoint <dir>/<variant> --image inputs/face960.jpg --size 128` (the directory's name is the variant), and IK_PARITY_COSMOS_TOKENIZER is the same root. For DI8x8, DV4x8x8, DV8x8x8, and DV8x16x16 the single autoencoder.jit holds different weights from the encoder/decoder pair, so each also carries record_autoencoder.safetensors (`--checkpoint <dir>/<variant>/autoencoder.jit`); the other six autoencoder.jit files are bit-identical to their pairs. The oracle rebuilds each release from NVIDIA's modules, loads every parameter but not the stored derived constants (the Haar taps are kept at bfloat16, 0.70703125), runs float32, and runs the shipped TorchScript graph on the same input. The objective record: `run_reference.py cosmos_tokenizer_loss <dir>/loss_record.safetensors --checkpoint vgg16/model.safetensors`. Ported at reference parity on every variant, with the post-training objective (L1 + 0.1 x VGG-16 perceptual, Gram optional) measured on identical tensors."
+    },
+    {
+      "key": "COSMOS_TOKENIZER_CI16X16",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-CI16x16",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "CI16x16/encoder.jit",
+        "CI16x16/decoder.jit",
+        "CI16x16/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_DI8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-DI8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "DI8x8/encoder.jit",
+        "DI8x8/decoder.jit",
+        "DI8x8/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_DI16X16",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-DI16x16",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "DI16x16/encoder.jit",
+        "DI16x16/decoder.jit",
+        "DI16x16/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_CV4X8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-CV4x8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "CV4x8x8/encoder.jit",
+        "CV4x8x8/decoder.jit",
+        "CV4x8x8/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_CV8X8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-CV8x8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "CV8x8x8/encoder.jit",
+        "CV8x8x8/decoder.jit",
+        "CV8x8x8/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_CV8X16X16",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-CV8x16x16",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "CV8x16x16/encoder.jit",
+        "CV8x16x16/decoder.jit",
+        "CV8x16x16/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_DV4X8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-DV4x8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "DV4x8x8/encoder.jit",
+        "DV4x8x8/decoder.jit",
+        "DV4x8x8/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_DV8X8X8",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-DV8x8x8",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "DV8x8x8/encoder.jit",
+        "DV8x8x8/decoder.jit",
+        "DV8x8x8/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "COSMOS_TOKENIZER_DV8X16X16",
+      "repo": "nvidia/Cosmos-0.1-Tokenizer-DV8x16x16",
+      "directory": "cosmos-tokenizer",
+      "files": [
+        "DV8x16x16/encoder.jit",
+        "DV8x16x16/decoder.jit",
+        "DV8x16x16/autoencoder.jit"
+      ],
+      "config": {}
+    },
+    {
+      "key": "VGG16",
+      "repo": "timm/vgg16.tv_in1k",
+      "directory": "vgg16",
+      "files": [
+        "config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_VGG16": "model.safetensors"
+      },
+      "note": "VGG-16 with torchvision's ImageNet weights (timm/vgg16.tv_in1k, BSD-3-Clause), ~553 MB float32. The perceptual loss network of the Cosmos Tokenizer post-training objective: only `features.*` (the 13 convolutions, ~58 MB) is read. The objective oracle loads this same file into torchvision's vgg16."
+    },
+    {
+      "key": "QWEN_IMAGE",
+      "repo": "Qwen/Qwen-Image-2.1",
+      "directory": "qwen-image-2.1",
+      "files": [
+        "model_index.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors",
+        "text_encoder/config.json",
+        "text_encoder/model-00001-of-00004.safetensors",
+        "text_encoder/model-00002-of-00004.safetensors",
+        "text_encoder/model-00003-of-00004.safetensors",
+        "text_encoder/model-00004-of-00004.safetensors",
+        "text_encoder/model.safetensors.index.json",
+        "scheduler/scheduler_config.json",
+        "processor/tokenizer.json",
+        "processor/tokenizer_config.json",
+        "processor/vocab.json",
+        "processor/merges.txt",
+        "processor/preprocessor_config.json",
+        "processor/chat_template.jinja"
+      ],
+      "config": {
+        "IK_VAL_QWEN_IMAGE": ""
+      },
+      "note": "Qwen-Image 2.1, 31 GB, QWEN RESEARCH LICENSE (non-commercial), released 2026-09-20. Four stages: a 7.1B block-causal DiT (transformer/, 297 tensors bf16), a Qwen3-VL 8B text encoder (text_encoder/, read one layer BEFORE its final norm), the Wan 2.2 residual VAE specialized to one frame (vae/, 238 tensors, 4-D conv weights, four image channels), and a FlowMatchEuler scheduler with dynamic shifting and shift_terminal 0.02. Records: run_reference.py qwenimage21 (tiny, no checkpoint), qwenimage21_real / qwenimage21_vae / qwenimage21_scheduler / qwenimage21_pipeline / qwenimage21_text (--checkpoint this directory) -> IK_PARITY_QWEN_IMAGE / _REAL / _VAE / _SCHEDULER / _PIPELINE / _TEXT. The transformer's shapes.json lives under shapes/qwen-image-2.1-transformer. All modes need the qwenimage oracle interpreter (diffusers from git main)."
+    },
+    {
+      "key": "QWEN3_VL_EMBEDDING_2B",
+      "repo": "Qwen/Qwen3-VL-Embedding-2B",
+      "directory": "qwen3-vl-embedding-2b",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "merges.txt",
+        "vocab.json",
+        "chat_template.jinja",
+        "1_Pooling/config.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_VL_EMBEDDING": ""
+      },
+      "note": "Qwen3-VL-Embedding-2B, 4.3 GB, Apache 2.0. The Qwen3-VL 2B backbone under a retrieval fine-tune: the instruction goes in a system turn, the content in a user turn, and the embedding is the last position's hidden state, L2-normalized. Its tokenizer.json carries a TemplateProcessing post-processor appending <|endoftext|>, and THAT token is the pooled position; the core tokenizer implements no post-processor, so the port appends the id. preprocessor_config.json bounds an image between 4,096 and 1,310,720 pixels, not the instruct model's 65,536 and 16,777,216, which changes how many tokens an image occupies."
+    },
+    {
+      "key": "QWEN3_VL_RERANKER_2B",
+      "repo": "Qwen/Qwen3-VL-Reranker-2B",
+      "directory": "qwen3-vl-reranker-2b",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "preprocessor_config.json",
+        "merges.txt",
+        "vocab.json",
+        "chat_template.jinja",
+        "1_LogitScore/config.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_VL_RERANKER": ""
+      },
+      "note": "Qwen3-VL-Reranker-2B, 4.3 GB, Apache 2.0. The same backbone as a cross-encoder: query and document in one prompt, scored by sigmoid(logit[yes] - logit[no]) at the last position, which equals the reference's linear layer over lm_head[yes] - lm_head[no] because the projection carries no bias. The two ids are in 1_LogitScore/config.json (9693 and 2152). Its tokenizer carries NO post-processor, so the scored position is the newline after <|im_start|>assistant rather than an appended token."
+    },
+    {
       "key": "GEMMA4_E4B",
       "repo": "google/gemma-4-E4B-it",
       "directory": "gemma4-e4b",
       "files": [
         "config.json",
+        "tokenizer.json",
         "generation_config.json",
         "tokenizer_config.json",
         "model.safetensors"
@@ -1656,6 +3098,48 @@
       "note": "Parakeet-TDT 0.6B v2 speech recognizer (NVIDIA, CC-BY-4.0): a 2.47 GB .nemo tar holding model_config.yaml, model_weights.ckpt, and the SentencePiece BPE tokenizer (.model/.vocab). Unpack with `tar -xf` into raw/parakeet/tdt-0.6b-v2 (IK_VAL_PARAKEET); NFKMLXParakeet.backend(directoryURL:) reads model_weights.ckpt through the native torch reader and the *_tokenizer.vocab piece table. Parity via run_reference.py parakeet --checkpoint <the .nemo> under the nemo oracle env, on the validation speech clip (IK_VAL_AUDIO)."
     },
     {
+      "key": "CANARY",
+      "repo": "nvidia/canary-1b-v2",
+      "directory": "raw/canary",
+      "files": [
+        "canary-1b-v2.nemo"
+      ],
+      "config": {
+        "IK_VAL_CANARY": "release"
+      },
+      "note": "Canary-1B-v2 multitask speech model (NVIDIA NeMo EncDecMultiTaskModel, CC-BY-4.0): transcribes and translates. A ~6 GB .nemo tar holding model_config.yaml, model_weights.ckpt, and the NeMo aggregate tokenizers. The acoustic front is the BIASED FastConformer encoder (32 layers) reused verbatim through NFKParakeetEncoder with useBias=true (attention_bias + convolution_bias); the head is a Transformer attention encoder-decoder (pre-LN self-attn + cross-attn into the encoder + ReLU FF; embedding LayerNorm; fixed sinusoidal positions SCALED by 1/sqrt(d); output projection tied to the token embedding). Generation is greedy from a task prompt of control tokens (<|startofcontext|><|startoftranscript|><|emo:undefined|><|src|><|tgt|><|pnc|><|noitn|><|notimestamp|><|nodiarize|>). Setup: extract model_weights.ckpt from the .nemo into raw/canary/release (tar -xf canary-1b-v2.nemo -C raw/canary/release ./model_weights.ckpt) and place the HF tokenizer.json (a Metaspace BPE, 16384 vocab + control tokens; NFKMLXCanaryTokenizer) beside it (IK_VAL_CANARY). NFKMLXCanary.backend(directoryURL:) reads model_weights.ckpt through the native torch reader and tokenizer.json. Parity via run_reference.py canary --checkpoint <the .nemo> under the nemo oracle env, on the validation speech clip (IK_VAL_AUDIO) -> IK_PARITY_CANARY: encoder seams ~1.0, decoder logits (log-softmax space, the tied classifier's raw logits share a large component) ~1.0, greedy transcription exact, 1475 base tensors 0/0/0. The oracle clones the tied proj_out/token_embedding so safetensors saves both."
+    },
+    {
+      "key": "PHI4MM",
+      "repo": "microsoft/Phi-4-multimodal-instruct",
+      "directory": "/Volumes/WindowsBoot/InferKit/raw/phi4mm",
+      "files": [
+        "release/config.json",
+        "release/generation_config.json",
+        "release/model.safetensors.index.json",
+        "release/model-00001-of-00003.safetensors",
+        "release/model-00002-of-00003.safetensors",
+        "release/model-00003-of-00003.safetensors",
+        "release/tokenizer.json",
+        "release/tokenizer_config.json",
+        "release/vocab.json",
+        "release/merges.txt",
+        "release/added_tokens.json",
+        "release/special_tokens_map.json",
+        "release/preprocessor_config.json",
+        "release/processor_config.json",
+        "release/configuration_phi4mm.py",
+        "release/modeling_phi4mm.py",
+        "release/processing_phi4mm.py",
+        "release/speech_conformer_encoder.py",
+        "release/vision_siglip_navit.py"
+      ],
+      "config": {
+        "IK_VAL_PHI4MM": "release"
+      },
+      "note": "Phi-4-multimodal (Microsoft, MIT): a Phi-4-mini decoder serving text, image, and speech, with a SigLIP image tower, a Conformer speech tower, and per-modality LoRAs. 12.8 GB across three bf16 shards, which carry BOTH adapters beside the base weights (`base_layer` plus `lora_A`/`lora_B`.{vision,speech}); the repository's `vision-lora/` and `speech-lora/` directories duplicate them and are not fetched. The five `.py` files are the release's remote code, which the `phi4mm` oracle environment runs (`run_reference.py phi4mm --checkpoint <directory>/release`, transformers 4.46.1); the Swift port reads only the JSON, the tokenizer files, and the shards. On the overflow volume beside the other large releases, because the home volume could not hold it. The parity records are written by oracle runs from the validation clip and photo, not fetched: IK_PARITY_PHI4MM by `phi4mm` (one turn in every mode), IK_PARITY_PHI4MM_CONVERSATION by `phi4mm_conversation` (a multi-turn chat with two pictures and two clips, two clips batched, and a 45 s clip past the encoder's 500-frame window)."
+    },
+    {
       "key": "CHATTERBOX",
       "repo": "ResembleAI/chatterbox",
       "directory": "raw/chatterbox",
@@ -1707,7 +3191,8 @@
       ],
       "config": {
         "IK_VAL_GTCRN": "raw/gtcrn/weights.safetensors",
-        "IK_PARITY_GTCRN": "raw/gtcrn/record.safetensors"
+        "IK_PARITY_GTCRN": "raw/gtcrn/record.safetensors",
+        "IK_PARITY_GTCRN_LOSS": "raw/gtcrn/loss-record.safetensors"
       },
       "note": "GTCRN ultra-light (~48.2K param) real-time speech enhancement (Xiaobin-Rong/gtcrn, MIT). Not on HF: git-clone the repo to reference-sources/gtcrn (checkpoints ship with it), then convert checkpoints/model_trained_on_dns3.tar with Tools/gtcrn-to-safetensors (or the native torch reader). STFT is n_fft=512/hop=256 with a SQRT-Hann window (hann_window(512).pow(0.5), from infer.py). Parity via `run_reference.py gtcrn --checkpoint <ckpt>` with IK_GTCRN_SRC=<clone>, on the source (torch only, runs on 3.9). Five load-bearing facts: erb_fc/ierb_fc are bias=False (fixed ERB filterbank); the deconv weight transpose is group-aware ([in,out/g,kH,kW] -> [out,kH,kW,in/g]); the shared NFKMLXGRUCell must add the n-gate hidden bias b_hn at step 0 (MLX's GRU omits it; PyTorch keeps it); the deconv front-pads time for BOTH conv and deconv with the ConvTranspose padding=(2*dilation,1) removing the excess (no crop); and MLX's GROUPED ConvTranspose does not match PyTorch, so a grouped deconv runs each group as its own groups=1 transpose. At reference parity: waveform cosine > 0.999, all seams (encoder/skips/dpgrnn/decoder) exact."
     },
@@ -1880,7 +3365,8 @@
       "directory": "nuwave2",
       "file": "nuwave2_official.ckpt",
       "config": {
-        "IK_VAL_NUWAVE2": "nuwave2_official.ckpt"
+        "IK_VAL_NUWAVE2": "nuwave2_official.ckpt",
+        "IK_PARITY_NUWAVE2_LOSS": "nuwave2-loss.safetensors"
       },
       "note": "NU-Wave 2 (maum-ai/nuwave2, BSD-3), 20.9 MB: the README's official Lightning checkpoint (state_dict under model.model.; the pickled callbacks are inert to the native torch reader, and need a pytorch_lightning stub under torch.load). Oracle: the repository's model.py / diffusion.py / hparameter.yaml curled into reference-sources/nuwave2 (IK_NUWAVE2_SRC) on the llm env with omegaconf; torch.istft is patched to take the complex view. The parity input is the CMGAN clean 16 kHz clip through inference.py's conditioning."
     },
@@ -2286,13 +3772,265 @@
         "IK_VAL_SMOLVLM2_2_2B": ""
       },
       "note": "SmolVLM2-2.2B-Instruct (Apache, ungated), the largest released size, sharded across two files that NFKMLXReleaseWeights reads. Its text config states no `num_attention_heads`, so the language reader derives the head count from `head_dim` (32) rather than falling back to 16; the wrong count would have loaded silently. Record: `run_reference.py smolvlm` with the directory -> IK_PARITY_SMOLVLM_2_2B."
+    },
+    {
+      "key": "OPUS_MT_EN_DE",
+      "directory": "opus-mt-en-de",
+      "repo": "Helsinki-NLP/opus-mt-en-de",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN": ""
+      },
+      "note": "OPUS-MT en-de (Marian, CC-BY-4.0). NFKMLXMarian.translator(directoryURL:) reads the directory as is: the .bin through the native torch reader, source.spm/target.spm through NFKMLXSentencePiece, vocab.json as the shared numbering. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv → IK_PARITY_MARIAN (records/marian.safetensors)."
+    },
+    {
+      "key": "M2M100_418M",
+      "directory": "m2m100-418m",
+      "repo": "facebook/m2m100_418M",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "sentencepiece.bpe.model",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_M2M100": ""
+      },
+      "note": "M2M-100 418M (Meta, MIT). NFKMLXM2M100.translator(directoryURL:) reads the directory as is. Parity record: `run_reference.py m2m100 <out> --checkpoint <this directory>` under llmvenv → IK_PARITY_M2M100 (records/m2m100.safetensors)."
+    },
+    {
+      "key": "MADLAD400_3B_MT",
+      "directory": "madlad400-3b-mt",
+      "repo": "google/madlad400-3b-mt",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "spiece.model",
+        "tokenizer.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_MADLAD": ""
+      },
+      "note": "MADLAD-400 3B-MT (Google, Apache-2.0), 11.8 GB float32. NFKMLXMADLAD.translator(directoryURL:) reads config.json, spiece.model, and model.safetensors; tokenizer.json is for the oracle's fast tokenizer only. Parity record: `run_reference.py madlad <out> --checkpoint <this directory>` under llmvenv (the fast tokenizer; the slow one needs a protobuf build llmvenv lacks) → IK_PARITY_MADLAD (records/madlad.safetensors)."
+    },
+    {
+      "key": "TRANSLATEGEMMA_4B",
+      "directory": "translategemma-4b-it",
+      "repo": "google/translategemma-4b-it",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "chat_template.jinja",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRANSLATEGEMMA": ""
+      },
+      "note": "TranslateGemma 4B (google/translategemma-4b-it, Gemma terms, GATED: accept the license on the model page and give the hub a token). A Gemma 3 4B release with the translation chat template; NFKMLXTranslateGemma.translator(directoryURL:) loads it through the Gemma 3 reader and reads the language table from chat_template.jinja. Parity record: `run_reference.py translategemma <out> --checkpoint <this directory>` under the gemma oracle interpreter → IK_PARITY_TRANSLATEGEMMA (records/translategemma.safetensors)."
+    },
+    {
+      "key": "TRANSLATEGEMMA_12B",
+      "directory": "translategemma-12b-it",
+      "repo": "google/translategemma-12b-it",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "chat_template.jinja",
+        "model.safetensors.index.json",
+        "model-00001-of-00005.safetensors",
+        "model-00002-of-00005.safetensors",
+        "model-00003-of-00005.safetensors",
+        "model-00004-of-00005.safetensors",
+        "model-00005-of-00005.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRANSLATEGEMMA_12B": ""
+      },
+      "note": "TranslateGemma 12B (google/translategemma-12b-it, Gemma terms, GATED), 24 GB bfloat16. Measured bfloat16 against bfloat16: `TRANSLATEGEMMA_DTYPE=bfloat16 run_reference.py translategemma <out> --checkpoint <this directory>` under the gemma interpreter → IK_PARITY_TRANSLATEGEMMA_12B (records/translategemma-12b.safetensors); the port loads at .checkpoint. A float32 reference needs 48 GB."
+    },
+    {
+      "key": "OPEN_JEV_DEBERTA",
+      "directory": "open-jev-deberta-v3-large",
+      "repo": "com-kotobalabs/open-jev-deberta-v3-large",
+      "revision": "19bf9a64815add579fbf6c907bef584d9277a8e4",
+      "files": [
+        "config.json",
+        "open_jev_config.json",
+        "head.safetensors",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "spm.model",
+        "typed_decisions/__init__.py",
+        "typed_decisions/encoder.py",
+        "typed_decisions/open_jev.py",
+        "typed_decisions/schema.py",
+        "README.md"
+      ],
+      "config": {
+        "IK_VAL_OPEN_JEV_DEBERTA": ""
+      },
+      "note": "open-jev-deberta-v3-large (com-kotobalabs, Apache-2.0; base microsoft/deberta-v3-large, MIT), a community reproduction of Jev's typed decisions: a DeBERTa-v3-large encoder reads [CLS] [STATE] state ([Q] instructions ([OPT] option)*)* [SEP] in one pass, and a 3-layer head scores [mean(question tokens); mean(option tokens); product] per option, softmaxed within each question at the fitted temperature 1.05 (open_jev_config.json). 1.74 GB fp32. typed_decisions/ is the reference inference code the oracle imports."
+    },
+    {
+      "key": "QWEN3_5_2B",
+      "directory": "qwen3.5-2B",
+      "repo": "Qwen/Qwen3.5-2B",
+      "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors.index.json",
+        "model.safetensors-00001-of-00001.safetensors"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_5_2B": ""
+      },
+      "note": "Qwen3.5-2B (Apache-2.0) at the exact revision ZefanCai/Open-Jev-2B was trained against (package/checkpoint/model.json); the Open-Jev adapter requires this base. 4.57 GB bf16 including the vision tower, which the decoder does not load."
+    },
+    {
+      "key": "QWEN3_5_9B",
+      "directory": "qwen3.5-9B",
+      "repo": "Qwen/Qwen3.5-9B",
+      "revision": "c202236235762e1c871ad0ccb60c8ee5ba337b9a",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "chat_template.jinja",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors.index.json",
+        "model.safetensors-00001-of-00004.safetensors",
+        "model.safetensors-00002-of-00004.safetensors",
+        "model.safetensors-00003-of-00004.safetensors",
+        "model.safetensors-00004-of-00004.safetensors"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_5_9B": ""
+      },
+      "note": "Qwen3.5-9B (Apache-2.0) at the exact revision ZefanCai/Open-Jev-9B was trained against. 19.3 GB bf16 including the vision tower."
+    },
+    {
+      "key": "OPEN_JEV_2B",
+      "directory": "open-jev-2b",
+      "repo": "ZefanCai/Open-Jev-2B",
+      "revision": "0c7aa498b1627be8da4acf34c863ff0ee0a92785",
+      "files": [
+        "package/checkpoint/adapter/adapter_config.json",
+        "package/checkpoint/adapter/adapter_model.safetensors",
+        "package/checkpoint/head.pt",
+        "package/checkpoint/model.json",
+        "package/checkpoint/temperature.json",
+        "package/manifest.json",
+        "package/provenance.json",
+        "README.md"
+      ],
+      "config": {
+        "IK_VAL_OPEN_JEV_2B": "package/checkpoint"
+      },
+      "note": "Open-Jev-2B (ZefanCai, weights Apache-2.0, loader MIT): a rank-8 LoRA adapter on Qwen3.5-2B's text model plus a float32 scalar head over the last token, scoring each candidate as its own chat-templated Yes/No prompt; temperature.json holds the calibration. Needs QWEN3_5_2B. The loader is github.com/Zefan-Cai/Open-Jev (jev/model.py, jev/api.py); the training commit the card names is not in that public repository."
+    },
+    {
+      "key": "OPEN_JEV_9B",
+      "directory": "open-jev-9b",
+      "repo": "ZefanCai/Open-Jev-9B",
+      "revision": "47e966881e489511c0c7f5633a9e1960a676a551",
+      "files": [
+        "package/checkpoint/adapter/adapter_config.json",
+        "package/checkpoint/adapter/adapter_model.safetensors",
+        "package/checkpoint/head.pt",
+        "package/checkpoint/model.json",
+        "package/checkpoint/temperature.json",
+        "package/manifest.json",
+        "package/provenance.json",
+        "README.md"
+      ],
+      "config": {
+        "IK_VAL_OPEN_JEV_9B": "package/checkpoint"
+      },
+      "note": "Open-Jev-9B: the same recipe on Qwen3.5-9B. Needs QWEN3_5_9B."
+    },
+    {
+      "key": "OPEN_JEV_27B",
+      "directory": "open-jev-27b",
+      "repo": "ZefanCai/Open-Jev-27B-v1.1",
+      "revision": "28cf73067d5b337860bbef3c85b8b82ba8730956",
+      "files": [
+        "package/checkpoint/adapter/adapter_config.json",
+        "package/checkpoint/adapter/adapter_model.safetensors",
+        "package/checkpoint/head.pt",
+        "package/checkpoint/model.json",
+        "package/checkpoint/temperature.json",
+        "package/provenance.json",
+        "README.md"
+      ],
+      "config": {
+        "IK_VAL_OPEN_JEV_27B": "package/checkpoint"
+      },
+      "note": "Open-Jev-27B-v1.1: the same recipe on Qwen/Qwen3.8-27B at 1d4bf0f2. The 62 MB adapter package only; the base is checked through its headers (QWEN3_8 shapes), never downloaded."
+    },
+    {
+      "key": "GEMMA2_2B",
+      "repo": "unsloth/gemma-2-2b-it",
+      "directory": "gemma-2-2b-it",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer.model",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "generation_config.json"
+      ],
+      "config": {
+        "IK_VAL_GEMMA2_2B": ""
+      },
+      "note": "Gemma 2 2B (5.2 GB bf16), an ungated re-export of Google's gated gemma-2-2b-it and the size SANA's caption encoder runs. Records, gemma venv: `IK_PROBE_LAYERS=0 run_reference.py hf_layer_probe records/gemma2_2b_f32.safetensors --checkpoint <dir>` (float32) and `IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,1,13 ... records/gemma2_2b_bf16_probe.safetensors` (bf16, eager, every submodule of the probed layers). NFKMLXBFloat16ParityTests reads both from ~/.inferkit-validation/records."
     }
   ],
   "oracle_environments": {
     "comment": "diffusers cannot be installed beside the other oracles — it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against — so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
     "diffusers": {
       "path": "sdvenv",
-      "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate",
+      "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate protobuf sentencepiece",
       "modes": [
         "sd_unet",
         "sd_vae",
@@ -2305,10 +4043,11 @@
     },
     "llm": {
       "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
-      "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor, and the DDColor oracle needs scikit-image for its Lab conversion, and the HAT oracle needs einops (basicsr itself is shimmed in the mode rather than installed).",
-      "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac' scikit-image einops",
+      "why": "Qwen3 needs transformers >= 4.51; the vision oracles run against 4.33.3 and the diffusers oracle against its own environment, so a third one keeps them from fighting. The SmolVLM oracle additionally needs Pillow, torchvision, and num2words for its image processor, and the DDColor oracle needs scikit-image for its Lab conversion, and the HAT oracle needs einops (basicsr itself is shimmed in the mode rather than installed). The Qwen3-VL retrieval oracles need sentence-transformers, which is the reference for their two training objectives; install it with --no-deps so it cannot move transformers or torch under the records already measured here.",
+      "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac' scikit-image einops && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install --no-deps sentence-transformers",
       "modes": [
         "qwen3",
+        "flux2_text_mistral",
         "qwen3_embedding",
         "embeddinggemma",
         "modernbert_reranker",
@@ -2336,7 +4075,17 @@
         "zero_dce_plus",
         "isnet",
         "adain",
-        "hat"
+        "hat",
+        "mamba",
+        "mamba2_real",
+        "granite_hybrid",
+        "granite_hybrid_moe",
+        "granite_hybrid_loss",
+        "granite_hybrid_real",
+        "granite_speech",
+        "granite_speech_real",
+        "voxtral",
+        "voxtral_real"
       ]
     },
     "voicerestore": {
@@ -2372,10 +4121,20 @@
     },
     "nemo": {
       "interpreter": "~/.inferkit-validation/nemovenv/bin/python3",
-      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet reference and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12.",
+      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet and Canary reference and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12. Canary-1B-v2 restores through EncDecMultiTaskModel; transformers has no released CanaryForConditionalGeneration yet, so NeMo is the oracle.",
       "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]' torch safetensors",
       "modes": [
-        "parakeet"
+        "parakeet",
+        "canary"
+      ]
+    },
+    "phi4mm": {
+      "interpreter": "/Volumes/WindowsBoot/InferKit/phi4mmvenv/bin/python",
+      "why": "Phi-4-multimodal's reference is the release's own remote code (trust_remote_code), written for transformers 4.46.1; the llm environment's 4.57 breaks its imports. It also needs peft (the release builds its adapters with it), torchvision (the image processor), soundfile and scipy (the audio processor), and numpy < 2 for torch 2.6. The home volume could not hold it, so it lives on the overflow volume; set HF_HOME there too, since the remote code is copied into the Hugging Face modules cache.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv /Volumes/WindowsBoot/InferKit/phi4mmvenv && /Volumes/WindowsBoot/InferKit/phi4mmvenv/bin/pip install 'torch==2.6.0' 'torchvision==0.21.0' 'transformers==4.46.1' 'peft==0.13.2' 'accelerate>=0.34' soundfile librosa pillow scipy einops safetensors sentencepiece backoff 'numpy<2' tiktoken blobfile",
+      "modes": [
+        "phi4mm",
+        "phi4mm_conversation"
       ]
     },
     "da3": {
@@ -2430,6 +4189,20 @@
         "gemma3n_conditional_real"
       ]
     },
+    "wananimate": {
+      "path": "wananimatevenv",
+      "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wananimatevenv && ~/.inferkit-validation/wananimatevenv/bin/pip install 'diffusers>=0.40' 'transformers>=4.57' torch safetensors accelerate scipy",
+      "note": "WanAnimate2Transformer3DModel arrived in diffusers 0.40, which needs a modern torch; the 3.9 environments top out at diffusers 0.36, so this one is built on Homebrew python@3.12. Its transformers is the modern one too (5.x), which is where Sam2VideoModel lives, so the SAM 2 video oracle runs here. `scipy` is here for the SAM 3 objective, whose matcher calls `linear_sum_assignment`.",
+      "modes": [
+        "wan_animate",
+        "sam2_video",
+        "sam3_vision",
+        "sam3_text",
+        "sam3_detector",
+        "sam2_loss",
+        "sam3_loss"
+      ]
+    },
     "ltx": {
       "path": "ltxvenv",
       "create": "python3 -m venv ~/.inferkit-validation/ltxvenv && ~/.inferkit-validation/ltxvenv/bin/pip install 'diffusers>=0.32' 'transformers>=4.44' torch safetensors accelerate",
@@ -2449,6 +4222,8 @@
         "dc_ae_real",
         "sd3",
         "flux",
+        "flux_real",
+        "flux_text",
         "sd3_controlnet",
         "sd3_controlnet_single",
         "flux_controlnet",
@@ -2485,10 +4260,135 @@
         "yolo_detections",
         "yolo_generation"
       ]
+    },
+    "basic_pitch": {
+      "interpreter": "~/.inferkit-validation/bpvenv/bin/python3",
+      "why": "basic-pitch pins tensorflow-macos on Darwin above Python 3.11, and on 3.9 it needs none: the ONNX graph is the reference artifact and onnxruntime runs it. Its own interpreter also keeps resampy's pinned numpy away from the other oracles. resampy imports pkg_resources, so setuptools stays below 81.",
+      "rebuild": "/usr/bin/python3 -m venv ~/.inferkit-validation/bpvenv && ~/.inferkit-validation/bpvenv/bin/pip install 'basic-pitch[onnx]' onnx mido torch safetensors 'setuptools<81'",
+      "modes": [
+        "basic_pitch"
+      ]
+    },
+    "allin1": {
+      "interpreter": "~/.inferkit-validation/allin1venv/bin/python3",
+      "why": "All-In-One needs madmom (unmaintained, installed from git and compiled with Cython) beside a current torch, which no other oracle wants. NATTEN is installed too, but only as a CHECK: 0.21 dropped the biased 1D/2D kernels the released model imports, so the oracle substitutes a torch neighborhood attention transcribed from NATTEN 0.14.6's own index rules and verifies its neighbor selection against the installed kernel (through the flex backend, at a power-of-two head dimension) before recording anything. The model sources are vendored rather than pip-installed, at IK_ALLIN1_SRC, because the package pulls hydra and demucs at import.",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/allin1venv && ~/.inferkit-validation/allin1venv/bin/pip install 'setuptools<81' torch cython safetensors omegaconf librosa natten 'madmom @ git+https://github.com/CPJKU/madmom'",
+      "modes": [
+        "allin1"
+      ]
+    },
+    "muscriptor": {
+      "interpreter": "~/.inferkit-validation/msvenv/bin/python3",
+      "why": "The muscriptor package is MIT and installs from GitHub with a current torch; it carries the released geometry in _CONFIGS, so the architecture is measurable without the gated weights. Its own interpreter keeps that torch away from the other oracles.",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/msvenv && ~/.inferkit-validation/msvenv/bin/pip install 'git+https://github.com/muscriptor/muscriptor.git' safetensors",
+      "modes": [
+        "muscriptor",
+        "muscriptor_real"
+      ]
+    },
+    "hft": {
+      "interpreter": "~/.inferkit-validation/hftvenv/bin/python3",
+      "why": "hFT-Transformer's amt.py imports pretty_midi and torchaudio, and its released pickle needs the model classes importable (IK_HFT_SRC points at the vendored model/ directory). torchaudio 2.11 routes `load` through torchcodec, which is not installed, so the oracle substitutes the wav read alone and leaves the reference's feature code untouched.",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/hftvenv && ~/.inferkit-validation/hftvenv/bin/pip install torch torchaudio safetensors numpy pretty_midi",
+      "modes": [
+        "hft"
+      ]
+    },
+    "qwenimage": {
+      "interpreter": "~/.inferkit-validation/qwenimagevenv/bin/python3.12",
+      "why": "Qwen-Image 2.1's classes (QwenImage21Transformer2DModel, AutoencoderKLQwenImage21, QwenImage21Pipeline) exist only in diffusers from git main; the released 0.31 in sdvenv carries none of them, and the newer diffusers needs a newer transformers than the other environments are measured against. The same interpreter carries transformers 5.17, which is the first release whose `qwen4_exp` package exists, so the Qwen4-Exp oracle runs here too. The same interpreter carries the diffusers revision whose `Flux2Transformer2DModel` is the FLUX.2 reference, so the `flux2` oracle runs here rather than in the older `ltx`/`diffusers` environments.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/qwenimagevenv && ~/.inferkit-validation/qwenimagevenv/bin/pip install 'torch==2.8.0' 'transformers>=4.57' safetensors accelerate Pillow torchvision && ~/.inferkit-validation/qwenimagevenv/bin/pip install 'git+https://github.com/huggingface/diffusers.git'",
+      "note": "Create it with python3.12 explicitly: the default python3 here is 3.14, which has no torch 2.8 wheel, and re-running venv over an existing directory updates pyvenv.cfg and lib/ but NOT the bin/python symlink.",
+      "modes": [
+        "qwenimage21",
+        "qwenimage21_real",
+        "qwenimage21_vae",
+        "qwenimage21_scheduler",
+        "qwenimage21_pipeline",
+        "qwenimage21_text",
+        "qwen4_exp",
+        "flux2",
+        "ltx2",
+        "flux2_vae",
+        "flux2_text",
+        "flux2_scheduler",
+        "flux2_prompt",
+        "flux2_real",
+        "flux2_inpaint",
+        "flux2_kv",
+        "flux2_real_f32",
+        "flux2_real_truncated",
+        "flux2_vae_real",
+        "flux2_text_real"
+      ]
+    },
+    "deepseek_v41": {
+      "interpreter": "~/.inferkit-validation/qwenimagevenv/bin/python3.12",
+      "why": "transformers carries deepseek_v4 and no deepseek_v41, so the reference is the release's own inference/model.py. It needs nothing beyond torch; this interpreter is already provisioned.",
+      "source": "~/.inferkit-validation/reference-sources/deepseek-v41 (IK_DEEPSEEK_V41_SRC): model.py, engram.py, vision.py, image_processor.py and convert.py from the release's inference/ directory, fetched rather than cloned.",
+      "note": "model.py imports six symbols from kernel, whose real bodies are tilelang kernels that compile for CUDA. The mode stands a CPU kernel module in front of it: the two quantized GEMMs raise (only a quantized weight reaches them, and a float configuration has none), the two activation quantizers are neutral (inplace=True is a fused quantize-then-dequantize, so skipping it gives the unquantized model), and sparse_attn and hc_split_sinkhorn are transcribed from transformers' own plain-PyTorch deepseek_v4, the third party this package already measured those two mechanisms against. kernel.py itself is never imported, so tilelang is not needed. The vision mode needs no substitute at all: vision.py imports torch and nothing else, and the released tower ships unquantized.",
+      "decode_note": "deepseek_v41_decode records a prefill of 11 tokens then three single-token steps, with every buffer a step carries written out after each: the sliding window, the shared compressed key-value, the index keys, the compressor's parked partial group and the n-gram id history. The prompt is 11 on purpose. It is odd, so a ratio-2 group parks a partial at the boundary; longer than the window of 8, so the ring has already wrapped; and longer than the n-gram look-back, so that look-back crosses the prefill/decode split. ONE LINE OF THE REFERENCE IS CORRECTED: Indexer.forward publishes shared_attn.index_k only when its compressor emitted a latent, while _compress_kv publishes unconditionally, so on a no-emit step a ratio-2 layer scores against whatever layer published last, at a different stride. The publish is hoisted BEFORE the call, because Indexer.forward reads index_k itself and publishing on the way out leaves the owner scoring its own step against stale keys.",
+      "modes": [
+        "deepseek_v4_release",
+        "deepseek_v4_release_bf16",
+        "deepseek_v4_release_decode",
+        "deepseek_v4_release_decode_bf16",
+        "deepseek_v4_pro_dspark",
+        "deepseek_v4_pro_dspark_bf16",
+        "deepseek_v4_pro_release",
+        "deepseek_v4_pro_release_bf16",
+        "deepseek_v4_pro_release_decode",
+        "deepseek_v4_pro_release_decode_bf16",
+        "deepseek_v41",
+        "deepseek_v41_decode",
+        "deepseek_v41_dspark",
+        "deepseek_v41_image",
+        "deepseek_v41_quantized",
+        "deepseek_v41_dspark_quantized",
+        "deepseek_v41_bf16",
+        "deepseek_v41_bf16_plain",
+        "deepseek_v41_decode_bf16",
+        "deepseek_v41_dspark_bf16",
+        "deepseek_v41_vision_bf16",
+        "deepseek_v41_vl_router_bf16",
+        "deepseek_v41_quant",
+        "deepseek_v41_tokens",
+        "deepseek_v41_vision",
+        "deepseek_v41_vl_router"
+      ],
+      "quantized_note": "deepseek_v41_quantized and deepseek_v41_dspark_quantized run the same code with the kernel shim's act_quant and fp4_act_quant made REAL, transcribed from kernel.py: the next power of two of the block maximum times the reciprocal of the format's range, clamp, cast, cast back, multiply; the compressed latent alone divides by 6 and rounds that scale to e4m3. They run under the gemma environment, not this one, because the fp4 cast needs ml_dtypes, which this interpreter does not carry. The index heads are 32 wide in both, because the real kernel asserts a row divides into its fp4 blocks. The unquantized records reproduce byte for byte with the switch in place.",
+      "bf16_note": "deepseek_v41_bf16_plain builds the release's code under set_dtype(bfloat16), so every parameter the constructor does not make float32 is bf16 and every activation is bf16 between the places the code computes in float32; deepseek_v41_bf16 does the same with the quantizers and the narrow GEMMs of deepseek_v41_quantized. Both run under the gemma environment for ml_dtypes, and both record dtype::<parameter> (1 for float32) from the reference's own state_dict, which is what the port's float32 rule is held to. Every deepseek_v41 record also carries probe.hc.*: hc_post and hc_pre on independently drawn copies from a private generator, because the decoder's own copies never diverge far enough to tell which index comb sums over. Adding it left every other entry byte-identical. The decode, dspark, vision and vl_router modes each have a _bf16 twin built through the same helper, and each float32 record reproduces byte for byte with the switch in place. deepseek_v41_vision_bf16 runs under sdpa_kernel(SDPBackend.MATH), torch's definition of scaled_dot_product_attention, because the default CPU backend's bf16 attention exponentiates through its own fast polynomial; the default backend's result is kept as default_sdpa.* for comparison.",
+      "v4_note": "The deepseek_v4_* modes run V4's own inference/model.py behind the same kernel shim: ~/.inferkit-validation/reference-sources/deepseek-v4 (V4 Flash, whose model.py V4 Pro shares) and deepseek-v4-pro-0813, each fetched from the release's inference/ directory at a recorded revision (SOURCE). V4's indexer rotates through fast_hadamard_transform, a CUDA library; the mode supplies it as the library's hadamard_transform_ref with the kernel's float32 accumulation and one rounding, and a float32 record runs the same rotation past rotate_activation's bf16 assertion. deepseek_v4_pro_dspark runs 0813's DSpark stack (two stages over the decoder's experts) through its own forward and forward_spec at temperature 0, and records each stage's sparse-attention inputs and output.",
+      "image_note": "deepseek_v41_image measures the PREPROCESSOR, which deepseek_v41_vision leaves out by starting from patches. Its input is a deterministic RGB array encoded to PNG only so the release's own load_image runs its real path; PNG is lossless, so the recorded pixels are exactly the ones the reference resized and a port reads them without agreeing about PNG decoding. Two sizes are recorded: an ordinary picture whose sides are not multiples of the patch size, so the pad runs, and one wide enough to trip vision_max_wh_ratio, which takes the resize-without-padding branch. Matching it needs PIL's two-pass 8-bit resample in fixed point, not a float resample of the same coefficients."
+    },
+    "open_jev": {
+      "interpreter": "~/.inferkit-validation/openjevvenv/bin/python",
+      "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/openjevvenv && ~/.inferkit-validation/openjevvenv/bin/pip install 'torch>=2.8' 'transformers==5.10.2' 'peft==0.19.1' 'accelerate==1.13.0' safetensors sentencepiece protobuf numpy",
+      "why": "Open-Jev pins transformers 5.10.2 and PEFT 0.19.1 (its pyproject's train extra), and no other oracle carries PEFT at a 5.x transformers.",
+      "source": "~/.inferkit-validation/reference-sources/open-jev/be624f36b6f6cfc4b146c801bee3d7a7b1bff411 (OPEN_JEV_SOURCE): jev/{__init__,api,metrics,model}.py from github.com/Zefan-Cai/Open-Jev at that commit, fetched rather than cloned. The training commit the release cards name (99e8811) is not in the public repository; the inference files are what the mode runs.",
+      "note": "The mode loads through jev.model.DecisionModel.load with the two from_pretrained calls redirected to OPEN_JEV_BASE (the base at the revision model.json pins, from the QWEN3_5_2B / QWEN3_5_9B releases) at OPEN_JEV_DTYPE: float32 for the 2B parity record, bfloat16 (the loader's own) for the 9B record, whose float32 form needs about 36 GB.",
+      "modes": [
+        "open_jev"
+      ]
+    },
+    "typed_decisions": {
+      "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
+      "why": "open-jev-deberta was saved with transformers 4.57.6, which this interpreter carries with sentencepiece.",
+      "source": "open_jev_deberta imports the typed_decisions package the release ships beside its weights (--checkpoint). open_jev_deberta_budget imports the repository's current collator from ~/.inferkit-validation/reference-sources/typed-decisions/e4ed807630c061179a6834d77e18c43227e4f19d (TYPED_DECISIONS_SOURCE), whose state budget the bundled copy predates.",
+      "modes": [
+        "open_jev_deberta",
+        "open_jev_deberta_budget"
+      ]
     }
   },
   "shapes_comment": "Releases held to the module STRUCTURALLY (every parameter's shape against the safetensors headers, no weights downloaded): `python3 shapes.py <repo> ~/.inferkit-validation/shapes/<directory>`; `IK_SHAPES_ROOT` names the parent, and NFKMLXReleasedSizesTests reads each entry by directory name.",
   "shapes": [
+    {
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B",
+      "file": "wan_animate_2/wan_animate_2_bf16.safetensors",
+      "directory": "wan-animate-2-14b",
+      "note": "The Wan 2.2 Animate 2 DiT (32.8 GB bf16, 1303 tensors). The release ships one safetensors under a subfolder rather than a diffusers component layout, so shapes.py's repo/subfolder form does not reach it; capture the header with two curl range requests (the length prefix, then the JSON) and write shapes.json from it. There is no config.json for the transformer: the geometry is the diffusers defaults, which NFKMLXWanAnimateConfiguration.base spells out."
+    },
     {
       "repo": "Qwen/Qwen3-14B",
       "directory": "qwen3-14b"
@@ -2540,6 +4440,14 @@
     {
       "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct",
       "directory": "qwen3-vl-30b-a3b"
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-Embedding-8B",
+      "directory": "qwen3-vl-embedding-8b"
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-Reranker-8B",
+      "directory": "qwen3-vl-reranker-8b"
     },
     {
       "repo": "google/siglip2-base-patch16-256",
@@ -2601,7 +4509,7 @@
       "repo": "adamo1139/stable-diffusion-3.5-large-ungated",
       "subfolder": "transformer",
       "directory": "sd35-large",
-      "note": "SD3.5-large (8B) transformer. The official stabilityai repo is gated; this is an ungated mirror of the same geometry. Python's urllib hangs on HF's redirect here, so capture the headers with curl range requests rather than shapes.py."
+      "note": "SD3.5-large (8B) transformer. The official stabilityai repo is gated; this is an ungated mirror of the same geometry. The urllib stall this note used to describe was IPv6: huggingface.co advertises sixteen IPv6 addresses ahead of its IPv4 ones and Python tried each in turn, which shapes.py now avoids by ordering the IPv4 addresses first."
     },
     {
       "repo": "adamo1139/stable-diffusion-3.5-medium-ungated",
@@ -2613,13 +4521,260 @@
       "repo": "cocktailpeanut/xulf-s",
       "subfolder": "transformer",
       "directory": "flux-schnell",
-      "note": "FLUX.1 [schnell] (12B) transformer. Ungated mirror of the Apache release."
+      "note": "FLUX.1 [schnell] (12B) transformer. Ungated mirror of the Apache release (the official black-forest-labs/FLUX.1-schnell repo is gated). Used for the released-weight numeric parity too: provision the whole mirror to a directory, add the T5 spiece.model (from google/t5-v1_1-xxl, since FLUX's tokenizer_2 ships only tokenizer.json) into tokenizer_2/, and set IK_VAL_FLUX_SCHNELL (its transformer/ subdir) + IK_VAL_FLUX_SCHNELL_FULL (the directory). Records: run_reference.py flux_real (the 12B transformer's velocity on a tiny-spatial input, bf16, ~24 GB resident -> IK_PARITY_FLUX_REAL) and flux_text (the CLIP-L + T5-XXL text front end, ~10 GB -> IK_PARITY_FLUX_TEXT), both under the sd oracle (sdvenv: diffusers 0.31 + accelerate for the low-memory 24 GB load, plus protobuf + sentencepiece for the T5 tokenizer). The HF IPv6 stall (shapes.py's getaddrinfo IPv4-first patch) applies to the download."
     },
     {
       "repo": "cocktailpeanut/xulf-d",
       "subfolder": "transformer",
       "directory": "flux-dev",
       "note": "FLUX.1 [dev] (12B) transformer, guidance-distilled (the guidance_embedder the schnell size lacks). The official BFL repo is gated; this is an ungated mirror."
+    },
+    {
+      "repo": "Qwen/Qwen3.8-Flash-Next",
+      "directory": "qwen3.8-flash-next",
+      "note": "The released Qwen4-Exp: 180B of bfloat16 across 131 shards, 1658 tensors, 360 GB. The decoder is 1163 of them; the rest are the vision tower, the multi-token-prediction head, the derived hash buffers, and the n-gram table's 128 shards."
+    },
+    {
+      "repo": "deepseek-ai/DeepSeek-V4.1-Flash",
+      "directory": "deepseek-v4.1-flash",
+      "note": "The released DeepSeek V4.1 (MIT, 763B): 96085 tensors across 48 shards, 510 GB, quantized as shipped — int8 four-bit-packed routed experts, fp8 attention and n-gram tables, bf16 embeddings. 47006 tensors are the decoder, 46412 are block scales that decode one of them, and 2667 are the multi-token/DSpark heads, the vision tower, the aligner, and the image delimiters. Read by NFKMLXDeepSeekTests through IK_SHAPES_DEEPSEEK_V41 / IK_CONFIG_DEEPSEEK_V41 / IK_INDEX_DEEPSEEK_V41, which take shapes.py's shapes.json beside its dtypes.json as well as the combined format the earlier releases were captured in."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-4B",
+      "subfolder": "transformer",
+      "directory": "flux2-klein-4b",
+      "note": "FLUX.2 [klein] 4B (3.88B) transformer, the FLUX.2 release that is NOT gated, so this inventory comes from Black Forest Labs' own repository rather than a mirror (169 tensors). FLUX.2 [dev] (32B) and FLUX.2 [klein] 9B are gated: accepting their license is a user action, so their headers cannot be walked here. The [dev] geometry is pinned instead by its published parameter total, which the declared configuration reproduces exactly (NFKMLXReleasedSizesTests.testFlux2DevParameterTotalMatchesTheRelease). The klein 9B total pins 32 heads, a 12288-wide text sequence and no guidance embedding, and leaves the split between double and single blocks open, because a double block costs exactly two single blocks; the split is read from the base-9B inventory below rather than chosen."
+    },
+    {
+      "repo": "diffusers/LTX-2.3-Diffusers",
+      "subfolder": "transformer",
+      "directory": "ltx2-23-22b",
+      "note": "LTX-2.3 22B audio-video transformer (`LTX2VideoTransformer3DModel`, 4186 tensors across 8 shards, 19.0 GB bf16). Every LTX-2.5 repository is gated (`Lightricks/LTX-2.5`, `LTX-2.5-Diffusers`, `LTX-2.5-Pre-Trained`), and accepting a license is a user action, so the structural check runs against LTX-2.3, the same class at the arrangement its `config.json` declares (`rope_type` split, `cross_attn_mod` true, `use_prompt_embeddings` false). LTX-2.5's three declared differences — `ff_bias` false, `use_prompt_adaln_single` false, `use_keyframes_abs_pos_embedding` true — are measured numerically instead, by the `l25` half of `run_reference.py ltx2`. `Lightricks/LTX-2.3` itself ships a single-file checkpoint with no config, which is why the diffusers organization's conversion is the source here."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-base-9B",
+      "directory": "/Volumes/WindowsBoot/InferKit/validation/flux2-klein-base-9b",
+      "note": "The base 9B RELEASE's transformer (17 GB, two shards, fetched with curl -4), under IK_VAL_FLUX2_KLEIN_BASE_9B. It backs `run_reference.py flux2_real` (the whole transformer at bfloat16, 18 GB) and `flux2_real_truncated` (the first two double and two single blocks at float32 and bfloat16, read tensor by tensor through safe_open so the release never exists whole in memory). The whole release is 36 GB at float32, which this machine cannot hold. Its VAE is byte-identical to klein 4B's (same lfs sha256), so that stage is covered by the klein 4B release. The 18 GB oracle is killed when it shares the machine with a build or another oracle; it ran cleanly with 82% of memory free."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-base-9B",
+      "subfolder": "transformer",
+      "directory": "flux2-klein-base-9b",
+      "note": "FLUX.2 [klein] BASE 9B transformer (9.08B, 233 tensors across 2 shards). Gated, and the gate was accepted for THIS repository alone: `FLUX.2-klein-9B` itself, `FLUX.2-klein-9b-kv` and `FLUX.2-dev` still refuse a weight fetch. It is the inventory that resolves what the 9.08B parameter total could not, `num_layers` 8 against `num_single_layers` 24, because a double block costs exactly two single blocks and seventeen splits reach the same total. Its config's own `_name_or_path` is `/raid/yiyi/klein-9b-diffusers/transformer`, which is how one release's headers come to pin the other's geometry. Read by NFKMLXReleasedSizesTests.testFlux2Klein9BMatchesTheReleasedShapes through IK_SHAPES_ROOT."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-9b-kv",
+      "subfolder": "transformer",
+      "directory": "flux2-klein-9b-kv",
+      "note": "FLUX.2 [klein] 9B KV transformer (233 tensors, 2 shards). Its config and every tensor's name and shape are the base 9B's; the release differs in being TRAINED for the reference cache, an inference mechanism in which reference tokens take the modulation of timestep 0, attend only to one another, and have their keys and values cached from the first step. Nothing in the release's files marks this: its model_index.json names the plain Flux2KleinPipeline. Read by NFKMLXReleasedSizesTests.testFlux2Klein9BKVMatchesTheReleasedShapes through IK_SHAPES_ROOT."
+    },
+    {
+      "repo": "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
+      "directory": "mistral-small-3.2-24b",
+      "note": "Mistral-Small 3.2 24B, the text front end FLUX.2 [dev] conditions on. UNGATED, unlike every FLUX.2 release above klein 4B, so its headers are walked from Mistral AI's own repository (585 tensors across 10 shards, 44.7 GB bf16). 363 of them are the decoder under a `language_model.` prefix; the other 222 are the Pixtral-style vision tower and its connector, which this reads past. The release is `Mistral3ForConditionalGeneration`, so its decoder sits under `text_config` while the top-level `architectures` names the wrapper. 24 billion parameters are 48 GB at bf16, above what a 32 GB machine holds, so the numeric check is `run_reference.py flux2_text_mistral` at a small configuration of the same shape and this inventory is the structural half. FLUX.2 [dev] bundles its own copy of these weights, so the standalone repository is the architecture reference rather than a download the port needs."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-4B",
+      "directory": "/Volumes/WindowsBoot/InferKit/validation/flux2-klein-4b",
+      "note": "The klein 4B RELEASE itself, not a shape inventory: `transformer/` (7.22 GB), `vae/` (0.16 GB), `text_encoder/` (7.5 GB, two shards) and `tokenizer/`, 15 GB in all, fetched with `curl -4` because `hf download` stalls on this host's IPv6 route. The root `flux-2-klein-4b.safetensors` duplicates `transformer/` and is not fetched. It backs the released-weight measurements `run_reference.py flux2_real` / `flux2_real_f32` (--checkpoint <root>/transformer), `flux2_vae_real` (<root>/vae) and `flux2_text_real` (<root>), read through IK_VAL_FLUX2_KLEIN_4B, IK_VAL_FLUX2_KLEIN_4B_VAE and IK_VAL_FLUX2_KLEIN_4B_ROOT. The text encoder is a Qwen3ForCausalLM that is NOT byte-identical to Qwen/Qwen3-4B (two shards against three, no shard hash in common)."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-klein-base-4B",
+      "subfolder": "transformer",
+      "directory": "flux2-klein-base-4b",
+      "note": "FLUX.2 [klein] BASE 4B transformer, the un-distilled sibling of klein 4B and also ungated. Its config is identical to klein 4B's, so the value of this inventory is that the declared `.klein4B` geometry reads a SECOND release rather than having been fitted to one checkpoint (169 tensors)."
+    },
+    {
+      "repo": "black-forest-labs/FLUX.2-small-decoder",
+      "directory": "flux2-small-decoder",
+      "note": "FLUX.2's small decoder (62M, ungated): the full encoder at a narrower decoder, `decoder_block_out_channels` [96,192,384,384] against [128,256,512,512]. The first ASYMMETRIC autoencoder here, which is why `NFKMLXSDVAEConfiguration` gained `decoderBlockChannels`. The repository keeps `config.json` AND `diffusion_pytorch_model.safetensors` at its ROOT, which is why shapes.py no longer picks the weight name from whether a subfolder was given: it tries the likely name and falls back."
+    }
+  ],
+  "cuts_comment": "Releases too large for float32 here, cut to their first N decoder layers by `python3 truncate.py <repo> <out> N`, which fetches only the kept tensors by HTTP range request into compact shards and writes a reduced config.json and index. Each cut is a valid small release that transformers and the Swift loaders read unchanged. Its records come from `run_reference.py hf_layer_probe --checkpoint <cut>` at float32 (with `IK_PROBE_STREAM_F32=1` where the float32 model does not fit: a bf16 load whose modules widen to float32 one at a time) and at `IK_PROBE_DTYPE=bfloat16`, named `<record>_f32` / `<record>_bf16` (Gemma 3: `gemma3_<size>-cut4_f32eager` / `_bf16`) in ~/.inferkit-validation/records, where NFKMLXBFloat16ParityTests reads them.",
+  "cuts": [
+    {
+      "repo": "mistralai/Mamba-Codestral-7B-v0.1",
+      "layers": 4,
+      "directory": "codestral-mamba-cut4",
+      "config": "IK_VAL_CODESTRAL_CUT4",
+      "record": "codestral_cut4"
+    },
+    {
+      "repo": "Qwen/Qwen3-14B",
+      "layers": 4,
+      "directory": "qwen3-14b-cut4",
+      "config": "IK_VAL_QWEN3_14B_CUT4",
+      "record": "qwen3_14b_cut4"
+    },
+    {
+      "repo": "Qwen/Qwen3-32B",
+      "layers": 4,
+      "directory": "qwen3-32b-cut4",
+      "config": "IK_VAL_QWEN3_32B_CUT4",
+      "record": "qwen3_32b_cut4"
+    },
+    {
+      "repo": "unsloth/gemma-3-12b-it",
+      "layers": 4,
+      "directory": "gemma-3-12b-cut4",
+      "config": "IK_VAL_GEMMA3_12B_CUT4",
+      "record": "gemma3_12b-cut4"
+    },
+    {
+      "repo": "unsloth/gemma-3-27b-it",
+      "layers": 4,
+      "directory": "gemma-3-27b-cut4",
+      "config": "IK_VAL_GEMMA3_27B_CUT4",
+      "record": "gemma3_27b-cut4"
+    },
+    {
+      "repo": "unsloth/gemma-2-27b-it",
+      "layers": 4,
+      "directory": "gemma-2-27b-cut4",
+      "config": "IK_VAL_GEMMA2_27B_CUT4",
+      "record": "gemma2_27b_cut4"
+    },
+    {
+      "repo": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+      "layers": 15,
+      "directory": "nemotron-nano-9b-cut15",
+      "config": "IK_VAL_NEMOTRON_CUT15",
+      "record": "nemotron_cut15"
+    },
+    {
+      "repo": "ByteDance/Sa2VA-8B",
+      "layers": 4,
+      "directory": "sa2va-8b-cut4",
+      "config": "IK_VAL_SA2VA_8B_CUT4",
+      "record": "sa2va-8b-cut4/record.safetensors",
+      "note": "Sa2VA-8B cut to its first four InternLM2 layers; the InternViT tower and the SAM 2 grounding encoder stay whole (truncate.py keeps `vision_model.` and `grounding_encoder.`), and the cut carries the repo's remote code. Record: `run_reference.py sa2va_teacher <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_8B_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "ByteDance/Sa2VA-InternVL3-8B",
+      "layers": 4,
+      "directory": "sa2va-internvl3-8b-cut4",
+      "config": "IK_VAL_SA2VA_INTERNVL3_8B_CUT4",
+      "record": "sa2va-internvl3-8b-cut4/record.safetensors",
+      "note": "Sa2VA-InternVL3-8B cut to its first four qwen2 layers; the InternViT tower and the SAM 2 grounding encoder stay whole, and the cut carries the repo's remote code. Record: `run_reference.py sa2va_teacher <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_INTERNVL3_8B_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "ByteDance/Sa2VA-InternVL3-14B",
+      "layers": 4,
+      "directory": "sa2va-internvl3-14b-cut4",
+      "config": "IK_VAL_SA2VA_INTERNVL3_14B_CUT4",
+      "record": "sa2va-internvl3-14b-cut4/record.safetensors",
+      "note": "Sa2VA-InternVL3-14B cut to its first four qwen2 layers; the InternViT tower and the SAM 2 grounding encoder stay whole, and the cut carries the repo's remote code. Record: `run_reference.py sa2va_teacher <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_INTERNVL3_14B_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "ByteDance/Sa2VA-LLaVA-1.5-7B",
+      "layers": 4,
+      "directory": "sa2va-llava-1.5-7b-cut4",
+      "config": "IK_VAL_SA2VA_LLAVA_CUT4",
+      "record": "sa2va-llava-1.5-7b-cut4/record.safetensors",
+      "note": "Sa2VA-LLaVA-1.5-7B cut to its first four Llama layers; the CLIP tower, the projector, and the SAM 2 grounding encoder stay whole (truncate.py keeps `model.model.vision_tower.`, `model.model.multi_modal_projector.`, and `grounding_encoder.`). Record: `run_reference.py sa2va_llava_teacher <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_LLAVA_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "ByteDance/Sa2VA-26B",
+      "layers": 4,
+      "vision_layers": 4,
+      "directory": "sa2va-26b-cut4",
+      "config": "IK_VAL_SA2VA_26B_CUT4",
+      "record": "sa2va-26b-cut4/record.safetensors",
+      "note": "Sa2VA-26B cut to its first four InternLM2 layers AND its first four InternViT-6B layers (`truncate.py ... 4 4`): the 6B tower alone is 22 GB at float32. The SAM 2 grounding encoder stays whole. Record: `run_reference.py sa2va_teacher <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_26B_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "ByteDance/Sa2VA-Qwen2_5-VL-7B",
+      "layers": 4,
+      "directory": "sa2va-qwen2_5-vl-7b-cut4",
+      "config": "IK_VAL_SA2VA_QWEN2_5_VL_7B_CUT4",
+      "record": "sa2va-qwen2_5-vl-7b-cut4/record.safetensors",
+      "note": "Sa2VA-Qwen2_5-VL-7B cut to its first four Qwen2 layers; the vision tower (`model.model.visual.`, whose blocks are not `layers.N`) and the SAM 2 grounding encoder stay whole. Record: `SA2VA_TEACHER=1 run_reference.py sa2va_qwen <dir>/record.safetensors --checkpoint <dir>` (IK_PARITY_SA2VA_QWEN2_5_VL_7B_CUT4), float32 on the CPU."
+    },
+    {
+      "repo": "google/gemma-4-12B-it",
+      "layers": 6,
+      "directory": "gemma-4-12b-cut6",
+      "config": "IK_VAL_GEMMA4_12B_CUT6",
+      "record": "gemma4_12b_cut6",
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+    },
+    {
+      "repo": "google/gemma-4-31B-it",
+      "layers": 6,
+      "directory": "gemma-4-31b-cut6",
+      "config": "IK_VAL_GEMMA4_31B_CUT6",
+      "record": "gemma4_31b_cut6",
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+    },
+    {
+      "repo": "google/gemma-4-26B-A4B-it",
+      "layers": 6,
+      "directory": "gemma-4-26b-a4b-cut6",
+      "config": "IK_VAL_GEMMA4_26B_CUT6",
+      "record": "gemma4_26b_cut6",
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+    },
+    {
+      "repo": "unsloth/gemma-2-9b-it",
+      "layers": 4,
+      "directory": "gemma-2-9b-cut4",
+      "config": "IK_VAL_GEMMA2_9B_CUT4",
+      "record": "gemma2_9b_cut4"
+    },
+    {
+      "repo": "mistralai/Mistral-Small-24B-Instruct-2501",
+      "layers": 4,
+      "directory": "mistral-small-24b-cut4",
+      "config": "IK_VAL_MISTRAL_SMALL_CUT4",
+      "record": "mistral_small_cut4"
+    }
+  ],
+  "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from ~/.inferkit-validation/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",
+  "bf16_records": [
+    {
+      "records": "granite_speech_bf16 / _bf16in / _bf16_folded",
+      "environment": "llm",
+      "command": "IK_GRANITE_SPEECH_DTYPE=bfloat16 | bfloat16-inputs | bfloat16-folded granite_speech_real --checkpoint $IK_VAL_GRANITE_SPEECH"
+    },
+    {
+      "records": "granite_speech_probe / _probe_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_ENCODER=1 IK_GRANITE_SPEECH_DTYPE=bfloat16 | bfloat16-inputs granite_speech_real"
+    },
+    {
+      "records": "granite_speech_decoder_probe / _decoder_probe_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_LAYERS=0,1,39 IK_GRANITE_SPEECH_DTYPE=bfloat16-folded | bfloat16-inputs granite_speech_real"
+    },
+    {
+      "records": "voxtral_bf16 / _bf16in",
+      "environment": "llm",
+      "command": "IK_PROBE_ENCODER=1 IK_PROBE_LAYERS=0,1,29 IK_VOXTRAL_DTYPE=bfloat16 | bfloat16-inputs voxtral_real --checkpoint $IK_VAL_VOXTRAL (8.9 GB each: every encoder layer probed)"
+    },
+    {
+      "records": "phi4mm_bf16 / _bf16in",
+      "environment": "phi4mm",
+      "command": "IK_PHI4MM_DTYPE=bfloat16 | bfloat16-inputs phi4mm_bf16 --checkpoint $IK_VAL_PHI4MM (5.3 GB each)"
+    },
+    {
+      "records": "music_depth_bf16 / _bf16in",
+      "environment": "music",
+      "command": "IK_MUSIC_DEPTH_DTYPE=bfloat16 | bfloat16-inputs music_depth --checkpoint <release>/rvq_depth_decoder"
+    },
+    {
+      "records": "flux_bf16 / _bf16in, wan_bf16 / _bf16in",
+      "environment": "ltx",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux | wan"
+    },
+    {
+      "records": "flux2_bf16 / _bf16in, qwenimage21_bf16 / _bf16in",
+      "environment": "qwenimage",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux2 | qwenimage21"
+    },
+    {
+      "records": "gemma4_moe_bf16 / _bf16in, gemma4_unified_bf16 / _bf16in",
+      "environment": "gemma",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights gemma4_moe | gemma4_unified --checkpoint unused"
     }
   ]
 }

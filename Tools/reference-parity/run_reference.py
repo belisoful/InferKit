@@ -1294,6 +1294,184 @@ def run_yolo(image, checkpoint):
     return decoded[0].transpose(0, 1).contiguous()              # [anchors, 4 + classes]
 
 
+
+def run_yolo_loss(image):
+    """YOLO's training objective, ultralytics' own `v8DetectionLoss`, on identical head outputs.
+
+    A three-class YOLOv8n built from the package's bundled `yolov8n.yaml` supplies the loss its
+    strides, `reg_max`, and `get_cfg()`'s gains; no weights are needed, because the head outputs are
+    synthesized: seeded class logits, and box distributions peaked near bin 2 so every predicted box
+    overlaps the boxes it lands in (a zero-metric candidate would make the assigner's top-k depend on
+    `torch.topk`'s unspecified tie order). The batch has two 64-pixel images: three boxes in the first
+    (two overlapping, so an anchor is claimed twice, and one narrower than the first stride, so the
+    assigner grows it) and one in the second. Runs on the interpreter that has ultralytics installed.
+    """
+    from ultralytics.cfg import get_cfg
+    from ultralytics.nn.tasks import DetectionModel
+    from ultralytics.utils.loss import v8DetectionLoss
+
+    classes, size, batch = 3, 64, 2
+    model = DetectionModel("yolov8n.yaml", nc=classes, verbose=False)
+    model.args = get_cfg()
+    criterion = v8DetectionLoss(model)
+    strides = [int(s) for s in model.model[-1].stride.tolist()]
+    feats = [torch.zeros(batch, 1, size // s, size // s) for s in strides]
+    anchors = sum((size // s) ** 2 for s in strides)
+    reg_max = criterion.reg_max
+
+    generator = torch.Generator().manual_seed(41)
+    bins = torch.arange(reg_max, dtype=torch.float32)
+    peaked = -0.5 * (bins - 2.2) ** 2                                      # [reg_max]
+    boxes = peaked.view(1, 1, reg_max, 1) + 0.3 * torch.randn(batch, 4, reg_max, anchors, generator=generator)
+    boxes = boxes.reshape(batch, 4 * reg_max, anchors)
+    scores = torch.randn(batch, classes, anchors, generator=generator)
+
+    truth = torch.tensor([[0, 0, 10, 12, 46, 50],
+                          [0, 1, 20, 18, 56, 58],
+                          [0, 2, 40, 6, 45, 14],
+                          [1, 1, 8, 30, 60, 62]], dtype=torch.float32)            # image, class, x1, y1, x2, y2
+    xyxy = truth[:, 2:]
+    xywh = torch.cat(((xyxy[:, :2] + xyxy[:, 2:]) / 2, xyxy[:, 2:] - xyxy[:, :2]), 1) / size
+    batch_dict = {"batch_idx": truth[:, 0], "cls": truth[:, 1:2], "bboxes": xywh}
+    preds = {"boxes": boxes, "scores": scores, "feats": feats}
+
+    (fg_mask, _, _, _, _), _, _ = criterion.get_assigned_targets_and_loss(preds, batch_dict)
+    total, items = criterion.loss(preds, batch_dict)
+    globals()["_extra"] = {
+        "box_distribution": boxes.permute(0, 2, 1).contiguous(),              # [batch, anchors, 4 · reg_max]
+        "class_logits": scores.permute(0, 2, 1).contiguous(),                 # [batch, anchors, classes]
+        "targets": truth.contiguous(),
+        "strides": torch.tensor(strides, dtype=torch.int32),
+        "image_size": torch.tensor([size], dtype=torch.int32),
+        "components": torch.stack([items["box_loss"], items["cls_loss"], items["dfl_loss"]]).float(),
+        "foreground": fg_mask.reshape(-1).nonzero().reshape(-1).to(torch.int32).contiguous(),
+    }
+    return total.sum().reshape(1).contiguous()
+
+
+
+def run_yolo_e2e_loss(image):
+    """The end-to-end generations' objective, ultralytics' own `E2ELoss`, for YOLOv10n (DFL) and YOLO26n
+    (`reg_max` 1, an L1 on the side distances), each three-class from its bundled yaml.
+
+    Each model's criterion (`model.init_criterion()`) scores synthesized one-to-many and one-to-one head
+    outputs over two 64-pixel images with the boxes `yolo_loss` uses; the run is 4 epochs, and the
+    total is recorded at epoch 0 and again after one `update()`, where the one-to-many weight has moved
+    from 0.8. Each branch's own `v8DetectionLoss` terms are recorded too. Runs on the interpreter that
+    has ultralytics installed.
+    """
+    from ultralytics.cfg import get_cfg
+    from ultralytics.nn.tasks import DetectionModel
+
+    classes, size, batch = 3, 64, 2
+    truth = torch.tensor([[0, 0, 10, 12, 46, 50],
+                          [0, 1, 20, 18, 56, 58],
+                          [0, 2, 40, 6, 45, 14],
+                          [1, 1, 8, 30, 60, 62]], dtype=torch.float32)
+    xyxy = truth[:, 2:]
+    xywh = torch.cat(((xyxy[:, :2] + xyxy[:, 2:]) / 2, xyxy[:, 2:] - xyxy[:, :2]), 1) / size
+    batch_dict = {"batch_idx": truth[:, 0], "cls": truth[:, 1:2], "bboxes": xywh}
+    extra = {"targets": truth.contiguous(), "image_size": torch.tensor([size], dtype=torch.int32)}
+    generator = torch.Generator().manual_seed(43)
+    totals = []
+    for prefix, cfg in [("v10", "yolov10n.yaml"), ("y26", "yolo26n.yaml")]:
+        model = DetectionModel(cfg, nc=classes, verbose=False)
+        model.args = get_cfg()
+        model.args.epochs = 4
+        criterion = model.init_criterion()
+        strides = [int(s) for s in model.model[-1].stride.tolist()]
+        feats = [torch.zeros(batch, 1, size // s, size // s) for s in strides]
+        anchors = sum((size // s) ** 2 for s in strides)
+        reg_max = criterion.one2many.reg_max
+
+        def head():
+            if reg_max > 1:
+                bins = torch.arange(reg_max, dtype=torch.float32)
+                boxes = -0.5 * (bins - 2.2).view(1, 1, reg_max, 1) ** 2 \
+                    + 0.3 * torch.randn(batch, 4, reg_max, anchors, generator=generator)
+            else:
+                boxes = 2 + 0.3 * torch.rand(batch, 4, 1, anchors, generator=generator)
+            return {"boxes": boxes.reshape(batch, 4 * reg_max, anchors),
+                    "scores": torch.randn(batch, classes, anchors, generator=generator), "feats": feats}
+
+        many, one = head(), head()
+        preds = {"one2many": many, "one2one": one}
+        first = criterion(preds, batch_dict)[0].sum()
+        criterion.update()
+        second = criterion(preds, batch_dict)[0].sum()
+        _, many_items = criterion.one2many.loss(many, batch_dict)
+        _, one_items = criterion.one2one.loss(one, batch_dict)
+        names = criterion.one2many.loss_names
+        for branch, preds_branch, items in [("many", many, many_items), ("one", one, one_items)]:
+            extra[f"{prefix}_{branch}_distribution"] = preds_branch["boxes"].permute(0, 2, 1).contiguous()
+            extra[f"{prefix}_{branch}_logits"] = preds_branch["scores"].permute(0, 2, 1).contiguous()
+            extra[f"{prefix}_{branch}_components"] = torch.stack([items[n] for n in names]).float()
+        extra[f"{prefix}_strides"] = torch.tensor(strides, dtype=torch.int32)
+        extra[f"{prefix}_totals"] = torch.stack([first, second]).float()
+        totals += [first, second]
+    globals()["_extra"] = extra
+    return torch.stack(totals).float().contiguous()
+
+def run_yolo_training_setup(image):
+    """ultralytics' training setup for a three-class YOLOv8n, from the trainer's own methods.
+
+    `BaseTrainer.build_optimizer` runs unbound on a stand-in trainer (`optimizer="auto"`, a 2-image
+    batch, 20 iterations) and reports its groups; `_setup_scheduler` and `_get_warmup_iterations` give
+    the schedule for 4 epochs of 5 batches, and the per-iteration warm-up is `_do_train`'s own
+    `np.interp` expression (trainer.py lines 469-481 at 8.4.120) evaluated over the run; `ModelEMA`
+    averages a small module through three updates. Runs on the interpreter that has ultralytics installed.
+    """
+    import types
+    from ultralytics.cfg import get_cfg
+    from ultralytics.engine.trainer import BaseTrainer
+    from ultralytics.nn.tasks import DetectionModel
+    from ultralytics.utils.torch_utils import ModelEMA
+
+    classes, batch, epochs, per_epoch = 3, 2, 4, 5
+    model = DetectionModel("yolov8n.yaml", nc=classes, verbose=False)
+    args = get_cfg()
+    stand_in = types.SimpleNamespace(args=args, data={"nc": classes})
+    accumulate = max(round(args.nbs / batch), 1)
+    decay = args.weight_decay * batch * accumulate / args.nbs
+    optimizer = BaseTrainer.build_optimizer(stand_in, model, name="auto", lr=args.lr0, momentum=args.momentum,
+                                            decay=decay, iterations=epochs * per_epoch)
+    groups = {}
+    for group in optimizer.param_groups:
+        names = [n for n, p in model.named_parameters() if any(p is q for q in group["params"])]
+        kept = [n for n in names if ".dfl" not in n]                        # the trainer always freezes .dfl
+        groups[group["param_group"]] = (len(kept), group["lr"], group["weight_decay"])
+
+    stand_in.epochs, stand_in.optimizer = epochs, optimizer
+    BaseTrainer._setup_scheduler(stand_in)
+    warmup = BaseTrainer._get_warmup_iterations(stand_in, per_epoch)
+    rates = []
+    for ni in range(epochs * per_epoch):
+        epoch = ni // per_epoch
+        scale = stand_in.lf(epoch)
+        if ni < warmup:
+            scale = float(np.interp(ni, [0, warmup], [0.0, scale]))
+        rates.append(scale)
+
+    ema_net = torch.nn.Linear(3, 2)
+    torch.nn.init.constant_(ema_net.weight, 1.0)
+    torch.nn.init.constant_(ema_net.bias, 0.0)
+    ema = ModelEMA(ema_net)
+    for step in range(3):
+        with torch.no_grad():
+            ema_net.weight.fill_(float(step + 2))
+            ema_net.bias.fill_(float(-(step + 1)))
+        ema.update(ema_net)
+
+    globals()["_extra"] = {
+        "group_counts": torch.tensor([groups["weight"][0], groups["bn"][0], groups["bias"][0]], dtype=torch.int32),
+        "group_decays": torch.tensor([groups["weight"][2], groups["bn"][2], groups["bias"][2]], dtype=torch.float64),
+        "rate": torch.tensor([groups["weight"][1]], dtype=torch.float64),
+        "schedule": torch.tensor(rates, dtype=torch.float64),
+        "ema_weight": ema.ema.weight.detach().reshape(-1).contiguous(),
+        "ema_bias": ema.ema.bias.detach().contiguous(),
+    }
+    return torch.tensor([float(warmup)])
+
 def run_yolo_generation(image, checkpoint):
     """The pre-suppression predictions of a YOLOv9 / v10 / 11 / v12 / YOLO26 release, from ultralytics.
 
@@ -2005,6 +2183,466 @@ def run_modernbert_reranker(image, checkpoint):
     return relevant.contiguous()
 
 
+_LAYA_STATE = ("Subject: Payouts failing for three days. Hello, my weekly payouts to my bank account have failed "
+               "three times in a row since Monday with the message 'transfer rejected by the receiving bank'. "
+               "I have not changed my account details, the account is open, and other merchants pay into it "
+               "without any problem. Support chat told me to wait 48 hours and it has now been 72. I have "
+               "staff to pay on Friday and need this resolved today. Account id 88213, plan Pro, region EU. "
+               "Please escalate this to someone who can actually look at the transfer logs. Thanks, Dana.")
+
+# The keys are in sorted order, which is how the port serializes a record, so the two sides agree.
+_LAYA_RECORD = {"account": 88213, "body": "Where is my refund? It was promised in 5 business days.",
+                "plan": "Pro", "priority": 2.5, "tags": ["billing", "refund"], "vip": True, "note": None}
+_LAYA_RECORD = dict(sorted(_LAYA_RECORD.items()))
+
+_LAYA_QUESTIONS = {
+    "department": {"type": "choice", "instructions": "Which team should handle this?",
+                   "criteria": {"billing": "Payments, invoicing, refunds", "technical": "Bugs, outages, integrations",
+                                "sales": None}},
+    "topic": {"type": "choice", "instructions": "What is the message mainly about?",
+              "criteria": ["payouts", "refunds", "login", "pricing", "bug report", "other"]},
+    "severity": {"type": "score", "instructions": "How severe is the problem?", "criteria": ["low", "medium", "high"]},
+    "urgent": {"type": "noul", "instructions": "The customer needs an answer today.",
+               "criteria": {"true": "the customer states or implies a deadline within a day",
+                            "false": "no deadline is stated or implied"}},
+}
+
+
+def _laya_agent(checkpoint):
+    """The release's own RLAgent over a variant directory, with rl_common.py found at the release root and
+    the transformers 5 `rope_parameters` copied into the fields a 4.x ModernBertConfig reads (mmBERT's
+    local rotary base is 160000, which the 4.x default of 10000 would silently replace)."""
+    import os
+    import sys
+    import transformers
+
+    root = os.path.abspath(checkpoint)
+    while not os.path.exists(os.path.join(root, "rl_common.py")):
+        parent = os.path.dirname(root)
+        if parent == root:
+            raise SystemExit(f"rl_common.py not found at or above {checkpoint}")
+        root = parent
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    original = transformers.AutoConfig.from_pretrained
+
+    def with_rope_parameters(path, *args, **kwargs):
+        config = original(path, *args, **kwargs)
+        rope = getattr(config, "rope_parameters", None) or {}
+        if isinstance(rope, dict):
+            if "full_attention" in rope:
+                config.global_rope_theta = float(rope["full_attention"]["rope_theta"])
+            if "sliding_attention" in rope:
+                config.local_rope_theta = float(rope["sliding_attention"]["rope_theta"])
+        return config
+    transformers.AutoConfig.from_pretrained = with_rope_parameters
+    from rl_agent_api import RLAgent
+    return RLAgent(checkpoint, device="cpu")
+
+
+def run_laya(image, checkpoint):
+    """Laya (convaiinnovations/laya), the open reproduction of Jev, from the release's own inference code
+    (`rl_agent_api.RLAgent` over `rl_common.build_sequence` and `DecisionModel`).
+
+    `--checkpoint` is one variant directory: the release root (ModernBERT-large), `typed-decisions`
+    (the same geometry fine-tuned), or `multilingual` (mmBERT-base with Gemma's tokenizer). Four
+    questions (a described 3-way choice, an undescribed 6-way choice, a 3-level score, and a noul with
+    meanings) are asked about a string state and about a record state. The record carries, per question
+    and state (`q{i}.*` for the string, `d{i}.*` for the record), the token ids and marker positions
+    the reference builds, the raw marker logits before the temperature, the calibrated probabilities the
+    API answers with, and the act probability; for the string state's first question, the encoder's
+    per-layer hidden states and the decision head's output for the isolation harness; and the
+    serialized record state as UTF-8 bytes, so the port's serialization is checked byte for byte.
+    """
+    import torch
+
+    agent = _laya_agent(checkpoint)
+    from rl_common import QTYPES, build_sequence, render_options, serialize_state, temp_bucket
+    model, tok, cfg = agent.model, agent.tok, agent.cfg
+    extra = {}
+    keys = list(_LAYA_QUESTIONS)
+    first_logits = None
+    for prefix, state in (("q", _LAYA_STATE), ("d", _LAYA_RECORD)):
+        answers = agent.system_one(state, _LAYA_QUESTIONS)["answers"]
+        for index, qid in enumerate(keys):
+            q = agent._to_internal(_LAYA_QUESTIONS[qid])
+            seq, markers = build_sequence(tok, state, q, cfg["max_len"], cfg["head_max_len"])
+            k = len(markers)
+            assert k == len(render_options(q)), (qid, k)
+            ids = torch.tensor([seq])
+            attention = torch.ones_like(ids)
+            with torch.no_grad():
+                logits, act = model(ids, attention, torch.tensor([markers]), torch.ones(1, k, dtype=torch.bool),
+                                    torch.tensor([QTYPES[q["t"]]]))
+            logits = logits[0, :k].float()
+            qt = QTYPES[q["t"]]
+            temperature = agent.temperature_by_options.get(temp_bucket(qt, k), agent.temperature[qt])
+            probabilities = torch.softmax(logits / temperature, -1)
+            answer = answers[qid]
+            extra[f"{prefix}{index}.ids"] = ids[0].to(torch.int32).contiguous()
+            extra[f"{prefix}{index}.markers"] = torch.tensor(markers, dtype=torch.int32)
+            extra[f"{prefix}{index}.logits"] = logits.contiguous()
+            extra[f"{prefix}{index}.probabilities"] = probabilities.contiguous()
+            extra[f"{prefix}{index}.temperature"] = torch.tensor([float(temperature)])
+            extra[f"{prefix}{index}.act_probability"] = torch.tensor([float(answer["rl_agent"]["act_probability"])])
+            if q["t"] == "choice":
+                extra[f"{prefix}{index}.choice"] = torch.tensor([list(q["crit"]).index(answer["choice"])], dtype=torch.int32)
+                extra[f"{prefix}{index}.confidence"] = torch.tensor([float(answer["confidence"])])
+            elif q["t"] == "score":
+                extra[f"{prefix}{index}.score"] = torch.tensor([float(answer["score"])])
+                extra[f"{prefix}{index}.confidence"] = torch.tensor([float(answer["confidence"])])
+            else:
+                extra[f"{prefix}{index}.noul"] = torch.tensor([float(answer["noul"])])
+            if prefix == "q" and index == 0:
+                first_logits = logits
+                with torch.no_grad():
+                    encoded = model.encoder(input_ids=ids, attention_mask=attention, output_hidden_states=True)
+                    for layer, hidden in enumerate(encoded.hidden_states):
+                        extra[f"hidden.{layer}"] = hidden[0].float().contiguous()
+                    h = encoded.last_hidden_state + model.type_emb(torch.tensor([qt]))[:, None, :]
+                    for layer in model.head.layers:
+                        h = layer(h, src_key_padding_mask=~attention.bool())
+                    extra["head_out"] = h[0].float().contiguous()
+    extra["record_bytes"] = torch.tensor(list(serialize_state(_LAYA_RECORD).encode("utf-8")), dtype=torch.int32)
+    extra["temperature"] = torch.tensor([float(t) for t in agent.temperature])
+    globals()["_extra"] = extra
+    return first_logits.clone()                     # the record's output must not share storage with q0.logits
+
+
+_OJD_CASES = [
+    ("Customer: I was charged twice for the same order and nobody answers my emails. I want my money back now.",
+     [{"type": "choice", "instructions": "Which product area is the message about?",
+       "options": ["fees & charges", "pin & security", "refund & dispute", "card", "other"]},
+      {"type": "score", "instructions": "How positive is the sentiment of this message?",
+       "options": ["very negative", "negative", "neutral", "positive", "very positive"]},
+      {"type": "noul", "instructions": "The customer is asking for a refund."}]),
+    # The port serializes a record with sorted keys the way json.dumps(sort_keys=True, ensure_ascii=False)
+    # writes it; the reference takes text, so it is handed that text.
+    ({"ticket": 4471, "channel": "email", "body": "Mon café est froid — rembourser svp", "vip": True, "tags": ["billing", None]},
+     [{"type": "noul", "instructions": "The message is written in French."},
+      {"type": "choice", "instructions": "Which team?", "options": ["billing", "technical", "sales"]}]),
+    (("The quarterly report shows revenue of $4.2M, up 12% year over year, while churn fell to 3.1%. "
+      "Ｆｕｌｌｗｉｄｔｈ text, naïve résumé, 東京 office, and tabs\tand\nnewlines  with   spaces. ") * 12,
+     [{"type": "choice", "instructions": "What is the main topic?",
+       "options": ["finance", "hiring", "product", "legal", "marketing", "operations", "sales", "support", "security", "other"]},
+      {"type": "score", "instructions": "How optimistic is the report?", "options": ["low", "medium", "high"]}]),
+]
+_OJD_TEXTS = ["Hello world", "  leading and trailing  ", "naïve café résumé", "Ｆｕｌｌｗｉｄｔｈ ＡＢＣ １２３",
+              "東京タワー", "tabs\tand\nnewlines", "$4.2M (12%) -- ok?!", "don't won't I'm", "emoji 🙂 end",
+              "UPPER lower MiXeD", "", "a" * 40, "x = f(y) + 3.14159e-2", "ﬁ ligature ½ ①"]
+
+
+def run_open_jev_deberta(image, checkpoint):
+    """open-jev-deberta-v3-large (com-kotobalabs), from the release's own `typed_decisions` package.
+
+    `--checkpoint` is the release directory. Three cases (`c{i}.*`): a customer message with a
+    5-way choice, a 5-level score, and a noul; a record state (serialized with sorted keys) with a
+    noul and a 3-way choice; and a long state, cut to the 256-token budget, with a 10-way choice and a
+    3-level score. Each carries the token ids, the per-token span slots (`seg`), the raw logits before
+    the temperature, the probabilities, and the readout. Case 0 carries every encoder layer's hidden
+    state. `batch.*` is cases 0 and 1 padded together through the collator, the padding path, with the
+    objective `decision_loss` at Brier weights 1 and 0.5 against fixed golds. `text{i}` is the
+    tokenizer on its own over awkward strings, and `buckets` is the log-bucketed relative position
+    for offsets -600 through 600.
+    """
+    import json as _json
+    import sys as _sys
+    import torch
+    _sys.path.insert(0, checkpoint)
+    from typed_decisions.open_jev import OpenJev
+    from typed_decisions.encoder import decision_loss
+    from transformers.models.deberta_v2.modeling_deberta_v2 import make_log_bucket_position
+
+    m = OpenJev.from_pretrained(checkpoint, device="cpu")
+    model, collator = m.model, m.collator
+    extra = {}
+    first = None
+    batch_items = []
+    for index, (state, questions) in enumerate(_OJD_CASES):
+        text = state if isinstance(state, str) else _json.dumps(state, ensure_ascii=False, sort_keys=True)
+        qs = [m._question(i, q) for i, q in enumerate(questions)]
+        if index < 2:
+            batch_items.append((text, qs))
+        b = collator([(text, qs)], torch.device("cpu"))
+        with torch.no_grad():
+            logits = model(b["input_ids"], b["attention_mask"], b["opt_pos"], b["opt_mask"], b["q_pos"], b["seg"]).float()
+        probabilities = (logits / model.temperature).softmax(-1)[0]
+        answers = m.decide(text, questions)
+        extra[f"c{index}.ids"] = b["input_ids"][0].to(torch.int32).contiguous()
+        extra[f"c{index}.seg"] = b["seg"][0].to(torch.int32).contiguous()
+        extra[f"c{index}.logits"] = logits[0].masked_fill(~b["opt_mask"][0], 0).contiguous()
+        extra[f"c{index}.probabilities"] = probabilities.contiguous()
+        if not isinstance(state, str):
+            extra[f"c{index}.state_bytes"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.int32)
+        for qi, (q, answer) in enumerate(zip(questions, answers)):
+            key = f"c{index}.q{qi}"
+            if q["type"] == "choice":
+                extra[key + ".choice"] = torch.tensor([q["options"].index(answer["choice"])], dtype=torch.int32)
+                extra[key + ".confidence"] = torch.tensor([float(answer["confidence"])])
+            elif q["type"] == "score":
+                extra[key + ".score"] = torch.tensor([float(answer["score"])])
+                extra[key + ".confidence"] = torch.tensor([float(answer["confidence"])])
+            else:
+                extra[key + ".noul"] = torch.tensor([float(answer["noul"])])
+        if index == 0:
+            first = logits[0].masked_fill(~b["opt_mask"][0], 0).clone()
+            with torch.no_grad():
+                encoded = model.backbone(input_ids=b["input_ids"], attention_mask=b["attention_mask"], output_hidden_states=True)
+            for layer, hidden in enumerate(encoded.hidden_states):
+                extra[f"hidden.{layer}"] = hidden[0].float().contiguous()
+    b = collator(batch_items, torch.device("cpu"))
+    with torch.no_grad():
+        logits = model(b["input_ids"], b["attention_mask"], b["opt_pos"], b["opt_mask"], b["q_pos"], b["seg"]).float()
+    gold = torch.tensor([[2, 1, 1], [0, 0, -100]])
+    extra["batch.ids"] = b["input_ids"].to(torch.int32).contiguous()
+    extra["batch.logits"] = logits.masked_fill(~b["opt_mask"], 0).contiguous()
+    extra["batch.gold"] = gold.to(torch.int32)
+    for weight in (1.0, 0.5):
+        loss, info = decision_loss(logits, gold, weight)
+        extra[f"batch.loss.{weight}"] = torch.tensor([float(loss), info["ce"], info["brier"]])
+    for index, text in enumerate(_OJD_TEXTS):
+        extra[f"text{index}"] = torch.tensor(m.tok(text, add_special_tokens=False)["input_ids"] or [-1], dtype=torch.int32)
+    offsets = torch.arange(-600, 601)
+    extra["buckets"] = make_log_bucket_position(offsets, 256, 512).to(torch.int32)
+    extra["temperature"] = torch.tensor([float(model.temperature)])
+    globals()["_extra"] = extra
+    return first
+
+
+_OPEN_JEV_REQUESTS = [
+    ({"customer": "Dana", "message": "I was charged twice for order 88213 and want my money back.", "plan": "Pro", "vip": True},
+     {"intent": {"type": "choice", "instructions": "Choose the customer intent.",
+                 "criteria": {"billing": "A payment or refund issue", "technical": "A malfunction or setup issue", "other": None}},
+      "urgency": {"type": "score", "instructions": "How urgent is the request?", "criteria": ["not urgent", "somewhat urgent", "very urgent"]},
+      "refund": {"type": "noul", "instructions": "The customer asks for a refund.",
+                 "criteria": {"true": "the message requests money back", "false": "no refund is requested"}}}),
+    ("Café au lait costs €4.50 at the 2nd location; the resérvation for 12 people is at 19:30.",
+     {"topic": {"type": "choice", "instructions": "What is the text about?",
+                "criteria": {"food": None, "travel": None, "sports": None, "finance": None}},
+      "numbers": {"type": "noul", "instructions": "The text mentions a time of day."}}),
+]
+
+
+def run_open_jev(image, checkpoint):
+    """Open-Jev (ZefanCai/Open-Jev-2B or -9B), through the loader's own `jev.model.DecisionModel.load`
+    and `jev.api`: each candidate is its own chat-templated Yes/No prompt through the Qwen3.5 text
+    model with the LoRA adapter, and a float32 head reads the last token.
+
+    `--checkpoint` is the package's `checkpoint` directory. `OPEN_JEV_BASE` is a local copy of the
+    base model at the revision `model.json` pins, `OPEN_JEV_SOURCE` the loader checkout (the folder
+    holding `jev/`), and `OPEN_JEV_DTYPE` the precision (`float32`, the default, or `bfloat16`, which
+    is the loader's own). The loader's `from_pretrained` calls are redirected to the local base at that
+    precision; everything else is its code.
+
+    Two requests (`r{i}.*` per compiled record): a record state with a described 3-way choice, a
+    3-level score, and a noul with meanings; a text state (accents, a decomposed accent, digits) with
+    a 4-way choice and a plain noul. Each record carries every candidate's token ids, the raw logits
+    (a noul's are [0, s]), the probabilities at the saved temperature, and the answer. At float32 the
+    first candidate carries every hidden state of the text model. `loss.*` is the training loss at the
+    released Brier weight 0.1 against fixed soft targets, per record.
+    """
+    import json as _json
+    import os as _os
+    import sys as _sys
+    import torch
+    _sys.path.insert(0, _os.environ["OPEN_JEV_SOURCE"])
+    import jev.model as jev_model
+    from jev.api import compile_request, candidate_prompts, format_response
+    from jev.metrics import softmax
+
+    base = _os.environ["OPEN_JEV_BASE"]
+    dtype = getattr(torch, _os.environ.get("OPEN_JEV_DTYPE", "float32"))
+    real_model, real_tokenizer = jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer
+
+    class _LocalModel:
+        @staticmethod
+        def from_pretrained(model_id, revision=None, torch_dtype=None, **kw):
+            kw.pop("device_map", None)
+            return real_model.from_pretrained(base, dtype=dtype, **kw)
+
+    class _LocalTokenizer:
+        @staticmethod
+        def from_pretrained(model_id, revision=None, **kw):
+            return real_tokenizer.from_pretrained(base, **kw)
+
+    jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer = _LocalModel, _LocalTokenizer
+    model = jev_model.DecisionModel.load(checkpoint, device="cpu")
+    temperature = _json.load(open(_os.path.join(checkpoint, "temperature.json")))["temperature"]
+    extra = {"temperature": torch.tensor([float(temperature)])}
+    targets = {"choice": lambda n: [1.0 if i == 1 else 0.0 for i in range(n)],
+               "score": lambda n: [0.1, 0.7, 0.2][:n], "noul": lambda n: [0.3, 0.7]}
+    first = None
+    index = 0
+    for state, questions in _OPEN_JEV_REQUESTS:
+        records = compile_request(state, questions)
+        for record in records:
+            key = f"r{index}"
+            prompts = [model.tokenizer.apply_chat_template([{"role": "user", "content": text}], tokenize=False,
+                                                           add_generation_prompt=True, enable_thinking=False)
+                       for text in candidate_prompts(record)]
+            for c, text in enumerate(prompts):
+                extra[f"{key}.c{c}.ids"] = torch.tensor(model.tokenizer(text)["input_ids"], dtype=torch.int32)
+            with torch.no_grad():
+                logits = model([record])[0].float()
+            probabilities = softmax(logits.tolist(), temperature=temperature)
+            answer = format_response([record], [probabilities])["answers"][record["id"]]
+            extra[f"{key}.logits"] = logits.contiguous().clone()
+            extra[f"{key}.probabilities"] = torch.tensor(probabilities)
+            if record["kind"] == "choice":
+                extra[f"{key}.choice"] = torch.tensor([record["answer_keys"].index(answer["choice"])], dtype=torch.int32)
+                extra[f"{key}.confidence"] = torch.tensor([float(answer["confidence"])])
+            elif record["kind"] == "score":
+                extra[f"{key}.score"] = torch.tensor([float(answer["score"])])
+                extra[f"{key}.confidence"] = torch.tensor([float(answer["confidence"])])
+            else:
+                extra[f"{key}.noul"] = torch.tensor([float(answer["noul"])])
+            target = torch.tensor(targets[record["kind"]](len(logits)))
+            loss = -(target * logits.log_softmax(-1)).sum() + 0.1 * ((logits.softmax(-1) - target) ** 2).sum()
+            extra[f"loss.{key}"] = torch.tensor([float(loss)])
+            extra[f"loss.{key}.target"] = target
+            if first is None:
+                first = logits.clone()
+                if dtype == torch.float32:
+                    ids = torch.tensor([model.tokenizer(prompts[0])["input_ids"]])
+                    with torch.no_grad():
+                        out = model.backbone(input_ids=ids, output_hidden_states=True, use_cache=False)
+                    for layer, hidden in enumerate(out.hidden_states):
+                        extra[f"hidden.{layer}"] = hidden[0].float().contiguous()
+                    extra["last_hidden"] = out.last_hidden_state[0].float().contiguous().clone()
+            index += 1
+    globals()["_extra"] = extra
+    return first
+
+
+def run_open_jev_deberta_budget(image, checkpoint):
+    """The state budget of typed-decisions' current collator, tokens only.
+
+    The release's bundled collator raises when the state and questions overflow `max_len`; the
+    repository's current one (`TYPED_DECISIONS_SOURCE`, the folder holding `typed_decisions/`) cuts
+    the state further so the questions fit. `--checkpoint` is the release directory, for its
+    tokenizer and limits. One case, `budget.ids`: a long state under ten 10-way choices, which the
+    bundled collator refuses and the current one fits in exactly `max_len` tokens.
+    """
+    import json as _json
+    import os as _os
+    import sys as _sys
+    import torch
+    from transformers import AutoTokenizer
+    _sys.path.insert(0, _os.environ["TYPED_DECISIONS_SOURCE"])
+    from typed_decisions.encoder import Collator
+    from typed_decisions.schema import Question
+
+    cfg = _json.load(open(_os.path.join(checkpoint, "open_jev_config.json")))
+    tok = AutoTokenizer.from_pretrained(checkpoint)
+    collator = Collator(tok, max_state_tokens=cfg["max_state_tokens"], max_len=cfg["max_len"])
+    state, _ = _OJD_CASES[2]
+    options = ["finance", "hiring", "product", "legal", "marketing", "operations", "sales", "support", "security", "other"]
+    questions = [Question(f"q{i}", "choice", f"Which department owns item number {i} in this report?", options, 0)
+                 for i in range(10)]
+    ids = collator([(state, questions)])["input_ids"][0]
+    globals()["_extra"] = {"budget.ids": ids.to(torch.int32).contiguous()}
+    return ids.float().clone()
+
+
+_LAYA_EPISODE = {
+    # Context keys sort before "conversation", which the reference appends last, so the port's sorted
+    # serialization and the reference's insertion order write the same text.
+    "ctx": {"account": 88213, "channel": "chat"},
+    "turns": [
+        {"role": "customer", "text": "Hi, my payouts have failed three times this week."},
+        {"role": "agent", "text": "Sorry to hear that. Which bank is the account with?"},
+        {"role": "customer", "text": "Nordbank, and nothing changed on my side."},
+        {"role": "agent", "text": "I see two rejections from the receiving bank. Did they contact you?"},
+        {"role": "customer", "text": "No. I have staff to pay on Friday, this cannot wait."},
+        {"role": "agent", "text": "Understood. I am escalating this to the payments team now."},
+        {"role": "customer", "text": "Thank you. Will I hear back today?"},
+        {"role": "agent", "text": "Yes, within two hours, and the transfer will be retried."},
+    ],
+    "y": 1,
+}
+
+
+def run_laya_episode(image, checkpoint):
+    """Laya's conversation-prefix training path, from the release's own `rl_common`: an eight-turn episode
+    sampled to the release's `max_prefixes` prefix lengths (`episode_prefix_lengths`), each prefix built by
+    `encode_record` (the context plus the turns so far under `conversation`, cut from the left), and the
+    TD(lambda) targets `td_lambda_targets` produces over the grouped prefixes at lambda 1 (the release's
+    setting) and lambda 0.5 from a fixed vector of next-prefix predictions. `--checkpoint` is the release
+    root; only the tokenizer and the config are read. The record carries the prefix lengths, each
+    prefix's ids, markers, and serialized state bytes, the predictions, and both target tables.
+    """
+    import torch
+    agent = _laya_agent(checkpoint)
+    from rl_common import collate_items, encode_record, episode_prefix_lengths, serialize_state, td_lambda_targets
+
+    question = {"t": "noul", "ins": "The customer's problem will be resolved by the end of the conversation.",
+                "crit": {"true": "the issue is on its way to a fix", "false": "the issue stays open"}}
+    record = {"kind": "episode", "ep": _LAYA_EPISODE, "qs": [question], "src": "test"}
+    items = encode_record(record, agent.tok, agent.cfg, None, False)
+    for item in items:
+        item["rec_uid"] = 0                     # one group, which is what td_lambda_targets walks
+    lengths = episode_prefix_lengths(len(_LAYA_EPISODE["turns"]), agent.cfg["max_prefixes"])
+    assert len(items) == len(lengths), (len(items), lengths)
+    batch = collate_items([items], agent.tok.pad_token_id)
+    torch.manual_seed(5)
+    p_true = torch.rand(len(items))
+    lam1 = td_lambda_targets(p_true, batch, 1.0)
+    lam05 = td_lambda_targets(p_true, batch, 0.5)
+
+    extra = {"prefix_lengths": torch.tensor(lengths, dtype=torch.int32),
+             "p_true": p_true.contiguous(), "targets_lambda1": lam1.contiguous(),
+             "targets_lambda05": lam05.contiguous(), "outcome": torch.tensor([int(_LAYA_EPISODE["y"])], dtype=torch.int32)}
+    for index, (item, length) in enumerate(zip(items, lengths)):
+        state = dict(_LAYA_EPISODE["ctx"], conversation=_LAYA_EPISODE["turns"][:length])
+        extra[f"p{index}.ids"] = torch.tensor(item["ids"], dtype=torch.int32)
+        extra[f"p{index}.markers"] = torch.tensor(item["markers"], dtype=torch.int32)
+        extra[f"p{index}.state_bytes"] = torch.tensor(list(serialize_state(state).encode("utf-8")), dtype=torch.int32)
+    globals()["_extra"] = extra
+    return lam05.clone()
+
+
+def run_laya_loss(image, checkpoint):
+    """Laya's training objective, `rl_common.proper_reward`, on identical tensors: the log score plus half
+    the spherical score for every question, minus the ranked probability score for an ordinal one, over
+    six rows of mixed type and cardinality with one-hot and soft targets. `--checkpoint` is the release
+    root, where rl_common.py lives; no weights are loaded. The record carries the raw logits, the
+    targets, the option mask, the types, the per-row reward, and the mean loss the port minimizes.
+    """
+    import os
+    import sys
+    import torch
+
+    root = os.path.abspath(checkpoint)
+    while not os.path.exists(os.path.join(root, "rl_common.py")):
+        root = os.path.dirname(root)
+    sys.path.insert(0, root)
+    from rl_common import proper_reward
+
+    torch.manual_seed(11)
+    counts = [3, 6, 2, 4, 5, 2]
+    qtypes = torch.tensor([0, 0, 1, 1, 2, 0])
+    rows, width = len(counts), max(counts)
+    mask = torch.zeros(rows, width, dtype=torch.bool)
+    targets = torch.zeros(rows, width)
+    for row, k in enumerate(counts):
+        mask[row, :k] = True
+        if row % 2 == 0:
+            targets[row, torch.randint(k, (1,)).item()] = 1.0
+        else:
+            soft = torch.rand(k)
+            targets[row, :k] = soft / soft.sum()
+    logits = torch.randn(rows, width) * 2
+    q = torch.softmax(logits.masked_fill(~mask, -1e4), -1) * mask
+    reward = proper_reward(q, targets, qtypes, mask)
+    loss = -reward.mean()
+    globals()["_extra"] = {
+        "logits": logits.contiguous(), "targets": targets.contiguous(),
+        "mask": mask.to(torch.int32).contiguous(), "types": qtypes.to(torch.int32).contiguous(),
+        "reward": reward.contiguous(), "loss": loss.reshape(1).contiguous(),
+    }
+    return reward.clone()
+
+
 def run_smolvlm(image, checkpoint):
     """A SmolVLM2 vision-language forward, from transformers' own SmolVLMForConditionalGeneration.
 
@@ -2111,6 +2749,123 @@ def run_qwen3vl(image, checkpoint):
     return logits.contiguous()
 
 
+def run_pixtral(image, checkpoint):
+    """Pixtral 12B's vision tower, connector, and fused decoder, from transformers' own
+    LlavaForConditionalGeneration.
+
+    `--checkpoint` is the released `mistral-experimental/pixtral-12b` directory. The vision tower is a
+    from-scratch 2D-rotary ViT (PixtralVisionModel): a patch convolution, an RMSNorm, and blocks of
+    RMSNorm-normalized attention with a 2D rotary over the (height, width) patch grid and a SiLU-gated
+    MLP. A two-layer GELU connector projects the patch features to the decoder width, and the decoder
+    is a Mistral-Nemo dense stack. The vision seams are recorded in float32 for a high-precision
+    isolation harness; the fused logits and the greedy continuation are recorded in the release's
+    bfloat16, since fp32 for the 12B decoder does not fit. The record carries the processor's pixel
+    values, the patch-embedding, ln_pre, first-layer, and last-layer vision seams, the projected image
+    features, the input ids, the logits, and the continuation.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.bfloat16).eval()
+
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    prompt = "<s>[INST]Describe the image in detail.[IMG][/INST]"
+    inputs = processor(text=prompt, images=[pil], return_tensors="pt")
+
+    # The fused pass in the release dtype: the 12B decoder does not fit in float32 on this machine.
+    # The processor returns float32 pixels, which the bfloat16 patch convolution rejects, so the pixel
+    # values are cast to the model's dtype for the fused pass.
+    fused = dict(inputs)
+    fused["pixel_values"] = fused["pixel_values"].to(torch.bfloat16)
+    with torch.no_grad():
+        logits = model(**fused).logits[0]
+        generated = model.generate(**fused, max_new_tokens=16, do_sample=False)
+    continuation = generated[0, inputs["input_ids"].shape[1]:]
+
+    # The vision tower and connector, upcast to float32 for high-precision seams.
+    vision_tower = model.model.vision_tower.float()
+    projector = model.model.multi_modal_projector.float()
+    pixel_values = inputs["pixel_values"].float()
+    image_sizes = inputs.get("image_sizes")
+    with torch.no_grad():
+        patch_conv = vision_tower.patch_conv(pixel_values)
+        patch_embeds = patch_conv.flatten(2).transpose(1, 2)         # [1, patches, hidden], row-major
+        vision = vision_tower(pixel_values, image_sizes=image_sizes, output_hidden_states=True)
+        vision_output = vision.last_hidden_state
+        projected = projector(vision_output)
+
+    extra = {
+        "pixel_values": pixel_values.contiguous(),
+        "patch_embeds": patch_embeds.contiguous(),
+        "ln_pre": vision.hidden_states[0].contiguous(),
+        "layer0": vision.hidden_states[1].contiguous(),
+        "vision_output": vision_output.contiguous(),
+        "projected": projected.contiguous(),
+        "input_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    globals()["_extra"] = extra
+    return logits.float().contiguous()
+
+
+def run_pixtral_tiny(image, checkpoint):
+    """The whole Pixtral pipeline at a tiny random configuration, from transformers' own
+    LlavaForConditionalGeneration.
+
+    The released 12B decoder does not fit this machine at any precision the fused pass needs, so the
+    fusion — the vision tower, the connector, the scatter of the projected patch features into the
+    `[IMG]` positions, and the Mistral decoder over the fused sequence — is measured at a size that
+    runs in float32. `--checkpoint` is a writable directory the tiny release is saved into, which the
+    Swift side loads through its ordinary release builders. The record carries the pixel values, the
+    image sizes, the input ids, the projected features, the vision output, and the fused logits.
+    """
+    import numpy as np
+    import torch
+    from transformers import (LlavaConfig, LlavaForConditionalGeneration, MistralConfig,
+                              PixtralVisionConfig)
+
+    torch.manual_seed(23)
+    vision = PixtralVisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=2,
+                                 num_attention_heads=2, image_size=32, patch_size=4, rope_theta=10000.0)
+    # num_attention_heads is intentionally omitted so the tiny model inherits the MistralConfig default
+    # (32), exercising the same absent-count path the released Pixtral config needs — 48 / 16 = 3 would
+    # be the wrong derived count, as 5120 / 128 = 40 is for the release.
+    text = MistralConfig(hidden_size=48, intermediate_size=64, num_hidden_layers=2,
+                         num_key_value_heads=2, head_dim=16, vocab_size=64,
+                         rms_norm_eps=1e-5, rope_theta=1_000_000.0, max_position_embeddings=128,
+                         tie_word_embeddings=False)
+    config = LlavaConfig(vision_config=vision.to_dict(), text_config=text.to_dict(),
+                         image_token_index=10, vision_feature_layer=-1,
+                         vision_feature_select_strategy="full", projector_hidden_act="gelu")
+    model = LlavaForConditionalGeneration(config).eval().float()
+
+    height, width = 8, 12                                        # a 2×3 patch grid → 6 image tokens
+    pixel_values = torch.randn(1, 3, height, width)
+    image_sizes = torch.tensor([[height, width]])
+    image_ids = [10] * 6
+    input_ids = torch.tensor([[1] + image_ids + [5, 7, 9, 2]], dtype=torch.long)
+
+    with torch.no_grad():
+        vision_output = model.model.vision_tower(pixel_values, image_sizes=image_sizes).last_hidden_state
+        projected = model.model.multi_modal_projector(vision_output)
+        logits = model(input_ids=input_ids, pixel_values=pixel_values, image_sizes=image_sizes).logits[0]
+
+    model.save_pretrained(checkpoint)
+
+    extra = {
+        "pixel_values": pixel_values.contiguous(),
+        "image_sizes": image_sizes.to(torch.int32).contiguous(),
+        "input_ids": input_ids[0].to(torch.int32).contiguous(),
+        "vision_output": vision_output.contiguous(),
+        "projected": projected.contiguous(),
+    }
+    globals()["_extra"] = extra
+    return logits.float().contiguous()
+
+
 def run_gguf(image, checkpoint):
     """Reference dequantization of a GGUF model's tensors, from the `gguf` package.
 
@@ -2140,10 +2895,30 @@ def run_gguf(image, checkpoint):
 
 
 def _tiny_decoder_record(model, tokens, release_name=lambda key: key):
-    """Logits, every hidden state, and the weights in release naming, for a tiny random model."""
+    """Logits, every hidden state, and the weights in release naming, for a tiny random model.
+
+    `IK_TINY_DTYPE=bfloat16` runs the model at bf16 with eager attention, the record a bf16 port's
+    rounding placement is held to; `IK_TINY_DTYPE=bfloat16-weights` runs float32 arithmetic on the same
+    bf16-rounded weights, its floor. The pair differs in arithmetic precision alone, as a released bf16
+    checkpoint's float32 and bf16 runs do.
+    """
+    mode = os.environ.get("IK_TINY_DTYPE")
+    if mode in ("bfloat16", "bfloat16-weights"):
+        model = model.to(torch.bfloat16)
+        if mode == "bfloat16-weights":
+            model = model.float()
+        for module in model.modules():
+            config = getattr(module, "config", None)
+            if config is not None and hasattr(config, "_attn_implementation"):
+                config._attn_implementation = "eager"
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    restore = None
+    if os.environ.get("IK_PROBE_LAYERS"):
+        restore = _probe_hooks(model, [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")], extra)
     with torch.no_grad():
         out = model(tokens, output_hidden_states=True)
-    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    if restore is not None:
+        restore()
     for index, hidden in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = hidden[0].float().contiguous()
     for key, value in model.state_dict().items():
@@ -2154,13 +2929,62 @@ def _tiny_decoder_record(model, tokens, release_name=lambda key: key):
 
 
 def _randomized(model, seed=11, scale=0.05):
+    """`model` with every floating tensor drawn from a seeded normal at `scale`, in float32.
+
+    `IK_DIT_DTYPE=bfloat16` then runs it at bf16, every floating input rounded to bf16 on the way in, the
+    record a bf16 port's rounding placement is held to; `bfloat16-weights` runs float32 arithmetic on
+    the same rounded weights and inputs, the floor for that record. The weights recorded as `w::` are
+    the rounded ones either way."""
     torch.manual_seed(seed)
     state = model.state_dict()
     for key in sorted(state):
         if state[key].is_floating_point():
             state[key] = torch.randn(state[key].shape) * scale
     model.load_state_dict(state)
-    return model.eval().float()
+    model.eval().float()
+    mode = os.environ.get("IK_DIT_DTYPE")
+    if mode:
+        # `from_pretrained` casts what the state dict holds and leaves a non-persistent buffer (a
+        # sinusoid's frequencies, a rotary table) as its constructor built it, so those are restored.
+        persistent = set(model.state_dict())
+        kept = {name: buffer.clone() for name, buffer in model.named_buffers()
+                if name not in persistent and buffer.is_floating_point()}
+        model.to(torch.bfloat16)
+        target = torch.bfloat16 if mode == "bfloat16" else torch.float32
+        model.to(target)
+        # A transformers model reads its attention implementation from its config at every call.
+        if hasattr(getattr(model, "config", None), "_attn_implementation"):
+            model.config._attn_implementation = "eager"
+        for name, buffer in kept.items():
+            owner, _, leaf = name.rpartition(".")
+            setattr(model.get_submodule(owner) if owner else model, leaf, buffer)
+
+        def rounded(value):
+            if torch.is_tensor(value) and value.is_floating_point():
+                return value.to(torch.bfloat16).to(target)
+            return value
+
+        def round_inputs(module, args, kwargs):
+            return tuple(rounded(a) for a in args), {k: rounded(v) for k, v in kwargs.items()}
+
+        model.register_forward_pre_hook(round_inputs, with_kwargs=True)
+        # Every submodule's first call is kept as `probe.<name>.in` / `.out` for localizing a seam.
+        for name, module in model.named_modules():
+            if not name:
+                continue
+
+            def keep(module, inputs, output, name=name):
+                out = output[0] if isinstance(output, tuple) else output
+                if f"probe.{name}.out" in _DIT_PROBES or not torch.is_tensor(out):
+                    return
+                _DIT_PROBES[f"probe.{name}.out"] = out.detach().float().clone().contiguous()
+                if inputs and torch.is_tensor(inputs[0]):
+                    _DIT_PROBES[f"probe.{name}.in"] = inputs[0].detach().float().clone().contiguous()
+            module.register_forward_hook(keep)
+    return model
+
+
+_DIT_PROBES = {}
 
 
 def run_qwen3_moe(image, checkpoint):
@@ -2209,6 +3033,533 @@ def run_mixtral(image, checkpoint):
     return _tiny_decoder_record(model, tokens)
 
 
+def run_mamba2(image, checkpoint):
+    """The Mamba-2 decoder's arithmetic, from transformers' own Mamba2ForCausalLM, at a tiny random
+    configuration.
+
+    Mamba-2 is the toolkit's first state-space model: every layer replaces attention with a selective
+    scan — a fused input projection, a depthwise causal convolution over x/B/C, the SSD recurrence, a
+    gated RMS normalization, and an output projection. The released Codestral-Mamba-7B does not fit
+    this machine at float32, so the scan's arithmetic is measured at a size that does. Every hidden
+    state is recorded so a divergence is located to a layer; transformers' CPU path is the naive scan,
+    which is what the Swift port matches. The weights are saved under the release's own names, read
+    unchanged but for squeezing the depthwise convolution `[C, 1, K]` to `[C, K]`. `checkpoint` unused.
+    """
+    from transformers import Mamba2Config, Mamba2ForCausalLM
+
+    config = Mamba2Config(
+        hidden_size=64, num_hidden_layers=3, vocab_size=128, num_heads=8, head_dim=16,
+        state_size=16, n_groups=2, conv_kernel=4, expand=2, chunk_size=8,
+        use_conv_bias=True, use_bias=False, tie_word_embeddings=False)
+    model = _randomized(Mamba2ForCausalLM(config), seed=23)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_mamba2_real(image, checkpoint):
+    """Codestral-Mamba-7B logits + greedy continuation from transformers' Mamba2ForCausalLM.
+
+    `--checkpoint` is the release directory (config.json + the sharded safetensors + tokenizer). The
+    7B does not fit float32 on a 32 GB machine, so both sides run bfloat16 (as the Gemma E4B parity
+    does). The record carries the prompt tokens, the prefill logits, and the greedy continuation, so a
+    divergence shows as a logit cosine below the bf16 floor or a differing token.
+
+    Parity is a function of the token ids, and the release's tokenizer needs a sentencepiece/protobuf
+    stack the oracle environment does not carry, so a fixed id prompt is fed directly. Both sides read
+    the same ids from the record, so the encoding is immaterial.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.bfloat16).eval()
+
+    ids = torch.tensor([[1, 1602, 4934, 322, 1148, 42, 7]], dtype=torch.long)
+    with torch.no_grad():
+        logits = model(ids).logits[0].float()
+        generated = model.generate(ids, max_new_tokens=12, do_sample=False, pad_token_id=0)
+    continuation = generated[0, ids.shape[1]:]
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    return logits.contiguous()
+
+
+def run_granite_hybrid(image, checkpoint):
+    """Granite 4.0-H (`GraniteMoeHybridForCausalLM`, IBM) at a tiny random configuration: a hybrid of
+    Mamba-2 selective-scan layers and NoPE grouped-query attention layers, a gated-linear shared MLP,
+    and Granite's scalar multipliers (embedding, residual, attention, logits). This config is DENSE
+    (`num_local_experts` 0); the routed mixture of experts is a separate mode. The multipliers are set
+    to values distinct from the released defaults so a port that hard-codes the defaults diverges.
+    Every hidden state is recorded so a divergence is located to a layer. `checkpoint` unused.
+    """
+    from transformers import GraniteMoeHybridConfig, GraniteMoeHybridForCausalLM
+
+    config = GraniteMoeHybridConfig(
+        hidden_size=64, num_hidden_layers=6, vocab_size=128,
+        num_attention_heads=4, num_key_value_heads=2,
+        mamba_n_heads=8, mamba_d_head=16, mamba_n_groups=1, mamba_d_state=16, mamba_d_conv=4,
+        mamba_expand=2, mamba_chunk_size=8, shared_intermediate_size=96,
+        num_local_experts=0, num_experts_per_tok=0, intermediate_size=0,
+        embedding_multiplier=2.0, residual_multiplier=0.5, attention_multiplier=0.25, logits_scaling=3.0,
+        layer_types=["mamba", "mamba", "mamba", "mamba", "mamba", "attention"],
+        tie_word_embeddings=False)  # untied so safetensors does not refuse the aliased lm_head
+    model = _randomized(GraniteMoeHybridForCausalLM(config), seed=29)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_granite_hybrid_moe(image, checkpoint):
+    """Granite 4.0-H at a tiny random configuration WITH the routed mixture of experts (the h-tiny /
+    h-small feed-forward): every layer carries `num_local_experts` experts routed `num_experts_per_tok`
+    at a time, whose output sums with the shared MLP. `block_sparse_moe.input_linear` is the fused
+    gate+up projection, `output_linear` the down projection, both stored `[experts, out, in]`, and
+    `router.layer` scores the experts with the softmax taken over the chosen top-k. The multipliers
+    are set distinct from the released defaults. Every hidden state is recorded. `checkpoint` unused.
+    """
+    from transformers import GraniteMoeHybridConfig, GraniteMoeHybridForCausalLM
+
+    config = GraniteMoeHybridConfig(
+        hidden_size=64, num_hidden_layers=6, vocab_size=128,
+        num_attention_heads=4, num_key_value_heads=2,
+        mamba_n_heads=8, mamba_d_head=16, mamba_n_groups=1, mamba_d_state=16, mamba_d_conv=4,
+        mamba_expand=2, mamba_chunk_size=8, shared_intermediate_size=96,
+        num_local_experts=8, num_experts_per_tok=2, intermediate_size=32,
+        embedding_multiplier=2.0, residual_multiplier=0.5, attention_multiplier=0.25, logits_scaling=3.0,
+        layer_types=["mamba", "mamba", "attention", "mamba", "mamba", "attention"],
+        tie_word_embeddings=False)  # untied so safetensors does not refuse the aliased lm_head
+    model = _randomized(GraniteMoeHybridForCausalLM(config), seed=31)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_granite_hybrid_loss(image, checkpoint):
+    """The causal language-model loss `GraniteMoeHybridForCausalLM` computes for the tiny dense config,
+    for the fine-tune objective's parity. The same seed-29 weights as `granite_hybrid`, so the logits
+    match that record; `labels=tokens` makes transformers apply its shifted cross-entropy. The scalar
+    loss is the reference output; the logits and tokens are recorded so the port scores the objective on
+    IDENTICAL logits (isolating the objective's arithmetic from the forward pass). `checkpoint` unused.
+    """
+    import torch
+    from transformers import GraniteMoeHybridConfig, GraniteMoeHybridForCausalLM
+
+    config = GraniteMoeHybridConfig(
+        hidden_size=64, num_hidden_layers=6, vocab_size=128,
+        num_attention_heads=4, num_key_value_heads=2,
+        mamba_n_heads=8, mamba_d_head=16, mamba_n_groups=1, mamba_d_state=16, mamba_d_conv=4,
+        mamba_expand=2, mamba_chunk_size=8, shared_intermediate_size=96,
+        num_local_experts=0, num_experts_per_tok=0, intermediate_size=0,
+        embedding_multiplier=2.0, residual_multiplier=0.5, attention_multiplier=0.25, logits_scaling=3.0,
+        layer_types=["mamba", "mamba", "mamba", "mamba", "mamba", "attention"],
+        tie_word_embeddings=False)
+    model = _randomized(GraniteMoeHybridForCausalLM(config), seed=29)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, labels=tokens)
+    globals()["_extra"] = {
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "logits": out.logits[0].float().contiguous(),
+    }
+    return torch.tensor([out.loss.item()], dtype=torch.float32)
+
+
+def run_granite_hybrid_real(image, checkpoint):
+    """Granite 4.0-H released decoder logits + greedy continuation from transformers, float32.
+
+    `--checkpoint` is the release directory. granite-4.0-h-1b is the DENSE hybrid (no routed experts)
+    and small enough for float32, so it gets a full numeric oracle. A fixed id prompt is fed directly
+    (the tokenizer is sidestepped; parity is a function of the ids). The record carries the tokens, the
+    per-layer hidden states for seam isolation, the prefill logits, and the greedy continuation.
+    `IK_GRANITE_DTYPE=bfloat16` builds it at the released bf16 with eager attention instead, the
+    record a bf16 load's rounding placement is held to.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    if os.environ.get("IK_GRANITE_DTYPE") == "bfloat16":
+        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.bfloat16,
+                                                     attn_implementation="eager").eval()
+    else:
+        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(ids, output_hidden_states=True)
+        logits = out.logits[0].float()
+        generated = model.generate(ids, max_new_tokens=12, do_sample=False, pad_token_id=0)
+    continuation = generated[0, ids.shape[1]:]
+    extra = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits.contiguous()
+
+
+def run_nemotron_h(image, checkpoint):
+    """Nemotron-H (`NemotronHForCausalLM`, NVIDIA) at a tiny random configuration: the hybrid decoder
+    behind Nemotron Nano 2, interleaving Mamba-2 selective-scan layers (`linear_attention`), NoPE
+    grouped-query attention layers (`full_attention`), and ReLU-squared dense feed-forward layers
+    (`mlp`), one mixer per block. Unlike Granite there are no scalar multipliers and each block carries
+    a single pre-norm with a plain residual add. `n_groups` is 2 so the Mamba mixer's gated output norm
+    exercises its GROUPED path (HF's `Zamba2RMSNormGated`), the one departure from the ungrouped
+    Codestral/Granite mixer. Every hidden state is recorded so a divergence is located to a layer.
+    Requires the music oracle (transformers >= 5, which carries `NemotronHForCausalLM`). `checkpoint`
+    unused.
+    """
+    from transformers import NemotronHConfig, NemotronHForCausalLM
+
+    config = NemotronHConfig(
+        hidden_size=64, vocab_size=128,
+        mamba_num_heads=8, mamba_head_dim=16, ssm_state_size=16, n_groups=2, conv_kernel=4, chunk_size=8,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=16,
+        intermediate_size=96, mlp_hidden_act="relu2", mamba_hidden_act="silu",
+        layer_norm_epsilon=1e-5, time_step_min=0.001, time_step_max=0.1, time_step_floor=1e-4,
+        use_conv_bias=True, use_bias=False, mlp_bias=False, tie_word_embeddings=False,
+        layers_block_type=["linear_attention", "mlp", "linear_attention", "full_attention",
+                           "linear_attention", "mlp"],
+        attn_implementation="eager")
+    model = _randomized(NemotronHForCausalLM(config), seed=37)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61]], dtype=torch.long)
+    return _tiny_decoder_record(model, tokens)
+
+
+def run_nemotron_h_loss(image, checkpoint):
+    """The causal language-model loss `NemotronHForCausalLM` computes for the tiny config, for the
+    fine-tune objective's parity. The same seed-37 weights as `nemotron_h`, so the logits match that
+    record; `labels=tokens` makes transformers apply its shifted cross-entropy. The scalar loss is the
+    reference output; the logits and tokens are recorded so the port scores the objective on IDENTICAL
+    logits, isolating the objective's arithmetic from the forward pass. `checkpoint` unused.
+    """
+    import torch
+    from transformers import NemotronHConfig, NemotronHForCausalLM
+
+    config = NemotronHConfig(
+        hidden_size=64, vocab_size=128,
+        mamba_num_heads=8, mamba_head_dim=16, ssm_state_size=16, n_groups=2, conv_kernel=4, chunk_size=8,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=16,
+        intermediate_size=96, mlp_hidden_act="relu2", mamba_hidden_act="silu",
+        layer_norm_epsilon=1e-5, time_step_min=0.001, time_step_max=0.1, time_step_floor=1e-4,
+        use_conv_bias=True, use_bias=False, mlp_bias=False, tie_word_embeddings=False,
+        layers_block_type=["linear_attention", "mlp", "linear_attention", "full_attention",
+                           "linear_attention", "mlp"],
+        attn_implementation="eager")
+    model = _randomized(NemotronHForCausalLM(config), seed=37)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, labels=tokens)
+    globals()["_extra"] = {
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "logits": out.logits[0].float().contiguous(),
+    }
+    return torch.tensor([out.loss.item()], dtype=torch.float32)
+
+
+def run_nemotron_h_real(image, checkpoint):
+    """Nemotron Nano 2 released decoder logits + greedy continuation from transformers.
+
+    `--checkpoint` is the release directory (`nvidia/NVIDIA-Nemotron-Nano-9B-v2`). The 9B does not fit
+    float32 on a 32 GB machine, so both sides run bfloat16 (as the Codestral-Mamba and Gemma E4B parity
+    do). A fixed id prompt is fed directly (the tokenizer is sidestepped; parity is a function of the
+    ids). The record carries the tokens, the per-layer hidden states for seam isolation, the prefill
+    logits, and the greedy continuation. Requires the music oracle (transformers >= 5).
+    """
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint, dtype=torch.bfloat16, trust_remote_code=True).eval()
+    ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(ids, output_hidden_states=True)
+        logits = out.logits[0].float()
+        generated = model.generate(ids, max_new_tokens=12, do_sample=False, pad_token_id=0)
+    continuation = generated[0, ids.shape[1]:]
+    extra = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits.contiguous()
+
+
+def run_granite_speech(image, checkpoint):
+    """Granite Speech 3.3-2B (`GraniteSpeechForConditionalGeneration`, IBM) at a tiny random config: a
+    Conformer CTC encoder, a BLIP-2 Q-former projector, and a dense Granite decoder. Seams recorded so a
+    divergence localizes: the encoder output (Conformer with Shaw relative-position block-local
+    attention, macaron feed-forward, GLU convolution, mid-stack CTC skip), the projector output (the
+    windowed Q-former's self- then cross-attention with learned queries), and the fused logits (audio
+    features scattered into the decoder prompt at the audio-token positions, then the dense Granite
+    decoder with its four scalar multipliers). BatchNorm running variance is set positive (a randomized
+    negative variance would NaN both sides). `checkpoint` unused. Requires the llm oracle (transformers
+    4.57.6, which carries GraniteSpeech and the dense `granite` decoder).
+    """
+    import torch
+    from transformers import GraniteSpeechConfig, GraniteSpeechForConditionalGeneration
+    from transformers.models.granite_speech.configuration_granite_speech import GraniteSpeechEncoderConfig
+
+    enc = GraniteSpeechEncoderConfig(
+        input_dim=16, hidden_dim=32, output_dim=24, num_layers=4, num_heads=2, dim_head=16,
+        feedforward_mult=2, conv_expansion_factor=2, conv_kernel_size=5, context_size=8, max_pos_emb=16)
+    text = dict(model_type="granite", hidden_size=32, num_hidden_layers=2, num_attention_heads=4,
+                num_key_value_heads=2, head_dim=8, intermediate_size=64, vocab_size=40, rope_theta=1e6,
+                rms_norm_eps=1e-5, embedding_multiplier=2.0, residual_multiplier=0.5,
+                attention_multiplier=0.25, logits_scaling=3.0, tie_word_embeddings=False,
+                max_position_embeddings=64)  # untied so safetensors does not refuse the aliased lm_head
+    proj = dict(model_type="blip_2_qformer", hidden_size=32, num_hidden_layers=2, num_attention_heads=2,
+                intermediate_size=64, encoder_hidden_size=32, hidden_act="gelu", layer_norm_eps=1e-12)
+    config = GraniteSpeechConfig(encoder_config=enc.to_dict(), text_config=text, projector_config=proj,
+                                 audio_token_index=39, window_size=4, downsample_rate=2,
+                                 has_lora_adapter=False)
+    model = GraniteSpeechForConditionalGeneration(config).eval()
+    state = model.state_dict()
+    generator = torch.Generator().manual_seed(41)
+    for key in sorted(state):
+        tensor = state[key]
+        if not tensor.is_floating_point():
+            continue
+        if key.endswith("running_var"):
+            state[key] = torch.ones_like(tensor)
+        elif key.endswith("running_mean"):
+            state[key] = torch.zeros_like(tensor)
+        else:
+            state[key] = torch.randn(tensor.shape, generator=generator) * 0.05
+    model.load_state_dict(state)
+    model.eval()
+
+    features = torch.randn(1, 12, 16, generator=generator)
+    tokens = torch.tensor([[3, 17, 39, 39, 39, 39, 39, 39, 5]], dtype=torch.long)
+    features_mask = torch.ones(1, 6, dtype=torch.bool)
+    with torch.no_grad():
+        encoder_out = model.encoder(features)
+        projector_out = model.projector(encoder_out)
+        out = model(input_ids=tokens, input_features=features, input_features_mask=features_mask)
+    extra = {
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "features": features[0].float().contiguous(),
+        "encoder_out": encoder_out[0].float().contiguous(),
+        "projector_out": projector_out[0].float().contiguous(),
+    }
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def _probe_encoder_layers(layers, probes):
+    """Hooks every submodule of an encoder's `layers`, keeping each one's first call as
+    `enc.<layer>.<submodule>.in` / `.out` (`block` for the layer itself) in `probes`."""
+    import torch
+
+    def keep(value):
+        return value[0].detach().float().clone().contiguous()
+
+    for index, layer in enumerate(layers):
+        for name, module in layer.named_modules():
+            def hook(module, inputs, output, label=f"enc.{index}.{name or 'block'}"):
+                if f"{label}.out" in probes or f"{label}.in" in probes:
+                    return
+                if inputs and torch.is_tensor(inputs[0]):
+                    probes[f"{label}.in"] = keep(inputs[0])
+                out = output[0] if isinstance(output, tuple) else output
+                if torch.is_tensor(out):
+                    probes[f"{label}.out"] = keep(out)
+            module.register_forward_hook(hook)
+
+
+def run_granite_speech_real(image, checkpoint):
+    """Granite Speech 3.3-2b released decoder, float32, with the audio LoRA adapter enabled — the
+    audio-active model. `--checkpoint` is the release directory (`from_pretrained` auto-loads the adapter
+    it ships). Fixed random log-mel features and a prompt with the right number of audio tokens are fed
+    directly (parity is a function of the inputs). The record carries the tokens, the features, the
+    encoder and projector seams, the prefill logits, and the greedy continuation. Requires the llm oracle
+    (transformers 4.57.6 + peft).
+    """
+    import torch
+    from transformers import GraniteSpeechForConditionalGeneration
+
+    # `IK_GRANITE_SPEECH_DTYPE=bfloat16` builds the model at bf16 with eager attention; `bfloat16-inputs`
+    # keeps float32 arithmetic but rounds the features to bf16, the floor for that record. Both draw the
+    # same features, so the pair differs in arithmetic precision alone.
+    # `bfloat16-folded` folds the float32 LoRA into the decoder weights before the bf16 cast, as the port
+    # loads it; transformers otherwise applies the adapter as its own bf16 branch, which alone moves the
+    # logits by most of the bf16 floor.
+    mode = os.environ.get("IK_GRANITE_SPEECH_DTYPE")
+    dtype = torch.bfloat16 if mode == "bfloat16" else torch.float32
+    model = GraniteSpeechForConditionalGeneration.from_pretrained(
+        checkpoint, dtype=dtype, attn_implementation="eager" if mode else None).eval()
+    if hasattr(model, "enable_adapters"):
+        model.enable_adapters()                                   # the audio path the adapter serves
+    if mode == "bfloat16-folded":
+        with torch.no_grad():
+            for module in model.modules():
+                for key in getattr(module, "lora_A", {}):
+                    delta = module.lora_B[key].weight @ module.lora_A[key].weight
+                    module.base_layer.weight += delta * module.scaling[key]
+        model.disable_adapters()
+        model, dtype = model.to(torch.bfloat16), torch.bfloat16
+        # `.to` casts the rotary's inverse frequencies too; a bf16 load keeps them float32.
+        for module in model.modules():
+            if hasattr(module, "inv_freq") and hasattr(module, "rope_init_fn"):
+                inverse, _ = module.rope_init_fn(module.config, module.inv_freq.device)
+                module.inv_freq = inverse.float()
+                module.original_inv_freq = module.inv_freq
+    torch.manual_seed(3)
+    frames = 30
+    features = torch.randn(1, frames, 160)
+    if mode:
+        features = features.to(torch.bfloat16).to(dtype)
+    audioCount = ((frames + 14) // 15) * 3                        # ceil(frames / window) · queries
+    audioId = model.config.audio_token_id
+    ids = torch.tensor([[1, 100, 200] + [audioId] * audioCount + [300]], dtype=torch.long)
+    mask = torch.ones(1, audioCount, dtype=torch.bool)
+    # `IK_PROBE_ENCODER=1` records every Conformer submodule's input and output on the encoder pass,
+    # keyed `enc.<layer>.<submodule>.in` / `.out`, for isolating a block piece by piece.
+    probes = {}
+    if os.environ.get("IK_PROBE_ENCODER"):
+        _probe_encoder_layers(model.encoder.layers, probes)
+    with torch.no_grad():
+        encoder_out = model.encoder(features)
+        recorded = dict(probes)
+        projector_out = model.projector(encoder_out)
+        # `IK_PROBE_LAYERS` records the named decoder layers on the prefill, as `hf_layer_probe` does.
+        decoder_probes, restore = {}, None
+        if os.environ.get("IK_PROBE_LAYERS"):
+            layers = [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")]
+            restore = _probe_hooks(model.language_model, layers, decoder_probes)
+        logits = model(input_ids=ids, input_features=features, input_features_mask=mask).logits[0].float()
+        recorded.update({f"dec.{key}": value for key, value in decoder_probes.items()})
+        if restore is not None:
+            restore()
+        generated = model.generate(input_ids=ids, input_features=features, input_features_mask=mask,
+                                   max_new_tokens=8, do_sample=False)
+    continuation = generated[0, ids.shape[1]:]
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "features": features[0].float().contiguous(),
+        "encoder_out": encoder_out[0].float().contiguous(),
+        "projector_out": projector_out[0].float().contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        **recorded,
+    }
+    return logits.contiguous()
+
+
+def run_voxtral(image, checkpoint):
+    """Voxtral-Mini (`VoxtralForConditionalGeneration`, Mistral) at a tiny random config: a Whisper audio
+    encoder, a two-layer projector that groups four encoder frames, and a Llama decoder that generates
+    with the audio embeddings scattered into the prompt at the audio-token positions. Seams recorded: the
+    encoder last hidden state, the projected audio embeddings, and the fused logits. `checkpoint` unused.
+    Requires the llm oracle (transformers 4.57.6, which carries Voxtral).
+    """
+    from transformers import VoxtralConfig, VoxtralForConditionalGeneration
+    from transformers.models.voxtral.configuration_voxtral import VoxtralEncoderConfig
+
+    audio = VoxtralEncoderConfig(num_mel_bins=32, hidden_size=64, intermediate_size=256,
+                                 num_attention_heads=4, num_hidden_layers=2, max_source_positions=24)
+    text = dict(model_type="llama", hidden_size=64, num_hidden_layers=2, num_attention_heads=4,
+                num_key_value_heads=2, head_dim=16, intermediate_size=128, vocab_size=40, rope_theta=1e4,
+                rms_norm_eps=1e-5, tie_word_embeddings=False, max_position_embeddings=64)
+    config = VoxtralConfig(audio_config=audio.to_dict(), text_config=text, audio_token_id=39,
+                           projector_hidden_act="gelu")
+    model = VoxtralForConditionalGeneration(config).eval()
+    state = model.state_dict()
+    generator = torch.Generator().manual_seed(41)
+    for key in sorted(state):
+        if state[key].is_floating_point():
+            state[key] = torch.randn(state[key].shape, generator=generator) * 0.05
+    # The encoder positional embedding is Whisper's fixed sinusoids, which the port computes rather than
+    # loads; set it so the tiny oracle matches (the released model already carries the sinusoids).
+    import math
+    posLength, channels = state["audio_tower.embed_positions.weight"].shape
+    half = channels // 2
+    logTimescale = math.log(10000) / max(half - 1, 1)
+    sinusoids = torch.zeros(posLength, channels)
+    for t in range(posLength):
+        for i in range(half):
+            scaled = t * math.exp(-logTimescale * i)
+            sinusoids[t, i] = math.sin(scaled)
+            sinusoids[t, half + i] = math.cos(scaled)
+    state["audio_tower.embed_positions.weight"] = sinusoids
+    model.load_state_dict(state)
+    model.eval()
+
+    features = torch.randn(1, 32, 48, generator=generator)      # [batch, mels, 2·max_source_positions]
+    with torch.no_grad():
+        encoder_out = model.audio_tower(features).last_hidden_state
+        audio_embeds = model.get_audio_features(features)
+        audioCount = audio_embeds.shape[0]
+        tokens = torch.tensor([[1, 5] + [39] * audioCount + [7]], dtype=torch.long)
+        logits = model(input_ids=tokens, input_features=features).logits[0].float()
+    extra = {
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "features": features[0].float().contiguous(),
+        "encoder_out": encoder_out[0].float().contiguous(),
+        "audio_embeds": audio_embeds.float().contiguous(),
+    }
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return logits.contiguous()
+
+
+def run_voxtral_real(image, checkpoint):
+    """Voxtral-Mini-3B released decoder, float32. `--checkpoint` is the release directory. Fixed random
+    log-mel features (30 s, 128 mel bands) and a prompt with the right number of audio tokens are fed
+    directly (parity is a function of the inputs). The record carries the tokens, the features, the
+    encoder and projector seams, the prefill logits, and the greedy continuation. Requires the llm
+    oracle (transformers 4.57.6 which carries Voxtral).
+    """
+    import torch
+    from transformers import VoxtralForConditionalGeneration
+
+    # `IK_VOXTRAL_DTYPE=bfloat16` builds the model at bf16 with eager attention; `bfloat16-inputs` keeps
+    # float32 arithmetic on the same features rounded to bf16, the floor for that record.
+    # `IK_PROBE_ENCODER=1` records the audio tower's layers piece by piece, `IK_PROBE_LAYERS` the named
+    # decoder layers on the prefill.
+    mode = os.environ.get("IK_VOXTRAL_DTYPE")
+    dtype = torch.bfloat16 if mode == "bfloat16" else torch.float32
+    model = VoxtralForConditionalGeneration.from_pretrained(
+        checkpoint, dtype=dtype, attn_implementation="eager" if mode else None).eval()
+    torch.manual_seed(3)
+    features = torch.randn(1, 128, 3000)
+    if mode:
+        features = features.to(torch.bfloat16).to(dtype)
+    probes = {}
+    if os.environ.get("IK_PROBE_ENCODER"):
+        _probe_encoder_layers(model.audio_tower.layers, probes)
+    with torch.no_grad():
+        encoder_out = model.audio_tower(features).last_hidden_state
+        audio_embeds = model.get_audio_features(features)
+    audioCount = audio_embeds.shape[0]
+    audioId = model.config.audio_token_id
+    ids = torch.tensor([[1] + [audioId] * audioCount + [100, 200]], dtype=torch.long)
+    restore = None
+    if os.environ.get("IK_PROBE_LAYERS"):
+        decoder_probes = {}
+        restore = _probe_hooks(model.language_model, [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")],
+                               decoder_probes)
+    with torch.no_grad():
+        logits = model(input_ids=ids, input_features=features).logits[0].float()
+        if restore is not None:
+            restore()
+            probes.update({f"dec.{key}": value for key, value in decoder_probes.items()})
+        generated = model.generate(input_ids=ids, input_features=features, max_new_tokens=8, do_sample=False)
+    continuation = generated[0, ids.shape[1]:]
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "features": features[0].float().contiguous(),
+        "encoder_out": encoder_out[0].float().contiguous(),
+        "audio_embeds": audio_embeds.float().contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        **probes,
+    }
+    return logits.contiguous()
+
+
 def run_qwen2_moe(image, checkpoint):
     """The Qwen2-MoE decoder's arithmetic, from transformers' own Qwen2MoeForCausalLM, at a tiny
     random configuration.
@@ -2228,6 +3579,10 @@ def run_qwen2_moe(image, checkpoint):
         shared_expert_intermediate_size=48, num_experts=8, num_experts_per_tok=2, norm_topk_prob=False,
         decoder_sparse_step=1, mlp_only_layers=[], rms_norm_eps=1e-6, rope_theta=10000.0,
         tie_word_embeddings=False, max_position_embeddings=64, use_sliding_window=False, qkv_bias=True)
+    if os.environ.get("IK_TINY_DTYPE"):
+        # This transformers picks the attention class at construction, so a bf16 record asks for eager
+        # here rather than through `_tiny_decoder_record`.
+        config._attn_implementation = "eager"
     model = _randomized(Qwen2MoeForCausalLM(config), seed=17)
     tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
     return _tiny_decoder_record(model, tokens)
@@ -2445,7 +3800,11 @@ def run_gemma3n(image, checkpoint):
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     config = AutoConfig.from_pretrained(checkpoint)
     text_config = getattr(config, "text_config", config)
-    model = Gemma3nForCausalLM.from_pretrained(checkpoint, config=text_config, dtype=dtype).eval()
+    # Eager attention at bf16: torch's CPU SDPA kernel approximates `exp` with its own polynomial, which
+    # no port reproduces, and a bf16 record is what a port's rounding placement is held to.
+    attention = "eager" if dtype == torch.bfloat16 else None
+    model = Gemma3nForCausalLM.from_pretrained(checkpoint, config=text_config, dtype=dtype,
+                                               attn_implementation=attention).eval()
 
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
@@ -2596,17 +3955,23 @@ def run_gemma3(image, checkpoint):
     greedy continuation (which the reference decodes through its hybrid cache, so the Swift cache is
     measured by it), every hidden state for the per-layer isolation harness, the chat-templated ids of
     a one-turn conversation, and the ids of a few tokenizer probe strings.
+
+    `IK_GEMMA_DTYPE=bfloat16` builds the reference at the released precision, eager attention, which
+    is the record a bf16 port is held to; the float32 record from the same prompt is its floor.
     """
     import json
     import torch
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
+    dtype = torch.bfloat16 if os.environ.get("IK_GEMMA_DTYPE") == "bfloat16" else torch.float32
     config = json.load(open(os.path.join(checkpoint, "config.json")))
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     if config.get("model_type") == "gemma3":
-        model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+        model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=dtype,
+                                                            attn_implementation="eager").eval()
     else:
-        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+        model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=dtype,
+                                                     attn_implementation="eager").eval()
 
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
@@ -2632,6 +3997,201 @@ def run_gemma3(image, checkpoint):
         extra[f"hidden.{index}"] = state[0].float().contiguous()
     globals()["_extra"] = extra
     return logits.float().contiguous()
+
+
+def _probe_hooks(model, probed, extra):
+    """Hooks every submodule of the decoder layers in `probed`, the eager attention function, and the
+    module-level functions `IK_PROBE_FUNCTIONS` names, recording into `extra` under the keys
+    `hf_layer_probe` documents. Returns a function that undoes the attention patch."""
+    import importlib
+    import torch
+
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n and "embed_tokens_extend" not in n)
+
+    def keep(value):
+        return value.detach().float().clone().contiguous()
+
+    for index in probed:
+        layer = decoder_layers[index]
+        for name, module in layer.named_modules():
+            label = f"{index}.{name}" if name else f"{index}.block"
+            def hook(module, inputs, output, label=label, whole=not name):
+                if inputs and torch.is_tensor(inputs[0]):
+                    extra[f"{label}.in"] = keep(inputs[0][0])
+                    if whole:
+                        extra[f"{label}.in.whole"] = keep(inputs[0])
+                if whole and torch.is_tensor(output if not isinstance(output, tuple) else output[0]):
+                    extra[f"{label}.out.whole"] = keep(output if not isinstance(output, tuple) else output[0])
+                out = output[0] if isinstance(output, tuple) else output
+                if torch.is_tensor(out):
+                    extra[f"{label}.out"] = keep(out[0])
+            module.register_forward_hook(hook)
+
+    modeling = importlib.import_module(type(decoder_layers[0]).__module__)
+    original = getattr(modeling, "eager_attention_forward", None)
+    layer_of = {id(decoder_layers[i].self_attn): i for i in probed if hasattr(decoder_layers[i], "self_attn")}
+
+    def recording(module, query, key, value, attention_mask, **kwargs):
+        output, weights = original(module, query, key, value, attention_mask, **kwargs)
+        index = layer_of.get(id(module))
+        if index is not None:
+            extra[f"{index}.attn.q"] = keep(query[0])
+            extra[f"{index}.attn.k"] = keep(key[0])
+            extra[f"{index}.attn.v"] = keep(value[0])
+            extra[f"{index}.attn.weights"] = keep(weights[0])
+            extra[f"{index}.attn.out"] = keep(output[0])
+        return output, weights
+
+    if original is not None:
+        modeling.eager_attention_forward = recording
+    # `IK_PROBE_FUNCTIONS` names module-level functions (a recurrence, a convolution) that no hook
+    # sees; each call's tensor arguments and outputs are kept as `fn.<name>.<call>.arg<i>` / `.out<i>`.
+    for function in filter(None, os.environ.get("IK_PROBE_FUNCTIONS", "").split(",")):
+        def wrap(inner, name=function, calls=[0]):
+            def recorded(*args, **kwargs):
+                result = inner(*args, **kwargs)
+                call = calls[0]
+                calls[0] += 1
+                for i, value in enumerate(list(args) + [kwargs[k] for k in sorted(kwargs)]):
+                    if torch.is_tensor(value):
+                        extra[f"fn.{name}.{call}.arg{i}"] = keep(value)
+                outputs = result if isinstance(result, tuple) else (result,)
+                for i, value in enumerate(outputs):
+                    if torch.is_tensor(value):
+                        extra[f"fn.{name}.{call}.out{i}"] = keep(value)
+                return result
+            return recorded
+        setattr(modeling, function, wrap(getattr(modeling, function)))
+
+    def restore():
+        if original is not None:
+            modeling.eager_attention_forward = original
+    return restore
+
+
+def _stream_loaded(loader, checkpoint):
+    """`checkpoint` loaded at bf16 with every module streamed to float32 (`_stream_float32`). The
+    buffers the constructor computes (an embedding scale, a rotary table) are made at bf16 by a bf16
+    load, and widening cannot undo that rounding, so they are taken from a float32 construction of the
+    same model whose parameters live on the meta device and cost no memory."""
+    import copy
+    import torch
+
+    model = loader.from_pretrained(checkpoint, dtype=torch.bfloat16, attn_implementation="eager").eval()
+    persistent = set(model.state_dict())
+    register = torch.nn.Module.register_parameter
+
+    def register_on_meta(module, name, parameter):
+        register(module, name, parameter)
+        if parameter is not None:
+            module._parameters[name] = torch.nn.Parameter(parameter.to("meta"), requires_grad=False)
+
+    # The loaded config records bf16 on itself and its sub-configs, and a multimodal wrapper builds
+    # its language model at that type, so the float32 construction reads a copy set to float32.
+    config = copy.deepcopy(model.config)
+    pending = [config]
+    while pending:
+        current = pending.pop()
+        for key in ("dtype", "torch_dtype"):
+            if getattr(current, key, None) is not None:
+                setattr(current, key, torch.float32)
+        pending.extend(value for value in vars(current).values() if hasattr(value, "to_dict") and hasattr(value, "model_type"))
+    torch.nn.Module.register_parameter = register_on_meta
+    set_default = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(torch.float32)
+        shell = type(model)(config)
+    finally:
+        torch.nn.Module.register_parameter = register
+        torch.set_default_dtype(set_default)
+    for name, buffer in shell.named_buffers():
+        if name in persistent or not buffer.is_floating_point() or buffer.device.type == "meta":
+            continue
+        owner, _, leaf = name.rpartition(".")
+        target = model.get_submodule(owner) if owner else model
+        if leaf in target._buffers:
+            target._buffers[leaf] = buffer.to(torch.float32)
+    del shell
+    _stream_float32(model)
+    return model
+
+
+def _stream_float32(model):
+    """Hooks every module so its own floating parameters and buffers are float32 while it runs and
+    return to their stored types after. A tensor shared by two modules (a tied head) is widened by
+    whichever runs, and restored when that module ends."""
+    import torch
+
+    def tensors(module):
+        return [t for t in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False))
+                if t.is_floating_point()]
+
+    def widen(module, args):
+        stored = []
+        for t in tensors(module):
+            stored.append((t, t.data.dtype))
+            if t.data.dtype != torch.float32:
+                t.data = t.data.float()
+        module._ik_stored = stored
+
+    def restore(module, args, output):
+        for t, original in getattr(module, "_ik_stored", []):
+            if t.data.dtype != original:
+                t.data = t.data.to(original)
+        module._ik_stored = []
+
+    for module in model.modules():
+        if tensors(module):
+            module.register_forward_pre_hook(widen)
+            module.register_forward_hook(restore)
+
+
+def run_hf_layer_probe(image, checkpoint):
+    """Every submodule's input and output inside chosen decoder layers of a transformers release.
+
+    `--checkpoint` is a released DIRECTORY that loads as a causal LM (a multimodal Gemma 3 release
+    loads as `AutoModelForImageTextToText` and is driven text-only). `IK_PROBE_LAYERS` names the
+    layers (default `0`), `IK_PROBE_DTYPE=bfloat16` builds the reference at that precision, eager
+    attention. Records `hidden.i` for every hidden state, then per probed layer `L`:
+    `L.<module>.in` / `L.<module>.out` for every submodule (cloned at capture, since a module can
+    mutate its output in place later), the block's whole input and output as `L.block.in.whole` /
+    `L.block.out.whole` (Gemma 3n's residual stream carries AltUp copies ahead of the batch axis), and from the eager attention function the post-rotary
+    `L.attn.q` / `L.attn.k`, the `L.attn.v`, the rounded probabilities `L.attn.weights`, and the
+    weighted sum `L.attn.out`. Each seam's input is the reference's own, so a port runs a piece on it
+    and counts the elements that differ. `image` unused.
+    """
+    import json
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+
+    dtype = torch.bfloat16 if os.environ.get("IK_PROBE_DTYPE") == "bfloat16" else torch.float32
+    # `IK_PROBE_STREAM_F32=1` computes the float32 run from a bf16 load: each module's own weights are
+    # widened to float32 just before it runs and returned to their stored type after, so only one
+    # module is float32 at a time. A bf16 weight widens exactly, so the arithmetic is the float32
+    # model's; the peak is the bf16 model plus the largest single module.
+    stream = os.environ.get("IK_PROBE_STREAM_F32") == "1" and dtype == torch.float32
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", "0").split(",")]
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    # A multimodal Gemma 3 release only loads whole; Gemma 3n and 4 load their text decoder alone.
+    loader = AutoModelForImageTextToText if config.get("model_type") == "gemma3" else AutoModelForCausalLM
+    model = _stream_loaded(loader, checkpoint) if stream else loader.from_pretrained(
+        checkpoint, dtype=dtype, attn_implementation="eager").eval()
+
+    extra = {}
+    restore = _probe_hooks(model, probed, extra)
+    prompt = "The capital of France is"
+    ids = tokenizer(prompt, return_tensors="pt").input_ids
+    with torch.no_grad():
+        out = model(input_ids=ids, output_hidden_states=True)
+    restore()
+    extra["tokens"] = ids[0].to(torch.int32).contiguous()
+    for index, state in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = state[0].detach().float().clone().contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
 
 
 # Strings the Swift tokenizer is held to the reference on: runs of spaces, multi-byte text, newlines
@@ -3340,6 +4900,1471 @@ def run_qwen3_5(image, checkpoint):
     return logits.float().contiguous()
 
 
+def _deepseek_v41_serve_gemms(reference, net, args, tokenizer):
+    """Make a float net compute its GEMMs the way the release serves them.
+
+    The release builds every `Linear` without an explicit dtype as fp8 and its routed experts as
+    fp4, and `linear()` then rounds the INPUT of each to fp8 in blocks of 32 before a narrow GEMM.
+    Which layers those are is the reference's decision, so it is read off a probe built with the
+    release's own dtypes rather than listed here: the port is measured against the rule, and a rule
+    written down on both sides would agree with itself whatever the release does.
+
+    The measured net stays float32. Each weight the probe builds narrow is rounded once to that
+    storage format (fp8 in square blocks of 32, fp4 in row blocks of 32, each scale the next power
+    of two of the block maximum over the format's range), which is what dequantizing the stored
+    weight gives. `linear()` is wrapped so a weight so marked has its input rounded as the release's
+    `act_quant` rounds it. A GEMM over dequantized operands with float32 accumulation is the fp8 or
+    fp4 GEMM's arithmetic up to the order of the sum.
+
+    `wo_a` is built fp8 and applied through an einsum rather than `linear()`, so its weight is
+    rounded and its input is not, which is the release's own behaviour and falls out of this rather
+    than being special-cased.
+    """
+    import dataclasses
+    import ml_dtypes
+    import numpy as np
+    import torch
+
+    probe = reference.Transformer(dataclasses.replace(args, dtype="fp8", expert_dtype="fp4"),
+                                  tokenizer)
+    narrow = {name: ("fp4" if module.weight.dtype == torch.float4_e2m1fn_x2 else "fp8")
+              for name, module in probe.named_modules()
+              if isinstance(module, reference.Linear)
+              and module.weight.dtype in (torch.float8_e4m3fn, torch.float4_e2m1fn_x2)}
+    del probe
+
+    def next_power_of_two(value):
+        bits = value.float().contiguous().view(torch.int32)
+        exponent = ((bits >> 23) & 0xFF) - 127 + ((bits & ((1 << 23) - 1)) != 0).to(torch.int32)
+        return ((exponent + 127) << 23).to(torch.int32).view(torch.float32)
+
+    def stored(weight, kind):
+        w = weight.detach().float()
+        rows, columns = w.shape
+        if kind == "fp8":
+            padded = torch.zeros((rows + 31) // 32 * 32, (columns + 31) // 32 * 32)
+            padded[:rows, :columns] = w
+            blocks = padded.reshape(padded.shape[0] // 32, 32, padded.shape[1] // 32, 32)
+            amax = blocks.abs().amax(dim=(1, 3), keepdim=True).clamp(min=1e-4)
+            scale = next_power_of_two(amax / 448.0)
+            narrow_values = (blocks / scale).clamp(-448, 448).to(torch.float8_e4m3fn).float()
+            return (narrow_values * scale).reshape(padded.shape)[:rows, :columns]
+        blocks = w.reshape(rows, columns // 32, 32)
+        amax = blocks.abs().amax(dim=-1, keepdim=True).clamp(min=6 * 2.0 ** -126)
+        scale = next_power_of_two(amax / 6.0)
+        values = (blocks / scale).clamp(-6, 6).numpy().astype(ml_dtypes.float4_e2m1fn)
+        return (torch.from_numpy(values.astype(np.float32)) * scale).reshape(rows, columns)
+
+    for name, module in net.named_modules():
+        kind = narrow.get(name)
+        if kind is None:
+            continue
+        with torch.no_grad():
+            module.weight.copy_(stored(module.weight, kind))
+        module.weight._served = True
+
+    original_linear = reference.linear
+    act_quant = sys.modules["kernel"].act_quant
+
+    def serving_linear(x, weight, bias=None):
+        if getattr(weight, "_served", False):
+            x = x.clone()
+            act_quant(x, reference.fp8_block_size, reference.scale_fmt, reference.scale_dtype, True)
+        return original_linear(x, weight, bias)
+
+    reference.linear = serving_linear
+    return narrow, original_linear
+
+
+def _deepseek_v41_bf16(reference, build, seed=11):
+    """A module built inside the release's own `set_dtype(torch.bfloat16)`, randomized in place.
+
+    Every parameter takes the dtype the reference's constructor gives it: bf16 by default, float32
+    where the constructor says so. Each is randomized in its OWN dtype, because `_randomized` ends by
+    casting to float32, which is the one thing a bf16 module must not do.
+    """
+    import torch
+
+    with reference.set_dtype(torch.bfloat16):
+        module = build()
+    torch.manual_seed(seed)
+    state = module.state_dict()
+    for key in sorted(state):
+        if state[key].is_floating_point():
+            state[key] = (torch.randn(state[key].shape) * 0.05).to(state[key].dtype)
+    module.load_state_dict(state)
+    return module.eval()
+
+
+def _deepseek_v41_kernel_shim(quantizes=False):
+    """Stand a CPU `kernel` module in front of DeepSeek V4.1's reference implementation.
+
+    With `quantizes`, the two activation quantizers do what the release's tilelang kernels do instead
+    of nothing, transcribed line for line from `kernel.py`: a block's absolute maximum, floored, sets
+    the scale; with `scale_fmt` the scale is the next power of two, computed as the kernel computes
+    it by multiplying by the reciprocal rather than dividing; the value is clamped, cast to the
+    narrow type, cast back, and multiplied by the scale. The compressed latent's fp4 takes an E4M3
+    scale instead, which the kernel reaches by DIVIDING by 6 and rounding the quotient to e4m3. Both
+    casts round to nearest-even, through torch's own float8 and ml_dtypes' float4, which are
+    independent of the port that is measured against them.
+
+    `inference/model.py` imports six symbols from `kernel`, whose real bodies are tilelang kernels
+    that compile for CUDA. At a float configuration the reachable surface is small:
+
+    - `fp8_gemm` / `fp4_gemm` are reached only through `linear()` for a QUANTIZED weight, and there
+      are none here, so they raise. That turns "the float path does not route through them" from an
+      assumption into an assertion.
+    - `act_quant` / `fp4_act_quant` are called on the sliding-window key-value and the compressed
+      latent whatever the weights are. With `inplace=True` each is a fused quantize-then-dequantize
+      that writes back in the input's dtype, so it only rounds; leaving the tensor alone makes this
+      the UNQUANTIZED model, which is what a float port should be held to.
+    - `sparse_attn` and `hc_split_sinkhorn` carry arithmetic. Both are mechanisms already measured
+      against transformers' own `deepseek_v4`, which implements each in plain PyTorch, so these are
+      transcribed from that verified third party rather than invented here.
+    """
+    import types
+    import torch
+    import torch.nn.functional as F
+
+    kernel = types.ModuleType("kernel")
+
+    def gemm(name):
+        def stub(*args, **kwargs):
+            raise AssertionError(f"{name} reached at a float configuration: only a quantized "
+                                 "weight routes through it, and there are none here")
+        return stub
+
+    kernel.fp8_gemm = gemm("fp8_gemm")
+    kernel.fp4_gemm = gemm("fp4_gemm")
+
+    def next_power_of_two(value):
+        # `fast_log2_ceil` then `fast_pow2`: the exponent field, plus one when any mantissa bit is
+        # set, so an exact power of two is its own ceiling.
+        bits = value.float().contiguous().view(torch.int32)
+        exponent = ((bits >> 23) & 0xFF) - 127 + ((bits & ((1 << 23) - 1)) != 0).to(torch.int32)
+        return ((exponent + 127) << 23).to(torch.int32).view(torch.float32)
+
+    def blocks(x, block_size):
+        width = x.size(-1)
+        assert width % block_size == 0, f"{width} does not divide into blocks of {block_size}"
+        return x.float().reshape(*x.shape[:-1], width // block_size, block_size)
+
+    def act_quant(x, block_size=128, scale_fmt=None, scale_dtype=None, inplace=False):
+        assert inplace, "a non-inplace act_quant feeds a quantized GEMM"
+        if not quantizes:
+            return None
+        z = blocks(x, block_size)
+        amax = z.abs().amax(dim=-1, keepdim=True).clamp(min=1e-4)
+        inverse = torch.tensor(1.0 / 448.0, dtype=torch.float32)
+        scale = next_power_of_two(amax * inverse) if scale_fmt is not None else amax * inverse
+        narrow = (z / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn).float()
+        x.copy_((narrow * scale).reshape(x.shape).to(x.dtype))
+        return x
+
+    def fp4_act_quant(x, block_size=32, inplace=False, scale_dtype=None):
+        assert inplace, "a non-inplace fp4_act_quant feeds a quantized GEMM"
+        if not quantizes:
+            return None
+        import ml_dtypes
+        import numpy as np
+        z = blocks(x, block_size)
+        amax = z.abs().amax(dim=-1, keepdim=True)
+        if scale_dtype == torch.float8_e4m3fn:
+            # Training's compressed KV: an all-zero group keeps a nonzero scale. The quotient is
+            # rounded to e4m3 as the kernel's `T.Cast(FP8, amax / fp4_max)` does; it is clamped to
+            # the format's range first because an overflowing cast is where torch and the kernel
+            # could disagree, and no activation here comes near it.
+            amax = amax.clamp(min=6 * 2.0 ** -9)
+            scale = (amax / 6.0).clamp(max=448.0).to(torch.float8_e4m3fn).float()
+        else:
+            amax = amax.clamp(min=6 * 2.0 ** -126)
+            scale = next_power_of_two(amax * torch.tensor(1.0 / 6.0, dtype=torch.float32))
+        clamped = (z / scale).clamp(-6.0, 6.0)
+        narrow = torch.from_numpy(clamped.numpy().astype(ml_dtypes.float4_e2m1fn)
+                                  .astype(np.float32))
+        x.copy_((narrow * scale).reshape(x.shape).to(x.dtype))
+        return x
+
+    def hc_split_sinkhorn(mixes, hc_scale, hc_base, hc_mult=4, sinkhorn_iters=20, eps=1e-6):
+        hc = hc_mult
+        pre_w, post_w, comb_w = mixes.float().split([hc, hc, hc * hc], dim=-1)
+        pre_b, post_b, comb_b = hc_base.float().split([hc, hc, hc * hc])
+        pre_scale, post_scale, comb_scale = hc_scale.float().unbind(0)
+        pre = torch.sigmoid(pre_w * pre_scale + pre_b) + eps
+        post = 2 * torch.sigmoid(post_w * post_scale + post_b)
+        logits = comb_w.view(*comb_w.shape[:-1], hc, hc) * comb_scale + comb_b.view(hc, hc)
+        comb = torch.softmax(logits, dim=-1) + eps
+        comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+        for _ in range(sinkhorn_iters - 1):
+            comb = comb / (comb.sum(dim=-1, keepdim=True) + eps)
+            comb = comb / (comb.sum(dim=-2, keepdim=True) + eps)
+        return pre, post, comb
+
+    def sparse_attn(q, kv, attn_sink, topk_idxs, softmax_scale):
+        """q [b,s,h,d] against the shared latent kv [b,n,d] at the positions topk_idxs names.
+
+        One latent is both key and value, which is what multi-head latent attention means; -1 marks
+        a position the query may not see, and the per-head sink is an extra softmax logit that
+        drains mass and contributes no value.
+        """
+        b, s, h, d = q.shape
+        k = topk_idxs.shape[-1]
+        valid = topk_idxs >= 0
+        gathered = topk_idxs.clamp_min(0).long()
+        latents = torch.gather(kv.unsqueeze(1).expand(b, s, kv.shape[1], d), 2,
+                               gathered.unsqueeze(-1).expand(b, s, k, d)).float()
+        scores = torch.einsum("bshd,bskd->bshk", q.float(), latents) * softmax_scale
+        scores = scores.masked_fill(~valid.unsqueeze(2), float("-inf"))
+        sink = attn_sink.float().view(1, 1, h, 1).expand(b, s, h, 1)
+        probs = torch.softmax(torch.cat([scores, sink], dim=-1), dim=-1)[..., :k]
+        return torch.einsum("bshk,bskd->bshd", probs, latents).to(q.dtype)
+
+    kernel.act_quant = act_quant
+    kernel.fp4_act_quant = fp4_act_quant
+    kernel.hc_split_sinkhorn = hc_split_sinkhorn
+    kernel.sparse_attn = sparse_attn
+    sys.modules["kernel"] = kernel
+
+
+def run_deepseek_v4_release(image):
+    """DeepSeek V4 Flash's decoder from the release's OWN `inference/model.py`, in float32."""
+    return _run_deepseek_v4_release(image, "deepseek-v4")
+
+
+def run_deepseek_v4_release_bf16(image):
+    """The same, built in bf16 as the release runs it. Run under the gemma environment."""
+    return _run_deepseek_v4_release(image, "deepseek-v4", bf16=True)
+
+
+def run_deepseek_v4_pro_release(image):
+    """DeepSeek V4 Pro (0813)'s decoder from its release's own `inference/model.py`, in float32."""
+    return _run_deepseek_v4_release(image, "deepseek-v4-pro-0813")
+
+
+def run_deepseek_v4_pro_release_bf16(image):
+    """The same, built in bf16 as the release runs it. Run under the gemma environment."""
+    return _run_deepseek_v4_release(image, "deepseek-v4-pro-0813", bf16=True)
+
+
+def _deepseek_v4_release_net(release, bf16=False, dspark=False):
+    """DeepSeek V4's decoder from the release's own `inference/model.py`, behind the same CPU
+    `kernel` shim V4.1 runs behind (V4 imports the same six symbols with the same signatures).
+
+    `deepseek_v4` measures V4 against transformers at an all-sliding configuration, which never
+    reaches a compressor or the indexer. This reaches both: ratio 4 pools overlapping groups and
+    owns an indexer that keeps fewer groups than exist, ratio 8 stands in for the release's 128 and
+    pools plain groups, layer 0 routes by its token table, and YaRN is on for the compressed layers
+    at an original length the sequence exceeds, as the releases configure it. Pro 0813 differs in
+    layout (its first layers compress) and routing scale, and moves `hc_head` onto the block; both
+    arrangements are recorded. V4 Flash and V4 Pro share one `model.py`, so Flash's record covers
+    Pro's first release too.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    _deepseek_v41_kernel_shim()
+    # The indexer rotates its query and keys through `fast_hadamard_transform`, a CUDA library.
+    # This is the library's own `hadamard_transform_ref` (a Sylvester Hadamard matrix, times the
+    # scale) with the CUDA kernel's arithmetic: accumulated in float32, rounded once to the input's
+    # dtype. transformers' `deepseek_v4` omits the rotation, so there is no third party to take it
+    # from; the definition is the library's.
+    import types
+    hadamard = types.ModuleType("fast_hadamard_transform")
+
+    def hadamard_transform(x, scale=1.0):
+        width = x.size(-1)
+        assert width & (width - 1) == 0, f"{width} is not a power of two"
+        matrix = torch.ones(1, 1)
+        while matrix.size(0) < width:
+            matrix = torch.cat([torch.cat([matrix, matrix], 1), torch.cat([matrix, -matrix], 1)], 0)
+        return (F.linear(x.float(), matrix) * scale).to(x.dtype)
+
+    hadamard.hadamard_transform = hadamard_transform
+    sys.modules["fast_hadamard_transform"] = hadamard
+    source = os.path.expanduser(f"~/.inferkit-validation/reference-sources/{release}")
+    sys.path.insert(0, source)
+    import model as reference
+    if not bf16:
+        # `rotate_activation` asserts bf16, because the release only ever runs in bf16. A float32
+        # record runs the same rotation without the assertion.
+        reference.rotate_activation = lambda x: hadamard_transform(x, scale=x.size(-1) ** -0.5)
+
+    pro = "pro" in release
+    # 0813's draft stack: two stages over the decoder's own experts, reading the last three layers.
+    drafting = dict(n_mtp_layers=2, dspark_block_size=3, dspark_noise_token_id=120,
+                    dspark_target_layer_ids=(3, 4, 5), dspark_markov_rank=8, temperature=0) if dspark else {}
+    ratios = (8, 8, 4, 8, 4, 0) if pro else (0, 0, 4, 8, 4, 8)
+    args = reference.ModelArgs(**drafting,
+        max_batch_size=1, max_seq_len=64, dtype="bf16", expert_dtype=None, scale_dtype="fp32",
+        scale_fmt=None, vocab_size=128, dim=64, moe_inter_dim=32, n_layers=6, n_hash_layers=1,
+        **({} if dspark else {"n_mtp_layers": 0}), n_heads=4, n_routed_experts=8,
+        n_shared_experts=1, n_activated_experts=2,
+        score_func="sqrtsoftplus", route_scale=2.5 if pro else 1.5, swiglu_limit=10.0,
+        q_lora_rank=32, head_dim=32, rope_head_dim=8, o_groups=2, o_lora_rank=16, window_size=8,
+        compress_ratios=ratios + ((0, 0) if dspark else ()),
+        compress_rope_theta=40000.0, original_seq_len=16, rope_theta=10000.0, rope_factor=4,
+        beta_fast=32, beta_slow=1, index_n_heads=4, index_head_dim=32, index_topk=3,
+        hc_mult=3, hc_sinkhorn_iters=4, hc_eps=1e-6)
+    torch.manual_seed(0)
+    if bf16:
+        net = _deepseek_v41_bf16(reference, lambda: reference.Transformer(args))
+    else:
+        net = _randomized(reference.Transformer(args).float())
+    torch.manual_seed(5)
+    for layer in net.layers:
+        if layer.ffn.gate.hash:
+            layer.ffn.gate.tid2eid.data = torch.stack(
+                [torch.randperm(args.n_routed_experts)[:args.n_activated_experts]
+                 for _ in range(args.vocab_size)]).to(torch.int32)
+    return reference, net, args
+
+
+def _run_deepseek_v4_release(image, release, bf16=False):
+    """The prefill record for `_deepseek_v4_release_net`'s network: every position's logits, every
+    layer's stream, and the seams a disagreement localizes to."""
+    import torch
+    import torch.nn.functional as F
+
+    reference, net, args = _deepseek_v4_release_net(release, bf16)
+    seams = {}
+
+    def capture(name):
+        def hook(module, inputs, output):
+            seams[name] = output.detach().clone()
+        return hook
+
+    for index, layer in enumerate(net.layers):
+        layer.attn.register_forward_hook(capture(f"attn.{index}"))
+        layer.ffn.register_forward_hook(capture(f"ffn.{index}"))
+        if getattr(layer.attn, "indexer", None) is not None:
+            layer.attn.indexer.register_forward_hook(capture(f"indexer.{index}"))
+    # What the sparse attention reads and returns, per layer in call order: the query after its
+    # norm and rotary, the key-value it gathers from, and its output before the de-rotation.
+    sparse_calls = []
+    shimmed_sparse = reference.sparse_attn
+
+    def recording_sparse(q, kv, attn_sink, topk_idxs, softmax_scale):
+        out = shimmed_sparse(q, kv, attn_sink, topk_idxs, softmax_scale)
+        sparse_calls.append((q.detach().clone(), kv.detach().clone(), out.detach().clone()))
+        return out
+
+    reference.sparse_attn = recording_sparse
+    # Each indexer's ranked scores, the receiver of the one `topk` inside `Indexer.forward`.
+    index_scores = {}
+    pending_score = {}
+    original_topk = torch.Tensor.topk
+
+    def recording_topk(self, k, dim=-1, largest=True, sorted=True):
+        pending_score["last"] = self.detach().clone()
+        return original_topk(self, k, dim=dim, largest=largest, sorted=sorted)
+
+    torch.Tensor.topk = recording_topk
+    for index, layer in enumerate(net.layers):
+        if getattr(layer.attn, "indexer", None) is not None:
+            def take_score(module, inputs, output, index=index):
+                if "last" in pending_score:
+                    index_scores[index] = pending_score.pop("last")
+            layer.attn.indexer.register_forward_hook(take_score)
+
+    tokens = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3, 12, 25, 7, 19, 40, 2, 99, 71, 8, 64]])
+    states = []
+    with torch.inference_mode():
+        h = net.embed(tokens).unsqueeze(2).repeat(1, 1, args.hc_mult, 1)
+        for layer in net.layers:
+            states.append(h)
+            h = layer(h, 0, tokens)
+        # V4 collapses the copies in its head; 0813 moved the same function onto the block.
+        collapse = (net.layers[-1].hc_head if hasattr(reference.Block, "hc_head")
+                    else net.head.hc_head)
+        collapsed = collapse(h, net.hc_head_fn, net.hc_head_scale, net.hc_head_base)
+        # `get_logits` keeps only the last position; every one is wanted here.
+        logits = F.linear(net.norm(collapsed).float(), net.head.weight)
+
+    reference.sparse_attn = shimmed_sparse
+    torch.Tensor.topk = original_topk
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous(),
+             "collapsed": collapsed[0].float().contiguous()}
+    for index, value in index_scores.items():
+        extra[f"seam.score.{index}"] = torch.nan_to_num(value[0].float(), neginf=-1e30).contiguous()
+    for index, (q, kv, out) in enumerate(sparse_calls):
+        extra[f"seam.sparse.q.{index}"] = q[0].float().contiguous()
+        extra[f"seam.sparse.kv.{index}"] = kv[0].float().contiguous()
+        extra[f"seam.sparse.out.{index}"] = out[0].float().contiguous()
+    for name, value in seams.items():
+        extra[f"seam.{name}"] = (value.float() if value.is_floating_point()
+                                 else value.to(torch.int32))[0].clone().contiguous()
+    for index, state in enumerate(states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    extra[f"hidden.{len(states)}"] = h[0].float().contiguous()
+    for key, value in net.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).clone().contiguous()
+        if bf16 and value.is_floating_point():
+            extra[f"dtype::{key}"] = torch.tensor([1 if value.dtype == torch.float32 else 0],
+                                                  dtype=torch.int32)
+    globals()["_extra"] = extra
+    return logits[0].float().contiguous()
+
+
+def run_deepseek_v4_release_decode(image):
+    """V4 Flash decoding one token at a time through its release's own code, in float32."""
+    return _run_deepseek_v4_release_decode(image, "deepseek-v4")
+
+
+def run_deepseek_v4_release_decode_bf16(image):
+    """The same in bf16. Run under the gemma environment."""
+    return _run_deepseek_v4_release_decode(image, "deepseek-v4", bf16=True)
+
+
+def run_deepseek_v4_pro_release_decode(image):
+    """V4 Pro (0813) decoding one token at a time through its release's own code, in float32."""
+    return _run_deepseek_v4_release_decode(image, "deepseek-v4-pro-0813")
+
+
+def run_deepseek_v4_pro_release_decode_bf16(image):
+    """The same in bf16. Run under the gemma environment."""
+    return _run_deepseek_v4_release_decode(image, "deepseek-v4-pro-0813", bf16=True)
+
+
+def _run_deepseek_v4_release_decode(image, release, bf16=False):
+    """A prefill of 11 tokens, then five single-token steps, through the release's own buffers.
+
+    Eleven is odd and past the window of 8, so the ring has wrapped, a ratio-4 compressor parks
+    three positions and a ratio-8 one parks three. The steps reach positions 11 to 15: position 11
+    closes a ratio-4 group through the overlapping two-window state, and position 15 closes both a
+    ratio-4 and a ratio-8 group, so every compressor emits at decode as well as at prefill. The
+    indexer's own compressor and keys are exercised the same way. Each call runs the layer loop
+    `Transformer.forward` runs, and the head reads the last position, as a step does.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    reference, net, args = _deepseek_v4_release_net(release, bf16)
+    index_scores = {}
+    pending_score = {}
+    original_topk = torch.Tensor.topk
+
+    def recording_topk(self, k, dim=-1, largest=True, sorted=True):
+        pending_score["last"] = self.detach().clone()
+        return original_topk(self, k, dim=dim, largest=largest, sorted=sorted)
+
+    step_tag = {"tag": "prefill"}
+    for index, layer in enumerate(net.layers):
+        if getattr(layer.attn, "indexer", None) is not None:
+            def take_score(module, inputs, output, index=index):
+                if "last" in pending_score:
+                    index_scores[f"{step_tag['tag']}.score.{index}"] = pending_score.pop("last")
+            layer.attn.indexer.register_forward_hook(take_score)
+
+    def run(ids, start_pos):
+        h = net.embed(ids).unsqueeze(2).repeat(1, 1, args.hc_mult, 1)
+        for layer in net.layers:
+            h = layer(h, start_pos, ids)
+        collapse = (net.layers[-1].hc_head if hasattr(reference.Block, "hc_head")
+                    else net.head.hc_head)
+        collapsed = collapse(h, net.hc_head_fn, net.hc_head_scale, net.hc_head_base)
+        return F.linear(net.norm(collapsed)[:, -1].float(), net.head.weight)
+
+    prompt = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3, 12]])
+    extra = {"prompt": prompt[0].to(torch.int32).contiguous()}
+    torch.Tensor.topk = recording_topk
+    with torch.inference_mode():
+        logits = run(prompt, 0)
+        extra["prefill.logits"] = logits[0].float().contiguous()
+        tokens = [int(logits[0].argmax())]
+        for step in range(5):
+            step_tag["tag"] = f"step{step}"
+            logits = run(torch.tensor([[tokens[-1]]]), prompt.size(1) + step)
+            extra[f"step{step}.logits"] = logits[0].float().contiguous()
+            tokens.append(int(logits[0].argmax()))
+    torch.Tensor.topk = original_topk
+    extra["generated"] = torch.tensor(tokens, dtype=torch.int32)
+    for name, value in index_scores.items():
+        extra[name] = torch.nan_to_num(value[0].float(), neginf=-1e30).contiguous()
+    for key, value in net.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["prefill.logits"].clone()
+
+
+def run_deepseek_v4_pro_dspark(image):
+    """V4 Pro 0813's DSpark draft stack from its release's own `inference/model.py`, in float32."""
+    return _run_deepseek_v4_pro_dspark(image)
+
+
+def run_deepseek_v4_pro_dspark_bf16(image):
+    """The same in bf16, as the release runs it. Run under the gemma environment."""
+    return _run_deepseek_v4_pro_dspark(image, bf16=True)
+
+
+def _run_deepseek_v4_pro_dspark(image, bf16=False):
+    """V4 Pro 0813's draft stack, measured the way V4.1's is, with 0813's four differences in play:
+    the main states are the target layers' OUTPUTS rather than the stream entering them, a stage is a
+    V4 block (its own read weight per sub-block and V4's query-head norm), the last stage collapses
+    the copies through its own learned `hc_head`, and the Markov tables are `markov_w1` and
+    `markov_w2`. The stages route over the decoder's experts, which is how 0813's config leaves it.
+    `temperature` is zero, so the reference's sampler is an argmax and the walk reproducible.
+    """
+    import re
+    import torch
+
+    reference, net, args = _deepseek_v4_release_net("deepseek-v4-pro-0813", bf16, dspark=True)
+    first, last = net.mtp[0], net.mtp[-1]
+    width = torch.bfloat16 if bf16 else torch.float32
+
+    torch.manual_seed(2)
+    main_hidden = torch.randn(1, args.dspark_block_size,
+                              args.dim * len(args.dspark_target_layer_ids)).to(width)
+    hidden = torch.randn(1, args.dspark_block_size, args.dim).to(width)
+    tokens = torch.tensor([[17, 5, 100]], dtype=torch.long)
+    with torch.inference_mode():
+        main_state = first.main_norm(first.main_proj(main_hidden))
+        bias, embedded = last.markov_head(tokens[0])
+        confidence = last.confidence_head(hidden, embedded.unsqueeze(0))
+
+    draft_seams = {}
+
+    def capture(name):
+        def hook(module, inputs, output):
+            draft_seams[name] = output.detach().clone()
+        return hook
+
+    for stage, block in enumerate(net.mtp):
+        block.attn.register_forward_hook(capture(f"draft.attn.{stage}"))
+        block.register_forward_hook(capture(f"draft.block.{stage}"))
+        block.ffn.register_forward_hook(capture(f"draft.ffn.{stage}"))
+
+    # What each draft stage's sparse attention reads and returns; they are the last calls of the step.
+    sparse_calls = []
+    shimmed_sparse = reference.sparse_attn
+
+    def recording_sparse(q, kv, attn_sink, topk_idxs, softmax_scale):
+        out = shimmed_sparse(q, kv, attn_sink, topk_idxs, softmax_scale)
+        sparse_calls.append((q.detach().clone(), kv.detach().clone(), topk_idxs.detach().clone(),
+                             out.detach().clone()))
+        return out
+
+    reference.sparse_attn = recording_sparse
+    # Ten tokens, past the window of 8, so each stage's window is a ring that has already wrapped.
+    prompt = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3]])
+    length = prompt.size(1)
+    with torch.inference_mode():
+        committed, _, prompt_states = net(prompt, start_pos=0)
+        net.forward_spec(prompt[:, -1], prompt_states, start_pos=0)   # seeds each stage's window
+        _, _, step_states = net(committed.view(1, 1), start_pos=length)
+        drafted, draft_logits, draft_confidence = net.forward_spec(
+            committed, step_states, start_pos=length)
+
+    extra = {
+        "main_hidden": main_hidden[0].float().contiguous(),
+        "hidden": hidden[0].float().contiguous(),
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "main_state": main_state[0].float().contiguous(),
+        "markov_embed": embedded.float().contiguous(),
+        "confidence": confidence[0].float().contiguous(),
+        "noise_token": torch.tensor([args.dspark_noise_token_id], dtype=torch.int32),
+        "block_size": torch.tensor([args.dspark_block_size], dtype=torch.int32),
+        "loop.prompt": prompt[0].to(torch.int32).contiguous(),
+        "loop.committed": committed.to(torch.int32).contiguous(),
+        "loop.main_states": torch.cat([prompt_states, step_states], dim=1)[0].float().contiguous(),
+        "loop.drafted": drafted[0].to(torch.int32).contiguous(),
+        "loop.logits": draft_logits[0].float().contiguous(),
+        "loop.confidence": draft_confidence[0].float().contiguous(),
+    }
+    reference.sparse_attn = shimmed_sparse
+    for stage, (q, kv, idxs, out) in enumerate(sparse_calls[-len(net.mtp):]):
+        extra[f"seam.draft.sparse.q.{stage}"] = q[0].float().clone().contiguous()
+        extra[f"seam.draft.sparse.kv.{stage}"] = kv[0].float().clone().contiguous()
+        extra[f"seam.draft.sparse.idx.{stage}"] = idxs[0].to(torch.int32).clone().contiguous()
+        extra[f"seam.draft.sparse.out.{stage}"] = out[0].float().clone().contiguous()
+    extra["markov_bias"] = bias.float().clone().contiguous()
+    # Cloned one by one: in float32 `.float()` hands back the same buffer, and two names may not share it.
+    extra = {name: value.clone() for name, value in extra.items()}
+    for name, value in draft_seams.items():
+        extra[f"seam.{name}"] = value.detach().float()[0].clone().contiguous()
+    for key, value in net.state_dict().items():
+        if re.match(r"mtp\.\d+\.(embed|head)\.weight$", key):
+            continue   # aliases of the decoder's own embedding and head
+        extra[f"w::stack.{key}"] = (value.float() if value.is_floating_point() else value).clone().contiguous()
+        if bf16 and value.is_floating_point():
+            extra[f"dtype::{key}"] = torch.tensor([1 if value.dtype == torch.float32 else 0],
+                                                  dtype=torch.int32)
+    globals()["_extra"] = extra
+    # Cloned: the harness writes this as `output`, and safetensors refuses two names for one buffer.
+    return draft_logits[0].float().clone().contiguous()
+
+
+def run_deepseek_v41(image):
+    """The DeepSeek V4.1 decoder's arithmetic, from the release's own `inference/model.py`."""
+    return _run_deepseek_v41(image)
+
+
+def run_deepseek_v41_quantized(image):
+    """The same decoder with the release's own activation round trips switched ON.
+
+    The unquantized record holds the port to the model; this one holds it to what the release's
+    `inference/model.py` computes, which rounds the sliding-window key-value to fp8, the compressed
+    latent to fp4 with E4M3 scales, and the indexer's keys and queries to fp4, each in place and
+    each read by everything downstream. It also keeps the n-gram lookup's cast of its rows to bf16,
+    which the unquantized record drops for the same reason. What it does NOT reproduce is running
+    in bf16 throughout: the net is float32, as the port is, so this measures the explicit round
+    trips and not the dtype the release computes in.
+
+    The index head width is 32 rather than 16 here, because the real kernel asserts that a row
+    divides into its blocks and the indexer's fp4 block is 32. Run under the gemma environment,
+    which carries ml_dtypes for the fp4 cast.
+    """
+    return _run_deepseek_v41(image, quantizes=True)
+
+
+def run_deepseek_v41_bf16(image):
+    """The decoder as the release SERVES it: in bf16, with its round trips and its narrow GEMMs.
+
+    The net is built inside the release's own `set_dtype(torch.bfloat16)`, so every parameter takes
+    the dtype the reference's constructor gives it, with no fix-up: bf16 by default, and float32 for
+    the hyper-connection coefficients, the attention sink, the router bias, the head, and the
+    ratio-above-one compressor. That set is exactly what the release's headers store F32 or hold
+    float32, entry for entry. Everything the reference computes in float32 it still computes in
+    float32, because that is the reference's own code: only the dtype it starts from changes.
+    """
+    return _run_deepseek_v41(image, quantizes=True, bf16=True)
+
+
+def run_deepseek_v41_bf16_plain(image):
+    """The same bf16 decoder without the round trips or the narrow GEMMs, which isolates the dtype."""
+    return _run_deepseek_v41(image, bf16=True)
+
+
+def _run_deepseek_v41(image, quantizes=False, bf16=False):
+    """The DeepSeek V4.1 decoder's arithmetic, from the release's own `inference/model.py`.
+
+    V4.1 is the V4 architecture with a different arrangement, and this measures the arrangement:
+    only four layers own a compressor and the rest read one of them, a compressor that pools one
+    position per group is a plain projection with no gate, the indexer takes its keys from that
+    compressor's latent, and the hyper-connection copies collapse without a learned head. The
+    released weights are 510 GB, so the size measured here is the one `ModelArgs` was given defaults
+    for, with the layer pattern chosen so every one of those differences is exercised: ratios of 2
+    and 1 both appear, the kv sources are fewer than the index sources, a non-source layer sits
+    between them, the candidate source is a ratio-1 kv source with one consumer after it (which is
+    the released arrangement at layer 20), and two layers carry an n-gram memory.
+
+    The sequence is twice the sliding window, so the window is a real constraint rather than a
+    causal mask by another name, and every compressed layer reaches past it.
+
+    transformers carries `deepseek_v4` and no `deepseek_v41`, so the reference here is the release's
+    own code, run on the CPU behind `_deepseek_v41_kernel_shim`. The record's weights are saved in
+    the release's naming, and the hidden state entering every layer is recorded so a divergence
+    localizes to a layer rather than to the stack.
+    """
+    import torch
+    import torch.nn.functional as F
+
+    _deepseek_v41_kernel_shim(quantizes=quantizes)
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    import model as reference
+
+    # The n-gram table is stored fp8 and its lookup casts the dequantized rows to bf16 on the way
+    # out. That is the same storage rounding the kernel shim neutralizes for the window key-value,
+    # and at a float configuration it is the only lossy step in the engram path, so it is dropped
+    # for the same reason: what is measured is the unquantized model. Dropping it also keeps the
+    # lookup in the dtype `wkv` was converted to, which a bf16 result would not match.
+    def unrounded_lookup(self, indices):
+        values = F.embedding(indices, self.weight)
+        scales = F.embedding(indices, self.scale)
+        values = values.float().unflatten(-1, (-1, self.block_size)) * scales.float().unsqueeze(-1)
+        rows = values.flatten(-2)
+        # The release casts the rows to bf16 on the way out. A float32 net brings them back so its
+        # float32 `wkv` can read them; a bf16 net keeps them, as the release does.
+        if bf16:
+            return rows.to(torch.bfloat16)
+        return rows.to(torch.bfloat16).float() if quantizes else rows
+
+    original_lookup = reference.ParallelEngramEmbedding.forward
+    reference.ParallelEngramEmbedding.forward = unrounded_lookup
+
+    # `build_compressed_token_map` needs a tokenizer only to learn which token ids normalize alike.
+    # Ids that all normalize apart make the map the identity, which leaves the compressed vocab size
+    # equal to the vocab size and exercises the REAL derivation -- the primes, the per-layer
+    # multipliers, and the look-back -- without carrying a 129,280-entry tokenizer into the record.
+    class _DistinctBackend:
+        def decode(self, ids, skip_special_tokens=False):
+            return f"tok{ids[0]}"
+
+        def id_to_token(self, token_id):
+            return f"tok{token_id}"
+
+    class _DistinctTokenizer:
+        def __init__(self, size):
+            self._size = size
+            self.backend_tokenizer = _DistinctBackend()
+
+        def __len__(self):
+            return self._size
+
+    args = reference.ModelArgs(
+        max_batch_size=1, max_seq_len=64, dtype="bf16", expert_dtype=None,
+        vocab_size=256, dim=64, moe_inter_dim=32, n_layers=6, n_mtp_layers=0,
+        n_heads=4, n_routed_experts=8, n_activated_experts=2,
+        q_lora_rank=32, head_dim=32, rope_head_dim=8, o_groups=2, o_lora_rank=16,
+        window_size=8, compress_ratios=(0, 0, 2, 2, 1, 1),
+        kv_source_layers=(2, 4), index_source_layers=(2, 3, 4, 5),
+        index_n_heads=8, index_head_dim=32 if (quantizes or bf16) else 16, index_topk=4,
+        candidate_source_layer=4, candidate_topk_blocks=3, candidate_block_size=2,
+        engram_layer_ids=(1, 3), engram_num_embeddings=(290, 370),
+        engram_max_ngram_size=3, engram_n_heads=2, engram_head_dim=32,
+        engram_vocab_size=64, engram_compressed_vocab_size=256, engram_pad_id=2,
+        hc_mult=3, hc_sinkhorn_iters=4,
+    )
+    torch.manual_seed(0)
+    if bf16:
+        net = _deepseek_v41_bf16(
+            reference, lambda: reference.Transformer(args, _DistinctTokenizer(args.vocab_size)))
+    else:
+        net = reference.Transformer(args, _DistinctTokenizer(args.vocab_size)).float()
+        net = _randomized(net)
+    served = None
+    if quantizes:
+        served, unserved_linear = _deepseek_v41_serve_gemms(
+            reference, net, args, _DistinctTokenizer(args.vocab_size))
+    # The table row counts are not free parameters: each is the sum of that layer's bucket primes,
+    # which is how the released 384,006,168 and 384,016,682 are checked too.
+    assert tuple(sum(sum(per_size) for per_size in layer) for layer in net.engram_layout.primes) \
+        == args.engram_num_embeddings
+
+    # Seams, so a divergence localizes to a mechanism. The hyper-connection coefficients come from a
+    # wrapper rather than a hook, because `hc_mixes` is a method on the block and not a submodule.
+    seams = {}
+
+    # Cloned AT CAPTURE, not at the end of the run. `_compress_kv` rotates the compressor's output
+    # in place after the hook has fired, and `_window_kv` quantizes the key-value in place, so a
+    # hook that stores the reference records a tensor that is mutated afterwards. That shows up as a
+    # seam whose norm is exactly right and whose direction is not, which is what a rotary does.
+    def capture(name, pick=lambda output: output):
+        def hook(module, inputs, output):
+            seams[name] = pick(output).detach().clone()
+        return hook
+
+    layers = net.layers
+    def capture_input(name):
+        def hook(module, inputs, output):
+            seams[name] = inputs[0].detach().clone()
+        return hook
+
+    # The compressor's INPUT as well as its output: a mismatch in the pooled latent is otherwise
+    # indistinguishable from a mismatch in what the block handed it.
+    for layer_id in (2, 4):
+        layers[layer_id].attn.compressor.register_forward_hook(capture_input(f"compressor.in.{layer_id}"))
+        layers[layer_id].attn.compressor.register_forward_hook(capture(f"compressor.{layer_id}"))
+    for layer_id in (2, 3, 4, 5):
+        layers[layer_id].attn.indexer.register_forward_hook(capture(f"indexer.{layer_id}"))
+    for layer_id in range(args.n_layers):
+        layers[layer_id].attn.register_forward_hook(capture(f"attn.{layer_id}"))
+    layers[2].attn.register_forward_hook(capture_input("attn.in.2"))
+    for layer_id in args.engram_layer_ids:
+        layers[layer_id].engram.register_forward_hook(capture(f"engram.{layer_id}"))
+        layers[layer_id].engram.register_forward_hook(capture_input(f"engram.in.{layer_id}"))
+    layers[0].ffn.register_forward_hook(capture("ffn.0"))
+    if bf16:
+        # Every layer's mixture, in and out, where the dtype is what is being measured: a bf16
+        # difference that is systematic across tokens sits in one op, and these localize it.
+        for layer_id in range(args.n_layers):
+            layers[layer_id].ffn.register_forward_hook(capture_input(f"ffn.in.{layer_id}"))
+            if layer_id:
+                layers[layer_id].ffn.register_forward_hook(capture(f"ffn.{layer_id}"))
+
+    # The candidate mask the source publishes, which nothing else records: it is read off the shared
+    # runtime right after the layer that writes it, before its consumer masks with it.
+    original_select = reference.select_candidate_blocks
+
+    def recording_select(*call):
+        result = original_select(*call)
+        seams["candidates"] = result.detach().clone()
+        return result
+
+    reference.select_candidate_blocks = recording_select
+
+    original_mixes = reference.Block.hc_mixes
+
+    def recording_mixes(self, x, hc_fn, hc_scale, hc_base):
+        result = original_mixes(self, x, hc_fn, hc_scale, hc_base)
+        part = "attn" if hc_fn is self.hc_attn_fn else "ffn"
+        for name, value in zip(("pre", "post", "comb"), result):
+            seams[f"hc.{part}.{name}.{self.layer_id}"] = value.detach().clone()
+        return result
+
+    reference.Block.hc_mixes = recording_mixes
+
+    # The indexer's ranked scores, when quantizing. fp4 queries against fp4 keys land on few enough
+    # values that two positions can tie exactly at the top-k boundary, and a kept position that
+    # differs there is a tie broken the other way rather than a defect; only the score says which.
+    # `topk` is the only caller inside `Indexer.forward`, so the score is its receiver.
+    indexer_scores = {}
+    original_topk = torch.Tensor.topk
+    if quantizes or bf16:
+        pending_score = {}
+
+        def recording_topk(self, k, dim=-1, largest=True, sorted=True):
+            pending_score["last"] = self.detach().clone()
+            return original_topk(self, k, dim=dim, largest=largest, sorted=sorted)
+
+        torch.Tensor.topk = recording_topk
+        for layer_id in (2, 3, 4, 5):
+            def take_score(module, inputs, output, layer_id=layer_id):
+                if "last" in pending_score:
+                    indexer_scores[layer_id] = pending_score.pop("last")
+            layers[layer_id].attn.indexer.register_forward_hook(take_score)
+
+    tokens = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3, 12, 25, 7, 19, 40, 2]])
+    states = []
+    with torch.inference_mode():
+        hashes = net.engram_hash(tokens, 0, None)
+        hidden = net.embed(tokens).unsqueeze(2).repeat(1, 1, args.hc_mult, 1)
+        pre_mix = reference.make_identity_pre_mix(hidden, args.hc_mult)
+        for layer in net.layers:
+            if layer.engram is not None:
+                hidden = layer.engram(hidden, hashes[:, :, layer.engram.layer_hash_index, :], None)
+            states.append(hidden)
+            hidden, pre_mix = layer(hidden, 0, pre_mix, None)
+        collapsed = net.layers[-1].hc_pre(hidden, pre_mix)
+        # `Transformer.forward` keeps only the last position; every one is wanted here.
+        logits = net.head(net.norm(collapsed), full_logits=True)
+
+    # The copies of the run above stay within a unit in the last place of one another, because every
+    # `post` is near 1 and the stream starts as one copy repeated; which index `comb` sums over is
+    # invisible there. This probe hands `hc_post` and `hc_pre` copies that differ, from a private
+    # generator, so the rest of the record is unchanged.
+    generator = torch.Generator().manual_seed(41)
+    probe_block = net.layers[1]
+    probe_dtype = hidden.dtype
+    with torch.inference_mode():
+        probe_residual = torch.randn(1, 4, args.hc_mult, args.dim, generator=generator).to(probe_dtype)
+        probe_x = torch.randn(1, 4, args.dim, generator=generator).to(probe_dtype)
+        probe_pre, probe_post, probe_comb = original_mixes(
+            probe_block, probe_residual, probe_block.hc_attn_fn, probe_block.hc_attn_scale,
+            probe_block.hc_attn_base)
+        probe_expanded = probe_block.hc_post(probe_x, probe_residual, probe_post, probe_comb)
+        probe_reduced = probe_block.hc_pre(probe_expanded, probe_pre)
+    probe = {"x": probe_x, "residual": probe_residual, "pre": probe_pre, "post": probe_post,
+             "comb": probe_comb, "expanded": probe_expanded, "reduced": probe_reduced}
+
+    torch.Tensor.topk = original_topk
+    reference.Block.hc_mixes = original_mixes
+    reference.select_candidate_blocks = original_select
+    reference.ParallelEngramEmbedding.forward = original_lookup
+    if served is not None:
+        reference.linear = unserved_linear
+
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous(),
+             "collapsed": collapsed[0].float().contiguous(),
+             "engram.hashes": hashes[0].to(torch.int32).contiguous(),
+             "engram.multipliers": net.engram_hash.multipliers.contiguous(),
+             "engram.primes": net.engram_hash.primes.to(torch.int64).contiguous(),
+             "engram.offsets": net.engram_hash.offsets.to(torch.int64).contiguous()}
+    for name, value in seams.items():
+        # A captured input is often a view of a tensor recorded elsewhere, and safetensors refuses
+        # aliased storage, so each seam is cloned rather than merely made contiguous.
+        tensor = value.detach()
+        extra[f"seam.{name}"] = (tensor.float() if tensor.is_floating_point()
+                                 else tensor.to(torch.int32))[0].clone().contiguous()
+    # Each parameter's dtype as the reference's own constructor assigned it: 1 for float32, 0 for
+    # anything narrower. The port's rule for what a bf16 decoder holds float32 is measured against
+    # this rather than against a list written down on both sides.
+    if bf16:
+        for key, value in net.state_dict().items():
+            if value.is_floating_point():
+                extra[f"dtype::{key}"] = torch.tensor([1 if value.dtype == torch.float32 else 0],
+                                                      dtype=torch.int32)
+    for name, value in probe.items():
+        extra[f"probe.hc.{name}"] = value[0].float().clone().contiguous()
+    for layer_id, value in indexer_scores.items():
+        extra[f"seam.score.{layer_id}"] = torch.nan_to_num(value[0].float(), neginf=-1e30).contiguous()
+    for index, state in enumerate(states):
+        extra[f"hidden.{index}"] = state[0].float().contiguous()
+    extra[f"hidden.{len(states)}"] = hidden[0].float().contiguous()
+    for key, value in net.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return logits[0].float().contiguous()
+
+
+def run_deepseek_v41_decode_bf16(image):
+    """The same decode, in bf16 as the release runs it: every carried buffer is then bf16 too.
+
+    The index heads are 32 wide, as in every bf16 record. Run under the gemma environment.
+    """
+    return run_deepseek_v41_decode(image, bf16=True)
+
+
+def run_deepseek_v41_decode(image, bf16=False):
+    """DeepSeek V4.1 decoding ONE TOKEN AT A TIME, with the state each step carries.
+
+    Prefill is whole-sequence tensor work; decode is not. The reference keeps five pieces of state
+    across steps — the sliding-window ring, the shared compressed cache, the index keys, the
+    compressor's parked partial group, and the n-gram id history — and every one of them is a buffer
+    indexed by ABSOLUTE position rather than by a chunk. This records all of them after every step,
+    so a port is held to each mechanism separately instead of to a logit at the end.
+
+    The prompt is 11 tokens on purpose: odd, so a ratio-2 group parks a partial at the boundary;
+    longer than the window of 8, so the ring has already wrapped; and longer than the n-gram
+    look-back, so that look-back crosses the prefill/decode split.
+
+    ONE LINE OF THE REFERENCE IS CORRECTED HERE, and a port matching the uncorrected version would
+    be matching a bug. `Indexer.forward` publishes `shared_attn.index_k` only when its compressor
+    emitted a latent, while `_compress_kv` publishes `shared_attn.compress_kv` unconditionally. On a
+    step where a ratio-2 compressor emits nothing, the ratio-2 layers therefore score against
+    whatever layer published last — measured: at `start_pos` 12 they score against the ratio-1
+    layer's `k_cache` from the previous step, at a different stride. The compressed key-value they
+    then read is correct, so the effect is a silently degraded choice of positions on alternate
+    steps. The publish is hoisted out of the latent check, which is what `compress_kv` already does.
+    """
+    import torch
+
+    _deepseek_v41_kernel_shim()
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    import model as reference
+
+    # The n-gram table's lookup casts its dequantized rows to bf16, which is the storage rounding the
+    # kernel shim neutralizes elsewhere; at a float configuration it is also a dtype mismatch against
+    # the float `wkv` beside it. Dropped for the same reason and in the same way as in the decoder
+    # oracle: what is measured is the unquantized model.
+    def unrounded_lookup(self, indices):
+        import torch.nn.functional as F
+        values = F.embedding(indices, self.weight)
+        scales = F.embedding(indices, self.scale)
+        values = values.float().unflatten(-1, (-1, self.block_size)) * scales.float().unsqueeze(-1)
+        # A bf16 net keeps the release's cast, since its `wkv` reads bf16.
+        return values.flatten(-2).to(torch.bfloat16) if bf16 else values.flatten(-2)
+
+    original_lookup = reference.ParallelEngramEmbedding.forward
+    reference.ParallelEngramEmbedding.forward = unrounded_lookup
+    # `Indexer.forward` computes the combined score and does not return it. It is the only caller of
+    # `Tensor.topk` in that function, so the score is captured as topk's own receiver.
+    original_topk = torch.Tensor.topk
+    pending_score = {}
+
+    def recording_topk(self, k, dim=-1, largest=True, sorted=True):
+        pending_score["last"] = self.detach().clone()
+        return original_topk(self, k, dim=dim, largest=largest, sorted=sorted)
+
+    original_indexer = reference.Indexer.forward
+    chosen, scored = {}, {}
+
+    def publishing_indexer(self, x, qr, latent, start_pos, offset):
+        # BEFORE the call, not after. `Indexer.forward` reads `shared_attn.index_k` itself, so an
+        # owner that publishes only on its way out still scores its OWN step against whatever the
+        # last owner left. Publishing first also covers the emitting case unchanged: the write at
+        # `k_cache[...] = k` is in place, and this binds that same buffer.
+        if self.owns_k:
+            reference.shared_attn.index_k = self.k_cache
+        result = original_indexer(self, x, qr, latent, start_pos, offset)
+        # Which compressed positions this indexer kept. State can agree while the CHOICE does not,
+        # and the choice is what the attention then reads. The SCORES go with it: a choice that
+        # differs where the scores agree is a tie, and a choice that differs where they do not is a
+        # defect, and nothing short of the scores tells those apart.
+        chosen[self.layer_tag] = result.detach().clone()
+        if "last" in pending_score:
+            scored[self.layer_tag] = pending_score.pop("last")
+        return result
+
+    reference.Indexer.forward = publishing_indexer
+    torch.Tensor.topk = recording_topk
+
+    class _DistinctBackend:
+        def decode(self, ids, skip_special_tokens=False):
+            return f"tok{ids[0]}"
+
+        def id_to_token(self, token_id):
+            return f"tok{token_id}"
+
+    class _DistinctTokenizer:
+        def __init__(self, size):
+            self._size = size
+            self.backend_tokenizer = _DistinctBackend()
+
+        def __len__(self):
+            return self._size
+
+    args = reference.ModelArgs(
+        max_batch_size=1, max_seq_len=64, dtype="bf16", expert_dtype=None, temperature=0,
+        vocab_size=256, dim=64, moe_inter_dim=32, n_layers=6, n_mtp_layers=0,
+        n_heads=4, n_routed_experts=8, n_activated_experts=2,
+        q_lora_rank=32, head_dim=32, rope_head_dim=8, o_groups=2, o_lora_rank=16,
+        window_size=8, compress_ratios=(0, 0, 2, 2, 1, 1),
+        kv_source_layers=(2, 4), index_source_layers=(2, 3, 4, 5),
+        index_n_heads=8, index_head_dim=32 if bf16 else 16, index_topk=4,
+        candidate_source_layer=4, candidate_topk_blocks=3, candidate_block_size=2,
+        engram_layer_ids=(1, 3), engram_num_embeddings=(290, 370),
+        engram_max_ngram_size=3, engram_n_heads=2, engram_head_dim=32,
+        engram_vocab_size=64, engram_compressed_vocab_size=256, engram_pad_id=2,
+        hc_mult=3, hc_sinkhorn_iters=4,
+    )
+    torch.manual_seed(0)
+    if bf16:
+        net = _deepseek_v41_bf16(
+            reference, lambda: reference.Transformer(args, _DistinctTokenizer(args.vocab_size)))
+    else:
+        net = reference.Transformer(args, _DistinctTokenizer(args.vocab_size)).float()
+        net = _randomized(net)
+    for index, layer in enumerate(net.layers):
+        if layer.attn.indexer is not None:
+            layer.attn.indexer.layer_tag = index
+
+    prompt = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3, 12]])
+    extra = {"prompt": prompt[0].to(torch.int32).contiguous()}
+
+    def record(tag):
+        """Every buffer a decode step carries, after the step that wrote them."""
+        for index, layer in enumerate(net.layers):
+            attn = layer.attn
+            extra[f"{tag}.window.{index}"] = attn.window_kv_cache[0].float().clone().contiguous()
+            if attn.compressor is not None and attn.compressor.compress_ratio > 1:
+                extra[f"{tag}.kv_state.{index}"] = attn.compressor.kv_state[0].float().clone().contiguous()
+                extra[f"{tag}.score_state.{index}"] = torch.nan_to_num(
+                    attn.compressor.score_state[0].float(), neginf=-1e30).clone().contiguous()
+            if attn.is_kv_source:
+                extra[f"{tag}.compress.{index}"] = attn.compress_kv_cache[0].float().clone().contiguous()
+            if attn.indexer is not None and attn.indexer.owns_k:
+                extra[f"{tag}.index_k.{index}"] = attn.indexer.k_cache[0].float().clone().contiguous()
+        extra[f"{tag}.engram_ids"] = net.engram_hash.cache[0].to(torch.int32).clone().contiguous()
+        for index, picked in chosen.items():
+            extra[f"{tag}.chosen.{index}"] = picked[0].to(torch.int32).contiguous()
+        for index, value in scored.items():
+            extra[f"{tag}.score.{index}"] = torch.nan_to_num(
+                value[0].float(), neginf=-1e30).contiguous()
+        chosen.clear()
+        scored.clear()
+
+    with torch.inference_mode():
+        committed, logits, _ = net(prompt, start_pos=0)
+        extra["prefill.logits"] = logits[0].float().contiguous()
+        record("prefill")
+        tokens = [int(committed[0])]
+        for step in range(3):
+            position = prompt.size(1) + step
+            committed, logits, _ = net(committed.view(1, 1), start_pos=position)
+            extra[f"step{step}.logits"] = logits[0].float().contiguous()
+            record(f"step{step}")
+            tokens.append(int(committed[0]))
+
+    reference.Indexer.forward = original_indexer
+    torch.Tensor.topk = original_topk
+    reference.ParallelEngramEmbedding.forward = original_lookup
+    extra["generated"] = torch.tensor(tokens, dtype=torch.int32)
+    for key, value in net.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    # Cloned: the harness writes the return value as `output`, and safetensors refuses two names for
+    # one buffer.
+    return extra["prefill.logits"].clone()
+
+
+def run_deepseek_v41_dspark(image):
+    """DeepSeek V4.1's DSpark draft stack, from the release's own `inference/model.py`."""
+    return _run_deepseek_v41_dspark(image)
+
+
+def run_deepseek_v41_dspark_bf16(image):
+    """The same draft loop in bf16, as the release runs it. Run under the gemma environment."""
+    return _run_deepseek_v41_dspark(image, bf16=True)
+
+
+def run_deepseek_v41_dspark_quantized(image):
+    """The same draft loop with the release's own activation round trips switched ON.
+
+    A draft stage rounds two key-values to fp8 that the decoder does not: the main stack's states run
+    through the stage's own `wkv` for its window, and the drafted block's own. The main decoder that
+    seeds it rounds its own four as `deepseek_v41_quantized` measures. The index heads are 32 wide for
+    the same reason they are there. Run under the gemma environment for ml_dtypes.
+    """
+    return _run_deepseek_v41_dspark(image, quantizes=True)
+
+
+def _run_deepseek_v41_dspark(image, quantizes=False, bf16=False):
+    """DeepSeek V4.1's DSpark draft stack, from the release's own `inference/model.py`.
+
+    A draft stage is a decoder block that never compresses, routing over its own smaller set of
+    experts. Two things are its own, and both are measured here: the attention, which reads the MAIN
+    stack's key-value for its sliding window and the whole drafted block for itself with no causal
+    mask between the drafts, and the head, which walks the block one position at a time so each
+    drafted token biases the next through a Markov embedding.
+
+    The loop is decode-time, so the record carries both halves of it: a prefill that seeds every
+    stage's window from the prompt, then one step that drafts `dspark_block_size` tokens after it.
+    `temperature` is zero, which makes the reference's own sampler an argmax and the walk
+    reproducible. The Markov rank differs from the hidden width on purpose, so a head that confused
+    the two would not line up.
+    """
+    import torch
+
+    _deepseek_v41_kernel_shim(quantizes=quantizes)
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    import model as reference
+
+    args = reference.ModelArgs(
+        max_batch_size=1, max_seq_len=64, dtype="bf16", expert_dtype=None, temperature=0,
+        vocab_size=256, dim=64, moe_inter_dim=32, n_layers=6, n_mtp_layers=2,
+        n_heads=4, n_routed_experts=8, n_activated_experts=2,
+        q_lora_rank=32, head_dim=32, rope_head_dim=8, o_groups=2, o_lora_rank=16,
+        window_size=8, compress_ratios=(0, 0, 2, 2, 1, 1, 0, 0),
+        kv_source_layers=(2, 4), index_source_layers=(2, 3, 4, 5),
+        index_n_heads=8, index_head_dim=32 if (quantizes or bf16) else 16, index_topk=8, hc_mult=3, hc_sinkhorn_iters=4,
+        dspark_block_size=3, dspark_noise_token_id=250, dspark_target_layer_ids=(3, 4, 5),
+        dspark_markov_rank=8, dspark_n_routed_experts=4, dspark_n_activated_experts=2,
+    )
+    torch.manual_seed(0)
+    if bf16:
+        net = _deepseek_v41_bf16(reference, lambda: reference.Transformer(args), seed=7)
+    else:
+        net = _randomized(reference.Transformer(args).float(), seed=7)
+    unserved_linear = None
+    if quantizes:
+        # The draft stack has no n-gram memory, so the probe needs no tokenizer either.
+        _, unserved_linear = _deepseek_v41_serve_gemms(reference, net, args, None)
+    first, last = net.mtp[0], net.mtp[-1]
+
+    # The three heads on their own, at inputs of their own, so a disagreement in the loop below
+    # localizes to the walk rather than to a head.
+    torch.manual_seed(2)
+    width = torch.bfloat16 if bf16 else torch.float32
+    main_hidden = torch.randn(
+        1, args.dspark_block_size, args.dim * len(args.dspark_target_layer_ids)).to(width)
+    hidden = torch.randn(1, args.dspark_block_size, args.dim).to(width)
+    tokens = torch.tensor([[17, 5, 200]], dtype=torch.long)
+    with torch.inference_mode():
+        main_state = first.main_norm(first.main_proj(main_hidden))
+        bias, embedded = last.markov_head(tokens[0])
+        confidence = last.confidence_head(hidden, embedded.unsqueeze(0))
+
+    # The loop. The prompt runs through the MAIN stack first, because what the draft stack reads is
+    # the mean over the hyper-connection copies of the stream entering each target layer's attention.
+    # `window_size` is 8 and the prompt is 10, so the draft window is a real ring that has already
+    # wrapped rather than the whole prefix.
+    prompt = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3]])
+    length = prompt.size(1)
+    draft_seams = {}
+
+    def capture(name):
+        def hook(module, inputs, output):
+            draft_seams[name] = output.detach().clone()
+        return hook
+
+    for stage, block in enumerate(net.mtp):
+        block.attn.register_forward_hook(capture(f"draft.attn.{stage}"))
+
+    with torch.inference_mode():
+        committed, _, prompt_states = net(prompt, start_pos=0)
+        net.forward_spec(prompt[:, -1], prompt_states, start_pos=0)   # seeds each stage's window
+        _, _, step_states = net(committed.view(1, 1), start_pos=length)
+        drafted, draft_logits, draft_confidence = net.forward_spec(
+            committed, step_states, start_pos=length)
+
+    extra = {
+        "main_hidden": main_hidden[0].float().contiguous(),
+        "hidden": hidden[0].float().contiguous(),
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "main_state": main_state[0].float().contiguous(),
+        "markov_embed": embedded.float().contiguous(),
+        "confidence": confidence[0].float().contiguous(),
+        "noise_token": torch.tensor([args.dspark_noise_token_id], dtype=torch.int32),
+        "block_size": torch.tensor([args.dspark_block_size], dtype=torch.int32),
+        # The draft stack reads the main stack at positions 0..length; the prefill produced the
+        # first `length` of those and the step produced the last, and their concatenation is what a
+        # prefill of the whole committed sequence would give.
+        "loop.prompt": prompt[0].to(torch.int32).contiguous(),
+        "loop.committed": committed.to(torch.int32).contiguous(),
+        "loop.main_states": torch.cat([prompt_states, step_states], dim=1)[0].float().contiguous(),
+        "loop.drafted": drafted[0].to(torch.int32).contiguous(),
+        "loop.logits": draft_logits[0].float().contiguous(),
+        "loop.confidence": draft_confidence[0].float().contiguous(),
+    }
+    for name, value in draft_seams.items():
+        extra[f"seam.{name}"] = value.detach().float()[0].clone().contiguous()
+    for key, value in first.main_proj.state_dict().items():
+        extra[f"w::main_proj.{key}"] = value.float().clone().contiguous()
+    for key, value in first.main_norm.state_dict().items():
+        extra[f"w::main_norm.{key}"] = value.float().clone().contiguous()
+    for key, value in last.markov_head.state_dict().items():
+        extra[f"w::markov.{key}"] = value.float().clone().contiguous()
+    for key, value in last.confidence_head.state_dict().items():
+        extra[f"w::confidence.{key}"] = value.float().clone().contiguous()
+    # The whole stack, in the release's naming. `mtp.<n>.embed` and `mtp.<n>.head` alias the main
+    # model's own, so they are skipped rather than written twice.
+    import re
+    for key, value in net.state_dict().items():
+        if re.match(r"mtp\.\d+\.(embed|head)\.weight$", key):
+            continue
+        # The WHOLE model, decoder included. The draft stack reads the main stack's own states, so a
+        # port that only has the `mtp.` weights can be held to the reference's recorded states but
+        # not to states it produced itself, which is the half that says the two are connected.
+        extra[f"w::stack.{key}"] = (value.float() if value.is_floating_point()
+                                    else value).contiguous()
+    # Each parameter's dtype as the reference's constructor assigned it, 1 for float32, which is
+    # what the port's rule for the draft stack is held to, as the decoder's is.
+    if bf16:
+        for key, value in net.state_dict().items():
+            if value.is_floating_point():
+                extra[f"dtype::{key}"] = torch.tensor([1 if value.dtype == torch.float32 else 0],
+                                                      dtype=torch.int32)
+    if unserved_linear is not None:
+        reference.linear = unserved_linear
+    globals()["_extra"] = extra
+    return bias.float().contiguous()
+
+
+def run_deepseek_v41_vision_bf16(image):
+    """The same tower and aligner in bf16, as the release runs them. Run under the gemma environment."""
+    return run_deepseek_v41_vision(image, bf16=True)
+
+
+def run_deepseek_v41_vision(image, bf16=False):
+    """DeepSeek V4.1's image tower and aligner, from the release's own `inference/vision.py`.
+
+    The tower needs none of the substitute kernels the decoder does: `vision.py` imports torch and
+    nothing else, and the released tower is the one part of this checkpoint that ships unquantized.
+    A grid whose sides are NOT multiples of the downsample ratio is chosen on purpose, so the
+    aligner's padding runs; a grid that divides evenly would pass with the padding dropped.
+    """
+    import torch
+
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    _deepseek_v41_kernel_shim()
+    import model as reference
+    import vision as reference_vision
+
+    args = reference.ModelArgs(
+        dim=64, vision_n_layers=3, vision_dim=32, vision_n_heads=4, vision_inter_dim=48,
+        vision_patch_size=4, vision_rope_theta=10000.0, vision_downsample_ratio=3,
+    )
+    torch.manual_seed(0)
+    if bf16:
+        tower = _deepseek_v41_bf16(reference, lambda: reference_vision.ViT(args), seed=5)
+        aligner = _deepseek_v41_bf16(reference, lambda: reference_vision.Aligner(args), seed=6)
+    else:
+        tower = _randomized(reference_vision.ViT(args).float(), seed=5)
+        aligner = _randomized(reference_vision.Aligner(args).float(), seed=6)
+
+    rows, columns = 5, 7                       # neither divides by 3, so the aligner pads both axes
+    torch.manual_seed(3)
+    patches = torch.randn(rows * columns, 3, args.vision_patch_size, args.vision_patch_size)
+    seams = {}
+    if bf16:
+        patches = patches.to(torch.bfloat16)
+        # Every step of every block, where a bf16 rounding can land.
+        def capture(name):
+            def hook(module, inputs, output):
+                seams[name] = output.detach().clone()
+            return hook
+        tower.patch_embed.register_forward_hook(capture("patch_embed"))
+        for index, block in enumerate(tower.blocks):
+            for name in ("norm1", "attn", "norm2", "mlp"):
+                getattr(block, name).register_forward_hook(capture(f"block{index}.{name}"))
+            block.attn.wqkv.register_forward_hook(capture(f"block{index}.wqkv"))
+            block.mlp.w1.register_forward_hook(capture(f"block{index}.w1"))
+            block.register_forward_hook(capture(f"block{index}"))
+        aligner.w1.register_forward_hook(capture("aligner.w1"))
+    # `vision.py` calls `F.scaled_dot_product_attention`, whose bf16 arithmetic belongs to the
+    # backend rather than to the model: the CPU flash kernel exponentiates through a cubic
+    # polynomial (`fexp_u20`) and rounds the softmax numerators to bf16 before the value product,
+    # and a CUDA kernel differs again. A bf16 record is therefore taken on torch's own MATH backend,
+    # the definition (float32 throughout, one rounding), and the default backend's result is kept
+    # beside it so the difference between the two is a measured figure.
+    from contextlib import nullcontext
+    from torch.nn.attention import SDPBackend, sdpa_kernel
+    with torch.inference_mode(), (sdpa_kernel(SDPBackend.MATH) if bf16 else nullcontext()):
+        features = tower(patches, rows, columns)
+        aligned = aligner(features, rows, columns)
+    if bf16:
+        kept = dict(seams)
+        with torch.inference_mode():
+            default_features = tower(patches, rows, columns)
+            default_aligned = aligner(default_features, rows, columns)
+        seams.clear()
+        seams.update(kept)
+
+    extra = {"patches": patches.float().contiguous(),
+             "rows": torch.tensor([rows], dtype=torch.int32),
+             "columns": torch.tensor([columns], dtype=torch.int32),
+             "features": features.float().contiguous()}
+    for key, value in tower.state_dict().items():
+        extra[f"w::vision.{key}"] = value.float().contiguous()
+    for key, value in aligner.state_dict().items():
+        extra[f"w::aligner.{key}"] = value.float().contiguous()
+    for name, value in seams.items():
+        extra[f"seam.{name}"] = value.float().contiguous()
+    if bf16:
+        extra["default_sdpa.features"] = default_features.float().contiguous()
+        extra["default_sdpa.aligned"] = default_aligned.float().contiguous()
+        for prefix, module in (("vision", tower), ("aligner", aligner)):
+            for key, value in module.state_dict().items():
+                extra[f"dtype::{prefix}.{key}"] = torch.tensor(
+                    [1 if value.dtype == torch.float32 else 0], dtype=torch.int32)
+    globals()["_extra"] = extra
+    return aligned.float().contiguous()
+
+
+def run_deepseek_v41_image(image):
+    """DeepSeek V4.1's image PREPROCESSOR, from the release's own `inference/image_processor.py`.
+
+    `deepseek_v41_vision` measures the tower and the aligner starting from patches, which leaves the
+    step that produces those patches unmeasured: solving the resize ratio, padding to the patch
+    grid, normalizing, and cutting the result into patches. That step decides the grid every later
+    shape follows from, so a port that got it wrong would feed a correct tower the wrong picture.
+
+    The input is a deterministic RGB array rather than a file, encoded to PNG only so the release's
+    own `load_image` runs its real path. PNG is lossless, so the pixels recorded here are exactly
+    the ones the reference resized, and a port reproducing this reads the same pixels without
+    needing to agree about PNG decoding.
+
+    Two sizes are recorded. The first is an ordinary picture whose sides are not multiples of the
+    patch size, so the pad runs and the token grid is not the naive ratio. The second is wide enough
+    to trip `vision_max_wh_ratio`, which takes the other branch: a plain resize with no padding.
+    """
+    import io
+
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    _deepseek_v41_kernel_shim()
+    import model as reference
+    import image_processor as processor
+
+    args = reference.ModelArgs(
+        dim=64, vision_n_layers=3, vision_dim=32, vision_n_heads=4, vision_inter_dim=48,
+        vision_patch_size=4, vision_rope_theta=10000.0, vision_downsample_ratio=3,
+    )
+    args.vision_max_n_token = 64
+    args.vision_min_pixels = 16 * 16
+    args.vision_max_wh_ratio = 8
+
+    extra = {"patch_size": torch.tensor([args.vision_patch_size], dtype=torch.int32),
+             "downsample_ratio": torch.tensor([args.vision_downsample_ratio], dtype=torch.int32),
+             "max_n_token": torch.tensor([args.vision_max_n_token], dtype=torch.int32),
+             "min_pixels": torch.tensor([args.vision_min_pixels], dtype=torch.int32),
+             "max_wh_ratio": torch.tensor([args.vision_max_wh_ratio], dtype=torch.int32)}
+
+    first = None
+    for tag, (width, height) in {"a": (37, 53), "b": (200, 19)}.items():
+        rng = np.random.default_rng(7 if tag == "a" else 11)
+        pixels = rng.integers(0, 256, size=(height, width, 3), dtype=np.uint8)
+        buffer = io.BytesIO()
+        Image.fromarray(pixels, mode="RGB").save(buffer, format="PNG")
+        patches, n_vit_h, n_vit_w, n_llm_h, n_llm_w = processor.load_image(
+            {"data": buffer.getvalue()}, args)
+        types = processor.image_token_types(n_llm_h, n_llm_w)
+
+        extra[f"{tag}.pixels"] = torch.from_numpy(pixels.astype(np.float32)).contiguous()
+        extra[f"{tag}.size"] = torch.tensor([width, height], dtype=torch.int32)
+        extra[f"{tag}.grid"] = torch.tensor([n_vit_h, n_vit_w, n_llm_h, n_llm_w], dtype=torch.int32)
+        extra[f"{tag}.patches"] = patches.float().contiguous()
+        extra[f"{tag}.types"] = types.to(torch.int32).contiguous()
+        if first is None:
+            first = patches.float().contiguous()
+
+    globals()["_extra"] = extra
+    return first
+
+
+def run_qwen4_exp(image):
+    """The Qwen4-Exp decoder's arithmetic, from transformers' own Qwen4ExpForCausalLM, at a tiny
+    random configuration.
+
+    Qwen3.8-Flash-Next is the released instance at 180B — 360 GB of bfloat16, which no machine here
+    holds — so the four mechanisms this architecture adds to the hybrid family are measured at a size
+    that runs: hyper-connections carrying the residual stream `hc_count` times over, a per-layer
+    embedding over hashed n-grams, the query-sparse-attention indexer that picks which earlier tokens
+    a query may see, and a mixture of experts with a shared expert beside it.
+
+    The configuration is chosen so that every one of them bites. Twelve tokens over a compression
+    ratio of 2 give six index blocks against a budget of two, so the indexer discards rather than
+    admitting everything; the token ids repeat the end-of-sequence id twice, so the n-gram hash has
+    to refuse to read across a segment boundary; and the sequence is not a multiple of the ratio, so
+    the tail that fills no block is exercised.
+
+    Seam records accompany the logits: the hashed n-gram row indices, the per-layer embedding's
+    output, the hyper-connection read and its write shares, the indexer's own mask, and each branch's
+    output. A divergence localizes to a mechanism rather than to the stack.
+
+    `IK_QWEN4_INDEXER_HEADS` widens the indexer (default 2). Its scores sum RECTIFIED per-head products,
+    so with 2 heads a quarter of the query/block pairs score exactly zero and tie; which of the tied
+    blocks `torch.topk` keeps is a partial-sort artifact rather than a rule. At 8 heads a tie needs all
+    eight rectified to zero (p = 1/256), so the selection is determined and a match means something.
+    """
+    import torch
+    from transformers import Qwen4ExpTextConfig
+    from transformers.models.qwen4_exp.modeling_qwen4_exp import Qwen4ExpForCausalLM
+
+    indexer_heads = int(os.environ.get("IK_QWEN4_INDEXER_HEADS", "2"))
+
+    config = Qwen4ExpTextConfig(
+        hidden_size=32, num_hidden_layers=4, vocab_size=128,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=32,
+        rope_parameters={"rope_type": "default", "rope_theta": 10000.0,
+                         "partial_rotary_factor": 0.25, "mrope_section": [2, 1, 1],
+                         "mrope_interleaved": True},
+        indexer_n_heads=indexer_heads, indexer_kv_heads=1, indexer_head_dim=8,
+        indexer_budget=4, indexer_compress_ratio=2,
+        linear_num_key_heads=2, linear_num_value_heads=4,
+        linear_key_head_dim=8, linear_value_head_dim=8, linear_conv_kernel_dim=4,
+        hc_count=3, hc_lowrank=8,
+        num_experts=8, num_experts_per_tok=2,
+        moe_intermediate_size=16, shared_expert_intermediate_size=16,
+        ple_layer_ids=[1], ple_embed_dim=32, ple_conv_kernel_size=4,
+        ngram_size=3, heads_per_ngram=2, ngram_vocab_size_base=1000,
+        make_ngram_vocab_size_divisible_by=8, seed=1234, split_ngram_parts=4,
+        output_gate_type="sigmoid", hidden_act="silu",
+        eos_token_id=2, bos_token_id=1, tie_word_embeddings=False,
+        full_attention_interval=4,
+    )
+    model = _randomized(Qwen4ExpForCausalLM(config))
+    layers = model.model.layers
+    seams = {}
+
+    def capture(name, pick=lambda output: output):
+        def hook(module, inputs, output):
+            seams[name] = pick(output)
+        return hook
+
+    def capture_input(name):
+        def hook(module, inputs, output):
+            seams[name] = inputs[0]
+        return hook
+
+    layers[0].ple.ple_embedding.ngram_embedding.register_forward_hook(capture_input("ngram_ids"))
+    layers[0].ple.ple_embedding.register_forward_hook(capture("ngram_features"))
+    layers[0].ple.register_forward_hook(capture("ple"))
+    layers[0].attn_hyper_connection.register_forward_hook(capture("hc_read", lambda o: o[0]))
+    layers[0].attn_hyper_connection.register_forward_hook(capture("hc_shares", lambda o: o[2]))
+    layers[0].linear_attn.register_forward_hook(capture("linear_attn"))
+    layers[0].mlp.register_forward_hook(capture("moe"))
+    layers[3].self_attn.indexer.register_forward_hook(capture("indexer_mask"))
+    layers[3].self_attn.register_forward_hook(capture("attn", lambda o: o[0]))
+
+    # Two end-of-sequence ids inside the sequence, so the n-gram hash meets a segment boundary.
+    tokens = torch.tensor([[5, 9, 2, 31, 7, 44, 2, 18, 60, 3, 12, 25]])
+    logits = _tiny_decoder_record(
+        model, tokens,
+        release_name=lambda key: ("model.language_model." + key[len("model."):]
+                                  if key.startswith("model.") else key))
+    extra = globals()["_extra"]
+    for name, value in seams.items():
+        tensor = value.detach()
+        extra[f"seam.{name}"] = (tensor.float() if tensor.is_floating_point()
+                                 else tensor.to(torch.int32)).contiguous()[0]
+    globals()["_extra"] = extra
+    return logits
+
+
 def run_clip_text(image):
     """CLIP ViT-B/32 text embedding, L2-normalized, through transformers.
 
@@ -3942,6 +6967,71 @@ def run_vad(image, checkpoint):
     return torch.softmax(logits, dim=-1)[0, :, 1].contiguous()  # [frames]
 
 
+
+def run_vad_training(image, checkpoint):
+    """The MarbleNet release's own training objective and learning-rate schedule.
+
+    `--checkpoint` is the released `.nemo`, restored as `run_vad` restores it. Objective: a two-second
+    clip (voiced for the first second, then noise) with speech labels at NeMo's 40 ms label rate goes
+    through `EncDecFrameClassificationModel.forward` in evaluation mode (no dither, SpecAugment, or
+    dropout, so the logits are reproducible), `reshape_labels` onto the 20 ms logits, `get_label_masks`,
+    and the model's own `loss`. Schedule: the release's `optim.sched` (`PolynomialHoldDecayAnnealing`,
+    warm-up 0.05, hold 0.15, power 2, min_lr 1e-8) over a 40-step run on the release's SGD, read back
+    for 45 steps so the floor past the run shows.
+    """
+    import huggingface_hub
+
+    for name in ["ModelFilter", "DatasetFilter"]:
+        if not hasattr(huggingface_hub, name):
+            setattr(huggingface_hub, name, type(name, (), {}))
+    import nemo.collections.asr as nemo_asr
+    from nemo.core.optim.lr_scheduler import PolynomialHoldDecayAnnealing
+
+    model = nemo_asr.models.EncDecFrameClassificationModel.restore_from(checkpoint, strict=False).eval()
+    model.preprocessor.featurizer.dither = 0.0
+
+    samples = 32000
+    time = np.arange(samples, dtype=np.float32) / 16000.0
+    generator = np.random.default_rng(29)
+    speech = sum(0.3 / (h + 1) * np.sin(2 * np.pi * 140 * (h + 1) * time) for h in range(6))
+    wave = np.where(time < 1.0, speech, 0.05 * generator.standard_normal(samples)).astype(np.float32)
+    label_frames = samples // 640
+    labels = torch.tensor([[1 if (index + 0.5) * 0.04 < 1.0 else 0 for index in range(label_frames)]])
+
+    signal = torch.from_numpy(wave)[None]
+    length = torch.tensor([samples])
+    with torch.no_grad():
+        features, feature_length = model.preprocessor(input_signal=signal, length=length)
+        logits = model(input_signal=signal, input_signal_length=length)
+        reshaped, reshaped_length = model.reshape_labels(logits, labels, length, torch.tensor([label_frames]))
+        masks = model.get_label_masks(reshaped, reshaped_length)
+        loss = model.loss(logits=logits, labels=reshaped, loss_mask=masks)
+
+    optim = model.cfg.optim
+    parameter = torch.nn.Parameter(torch.zeros(1))
+    sgd = torch.optim.SGD([parameter], lr=optim.lr, momentum=optim.momentum, weight_decay=optim.weight_decay)
+    run = 40
+    scheduler = PolynomialHoldDecayAnnealing(sgd, max_steps=run, warmup_ratio=optim.sched.warmup_ratio,
+                                             hold_ratio=optim.sched.hold_ratio, power=optim.sched.power,
+                                             min_lr=optim.sched.min_lr)
+    rates = []
+    for _ in range(run + 5):
+        rates.append(sgd.param_groups[0]["lr"] / optim.lr)
+        sgd.step()
+        scheduler.step()
+
+    globals()["_extra"] = {
+        "waveform": signal[0].contiguous(),
+        "features": features[0].transpose(0, 1).contiguous(),               # [mel frames, mels]
+        "feature_length": feature_length.to(torch.int32).contiguous(),
+        "logits": logits[0].contiguous(),                                   # [frames, 2]
+        "labels": reshaped[0].to(torch.int32).contiguous(),                 # [frames]
+        "mask": masks[0].to(torch.int32).contiguous(),
+        "schedule": torch.tensor(rates, dtype=torch.float64),
+        "optimizer": torch.tensor([optim.lr, optim.momentum, optim.weight_decay], dtype=torch.float64),
+    }
+    return loss.reshape(1).contiguous()
+
 def run_silero_vad(image):
     """Silero VAD v6 (snakers4, PyPI `silero_vad` 6.2.1) per-chunk speech probability, `[chunks]`.
 
@@ -4369,6 +7459,86 @@ def run_flux(image):
     return output.contiguous()                                             # [B, img_seq, out_channels]
 
 
+def run_flux_real(image, checkpoint):
+    """The FLUX.1 [schnell] transformer velocity on the RELEASED weights, at the precision they ship in.
+
+    `--checkpoint` is the release's `transformer/` directory. The 12B transformer at float32 is ~48 GB,
+    which this machine cannot hold, so both sides run bfloat16 and the comparison describes the released
+    precision rather than the arithmetic's ceiling; `run_flux` is where the arithmetic is measured exactly
+    at a tiny configuration. The spatial input is deliberately tiny (a 2×2 packed-latent grid, 4 image
+    tokens, 8 text tokens) so only the WEIGHTS are large, not the activations. The text conditioning is
+    random rather than the CLIP/T5 encoders' output, which keeps the transformer measured in isolation,
+    the way the LTX DiT and Qwen-Image transformer are. schnell carries no guidance embedding.
+    """
+    import torch
+    from diffusers import FluxTransformer2DModel
+
+    model = FluxTransformer2DModel.from_pretrained(checkpoint, torch_dtype=torch.bfloat16).eval()
+
+    generator = torch.Generator().manual_seed(8)
+    lh, lw = 2, 2                                                          # packed latent grid -> 4 tokens
+    channels = model.config.in_channels                                   # 64 for schnell
+    joint = model.config.joint_attention_dim                              # 4096
+    pooledDim = model.config.pooled_projection_dim                        # 768
+    hidden = torch.randn(1, lh * lw, channels, generator=generator).to(torch.bfloat16)
+    encoder = torch.randn(1, 8, joint, generator=generator).to(torch.bfloat16)
+    pooled = torch.randn(1, pooledDim, generator=generator).to(torch.bfloat16)
+    t = torch.tensor([0.5], dtype=torch.bfloat16)
+    img_ids = torch.zeros(lh * lw, 3)
+    img_ids[:, 1] = torch.arange(lh).unsqueeze(1).expand(lh, lw).reshape(-1).float()
+    img_ids[:, 2] = torch.arange(lw).unsqueeze(0).expand(lh, lw).reshape(-1).float()
+    txt_ids = torch.zeros(8, 3)
+
+    with torch.no_grad():
+        output = model(hidden_states=hidden, encoder_hidden_states=encoder, pooled_projections=pooled,
+                       timestep=t, img_ids=img_ids, txt_ids=txt_ids, guidance=None, return_dict=False)[0]
+
+    globals()["_extra"] = {
+        "hidden": hidden.float().contiguous(), "encoder": encoder.float().contiguous(),
+        "pooled": pooled.float().contiguous(), "timestep": t.float().contiguous(),
+        "img_ids": img_ids.contiguous()}
+    return output.float().contiguous()                                     # [B, img_seq, out_channels]
+
+
+def run_flux_text(image, checkpoint):
+    """FLUX.1's text front end on the RELEASED weights: the CLIP-L pooled projection and the T5-XXL
+    sequence, from transformers' own CLIPTextModel and T5EncoderModel.
+
+    `--checkpoint` is a FLUX release directory (the diffusers layout: `text_encoder/`, `text_encoder_2/`,
+    `tokenizer/`, `tokenizer_2/`). The encoders together are ~10 GB in bfloat16, which fits where the 24 GB
+    transformer does not, so this measures the whole text path — tokenization included — that the Swift
+    `NFKMLXFlux.encode` reproduces. CLIP pads to 77 and reads the pooled embedding at the end-of-text
+    token (a causal model, so padding past it does not change that token); T5 pads to 256 and encodes the
+    whole padded sequence with no attention mask, the way diffusers' FluxPipeline does.
+    """
+    import torch
+    from transformers import (CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast)
+
+    prompt = "a photograph of an astronaut riding a horse on the moon"
+    clip_tokenizer = CLIPTokenizer.from_pretrained(checkpoint, subfolder="tokenizer")
+    clip = CLIPTextModel.from_pretrained(checkpoint, subfolder="text_encoder",
+                                         torch_dtype=torch.bfloat16).eval()
+    clip_ids = clip_tokenizer(prompt, padding="max_length", max_length=77, truncation=True,
+                              return_tensors="pt").input_ids
+    with torch.no_grad():
+        pooled = clip(clip_ids).pooler_output[0]                           # [768]
+
+    t5_tokenizer = T5TokenizerFast.from_pretrained(checkpoint, subfolder="tokenizer_2")
+    t5 = T5EncoderModel.from_pretrained(checkpoint, subfolder="text_encoder_2",
+                                        torch_dtype=torch.bfloat16).eval()
+    t5_ids = t5_tokenizer(prompt, padding="max_length", max_length=256, truncation=True,
+                          return_tensors="pt").input_ids
+    with torch.no_grad():
+        embeds = t5(t5_ids)[0][0]                                          # [256, 4096]
+
+    globals()["_extra"] = {
+        "clip_ids": clip_ids[0].to(torch.int32).contiguous(),
+        "t5_ids": t5_ids[0].to(torch.int32).contiguous(),
+        "pooled": pooled.float().contiguous(),
+        "embeds": embeds.float().contiguous()}
+    return pooled.float().contiguous()
+
+
 def run_sd3_controlnet(image):
     """The SD3 ControlNet (dual-stream) end to end, from diffusers' SD3ControlNetModel plus the base
     SD3Transformer2DModel with the ControlNet residuals injected.
@@ -4623,6 +7793,432 @@ def run_wan(image):
     return output.contiguous()                                             # [C, F, H, W]
 
 
+def run_sam3_vision(image):
+    """SAM 3's vision encoder (`Sam3VisionModel`, released `facebook/sam3`) on a real plate: the
+    32-layer rotary ViT and the FPN neck that reads its one output map at four scales.
+
+    Measured at 504 pixels rather than the released 1008, which exercises both edges the full size
+    hides: the pretraining position grid is 24x24 patches and the input is 36x36, so the grid is
+    tiled and cropped, and 36 is not a whole number of 24-wide windows, so a windowed layer pads.
+    Records the plate, the ViT's output, and the four FPN levels. The vision encoder is loaded on its
+    own out of the 1797-tensor release, so the detector and tracker stay off the machine. Runs under
+    the `wananimate` oracle env (transformers >= 5.16). `image` is the plate.
+    """
+    from safetensors.torch import safe_open
+    from transformers import AutoConfig
+    from transformers.models.sam3.modeling_sam3 import Sam3VisionModel
+
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    config = AutoConfig.from_pretrained(directory).detector_config.vision_config
+    # The global layers' rotary table is built from the CONFIGURED image size, not the input's, so a
+    # plate of another size needs the configuration to say so.
+    config.backbone_config.image_size = int(os.environ.get("IK_SAM3_SIZE", 504))
+    model = Sam3VisionModel(config)
+
+    prefix = "detector_model.vision_encoder."
+    state = {}
+    with safe_open(os.path.join(directory, "model.safetensors"), framework="pt") as handle:
+        for key in handle.keys():
+            if key.startswith(prefix):
+                state[key[len(prefix):]] = handle.get_tensor(key).float()
+    model.load_state_dict(state, strict=True)
+    model = model.eval().float()
+
+    plate = torch.tensor(image).permute(2, 0, 1).unsqueeze(0)              # [1, 3, H, W]
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixel_values = (plate - mean) / deviation
+
+    with torch.no_grad():
+        output = model(pixel_values=pixel_values)
+
+    grid = pixel_values.shape[-1] // config.backbone_config.patch_size
+    extra = {"pixel_values": pixel_values[0].permute(1, 2, 0).contiguous(),
+             "backbone": output.last_hidden_state[0].reshape(grid, grid, -1).contiguous()}
+    for index, level in enumerate(output.fpn_hidden_states):
+        extra[f"fpn_{index}"] = level[0].permute(1, 2, 0).contiguous()
+    globals()["_extra"] = extra
+    return extra["fpn_0"].clone()                                                  # the finest level
+
+
+def run_sam3_text(image):
+    """SAM 3's prompt side (`CLIPTextModelWithProjection` + the detector's projection, released
+    `facebook/sam3`): the 24-layer causal CLIP text tower 1024 wide, and the 1024 -> 256 projection
+    that carries EVERY token to the detector's width rather than the pooled end-of-text one.
+
+    Records the token ids, the tower's last hidden state, and the projected prompt. The text tower is
+    loaded on its own out of the 1797-tensor release. Runs under the `wananimate` oracle env
+    (transformers >= 5.16). `image` unused.
+    """
+    from safetensors.torch import safe_open
+    from transformers import AutoConfig, CLIPTextModelWithProjection
+
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    detector = AutoConfig.from_pretrained(directory).detector_config
+    model = CLIPTextModelWithProjection(detector.text_config)
+    projection = torch.nn.Linear(detector.text_config.hidden_size, detector.detr_encoder_config.hidden_size)
+
+    state, projection_state = {}, {}
+    with safe_open(os.path.join(directory, "model.safetensors"), framework="pt") as handle:
+        for key in handle.keys():
+            if key.startswith("detector_model.text_encoder."):
+                state[key[len("detector_model.text_encoder."):]] = handle.get_tensor(key).float()
+            elif key.startswith("detector_model.text_projection."):
+                projection_state[key[len("detector_model.text_projection."):]] = handle.get_tensor(key).float()
+    model.load_state_dict(state, strict=True)
+    projection.load_state_dict(projection_state, strict=True)
+    model, projection = model.eval().float(), projection.eval().float()
+
+    # A short prompt between CLIP's start and end tokens, padded to the trained context.
+    ids = torch.full((1, detector.text_config.max_position_embeddings),
+                     detector.text_config.pad_token_id, dtype=torch.long)
+    prompt = [49406, 2368, 49407]
+    ids[0, : len(prompt)] = torch.tensor(prompt)
+    attention_mask = torch.zeros_like(ids)
+    attention_mask[0, : len(prompt)] = 1
+
+    with torch.no_grad():
+        output = model(input_ids=ids, attention_mask=attention_mask, return_dict=True)
+        projected = projection(output.last_hidden_state)
+
+    extra = {"input_ids": ids[0].to(torch.int32).contiguous(),
+             "attention_mask": attention_mask[0].to(torch.int32).contiguous(),
+             "last_hidden_state": output.last_hidden_state[0].contiguous()}
+    globals()["_extra"] = extra
+    return projected[0].contiguous()                                       # [L, 256]
+
+
+def run_sam3_detector(image):
+    """SAM 3's detector (`Sam3Model`, released `facebook/sam3`) on a real plate and a worded prompt:
+    the DETR encoder that fuses one vision level with the prompt, the DETR decoder with its 200
+    queries and presence token, the dot-product scoring head, and the mask decoder.
+
+    Records the FPN levels and their position encodings, the projected prompt, and every output, so
+    the detector can be driven from recorded inputs and measured on its own as well as end to end.
+    Runs at 504 pixels, where the detector reads a 36x36 level and lifts its result back to 144x144.
+    Runs under the `wananimate` oracle env (transformers >= 5.16). `image` is the plate.
+    """
+    from transformers import AutoConfig
+    from transformers.models.sam3.modeling_sam3 import Sam3Model
+
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    config = AutoConfig.from_pretrained(directory)
+    size = int(os.environ.get("IK_SAM3_SIZE", 504))
+    config.detector_config.vision_config.backbone_config.image_size = size
+    model = Sam3Model.from_pretrained(directory, config=config, dtype=torch.float32).eval()
+
+    plate = torch.tensor(image).permute(2, 0, 1).unsqueeze(0)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixel_values = (plate - mean) / deviation
+
+    text_config = config.detector_config.text_config
+    ids = torch.full((1, text_config.max_position_embeddings), text_config.pad_token_id, dtype=torch.long)
+    prompt = [49406, 2368, 49407]
+    ids[0, : len(prompt)] = torch.tensor(prompt)
+    attention_mask = torch.zeros_like(ids)
+    attention_mask[0, : len(prompt)] = 1
+
+    with torch.no_grad():
+        vision = model.get_vision_features(pixel_values=pixel_values)
+        text = model.get_text_features(input_ids=ids, attention_mask=attention_mask, return_dict=True)
+        output = model(vision_embeds=vision, text_embeds=text, attention_mask=attention_mask)
+
+    extra = {"pixel_values": pixel_values[0].permute(1, 2, 0).contiguous(),
+             "input_ids": ids[0].to(torch.int32).contiguous(),
+             "attention_mask": attention_mask[0].to(torch.int32).contiguous(),
+             "prompt": text.pooler_output[0].contiguous(),
+             "pred_boxes": output.pred_boxes[0].contiguous(),
+             "pred_logits": output.pred_logits[0].reshape(-1).contiguous(),
+             "presence_logits": output.presence_logits.reshape(-1).contiguous(),
+             "semantic_seg": output.semantic_seg[0].permute(1, 2, 0).contiguous()}
+    # The detector reads every FPN level but the coarsest.
+    for index, (level, position) in enumerate(zip(vision.fpn_hidden_states[:-1],
+                                                  vision.fpn_position_encoding[:-1])):
+        extra[f"level_{index}"] = level[0].permute(1, 2, 0).contiguous()
+        extra[f"position_{index}"] = position[0].permute(1, 2, 0).contiguous()
+    globals()["_extra"] = extra
+    return output.pred_masks[0].contiguous()                               # [queries, H, W]
+
+
+def run_sam2_loss(image):
+    """SAM 2's training objective (`MultiStepMultiMasksAndIous`, facebookresearch/sam2), scored on
+    random predictions and a target, at the weights the reference's own fine-tuning configuration
+    sets: mask 20, dice 1, IoU 1, class 1, every IoU supervised, IoU by L1.
+
+    The loss is the reference's own file, not a reimplementation of its paper: `loss_fns.py` is
+    executed with `training.trainer` and `training.utils.distributed` stubbed, since neither the
+    trainer nor distribution is needed to score one example. Records the tensors it scored and the
+    four terms it returns, each before the weighting, so a port can be compared term by term. Runs
+    under any oracle env with torch. `image` unused.
+
+    The source is `IK_SAM2_SRC` (default `~/.inferkit-validation/reference-sources/sam2`), curled
+    from the repository rather than cloned.
+    """
+    import sys
+    import types
+
+    directory = os.path.expanduser(os.environ.get("IK_SAM2_SRC",
+                                                  "~/.inferkit-validation/reference-sources/sam2"))
+    trainer = types.ModuleType("training.trainer")
+    trainer.CORE_LOSS_KEY = "core_loss"
+    distributed = types.ModuleType("training.utils.distributed")
+    distributed.get_world_size = lambda: 1
+    distributed.is_dist_avail_and_initialized = lambda: False
+    package = types.ModuleType("training")
+    utilities = types.ModuleType("training.utils")
+    sys.modules.update({"training": package, "training.trainer": trainer,
+                        "training.utils": utilities, "training.utils.distributed": distributed})
+
+    namespace = {"__name__": "sam2_loss_fns"}
+    with open(os.path.join(directory, "loss_fns.py")) as handle:
+        exec(compile(handle.read(), os.path.join(directory, "loss_fns.py"), "exec"), namespace)
+
+    objective = namespace["MultiStepMultiMasksAndIous"](
+        weight_dict={"loss_mask": 20, "loss_dice": 1, "loss_iou": 1, "loss_class": 1},
+        supervise_all_iou=True, iou_use_l1_loss=True, pred_obj_scores=True,
+        focal_gamma_obj_score=0.0, focal_alpha_obj_score=-1.0)
+
+    generator = torch.Generator().manual_seed(17)
+    # Three multimask slots over a small map, a target with an object in it, and an IoU head that is
+    # wrong enough for its term to carry signal.
+    masks = torch.randn(1, 3, 24, 24, generator=generator) * 3
+    target = torch.zeros(1, 24, 24)
+    target[0, 6:18, 8:20] = 1
+    ious = torch.rand(1, 3, generator=generator)
+    object_score = torch.randn(1, 1, generator=generator)
+
+    outputs = {"multistep_pred_multimasks_high_res": [masks],
+               "multistep_pred_ious": [ious],
+               "multistep_object_score_logits": [object_score]}
+    losses = objective._forward(outputs, target, 1.0)
+
+    extra = {"masks": masks[0].contiguous(), "target": target[0].contiguous(),
+             "ious": ious[0].contiguous(), "object_score": object_score.reshape(-1).contiguous(),
+             "loss_mask": losses["loss_mask"].detach().reshape(1).contiguous(),
+             "loss_dice": losses["loss_dice"].detach().reshape(1).contiguous(),
+             "loss_iou": losses["loss_iou"].detach().reshape(1).contiguous(),
+             "loss_class": losses["loss_class"].detach().reshape(1).contiguous()}
+    globals()["_extra"] = extra
+    return losses["core_loss"].detach().reshape(1).contiguous()            # the weighted total
+
+def run_sam3_loss(image):
+    """SAM 3's training objective for a text-only fine-tune (facebookresearch/sam3), scored on random
+    predictions and a set of target boxes, at the settings its own
+    `configs/odinw13/odinw_text_only_train.yaml` sets: a `BinaryHungarianMatcherV2` (class 2, box 5,
+    GIoU 2, focal alpha 0.25, gamma 2), then `Boxes` (L1 5, GIoU 2) and `IABCEMdetr` (classification
+    20, presence 20, positive weight 5). That configuration turns segmentation off, so there is no
+    mask term to score.
+
+    The loss and the matcher are the reference's own files, executed from a tree under `IK_SAM3_SRC`
+    (default `~/.inferkit-validation/reference-sources/sam3`) that was curled rather than cloned. Only
+    three leaves are stand-ins, none of them arithmetic the loss depends on: the distributed helpers,
+    the metric the loss reports and never trains on, and the focal loss's Triton kernel, which needs
+    CUDA and is replaced by the eager form the reference's own file falls back to.
+
+    Records the predictions, the targets, the matcher's assignment, and the four terms, so a port can
+    be compared assignment first and then term by term. Runs under the `wananimate` oracle env, which
+    needs `scipy` for the reference's `linear_sum_assignment`. `image` unused.
+    """
+    root = os.path.expanduser(os.environ.get("IK_SAM3_SRC",
+                                             "~/.inferkit-validation/reference-sources/sam3"))
+    sys.path.insert(0, root)
+    from sam3.model.box_ops import box_cxcywh_to_xyxy
+    from sam3.train.loss.loss_fns import Boxes, IABCEMdetr
+    from sam3.train.matcher import BinaryHungarianMatcherV2
+
+    torch.manual_seed(11)
+    queries, count = 12, 3
+    logits = torch.randn(1, queries, 1)
+    boxes = torch.rand(1, queries, 4) * 0.5 + 0.25
+    boxes[..., 2:] = boxes[..., 2:] * 0.4 + 0.05
+    presence = torch.randn(1, 1)
+    target_boxes = torch.rand(count, 4) * 0.5 + 0.25
+    target_boxes[:, 2:] = target_boxes[:, 2:] * 0.4 + 0.05
+
+    outputs = {"pred_logits": logits, "pred_boxes": boxes,
+               "pred_boxes_xyxy": box_cxcywh_to_xyxy(boxes), "presence_logit_dec": presence}
+    targets = {"boxes": target_boxes, "boxes_xyxy": box_cxcywh_to_xyxy(target_boxes),
+               "boxes_padded": target_boxes.unsqueeze(0), "num_boxes": torch.tensor([count]),
+               "object_ids_padded": torch.arange(count).unsqueeze(0),
+               "is_exhaustive": torch.tensor([True])}
+
+    matcher = BinaryHungarianMatcherV2(focal=True, cost_class=2.0, cost_bbox=5.0, cost_giou=2.0,
+                                       alpha=0.25, gamma=2, stable=False)
+    indices = matcher(outputs, targets)
+
+    box_loss = Boxes(weight_dict={"loss_bbox": 5.0, "loss_giou": 2.0})
+    class_loss = IABCEMdetr(weight_dict={"loss_ce": 20.0, "presence_loss": 20.0}, pos_weight=5.0,
+                            alpha=0.25, gamma=2, use_presence=True, pos_focal=False,
+                            pad_n_queries=queries, pad_scale_pos=1.0, weak_loss=False)
+    boxes_out = box_loss.get_loss(outputs, targets, indices, float(count))
+    class_out = class_loss.get_loss(outputs, targets, indices, float(count))
+    total = (boxes_out["loss_bbox"] * 5.0 + boxes_out["loss_giou"] * 2.0
+             + class_out["loss_ce"] * 20.0 + class_out["presence_loss"] * 20.0)
+
+    extra = {"logits": logits.reshape(1, queries).contiguous(),
+             "boxes": boxes[0].contiguous(),
+             "presence": presence.reshape(1).contiguous(),
+             "targets": target_boxes.contiguous(),
+             "matched": indices[1].to(torch.int32).contiguous(),
+             "loss_bbox": boxes_out["loss_bbox"].detach().reshape(1).contiguous(),
+             "loss_giou": boxes_out["loss_giou"].detach().reshape(1).contiguous(),
+             "loss_ce": class_out["loss_ce"].detach().reshape(1).contiguous(),
+             "presence_loss": class_out["presence_loss"].detach().reshape(1).contiguous()}
+    globals()["_extra"] = extra
+    return total.detach().reshape(1).contiguous()                          # the weighted total
+
+
+def run_sam2_video(image):
+    """SAM 2.1's video tracker (`Sam2VideoModel`, released `facebook/sam2.1-hiera-tiny`) over a
+    three-frame clip: one click on the first frame, then two tracked frames.
+
+    This is the whole model, not a seam: the Hiera encoder, the prompt encoder and mask decoder, the
+    memory encoder that folds each frame's mask into a memory, and the memory attention that reads
+    those memories and the object pointers on the frames after. It also exercises what 2.1 adds over
+    2.0 — the occlusion spatial embedding and the projected temporal encoding on the object pointers.
+    Records the normalized frames, the click, and per frame the mask logits, the object score, the
+    object pointer, and the stored memory, so a divergence localizes to a frame and a stage. Runs
+    under the `wananimate` oracle env (transformers >= 5.16, which carries SAM 2 video). `image` unused.
+    """
+    import numpy as np
+    from transformers import Sam2VideoModel
+    from transformers.models.sam2_video.modeling_sam2_video import Sam2VideoInferenceSession
+
+    model = Sam2VideoModel.from_pretrained("facebook/sam2.1-hiera-tiny", dtype=torch.float32).eval()
+
+    # A moving disc on a blocky background: the tracker needs something to follow, and a plate of
+    # noise gives it nothing, which would compare two near-empty masks.
+    generator = np.random.default_rng(3)
+    frames = []
+    for index in range(3):
+        base = generator.random((16, 16, 3), dtype=np.float32)
+        frame = np.repeat(np.repeat(base, 64, axis=0), 64, axis=1)
+        rows, columns = np.mgrid[0:1024, 0:1024]
+        disc = ((rows - 512 - 40 * index) ** 2 + (columns - 512) ** 2) < 200 ** 2
+        frame[disc] = 0.9
+        frames.append(frame)
+    pixel_values = torch.tensor(np.stack(frames)).permute(0, 3, 1, 2)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    pixel_values = (pixel_values - mean) / deviation
+
+    session = Sam2VideoInferenceSession(video=pixel_values, video_height=1024, video_width=1024,
+                                        dtype=torch.float32)
+    session.obj_id_to_idx(1)
+    session.add_point_inputs(0, 0, {"point_coords": torch.tensor([[[[512.0, 512.0]]]]),
+                                    "point_labels": torch.tensor([[[1]]], dtype=torch.int32)})
+    session.obj_with_new_inputs = [1]
+
+    masks = []
+    with torch.no_grad():
+        for output in model.propagate_in_video_iterator(session, start_frame_idx=0):
+            masks.append(output.pred_masks[0, 0])
+
+    extra = {"frames": pixel_values.permute(0, 2, 3, 1).contiguous(),
+             "point": torch.tensor([512.0, 512.0])}
+    for index in range(3):
+        key = "cond_frame_outputs" if index == 0 else "non_cond_frame_outputs"
+        stored = session.output_dict_per_obj[0][key][index]
+        extra[f"mask_{index}"] = masks[index].contiguous()
+        extra[f"object_score_{index}"] = stored["object_score_logits"].reshape(-1).contiguous()
+        extra[f"pointer_{index}"] = stored["object_pointer"].reshape(-1).contiguous()
+        extra[f"memory_{index}"] = stored["maskmem_features"].float().permute(1, 0, 2).contiguous()
+    globals()["_extra"] = extra
+    return torch.stack(masks).contiguous()                                 # [3, 256, 256]
+
+
+def run_wan_animate(image):
+    """The Wan 2.2 Animate 2 DiT at a tiny random configuration, from diffusers'
+    `WanAnimate2Transformer3DModel`, across BOTH of its passes.
+
+    Animate adds three things to the Wan text-to-video block this package already ports: an image
+    cross-attention branch (`add_k_proj`/`add_v_proj`/`norm_added_k`) fed by an `img_emb` projector
+    over CLIP embeddings, and an in-context reference mechanism — a `kv_cache_mode="extract"` pass
+    over the reference latents that stores every block's pre-rotary key/value, and a
+    `kv_cache_mode="cached"` pass where each generation frame attends over the whole video's
+    generation buffer plus the reference tokens at its own frame index. Both passes are recorded, as
+    are block 0's output in each and the cache's first layer, so a divergence localizes. Runs under
+    the `wananimate` oracle env (diffusers 0.40 with `WanAnimate2Transformer3DModel`). `image` unused.
+    """
+    from diffusers.models.transformers.transformer_wan_animate_2 import (
+        WanAnimate2KVCache, WanAnimate2Transformer3DModel)
+
+    model = WanAnimate2Transformer3DModel(
+        patch_size=(1, 2, 2), text_len=16, in_dim=8, dim=32, ffn_dim=48, freq_dim=256,
+        text_dim=10, out_dim=4, num_heads=2, num_layers=2, cross_attn_norm=True, eps=1e-6,
+        use_img_emb=True, refer_offset_t=1, refer_offset_h=0, refer_offset_w=-1, refer_stride=1)
+    model = _randomized(model, seed=31)
+
+    generator = torch.Generator().manual_seed(5)
+    # The reference stream is two latent frames, the generation stream three; both are 8x8 latents,
+    # so each frame patchifies to a 4x4 grid and the generation stream fills the full video buffer
+    # the block mask is built over (`origin_len` 4 -> 2 + 1 latent frames, `origin_area` 64x64 -> 16).
+    reference_latent = torch.randn(4, 2, 8, 8, generator=generator)
+    reference_condition = torch.randn(4, 2, 8, 8, generator=generator)
+    latent = torch.randn(4, 3, 8, 8, generator=generator)
+    condition = torch.randn(4, 3, 8, 8, generator=generator)
+    text = torch.randn(7, 10, generator=generator)
+    image_embeds = torch.randn(1, 5, 1280, generator=generator)
+    t = torch.tensor([0.35])
+    reference_grid = torch.tensor([[2, 4, 4]], dtype=torch.long)
+
+    seams = {}
+    model.blocks[0].register_forward_hook(
+        lambda m, i, o, s=seams: s.__setitem__(f"block0_{s['mode']}", o.detach()))
+    model.img_emb.register_forward_hook(lambda m, i, o: seams.__setitem__("img_emb", o.detach()))
+
+    cache = WanAnimate2KVCache(2)
+    seams["mode"] = "extract"
+    with torch.no_grad():
+        extract = model(hidden_states=[reference_latent], timestep=t, encoder_hidden_states=[text],
+                        condition_latents=[reference_condition], kv_cache=cache,
+                        kv_cache_mode="extract", seq_len=32, encoder_hidden_states_image=image_embeds,
+                        offset_grid_sizes=reference_grid, return_dict=False)[0][0]
+    cached_key, cached_value = cache.get(0).get()
+
+    seams["mode"] = "cached"
+    with torch.no_grad():
+        cached = model(hidden_states=[latent], timestep=t, encoder_hidden_states=[text],
+                       condition_latents=[condition], kv_cache=cache, kv_cache_mode="cached",
+                       seq_len=48, encoder_hidden_states_image=image_embeds,
+                       reference_grid_sizes=reference_grid, origin_len=4, origin_area=[64, 64],
+                       return_dict=False)[0][0]
+
+    # A second generation pass as a CHUNK: four frames scattered into a five-frame video buffer, so
+    # the packed generation keys carry a zero-filled frame, and the fourth frame's reference slot sits
+    # past the two frames the cache holds and is zero-filled as well. Both are unmasked, so those zero
+    # keys enter the softmax denominator without contributing a value. Nothing in the full-length pass
+    # above exercises either, and a port that skips the dilution matches the full pass exactly.
+    chunk_latent = torch.randn(4, 4, 8, 8, generator=generator)
+    chunk_condition = torch.randn(4, 4, 8, 8, generator=generator)
+    seams["mode"] = "chunk"
+    with torch.no_grad():
+        chunk = model(hidden_states=[chunk_latent], timestep=t, encoder_hidden_states=[text],
+                      condition_latents=[chunk_condition], kv_cache=cache, kv_cache_mode="cached",
+                      seq_len=64, encoder_hidden_states_image=image_embeds,
+                      reference_grid_sizes=reference_grid, origin_len=12, origin_area=[64, 64],
+                      return_dict=False)[0][0]
+
+    extra = {"reference_latent": reference_latent.contiguous(),
+             "reference_condition": reference_condition.contiguous(),
+             "latent": latent.contiguous(), "condition": condition.contiguous(),
+             "text": text.contiguous(), "image_embeds": image_embeds[0].contiguous(),
+             "timestep": t.contiguous(), "extract": extract.contiguous(),
+             "img_emb": seams["img_emb"][0].contiguous(),
+             "cache_key": cached_key[0].contiguous(), "cache_value": cached_value[0].contiguous(),
+             "extract_block0": seams["block0_extract"][0].contiguous(),
+             "cached_block0": seams["block0_cached"][0].contiguous(),
+             "chunk_latent": chunk_latent.contiguous(),
+             "chunk_condition": chunk_condition.contiguous(),
+             "chunk": chunk.contiguous(),
+             "chunk_block0": seams["block0_chunk"][0].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return cached.contiguous()                                             # [C, F, H, W]
+
+
 def run_umt5(image):
     """The umT5 text encoder (`UMT5EncoderModel`, Wan's text encoder) at a tiny random configuration,
     from transformers. umT5 differs from plain T5 in giving EVERY layer its own relative-position bias;
@@ -4785,7 +8381,7 @@ def run_wan_vae_21(image):
     from diffusers import AutoencoderKLWan
 
     model = AutoencoderKLWan(
-        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[1, 2], num_res_blocks=1, attn_scales=[],
+        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[2, 2], num_res_blocks=1, attn_scales=[],
         temperal_downsample=[True], is_residual=False, patch_size=None, in_channels=3, out_channels=3)
     model = _randomized(model, seed=53)
 
@@ -5244,11 +8840,20 @@ def run_music_depth(image, checkpoint):
     Runs under the `music` oracle environment (diffusers >= 0.40.0)."""
     from diffusers import MiniMaxMusic3RVQDepthDecoder
 
-    decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    # `IK_MUSIC_DEPTH_DTYPE=bfloat16` runs the release's own bf16 with every block probed piece by piece
+    # (`enc.<layer>.<submodule>`); `bfloat16-inputs` keeps float32 arithmetic on the same bf16 inputs.
+    mode = os.environ.get("IK_MUSIC_DEPTH_DTYPE")
+    dtype = torch.bfloat16 if mode == "bfloat16" else torch.float32
+    decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(checkpoint, torch_dtype=dtype).eval()
     generator = np.random.default_rng(13)
     inputs = torch.from_numpy(generator.standard_normal((2, 8, 4096)).astype(np.float32))
     projection_input = torch.from_numpy(generator.standard_normal((2, 4096)).astype(np.float32))
     ids = torch.from_numpy(generator.integers(0, 1024 * 7, size=(2, 7)))
+    probes = {}
+    if mode:
+        inputs = inputs.to(torch.bfloat16).to(dtype)
+        projection_input = projection_input.to(torch.bfloat16).to(dtype)
+        _probe_encoder_layers(decoder.layers, probes)
     with torch.no_grad():
         hidden = decoder(inputs)
         head_logits = torch.stack([head(hidden[:, -1]) for head in decoder.audio_heads])
@@ -5262,6 +8867,7 @@ def run_music_depth(image, checkpoint):
         "projected": projected.float().contiguous(),
         "embedding_ids": ids.to(torch.int32).contiguous(),
         "embedded": embedded.float().contiguous(),
+        **probes,
     }
     return hidden.float().contiguous()
 
@@ -5462,6 +9068,117 @@ def run_music_tokenizer(image, checkpoint):
     return extra["case0_ids"][0].clone()
 
 
+def run_deepseek_v41_vl_router_bf16(image):
+    """The same router and mixture in bf16, as the release runs them. Run under the gemma environment."""
+    return run_deepseek_v41_vl_router(image, bf16=True)
+
+
+def run_deepseek_v41_vl_router(image, bf16=False):
+    """DeepSeek V4.1's router where a token sits inside an IMAGE SPAN.
+
+    The correction bias steers which experts a token selects, and a release with a vision tower
+    carries a second one for image spans (`noaux_tc_for_vl` in training). A port that routes those
+    tokens with the text bias picks different experts for them and is wrong only where an image is
+    present, which a text-only parity run cannot see. `vision_n_layers` is 1 here purely because
+    that is what makes the reference build `bias_vl` at all.
+    """
+    import torch
+
+    _deepseek_v41_kernel_shim()
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    import model as reference
+
+    args = reference.ModelArgs(
+        max_batch_size=1, max_seq_len=32, dtype="bf16", expert_dtype=None,
+        vocab_size=128, dim=32, moe_inter_dim=16, n_layers=1, n_mtp_layers=0,
+        n_heads=2, n_routed_experts=8, n_activated_experts=2,
+        q_lora_rank=16, head_dim=16, rope_head_dim=4, o_groups=1, o_lora_rank=8,
+        window_size=8, compress_ratios=(0,), kv_source_layers=(), index_source_layers=(),
+        index_n_heads=2, index_head_dim=8, index_topk=4, hc_mult=2, hc_sinkhorn_iters=2,
+        vision_n_layers=1, vision_dim=16, vision_n_heads=2, vision_inter_dim=32,
+    )
+    torch.manual_seed(0)
+    if bf16:
+        net = _deepseek_v41_bf16(reference, lambda: reference.Transformer(args), seed=5)
+    else:
+        net = _randomized(reference.Transformer(args).float(), seed=5)
+    gate = net.layers[0].ffn.gate
+    assert gate.bias_vl is not None, "a vision-enabled release carries the second bias"
+
+    torch.manual_seed(3)
+    hidden = torch.randn(9, args.dim)
+    if bf16:
+        hidden = hidden.to(torch.bfloat16)
+    mask = torch.zeros(9, dtype=torch.bool)
+    mask[3:7] = True                      # one image span, text either side
+    with torch.inference_mode():
+        text_weights, text_indices = gate(hidden, None)
+        vl_weights, vl_indices = gate(hidden, mask)
+        lifted = net.layers[0].ffn(hidden.unsqueeze(0), mask.unsqueeze(0))
+
+    moved = int((text_indices != vl_indices).any(dim=-1).sum())
+    assert moved > 0, "the image bias has to move at least one token's experts to be worth testing"
+    extra = {
+        "hidden": hidden.float().contiguous(),
+        "image_mask": mask.to(torch.int32).contiguous(),
+        "text_indices": text_indices.to(torch.int32).contiguous(),
+        "vl_indices": vl_indices.to(torch.int32).contiguous(),
+        # Cloned because the harness writes the RETURN value as `output`, and this is that same
+        # tensor: safetensors refuses two names for one buffer.
+        "vl_weights": vl_weights.float().clone().contiguous(),
+        "ffn_vl": lifted[0].float().contiguous(),
+        "tokens_rerouted": torch.tensor([moved], dtype=torch.int32),
+    }
+    # Cloned, not merely made contiguous: `_randomized` can leave entries of this state dict sharing
+    # storage, and safetensors refuses to write an alias.
+    for key, value in net.layers[0].ffn.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point()
+                              else value).clone().contiguous()
+    globals()["_extra"] = extra
+    return vl_weights.float().contiguous()
+
+
+def run_deepseek_v41_tokens(image, checkpoint):
+    """The collapsed id space DeepSeek V4.1's n-gram memory hashes over, from the release's own code.
+
+    `--checkpoint` is the release's `tokenizer.json`. `engram.build_compressed_token_map` decides
+    which token ids share a hash bucket, and the SIZE it returns is what every hash multiplier is
+    derived from, so a port that collapses differently hashes every n-gram to a different row of a
+    384-million-row table. The whole lookup is recorded rather than the size alone: two derivations
+    can agree on how many buckets there are and still disagree about which ids share one.
+    """
+    import torch
+    from tokenizers import Tokenizer
+
+    source = os.path.expanduser(os.environ.get(
+        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+    sys.path.insert(0, source)
+    from engram import build_compressed_token_map
+
+    backend = Tokenizer.from_file(checkpoint)
+
+    # `build_compressed_token_map` reaches for `len(tokenizer)` and `tokenizer.backend_tokenizer`,
+    # which is the transformers wrapper's shape rather than the Rust tokenizer's.
+    class _Wrapper:
+        def __init__(self, backend, size):
+            self.backend_tokenizer = backend
+            self._size = size
+
+        def __len__(self):
+            return self._size
+
+    size = backend.get_vocab_size(with_added_tokens=True)
+    lookup, collapsed = build_compressed_token_map(_Wrapper(backend, size))
+    globals()["_extra"] = {
+        "lookup": torch.tensor(lookup, dtype=torch.int32).contiguous(),
+        "collapsed_size": torch.tensor([collapsed], dtype=torch.int32),
+        "vocab_size": torch.tensor([size], dtype=torch.int32),
+    }
+    return torch.tensor([float(collapsed)])
+
+
 def run_deepseek_v4(image, checkpoint):
     """The DeepSeek V4 decoder's arithmetic, from transformers' own implementation, at a tiny
     configuration with every layer sliding attention.
@@ -5573,6 +9290,93 @@ def run_deepseek_v4(image, checkpoint):
                                    else value).contiguous()
     globals()["_extra"] = extra
     return out.logits[0].float().contiguous()
+
+
+def run_deepseek_v41_quant(image, checkpoint):
+    """The dequantization of real DeepSeek V4.1 weights, in BOTH of its fp8 blockings.
+
+    `--checkpoint` is the release's resolve base (`https://huggingface.co/<repo>/resolve/main`).
+    Only the bytes of the tensors read here are fetched, through HTTP range requests, so the record
+    costs a few megabytes against a 510 GB release. The shard each tensor lives in comes from the
+    stored index (`IK_INDEX_DEEPSEEK_V41`), because the two are in different shards.
+
+    V4.1 blocks its fp8 weights at 32, not V4's 128, and it uses two DIFFERENT blockings that a
+    single rule cannot cover. An attention weight is blocked SQUARELY: `[512, 5120]` carries a
+    `[16, 160]` scale. The n-gram table is blocked ROW-WISE: `[384006168, 256]` carries a
+    `[384006168, 8]` scale, one scale per 32 columns of each row and no sharing down the rows. A
+    decoder that repeats the scale along both axes reads the wrong scale for every row of the second.
+    """
+    import json, os, struct, subprocess
+    import torch
+
+    index_path = os.path.expanduser(os.environ.get(
+        "IK_INDEX_DEEPSEEK_V41",
+        "~/.inferkit-validation/shapes/deepseek-v4.1-flash/model.safetensors.index.json"))
+    weight_map = json.load(open(index_path))["weight_map"]
+
+    def fetch(url, rng):
+        done = subprocess.run(["curl", "-sSL", "--fail", "-m", "600", "-A", "InferKit/0.1",
+                               "-H", f"Range: bytes={rng}", url], capture_output=True)
+        if done.returncode != 0:
+            raise SystemExit(f"range request failed: {done.stderr.decode()[:200]}")
+        return done.stdout
+
+    headers = {}
+
+    def header(shard):
+        if shard not in headers:
+            url = f"{checkpoint.rstrip('/')}/{shard}"
+            length = struct.unpack("<Q", fetch(url, "0-7"))[0]
+            headers[shard] = (url, json.loads(fetch(url, f"8-{8 + length - 1}")), 8 + length)
+        return headers[shard]
+
+    def whole(key):
+        url, head, base = header(weight_map[key])
+        entry = head[key]
+        start, end = entry["data_offsets"]
+        raw = fetch(url, f"{base + start}-{base + end - 1}")
+        return torch.frombuffer(bytearray(raw), dtype=torch.uint8).view(*entry["shape"]), entry
+
+    def rows(key, first, count):
+        """`count` whole rows of a 2-D uint8 tensor, without fetching the other 98 GB of it."""
+        url, head, base = header(weight_map[key])
+        entry = head[key]
+        start, _ = entry["data_offsets"]
+        width = entry["shape"][1]
+        begin = base + start + first * width
+        raw = fetch(url, f"{begin}-{begin + count * width - 1}")
+        return torch.frombuffer(bytearray(raw), dtype=torch.uint8).view(count, width)
+
+    extra = {}
+
+    # Square 32: an attention weight, whole.
+    weight, meta = whole("layers.0.attn.wkv.weight")
+    scale, scale_meta = whole("layers.0.attn.wkv.scale")
+    values = weight.view(torch.float8_e4m3fn).float()
+    scales = scale.view(torch.float8_e8m0fnu).float()
+    spread = scales.repeat_interleave(32, 0).repeat_interleave(32, 1)
+    spread = spread[: values.shape[0], : values.shape[1]]
+    extra["square_bytes"] = weight.clone()
+    extra["square_scale_bytes"] = scale.clone()
+    extra["square_expected"] = (values * spread).contiguous()
+    extra["square_shape"] = torch.tensor(meta["shape"], dtype=torch.int32)
+
+    # Row-wise 32: eight rows of the n-gram table, and eight more from deep inside it so a large
+    # offset is exercised rather than only the first bytes of the shard.
+    first, deep, count = 0, 384_006_000, 8
+    for label, start in (("near", first), ("deep", deep)):
+        table = rows("layers.1.engram.embed.weight", start, count)
+        table_scale = rows("layers.1.engram.embed.scale", start, count)
+        values = table.view(torch.float8_e4m3fn).float()
+        scales = table_scale.view(torch.float8_e8m0fnu).float()
+        spread = scales.repeat_interleave(32, 1)[:, : values.shape[1]]
+        extra[f"rowwise_{label}_bytes"] = table.clone()
+        extra[f"rowwise_{label}_scale_bytes"] = table_scale.clone()
+        extra[f"rowwise_{label}_expected"] = (values * spread).contiguous()
+    extra["rowwise_shape"] = torch.tensor([count, 256], dtype=torch.int32)
+
+    globals()["_extra"] = extra
+    return extra["square_expected"][:4, :8].clone().contiguous()
 
 
 def run_deepseek_quant(image, checkpoint):
@@ -5855,22 +9659,12 @@ def run_mossformer2_sr(image, checkpoint):
     return torch.from_numpy(np.asarray(output, dtype=np.float32)).contiguous()
 
 
-def run_nuwave2(image, checkpoint):
-    """NU-Wave 2 (maum-ai/nuwave2, BSD-3) diffusion bandwidth extension through the released
-    `Diffusion` wrapper, seam by seam and step by step.
-
-    `--checkpoint` is the official Lightning checkpoint (`nuwave2_official.ckpt`); `IK_NUWAVE2_SRC` is
-    the cloned repository (`model.py`, `diffusion.py`, `hparameter.yaml`); `IK_NUWAVE2_CLIP` a 16 kHz
-    WAV (default the CMGAN clean sample). The input follows `inference.py`'s non-ground-truth path: the
-    clip peak-normalized, `resample_poly` to 48 kHz, trimmed to a multiple of the hop, the band one-hot
-    over the first `int(hi · 513)` bins. The eight-step schedule runs from a seeded standard-normal start
-    (recorded), and the record carries the start, every step's signal, and step 0's diffusion
-    embedding, first residual block, and noise prediction.
-    """
+def _load_nuwave2(checkpoint):
+    """The released `Diffusion` wrapper and its hparams from the official Lightning checkpoint, with
+    `pytorch_lightning` stubbed (the pickled callbacks are inert) and `torch.istft` taught to take the
+    real view the repository hands it. `IK_NUWAVE2_SRC` is the cloned repository."""
     import sys
     import types
-    import librosa
-    from scipy.signal import resample_poly
     from omegaconf import OmegaConf
     src = os.environ["IK_NUWAVE2_SRC"]
     sys.path.insert(0, src)
@@ -5903,6 +9697,24 @@ def run_nuwave2(image, checkpoint):
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)["state_dict"]
     diffusion.load_state_dict({k[len("model."):]: v for k, v in state.items()}, strict=True)
     diffusion.eval()
+    return diffusion, hparams
+
+
+def run_nuwave2(image, checkpoint):
+    """NU-Wave 2 (maum-ai/nuwave2, BSD-3) diffusion bandwidth extension through the released
+    `Diffusion` wrapper, seam by seam and step by step.
+
+    `--checkpoint` is the official Lightning checkpoint (`nuwave2_official.ckpt`); `IK_NUWAVE2_SRC` is
+    the cloned repository (`model.py`, `diffusion.py`, `hparameter.yaml`); `IK_NUWAVE2_CLIP` a 16 kHz
+    WAV (default the CMGAN clean sample). The input follows `inference.py`'s non-ground-truth path: the
+    clip peak-normalized, `resample_poly` to 48 kHz, trimmed to a multiple of the hop, the band one-hot
+    over the first `int(hi · 513)` bins. The eight-step schedule runs from a seeded standard-normal start
+    (recorded), and the record carries the start, every step's signal, and step 0's diffusion
+    embedding, first residual block, and noise prediction.
+    """
+    import librosa
+    from scipy.signal import resample_poly
+    diffusion, hparams = _load_nuwave2(checkpoint)
 
     clip = os.environ.get("IK_NUWAVE2_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_clean.wav"))
     wav, sr = librosa.load(clip, sr=None, mono=True)
@@ -6093,7 +9905,35 @@ def run_rope_scaling(image):
             float(scaling.get("high_freq_factor", 4.0)),
         ])
         outputs.append(inv_freq.float())
-    _extra["case_count"] = torch.tensor([len(cases)], dtype=torch.int32)
+
+    # LongRoPE (Phi-3, Phi-4): two per-pair factor tables chosen by sequence length, over a partial
+    # rotary, with the attention factor derived from the extended-to-original window ratio. The tables
+    # are ramps so the per-pair multiply is exercised; Phi-4-mini's own short table is all ones.
+    class LongRoPEConfig(Config):
+        def __init__(self, scaling):
+            super().__init__(128, 10000.0, 131072, scaling)
+            self.partial_rotary_factor = 0.75
+            self.original_max_position_embeddings = 4096
+
+    pairs = 48
+    short = [1.0 + 0.02 * i for i in range(pairs)]
+    long = [1.0 + 0.5 * i for i in range(pairs)]
+    index = len(cases)
+    for sequence_length, override in [(None, {}), (8192, {}), (None, {"attention_factor": 1.1})]:
+        scaling = dict({"rope_type": "longrope", "short_factor": short, "long_factor": long}, **override)
+        config = LongRoPEConfig(scaling)
+        inv_freq, attention_factor = ROPE_INIT_FUNCTIONS["longrope"](config, torch.device("cpu"), sequence_length)
+        _extra[f"case{index}_inv_freq"] = inv_freq.float().contiguous()
+        _extra[f"case{index}_attention_factor"] = torch.tensor([float(attention_factor)])
+        _extra[f"case{index}_params"] = torch.tensor([
+            96.0, 10000.0, 131072.0, 131072.0 / 4096.0, 4096.0, 32.0, 1.0, 3.0,
+            float(override.get("attention_factor", -1.0)), 1.0, 4.0])
+        _extra[f"case{index}_short_factor"] = torch.tensor(short, dtype=torch.float32)
+        _extra[f"case{index}_long_factor"] = torch.tensor(long, dtype=torch.float32)
+        _extra[f"case{index}_sequence_length"] = torch.tensor([sequence_length or 0], dtype=torch.int32)
+        outputs.append(inv_freq.float())
+        index += 1
+    _extra["case_count"] = torch.tensor([index], dtype=torch.int32)
     return torch.cat(outputs)
 
 
@@ -6161,6 +10001,1390 @@ def run_rtdetr(image):
         extra[f"w::{key}"] = value.float().contiguous() if value.is_floating_point() else value.contiguous()
     globals()["_extra"] = extra
     return out.logits[0].clone().contiguous()                              # [Q, num_labels]
+
+
+def run_table_transformer_loss(image, checkpoint):
+    """Table Transformer's training objective on a released model (`checkpoint`), from the reference's
+    own code: microsoft/table-transformer's vendored DETR (`IK_TABLE_TRANSFORMER_SRC`, the files the
+    manifest pins), `HungarianMatcher(cost_class=1, cost_bbox=5, cost_giou=2)` and `SetCriterion` with
+    `eos_coef` 0.4 and the losses `labels`, `boxes`, and `cardinality`, weighted 1, 5, and 2 for
+    `loss_ce`, `loss_bbox`, and `loss_giou` (`structure_config.json`, `detection_config.json`; their
+    `aux_loss` is false, so only the last decoder layer is scored).
+
+    The release's own forward (transformers, on the pixels the parity mode feeds it) supplies the
+    outputs; three fixed targets are scored against them. Records the pixels, the logits and boxes, the
+    targets, each loss term, the matched query of each target (`matched_queries`), transformers' own
+    `labels=` loss (`hf_loss`), and the weighted total (the output).
+    """
+    import ast
+    import sys
+
+    import torch.nn.functional as F
+    from transformers import TableTransformerForObjectDetection, DetrImageProcessor
+    from PIL import Image
+
+    model = TableTransformerForObjectDetection.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = DetrImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8"))
+    size = processor.size
+    if "longest_edge" in size and "shortest_edge" not in size:
+        edge = size["longest_edge"]
+        pixel_values = processor(images=pil, size={"max_height": edge, "max_width": edge},
+                                 return_tensors="pt")["pixel_values"]
+    else:
+        pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]
+    classes = model.config.num_labels
+    target_classes = torch.tensor([0, 1 % classes, (classes - 1)], dtype=torch.int64)
+    target_boxes = torch.tensor([[0.5, 0.5, 0.8, 0.7], [0.3, 0.25, 0.4, 0.1], [0.62, 0.7, 0.3, 0.2]])
+    with torch.no_grad():
+        out = model(pixel_values, return_dict=True)
+        hf = model(pixel_values, labels=[{"class_labels": target_classes, "boxes": target_boxes}], return_dict=True)
+
+    root = os.path.expanduser(os.environ.get("IK_TABLE_TRANSFORMER_SRC", "~/.inferkit-validation/sources/table-transformer"))
+    sys.path.insert(0, os.path.join(root, "detr"))
+    from util import box_ops
+    from util.misc import accuracy, get_world_size, is_dist_avail_and_initialized
+    from models.matcher import HungarianMatcher
+    source = open(os.path.join(root, "detr/models/detr.py")).read()
+    node = next(n for n in ast.parse(source).body if isinstance(n, ast.ClassDef) and n.name == "SetCriterion")
+    namespace = {"torch": torch, "F": F, "nn": torch.nn, "box_ops": box_ops, "accuracy": accuracy,
+                 "get_world_size": get_world_size, "is_dist_avail_and_initialized": is_dist_avail_and_initialized}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "detr.py", "exec"), namespace)
+
+    matcher = HungarianMatcher(cost_class=1, cost_bbox=5, cost_giou=2)
+    weights = {"loss_ce": 1, "loss_bbox": 5, "loss_giou": 2}
+    criterion = namespace["SetCriterion"](classes, matcher=matcher, weight_dict=weights, eos_coef=0.4,
+                                          losses=["labels", "boxes", "cardinality"])
+    outputs = {"pred_logits": out.logits, "pred_boxes": out.pred_boxes}
+    targets = [{"labels": target_classes, "boxes": target_boxes}]
+    with torch.no_grad():
+        losses = criterion(outputs, targets)
+        rows, columns = matcher(outputs, targets)[0]
+    total = sum(losses[k] * w for k, w in weights.items())
+    matched = torch.empty(len(target_classes), dtype=torch.int32)
+    matched[columns] = rows.to(torch.int32)
+
+    globals()["_extra"] = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),
+        "logits": out.logits[0].contiguous(),
+        "pred_boxes": out.pred_boxes[0].contiguous(),
+        "target_classes": target_classes.to(torch.int32),
+        "target_boxes": target_boxes.contiguous(),
+        "matched_queries": matched,
+        "loss_ce": losses["loss_ce"].reshape(1).contiguous(),
+        "loss_bbox": losses["loss_bbox"].reshape(1).contiguous(),
+        "loss_giou": losses["loss_giou"].reshape(1).contiguous(),
+        "hf_loss": hf.loss.reshape(1).contiguous(),
+    }
+    return total.reshape(1).contiguous()
+
+def run_table_transformer(image, checkpoint):
+    """Table Transformer (`TableTransformerForObjectDetection`, microsoft/table-transformer-*) on the
+    RELEASED weights, from transformers' own model and its DETR image processor. A vanilla DETR: a timm
+    ResNet-18 backbone with frozen batch norm, a normalized 2D sine position embedding, a 1x1 input
+    projection to d_model, a PRE-NORM transformer encoder and decoder (the layer norm precedes each
+    sub-block, and a final layer norm follows each stack, which is Table Transformer's one difference
+    from post-norm DETR), and the class / box heads over the decoder queries. Records the preprocessed
+    pixels so the port runs on the identical input, the last backbone feature map, the encoder and
+    decoder outputs, the predicted boxes, and the post-processed detections. `checkpoint` is the local
+    release directory. Runs under the `llm` oracle env (transformers, needs Pillow). `image` is the table.
+    """
+    from transformers import TableTransformerForObjectDetection, DetrImageProcessor
+    from PIL import Image
+
+    model = TableTransformerForObjectDetection.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = DetrImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8"))
+    size = processor.size
+    if "longest_edge" in size and "shortest_edge" not in size:
+        # The v1.1 releases declare `longest_edge` alone, which transformers 4.57's resize rejects; the
+        # processor's own max_height / max_width path bounds the longer edge the way that size intends.
+        edge = size["longest_edge"]
+        pixel_values = processor(images=pil, size={"max_height": edge, "max_width": edge},
+                                 return_tensors="pt")["pixel_values"]
+    else:
+        pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]    # [1, 3, H, W]
+
+    seams = {}
+    handle = model.model.backbone.conv_encoder.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("bb", o[-1][0][0].detach()))
+    with torch.no_grad():
+        out = model(pixel_values, return_dict=True)
+    handle.remove()
+
+    target_sizes = torch.tensor([pil.size[::-1]])
+    results = processor.post_process_object_detection(out, threshold=0.6, target_sizes=target_sizes)[0]
+
+    extra = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),                 # [H, W, 3] NHWC
+        "backbone": seams["bb"].permute(1, 2, 0).contiguous(),                   # [H/32, W/32, 512] NHWC
+        "enc_last": out.encoder_last_hidden_state[0].contiguous(),               # [HW, 256]
+        "dec_last": out.last_hidden_state[0].contiguous(),                       # [num_queries, 256]
+        "pred_boxes": out.pred_boxes[0].clone().contiguous(),                    # [num_queries, 4] cxcywh
+        "scores": results["scores"].contiguous(),                               # [detections]
+        "labels": results["labels"].to(torch.int32).contiguous(),               # [detections]
+        "boxes": results["boxes"].contiguous(),                                 # [detections, 4] xyxy px
+    }
+    globals()["_extra"] = extra
+    return out.logits[0].clone().contiguous()                                    # [num_queries, num_labels + 1]
+
+
+def run_vjepa2_probe(image):
+    """V-JEPA 2's frozen-encoder probe recipe, from the reference's own code (facebookresearch/vjepa2
+    at the commit the manifest pins, under `IK_VJEPA2_SRC`).
+
+    Three records the Swift recipe is held to:
+      - the loss: `torch.nn.CrossEntropyLoss()` as `run_one_epoch` builds it, on seeded logits `[4, 10]`
+        and labels, which both sides score (the output);
+      - the schedule: `WarmupCosineLRSchedule` from `evals/video_classification_frozen/eval.py`, taken
+        from the file and stepped before each update as `run_one_epoch` steps it (`lr_default` with no
+        warm-up and a cosine to zero, the recipe's default; `lr_warmup` with a warm-up and a floor);
+      - the initialization: `AttentiveClassifier(depth=4)` built by `src/models/attentive_pooler.py`,
+        each tensor's standard deviation keyed by the port's parameter name (`std/<name>`).
+    """
+    import ast
+    import math
+    import sys
+
+    root = os.path.expanduser(os.environ.get("IK_VJEPA2_SRC", "~/.inferkit-validation/sources/vjepa2"))
+    sys.path.insert(0, root)
+    from src.models.attentive_pooler import AttentiveClassifier
+
+    generator = torch.Generator().manual_seed(7)
+    logits = torch.randn(4, 10, generator=generator)
+    labels = torch.randint(0, 10, (4,), generator=generator)
+    loss = torch.nn.CrossEntropyLoss()(logits, labels)
+
+    source = open(os.path.join(root, "evals/video_classification_frozen/eval.py")).read()
+    tree = ast.parse(source)
+    node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "WarmupCosineLRSchedule")
+    namespace = {"math": math}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "eval.py", "exec"), namespace)
+    schedule_class = namespace["WarmupCosineLRSchedule"]
+
+    class _Optimizer:
+        def __init__(self, group):
+            self.param_groups = [group]
+
+    def rates(steps, warmup, start, ref, final):
+        optimizer = _Optimizer({"mc_warmup_steps": warmup, "mc_start_lr": start, "mc_ref_lr": ref,
+                                "mc_final_lr": final})
+        schedule = schedule_class(optimizer, T_max=steps)
+        values = []
+        for _ in range(steps):
+            schedule.step()
+            values.append(optimizer.param_groups[0]["lr"])
+        return torch.tensor(values, dtype=torch.float32)
+
+    torch.manual_seed(0)
+    width, depth = 512, 4
+    classifier = AttentiveClassifier(embed_dim=width, num_heads=8, depth=depth, num_classes=16)
+    pooler = classifier.pooler
+    stds = {"query_tokens": pooler.query_tokens}
+    for index, block in enumerate(pooler.blocks):
+        prefix = f"self_attention_layers.{index}."
+        qkv = block.attn.qkv.weight.detach()
+        for part, name in enumerate(["q_proj", "k_proj", "v_proj"]):
+            stds[prefix + f"self_attn.{name}.weight"] = qkv[part * width:(part + 1) * width]
+        stds[prefix + "self_attn.out_proj.weight"] = block.attn.proj.weight
+        stds[prefix + "mlp.fc1.weight"] = block.mlp.fc1.weight
+        stds[prefix + "mlp.fc2.weight"] = block.mlp.fc2.weight
+    cross = pooler.cross_attention_block
+    stds["cross_attention_layer.cross_attn.q_proj.weight"] = cross.xattn.q.weight
+    kv = cross.xattn.kv.weight.detach()
+    stds["cross_attention_layer.cross_attn.k_proj.weight"] = kv[:width]
+    stds["cross_attention_layer.cross_attn.v_proj.weight"] = kv[width:]
+    stds["cross_attention_layer.mlp.fc1.weight"] = cross.mlp.fc1.weight
+    stds["cross_attention_layer.mlp.fc2.weight"] = cross.mlp.fc2.weight
+
+    extra = {"logits": logits.contiguous(), "labels": labels.to(torch.int32).contiguous(),
+             "lr_default": rates(12, 0, 5e-3, 5e-3, 0.0),
+             "lr_warmup": rates(12, 3, 1e-3, 5e-3, 1e-4),
+             "width": torch.tensor([width, depth], dtype=torch.int32)}
+    for name, tensor in stds.items():
+        extra["std/" + name] = tensor.detach().float().std().reshape(1).contiguous()
+    globals()["_extra"] = extra
+    return loss.reshape(1).contiguous()
+
+def run_vjepa2(image, checkpoint):
+    """V-JEPA 2 vision encoder (`VJEPA2Model.get_vision_features`, facebook/vjepa2-*) on the RELEASED
+    weights, from transformers' own model. A ViT-L: a 3D-convolution tubelet patch embedding
+    (tubelet x patch x patch, no class token and no learned position table), 24 pre-norm blocks whose
+    attention rotates queries and keys with a 3D rotary embedding (temporal / height / width, each
+    2 * floor(floor(head_dim / 3) / 2) channels; the remainder unrotated), and a final layer norm. The
+    predictor and pooler heads in the checkpoint belong to pretraining and classification and are not
+    exercised (`skip_predictor=True`). A small deterministic clip (8 frames) is used so the token count
+    stays light while all three rotary axes vary; the port consumes the identical clip in `[T, H, W, C]`.
+    Records the patch embedding and a middle block's hidden state for localization; the returned `output`
+    is the final normed token feature sequence. `checkpoint` is the local release directory. Runs under
+    the `llm` oracle env (transformers). `image` is unused (this is a video model).
+    """
+    from transformers import VJEPA2Model, VJEPA2ForVideoClassification, AutoConfig
+
+    # A classification release (`VJEPA2ForVideoClassification`) wraps the encoder under `vjepa2` and adds
+    # the attentive pooler and classifier; its record also carries the pooler output and the logits.
+    classifies = "VJEPA2ForVideoClassification" in (AutoConfig.from_pretrained(checkpoint).architectures or [])
+    if classifies:
+        classifier = VJEPA2ForVideoClassification.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+        model = classifier.vjepa2
+    else:
+        model = VJEPA2Model.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    size = model.config.crop_size
+    rng = np.random.default_rng(0)
+    clip = rng.standard_normal((8, size, size, 3)).astype(np.float32)             # normalized clip [T, H, W, C]
+    pixel_values_videos = torch.from_numpy(clip).permute(0, 3, 1, 2).unsqueeze(0).contiguous()  # [1, T, C, H, W]
+
+    with torch.no_grad():
+        out = model(pixel_values_videos, skip_predictor=True, output_hidden_states=True)
+        hidden = out.hidden_states                                                # (num_layers + 1) x [1, N, hidden]
+        extra = {
+            "clip": torch.from_numpy(clip).contiguous(),                         # [T, H, W, 3]
+            "patch": hidden[0][0].contiguous(),                                  # [N, hidden] patch embedding
+            "mid": hidden[12][0].contiguous(),                                   # [N, hidden] after block 11
+        }
+        if classifies:
+            pooled = classifier.pooler(out.last_hidden_state)                     # [1, hidden]
+            extra["pooled"] = pooled[0].contiguous()
+            extra["logits"] = classifier.classifier(pooled)[0].contiguous()      # [labels]
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].contiguous()                                 # [N, hidden] final normed
+
+
+def run_sa2va_loss(image, checkpoint):
+    """Sa2VA's fine-tuning objective on a released InternVL model (`checkpoint`), from the authors' own
+    training code (bytedance/Sa2VA at the commit the manifest pins, under `IK_SA2VA_SRC`):
+    `Sa2VAModel.forward` with `sa2va_finetune.py`'s settings. The loss is the language model's shifted
+    cross-entropy (`InternVLMLLM._compute_loss`) plus 2.0 x the sigmoid cross-entropy and 0.5 x the naive
+    dice (eps 1) of the mask, both on 12,544 points `sample_points` draws (uncertainty-weighted, oversample
+    3, importance 0.75; the vendored mmdet `point_sample`, `binary_cross_entropy`, and `dice_loss`).
+
+    The mask path is `SAM2TrainRunner.get_sam2_embeddings` and `inject_language_embd` over the training
+    extension's `_forward_sam_heads` (the release's inference copy suppresses by object score and takes
+    no language embedding), bound onto the release's own SAM 2 modules. `check_obj_number` first fixes
+    the sample at five objects, repeating the one `[SEG]` and its mask. The example is the `run_sa2va`
+    plate and prompt with the answer `Sure, [SEG].` and the template's end, the prompt labeled -100, and
+    the plate's bright disk as the mask. The draws `torch.rand` makes inside the sampler are recorded
+    (`point_candidates`, `point_random`) with the coordinates they select (`points`), so the port can
+    score the same points. Records the inputs, the low-resolution mask logits, each term, the language
+    loss recomputed in float64 (`llm_loss_f64`), the learning rate mmengine's own `LinearLR` warm-up and
+    `CosineAnnealingLR` give over 40- and 200-iteration runs (`lr_40`, `lr_200`, the configuration's 4e-5,
+    `start_factor` 1e-5, and 5% warm-up), and the total (the output).
+    """
+    import ast
+    import sys
+    import types
+    import torch.nn.functional as F
+    from transformers import AutoModel, AutoTokenizer
+    from PIL import Image
+
+    root = os.path.expanduser(os.environ.get("IK_SA2VA_SRC", "~/.inferkit-validation/sources/sa2va"))
+
+    def extract(path, names, namespace, cls=None):
+        tree = ast.parse(open(os.path.join(root, path)).read())
+        body = tree.body
+        if cls is not None:
+            body = next(n for n in body if isinstance(n, ast.ClassDef) and n.name == cls).body
+        nodes = [n for n in body if isinstance(n, ast.FunctionDef) and n.name in names]
+        assert len(nodes) == len(names), (path, names)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), path, "exec"), namespace)
+        return namespace
+
+    utils = {"__name__": "mmdet_utils"}
+    exec(compile(open(os.path.join(root, "third_parts/mmdet/models/losses/utils.py")).read(), "utils.py", "exec"), utils)
+    sampling = {"__name__": "mmdet_point_sample"}
+    exec(compile(open(os.path.join(root, "third_parts/mmdet/models/utils/point_sample.py")).read(), "point_sample.py", "exec"), sampling)
+    losses = {"torch": torch, "F": F, "weight_reduce_loss": utils["weight_reduce_loss"]}
+    extract("third_parts/mmdet/models/losses/dice_loss.py", ["dice_loss"], losses)
+    extract("third_parts/mmdet/models/losses/cross_entropy_loss.py", ["binary_cross_entropy", "_expand_onehot_labels"], losses)
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=torch.float32, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    tok = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True, use_fast=True)
+    model.preparing_for_generation(tokenizer=tok, torch_dtype=torch.float32)
+    model.torch_dtype = torch.float32
+    IMG_CTX, SEG = model.img_context_token_id, model.seg_token_idx
+    mod = sys.modules[type(model).__module__]
+
+    size = 448
+    plate = np.zeros((size, size, 3), dtype=np.uint8)
+    plate[: size // 2, : size // 2] = (40, 60, 90)
+    plate[: size // 2, size // 2:] = (90, 40, 60)
+    plate[size // 2:, : size // 2] = (60, 90, 40)
+    plate[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    disk = ((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2
+    plate[disk] = (230, 210, 120)
+    pil = Image.fromarray(plate, "RGB")
+
+    images = mod.dynamic_preprocess(pil, 1, model.max_dynamic_patch, model.image_size, model.use_thumbnail)
+    pixel_values = torch.stack([model.transformer(im) for im in images]).to(torch.float32)
+    num_image_tokens = pixel_values.shape[0] * model.patch_token
+    g_np = model.extra_image_processor.apply_image(plate)
+    g_pixel = torch.from_numpy(g_np).permute(2, 0, 1).contiguous().to(torch.float32)
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g_pixel)]).to(torch.float32)
+
+    text = "<image>Please segment the bright object.".replace(
+        "<image>", f"{model.IMG_START_TOKEN}{model.IMG_CONTEXT_TOKEN * num_image_tokens}{model.IMG_END_TOKEN}")
+    prompt = tok.encode(model.template["INSTRUCTION"].format(input=text, round=1, bot_name=model.bot_name))
+    answer = tok.encode("Sure, [SEG]." + model.template["SUFFIX"], add_special_tokens=False)
+    input_ids = torch.tensor([prompt + answer])
+    labels = torch.tensor([[-100] * len(prompt) + answer])
+    gt_masks = torch.from_numpy(disk.astype(np.uint8))[None]                           # [1, 448, 448]
+
+    llm = types.SimpleNamespace(model=model)
+    compute = extract("projects/sa2va/models/mllm/internvl.py", ["_compute_loss"],
+                      {"torch": torch, "CrossEntropyLoss": torch.nn.CrossEntropyLoss}, cls="InternVLMLLM")
+
+    sam = model.grounding_encoder.sam2_model
+    heads = {"torch": torch, "F": F, "NO_OBJ_SCORE": -1024.0}
+    extract("projects/sa2va/models/extension/sam2_base.py", ["_forward_sam_heads"], heads, cls="SAM2Base")
+    sam._forward_sam_heads = types.MethodType(heads["_forward_sam_heads"], sam)
+    runner_ns = {"torch": torch}
+    extract("projects/sa2va/models/sam2_train.py", ["get_sam2_embeddings", "inject_language_embd"], runner_ns,
+            cls="SAM2TrainRunner")
+    runner = types.SimpleNamespace(sam2_model=sam, hidden_dim=sam.hidden_dim)
+
+    draws = []
+    real_rand = torch.rand
+
+    def recording_rand(*args, **kwargs):
+        value = real_rand(*args, **kwargs)
+        draws.append(value.clone())
+        return value
+
+    sampler_ns = {"torch": torch, "F": F, "point_sample": sampling["point_sample"],
+                  "get_uncertain_point_coords_with_randomness": sampling["get_uncertain_point_coords_with_randomness"]}
+    extract("projects/sa2va/models/sa2va.py", ["sample_points", "check_obj_number"], sampler_ns, cls="Sa2VAModel")
+    sampler = types.SimpleNamespace(num_points=12544, oversample_ratio=3.0, importance_sample_ratio=0.75)
+
+    with torch.no_grad():
+        vit_embeds = model.extract_feature(pixel_values)
+        embeds = model.language_model.get_input_embeddings()(input_ids).clone()
+        selected = input_ids == IMG_CTX
+        embeds[selected] = vit_embeds.reshape(-1, embeds.shape[-1])
+        output = model.language_model(inputs_embeds=embeds, output_hidden_states=True, return_dict=True)
+        llm_loss = compute["_compute_loss"](llm, output.logits, labels)
+        llm_loss_f64 = F.cross_entropy(output.logits[0, :-1].double(), labels[0, 1:])
+        hidden = model.text_hidden_fcs(output.hidden_states[-1])
+        # The reference fixes every sample at five objects before the mask path: fewer are repeated,
+        # more are subsampled.
+        found, masks_found = sampler_ns["check_obj_number"](sampler, [hidden[input_ids == SEG]], [gt_masks])
+        embeddings, gt_masks = found[0], masks_found[0]                               # [5, 256], [5, H, W]
+        states = runner_ns["get_sam2_embeddings"](runner, g_pixel, expand_size=embeddings.shape[0])
+        pred_masks = runner_ns["inject_language_embd"](runner, states, embeddings[:, None],
+                                                       nf_nobj=(1, embeddings.shape[0])).flatten(0, 1)
+        target = F.interpolate(gt_masks[None].float(), size=pred_masks.shape[-2:], mode="nearest")[0]
+
+        sampling["torch"].rand = recording_rand
+        torch.manual_seed(0)
+        try:
+            sampled_pred, sampled_gt = sampler_ns["sample_points"](sampler, pred_masks, target)
+        finally:
+            sampling["torch"].rand = real_rand
+        dice = 0.5 * losses["dice_loss"](sampled_pred.sigmoid(), sampled_gt, weight=None, eps=1.0,
+                                         reduction="mean", naive_dice=True, avg_factor=len(target) + 1e-4)
+        bce = 2.0 * losses["binary_cross_entropy"](sampled_pred.reshape(-1), sampled_gt.reshape(-1),
+                                                    reduction="mean",
+                                                    avg_factor=pred_masks.shape[0] * sampled_pred.shape[1] + 1e-4)
+    def mmengine_rates(steps):
+        # mmengine's own LinearParamScheduler and CosineAnnealingParamScheduler (the file the manifest
+        # pins), built from the configuration's epoch-based settings for a one-epoch run of `steps`
+        # iterations and stepped after each iteration, as ParamSchedulerHook steps them.
+        stubs = {name: types.ModuleType(name) for name in ["mmengine", "mmengine.logging", "mmengine.optim", "mmengine.registry"]}
+        stubs["mmengine.logging"].print_log = lambda *args, **kwargs: None
+        stubs["mmengine.optim"].BaseOptimWrapper = type("BaseOptimWrapper", (), {})
+        stubs["mmengine.registry"].PARAM_SCHEDULERS = types.SimpleNamespace(
+            register_module=lambda *args, **kwargs: (lambda cls: cls))
+        saved = {name: sys.modules.get(name) for name in stubs}
+        sys.modules.update(stubs)
+        try:
+            namespace = {"__name__": "mmengine_param_scheduler"}
+            exec(compile(open(os.path.join(root, "mmengine/param_scheduler.py")).read(), "param_scheduler.py", "exec"),
+                 namespace)
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+        optimizer = torch.optim.AdamW([torch.nn.Parameter(torch.zeros(1))], lr=4e-5)
+        schedulers = [
+            namespace["LinearParamScheduler"].build_iter_from_epoch(
+                optimizer, param_name="lr", start_factor=1e-5, by_epoch=True, begin=0, end=0.05, epoch_length=steps),
+            namespace["CosineAnnealingParamScheduler"].build_iter_from_epoch(
+                optimizer, param_name="lr", eta_min=0.0, by_epoch=True, begin=0.05, end=1, epoch_length=steps),
+        ]
+        rates = []
+        for _ in range(steps):
+            rates.append(optimizer.param_groups[0]["lr"])
+            for scheduler in schedulers:
+                scheduler.step()
+        return torch.tensor(rates, dtype=torch.float64).to(torch.float32)
+
+    candidates, random_points = draws[0], draws[1]
+    # The coordinates the sampler selected, rebuilt from its draws the way it builds them.
+    logits = sampling["point_sample"](pred_masks[:, None], candidates)
+    k = int(0.75 * 12544)
+    top = torch.topk(-logits.abs()[:, 0], k=k, dim=1)[1]
+    points = torch.cat([torch.gather(candidates, 1, top[..., None].expand(-1, -1, 2)), random_points], dim=1)
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values.contiguous(),
+        "g_pixel_values": g_pixel.contiguous(),
+        "input_ids": input_ids[0].to(torch.int32).contiguous(),
+        "labels": labels[0].to(torch.int32).contiguous(),
+        "gt_masks": gt_masks.to(torch.int32).contiguous(),
+        "seg_embedding": embeddings.contiguous(),
+        "pred_masks": pred_masks.contiguous(),
+        "point_candidates": candidates.contiguous(),
+        "point_random": random_points.contiguous(),
+        "points": points.contiguous(),
+        "llm_loss": llm_loss.reshape(1).contiguous(),
+        "llm_loss_f64": llm_loss_f64.float().reshape(1).contiguous(),
+        "loss_mask": bce.reshape(1).contiguous(),
+        "loss_dice": dice.reshape(1).contiguous(),
+        "lr_40": mmengine_rates(40),
+        "lr_200": mmengine_rates(200),
+    }
+    return (llm_loss + bce + dice).reshape(1).contiguous()
+
+def run_sa2va(image, checkpoint):
+    """Sa2VA-4B (ByteDance/Sa2VA-4B, Apache) on the RELEASED weights, from the repo's own custom code
+    (`AutoModel.from_pretrained(..., trust_remote_code=True)`). A segmentation VLM: an InternViT-300M
+    image encoder (a pre-norm ViT with per-channel LayerScale, a class token, a learned position table,
+    qkv bias, no query/key normalization, and no final layer norm), a pixel-shuffle + 2-layer MLP
+    projector (`mlp1`, downsample 0.5, ps v2), a Qwen2.5-3B decoder, a `[SEG]` bridge (`text_hidden_fcs`,
+    Linear -> ReLU -> Linear, 2048 -> 256), and a SAM 2 Hiera-Large grounding encoder driven by the
+    decoder's hidden state at each `[SEG]` position. The prompt asks the model to segment a bright object
+    in a deterministic quadrant image; the model answers "Sure, it is [SEG]." and the branch produces the
+    object's mask. Records seam by seam: the InternViT last hidden state, the projected vision tokens, the
+    fused decoder embeddings, the `[SEG]` embedding after the bridge, the conditioned SAM feature, and the
+    three multimask logits with their IoUs; the returned `output` is the best mask's low-resolution logits
+    [1, 1, 256, 256]. The SAM branch is run through the first-frame glue directly (the released video
+    predictor hardcodes CUDA), which is the conditioning-frame path a single image takes. `checkpoint` is
+    the local release directory; `image` is unused (a deterministic plate is synthesized). Runs under the
+    `llm` oracle env (transformers + peft + timm), on CPU in float32.
+    """
+    import sys
+    from PIL import Image
+    from transformers import AutoModel, AutoTokenizer
+
+    def make_image(size=448):
+        a = np.zeros((size, size, 3), dtype=np.uint8)
+        a[: size // 2, : size // 2] = (40, 60, 90)
+        a[: size // 2, size // 2:] = (90, 40, 60)
+        a[size // 2:, : size // 2] = (60, 90, 40)
+        a[size // 2:, size // 2:] = (30, 30, 30)
+        yy, xx = np.mgrid[0:size, 0:size]
+        disk = ((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2
+        a[disk] = (230, 210, 120)
+        return Image.fromarray(a, "RGB")
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=torch.float32, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    tok = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True, use_fast=True)
+    model.preparing_for_generation(tokenizer=tok, torch_dtype=torch.float32)
+    model.torch_dtype = torch.float32
+    IMG_CTX, SEG = model.img_context_token_id, model.seg_token_idx
+    mod = sys.modules[type(model).__module__]
+
+    plate = make_image(448)
+    images = mod.dynamic_preprocess(plate, 1, model.max_dynamic_patch, model.image_size, model.use_thumbnail)
+    pixel_values = torch.stack([model.transformer(im) for im in images]).to(torch.float32)
+    num_image_tokens = pixel_values.shape[0] * model.patch_token
+
+    g_np = model.extra_image_processor.apply_image(np.array(plate))
+    g_pixel = torch.from_numpy(g_np).permute(2, 0, 1).contiguous().to(torch.float32)
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g_pixel)]).to(torch.float32)
+
+    text = "<image>Please segment the bright object.".replace(
+        "<image>", f"{model.IMG_START_TOKEN}{model.IMG_CONTEXT_TOKEN * num_image_tokens}{model.IMG_END_TOKEN}")
+    input_text = model.template["INSTRUCTION"].format(input=text, round=1, bot_name=model.bot_name)
+    ids = torch.tensor(tok.encode(input_text)).unsqueeze(0)
+    attn = torch.ones_like(ids, dtype=torch.bool)
+
+    with torch.no_grad():
+        vit_last = model.vision_model(pixel_values=pixel_values, output_hidden_states=False,
+                                      return_dict=True).last_hidden_state
+        vit_embeds = model.extract_feature(pixel_values)
+        input_embeds = model.language_model.get_input_embeddings()(ids).clone()
+        B, N, Cn = input_embeds.shape
+        flat = input_embeds.reshape(B * N, Cn)
+        flat[(ids.reshape(B * N) == IMG_CTX)] = vit_embeds.reshape(-1, Cn).to(flat.dtype)
+        fused = flat.reshape(B, N, Cn)
+
+        gen = model.generate(pixel_values=pixel_values, input_ids=ids, attention_mask=attn,
+                             generation_config=model.gen_config, output_hidden_states=True,
+                             return_dict_in_generate=True, bos_token_id=tok.bos_token_id,
+                             stopping_criteria=model.stop_criteria, max_new_tokens=40)
+        seq = gen.sequences[0]
+        last_hidden = torch.cat([item[-1][0] for item in gen.hidden_states], dim=0)
+        seg_hidden = mod.get_seg_hidden_states(last_hidden, seq[:-1], seg_id=SEG)
+        all_seg = model.text_hidden_fcs(seg_hidden)
+
+        sam = model.grounding_encoder.sam2_model
+        backbone_out = sam.forward_image(g_pixel)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s)
+                    for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        sam_out = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                         high_res_features=high_res, multimask_output=True,
+                                         language_embd=all_seg[0].unsqueeze(0).unsqueeze(0))
+        low_res_multi, _, ious, low_res_best, _, _, _ = sam_out
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values.contiguous(),
+        "g_pixel_values": g_pixel.contiguous(),
+        "input_ids": ids.to(torch.int32).contiguous(),
+        "sequence": seq.to(torch.int32).contiguous(),
+        "vit_last_hidden": vit_last.contiguous(),
+        "vit_embeds": vit_embeds.contiguous(),
+        "fused": fused.contiguous(),
+        "seg_embedding": all_seg.contiguous(),
+        "sam_conditioned": conditioned.contiguous(),
+        "low_res_multi": low_res_multi.contiguous(),
+        "ious": ious.contiguous(),
+        "low_res_best": low_res_best.contiguous(),
+    }
+    return low_res_best.clone().contiguous()
+
+
+
+def run_sa2va_teacher(image, checkpoint):
+    """Sa2VA with the answer teacher-forced rather than generated, for a release cut to its first
+    decoder layers (`truncate.py`), whose shortened decoder cannot be expected to answer with `[SEG]`.
+    Everything up to the decoder is `run_sa2va`'s: the same plate, prompt, tiling, and remote code. The
+    prompt is followed by the fixed answer "Sure, it is [SEG]." and the whole sequence runs through the
+    decoder once. Records the InternViT last hidden state, the projected vision tokens, the fused
+    embeddings, the decoder's final normalized hidden states over the whole sequence (`dec_last`), the
+    last position's logits, the `[SEG]` embedding after the bridge, and the SAM 2 mask it drives
+    (`low_res_best`, also the returned `output`). Runs under the `llm` oracle env, float32 on the CPU."""
+    import sys
+    from PIL import Image
+    from transformers import AutoModel, AutoTokenizer
+
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=torch.float32, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    tok = _release_tokenizer(checkpoint, use_fast=True)
+    model.preparing_for_generation(tokenizer=tok, torch_dtype=torch.float32)
+    IMG_CTX, SEG = model.img_context_token_id, model.seg_token_idx
+    mod = sys.modules[type(model).__module__]
+
+    images = mod.dynamic_preprocess(plate, 1, model.max_dynamic_patch, model.image_size, model.use_thumbnail)
+    pixel_values = torch.stack([model.transformer(im) for im in images]).to(torch.float32)
+    num_image_tokens = pixel_values.shape[0] * model.patch_token
+    g_np = model.extra_image_processor.apply_image(np.array(plate))
+    g_pixel = torch.from_numpy(g_np).permute(2, 0, 1).contiguous().to(torch.float32)
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g_pixel)]).to(torch.float32)
+
+    text = "<image>Please segment the bright object.".replace(
+        "<image>", f"{model.IMG_START_TOKEN}{model.IMG_CONTEXT_TOKEN * num_image_tokens}{model.IMG_END_TOKEN}")
+    prompt_text = model.template["INSTRUCTION"].format(input=text, round=1, bot_name=model.bot_name)
+    prompt_ids = tok.encode(prompt_text)
+    answer_ids = tok.encode("Sure, it is [SEG].", add_special_tokens=False)
+    ids = torch.tensor(prompt_ids + answer_ids).unsqueeze(0)
+
+    with torch.no_grad():
+        vit_last = model.vision_model(pixel_values=pixel_values, output_hidden_states=False,
+                                      return_dict=True).last_hidden_state
+        vit_embeds = model.extract_feature(pixel_values)
+        embeds = model.language_model.get_input_embeddings()(ids).clone()
+        B, N, Cn = embeds.shape
+        flat = embeds.reshape(B * N, Cn)
+        flat[(ids.reshape(B * N) == IMG_CTX)] = vit_embeds.reshape(-1, Cn).to(flat.dtype)
+        fused = flat.reshape(B, N, Cn)
+        out = model.language_model(inputs_embeds=fused, output_hidden_states=True, return_dict=True)
+        dec_last = out.hidden_states[-1][0]
+        position = int((ids[0] == SEG).nonzero()[0])
+        seg_embedding = model.text_hidden_fcs(dec_last[position].unsqueeze(0))
+
+        sam = model.grounding_encoder.sam2_model
+        backbone_out = sam.forward_image(g_pixel)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s) for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        sam_out = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                         high_res_features=high_res, multimask_output=True,
+                                         language_embd=seg_embedding.unsqueeze(0))
+        low_res_best = sam_out[3]
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values.contiguous(),
+        "g_pixel_values": g_pixel.contiguous(),
+        "input_ids": ids.to(torch.int32).contiguous(),
+        "vit_last_hidden": vit_last.contiguous(),
+        "vit_embeds": vit_embeds.contiguous(),
+        "fused": fused.contiguous(),
+        "dec_last": dec_last.contiguous(),
+        "last_logits": out.logits[0, -1].contiguous(),
+        "seg_embedding": seg_embedding.contiguous(),
+        "low_res_best": low_res_best.contiguous(),
+        # The tokenizer both ways: the instruction text the ids encode, and the reference's decode of the
+        # whole sequence and of the answer alone, as UTF-8.
+        "prompt_utf8": torch.tensor(list(prompt_text.encode("utf-8")), dtype=torch.int32),
+        "decoded_utf8": torch.tensor(list(tok.decode(ids[0]).encode("utf-8")), dtype=torch.int32),
+        "answer_decoded_utf8": torch.tensor(list(tok.decode(answer_ids).encode("utf-8")), dtype=torch.int32),
+        "prompt_length": torch.tensor([len(prompt_ids)], dtype=torch.int32),
+    }
+    return low_res_best.clone().contiguous()
+
+
+
+def _stage_remote_code(checkpoint):
+    """Copies every `.py` of a local release into the dynamic-module folder transformers imports it from.
+    transformers copies the entry file and the modules it imports directly, and a release whose imports
+    nest deeper (Sa2VA-Qwen3-VL-4B-SAM3: `sam3.py` imports `sam3pkg_*`, which import each other) fails at
+    the second level. The copies place on the CPU what the release places on `"cuda"` by name
+    (SAM 3's position-encoding precompute and decoder coordinate cache are built there in `__init__`);
+    a device placement changes no arithmetic, and the release directory is left untouched. SAM 3's fused
+    `addmm_act` casts the ViT MLP's first projection to bfloat16, as the CUDA runtime's bfloat16 autocast
+    around the whole grounding call would; the staged copy keeps the input's dtype, so the float32 oracle
+    holds the same float32 bar as every other seam (on the CPU its GELU is the exact erf form). transformers
+    re-copies only the entry file and its direct imports, which none of this touches."""
+    from transformers.dynamic_module_utils import (HF_MODULES_CACHE, TRANSFORMERS_DYNAMIC_MODULE_NAME,
+                                                   _sanitize_module_name, create_dynamic_module)
+    submodule = os.path.join(TRANSFORMERS_DYNAMIC_MODULE_NAME,
+                             _sanitize_module_name(os.path.basename(os.path.normpath(checkpoint))))
+    create_dynamic_module(submodule)
+    target = os.path.join(HF_MODULES_CACHE, submodule)
+    for name in sorted(os.listdir(checkpoint)):
+        if name.endswith(".py"):
+            with open(os.path.join(checkpoint, name), encoding="utf-8") as source:
+                code = source.read()
+            code = code.replace('device="cuda"', 'device="cpu"').replace('torch.device("cuda")', 'torch.device("cpu")')
+            if name == "sam3pkg_perflib_fused.py":
+                code = code.replace(".to(torch.bfloat16)", ".to(mat1.dtype)")
+            with open(os.path.join(target, name), "w", encoding="utf-8") as staged:
+                staged.write(code)
+
+
+def run_sa2va_qwen(image, checkpoint):
+    """Sa2VA on Qwen3-VL or Qwen2.5-VL (ByteDance/Sa2VA-Qwen3-VL-*, -Qwen2_5-VL-*, Apache) on the RELEASED
+    weights, from the repo's own `Sa2VAChatModelQwen` (trust_remote_code): transformers' VLM under `model.`, the `[SEG]`
+    bridge, and SAM 2 grounding. `predict_forward` is followed step by step rather than called, since
+    it imports `qwen_vl_utils` only to lay out its messages; that module is stubbed. The same plate and
+    request as `run_sa2va`, formatted by the release's chat template with the reference's pixel bounds
+    (512·28² to 2048·28²). Records the processed patches and grid, the input ids, the merged vision
+    tokens and deepstack, the greedy generation, the decoder's final hidden states over the prompt and
+    the generation, the `[SEG]` embedding, the grounding image, and the mask (`low_res_best`, also the
+    returned `output`). Runs under the `llm` oracle env, float32 on the CPU."""
+    import sys
+    import types
+    from PIL import Image
+    from transformers import AutoModel, AutoProcessor
+
+    sys.modules.setdefault("qwen_vl_utils", types.SimpleNamespace(process_vision_info=None))
+    _stage_remote_code(checkpoint)
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=torch.float32, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    seg = processor.tokenizer.convert_tokens_to_ids("[SEG]")
+    messages = [{"role": "user", "content": [{"type": "image", "image": plate},
+                                             {"type": "text", "text": "Please segment the bright object."}]}]
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = processor(text=[text], images=[plate], padding=True, return_tensors="pt",
+                       min_pixels=model.min_pixels, max_pixels=model.max_pixels)
+    g = torch.from_numpy(model.extra_image_processor.apply_image(np.array(plate))).permute(2, 0, 1).contiguous()
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g.to(torch.float32))])
+
+    with torch.no_grad():
+        qwen = model.model
+        grid = inputs["image_grid_thw"]
+        vision_out = qwen.model.visual(inputs["pixel_values"], grid_thw=grid)
+        # Qwen3-VL returns the merged tokens and its deepstack; Qwen2.5-VL returns the tokens alone.
+        merged, deepstack = (vision_out[0], vision_out[1]) if isinstance(vision_out, tuple) else (vision_out, [])
+        prompt_length = inputs["input_ids"].shape[1]
+        if os.environ.get("SA2VA_TEACHER"):
+            # A release cut to its first decoder layers cannot be expected to answer with [SEG]; the fixed
+            # answer is teacher-forced instead, as `run_sa2va_teacher` does for the InternVL releases.
+            generated = torch.tensor(processor.tokenizer.encode("Sure, it is [SEG].", add_special_tokens=False))
+            full = torch.cat([inputs["input_ids"][0], generated]).unsqueeze(0)
+        else:
+            gen = qwen.generate(**inputs, max_new_tokens=40, do_sample=False,
+                                output_hidden_states=True, return_dict_in_generate=True)
+            generated = gen.sequences[0, prompt_length:]
+            full = gen.sequences[:, :]
+        full_out = qwen(input_ids=full, pixel_values=inputs["pixel_values"], image_grid_thw=grid,
+                        output_hidden_states=True, return_dict=True)
+        dec_last = full_out.hidden_states[-1][0]
+        position = int((full[0] == seg).nonzero()[0])
+        seg_embedding = model.text_hidden_fcs(dec_last[position].unsqueeze(0))
+
+        sam = model.grounding_encoder.sam2_model
+        backbone_out = sam.forward_image(g_pixel)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s) for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        low_res_best = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                              high_res_features=high_res, multimask_output=True,
+                                              language_embd=seg_embedding.unsqueeze(0))[3]
+    print("generated:", processor.batch_decode([generated], skip_special_tokens=False)[0])
+    extra = {
+        "pixel_values": inputs["pixel_values"].contiguous(),
+        "image_grid_thw": grid.to(torch.int32).contiguous(),
+        "input_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "vision_merged": merged.contiguous(),
+        "generated": generated.to(torch.int32).contiguous(),
+        "dec_last": dec_last.contiguous(),
+        "seg_embedding": seg_embedding.contiguous(),
+        "g_pixel_values": g_pixel.contiguous(),
+        "low_res_best": low_res_best.contiguous(),
+    }
+    for index, feature in enumerate(deepstack):
+        extra[f"deepstack_{index}"] = feature.contiguous()
+    globals()["_extra"] = extra
+    return low_res_best.clone().contiguous()
+
+
+
+def run_sa2va_processor(image, checkpoint):
+    """Sa2VA's image preprocessing from the release's own code, with no weights: the model's parameters
+    are built on the meta device (`init_empty_weights`), so `__init__` sets the processing constants
+    and objects (InternVL's `dynamic_preprocess` and `transformer`, the Qwen-VL pixel bounds, LLaVA's
+    `transformer`, the grounding `DirectResize` and `preprocess_image`) without reading a tensor. The picture is a
+    640×360 gradient with a disk, so every resize runs, where the 448 plate resizes nothing on the
+    InternVL path. Records `input_rgb`, the family's understanding pixels (`tile_pixel_values`,
+    `pixel_values` with `image_grid_thw`, or `llava_pixel_values`), and the grounding image
+    `g_pixel_values`. Runs under the `llm` oracle env on the CPU in seconds."""
+    import sys
+    import types
+    from PIL import Image
+    from transformers import AutoConfig, AutoModel, AutoProcessor
+
+    sys.modules.setdefault("qwen_vl_utils", types.SimpleNamespace(process_vision_info=None))
+    width, height = 640, 360
+    yy, xx = np.mgrid[0:height, 0:width]
+    a = np.stack([xx * 255 // (width - 1), yy * 255 // (height - 1), ((xx + yy) * 7) % 256], axis=-1).astype(np.uint8)
+    a[((xx - width * 0.3) ** 2 + (yy - height * 0.6) ** 2) < (height * 0.2) ** 2] = (230, 210, 120)
+    picture = Image.fromarray(a, "RGB")
+
+    from accelerate import init_empty_weights
+
+    _stage_remote_code(checkpoint)
+    config = AutoConfig.from_pretrained(checkpoint, trust_remote_code=True)
+    # Parameters only go to the meta device: InternViT's constructor reads `torch.linspace(...).item()`.
+    with init_empty_weights():
+        model = AutoModel.from_config(config, trust_remote_code=True)
+    architecture = type(model).__name__
+    extra = {"input_rgb": torch.from_numpy(a.astype(np.int32)).contiguous()}
+    with torch.no_grad():
+        if architecture == "Sa2VAChatModel":
+            # InternVL sets its processing objects in the reference's own `preparing_for_generation`.
+            from transformers import AutoTokenizer
+            model.preparing_for_generation(AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True))
+            mod = sys.modules[type(model).__module__]
+            tiles = mod.dynamic_preprocess(picture, 1, model.max_dynamic_patch, model.image_size, model.use_thumbnail)
+            extra["tile_pixel_values"] = torch.stack([model.transformer(t) for t in tiles]).to(torch.float32).contiguous()
+        elif architecture == "Sa2VAChatModelQwen":
+            processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+            messages = [{"role": "user", "content": [{"type": "image", "image": picture},
+                                                     {"type": "text", "text": "Please segment the bright object."}]}]
+            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = processor(text=[text], images=[picture], padding=True, return_tensors="pt",
+                               min_pixels=model.min_pixels, max_pixels=model.max_pixels)
+            extra["pixel_values"] = inputs["pixel_values"].to(torch.float32).contiguous()
+            extra["image_grid_thw"] = inputs["image_grid_thw"].to(torch.int32).contiguous()
+        elif architecture == "Sa2VAChatModelLlava":
+            extra["llava_pixel_values"] = model.transformer(picture).unsqueeze(0).to(torch.float32).contiguous()
+        else:
+            raise ValueError(f"{architecture} is not a Sa2VA family this mode knows")
+        g = torch.from_numpy(model.extra_image_processor.apply_image(a)).permute(2, 0, 1).contiguous()
+        g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g.to(torch.float32))]).contiguous()
+    extra["g_pixel_values"] = g_pixel
+    globals()["_extra"] = extra
+    return g_pixel.clone()
+
+
+def run_sa2va_llava_teacher(image, checkpoint):
+    """Sa2VA on LLaVA-1.5 (ByteDance/Sa2VA-LLaVA-1.5-7B, Apache), from the repo's own
+    `Sa2VAChatModelLlava` (trust_remote_code), with the answer teacher-forced: the 7B decoder does not fit
+    this machine at float32, so the release is cut to its first decoder layers (`truncate.py`). The same
+    plate and request as `run_sa2va`, the image through the release's own transform (PIL bicubic to 336,
+    CLIP normalization), the prompt through its Vicuna template with 576 `<image>` tokens, followed by the
+    fixed answer "Sure, it is [SEG].". Records the pixels, the CLIP tower's second-to-last hidden state,
+    the projected features, the fused embeddings, the decoder's final hidden states over the sequence,
+    the last logits, the `[SEG]` embedding, the grounding image, and the mask (`low_res_best`, also the
+    returned `output`), plus the prompt and the reference's decodes for the tokenizer. Runs under the
+    `llm` oracle env, float32 on the CPU."""
+    from PIL import Image
+    from transformers import AutoModel, AutoTokenizer
+
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=torch.float32, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    tok = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True)
+    seg = tok.convert_tokens_to_ids("[SEG]")
+    image_token = model.model.config.image_token_index
+    pixel_values = model.transformer(plate).unsqueeze(0).to(torch.float32)
+    text = "<image>Please segment the bright object.".replace(
+        "<image>", model.IMG_CONTEXT_TOKEN * model.patch_token + "\n")
+    prompt_text = model.template["INSTRUCTION"].format(input=text, round=1)
+    prompt_ids = tok.encode(prompt_text)
+    answer_ids = tok.encode("Sure, it is [SEG].", add_special_tokens=False)
+    ids = torch.tensor(prompt_ids + answer_ids).unsqueeze(0)
+    g = torch.from_numpy(model.extra_image_processor.apply_image(np.array(plate))).permute(2, 0, 1).contiguous()
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g.to(torch.float32))])
+
+    with torch.no_grad():
+        llava = model.model
+        vision_hidden = llava.model.vision_tower(pixel_values, output_hidden_states=True).hidden_states[-2]
+        features = llava.model.get_image_features(pixel_values=pixel_values, vision_feature_layer=-2,
+                                                  vision_feature_select_strategy="default")
+        features = features[0] if isinstance(features, (list, tuple)) else features
+        embeds = llava.model.get_input_embeddings()(ids).clone()
+        flat = embeds.reshape(-1, embeds.shape[-1])
+        flat[ids.reshape(-1) == image_token] = features.reshape(-1, embeds.shape[-1]).to(flat.dtype)
+        fused = flat.reshape(embeds.shape)
+        out = llava(input_ids=ids, pixel_values=pixel_values, output_hidden_states=True, return_dict=True)
+        dec_last = out.hidden_states[-1][0]
+        position = int((ids[0] == seg).nonzero()[0])
+        seg_embedding = model.text_hidden_fcs(dec_last[position].unsqueeze(0))
+
+        sam = model.grounding_encoder.sam2_model
+        backbone_out = sam.forward_image(g_pixel)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s) for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        low_res_best = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                              high_res_features=high_res, multimask_output=True,
+                                              language_embd=seg_embedding.unsqueeze(0))[3]
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values[0].permute(1, 2, 0).contiguous(),
+        "input_rgb": torch.from_numpy(np.asarray(plate)).to(torch.int32).contiguous(),
+        "input_ids": ids.to(torch.int32).contiguous(),
+        "vision_hidden": vision_hidden.contiguous(),
+        "features": features.contiguous(),
+        "fused": fused.contiguous(),
+        "dec_last": dec_last.contiguous(),
+        "last_logits": out.logits[0, -1].contiguous(),
+        "seg_embedding": seg_embedding.contiguous(),
+        "g_pixel_values": g_pixel.contiguous(),
+        "low_res_best": low_res_best.contiguous(),
+        "prompt_utf8": torch.tensor(list(prompt_text.encode("utf-8")), dtype=torch.int32),
+        "answer_decoded_utf8": torch.tensor(list(tok.decode(answer_ids).encode("utf-8")), dtype=torch.int32),
+        "prompt_length": torch.tensor([len(prompt_ids)], dtype=torch.int32),
+    }
+    return low_res_best.clone().contiguous()
+
+
+
+def run_qwen25vl_vision_tiny(image):
+    """Qwen2.5-VL's vision tower (transformers' `Qwen2_5_VisionTransformerPretrainedModel`) at a tiny
+    seeded configuration: 4 blocks 64 wide over 4 heads, the SiLU-gated feed-forward 96 wide, a 48-wide
+    output, windows of 112 pixels, and full attention at blocks 1 and 3, over a 20 x 28 patch grid (a
+    window grid that does not divide it, so the edge windows are partial). Records every parameter
+    under its checkpoint name, the patches, the window order (`_window_index`), the window boundaries
+    (`_cu_window`), the rotary angles in raster order (`_rotary`), and the merged output in raster order
+    (the returned `output`). `image` is unused."""
+    from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import Qwen2_5_VLVisionConfig
+    from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VisionTransformerPretrainedModel
+
+    torch.manual_seed(0)
+    config = Qwen2_5_VLVisionConfig(depth=4, hidden_size=64, num_heads=4, intermediate_size=96, out_hidden_size=48,
+                                    patch_size=14, temporal_patch_size=2, spatial_merge_size=2, window_size=112,
+                                    fullatt_block_indexes=[1, 3], hidden_act="silu")
+    config._attn_implementation = "eager"
+    model = Qwen2_5_VisionTransformerPretrainedModel(config).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, 0.05)
+    grid = torch.tensor([[1, 20, 28]])
+    patches = torch.randn(20 * 28, 3 * 2 * 14 * 14)
+    with torch.no_grad():
+        output = model(patches, grid_thw=grid)
+    window_index, cu_window = model.get_window_index(grid)
+    extra = {key: value.contiguous() for key, value in model.state_dict().items()}
+    extra.update({"_patches": patches, "_window_index": window_index.to(torch.int32),
+                  "_cu_window": torch.tensor(cu_window, dtype=torch.int32), "_rotary": model.rot_pos_emb(grid)})
+    globals()["_extra"] = extra
+    return output.contiguous()
+
+
+
+def run_internvit_qknorm_tiny(image, checkpoint):
+    """InternViT with InternViT-6B's switches (`norm_type` rms_norm, `qk_normalization` on, no qkv bias)
+    at a tiny seeded configuration, from the release's own `modeling_intern_vit.py` (`checkpoint` is any
+    Sa2VA directory that carries it): 2 layers 64 wide over 4 heads, a 28-pixel image of 14-pixel
+    patches. Records every parameter under its checkpoint name, the channels-last pixels (`_pixels`),
+    and the last hidden state (the returned `output`)."""
+    import importlib
+    import types
+    # The release's modules import one another relatively; a synthetic package lets them, and lets the
+    # optional flash-attention import fall back as the code intends when `flash_attn` is absent.
+    package = types.ModuleType("sa2va_remote")
+    package.__path__ = [checkpoint]
+    sys.modules["sa2va_remote"] = package
+    Config = importlib.import_module("sa2va_remote.configuration_intern_vit").InternVisionConfig
+    Model = importlib.import_module("sa2va_remote.modeling_intern_vit").InternVisionModel
+    torch.manual_seed(0)
+    config = Config(num_channels=3, patch_size=14, image_size=28, hidden_size=64, num_attention_heads=4,
+                    intermediate_size=96, num_hidden_layers=2, qkv_bias=False, qk_normalization=True,
+                    norm_type="rms_norm", layer_norm_eps=1e-6, use_flash_attn=False, drop_path_rate=0.0)
+    model = Model(config).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, 0.05)
+    pixels = torch.randn(1, 3, 28, 28)
+    with torch.no_grad():
+        output = model(pixel_values=pixels, output_hidden_states=False, return_dict=True).last_hidden_state
+    extra = {key: value.contiguous() for key, value in model.state_dict().items()}
+    extra["_pixels"] = pixels.permute(0, 2, 3, 1).contiguous()
+    globals()["_extra"] = extra
+    return output[0].contiguous()
+
+
+
+def run_llava_tiny(image):
+    """transformers' `LlavaForConditionalGeneration` at a tiny seeded configuration (a CLIP vision tower 2
+    layers 32 wide over a 28-pixel image of 14-pixel patches, read at `vision_feature_layer` -2 without
+    its class token; a Llama decoder 2 layers 48 wide), the LLaVA-1.5 layout Sa2VA-LLaVA wraps. Records
+    every parameter under its checkpoint name, the channels-last pixels (`_pixels`), the input ids with
+    four image tokens (`_ids`), the tower's second-to-last hidden state (`_vision_hidden`), the projected
+    features (`_features`), and the decoder's final hidden states (the returned `output`). `image` is
+    unused."""
+    from transformers import CLIPVisionConfig, LlamaConfig, LlavaConfig, LlavaForConditionalGeneration
+
+    torch.manual_seed(0)
+    vision = CLIPVisionConfig(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4,
+                              image_size=28, patch_size=14, projection_dim=32)
+    text = LlamaConfig(hidden_size=48, intermediate_size=96, num_hidden_layers=2, num_attention_heads=4,
+                       num_key_value_heads=4, vocab_size=64, max_position_embeddings=64,
+                       architectures=["LlamaForCausalLM"])
+    config = LlavaConfig(vision_config=vision, text_config=text, image_token_index=60,
+                         vision_feature_layer=-2, vision_feature_select_strategy="default",
+                         projector_hidden_act="gelu", multimodal_projector_bias=True)
+    config._attn_implementation = "eager"
+    model = LlavaForConditionalGeneration(config).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, 0.05)
+    pixels = torch.randn(1, 3, 28, 28)
+    ids = torch.tensor([[1, 5, 60, 60, 60, 60, 7, 9]])
+    with torch.no_grad():
+        vision_hidden = model.model.vision_tower(pixels, output_hidden_states=True).hidden_states[-2]
+        features = model.model.get_image_features(pixel_values=pixels, vision_feature_layer=-2,
+                                                  vision_feature_select_strategy="default")
+        features = features[0] if isinstance(features, (list, tuple)) else features
+        output = model(input_ids=ids, pixel_values=pixels, output_hidden_states=True).hidden_states[-1][0]
+    extra = {key: value.contiguous() for key, value in model.state_dict().items()}
+    extra.update({"_pixels": pixels.permute(0, 2, 3, 1).contiguous(), "_ids": ids[0].to(torch.int32),
+                  "_vision_hidden": vision_hidden[0].contiguous(), "_features": features.contiguous()})
+    globals()["_extra"] = extra
+    return output.contiguous()
+
+
+
+def run_internlm2_tiny(image, checkpoint):
+    """InternLM2 (`InternLM2ForCausalLM`) at a tiny seeded configuration, from the release's own
+    `modeling_internlm2.py` (`checkpoint` is a Sa2VA InternLM2 directory that carries it): 2 layers 64
+    wide, 8 query heads over 2 key-value heads (so the fused `wqkv` groups 4 queries with each key and
+    value), a 32-token vocabulary. Records every parameter under its checkpoint name, the input ids
+    (`_ids`), and the final hidden states (the returned `output`); the logits are `_logits`."""
+    import importlib
+    import types
+    package = types.ModuleType("sa2va_remote")
+    package.__path__ = [checkpoint]
+    sys.modules["sa2va_remote"] = package
+    Config = importlib.import_module("sa2va_remote.configuration_internlm2").InternLM2Config
+    Model = importlib.import_module("sa2va_remote.modeling_internlm2").InternLM2ForCausalLM
+    torch.manual_seed(0)
+    config = Config(vocab_size=32, hidden_size=64, intermediate_size=96, num_hidden_layers=2, num_attention_heads=8,
+                    num_key_value_heads=2, rms_norm_eps=1e-5, rope_theta=1_000_000, bias=False,
+                    attn_implementation="eager", rope_scaling={"type": "dynamic", "factor": 2.0},
+                    max_position_embeddings=64)
+    config._attn_implementation = "eager"
+    model = Model(config).eval()
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.normal_(0, 0.05)
+    ids = torch.tensor([[1, 5, 9, 3, 17, 22, 8, 2, 30, 11]])
+    with torch.no_grad():
+        out = model(input_ids=ids, output_hidden_states=True, return_dict=True)
+    extra = {key: value.contiguous() for key, value in model.state_dict().items()}
+    extra.update({"_ids": ids[0].to(torch.int32), "_logits": out.logits[0].contiguous()})
+    globals()["_extra"] = extra
+    return out.hidden_states[-1][0].contiguous()
+
+
+
+def _release_tokenizer(checkpoint, **kwargs):
+    """The release's tokenizer. transformers 4.57's `AutoTokenizer` hands back a bool for an `auto_map`
+    that names a slow class and no fast one (the InternLM2 Sa2VA releases'), so that class is then
+    loaded from the release's own module directly."""
+    import importlib
+    import json
+    import types
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True, **kwargs)
+    if not isinstance(tok, bool):
+        return tok
+    config = json.load(open(os.path.join(checkpoint, "tokenizer_config.json")))
+    module_name, class_name = config["auto_map"]["AutoTokenizer"][0].rsplit(".", 1)
+    package = types.ModuleType("sa2va_remote")
+    package.__path__ = [checkpoint]
+    sys.modules["sa2va_remote"] = package
+    return getattr(importlib.import_module("sa2va_remote." + module_name), class_name).from_pretrained(checkpoint)
+
+
+INTERNLM2_TOKENIZER_CASES = [
+    "<|im_start|>user\n<img><IMG_CONTEXT><IMG_CONTEXT></img>\nPlease segment the bright object.<|im_end|>\n<|im_start|>assistant\n",
+    "Sure, it is [SEG].",
+    "Sure, [SEG] and [SEG].<|im_end|>",
+    "  leading spaces, café, 数字 123",
+    "<p>left</p> [SEG]",
+]
+
+
+def run_internlm2_tokenizer(image, checkpoint):
+    """The InternLM2 releases' slow `InternLM2Tokenizer` (their only one) on INTERNLM2_TOKENIZER_CASES,
+    from the repo's own tokenization code (`checkpoint` is a Sa2VA InternLM2 directory): for case i,
+    `ids_<i>` (with the `<s>` the tokenizer adds) and `decoded_<i>` (the decode of those ids, UTF-8).
+    Returns the first case's ids."""
+    tok = _release_tokenizer(checkpoint)
+    extra = {}
+    for index, text in enumerate(INTERNLM2_TOKENIZER_CASES):
+        ids = tok.encode(text)
+        extra[f"ids_{index}"] = torch.tensor(ids, dtype=torch.int32)
+        extra[f"decoded_{index}"] = torch.tensor(list(tok.decode(ids).encode("utf-8")), dtype=torch.int32)
+        print(index, ids[:12], repr(tok.decode(ids))[:80])
+    globals()["_extra"] = extra
+    return extra["ids_0"].float()
+
+
+_BF16_POOL = []
+
+
+def _allow_bfloat16_average_pool():
+    """CPU torch has no bfloat16 `avg_pool3d`, which the shipped video graphs call. Registers one for this
+    process: the window mean accumulated in float32 and rounded once, as the CUDA kernel accumulates.
+    The graphs only pool non-overlapping windows without padding."""
+    if _BF16_POOL:
+        return
+    library = torch.library.Library("aten", "IMPL")
+
+    def average_pool(x, kernel_size, stride=(), padding=0, ceil_mode=False, count_include_pad=True,
+                     divisor_override=None):
+        k = list(kernel_size)
+        if list(stride or k) != k or any(padding if isinstance(padding, (list, tuple)) else [padding]):
+            raise NotImplementedError("only non-overlapping unpadded windows are needed")
+        b, c, t, h, w = x.shape
+        t, h, w = t // k[0] * k[0], h // k[1] * k[1], w // k[2] * k[2]
+        y = x.float()[:, :, :t, :h, :w].reshape(b, c, t // k[0], k[0], h // k[1], k[1], w // k[2], k[2])
+        return y.mean((3, 5, 7)).to(x.dtype)
+
+    library.impl("avg_pool3d", average_pool, "CPU")
+    _BF16_POOL.append(library)
+
+
+def run_cosmos_tokenizer(image, checkpoint):
+    """Cosmos Tokenizer (nvidia/Cosmos-0.1-Tokenizer-*, NVIDIA Open Model License) on the RELEASED
+    weights, from NVIDIA's own modules in `cosmos_predict1.tokenizer` (vendored under
+    `IK_COSMOS_TOKENIZER_SRC`, default `~/.inferkit-validation/cosmos-tokenizer-src`). The older
+    `cosmos_tokenizer` package does not build the releases: it creates every hybrid resampling
+    convolution, where the releases omit the ones a level does not use. `checkpoint` is a release
+    directory named for its variant (`CI8x8`, `DV8x16x16`, ...) holding `encoder.jit` and `decoder.jit`,
+    or the path of that directory's single `autoencoder.jit`, whose weights differ from the pair's for
+    DI8x8, DV4x8x8, DV8x8x8, and DV8x16x16 (the other six are bit-identical).
+    The release's config.json is empty, so the geometry comes from the name (compression) and the
+    release's tensors (patch size, widths, each half's level count); the network is rebuilt, every
+    parameter loaded from the TorchScript state dicts, and run in float32 on the CPU. The stored
+    derived constants are not loaded: the Haar taps are kept at bfloat16 in the releases (0.70703125),
+    and the modules compute 1/sqrt(2). The shipped TorchScript graphs are also run on the same input,
+    at float32 where their traced constants allow and otherwise at bfloat16 (CPU torch gains a bf16
+    `avg_pool3d` for that), which checks the rebuilt geometry against the release's own graph. Image
+    variants take `image` (resized by --size) in [-1, 1]; video variants take a 9-frame clip panning
+    across it. Records channels-last seams: the wavelet-patched input, the encoder after conv_in / the
+    middle block / the output, the latent (continuous) or the FSQ input, codes, and indices (discrete),
+    the decoder after conv_in / the middle block / conv_out; `output` is the reconstruction. Runs under
+    the `llm` oracle env.
+    """
+    import re
+    import time
+
+    sys.path.insert(0, os.environ.get("IK_COSMOS_TOKENIZER_SRC",
+                                      os.path.expanduser("~/.inferkit-validation/cosmos-tokenizer-src")))
+    from cosmos_predict1.tokenizer.networks import TokenizerModels, configs
+    from cosmos_predict1.tokenizer.modules import Decoder3DType, DecoderType
+
+    # A release directory reads its encoder.jit and decoder.jit; a path to a release's single
+    # autoencoder.jit reads that file instead, whose weights differ from the pair's in four releases.
+    path = os.path.normpath(checkpoint)
+    combined = path.endswith(".jit")
+    variant = os.path.basename(os.path.dirname(path) if combined else path)
+    match = re.fullmatch(r"([CD])([IV])(\d+)x(\d+)(?:x(\d+))?", variant)
+    if match is None:
+        raise SystemExit(f"cannot read a Cosmos tokenizer variant from {variant!r}")
+    discrete, video = match.group(1) == "D", match.group(2) == "V"
+    kind = match.group(1) + match.group(2)
+
+    if combined:
+        autoencoder_jit = torch.jit.load(path, map_location="cpu").eval()
+        encoder_state = decoder_state = autoencoder_jit.state_dict()
+        shipped_graphs = [autoencoder_jit]
+    else:
+        encoder_jit = torch.jit.load(os.path.join(path, "encoder.jit"), map_location="cpu").eval()
+        decoder_jit = torch.jit.load(os.path.join(path, "decoder.jit"), map_location="cpu").eval()
+        encoder_state, decoder_state = encoder_jit.state_dict(), decoder_jit.state_dict()
+        shipped_graphs = [encoder_jit, decoder_jit]
+
+    config = dict({"CI": configs.continuous_image, "DI": configs.discrete_image,
+                   "CV": configs.continuous_video, "DV": configs.discrete_video}[kind])
+    if video:
+        config.update(temporal_compression=int(match.group(3)), spatial_compression=int(match.group(4)))
+        conv_in = encoder_state["encoder.conv_in.0.conv3d.weight"]
+        patch = round((conv_in.shape[1] / 3) ** (1 / 3))
+        quant = encoder_state["quant_conv.conv3d.weight"]
+    else:
+        config.update(spatial_compression=int(match.group(3)))
+        conv_in = encoder_state["encoder.conv_in.weight"]
+        patch = round((conv_in.shape[1] / 3) ** 0.5)
+        quant = encoder_state["quant_conv.weight"]
+    channels = conv_in.shape[0]
+
+    def multipliers(state, prefix):
+        # Each level's width, read from its first block's first convolution, so a release trained at
+        # fewer levels than the package default (CV4x8x8's two) builds as it was trained.
+        found, level = [], 0
+        while True:
+            key = next((k for k in state if k.startswith(f"{prefix}.{level}.block.0.conv1.")
+                        and k.endswith("weight")), None)
+            if key is None:
+                return found
+            found.append(state[key].shape[0] // channels)
+            level += 1
+
+    encoder_mult = multipliers(encoder_state, "encoder.down")
+    decoder_mult = multipliers(decoder_state, "decoder.up")
+    config.update(patch_size=patch, channels=channels, z_channels=quant.shape[1], channels_mult=encoder_mult)
+    if discrete:
+        config.update(embedding_dim=quant.shape[0])
+    else:
+        config.update(latent_channels=quant.shape[0])
+    print(f"{variant}: patch {patch}, channels {conv_in.shape[0]}, z {quant.shape[1]}, "
+          f"latent {quant.shape[0]}, stored {conv_in.dtype}")
+
+    print(f"{variant}: encoder levels {encoder_mult}, decoder levels {decoder_mult}")
+    model = TokenizerModels[kind].value(**config).eval()
+    if decoder_mult != encoder_mult:
+        decoder_type = Decoder3DType.FACTORIZED.value if video else DecoderType.Default.value
+        model.decoder = decoder_type(**{**config, "channels_mult": decoder_mult,
+                                        "z_channels": config["z_channels"]}).eval()
+    if discrete:
+        model.quantizer.dtype = torch.float32
+    encoder, decoder = model.encoder_jit(), model.decoder_jit()
+    # The releases also store derived constants: the Haar taps (at bfloat16, 0.70703125 rather than
+    # 1/sqrt(2)) and the FSQ tables. Loading them would run float32 arithmetic on bf16-rounded taps, so
+    # the modules keep the constants they compute; every parameter must load.
+    derived = ("wavelets", "_arange", "patch_size_buffer", "_levels", "_basis", "implicit_codebook")
+    for half, state in ((encoder, encoder_state), (decoder, decoder_state)):
+        own = half.state_dict()
+        parameters = {k: v.float() for k, v in state.items()
+                      if not k.endswith(derived) and (not combined or k in own)}
+        result = half.load_state_dict(parameters, strict=False)
+        missing = [k for k in result.missing_keys if not k.endswith(derived)]
+        if missing or result.unexpected_keys:
+            raise SystemExit(f"{variant}: missing {missing}, unexpected {result.unexpected_keys}")
+
+    frame = torch.from_numpy(np.ascontiguousarray(image)).float() * 2 - 1           # [H, W, 3] in [-1, 1]
+    if video:
+        # Panning across the photo gives the clip real motion, so the causal temporal path carries signal.
+        frames = [torch.roll(frame, shifts=(2 * t, 3 * t), dims=(0, 1)) for t in range(9)]
+        clip = torch.stack(frames)                                                   # [T, H, W, 3]
+        pixels = clip.permute(3, 0, 1, 2).unsqueeze(0).contiguous()                  # [1, 3, T, H, W]
+    else:
+        clip = frame
+        pixels = frame.permute(2, 0, 1).unsqueeze(0).contiguous()                    # [1, 3, H, W]
+
+    def last(x):
+        # channels-last: [B, C, H, W] -> [B, H, W, C]; [B, C, T, H, W] -> [B, T, H, W, C]
+        return x.permute(0, *range(2, x.ndim), 1).contiguous().float()
+
+    seams = {}
+
+    def keep(name):
+        def hook(module, inputs, output):
+            seams[name] = last(output.detach().clone())
+        return hook
+
+    net_encoder, net_decoder = model.encoder, model.decoder
+    handles = [
+        (net_encoder.patcher3d if video else net_encoder.patcher).register_forward_hook(keep("patched")),
+        net_encoder.conv_in.register_forward_hook(keep("encoder_in")),
+        net_encoder.mid.block_2.register_forward_hook(keep("encoder_mid")),
+        net_decoder.conv_in.register_forward_hook(keep("decoder_in")),
+        net_decoder.mid.block_2.register_forward_hook(keep("decoder_mid")),
+        net_decoder.conv_out.register_forward_hook(keep("decoder_out")),
+    ]
+    started = time.time()
+    with torch.no_grad():
+        encoded_raw = net_encoder(pixels)
+        seams["encoder_out"] = last(encoded_raw)
+        encoded = encoder(pixels)
+        if discrete:
+            # The latent before rounding: token parity is only defined away from a rounding boundary.
+            seams["quantizer_input"] = last(model.quant_conv(encoded_raw))
+            indices, codes = encoded[0], encoded[1]
+            seams["codes"] = last(codes)
+            seams["indices"] = indices.to(torch.int32).contiguous()
+            reconstruction = decoder(indices)
+        else:
+            latent = encoded[0]
+            seams["latent"] = last(latent)
+            reconstruction = decoder(latent)
+    for handle in handles:
+        handle.remove()
+    print(f"float32 forward {time.time() - started:.1f}s")
+
+    def cosine(a, b):
+        a, b = a.flatten().double(), b.flatten().double()
+        return float(a @ b / (a.norm() * b.norm()))
+
+    # The shipped graphs, lifted to float32, on the identical input: the TorchScript IR NVIDIA traced is
+    # the release's own definition of the network, so agreement here proves the rebuilt geometry.
+    # The image graphs carry bfloat16 constants in their traced IR and run only at that precision; they
+    # then agree to the bf16 floor rather than to float32 rounding.
+    shipped_dtype = torch.float32
+    for graph in shipped_graphs:
+        graph.float()
+    try:
+        with torch.no_grad():
+            shipped_graphs[0](pixels)
+    except RuntimeError:
+        shipped_dtype = conv_in.dtype
+        _allow_bfloat16_average_pool()
+        for graph in shipped_graphs:
+            graph.to(shipped_dtype)
+    print(f"shipped graph runs at {shipped_dtype}")
+    started = time.time()
+    with torch.no_grad():
+        shipped = shipped_graphs[0](pixels.to(shipped_dtype))
+        if combined:
+            shipped_reconstruction = shipped[0] if isinstance(shipped, (tuple, list)) else shipped
+        elif discrete:
+            shipped_indices = shipped[0]
+            agree = (shipped_indices.to(torch.int64) == indices.to(torch.int64)).double().mean().item()
+            shipped_reconstruction = decoder_jit(indices)
+            print(f"shipped graph: index agreement {agree:.5f}")
+            seams["shipped_indices"] = shipped_indices.to(torch.int32).contiguous()
+        else:
+            shipped_latent = shipped[0] if isinstance(shipped, (tuple, list)) else shipped
+            print(f"shipped graph: latent cosine {cosine(shipped_latent.float(), latent):.8f}")
+            seams["shipped_latent"] = last(shipped_latent.float())
+            shipped_reconstruction = decoder_jit(latent.to(shipped_dtype))
+        print(f"shipped graph: reconstruction cosine "
+              f"{cosine(shipped_reconstruction.float(), reconstruction):.8f} ({time.time() - started:.1f}s)")
+    seams["shipped_reconstruction"] = last(shipped_reconstruction.float())
+
+    seams["clip"] = clip.contiguous()
+    globals()["_extra"] = seams
+    return last(reconstruction)[0]
+
+
+def run_cosmos_tokenizer_loss(image, checkpoint):
+    """The Cosmos Tokenizer post-training objective, from NVIDIA's own `ColorLoss` and `PerceptualLoss`
+    (`cosmos_predict1/tokenizer/training/losses`, vendored beside the network code under
+    `IK_COSMOS_TOKENIZER_SRC`), scored on identical tensors: a deterministic image batch and a clip,
+    each a target and a perturbed reconstruction in [-1, 1]. `checkpoint` is the VGG-16 ImageNet
+    weights file the port loads (`timm/vgg16.tv_in1k` `model.safetensors`), loaded into torchvision's
+    `vgg16` in place of its download, so both sides read one file. The LPIPS linear heads that
+    `LPIPS.__init__` downloads are never read by `PerceptualLoss.forward` and are skipped. Two helper
+    modules the losses import (`utils.lazy_config`, `utils.distributed`) are stubbed; neither carries
+    arithmetic. Records the color, perceptual, and Gram terms unweighted (Gram switched on, which
+    post-training leaves off) for the image batch and the clip; `output` is the image batch's color
+    term. Runs under the `llm` oracle env (torchvision).
+    """
+    import types
+
+    sys.path.insert(0, os.environ.get("IK_COSMOS_TOKENIZER_SRC",
+                                      os.path.expanduser("~/.inferkit-validation/cosmos-tokenizer-src")))
+    for name, attributes in (("cosmos_predict1.utils", {}),
+                             ("cosmos_predict1.utils.lazy_config", {"instantiate": lambda x: x}),
+                             ("cosmos_predict1.utils.distributed", {"is_rank0": lambda: True})):
+        module = types.ModuleType(name)
+        module.__dict__.update(attributes)
+        sys.modules[name] = module
+    from safetensors.torch import load_file
+    import torchvision
+    from cosmos_predict1.tokenizer.training.losses import lpips as lpips_module
+    from cosmos_predict1.tokenizer.training.losses.continuous import ColorLoss, PerceptualLoss
+
+    weights = load_file(checkpoint)
+    torchvision_vgg16 = torchvision.models.vgg16
+
+    def vgg16(pretrained=False, **kwargs):
+        model = torchvision_vgg16(weights=None)
+        model.features.load_state_dict({k[len("features."):]: v.float() for k, v in weights.items()
+                                        if k.startswith("features.")})
+        return model
+
+    lpips_module.models.vgg16 = vgg16
+    lpips_module.LPIPS.load_from_pretrained = lambda self, name="vgg_lpips": None
+
+    class Config:
+        pass
+
+    color_config = Config()
+    color_config.boundaries, color_config.values = [0], [1.0]
+    perceptual_config = Config()
+    perceptual_config.__dict__.update(
+        lpips_boundaries=[0], lpips_values=[1.0], layer_weights=[1.0 / 2.6, 1.0 / 4.8, 1.0 / 3.7, 1.0 / 5.6, 10.0 / 1.5],
+        gram_enabled=True, gram_boundaries=[0], gram_values=[1.0], corr_enabled=False, corr_boundaries=[0],
+        corr_values=[0.0], checkpoint_activations=False)
+    color, perceptual = ColorLoss(color_config), PerceptualLoss(perceptual_config).eval()
+
+    rng = np.random.default_rng(7)
+    extra = {}
+    for label, shape in (("image", (2, 3, 48, 64)), ("clip", (1, 3, 3, 48, 64))):
+        target = torch.from_numpy(np.clip(rng.standard_normal(shape) * 0.5, -1, 1).astype(np.float32))
+        reconstruction = torch.from_numpy(
+            np.clip(target.numpy() + rng.standard_normal(shape).astype(np.float32) * 0.2, -1, 1))
+        inputs = {"INPUT": target, "loss_mask": torch.ones_like(target)}
+        outputs = {"reconstructions": reconstruction}
+        with torch.no_grad():
+            terms = {**color(inputs, outputs, 0), **perceptual(inputs, outputs, 0)}
+        channels_last = (0, 2, 3, 1) if len(shape) == 4 else (0, 2, 3, 4, 1)
+        extra[f"{label}_target"] = target.permute(*channels_last).contiguous()
+        extra[f"{label}_reconstruction"] = reconstruction.permute(*channels_last).contiguous()
+        for term in ("color", "lpips", "gram"):
+            extra[f"{label}_{term}"] = terms[term].mean().reshape(1)
+        print(label, {k: float(v) for k, v in extra.items() if k.startswith(label) and v.numel() == 1})
+    globals()["_extra"] = extra
+    return extra["image_color"].clone()
 
 
 def run_kokoro(image, checkpoint):
@@ -6816,6 +12040,379 @@ def run_parakeet(image, checkpoint):
     return encoded[0].transpose(0, 1).clone().contiguous()
 
 
+def run_canary(image, checkpoint):
+    """NVIDIA Canary-1B-v2 speech recognition/translation, from NeMo's own EncDecMultiTaskModel on the
+    RELEASED `.nemo` archive (`--checkpoint`): the FastConformer encoder (dw-striding 8x subsampling, 32
+    rel-pos conformer layers, WITH biases) and an attention encoder-decoder — a Transformer decoder with
+    self-attention, cross-attention into the encoder frames, and a ReLU feed-forward, generating the
+    transcription from a task prompt of control tokens. The clip is the validation speech WAV, so the
+    transcription is a real measurement. Recorded seam by seam: the normalized mel features, the
+    pre-encode output, the first conformer layer, the encoder output, the decoder's first-step logits at
+    the transcription prompt, and the greedy tokens and text. Dither is zeroed. Runs under the `nemo`
+    oracle env.
+    """
+    import wave as wavemodule
+    import huggingface_hub
+    for name in ["ModelFilter", "DatasetFilter"]:
+        if not hasattr(huggingface_hub, name):
+            setattr(huggingface_hub, name, type(name, (), {}))
+    import nemo.collections.asr as nemo_asr
+
+    model = nemo_asr.models.EncDecMultiTaskModel.restore_from(checkpoint, strict=False).eval()
+    model.preprocessor.featurizer.dither = 0.0
+
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    with wavemodule.open(path) as handle:
+        assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
+        pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+    wave = (pcm.astype(np.float32) / 32768.0)
+    signal = torch.from_numpy(wave)[None]
+    length = torch.tensor([wave.shape[0]])
+
+    seams = {}
+    model.encoder.pre_encode.register_forward_hook(lambda m, i, o: seams.__setitem__("pre", o[0].detach()))
+    model.encoder.layers[0].register_forward_hook(lambda m, i, o: seams.__setitem__("layer0", o.detach()))
+
+    # The transcription prompt (English ASR, punctuation on) is the release chat template's ASR turn:
+    # <|startofcontext|><|startoftranscript|><|emo:undefined|><|en|><|en|><|pnc|><|noitn|><|notimestamp|><|nodiarize|>
+    prompt = [7, 4, 16, 64, 64, 5, 9, 11, 13]
+    eos = 3
+    with torch.no_grad():
+        features, feature_length = model.preprocessor(input_signal=signal, length=length)
+        encoded, encoded_length = model.encoder(audio_signal=features, length=feature_length)  # [1, D, T]
+        enc_states = encoded.transpose(1, 2)                                                    # [1, T, D]
+        enc_mask = torch.ones(enc_states.shape[:2], dtype=enc_states.dtype)
+        ids = list(prompt)
+        first_logits = None
+        for _ in range(512):
+            inp = torch.tensor([ids], dtype=torch.long)
+            dec_mask = torch.ones_like(inp, dtype=enc_states.dtype)
+            hidden = model.transf_decoder(input_ids=inp, decoder_mask=dec_mask,
+                                          encoder_embeddings=enc_states, encoder_mask=enc_mask)
+            step = model.log_softmax.mlp(hidden[:, -1])                                          # [1, V] raw logits
+            if first_logits is None:
+                first_logits = step[0].detach()
+            nxt = int(step[0].argmax().item())
+            if nxt == eos:
+                break
+            ids.append(nxt)
+    generated = ids[len(prompt):]
+    text = model.tokenizer.ids_to_text(generated)
+    print(f"canary transcription: {text!r} ({len(generated)} tokens)")
+
+    extra = {
+        "waveform": torch.from_numpy(wave).contiguous(),
+        "features": features[0].transpose(0, 1).contiguous(),               # [frames, mels] normalized
+        "pre": seams["pre"][0].contiguous(),                                 # [T', d_model]
+        "layer0": seams["layer0"][0].contiguous(),                           # [T', d_model]
+        "encoded": encoded[0].transpose(0, 1).contiguous(),                  # [T', d_model]
+        "prompt": torch.tensor(prompt, dtype=torch.int32),
+        "logits0": first_logits.contiguous(),                               # [V] at the prompt's last position
+        "tokens": torch.tensor(generated, dtype=torch.int32),
+        "text": torch.tensor(list(text.encode("utf-8")), dtype=torch.int32),
+    }
+    for key, value in model.state_dict().items():
+        if key.endswith("num_batches_tracked"):
+            continue
+        # `log_softmax.mlp.layer0.weight` is tied to the token embedding (shared storage), which
+        # safetensors refuses to save; clone so both land as independent tensors.
+        cloned = value.float().contiguous().clone() if value.is_floating_point() else value.contiguous().clone()
+        extra[f"w::{key}"] = cloned
+    globals()["_extra"] = extra
+    return encoded[0].transpose(0, 1).clone().contiguous()
+
+
+def run_phi4mm(image, checkpoint):
+    """Phi-4-multimodal (`Phi4MMForCausalLM`, Microsoft) on the released weights, float32, eager
+    attention, in every input mode the release serves. `--checkpoint` is the release directory; the
+    reference is the release's own remote code (`trust_remote_code`), written for transformers 4.46.1,
+    so it runs in its own oracle environment (torch 2.6, transformers 4.46.1, peft 0.13.2, torchvision
+    0.21, numpy<2). Inputs are the validation clip and photo.
+
+    Recorded: the text mode's prefill logits and greedy continuation; the speech mode's Conformer
+    encoder output, speech-head projection, first-token logits, and transcription; the vision mode's
+    SigLIP penultimate features, HD-projected image embeddings, first-token logits, and caption; the same
+    for a 900x500 picture that pads into a 2x3 crop grid; the vision-with-speech mode's vision-head audio
+    projection, logits, and answer; the tokenizer's ids for a plain text segment; the processor's raw
+    inputs (samples, decoded bytes) so the Swift preprocessors are measured on identical values; and the
+    feature extractor at 44.1, 48, 8, and 11.025 kHz, one clip per branch of its sample-rate handling.
+    `image` unused.
+    """
+    import math
+    import soundfile
+    from PIL import Image
+    from scipy.signal import resample_poly
+    from transformers import AutoModelForCausalLM, AutoProcessor
+
+    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    tokenizer = processor.tokenizer
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint, trust_remote_code=True, torch_dtype=torch.float32,
+        attn_implementation="eager", _attn_implementation="eager").eval()
+    embed = model.model.embed_tokens_extend
+    speech, rate = soundfile.read(os.path.join(root, "speech.wav"))
+    photo = Image.open(os.path.join(root, "photo.jpg")).convert("RGB")
+    padded = photo.resize((900, 500), Image.BICUBIC)
+    extra = {}
+
+    def utf8(text):
+        return torch.tensor(list(text.encode("utf-8")), dtype=torch.int32)
+
+    def run(prefix, prompt, new_tokens, hooks, images=None, audios=None):
+        """One mode: prefill logits and greedy continuation, with `hooks` capturing seams."""
+        captured, handles = {}, []
+        for name, module, pick in hooks:
+            handles.append(module.register_forward_hook(
+                lambda m, i, o, name=name, pick=pick: captured.__setitem__(name, pick(o).detach())))
+        inputs = processor(text=prompt, images=images, audios=audios, return_tensors="pt")
+        with torch.no_grad():
+            logits = model(**inputs).logits[0]
+            generated = model.generate(**inputs, max_new_tokens=new_tokens, do_sample=False)
+        for handle in handles:
+            handle.remove()
+        continuation = generated[0, inputs["input_ids"].shape[1]:]
+        extra[f"{prefix}_tokens"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+        extra[f"{prefix}_logits_last"] = logits[-1].float().contiguous()
+        extra[f"{prefix}_continuation"] = continuation.to(torch.int32).contiguous()
+        extra[f"{prefix}_text"] = utf8(tokenizer.decode(continuation, skip_special_tokens=True))
+        return inputs, captured, logits
+
+    # Text: no adapter.
+    ids = tokenizer("<|user|>What is the capital of France?<|end|><|assistant|>", return_tensors="pt").input_ids
+    with torch.no_grad():
+        text_logits = model(input_ids=ids, input_mode=torch.tensor([0]), use_cache=False).logits[0]
+        generated = model.generate(input_ids=ids, input_mode=torch.tensor([0]), max_new_tokens=12, do_sample=False)
+    extra["text_tokens"] = ids[0].to(torch.int32).contiguous()
+    extra["text_logits"] = text_logits.float().contiguous()
+    extra["text_continuation"] = generated[0, ids.shape[1]:].to(torch.int32).contiguous()
+
+    # Speech: the speech adapter and the speech projector head.
+    first = lambda o: (o[0] if isinstance(o, tuple) else o)
+    inputs, seams, _ = run("speech", "<|user|><|audio_1|>Transcribe the audio clip into text.<|end|><|assistant|>", 24,
+                           [("encoder", embed.audio_embed.encoder, first),
+                            ("proj", embed.audio_embed.audio_projection["speech"], lambda o: o)],
+                           audios=[(speech, rate)])
+    extra["speech_input_audio"] = inputs["input_audio_embeds"][0].float().contiguous()
+    extra["speech_audio_embed_sizes"] = inputs["audio_embed_sizes"].to(torch.int32).contiguous()
+    extra["speech_audio_encoder"] = seams["encoder"][0].float().contiguous()
+    extra["speech_audio_proj"] = seams["proj"][0].float().contiguous()
+    extra["speech_waveform"] = torch.tensor(np.asarray(speech, dtype=np.float32)).contiguous()
+
+    # Vision, for the photo and for a padded multi-crop picture: the vision adapter.
+    penultimate = lambda o: o.hidden_states[-2]
+    for prefix, picture, new_tokens in [("vision", photo, 24), ("pad", padded, 16)]:
+        inputs, seams, _ = run(prefix, "<|user|><|image_1|>Describe the image in one sentence.<|end|><|assistant|>",
+                               new_tokens, [("siglip", embed.image_embed.img_processor, penultimate),
+                                            ("proj", embed.image_embed.img_projection, lambda o: o)],
+                               images=[picture])
+        extra[f"{prefix}_input_image"] = inputs["input_image_embeds"][0].float().contiguous()
+        extra[f"{prefix}_image_sizes"] = inputs["image_sizes"].to(torch.int32).contiguous()
+        extra[f"{prefix}_image_attn_mask"] = inputs["image_attention_mask"][0].to(torch.int32).contiguous()
+        extra[f"{prefix}_siglip_m2"] = seams["siglip"].float().reshape(-1, seams["siglip"].shape[-1]).contiguous()
+        extra[f"{prefix}_img_proj"] = seams["proj"].float().reshape(-1, seams["proj"].shape[-1]).contiguous()
+        extra[f"{prefix}_rgb"] = torch.tensor(np.asarray(picture, dtype=np.uint8).astype(np.int32)).contiguous()
+
+    # Vision with speech: the vision adapter, with the audio through the projector's vision head.
+    _, seams, _ = run("vs", "<|user|><|image_1|><|audio_1|><|end|><|assistant|>", 24,
+                      [("proj", embed.audio_embed.audio_projection["vision"], lambda o: o)],
+                      images=[photo], audios=[(speech, rate)])
+    extra["vs_audio_proj"] = seams["proj"][0].float().contiguous()
+
+    extra["tok_text_ids"] = torch.tensor(
+        tokenizer("Describe the image in one sentence.", add_special_tokens=False).input_ids, dtype=torch.int32)
+
+    # The feature extractor at one rate per branch of its rate handling, on 16-bit samples.
+    extractor = processor.audio_processor
+    for clip_rate in [44100, 48000, 8000, 11025]:
+        g = math.gcd(clip_rate, 16000)
+        clip = resample_poly(speech, clip_rate // g, 16000 // g)
+        clip = np.round(np.clip(clip, -1, 32767 / 32768) * 32768) / 32768
+        features = extractor._extract_features(clip, clip_rate)
+        extra[f"rate{clip_rate}_waveform"] = torch.tensor(clip.astype(np.float32))
+        extra[f"rate{clip_rate}_features"] = torch.tensor(features.astype(np.float32))
+        extra[f"rate{clip_rate}_tokens"] = torch.tensor([extractor._compute_audio_embed_size(len(features))],
+                                                         dtype=torch.int32)
+
+    globals()["_extra"] = extra
+    # safetensors refuses two names over one buffer, and `text_logits` above is this same tensor.
+    return text_logits.float().contiguous().clone()
+
+
+def run_phi4mm_bf16(image, checkpoint):
+    """Phi-4-multimodal (the release's remote code, eager, in the `phi4mm` oracle environment) at bf16,
+    for the rounding-placement check. `IK_PHI4MM_DTYPE=bfloat16` loads the model at bf16;
+    `bfloat16-inputs` keeps float32 arithmetic on the same inputs rounded to bf16, the floor for that
+    record. Recorded, prefill only: the text mode's logits with decoder layers 0, 1, and 31 probed piece
+    by piece; the speech mode's Conformer output, speech-head projection, and logits, the Conformer
+    layers probed; the vision mode's SigLIP penultimate features, projection, and logits, the SigLIP
+    layers probed. `image` unused.
+    """
+    import soundfile
+    from PIL import Image
+    from transformers import AutoModelForCausalLM, AutoProcessor
+
+    mode = os.environ.get("IK_PHI4MM_DTYPE", "bfloat16")
+    dtype = torch.bfloat16 if mode == "bfloat16" else torch.float32
+    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    tokenizer = processor.tokenizer
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint, trust_remote_code=True, torch_dtype=dtype,
+        attn_implementation="eager", _attn_implementation="eager").eval()
+    embed = model.model.embed_tokens_extend
+    speech, rate = soundfile.read(os.path.join(root, "speech.wav"))
+    photo = Image.open(os.path.join(root, "photo.jpg")).convert("RGB")
+    extra = {}
+
+    def rounded(inputs):
+        for key in ("input_image_embeds", "input_audio_embeds"):
+            if key in inputs and inputs[key] is not None and inputs[key].is_floating_point():
+                inputs[key] = inputs[key].to(torch.bfloat16).to(dtype)
+        return inputs
+
+    decoder_probes = {}
+    restore = _probe_hooks(model, [0, 1, 31], decoder_probes)
+    ids = tokenizer("<|user|>What is the capital of France?<|end|><|assistant|>", return_tensors="pt").input_ids
+    with torch.no_grad():
+        extra["text_logits"] = model(input_ids=ids, input_mode=torch.tensor([0]), use_cache=False).logits[0].float()
+    restore()
+    extra.update({f"dec.{key}": value for key, value in decoder_probes.items()})
+    extra["text_tokens"] = ids[0].to(torch.int32).contiguous()
+
+    def run(prefix, prompt, layers, hooks, **media):
+        probes, captured = {}, {}
+        _probe_encoder_layers(layers, probes)
+        for name, module, pick in hooks:
+            def capture(m, i, o, name=name, pick=pick):
+                captured.setdefault(name, pick(o).detach().float())   # a hook's return replaces the output
+            module.register_forward_hook(capture)
+        inputs = rounded(processor(text=prompt, return_tensors="pt", **media))
+        with torch.no_grad():
+            extra[f"{prefix}_logits"] = model(**inputs).logits[0].float()
+        extra[f"{prefix}_tokens"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+        extra.update({f"{prefix}.{key}": value for key, value in probes.items()})
+        return inputs, captured
+
+    first = lambda o: (o[0] if isinstance(o, tuple) else o)
+    inputs, seams = run("speech", "<|user|><|audio_1|>Transcribe the audio clip into text.<|end|><|assistant|>",
+                        embed.audio_embed.encoder.encoders,
+                        [("encoder", embed.audio_embed.encoder, first),
+                         ("proj", embed.audio_embed.audio_projection["speech"], lambda o: o)],
+                        audios=[(speech, rate)])
+    extra["speech_input_audio"] = inputs["input_audio_embeds"][0].float().contiguous()
+    extra["speech_audio_encoder"] = seams["encoder"][0].contiguous()
+    extra["speech_audio_proj"] = seams["proj"][0].contiguous()
+
+    inputs, seams = run("vision", "<|user|><|image_1|>Describe the image in one sentence.<|end|><|assistant|>",
+                        embed.image_embed.img_processor.encoder.layers,
+                        [("siglip", embed.image_embed.img_processor, lambda o: o.hidden_states[-2]),
+                         ("proj", embed.image_embed.img_projection, lambda o: o)],
+                        images=[photo])
+    extra["vision_input_image"] = inputs["input_image_embeds"][0].float().contiguous()
+    extra["vision_siglip_m2"] = seams["siglip"].reshape(-1, seams["siglip"].shape[-1]).contiguous()
+    extra["vision_img_proj"] = seams["proj"].reshape(-1, seams["proj"].shape[-1]).contiguous()
+
+    globals()["_extra"] = {key: value.contiguous() for key, value in extra.items()}
+    return extra["text_logits"].contiguous().clone()
+
+
+def run_phi4mm_conversation(image, checkpoint):
+    """Phi-4-multimodal (the release's remote code, float32, eager, in the `phi4mm` oracle environment)
+    on the request shapes beyond one turn with one picture and one clip. `--checkpoint` is the release
+    directory.
+
+    Recorded, per case, the processor's prompt ids (`<case>_tokens`), the first answer token's logits
+    (`<case>_logits_last`), and the greedy continuation (`<case>_continuation`, `<case>_text`):
+    - `chat`: the release's chat template over a system turn, a finished exchange, and a second user
+      turn, with two pictures and two clips. A turn that opens with whitespace shows the template's
+      markers stripping it (`rstrip`). With a picture present, the clips go through the projector's
+      vision head (`chat_audio_proj`, `[clips, frames, width]`, padded to the longest).
+    - `clips`: two clips in speech mode, one past the encoder's 500-frame window (45 s) and one short,
+      so the encoder runs batched under its padding mask and unfolds into windows at once, the short
+      clip's second window wholly padding (`clips_audio_encoder`, `clips_audio_embed_sizes`).
+    - `long`: the 45 s clip alone, which unfolds without a mask (`long_audio_encoder`).
+    The raw inputs ride along: `short_waveform` (the validation clip), `long_waveform` (it tiled to
+    45 s), and the pictures (`photo_rgb`, `wide_rgb`). `image` unused.
+    """
+    import soundfile
+    from PIL import Image
+    from transformers import AutoModelForCausalLM, AutoProcessor
+
+    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    tokenizer = processor.tokenizer
+    model = AutoModelForCausalLM.from_pretrained(
+        checkpoint, trust_remote_code=True, torch_dtype=torch.float32,
+        attn_implementation="eager", _attn_implementation="eager").eval()
+    audio_embed = model.model.embed_tokens_extend.audio_embed
+    speech, rate = soundfile.read(os.path.join(root, "speech.wav"))
+    speech = np.asarray(speech, dtype=np.float32)
+    long_speech = np.tile(speech, 13)                         # 45.1 s, 564 encoder frames
+    photo = Image.open(os.path.join(root, "photo.jpg")).convert("RGB")
+    wide = photo.resize((900, 500), Image.BICUBIC)
+    extra = {}
+
+    def utf8(text):
+        return torch.tensor(list(text.encode("utf-8")), dtype=torch.int32)
+
+    def run(prefix, prompt, new_tokens, hooks, images=None, audios=None):
+        captured, handles = {}, []
+
+        def capture(name, pick):
+            # A forward hook that returns a value replaces the module's output, so this one returns None.
+            def hook(module, inputs, output):
+                if name not in captured:
+                    captured[name] = pick(output).detach()
+            return hook
+
+        for name, module, pick in hooks:
+            handles.append(module.register_forward_hook(capture(name, pick)))
+        inputs = processor(text=prompt, images=images, audios=audios, return_tensors="pt")
+        with torch.no_grad():
+            logits = model(**inputs).logits[0]
+            generated = model.generate(**inputs, max_new_tokens=new_tokens, do_sample=False)
+        for handle in handles:
+            handle.remove()
+        continuation = generated[0, inputs["input_ids"].shape[1]:]
+        extra[f"{prefix}_tokens"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+        extra[f"{prefix}_logits_last"] = logits[-1].float().contiguous()
+        extra[f"{prefix}_continuation"] = continuation.to(torch.int32).contiguous()
+        extra[f"{prefix}_text"] = utf8(tokenizer.decode(continuation, skip_special_tokens=True))
+        extra[f"{prefix}_audio_embed_sizes"] = inputs["audio_embed_sizes"].to(torch.int32).contiguous() \
+            if audios else torch.zeros(0, dtype=torch.int32)
+        print(f"phi4mm {prefix}: {inputs['input_ids'].shape[1]} ids -> {tokenizer.decode(continuation)!r}")
+        return captured
+
+    first = lambda o: (o[0] if isinstance(o, tuple) else o)
+    messages = [
+        {"role": "system", "content": "You answer in one short sentence."},
+        {"role": "user", "content": "<|image_1|><|image_2|>How many pictures are there?"},
+        {"role": "assistant", "content": "There are two pictures."},
+        {"role": "user", "content": "\n <|audio_1|><|audio_2|>What does the second clip say?"},
+    ]
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    extra["chat_prompt"] = utf8(prompt)
+    seams = run("chat", prompt, 24, [("proj", audio_embed.audio_projection["vision"], lambda o: o)],
+                images=[photo, wide], audios=[(long_speech, rate), (speech, rate)])
+    extra["chat_audio_proj"] = seams["proj"].float().contiguous()
+
+    seams = run("clips", "<|user|><|audio_1|><|audio_2|>Transcribe the audio clip into text.<|end|><|assistant|>", 16,
+                [("encoder", audio_embed.encoder, first)], audios=[(long_speech, rate), (speech, rate)])
+    extra["clips_audio_encoder"] = seams["encoder"].float().contiguous()
+
+    seams = run("long", "<|user|><|audio_1|>Transcribe the audio clip into text.<|end|><|assistant|>", 16,
+                [("encoder", audio_embed.encoder, first)], audios=[(long_speech, rate)])
+    extra["long_audio_encoder"] = seams["encoder"][0].float().contiguous()
+
+    extra["short_waveform"] = torch.tensor(speech).contiguous()
+    extra["long_waveform"] = torch.tensor(long_speech).contiguous()
+    extra["photo_rgb"] = torch.tensor(np.asarray(photo, dtype=np.uint8).astype(np.int32)).contiguous()
+    extra["wide_rgb"] = torch.tensor(np.asarray(wide, dtype=np.uint8).astype(np.int32)).contiguous()
+    globals()["_extra"] = extra
+    return extra["chat_logits_last"].clone()
+
+
 def _chatterbox_reference_audio():
     """The validation clip prepared the way `ChatterboxTTS.prepare_conditionals` prepares a voice
     prompt: `librosa.load(sr=24000)` (a 16 kHz file resampled up), then `librosa.resample` back down to
@@ -7452,6 +13049,153 @@ def run_gtcrn(image, checkpoint):
         globals()["_extra"][f"de{idx}"] = seams[f"de{idx}"].clone().contiguous()   # de4 aliases `decoder`
     return wav[0].contiguous()                                             # [samples]
 
+
+
+def run_gtcrn_loss(image):
+    """GTCRN's training objective, the repo's own `HybridLoss` (`loss.py`), on identical spectrograms.
+
+    Set IK_GTCRN_SRC to the directory holding `loss.py`. The target is the spectrogram of a
+    deterministic voiced clip and the prediction the spectrogram of that clip with noise added, both
+    through the sqrt-Hann STFT `infer.py` uses, so every term (the compressed real and imaginary MSEs,
+    the compressed magnitude MSE, and the negative log SI-SNR over the iSTFT) scores a realistic pair.
+    `output` is the loss the reference module returns; the terms and both waveforms are seams.
+    """
+    import os
+
+    sys.path.insert(0, os.environ.get("IK_GTCRN_SRC", "."))
+    from loss import HybridLoss
+
+    n_fft, hop = 512, 256
+    samples = 8000
+    t = np.arange(samples, dtype=np.float32) / 16000.0
+    gen = np.random.default_rng(31)
+    speech = sum(0.3 / (k + 1) * np.sin(2 * np.pi * 150 * (k + 1) * t) for k in range(5))
+    clean = (speech * (0.5 + 0.5 * np.sin(2 * np.pi * 4 * t))).astype(np.float32)
+    noisy = (clean + 0.1 * gen.standard_normal(samples)).astype(np.float32)
+
+    window = torch.hann_window(n_fft).pow(0.5)
+    def spectrogram(wave):
+        spec = torch.stft(torch.from_numpy(wave).unsqueeze(0), n_fft, hop, n_fft, window,
+                          center=True, return_complex=True)
+        return torch.stack([spec.real, spec.imag], dim=-1)                  # [1, F, T, 2]
+    pred, true = spectrogram(noisy), spectrogram(clean)
+
+    loss = HybridLoss()(pred, true)
+
+    # The terms, for localizing a disagreement. The assertion is on `output` alone.
+    pred_mag = torch.sqrt(pred[..., 0] ** 2 + pred[..., 1] ** 2 + 1e-12)
+    true_mag = torch.sqrt(true[..., 0] ** 2 + true[..., 1] ** 2 + 1e-12)
+    real_term = torch.nn.MSELoss()(pred[..., 0] / pred_mag ** 0.7, true[..., 0] / true_mag ** 0.7)
+    imag_term = torch.nn.MSELoss()(pred[..., 1] / pred_mag ** 0.7, true[..., 1] / true_mag ** 0.7)
+    mag_term = torch.nn.MSELoss()(pred_mag ** 0.3, true_mag ** 0.3)
+    y_pred = torch.istft(pred[..., 0] + 1j * pred[..., 1], n_fft, hop, n_fft, window=window)
+    y_true = torch.istft(true[..., 0] + 1j * true[..., 1], n_fft, hop, n_fft, window=window)
+
+    globals()["_extra"] = {
+        "predicted": pred[0].contiguous(),                                  # [F, T, 2]
+        "target": true[0].contiguous(),
+        "real_term": real_term.reshape(1).contiguous(),
+        "imag_term": imag_term.reshape(1).contiguous(),
+        "magnitude_term": mag_term.reshape(1).contiguous(),
+        "predicted_waveform": y_pred[0].contiguous(),
+        "target_waveform": y_true[0].contiguous(),
+    }
+    return loss.reshape(1).contiguous()
+
+
+def run_nuwave2_loss(image, checkpoint):
+    """NU-Wave 2's training objective, `NuWave2.common_step` in `lightning_model.py`, on identical tensors.
+
+    `--checkpoint` is the official Lightning checkpoint and `IK_NUWAVE2_SRC` the cloned repository,
+    as for `nuwave2`. The wide-band clip is a deterministic 48 kHz tone stack reaching 20 kHz, trimmed
+    to the training segment of 32,768 samples and peak-normalized, and the narrow-band input comes from
+    `dataloader.py`'s own degradation at its validation settings (a Chebyshev type I low-pass of order
+    8 and ripple 0.05 at 8 kHz through `sosfiltfilt`, then `resample_poly` down to 16 kHz and back).
+    The diffusion time and noise are fixed and recorded, so both sides score the same draw:
+    `Diffusion.diffusion` noises the clip, the network predicts the noise, and the loss is `nn.L1Loss`
+    between the prediction and the noise.
+    """
+    from scipy.signal import cheby1, resample_poly, sosfiltfilt
+    diffusion, hparams = _load_nuwave2(checkpoint)
+
+    rate = hparams.audio.sampling_rate
+    length = hparams.audio.length
+    t = np.arange(length, dtype=np.float64) / rate
+    wav = sum(0.4 / (k + 1) * np.sin(2 * np.pi * 220 * (k + 1) * t) for k in range(90))
+    wav = (wav / np.max(np.abs(wav))).astype(np.float32)
+
+    highcut = 8000
+    hi = highcut / (0.5 * rate)
+    sos = cheby1(8, 0.05, hi, btype="lowpass", output="sos")
+    wav_l = resample_poly(resample_poly(sosfiltfilt(sos, wav), highcut * 2, rate), rate, highcut * 2)
+    wav_l = wav_l[:length].astype(np.float32)
+    fft_size = hparams.audio.filter_length // 2 + 1
+    band = torch.zeros(fft_size, dtype=torch.int64)
+    band[: int(hi * fft_size)] = 1
+
+    y = torch.from_numpy(wav).unsqueeze(0)
+    y_l = torch.from_numpy(wav_l.copy()).unsqueeze(0)
+    band = band.unsqueeze(0)
+    time = torch.tensor([0.37])
+    generator = torch.Generator().manual_seed(11)
+    z = torch.randn(y.shape, generator=generator)
+
+    with torch.no_grad():
+        _, _, noised = diffusion.diffusion(y, z, time)
+        estimate, logsnr, _ = diffusion(noised, y_l, band, time)
+        loss = torch.nn.L1Loss()(estimate, z)
+
+    globals()["_extra"] = {
+        "waveform": y[0].contiguous(),
+        "waveform_low": y_l[0].contiguous(),
+        "band": band[0].to(torch.int32).contiguous(),
+        "time": time.contiguous(),
+        "noise": z[0].contiguous(),
+        "noised": noised[0].contiguous(),
+        "estimate": estimate[0].contiguous(),
+        "logsnr": logsnr.reshape(1).contiguous(),
+    }
+    return loss.reshape(1).contiguous()
+
+
+def run_convtasnet_loss(image):
+    """Conv-TasNet's training objective, asteroid v0.5.2's `PITLossWrapper(pairwise_neg_sisdr,
+    pit_from="pw_mtx")`, as `egs/librimix/ConvTasNet/train.py` builds it, on identical tensors.
+
+    `IK_ASTEROID_SRC` holds the tag's `asteroid/losses/sdr.py` and `pit_wrapper.py`, loaded by path
+    so the package's other dependencies stay out. Two speakers: the estimates are the sources swapped,
+    scaled, shifted by a constant, and noised, so the best assignment is the crossed one, the zero-mean
+    step matters, and the scale does not. `output` is the loss; `pairwise` is the matrix it minimizes over.
+    """
+    import importlib.util
+    import os
+
+    losses = os.path.join(os.environ.get("IK_ASTEROID_SRC", "."), "asteroid", "losses")
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    sdr = load("asteroid_sdr", os.path.join(losses, "sdr.py"))
+    pit = load("asteroid_pit_wrapper", os.path.join(losses, "pit_wrapper.py"))
+
+    samples = 8000
+    t = np.arange(samples, dtype=np.float32) / 16000.0
+    generator = np.random.default_rng(37)
+    first = 0.4 * np.sin(2 * np.pi * 180 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 3 * t))
+    second = 0.3 * np.sign(np.sin(2 * np.pi * 95 * t)) * (0.5 + 0.5 * np.cos(2 * np.pi * 2 * t))
+    sources = torch.from_numpy(np.stack([first, second]).astype(np.float32))[None]           # [1, 2, T]
+    noise = torch.from_numpy(generator.standard_normal((1, 2, samples)).astype(np.float32))
+    estimates = torch.stack([1.7 * sources[:, 1] + 0.2, 0.6 * sources[:, 0] - 0.1], dim=1) + 0.05 * noise
+
+    loss_func = pit.PITLossWrapper(sdr.pairwise_neg_sisdr, pit_from="pw_mtx")
+    loss = loss_func(estimates, sources)
+    globals()["_extra"] = {
+        "estimates": estimates[0].contiguous(),
+        "sources": sources[0].contiguous(),
+        "pairwise": sdr.pairwise_neg_sisdr(estimates, sources)[0].contiguous(),
+    }
+    return loss.reshape(1).contiguous()
 
 def run_sgmse(image, checkpoint):
     """SGMSE+ (sp-uhh/sgmse) score-based speech dereverberation / enhancement.
@@ -8195,21 +13939,3236 @@ def run_reenhance_e2e(image, checkpoint):
     return o[0].contiguous()
 
 
-MODELS = {"storm": run_storm, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
+def basic_pitch_clip(seconds=4.0, sample_rate=22050, seed=5):
+    """A deterministic clip with notes in it: a held chord, a two-note melody over it, and a little
+    noise. Basic Pitch scores pitch, so unstructured noise would give both sides an empty
+    transcription and measure nothing."""
+    total = int(seconds * sample_rate)
+    t = np.arange(total, dtype=np.float32) / sample_rate
+    generator = np.random.default_rng(seed)
+
+    def tone(midi, start, end, amplitude):
+        frequency = 440.0 * 2.0 ** ((midi - 69) / 12.0)
+        window = ((t >= start) & (t < end)).astype(np.float32)
+        # A short fade keeps the note from clicking, which would read as an onset of its own.
+        fade = np.minimum(np.minimum(t - start, end - t) / 0.02, 1.0).clip(0.0, 1.0).astype(np.float32)
+        partials = sum((1.0 / (k + 1)) * np.sin(2 * np.pi * frequency * (k + 1) * t) for k in range(4))
+        return amplitude * window * fade * partials.astype(np.float32)
+
+    wave = tone(60, 0.2, 3.6, 0.20) + tone(64, 0.2, 3.6, 0.16) + tone(67, 0.2, 3.6, 0.13)
+    wave = wave + tone(72, 0.5, 1.4, 0.25) + tone(76, 1.6, 2.6, 0.25)
+    wave = wave + 0.002 * generator.standard_normal(total).astype(np.float32)
+    return np.ascontiguousarray(wave / np.abs(wave).max() * 0.9, dtype=np.float32)
+
+
+def run_basic_pitch(image, checkpoint):
+    """Basic Pitch (spotify/basic-pitch) over a deterministic clip, seam by seam.
+
+    `--checkpoint` is the released `nmp.onnx` inside the `basic_pitch` package. The graph holds the
+    whole pipeline, so the record is taken from the reference's own artifact through onnxruntime:
+    the CQT magnitude, the normalized log, the harmonic stack, the three posteriorgrams per window,
+    the stitched posteriorgrams, and the notes the reference's own `note_creation` reads out of them.
+    Runs under the `basic_pitch` oracle environment (`bpvenv`).
+    """
+    import onnx
+    import onnxruntime
+    from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE, FFT_HOP
+    from basic_pitch import note_creation
+    from basic_pitch.inference import unwrap_output
+
+    graph = onnx.load(checkpoint).graph
+    # The intermediates are named by node index rather than by name: the export fuses whole chains of
+    # TensorFlow names into one identifier, and the indices are fixed for the released file.
+    seams = {"cqt": 189, "logspec": 212, "stack": 228}
+    for name, index in seams.items():
+        graph.output.append(onnx.helper.make_empty_tensor_value_info(graph.node[index].output[0]))
+    model = onnx.load(checkpoint)
+    model.graph.CopyFrom(graph)
+    session = onnxruntime.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"])
+
+    overlap = 30 * FFT_HOP
+    hop = AUDIO_N_SAMPLES - overlap
+    wave = basic_pitch_clip()
+    padded = np.concatenate([np.zeros(overlap // 2, dtype=np.float32), wave])
+
+    windows = []
+    start = 0
+    while start < len(padded):
+        window = padded[start:start + AUDIO_N_SAMPLES]
+        if len(window) < AUDIO_N_SAMPLES:
+            window = np.pad(window, [[0, AUDIO_N_SAMPLES - len(window)]])
+        windows.append(window)
+        start += hop
+    batch = np.stack(windows)[..., None].astype(np.float32)
+
+    names = [output.name for output in session.get_outputs()]
+    values = session.run(names, {session.get_inputs()[0].name: batch})
+    named = dict(zip(names, values))
+    contour, note, onset = values[2], values[1], values[0]
+    assert contour.shape[-1] == 264 and note.shape[-1] == 88 and onset.shape[-1] == 88
+
+    unwrap = lambda x: unwrap_output(x, len(wave), 30)
+    outputs = {"contour": unwrap(contour), "note": unwrap(note), "onset": unwrap(onset)}
+    _, events = note_creation.model_output_to_notes(outputs, onset_thresh=0.5, frame_thresh=0.3,
+                                                    min_note_len=11, infer_onsets=True,
+                                                    melodia_trick=True, include_pitch_bends=True)
+
+    rows = np.array([[start, end, pitch, amplitude] for start, end, pitch, amplitude, _ in events],
+                    dtype=np.float32).reshape(-1, 4)
+    lengths = np.array([0 if bends is None else len(bends) for _, _, _, _, bends in events], dtype=np.int32)
+    flattened = np.array([bend for _, _, _, _, bends in events for bend in (bends or [])], dtype=np.int32)
+
+    globals()["_extra"] = {
+        "waveform": torch.from_numpy(wave),
+        "windows": torch.from_numpy(batch[..., 0].copy()),
+        "cqt": torch.from_numpy(named[graph.node[seams["cqt"]].output[0]].copy()),
+        "logspec": torch.from_numpy(named[graph.node[seams["logspec"]].output[0]][..., 0].copy()),
+        "stack": torch.from_numpy(named[graph.node[seams["stack"]].output[0]].copy()),
+        "window_contour": torch.from_numpy(contour.copy()),
+        "window_note": torch.from_numpy(note.copy()),
+        "window_onset": torch.from_numpy(onset.copy()),
+        "contour": torch.from_numpy(outputs["contour"].copy()),
+        "note": torch.from_numpy(outputs["note"].copy()),
+        "notes": torch.from_numpy(rows),
+        "bend_lengths": torch.from_numpy(lengths),
+        "bend_values": torch.from_numpy(flattened),
+    }
+    return torch.from_numpy(outputs["onset"].copy())
+
+
+def _allin1_natten_shim():
+    """A torch neighborhood attention with the relative-position bias, standing in for the NATTEN
+    kernels All-In-One imports.
+
+    NATTEN dropped the biased 1D/2D kernels after 0.14, so the released model's own dependency no
+    longer installs. The neighbor and bias index rules are transcribed from NATTEN 0.14.6's
+    `natten_cpu_commons.h`, and the neighbor rule is checked against the installed NATTEN's own
+    kernel before anything is recorded (`_allin1_check_natten`), so the substitution is verified
+    rather than assumed.
+    """
+    import types
+
+    def window_start(index, length, kernel, dilation):
+        half = kernel // 2
+        if dilation <= 1:
+            return max(index - half, 0) + (length - index - half - 1 if index + half >= length else 0)
+        neighbor = index - half * dilation
+        if neighbor < 0:
+            return index % dilation
+        if index + half * dilation >= length:
+            remainder = index % dilation
+            whole = (length // dilation) * dilation
+            leftover = length - whole
+            if remainder < leftover:
+                return length - leftover + remainder - 2 * half * dilation
+            return whole + remainder - kernel * dilation
+        return neighbor
+
+    def bias_start(index, length, kernel, dilation):
+        half = kernel // 2
+        if dilation <= 1:
+            return (half + (half - index if index < half else 0)
+                    + (length - index - 1 - half if index + half >= length else 0))
+        if index - half * dilation < 0:
+            return kernel - 1 - (index // dilation)
+        if index + half * dilation >= length:
+            return (length - index - 1) // dilation
+        return half
+
+    def tables(length, kernel, dilation, device):
+        starts = torch.tensor([window_start(i, length, kernel, dilation) for i in range(length)], device=device)
+        biases = torch.tensor([bias_start(i, length, kernel, dilation) for i in range(length)], device=device)
+        steps = torch.arange(kernel, device=device)
+        return starts[:, None] + steps[None, :] * dilation, biases[:, None] + steps[None, :]
+
+    def qkrpb1d(query, key, rpb, kernel, dilation):
+        # query/key: [B, heads, length, dim]
+        length = query.shape[2]
+        neighbors, biases = tables(length, kernel, dilation, query.device)
+        gathered = key[:, :, neighbors, :]                                  # [B, heads, L, K, dim]
+        scores = (query.unsqueeze(3) * gathered).sum(-1)
+        return scores + rpb[None, :, :, :].expand(query.shape[0], -1, -1, -1).gather(
+            3, biases[None, None].expand(query.shape[0], rpb.shape[0], length, kernel)
+        ) if rpb.dim() == 3 else scores + rpb[:, biases][None]
+
+    def av1d(attn, value, kernel, dilation):
+        length = value.shape[2]
+        neighbors, _ = tables(length, kernel, dilation, value.device)
+        gathered = value[:, :, neighbors, :]
+        return (attn.unsqueeze(-1) * gathered).sum(3)
+
+    def qkrpb2d(query, key, rpb, kernel, dilation):
+        # query/key: [B, heads, rows, columns, dim]
+        rows, columns = query.shape[2], query.shape[3]
+        row_neighbors, row_biases = tables(rows, kernel, dilation, query.device)
+        column_neighbors, column_biases = tables(columns, kernel, dilation, query.device)
+        gathered = key[:, :, row_neighbors, :, :][:, :, :, :, column_neighbors, :]
+        # [B, heads, rows, K, columns, K, dim] -> [B, heads, rows, columns, K, K, dim]
+        gathered = gathered.permute(0, 1, 2, 4, 3, 5, 6)
+        scores = (query[:, :, :, :, None, None, :] * gathered).sum(-1)
+        bias = rpb[:, row_biases[:, :, None, None], column_biases[None, None, :, :]]
+        bias = bias.permute(0, 1, 3, 2, 4)[None]                            # [1, heads, rows, columns, K, K]
+        return (scores + bias).reshape(*scores.shape[:4], kernel * kernel)
+
+    def av2d(attn, value, kernel, dilation):
+        rows, columns = value.shape[2], value.shape[3]
+        row_neighbors, _ = tables(rows, kernel, dilation, value.device)
+        column_neighbors, _ = tables(columns, kernel, dilation, value.device)
+        gathered = value[:, :, row_neighbors, :, :][:, :, :, :, column_neighbors, :]
+        gathered = gathered.permute(0, 1, 2, 4, 3, 5, 6).reshape(*value.shape[:4], kernel * kernel, -1)
+        return (attn.unsqueeze(-1) * gathered).sum(4)
+
+    module = types.ModuleType("natten.functional")
+    module.natten1dqkrpb = qkrpb1d
+    module.natten1dav = av1d
+    module.natten2dqkrpb = qkrpb2d
+    module.natten2dav = av2d
+    return module
+
+
+def _allin1_install_natten_shim(module):
+    """Puts the stand-in where All-In-One's `dinat.py` looks for it. Installed only after the check
+    above has read the real NATTEN, which this replaces."""
+    import types
+    package = types.ModuleType("natten")
+    package.functional = module
+    sys.modules["natten"] = package
+    sys.modules["natten.functional"] = module
+
+
+def _allin1_check_natten(shim):
+    """Checks the stand-in's neighbor selection against the installed NATTEN kernel, with the bias
+    zeroed. A mismatch means the edge rule moved and the record would be worthless."""
+    try:
+        from natten.backends import na1d_flex, na2d_flex
+    except ImportError:
+        print("NATTEN is not installed; the neighborhood attention stand-in is UNCHECKED")
+        return
+    torch.manual_seed(0)
+    kernel = 5
+    # The installed NATTEN runs this on torch's flex attention, which takes only power-of-two head
+    # dimensions. The head dimension does not enter the neighbor rule, so the check runs at 16 while
+    # the model itself runs at 12.
+    def na1d(q, k, v, kernel_size, dilation, scale):
+        return na1d_flex(q, k, v, kernel_size=(kernel_size,), stride=(1,), dilation=(dilation,),
+                         is_causal=(False,), scale=scale)
+
+    def na2d(q, k, v, kernel_size, dilation, scale):
+        return na2d_flex(q, k, v, kernel_size=(kernel_size, kernel_size), stride=(1, 1),
+                         dilation=(dilation, dilation), is_causal=(False, False), scale=scale)
+
+    for dilation in (1, 2, 4):
+        q = torch.randn(1, 41, 2, 16)                                       # [B, length, heads, dim]
+        k = torch.randn_like(q)
+        v = torch.randn_like(q)
+        reference = na1d(q, k, v, kernel_size=kernel, dilation=dilation, scale=1.0)
+        scores = shim.natten1dqkrpb(q.permute(0, 2, 1, 3), k.permute(0, 2, 1, 3),
+                                    torch.zeros(2, 2 * kernel - 1), kernel, dilation)
+        mine = shim.natten1dav(scores.softmax(-1), v.permute(0, 2, 1, 3), kernel, dilation)
+        difference = (mine.permute(0, 2, 1, 3) - reference).abs().max().item()
+        assert difference < 1e-4, f"1D neighborhood attention differs from NATTEN at dilation {dilation}: {difference}"
+    q = torch.randn(1, 5, 41, 2, 16)                                        # [B, rows, columns, heads, dim]
+    k, v = torch.randn_like(q), torch.randn_like(q)
+    reference = na2d(q, k, v, kernel_size=kernel, dilation=1, scale=1.0)
+    scores = shim.natten2dqkrpb(q.permute(0, 3, 1, 2, 4), k.permute(0, 3, 1, 2, 4),
+                                torch.zeros(2, 2 * kernel - 1, 2 * kernel - 1), kernel, 1)
+    mine = shim.natten2dav(scores.softmax(-1), v.permute(0, 3, 1, 2, 4), kernel, 1)
+    difference = (mine.permute(0, 2, 3, 1, 4) - reference).abs().max().item()
+    assert difference < 1e-4, f"2D neighborhood attention differs from NATTEN: {difference}"
+    print("the neighborhood attention stand-in matches NATTEN's own kernel")
+
+
+def allin1_stems(seconds=12.0, sample_rate=44100, seed=11):
+    """Four deterministic stems with a beat in them: a kick on every beat, a bass note per beat, a
+    chord bed, and a vocal-like tone that enters halfway, so the section head has a boundary to find."""
+    total = int(seconds * sample_rate)
+    t = np.arange(total, dtype=np.float32) / sample_rate
+    generator = np.random.default_rng(seed)
+    beat = 0.5                                                              # 120 BPM
+    phase = np.mod(t, beat)
+
+    kick = (np.exp(-phase * 40) * np.sin(2 * np.pi * 60 * phase)).astype(np.float32)
+    hat = (np.exp(-np.mod(t, beat / 2) * 200) * generator.standard_normal(total) * 0.3).astype(np.float32)
+    drums = 0.8 * kick + 0.2 * hat
+    bass = (np.exp(-phase * 6) * np.sin(2 * np.pi * 55 * t)).astype(np.float32)
+    other = sum(0.2 * np.sin(2 * np.pi * f * t) for f in (220.0, 277.2, 330.0)).astype(np.float32)
+    vocals = np.where(t > seconds / 2, 0.4 * np.sin(2 * np.pi * (440 + 20 * np.sin(2 * np.pi * 5 * t)) * t), 0)
+
+    stems = [bass, drums, other, vocals.astype(np.float32)]                 # the model's own order
+    return [np.ascontiguousarray(s / max(1e-6, np.abs(s).max()) * 0.8, dtype=np.float32) for s in stems]
+
+
+def run_allin1_training(image):
+    """All-In-One's training path, from the authors' own sources, in three parts.
+
+    `IK_ALLIN1_SRC` is the vendored package (config.py, models/, and training/ from
+    mir-aidj/all-in-one at 18e7890) and `IK_TIMM_OPTIM_SRC` holds timm 0.9.16's `radam.py`.
+
+    Targets: a fixed annotation (beats, downbeats, section boundaries and labels) over 500 frames
+    goes through `training/data/eventconverters` and `widen_temporal_events` as `DatasetBase`
+    applies them. Loss: `AllInOneTrainer.compute_losses`, taken from `trainer.py` as written and
+    run on seeded logits against those targets with `Config`'s default weights, without importing
+    the Lightning, timm, and madmom modules the rest of the file needs. Optimizer: twelve steps of
+    timm's `RAdam` at the configuration's rate and weight decay over a weight in the decay group and
+    a bias outside it, as `param_groups_weight_decay` splits them, from recorded gradients.
+    """
+    import ast
+    import importlib.util
+    import os
+    import types
+
+    source = os.environ.get("IK_ALLIN1_SRC", ".")
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    # config.py registers itself with hydra's ConfigStore, which the oracle does not need.
+    for name in ["hydra", "hydra.core", "hydra.core.config_store"]:
+        sys.modules.setdefault(name, types.ModuleType(name))
+    class _Store:
+        @staticmethod
+        def instance():
+            return _Store()
+        def store(self, *args, **kwargs):
+            pass
+    sys.modules["hydra.core.config_store"].ConfigStore = _Store
+    config = load("allin1_training_config", os.path.join(source, "config.py"))
+    cfg = config.Config()
+    labels = list(config.HARMONIX_LABELS)
+
+    utils = load("allin1_training_utils", os.path.join(source, "training", "data", "utils.py"))
+    converters = load("allin1_training_converters",
+                      os.path.join(source, "training", "data", "eventconverters", "eventconverters.py"))
+
+    frames = 500
+    # Every time is exact in float32, because the record stores floats that way: 1.23 lands on frame
+    # 122 in float64 and on 123 once rounded to float32. The fractions still fall between samples and
+    # between frames, so the truncation and the floor division are both exercised.
+    beat_times = np.array([0.0, 0.50390625, 1.0, 1.4990234375, 2.0, 2.5, 3.0078125, 3.5, 4.0, 4.5,
+                           4.998046875, 5.0])
+    downbeat_times = np.array([0.0, 2.0, 4.0])
+    section_times = np.array([0.0, 1.228515625, 3.0703125, 4.955078125])
+    section_labels = ["start", "intro", "verse", "chorus", "end"]
+    common = dict(segment_frames=frames, sr=cfg.sample_rate, hop=cfg.hop_size)
+    beat = converters.BeatConverter(beat_times, **common)
+    downbeat = converters.DownbeatConverter(downbeat_times, **common)
+    section = converters.SectionConverter(section_times, section_labels, labels, beat_times, **common)
+    true_beat = beat.of_frames(encode=True)
+    true_downbeat = downbeat.of_frames(encode=True)
+    true_section = section.of_frames(encode=True, return_labels=False)
+    true_function = section.of_frames(encode=True, return_labels=True)
+    widen_beat = utils.widen_temporal_events(true_beat, num_neighbors=1)
+    widen_downbeat = utils.widen_temporal_events(true_downbeat, num_neighbors=1)
+    widen_section = utils.widen_temporal_events(true_section, num_neighbors=2)
+
+    trainer_path = os.path.join(source, "training", "trainer.py")
+    tree = ast.parse(open(trainer_path).read())
+    trainer_class = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AllInOneTrainer")
+    method = next(node for node in trainer_class.body if isinstance(node, ast.FunctionDef) and node.name == "compute_losses")
+    namespace = {"F": torch.nn.functional, "torch": torch, "Dict": dict, "AllInOneOutput": object,
+                 "prefix_dict": lambda d, p: {p + k: v for k, v in d.items()}}
+    exec(compile(ast.Module(body=[method], type_ignores=[]), trainer_path, "exec"), namespace)
+    compute_losses = namespace["compute_losses"]
+
+    generator = torch.Generator().manual_seed(17)
+    outputs = types.SimpleNamespace(
+        logits_beat=torch.randn(1, frames, generator=generator) * 2,
+        logits_downbeat=torch.randn(1, frames, generator=generator) * 2,
+        logits_section=torch.randn(1, frames, generator=generator) * 2,
+        logits_function=torch.randn(1, len(labels), frames, generator=generator) * 2)
+    batch = {"widen_true_beat": torch.from_numpy(widen_beat).unsqueeze(0).float(),
+             "widen_true_downbeat": torch.from_numpy(widen_downbeat).unsqueeze(0).float(),
+             "widen_true_section": torch.from_numpy(widen_section).unsqueeze(0).float(),
+             "true_function": torch.from_numpy(np.asarray(true_function)).unsqueeze(0).long(),
+             "mask": torch.ones(1, frames)}
+    losses = compute_losses(types.SimpleNamespace(cfg=cfg), outputs, batch)
+
+    radam = load("timm_radam", os.path.join(os.environ["IK_TIMM_OPTIM_SRC"], "radam.py"))
+    weight = torch.nn.Parameter(torch.randn(3, 4, generator=generator))
+    bias = torch.nn.Parameter(torch.randn(4, generator=generator))
+    optimizer = radam.RAdam([{"params": [bias], "weight_decay": 0.0},
+                             {"params": [weight], "weight_decay": cfg.weight_decay}], lr=cfg.lr)
+    extra = {"radam_weight_start": weight.detach().clone(), "radam_bias_start": bias.detach().clone(),
+             "radam_rate": torch.tensor([cfg.lr]), "radam_weight_decay": torch.tensor([cfg.weight_decay])}
+    for step in range(12):
+        weight.grad = torch.randn(3, 4, generator=generator)
+        bias.grad = torch.randn(4, generator=generator)
+        extra[f"radam_weight_grad_{step}"] = weight.grad.clone()
+        extra[f"radam_bias_grad_{step}"] = bias.grad.clone()
+        optimizer.step()
+        extra[f"radam_weight_{step}"] = weight.detach().clone()
+        extra[f"radam_bias_{step}"] = bias.detach().clone()
+
+    extra.update({
+        "beat_times": torch.from_numpy(beat_times).float(),
+        "downbeat_times": torch.from_numpy(downbeat_times).float(),
+        "section_times": torch.from_numpy(section_times).float(),
+        "section_labels": torch.tensor([labels.index(label) for label in section_labels], dtype=torch.int32),
+        "widen_true_beat": batch["widen_true_beat"][0],
+        "widen_true_downbeat": batch["widen_true_downbeat"][0],
+        "widen_true_section": batch["widen_true_section"][0],
+        "true_function": batch["true_function"][0].to(torch.int32),
+        "logits_beat": outputs.logits_beat[0], "logits_downbeat": outputs.logits_downbeat[0],
+        "logits_section": outputs.logits_section[0], "logits_function": outputs.logits_function[0],
+        "loss_beat": losses["loss_beat"].reshape(1), "loss_downbeat": losses["loss_downbeat"].reshape(1),
+        "loss_section": losses["loss_section"].reshape(1), "loss_function": losses["loss_function"].reshape(1),
+    })
+    globals()["_extra"] = {key: value.contiguous() for key, value in extra.items()}
+    return losses["loss"].reshape(1).contiguous()
+
+def run_allin1(image, checkpoint):
+    """All-In-One music structure analysis (mir-aidj/all-in-one) over four deterministic stems.
+
+    `--checkpoint` is a released `.pth` (`taejunkim/allinone`). Set IK_ALLIN1_SRC to the directory
+    holding the vendored `models/` and `postprocessing/` sources. Records the madmom spectrograms,
+    the embedding, every block's output, the four logits, and the sections and beats the reference's
+    own post-processing reads from them. Runs under the `allin1` oracle environment.
+    """
+    import os
+    import types
+
+    shim = _allin1_natten_shim()
+    _allin1_check_natten(shim)
+    _allin1_install_natten_shim(shim)
+
+    source = os.environ.get("IK_ALLIN1_SRC", ".")
+    sys.path.insert(0, source)
+    from omegaconf import OmegaConf
+    # `allinone.py` reaches for its package's config and typings modules; the checkpoint carries the
+    # config, and the output type is a plain container, so both are supplied rather than imported.
+    package = types.ModuleType("allin1_ref")
+    package.__path__ = [source]
+    sys.modules["allin1_ref"] = package
+    config_module = types.ModuleType("allin1_ref.config")
+    config_module.Config = object
+    config_module.HARMONIX_LABELS = ["start", "end", "intro", "outro", "break", "bridge", "inst",
+                                     "solo", "verse", "chorus"]
+    typings_module = types.ModuleType("allin1_ref.typings")
+
+    class AllInOneOutput(dict):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.__dict__.update(kwargs)
+
+    class Segment:
+        def __init__(self, start, end, label):
+            self.start, self.end, self.label = start, end, label
+
+    typings_module.AllInOneOutput = AllInOneOutput
+    typings_module.Segment = Segment
+    sys.modules["allin1_ref.config"] = config_module
+    sys.modules["allin1_ref.typings"] = typings_module
+
+    import importlib.util
+
+    def load(name, path):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(source, path))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    package.config = config_module
+    package.typings = typings_module
+    load("allin1_ref.models", os.path.join("models", "__init__.py")) if False else None
+    models_package = types.ModuleType("allin1_ref.models")
+    models_package.__path__ = [os.path.join(source, "models")]
+    sys.modules["allin1_ref.models"] = models_package
+    load("allin1_ref.models.utils", os.path.join("models", "utils.py"))
+    load("allin1_ref.models.dinat", os.path.join("models", "dinat.py"))
+    allinone = load("allin1_ref.models.allinone", os.path.join("models", "allinone.py"))
+
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    cfg = OmegaConf.create(state["config"])
+    model = allinone.AllInOne(cfg).eval()
+    model.load_state_dict(state["state_dict"])
+
+    # The front end is madmom's, exactly as the reference's preprocessing builds it.
+    from madmom.audio.signal import FramedSignalProcessor, Signal
+    from madmom.audio.stft import ShortTimeFourierTransformProcessor
+    from madmom.processors import SequentialProcessor
+    from madmom.audio.spectrogram import FilteredSpectrogramProcessor, LogarithmicSpectrogramProcessor
+
+    processor = SequentialProcessor([
+        FramedSignalProcessor(frame_size=cfg.window_size, fps=cfg.fps),
+        ShortTimeFourierTransformProcessor(),
+        FilteredSpectrogramProcessor(num_bands=cfg.num_bands, fmin=cfg.fmin, fmax=cfg.fmax, norm_filters=True),
+        LogarithmicSpectrogramProcessor(mul=1, add=1),
+    ])
+    stems = allin1_stems()
+    spectrograms = np.stack([np.asarray(processor(Signal(stem, sample_rate=cfg.sample_rate, num_channels=1)))
+                             for stem in stems])                            # [instruments, frames, bands]
+
+    seams = {}
+    handles = [model.embeddings.register_forward_hook(
+        lambda _m, _i, o: seams.__setitem__("embeddings", o))]
+    for index, layer in enumerate(model.encoder.layers):
+        handles.append(layer.register_forward_hook(
+            lambda _m, _i, o, index=index: seams.__setitem__(f"block{index}", o[0])))
+
+    with torch.no_grad():
+        logits = model(torch.from_numpy(spectrograms).unsqueeze(0))
+    for handle in handles:
+        handle.remove()
+
+    functional = load("allin1_ref.postprocessing.helpers", os.path.join("postprocessing", "helpers.py"))
+    sys.modules["allin1_ref.postprocessing"] = types.ModuleType("allin1_ref.postprocessing")
+    sys.modules["allin1_ref.postprocessing"].__path__ = [os.path.join(source, "postprocessing")]
+    sections_module = load("allin1_ref.postprocessing.functional", os.path.join("postprocessing", "functional.py"))
+    metrical_module = load("allin1_ref.postprocessing.metrical", os.path.join("postprocessing", "metrical.py"))
+
+    sections = sections_module.postprocess_functional_structure(logits, cfg)
+    metrical = metrical_module.postprocess_metrical_structure(logits, cfg)
+
+    # The decoded path itself, so a beat that lands one frame off can be traced to the state it came
+    # from rather than guessed at. This repeats the reference's own activation assembly.
+    beat_probability = torch.sigmoid(logits.logits_beat[0])
+    downbeat_probability = torch.sigmoid(logits.logits_downbeat[0])
+    off_beat = torch.maximum(torch.tensor(1e-8), beat_probability - downbeat_probability)
+    neither = ((1 - beat_probability) + (1 - downbeat_probability)) / 2
+    combined = torch.stack([off_beat, downbeat_probability, neither], dim=-1)
+    combined = (combined / combined.sum(-1, keepdim=True)).numpy()
+    from madmom.features.downbeats import DBNDownBeatTrackingProcessor
+    processor = DBNDownBeatTrackingProcessor(beats_per_bar=[3, 4], threshold=None, fps=cfg.fps)
+    paths = []
+    for hmm in processor.hmms:
+        path, probability = hmm.viterbi(combined[:, :2].astype(np.float32))
+        paths.append((probability, hmm.transition_model.state_space.state_positions[path],
+                      hmm.observation_model.pointers[path]))
+    best_path = max(paths, key=lambda item: item[0])
+    labels = config_module.HARMONIX_LABELS
+    section_rows = np.array([[s.start, s.end, labels.index(s.label)] for s in sections], dtype=np.float32).reshape(-1, 3)
+    beat_rows = np.array([[time, position] for time, position
+                          in zip(metrical["beats"], metrical["beat_positions"])], dtype=np.float32).reshape(-1, 2)
+
+    globals()["_extra"] = {
+        "stems": torch.from_numpy(np.stack(stems)),
+        "spectrograms": torch.from_numpy(spectrograms),
+        "embeddings": seams["embeddings"].contiguous(),
+        "block0": seams["block0"].contiguous(),
+        "block5": seams["block5"].contiguous(),
+        "block10": seams["block10"].contiguous(),
+        "logits_beat": logits.logits_beat.contiguous(),
+        "logits_downbeat": logits.logits_downbeat.contiguous(),
+        "logits_function": logits.logits_function.contiguous(),
+        "sections": torch.from_numpy(section_rows),
+        "beats": torch.from_numpy(beat_rows),
+        "dbn_activations": torch.from_numpy(combined.astype(np.float32)),
+        "dbn_positions": torch.from_numpy(best_path[1].astype(np.float32)),
+        "dbn_pointers": torch.from_numpy(best_path[2].astype(np.int32)),
+        "dbn_probability": torch.tensor([float(best_path[0])]),
+    }
+    return logits.logits_section.contiguous()
+
+
+def run_gemma4_shared_kv(image):
+    """The Gemma 4 decoder with keys and values SHARED on its full-attention layers
+    (`attention_k_eq_v`), at a tiny random configuration, from transformers' own Gemma4ForCausalLM.
+
+    The 26B-A4B, the 12B unified, and the 31B releases all set the flag, and none of them fits this
+    machine. Two behaviors ride on it, and neither one appears in a release that leaves it off: a
+    full-attention layer carries no `v_proj` and takes its value from the key projection, read
+    BEFORE the key norm and the rotary; and a full-attention layer runs
+    `num_global_key_value_heads` in place of `num_key_value_heads`. The two counts are set apart
+    here (2 sliding, 1 full) so that a net ignoring the override builds the wrong shape rather than
+    the right one by coincidence. Every hidden state is recorded so a divergence lands on a layer.
+    """
+    from transformers import Gemma4TextConfig
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4ForCausalLM
+
+    config = Gemma4TextConfig(
+        hidden_size=64, num_hidden_layers=2, vocab_size=131, num_attention_heads=4,
+        num_key_value_heads=2, num_global_key_value_heads=1, attention_k_eq_v=True,
+        head_dim=16, global_head_dim=32, intermediate_size=96,
+        hidden_size_per_layer_input=0, vocab_size_per_layer_input=131,
+        num_kv_shared_layers=0, sliding_window=64,
+        layer_types=["sliding_attention", "full_attention"], rms_norm_eps=1e-6,
+        max_position_embeddings=64, tie_word_embeddings=True,
+        hidden_activation="gelu_pytorch_tanh", final_logit_softcapping=None)
+    model = _randomized(Gemma4ForCausalLM(config), seed=23)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 12, 5]], dtype=torch.long)
+    with torch.no_grad():
+        out = model(tokens, output_hidden_states=True)
+    extra = {"tokens": tokens[0].to(torch.int32).contiguous()}
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    # The full-attention layer has no v_proj to save, which is what the record has to show.
+    for key, value in model.state_dict().items():
+        if key == "lm_head.weight":
+            continue
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def muscriptor_clip(seconds=1.0, sample_rate=16000, seed=17):
+    """A deterministic clip of struck notes.
+
+    The clip opens with silence and each note has a hard attack and a decay, so the model has ONSETS
+    to transcribe. A tone that is already sounding at t=0 reads as sustained from before the window,
+    which the model reports as a tie section with no note-on events — true to the audio, and a
+    degenerate thing to measure a decoder against."""
+    total = int(seconds * sample_rate)
+    t = np.arange(total, dtype=np.float32) / sample_rate
+    generator = np.random.default_rng(seed)
+
+    def struck(frequency, onset, decay=2.5):
+        since = t - onset
+        envelope = np.where(since >= 0, np.exp(-np.maximum(since, 0) * decay), 0.0)
+        partials = sum((0.6 ** k) * np.sin(2 * np.pi * frequency * (k + 1) * t) for k in range(3))
+        return (envelope * partials).astype(np.float32)
+
+    # A C major triad struck together, then a melody note, then the triad again.
+    wave = struck(261.63, 0.25) + struck(329.63, 0.25) + struck(392.0, 0.25)
+    if seconds > 1.5:
+        wave = wave + struck(523.25, 1.6) + struck(261.63, 3.0) + struck(329.63, 3.0)
+    wave = wave + 0.002 * generator.standard_normal(total).astype(np.float32)
+    return np.ascontiguousarray(wave / np.abs(wave).max() * 0.8, dtype=np.float32)
+
+
+def run_muscriptor(image):
+    """MuScriptor (muscriptor/muscriptor) at a TINY random configuration, seam by seam.
+
+    The released weights are CC BY-NC 4.0 behind a gated repository, and the inference code is MIT
+    with the released geometry in it, so the architecture is measured here the way the SD3 and FLUX
+    transformers were: a small random model, built by the reference's own `_build_model`, whose
+    weights ride in the record under `w::` so both sides run identical parameters.
+
+    Records the mel magnitudes, the log mel, the conditioning prefix with and without an instrument
+    class, the prefill logits, and a short greedy continuation. Runs under the `muscriptor` oracle
+    environment. `image` unused.
+    """
+    import torch as _torch
+    from muscriptor.transcription_model import _build_model, _ModelConfig, _SAMPLE_RATE
+    from muscriptor.modules.conditioners import WavCondition
+
+    _torch.manual_seed(20260921)
+    cfg = _ModelConfig(dim=64, num_heads=4, num_layers=2, card=1395)
+    model = _build_model(_torch.device("cpu"), cfg).eval()
+
+    wave = muscriptor_clip()
+    wav = _torch.from_numpy(wave).view(1, 1, -1)
+    condition = WavCondition(wav=wav, length=_torch.tensor([wav.shape[-1]]),
+                             sample_rate=[_SAMPLE_RATE], path=[None], seek_time=[None])
+
+    conditioners = model.condition_provider.conditioners
+    mel_conditioner = conditioners["self_wav"]
+    with _torch.no_grad():
+        mel = mel_conditioner.mel_spec_transform(wav)                        # [1, 1, mels, frames]
+        log_mel = _torch.log(mel.squeeze(1).transpose(1, 2) + mel_conditioner.eps)
+        mel_embed, _ = mel_conditioner(condition)
+
+        # The prefix the LM actually sees. The provider's dict orders the class conditions first and
+        # the wav last, and `forward` PREPENDS each in turn, so the wav ends up first.
+        instrument = conditioners["instrument_group"]
+        dataset = conditioners["dataset_name"]
+        unspecified = instrument(instrument.tokenize([None]))[0]
+        dataset_embed = dataset(dataset.tokenize([None]))[0]
+        specified = instrument(instrument.tokenize(["5"]))[0]
+
+        tokens = _torch.tensor([[model.initial_token_id]], dtype=_torch.long)
+        condition_tensors = {
+            "instrument_group": (unspecified, _torch.ones(unspecified.shape[:2])),
+            "dataset_name": (dataset_embed, _torch.ones(dataset_embed.shape[:2])),
+            "self_wav": (mel_embed, _torch.ones(mel_embed.shape[:2])),
+        }
+        logits = model(tokens, condition_tensors, first_step=True, model_state=None)
+
+        # A short greedy continuation, recomputed from scratch each step so the record does not
+        # depend on the reference's KV cache.
+        sequence = tokens
+        generated = []
+        for _ in range(8):
+            step_logits = model(sequence, condition_tensors, first_step=True, model_state=None)
+            scores = step_logits[:, -1, :].float()
+            scores[:, 1393:] = -float("inf")
+            nxt = int(scores.argmax(dim=-1)[0])
+            generated.append(nxt)
+            sequence = _torch.cat([sequence, _torch.tensor([[nxt]], dtype=_torch.long)], dim=1)
+
+    extra = {
+        "audio": _torch.from_numpy(wave),
+        "mel": mel.squeeze(0).squeeze(0).contiguous(),                        # [mels, frames]
+        "log_mel": log_mel[0].contiguous(),                                   # [frames, mels]
+        "mel_embed": mel_embed[0].contiguous(),                               # [frames, dim]
+        "instrument_unspecified": unspecified[0].contiguous(),
+        "instrument_specified": specified[0].contiguous(),
+        "dataset_embed": dataset_embed[0].contiguous(),
+        "tokens": _torch.tensor(generated, dtype=_torch.int32),
+    }
+    for name, tensor in model.state_dict().items():
+        extra["w::" + name] = tensor.contiguous().float()
+    globals()["_extra"] = extra
+    return logits[0].contiguous()
+
+
+def run_muscriptor_real(image, checkpoint):
+    """MuScriptor on the RELEASED weights, seam by seam.
+
+    `--checkpoint` is a downloaded release directory (`config.json` + `model.safetensors`) or the
+    safetensors itself beside its config. The weights are CC BY-NC 4.0 behind a gated repository, so
+    this mode runs only where a token has accepted the license; the tiny-configuration mode measures
+    the architecture without them.
+
+    Records the mel, the conditioning prefix, the prefill logits, and a greedy continuation long
+    enough to contain note events. Runs under the `muscriptor` oracle environment.
+    """
+    import json
+    import os
+    import torch as _torch
+    from pathlib import Path
+    from muscriptor.transcription_model import (
+        _build_model, _ModelConfig, _SAMPLE_RATE, _remap_single_codebook_keys,
+    )
+    from muscriptor.modules.conditioners import WavCondition
+    from safetensors.torch import load_file
+
+    path = Path(checkpoint)
+    directory = path if path.is_dir() else path.parent
+    weights = path if path.is_file() else directory / "model.safetensors"
+    config = json.loads((directory / "config.json").read_text())
+    cfg = _ModelConfig(dim=config["dim"], num_heads=config["num_heads"],
+                       num_layers=config["num_layers"], card=config["card"])
+
+    model = _build_model(_torch.device("cpu"), cfg).eval()
+    # The release stores the embedding and the head as the first entry of a module list, which the
+    # reference's own loader flattens before it loads.
+    state = _remap_single_codebook_keys(load_file(str(weights)))
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    # The mel window and filterbank are buffers the release carries; anything else missing is a
+    # mismatch worth failing on rather than measuring around.
+    assert not unexpected, f"unexpected keys in the release: {sorted(unexpected)[:5]}"
+    assert not missing, f"the release does not fill: {sorted(missing)[:5]}"
+
+    wave = muscriptor_clip(seconds=5.0)
+    wav = _torch.from_numpy(wave).view(1, 1, -1)
+    condition = WavCondition(wav=wav, length=_torch.tensor([wav.shape[-1]]),
+                             sample_rate=[_SAMPLE_RATE], path=[None], seek_time=[None])
+
+    conditioners = model.condition_provider.conditioners
+    mel_conditioner = conditioners["self_wav"]
+    with _torch.no_grad():
+        mel = mel_conditioner.mel_spec_transform(wav)
+        mel_embed, _ = mel_conditioner(condition)
+        instrument = conditioners["instrument_group"]
+        dataset = conditioners["dataset_name"]
+        instrument_embed = instrument(instrument.tokenize([None]))[0]
+        dataset_embed = dataset(dataset.tokenize([None]))[0]
+        condition_tensors = {
+            "instrument_group": (instrument_embed, _torch.ones(instrument_embed.shape[:2])),
+            "dataset_name": (dataset_embed, _torch.ones(dataset_embed.shape[:2])),
+            "self_wav": (mel_embed, _torch.ones(mel_embed.shape[:2])),
+        }
+
+        tokens = _torch.tensor([[model.initial_token_id]], dtype=_torch.long)
+        logits = model(tokens, condition_tensors, first_step=True, model_state=None)
+
+        sequence = tokens
+        generated = []
+        for _ in range(int(os.environ.get("IK_MUSCRIPTOR_STEPS", "24"))):
+            step_logits = model(sequence, condition_tensors, first_step=True, model_state=None)
+            scores = step_logits[:, -1, :].float()
+            scores[:, 1393:] = -float("inf")
+            nxt = int(scores.argmax(dim=-1)[0])
+            generated.append(nxt)
+            if nxt == 1:                                                  # EOS
+                break
+            sequence = _torch.cat([sequence, _torch.tensor([[nxt]], dtype=_torch.long)], dim=1)
+
+    # The reference's own decode state machine over those tokens, so the note path is compared and
+    # not only the token stream.
+    from muscriptor.events import ChunkBoundary, OpenNoteTracker, _StartNote, _EndNote, _DrumHit
+    from muscriptor.tokenizer.mt3 import MT3Tokenizer
+
+    tracker = OpenNoteTracker(MT3Tokenizer()._vocab, frame_rate=100)
+    actions = list(tracker.feed(ChunkBoundary(seek_time=0.0, next_seek_time=None)))
+    for token in generated:
+        if token == 1:
+            break
+        actions.extend(tracker.feed(token))
+    actions.extend(tracker.finish())
+
+    rows = []
+    for action in actions:
+        if isinstance(action, _StartNote):
+            rows.append([0, action.program, action.pitch, action.time])
+        elif isinstance(action, _EndNote):
+            rows.append([1, action.program, action.pitch, action.time])
+        elif isinstance(action, _DrumHit):
+            rows.append([2, 128, action.pitch, action.time])
+
+    globals()["_extra"] = {
+        "audio": _torch.from_numpy(wave),
+        "mel": mel.squeeze(0).squeeze(0).contiguous(),
+        "mel_embed": mel_embed[0].contiguous(),
+        "prefix": _torch.cat([mel_embed, dataset_embed, instrument_embed], dim=1)[0].contiguous(),
+        "tokens": _torch.tensor(generated, dtype=_torch.int32),
+        "note_actions": _torch.tensor(rows, dtype=_torch.float32).reshape(-1, 4),
+    }
+    return logits[0].contiguous()
+
+
+def run_hft(image, checkpoint):
+    """hFT-Transformer (sony/hFT-Transformer, MIT) on the released MAESTRO weights, seam by seam.
+
+    `--checkpoint` is the released `model_016_003.pkl`. Set IK_HFT_SRC to a directory holding
+    `model/model_spec2midi.py` and `model/amt.py`: the release is a plain pickle of the live module,
+    so its classes must be importable, and it was saved on CUDA, so the nested storage load is
+    patched onto the CPU.
+
+    Records the log-mel feature, the first segment's input, the encoder output, both output levels
+    with the decoder's note-to-frequency attention, the stitched posteriorgrams, and the notes the
+    reference's own `mpe2note` reads from them. Runs under the `hft` oracle environment.
+    """
+    import io
+    import json
+    import os
+    import pickle
+    import sys
+    import tempfile
+    import wave
+
+    import torch as _torch
+    import torch.storage as _torch_storage
+
+    source = os.environ.get("IK_HFT_SRC", ".")
+    sys.path.insert(0, source)
+    _torch_storage._load_from_bytes = lambda data: _torch.load(io.BytesIO(data), map_location="cpu",
+                                                               weights_only=False)
+    # torchaudio 2.11 routes `load` through torchcodec, which is not installed here; the reference's
+    # feature code is unchanged, only the file read is substituted.
+    import torchaudio as _torchaudio
+
+    def _load_wav(path, *args, **kwargs):
+        with wave.open(path, "rb") as handle:
+            frames = handle.readframes(handle.getnframes())
+            data = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
+            return _torch.from_numpy(data.copy()).unsqueeze(0), handle.getframerate()
+
+    _torchaudio.load = _load_wav
+    from model import amt as amt_module
+
+    config = {
+        "feature": {"sr": 16000, "hop_sample": 256, "mel_bins": 256, "n_bins": 256, "fft_bins": 2048,
+                    "window_length": 2048, "log_offset": 1e-8, "window": "hann", "pad_mode": "constant"},
+        "input": {"margin_b": 32, "margin_f": 32, "num_frame": 128,
+                  "min_value": float(np.log(1e-8))},
+        "midi": {"note_min": 21, "note_max": 108, "num_note": 88, "num_velocity": 128},
+    }
+
+    amt = amt_module.AMT(config, checkpoint, batch_size=1)
+    # The pickled module remembers the CUDA device it was trained on and builds its position indices
+    # there; the weights are already on the CPU, so only the recorded device needs correcting.
+    for part in (amt.model.encoder_spec2midi, amt.model.decoder_spec2midi):
+        part.device = "cpu"
+        for name in ("scale_freq", "scale_time"):
+            if hasattr(part, name):
+                setattr(part, name, getattr(part, name).cpu())
+
+    # A deterministic piano-like clip: struck notes with harmonics and decay, long enough to cross a
+    # segment boundary (4 seconds is 250 frames, so two 128-frame segments).
+    sample_rate = 16000
+    seconds = 4.0
+    total = int(seconds * sample_rate)
+    t = np.arange(total, dtype=np.float32) / sample_rate
+    generator = np.random.default_rng(23)
+
+    def struck(midi_pitch, onset, decay=3.0):
+        frequency = 440.0 * 2.0 ** ((midi_pitch - 69) / 12.0)
+        since = t - onset
+        envelope = np.where(since >= 0, np.exp(-np.maximum(since, 0) * decay), 0.0)
+        partials = sum((0.55 ** k) * np.sin(2 * np.pi * frequency * (k + 1) * t) for k in range(4))
+        return (envelope * partials).astype(np.float32)
+
+    wave_data = (struck(60, 0.2) + struck(64, 0.2) + struck(67, 0.2)
+                 + struck(72, 1.2) + struck(55, 2.1) + struck(60, 2.1) + struck(64, 3.0))
+    wave_data = wave_data + 0.001 * generator.standard_normal(total).astype(np.float32)
+    wave_data = np.ascontiguousarray(wave_data / np.abs(wave_data).max() * 0.85, dtype=np.float32)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as handle:
+        path = handle.name
+    with wave.open(path, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes((np.clip(wave_data, -1, 1) * 32767).astype("<i2").tobytes())
+
+    feature = np.array(amt.wav2feature(path), dtype=np.float32)
+    # The reference reads a 16-bit file, so the samples it actually saw are quantized. Recording the
+    # pre-quantization floats would make both sides run different audio and read as a front-end
+    # divergence of about 1e-5.
+    loaded, _ = _load_wav(path)
+    wave_data = loaded[0].numpy().astype(np.float32)
+    os.unlink(path)
+
+    # One segment through the model, the way `transcript` feeds it.
+    padded = np.concatenate([
+        np.full([config["input"]["margin_b"], config["feature"]["n_bins"]], config["input"]["min_value"], dtype=np.float32),
+        feature,
+        np.full([config["input"]["margin_f"] + 128, config["feature"]["n_bins"]], config["input"]["min_value"], dtype=np.float32),
+    ], axis=0)
+    segment = _torch.from_numpy(padded[0:32 + 128 + 32]).T.unsqueeze(0)
+
+    with _torch.no_grad():
+        encoded = amt.model.encoder_spec2midi(segment)
+        outputs = amt.model(segment)
+    (onset_f, offset_f, mpe_f, velocity_f, attention, onset_t, offset_t, mpe_t, velocity_t) = outputs
+
+    # The whole clip, then the notes the reference reads from it.
+    a_onset, a_offset, a_mpe, a_velocity, b_onset, b_offset, b_mpe, b_velocity = amt.transcript(feature)
+    notes = amt.mpe2note(a_onset=b_onset, a_offset=b_offset, a_mpe=b_mpe, a_velocity=b_velocity)
+    rows = np.array([[n["pitch"], n["onset"], n["offset"], n["velocity"]] for n in notes],
+                    dtype=np.float32).reshape(-1, 4)
+
+    globals()["_extra"] = {
+        "audio": _torch.from_numpy(wave_data),
+        "feature": _torch.from_numpy(feature),
+        "segment": segment[0].contiguous(),
+        "encoded": encoded[0].contiguous(),
+        "onset_freq": onset_f[0].contiguous(),
+        "offset_freq": offset_f[0].contiguous(),
+        "mpe_freq": mpe_f[0].contiguous(),
+        "velocity_freq": velocity_f[0].contiguous(),
+        "attention": attention[0].contiguous(),
+        "offset_time": offset_t[0].contiguous(),
+        "mpe_time": mpe_t[0].contiguous(),
+        "velocity_time": velocity_t[0].contiguous(),
+        "clip_onset": _torch.from_numpy(b_onset),
+        "clip_offset": _torch.from_numpy(b_offset),
+        "clip_mpe": _torch.from_numpy(b_mpe),
+        "clip_velocity": _torch.from_numpy(b_velocity.astype(np.int32)),
+        "notes": _torch.from_numpy(rows),
+    }
+    return onset_t[0].contiguous()
+
+
+def run_chatterbox_mtl_tokens(image, checkpoint):
+    """The multilingual Chatterbox TEXT layer: `MTLTokenizer` over the released
+    `grapheme_mtl_merged_expanded_v1.json`, recording the token ids for one line per language.
+
+    `--checkpoint` is the unpacked multilingual release directory. The reference reaches for an
+    OPTIONAL package for four languages and passes the text through unchanged when one is absent:
+    pykakasi for Japanese, spacy_pkuseg for Chinese segmentation, dicta_onnx for Hebrew, and
+    russian_text_stresser for Russian. The first two are installed in this environment and the last
+    two are not, so this record disables the first two explicitly: the port implements the fallback
+    path for all four, and a record taken with them active would measure a text layer the port does
+    not have. Chinese Cangjie encoding and Korean Jamo decomposition ARE ported and stay active.
+    Runs under the `chatterbox` oracle env.
+    """
+    import chatterbox.models.tokenizers.tokenizer as tk
+    from chatterbox.models.tokenizers import MTLTokenizer
+    from chatterbox.mtl_tts import punc_norm
+
+    tokenizer = MTLTokenizer(os.path.join(checkpoint, "grapheme_mtl_merged_expanded_v1.json"))
+    tokenizer.cangjie_converter.segmenter = None
+    tk.hiragana_normalize = lambda text: text
+
+    cases = [
+        ("en", "The quick brown fox jumps over the lazy dog."),
+        ("fr", "Le renard brun rapide saute par-dessus le chien paresseux."),
+        ("de", "Gr\u00f6\u00dfe und Wei\u00df, sagte er."),
+        ("es", "El veloz zorro marr\u00f3n salta sobre el perro perezoso."),
+        ("ru", "\u0411\u044b\u0441\u0442\u0440\u0430\u044f \u043b\u0438\u0441\u0430."),
+        ("he", "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd."),
+        ("ko", "\uc548\ub155\ud558\uc138\uc694 \uc138\uacc4."),
+        ("ja", "\u3053\u3093\u306b\u3061\u306f\u4e16\u754c\u3002"),
+        ("zh", "\u5feb\u901f\u7684\u68d5\u8272\u72d0\u72f8\u3002"),
+    ]
+    extra = {}
+    for language, text in cases:
+        ids = tokenizer.text_to_tokens(punc_norm(text), language_id=language)[0].tolist()
+        extra[f"tokens.{language}"] = torch.tensor(ids, dtype=torch.int32)
+        print(f"chatterbox mtl {language}: {len(ids)} tokens")
+    globals()["_extra"] = extra
+    return torch.tensor([float(len(cases))])
+
+
+def run_chatterbox_mtl_t3(image, checkpoint):
+    """The MULTILINGUAL T3 on the released `t3_mtl23ls_v3.safetensors`, teacher-forced so nothing is
+    sampled.
+
+    `--checkpoint` is the unpacked multilingual release directory. The network is the English T3's
+    graph at `T3Config.multilingual()`, whose only difference is the text embedding's width (2454
+    against 704), so this measures the release rather than the architecture. Recorded: the text tokens
+    the multilingual tokenizer produces, the conditioning the reference builds from the validation
+    clip (`speaker_emb`, `cond_tokens`, `cond_emb`), and the speech logits over a FIXED speech-token
+    sequence for both classifier-free-guidance rows (`tf_logits`). Runs under the `chatterbox` env.
+    """
+    import torch.nn.functional as F
+    from safetensors.torch import load_file
+    from chatterbox.models.t3 import T3
+    from chatterbox.models.t3.modules.t3_config import T3Config
+    from chatterbox.models.t3.modules.cond_enc import T3Cond
+    from chatterbox.models.tokenizers import MTLTokenizer
+    from chatterbox.models.voice_encoder import VoiceEncoder
+    from chatterbox.models.s3tokenizer import S3Tokenizer, S3_SR
+    from chatterbox.mtl_tts import punc_norm
+    import chatterbox.models.tokenizers.tokenizer as tk
+
+    directory = checkpoint
+    t3 = T3(T3Config.multilingual())
+    t3.load_state_dict(load_file(os.path.join(directory, "t3_mtl23ls_v3.safetensors")))
+    t3.eval()
+    ve = VoiceEncoder()
+    ve.load_state_dict(load_file(os.path.join(directory, "ve.safetensors")))
+    ve.eval()
+    s3gen_state = load_file(os.path.join(directory, "s3gen_v3.safetensors"))
+    speech_tokenizer = S3Tokenizer("speech_tokenizer_v2_25hz")
+    speech_tokenizer.load_state_dict(
+        {k[len("tokenizer."):]: v for k, v in s3gen_state.items() if k.startswith("tokenizer.")},
+        strict=False)
+    speech_tokenizer.eval()
+    del s3gen_state
+
+    text_tokenizer = MTLTokenizer(os.path.join(directory, "grapheme_mtl_merged_expanded_v1.json"))
+    text_tokenizer.cangjie_converter.segmenter = None
+    tk.hiragana_normalize = lambda text: text
+
+    wav24, wav16 = _chatterbox_reference_audio()
+    with torch.inference_mode():
+        ve_embed = torch.from_numpy(ve.embeds_from_wavs([wav16], sample_rate=S3_SR)).mean(axis=0, keepdim=True)
+        cond_tokens, _ = speech_tokenizer.forward([wav16[: 6 * S3_SR]], max_len=t3.hp.speech_cond_prompt_len)
+    cond_tokens = torch.atleast_2d(cond_tokens)
+    t3_cond = T3Cond(speaker_emb=ve_embed, cond_prompt_speech_tokens=cond_tokens,
+                     emotion_adv=0.5 * torch.ones(1, 1, 1))
+
+    text = punc_norm("The quick brown fox jumps over the lazy dog.")
+    text_tokens = text_tokenizer.text_to_tokens(text, language_id="en")
+    text_tokens = torch.cat([text_tokens, text_tokens], dim=0)
+    text_tokens = F.pad(text_tokens, (1, 0), value=t3.hp.start_text_token)
+    text_tokens = F.pad(text_tokens, (0, 1), value=t3.hp.stop_text_token).long()
+
+    # A fixed speech prefix, so the seam is teacher-forced and carries no sampling.
+    forced = torch.tensor([[t3.hp.start_speech_token, 137, 2048, 511, 4096]], dtype=torch.long)
+    forced = torch.cat([forced, forced], dim=0)
+    with torch.inference_mode():
+        cond_emb = t3.prepare_conditioning(t3_cond)
+        embeds, _ = t3.prepare_input_embeds(t3_cond=t3_cond, text_tokens=text_tokens,
+                                            speech_tokens=forced, cfg_weight=0.5)
+        out = t3.tfmr(inputs_embeds=embeds, output_hidden_states=True)
+        logits = t3.speech_head(out.hidden_states[-1])
+
+    globals()["_extra"] = {
+        "text_tokens": text_tokens[0].to(torch.int32).contiguous(),
+        "speaker_emb": ve_embed[0].float().contiguous(),
+        "cond_tokens": cond_tokens[0].to(torch.int32).contiguous(),
+        "cond_emb": cond_emb[0].float().contiguous(),
+        "forced": forced[0].to(torch.int32).contiguous(),
+    }
+    print(f"chatterbox mtl t3: {text_tokens.shape[1]} text tokens, cond {cond_emb.shape[1]}, "
+          f"logits {tuple(logits.shape)}")
+    return logits.float().contiguous()
+
+
+def run_rf_detr_seg(image, checkpoint):
+    """RF-DETR INSTANCE SEGMENTATION on released weights, from transformers'
+    `RfDetrForInstanceSegmentation` and its image processor.
+
+    `--checkpoint` is a `Roboflow/rf-detr-seg-*` snapshot directory. The detector underneath is the
+    one already at parity here, so this measures the mask head: the projector's output resampled to a
+    quarter of the input, one ConvNeXt-style block per decoder layer, and that layer's queries
+    projected and multiplied against the block's output. Records the preprocessed pixel values (so the
+    port runs on the identical input), the projector output the head reads, every decoder layer's
+    queries, and the masks of every layer. The reference's prediction is the last layer's.
+    Runs under the `rfdetr` oracle env.
+    """
+    from transformers import RfDetrForInstanceSegmentation, AutoImageProcessor
+    from PIL import Image
+
+    model = RfDetrForInstanceSegmentation.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = AutoImageProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype(np.uint8)) if image.dtype != np.uint8 else Image.fromarray(image)
+    pixel_values = processor(images=pil, return_tensors="pt")["pixel_values"]
+
+    with torch.no_grad():
+        base = model.model.model(pixel_values)
+        image_size = pixel_values.shape[-2:]
+        masks = model.segmentation_head(base.backbone_features, base.intermediate_hidden_states, image_size)
+        out = model(pixel_values)
+
+    extra = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),
+        "proj": base.backbone_features[0].permute(1, 2, 0).contiguous(),
+        "pred_boxes": out.pred_boxes[0].contiguous(),
+        "logits": out.logits[0].contiguous(),
+    }
+    for layer, queries in enumerate(base.intermediate_hidden_states):
+        extra[f"queries.{layer}"] = queries[0].contiguous()
+    for layer, layer_masks in enumerate(masks):
+        extra[f"masks.{layer}"] = layer_masks[0].clone().contiguous()
+    globals()["_extra"] = extra
+    print(f"rf-detr seg: pixels {tuple(pixel_values.shape)}, proj {tuple(base.backbone_features.shape)}, "
+          f"{len(masks)} layers, masks {tuple(masks[-1].shape)}")
+    return masks[-1][0].contiguous()
+
+
+def run_chronos(image):
+    """Amazon Chronos-Bolt (amazon/chronos-bolt-base, Apache-2.0) time-series forecaster: a patched T5
+    encoder-decoder emitting quantile forecasts. Loads from the Hub (no --checkpoint). Records the
+    instance-norm scale, the patched input embeddings, the encoder and (1-token) decoder outputs, and
+    the quantile forecast before and after un-scaling."""
+    from chronos import BaseChronosPipeline
+    pipe = BaseChronosPipeline.from_pretrained("amazon/chronos-bolt-base", device_map="cpu", torch_dtype=torch.float32)
+    m = pipe.model.eval()
+    torch.manual_seed(0)
+    n = 512
+    t = torch.arange(n, dtype=torch.float32)
+    ctx = (0.01 * t + torch.sin(2 * torch.pi * t / 24) + 0.3 * torch.sin(2 * torch.pi * t / 168)
+           + 0.1 * torch.randn(n)).unsqueeze(0)                                  # [1, 512]
+    with torch.no_grad():
+        hidden, loc_scale, input_embeds, attention_mask = m.encode(context=ctx)
+        seq = m.decode(input_embeds, attention_mask, hidden)                     # [1, 1, d_model]
+        pl, nq = m.chronos_config.prediction_length, m.num_quantiles
+        qp_scaled = m.output_patch_embedding(seq).view(1, nq, pl)
+        qp = m.instance_norm.inverse(qp_scaled.view(1, -1), loc_scale).view(1, nq, pl)
+        preds = m(context=ctx).quantile_preds                                    # [1, 9, 64]
+    loc, scale = loc_scale
+    globals()["_extra"] = {
+        "context": ctx[0].contiguous(),                       # [512]
+        "loc": loc.reshape(-1).contiguous(),                  # [1]
+        "scale": scale.reshape(-1).contiguous(),              # [1]
+        "input_embeds": input_embeds[0].contiguous(),         # [nP+1, d_model]
+        "attention_mask": attention_mask[0].to(torch.float32).contiguous(),
+        "encoder_hidden": hidden[0].contiguous(),
+        "decoder_out": seq[0].contiguous(),                   # [1, d_model]
+        "quantile_preds_scaled": qp_scaled[0].contiguous(),   # [9, 64]
+    }
+    return preds[0].contiguous()                              # [9, 64]  (recorded as "output")
+
+
+def run_mimi(image):
+    """Kyutai Mimi (kyutai/mimi, CC-BY-4.0) neural codec: audio -> codes -> audio. Loads from the Hub
+    (no --checkpoint). Records every seam -- encoder, encoder transformer, downsample, codes, quantizer
+    decode, upsample, decoder transformer, and the reconstructed waveform -- plus the public encode/decode."""
+    from transformers import MimiModel
+    m = MimiModel.from_pretrained("kyutai/mimi").eval()
+    torch.manual_seed(0)
+    n = 24000
+    t = torch.arange(n, dtype=torch.float32) / 24000.0
+    x = (0.5 * torch.sin(2 * torch.pi * 220 * t) + 0.3 * torch.sin(2 * torch.pi * 440 * t)
+         + 0.1 * torch.randn(n)).unsqueeze(0).unsqueeze(0)                       # [1, 1, N]
+    with torch.no_grad():
+        emb = m.encoder(x)                                                       # [1, 512, T@25]
+        et = m.encoder_transformer(emb.transpose(1, 2))[0].transpose(1, 2)
+        ds = m.downsample(et)                                                    # [1, 512, T@12.5]
+        codes = m.quantizer.encode(ds)                                          # [K, 1, T]
+        codes_bkt = codes.transpose(0, 1)                                        # [1, K, T]
+        dq = m.quantizer.decode(codes_bkt)                                       # [1, 512, T@12.5]
+        us = m.upsample(dq)                                                      # [1, 512, T@25]
+        dt = m.decoder_transformer(us.transpose(1, 2))[0].transpose(1, 2)
+        wav = m.decoder(dt)                                                      # [1, 1, samples]
+        full_codes = m.encode(x).audio_codes                                     # [1, K, T]
+        full_wav = m.decode(full_codes).audio_values                             # [1, 1, samples]
+    globals()["_extra"] = {
+        "audio": x[0].contiguous(),                          # [1, N]
+        "encoder_out": emb[0].contiguous(),                  # [512, T@25]
+        "transformer_out": et[0].contiguous(),
+        "downsample_out": ds[0].contiguous(),                # [512, T@12.5]
+        "codes": codes_bkt[0].to(torch.int32).contiguous(),  # [K, T]
+        "quant_decode": dq[0].contiguous(),
+        "upsample_out": us[0].contiguous(),
+        "dtransformer_out": dt[0].contiguous(),
+        "full_codes": full_codes[0].to(torch.int32).contiguous(),
+        "full_waveform": full_wav[0, 0].contiguous(),
+    }
+    return wav[0, 0].contiguous()
+
+
+def _qwen3vl_retrieval_model(checkpoint):
+    """The released Qwen3-VL retrieval checkpoint and its processor, at float32."""
+    import torch
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint, padding_side="right")
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    return model, processor
+
+
+def run_qwen3vl_embedding(image, checkpoint):
+    """Qwen3-VL-Embedding, from the release's own `Qwen3VLForEmbedding` recipe.
+
+    `--checkpoint` is the released `Qwen/Qwen3-VL-Embedding-2B` directory. The reference class wraps
+    `Qwen3VLModel` (the backbone with no output projection), so the embedding is the last position's
+    hidden state, L2-normalized. The instruction goes in a system turn and the content in a user turn,
+    and the chat template's generation prompt ends the sequence, which is the position that is pooled.
+
+    The record carries two cases: a text-only query under the default instruction, and an image with
+    text beside it. Each case records its input ids, the full hidden states, and the pooled embedding;
+    the image case adds the processor's pixel values and grid plus the vision tower's output and its
+    three deepstack features, so a mismatch localizes to a seam rather than to the pair.
+    """
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from PIL import Image
+
+    model, processor = _qwen3vl_retrieval_model(checkpoint)
+    backbone = model.model
+    instruction = "Represent the user's input."
+    extra = {}
+
+    def conversation(text, has_image):
+        content = []
+        if has_image:
+            content.append({"type": "image"})
+        if text:
+            content.append({"type": "text", "text": text})
+        return [{"role": "system", "content": [{"type": "text", "text": instruction}]},
+                {"role": "user", "content": content}]
+
+    # The text-only case.
+    prompt = processor.apply_chat_template(conversation("A photograph of a red bicycle.", False),
+                                           add_generation_prompt=True, tokenize=False)
+    inputs = processor(text=[prompt], return_tensors="pt")
+    with torch.no_grad():
+        hidden = backbone(**inputs).last_hidden_state
+    extra["text_prompt_ids"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+    extra["text_hidden"] = hidden[0].contiguous()
+    extra["text_embedding"] = F.normalize(hidden[0, -1], p=2, dim=-1).contiguous()
+
+    # The image-and-text case.
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    prompt = processor.apply_chat_template(conversation("What is in this image?", True),
+                                           add_generation_prompt=True, tokenize=False)
+    inputs = processor(text=[prompt], images=[pil], return_tensors="pt")
+    with torch.no_grad():
+        embeds, deepstack = backbone.visual(inputs["pixel_values"], grid_thw=inputs["image_grid_thw"])
+        hidden = backbone(**inputs).last_hidden_state
+    extra["image_prompt_ids"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+    extra["pixel_values"] = inputs["pixel_values"].contiguous()
+    extra["image_grid_thw"] = inputs["image_grid_thw"].to(torch.int32).contiguous()
+    extra["vision_output"] = embeds.contiguous()
+    for index, feature in enumerate(deepstack):
+        extra[f"deepstack_{index}"] = feature.contiguous()
+    extra["image_hidden"] = hidden[0].contiguous()
+    extra["image_embedding"] = F.normalize(hidden[0, -1], p=2, dim=-1).contiguous()
+
+    globals()["_extra"] = extra
+    # safetensors refuses aliased storage, so the returned output is its own tensor.
+    return extra["text_embedding"].clone()
+
+
+def run_qwen3vl_reranker(image, checkpoint):
+    """Qwen3-VL-Reranker, from the release's own `Qwen3VLReranker` recipe.
+
+    `--checkpoint` is the released `Qwen/Qwen3-VL-Reranker-2B` directory. The reference scores a pair
+    by reading the last position's hidden state through a one-output linear layer holding
+    `lm_head[yes] - lm_head[no]`, then a sigmoid. That equals the difference of the two logits, because
+    the output projection carries no bias, which is what the port computes.
+
+    The record carries a relevant text pair, an irrelevant one, and an image document, each with its
+    input ids and its score, plus the two scored token ids and the raw logit difference.
+    """
+    import numpy as np
+    import torch
+    from PIL import Image
+
+    model, processor = _qwen3vl_retrieval_model(checkpoint)
+    backbone = model.model
+    vocabulary = processor.tokenizer.get_vocab()
+    yes_id, no_id = vocabulary["yes"], vocabulary["no"]
+    weights = model.lm_head.weight.data
+    direction = weights[yes_id] - weights[no_id]
+    instruction = "Given a search query, retrieve relevant candidates that answer the query."
+    judgement = ('Judge whether the Document meets the requirements based on the Query and the '
+                 'Instruct provided. Note that the answer can only be "yes" or "no".')
+    extra = {"scored_token_ids": torch.tensor([yes_id, no_id], dtype=torch.int32)}
+
+    def pair(query, document, has_image):
+        content = [{"type": "text", "text": "<Instruct>: " + instruction},
+                   {"type": "text", "text": "<Query>:"},
+                   {"type": "text", "text": query},
+                   {"type": "text", "text": "\n<Document>:"}]
+        if has_image:
+            content.append({"type": "image"})
+        if document:
+            content.append({"type": "text", "text": document})
+        return [{"role": "system", "content": [{"type": "text", "text": judgement}]},
+                {"role": "user", "content": content}]
+
+    def record(name, query, document, has_image):
+        prompt = processor.apply_chat_template(pair(query, document, has_image),
+                                               add_generation_prompt=True, tokenize=False)
+        images = [Image.fromarray((image * 255).astype(np.uint8))] if has_image else None
+        inputs = processor(text=[prompt], images=images, return_tensors="pt")
+        with torch.no_grad():
+            hidden = backbone(**inputs).last_hidden_state[0, -1]
+            difference = torch.dot(hidden, direction)
+        extra[f"{name}_ids"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+        extra[f"{name}_difference"] = difference.reshape(1).contiguous()
+        extra[f"{name}_score"] = torch.sigmoid(difference).reshape(1).contiguous()
+        if has_image:
+            extra[f"{name}_pixel_values"] = inputs["pixel_values"].contiguous()
+            extra[f"{name}_grid_thw"] = inputs["image_grid_thw"].to(torch.int32).contiguous()
+        return extra[f"{name}_score"]
+
+    relevant = record("relevant", "How tall is the Eiffel Tower?",
+                      "The Eiffel Tower stands 330 metres tall, including its antennas.", False)
+    record("irrelevant", "How tall is the Eiffel Tower?",
+           "Sourdough bread needs a starter kept at room temperature.", False)
+    record("image", "What is in this image?", "A photograph.", True)
+
+    globals()["_extra"] = extra
+    # safetensors refuses aliased storage, so the returned output is its own tensor.
+    return relevant.clone()
+
+
+def run_qwen3vl_retrieval_loss(image):
+    """The two objectives the Qwen3-VL retrieval releases are trained with, from sentence-transformers.
+
+    The releases package themselves for sentence-transformers (`modules.json` names its Transformer,
+    Pooling, and Normalize modules for the embedder and its LogitScore module for the reranker), so
+    that library's losses are the reference training code: `MultipleNegativesRankingLoss` at its
+    defaults (in-batch negatives, cosine similarity, scale 20) for the embedder, and
+    `BinaryCrossEntropyLoss` over the raw pair logit for the reranker.
+
+    The record carries the inputs and both losses. Nothing here loads a checkpoint: the losses score
+    tensors, and the port must agree on identical ones.
+    """
+    import torch
+    from sentence_transformers.sentence_transformer.losses import MultipleNegativesRankingLoss
+    from sentence_transformers.cross_encoder.losses import BinaryCrossEntropyLoss
+
+    torch.manual_seed(7)
+    batch, width = 6, 32
+    queries = torch.randn(batch, width)
+    positives = torch.randn(batch, width)
+    negatives = torch.randn(batch, width)
+    logits = torch.randn(2 * batch)
+    labels = torch.tensor([1.0, 0.0] * batch)
+
+    ranking = MultipleNegativesRankingLoss(None)
+    paired = ranking.compute_loss_from_embeddings([queries, positives], labels=None)
+    with_negatives = ranking.compute_loss_from_embeddings([queries, positives, negatives], labels=None)
+    # The reference's BinaryCrossEntropyLoss refuses to construct without a CrossEncoder, and at its
+    # defaults (an Identity activation, no positive weight) it is exactly this loss over the raw pair
+    # logit, which is what its `__init__` builds and its `forward` calls.
+    binary = BinaryCrossEntropyLoss.__init__.__globals__["nn"].BCEWithLogitsLoss()(logits, labels)
+
+    globals()["_extra"] = {
+        "queries": queries.contiguous(),
+        "positives": positives.contiguous(),
+        "negatives": negatives.contiguous(),
+        "logits": logits.contiguous(),
+        "labels": labels.contiguous(),
+        "ranking_loss": paired.reshape(1).contiguous(),
+        "ranking_loss_with_negatives": with_negatives.reshape(1).contiguous(),
+        "binary_loss": binary.reshape(1).contiguous(),
+    }
+    return torch.stack([paired, with_negatives, binary]).contiguous()
+
+
+def run_qwenimage21(image):
+    """Qwen-Image 2.1's denoising transformer, from diffusers' own QwenImage21Transformer2DModel, at a
+    tiny random configuration.
+
+    The released transformer is 7B, which no float32 comparison on this machine holds, so the arithmetic
+    is measured at a small geometry the reference builds from the port's own parameters, and the released
+    weights take the structural check. Everything that distinguishes 2.1 is exercised here: the
+    block-causal mask over a sequence carrying one condition image and one target image, the
+    `causal_condition` split that modulates text and condition tokens from t=0, the three-axis rotary
+    with its centered and negative positions, and the zero-centered RMS norm in the caption projection.
+
+    The record carries the inputs, every weight in release naming, and the output over the whole joint
+    sequence.
+    """
+    import torch
+    from diffusers import QwenImage21Transformer2DModel
+
+    model = QwenImage21Transformer2DModel(
+        patch_size=1, in_channels=8, out_channels=8, num_layers=2, attention_head_dim=16,
+        num_attention_heads=2, context_in_dim=12, mlp_ratio=3, axes_dims_rope=(4, 6, 6), eps=1e-6,
+        causal_condition=True)
+    _randomized(model, seed=5, scale=0.1)
+
+    torch.manual_seed(3)
+    # One condition image (2x2 latent tokens, so one vision-language slot) inside the caption, and a
+    # target image of 4x4 latent tokens, whose four slots trail the caption.
+    img_shapes = [[(1, 2, 2), (1, 4, 4)]]
+    img_mask = torch.tensor([[False, False, False, True, False, False, False, False,
+                              True, True, True, True]])
+    encoder_hidden_states = torch.randn(1, 8, 12)
+    # The last caption slot is padding, so it must never be attended to as a key.
+    encoder_hidden_states_mask = torch.tensor([[True, True, True, True, True, True, True, False]])
+    latents = torch.randn(1, 20, 8)
+    timestep = torch.tensor([0.7])
+
+    with torch.no_grad():
+        output = model(
+            hidden_states=latents,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            img_shapes=img_shapes,
+            img_mask=img_mask,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            return_dict=False,
+        )[0]
+
+    image_pad_mask = torch.repeat_interleave(img_mask[0], torch.where(img_mask, 4, 1)[0])
+    image_ids, target_mask = model.build_token_metadata(image_pad_mask, img_shapes[0])
+    rotary = model.pos_embed(img_shapes[0], image_pad_mask, device=latents.device)
+
+    extra = {
+        "latents": latents[0].contiguous(),
+        "encoder_hidden_states": encoder_hidden_states[0].contiguous(),
+        "encoder_mask": encoder_hidden_states_mask[0].to(torch.int32).contiguous(),
+        "img_mask": img_mask[0].to(torch.int32).contiguous(),
+        "image_pad_mask": image_pad_mask.to(torch.int32).contiguous(),
+        "image_ids": image_ids.to(torch.int32).contiguous(),
+        "target_mask": target_mask.to(torch.int32).contiguous(),
+        "timestep": timestep.contiguous(),
+        "rotary_real": torch.view_as_real(rotary)[..., 0].contiguous(),
+        "rotary_imag": torch.view_as_real(rotary)[..., 1].contiguous(),
+    }
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output[0].contiguous()
+
+
+def run_qwenimage21_real(image, checkpoint):
+    """Qwen-Image 2.1's transformer on the RELEASED weights, at the precision they ship in.
+
+    `--checkpoint` is the release's `transformer/` directory. 7.1B parameters at float32 is 28 GB, which
+    this machine cannot hold on both sides, so both sides run bfloat16 and the comparison describes the
+    released precision rather than the arithmetic's ceiling; the tiny-configuration mode is where the
+    arithmetic is measured exactly.
+
+    The caption features are random rather than the vision-language encoder's, which keeps the
+    transformer measured in isolation, the way the LTX DiT is. The sequence carries one condition image
+    inside the caption and a small target image after it.
+    """
+    import torch
+    from diffusers import QwenImage21Transformer2DModel
+
+    model = QwenImage21Transformer2DModel.from_pretrained(checkpoint, dtype=torch.bfloat16).eval()
+
+    torch.manual_seed(11)
+    img_shapes = [[(1, 2, 2), (1, 8, 8)]]
+    slots = [False] * 16
+    slots[5] = True                                     # the condition image's slot, inside the caption
+    img_mask = torch.tensor([slots + [True] * 16])      # the target image's sixteen slots follow
+    encoder_hidden_states = (torch.randn(1, 16, 4096) * 0.5).to(torch.bfloat16)
+    encoder_hidden_states_mask = torch.ones(1, 16, dtype=torch.bool)
+    encoder_hidden_states_mask[0, -2:] = False          # two padded caption slots
+    latents = (torch.randn(1, 68, 64) * 0.5).to(torch.bfloat16)
+    timestep = torch.tensor([0.35])
+
+    seams = {}
+
+    def capture(name):
+        def hook(_module, _inputs, output):
+            value = output[0] if isinstance(output, tuple) else output
+            seams[name] = value.detach()[0].float().contiguous()
+        return hook
+
+    handles = [model.txt_in.register_forward_hook(capture("txt_in")),
+               model.img_in.register_forward_hook(capture("img_in")),
+               model.modulation.register_forward_hook(capture("modulation")),
+               model.time_text_embed.register_forward_hook(capture("temb")),
+               model.norm_out.register_forward_hook(capture("norm_out"))]
+    for index in (0, 7, 15, 23, 31):
+        handles.append(model.transformer_blocks[index].register_forward_hook(capture(f"block_{index}")))
+
+    with torch.no_grad():
+        output = model(
+            hidden_states=latents,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            img_shapes=img_shapes,
+            img_mask=img_mask,
+            encoder_hidden_states_mask=encoder_hidden_states_mask,
+            return_dict=False,
+        )[0]
+    for handle in handles:
+        handle.remove()
+
+    globals()["_extra"] = {
+        **{f"seam::{name}": value for name, value in seams.items()},
+        "latents": latents[0].float().contiguous(),
+        "encoder_hidden_states": encoder_hidden_states[0].float().contiguous(),
+        "encoder_mask": encoder_hidden_states_mask[0].to(torch.int32).contiguous(),
+        "img_mask": img_mask[0].to(torch.int32).contiguous(),
+        "timestep": timestep.contiguous(),
+    }
+    return output[0].float().contiguous()
+
+
+def run_qwenimage21_scheduler(image, checkpoint):
+    """Qwen-Image 2.1's sampler schedule, from diffusers' own FlowMatchEulerDiscreteScheduler.
+
+    `--checkpoint` is the release directory, whose `scheduler/` config carries the dynamic shifting
+    (base 0.5 over 256 tokens to max 0.9 over 8192) and the 0.02 terminal stretch. The pipeline passes
+    its own sigma ramp, `linspace(1, 1/steps, steps)`, rather than letting the scheduler build one from
+    `1/num_train_timesteps`, so the ramp is part of the schedule being measured.
+
+    The record carries sigmas and timesteps at three step counts and two sequence lengths.
+    """
+    import numpy as np
+    import torch
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from diffusers.pipelines.qwenimage21.pipeline_qwenimage21 import calculate_shift
+
+    extra = {}
+    for steps in (4, 20, 50):
+        for sequence in (1024, 4096):
+            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(checkpoint, subfolder="scheduler")
+            mu = calculate_shift(
+                sequence,
+                scheduler.config.get("base_image_seq_len", 256),
+                scheduler.config.get("max_image_seq_len", 4096),
+                scheduler.config.get("base_shift", 0.5),
+                scheduler.config.get("max_shift", 1.15),
+            )
+            sigmas = np.linspace(1.0, 1 / steps, steps)
+            scheduler.set_timesteps(steps, device="cpu", sigmas=sigmas, mu=mu)
+            extra[f"sigmas_{steps}_{sequence}"] = scheduler.sigmas.float().contiguous()
+            extra[f"timesteps_{steps}_{sequence}"] = scheduler.timesteps.float().contiguous()
+            extra[f"mu_{steps}_{sequence}"] = torch.tensor([mu], dtype=torch.float32)
+    globals()["_extra"] = extra
+    return extra["sigmas_20_4096"].clone()
+
+
+def run_qwenimage21_vae(image, checkpoint):
+    """Qwen-Image 2.1's autoencoder on the released weights, from diffusers' own
+    AutoencoderKLQwenImage21.
+
+    `--checkpoint` is the release directory. The model is the Wan 2.2 residual VAE specialized to one
+    frame: its causal convolution subclasses `nn.Conv2d` and refuses a feature cache, so every
+    convolution weight is 4-D and the temporal branches never run for a single frame.
+
+    The record carries the input frame, the encoder's moments before the split, the latent the
+    pipeline works in (normalized by the release's own per-channel statistics), and the decode of that
+    latent back to pixels.
+    """
+    import numpy as np
+    import torch
+    from diffusers import AutoencoderKLQwenImage21
+
+    vae = AutoencoderKLQwenImage21.from_pretrained(checkpoint, subfolder="vae", dtype=torch.float32).eval()
+
+    # The autoencoder takes four channels, so the plate's three are carried with a fourth held at one,
+    # which is what an opaque image gives.
+    plate = torch.from_numpy(image).permute(2, 0, 1)[None, :, None]          # [1, 3, 1, H, W]
+    plate = plate * 2 - 1
+    frame = torch.cat([plate, torch.ones_like(plate[:, :1])], dim=1)         # [1, 4, 1, H, W]
+
+    latents_mean = torch.tensor(vae.config.latents_mean).view(1, vae.config.z_dim, 1, 1, 1)
+    latents_std = torch.tensor(vae.config.latents_std).view(1, vae.config.z_dim, 1, 1, 1)
+
+    with torch.no_grad():
+        posterior = vae.encode(frame).latent_dist
+        moments = torch.cat([posterior.mean, posterior.logvar], dim=1)
+        latent = (posterior.mean - latents_mean) / latents_std
+        decoded = vae.decode(latent * latents_std + latents_mean).sample
+
+    globals()["_extra"] = {
+        "frame": frame[0].permute(1, 2, 3, 0).contiguous(),                  # [T, H, W, C]
+        "moments": moments[0].permute(1, 2, 3, 0).contiguous(),
+        "latent": latent[0].permute(1, 2, 3, 0).contiguous(),
+        "decoded": decoded[0].permute(1, 2, 3, 0).contiguous(),
+        "latents_mean": latents_mean.reshape(-1).contiguous(),
+        "latents_std": latents_std.reshape(-1).contiguous(),
+    }
+    return decoded[0].permute(1, 2, 3, 0).clone().contiguous()
+
+
+def run_qwenimage21_pipeline(image, checkpoint):
+    """Qwen-Image 2.1's text-to-image glue, from diffusers' own QwenImage21Pipeline.
+
+    `--checkpoint` is the release directory, for its scheduler config alone. The transformer and the
+    autoencoder are tiny random ones, so what this measures is the pipeline: the latent packing, the
+    image mask the transformer reads, the sampling loop over the flow schedule, the slice that takes
+    the target image's rows out of the joint sequence, and the latent normalization across the two
+    models. Each of those models is measured against its own reference elsewhere.
+
+    The record carries the inputs, both models' weights in release naming, the final packed latents,
+    and the decoded image, with and without the prefix KV cache the reference uses by default.
+    """
+    import torch
+    from diffusers import (AutoencoderKLQwenImage21, FlowMatchEulerDiscreteScheduler,
+                           QwenImage21Pipeline, QwenImage21Transformer2DModel)
+
+    transformer = QwenImage21Transformer2DModel(
+        patch_size=1, in_channels=4, out_channels=4, num_layers=2, attention_head_dim=16,
+        num_attention_heads=2, context_in_dim=12, mlp_ratio=3, axes_dims_rope=(4, 6, 6), eps=1e-6,
+        causal_condition=True)
+    _randomized(transformer, seed=5, scale=0.1)
+    vae = AutoencoderKLQwenImage21(
+        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[2, 2], num_res_blocks=1,
+        temperal_downsample=[True], in_channels=4, out_channels=4, is_residual=True,
+        latents_mean=[0.1, -0.2, 0.3, -0.4], latents_std=[1.1, 0.9, 1.3, 0.8])
+    _randomized(vae, seed=7, scale=0.1)
+    scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(checkpoint, subfolder="scheduler")
+
+    # The processor is the release's own (tokenizer files, no weights): the pipeline reads the system
+    # turn's token count from it, which is what it drops from the encoder's hidden states.
+    from transformers import AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint, subfolder="processor")
+    pipeline = QwenImage21Pipeline(scheduler=scheduler, vae=vae, text_encoder=None, processor=processor,
+                                   transformer=transformer)
+
+    torch.manual_seed(3)
+    prompt_embeds = torch.randn(1, 8, 12)
+    latents = torch.randn(1, 16, 4)                     # 64x64 pixels at the pipeline's 16x factor
+
+    extra = {"prompt_embeds": prompt_embeds[0].contiguous(), "latents": latents[0].contiguous(),
+             "drop_index": torch.tensor([pipeline._drop_idx], dtype=torch.int32),
+             "image_token_id": torch.tensor([pipeline._img_token_id], dtype=torch.int32)}
+    for name, cache in (("cached", True), ("uncached", False)):
+        with torch.no_grad():
+            final = pipeline(prompt_embeds=prompt_embeds, height=64, width=64, num_inference_steps=4,
+                             latents=latents.clone(), output_type="latent", use_kv_cache=cache,
+                             return_dict=False)[0]
+            decoded = pipeline(prompt_embeds=prompt_embeds, height=64, width=64, num_inference_steps=4,
+                               latents=latents.clone(), output_type="pt", use_kv_cache=cache,
+                               return_dict=False)[0]
+        extra[f"final_latents_{name}"] = final[0].contiguous()
+        extra[f"image_{name}"] = decoded[0].permute(1, 2, 0).contiguous()      # [H, W, C] in 0…1
+
+    for key, value in transformer.state_dict().items():
+        extra[f"t::{key}"] = value.float().contiguous()
+    for key, value in vae.state_dict().items():
+        extra[f"v::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents_uncached"].clone()
+
+
+def run_qwenimage21_text(image, checkpoint):
+    """Qwen-Image 2.1's prompt encoding on the released text encoder, the pipeline's own recipe.
+
+    `--checkpoint` is the release directory. The text encoder is Qwen3-VL at the 8B geometry, run at
+    the bfloat16 it ships in. Two details decide the features: the prompt is a RAW template string
+    passed straight to the processor rather than the chat template's rendering of it, and the states
+    read are the last decoder layer's output BEFORE the final normalization, which the pipeline obtains
+    by neutralizing that norm with a forward hook. The system turn's leading tokens are then dropped.
+
+    The record carries the token ids, the count dropped, and the resulting features.
+    """
+    import torch
+    from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+
+    processor = AutoProcessor.from_pretrained(checkpoint, subfolder="processor")
+    # Eager attention: a bf16 port is held to transformers' eager rounding, which torch's CPU SDPA
+    # kernel does not reproduce.
+    encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+        checkpoint, subfolder="text_encoder", dtype=torch.bfloat16, attn_implementation="eager").eval()
+
+    system = "Comprehend and analyze the provided prompt."
+    prompt = "A calico cat asleep on a stack of books, warm afternoon light"
+    template = (f"<|im_start|>system\n{system}<|im_end|>\n"
+                f"<|im_start|>user\n{{}}<|im_end|>\n<|im_start|>assistant\n")
+    inputs = processor(text=[template.format(prompt)], padding=True, padding_side="left",
+                       return_tensors="pt")
+
+    sys_message = [{"role": "system", "content": [{"type": "text", "text": system}]}]
+    drop = len(processor.apply_chat_template(sys_message, tokenize=True, return_dict=False)[0])
+
+    language = getattr(encoder.model, "language_model", encoder.model)
+    handle = language.norm.register_forward_hook(lambda module, args, output: args[0])
+    try:
+        with torch.no_grad():
+            outputs = encoder(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask,
+                              output_hidden_states=True)
+    finally:
+        handle.remove()
+    features = outputs.hidden_states[-1][0][drop:]
+
+    extra = {
+        "input_ids": inputs.input_ids[0].to(torch.int32).contiguous(),
+        "drop_index": torch.tensor([drop], dtype=torch.int32),
+        "prompt_embeds": features.float().contiguous(),
+    }
+    # Per-layer states, so a divergence localizes to a layer rather than to the whole encoder.
+    for index in (0, 1, 9, 18, 27, 30, 33, 34, 35, len(outputs.hidden_states) - 1):
+        extra[f"seam::hidden_{index}"] = outputs.hidden_states[index][0].float().contiguous()
+    globals()["_extra"] = extra
+    return features.float().clone().contiguous()
+
+
+TRANSLATION_SENTENCES = [
+    "Hello world! How are you?",
+    "The quick brown fox jumps over the lazy dog.",
+    "  spaced   out  text  ",
+    "naïve café — résumé 2024",
+    "ﬁne ½",
+]
+TRANSLATION_TARGET = "Der schnelle braune Fuchs springt über den faulen Hund."
+
+
+def _translation_record(model, tokenizer, encode_source, encode_target, beams, generate_kwargs):
+    """The seams a translation port is measured on: the tokenizer's ids for TRANSLATION_SENTENCES,
+    the encoder output for sentence 1, the reference's greedy and beam outputs, the teacher-forced
+    logits over the greedy output, and the training loss against TRANSLATION_TARGET."""
+    source = encode_source(TRANSLATION_SENTENCES[1])
+    input_ids = torch.tensor([source])
+    attention = torch.ones_like(input_ids)
+    with torch.no_grad():
+        encoder_hidden = model.get_encoder()(input_ids=input_ids, attention_mask=attention).last_hidden_state
+        greedy = model.generate(input_ids=input_ids, attention_mask=attention, num_beams=1, do_sample=False,
+                                max_new_tokens=64, **generate_kwargs)
+        beam = model.generate(input_ids=input_ids, attention_mask=attention, num_beams=beams, do_sample=False,
+                              max_new_tokens=64, **generate_kwargs)
+        decoder_input = greedy[:, :-1]
+        logits = model(input_ids=input_ids, attention_mask=attention, decoder_input_ids=decoder_input).logits
+        target = torch.tensor([encode_target(TRANSLATION_TARGET)])
+        loss = model(input_ids=input_ids, attention_mask=attention, labels=target).loss
+    extra = {
+        "source_ids": input_ids[0].to(torch.int32).contiguous(),
+        "encoder_hidden": encoder_hidden[0].contiguous(),
+        "greedy": greedy[0].to(torch.int32).contiguous(),
+        "beam": beam[0].to(torch.int32).contiguous(),
+        "beams": torch.tensor([beams], dtype=torch.int32),
+        "decoder_input": decoder_input[0].to(torch.int32).contiguous(),
+        "target_ids": target[0].to(torch.int32).contiguous(),
+        "loss": loss.reshape(1).contiguous(),
+    }
+    for index, sentence in enumerate(TRANSLATION_SENTENCES):
+        extra[f"tokens_{index}"] = torch.tensor(encode_source(sentence), dtype=torch.int32)
+    print("greedy:", tokenizer.decode(greedy[0], skip_special_tokens=True))
+    print("beam:", tokenizer.decode(beam[0], skip_special_tokens=True))
+    globals()["_extra"] = extra
+    return logits[0].contiguous()
+
+
+def run_marian(image, checkpoint):
+    """OPUS-MT (Helsinki-NLP/opus-mt-en-de, `MarianMTModel`) on a release directory: the seams of
+    `_translation_record`, beams from the release's generation config (4)."""
+    from transformers import MarianMTModel, MarianTokenizer
+    tokenizer = MarianTokenizer.from_pretrained(checkpoint)
+    model = MarianMTModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    beams = model.generation_config.num_beams or 4
+    return _translation_record(model, tokenizer, lambda s: tokenizer(s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, beams, {})
+
+
+def run_m2m100(image, checkpoint):
+    """M2M-100 (facebook/m2m100_418M, `M2M100ForConditionalGeneration`) on a release directory,
+    English to German: the seams of `_translation_record` with the target marker forced first, beams
+    from the release's generation config (5)."""
+    from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
+    tokenizer = M2M100Tokenizer.from_pretrained(checkpoint, src_lang="en", tgt_lang="de")
+    model = M2M100ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    beams = model.generation_config.num_beams or 5
+    return _translation_record(model, tokenizer, lambda s: tokenizer(s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, beams,
+                               {"forced_bos_token_id": tokenizer.get_lang_id("de")})
+
+
+def run_madlad(image, checkpoint):
+    """MADLAD-400 (google/madlad400-3b-mt, `T5ForConditionalGeneration`) on a release directory,
+    into German through the `<2de>` marker and the release's fast tokenizer: the seams of
+    `_translation_record`, beams 4."""
+    from transformers import AutoTokenizer, T5ForConditionalGeneration
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint, use_fast=True)
+    model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    return _translation_record(model, tokenizer, lambda s: tokenizer("<2de> " + s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, 4, {})
+
+
+def run_florence2_loss(image, checkpoint):
+    """Florence-2's fine-tuning objective: the release's own `labels=` loss
+    (`Florence2LanguageForConditionalGeneration`: the labels shifted right behind the decoder start
+    token, then `CrossEntropyLoss` over every position). Microsoft publishes no training script, so this
+    is the reference objective. FLORENCE2_REPO picks the release, as in run_florence2; `checkpoint` is
+    unused.
+
+    The answer is the release's own `<CAPTION>` (its generation settings, `use_cache=False` as the
+    generation mode needs), tokenized `<s> … </s>` as the processor's tokenizer gives it. Records the
+    pixels (NHWC), the prompt ids, the answer ids, the teacher-forced logits, the release's loss (the
+    output), and the same cross-entropy in float64 (`loss_f64`).
+    """
+    import os as _os
+    from transformers import AutoModelForCausalLM, AutoProcessor
+    from PIL import Image
+
+    repo = _os.environ.get("FLORENCE2_REPO", "microsoft/Florence-2-large")
+    model = AutoModelForCausalLM.from_pretrained(repo, trust_remote_code=True, dtype=torch.float32,
+                                                 attn_implementation="eager").eval()
+    processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
+    pil = Image.fromarray((image * 255).astype("uint8")).convert("RGB")
+    inputs = processor(text="<CAPTION>", images=pil, return_tensors="pt")
+    with torch.no_grad():
+        generated = model.generate(input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"],
+                                   max_new_tokens=40, use_cache=False)
+        answer = processor.batch_decode(generated, skip_special_tokens=True)[0].strip()
+        labels = processor.tokenizer(answer, return_tensors="pt").input_ids
+        out = model(input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"], labels=labels,
+                    use_cache=False)
+        exact = torch.nn.functional.cross_entropy(out.logits[0].double(), labels[0])
+    print("florence2 answer:", answer)
+    globals()["_extra"] = {
+        "pixels": inputs["pixel_values"][0].permute(1, 2, 0).contiguous(),
+        "prompt_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "answer_ids": labels[0].to(torch.int32).contiguous(),
+        "answer_utf8": torch.tensor(list(answer.encode("utf-8")), dtype=torch.int32),
+        "logits": out.logits[0].contiguous(),
+        "loss_f64": exact.float().reshape(1).contiguous(),
+    }
+    return out.loss.reshape(1).contiguous()
+
+def run_florence2(image, checkpoint):
+    """Florence-2-large (microsoft/Florence-2-large, MIT) from transformers
+    Florence2ForConditionalGeneration on the RELEASED weights: the DaViT vision tower (per block a
+    windowed SPATIAL attention then a grouped CHANNEL attention), the multi-modal projector (learned
+    2-D position embedding + cosine temporal embedding + mean-pooled-token prepend + projection and
+    LayerNorm), and the BART encoder-decoder over the scattered image+prompt sequence. `checkpoint` is
+    the local release directory. Records the preprocessed pixel values (NHWC, so the port runs on the
+    identical input), the prompt input_ids, the stage-0 patch embedding, the first DaViT block, the
+    vision-tower output, the projector output, the encoder last hidden state, and the first-step
+    logits. Runs under llmvenv (transformers 4.57 has native florence2)."""
+    # The native transformers Florence2 does not map the released original-davit checkpoint (it loads
+    # all-random), so the authoritative reference is the repo's own code via trust_remote_code, which
+    # matches the checkpoint layout the port loads from. `checkpoint` is unused; the Hub id supplies the
+    # remote code and the cached weights. Needs timm.
+    # FLORENCE2_REPO picks the release: microsoft/Florence-2-large (the default) or -base.
+    import os as _os
+    from transformers import AutoModelForCausalLM, AutoProcessor
+    from PIL import Image
+
+    repo = _os.environ.get("FLORENCE2_REPO", "microsoft/Florence-2-large")
+    model = AutoModelForCausalLM.from_pretrained(repo, trust_remote_code=True, torch_dtype=torch.float32,
+                                                 attn_implementation="eager").eval()
+    processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
+    pil = Image.fromarray((image * 255).astype("uint8")).convert("RGB")
+    inputs = processor(text="<OD>", images=pil, return_tensors="pt")
+    pixel_values = inputs["pixel_values"]                                          # [1, 3, S, S]
+    input_ids = inputs["input_ids"]
+
+    # Canonicalize any seam to [tokens, C] in row-major (H, W) order so cosines align with the NHWC port.
+    def canon(o):
+        o = o[0] if o.dim() == 4 else o
+        if o.dim() == 3 and o.shape[0] == 1:
+            o = o[0]
+        if o.dim() == 3:                                                           # [C, H, W]
+            return o.permute(1, 2, 0).reshape(-1, o.shape[0]).contiguous()
+        return o.contiguous()                                                      # [tokens, C]
+
+    # The original davit ConvEmbed and blocks return (tokens[B, H*W, C], (H, W)) tuples, not NCHW maps.
+    def grab(name):
+        return lambda m, i, o: seams.__setitem__(name, (o[0] if isinstance(o, (tuple, list)) else o).detach())
+    seams = {}
+    model.vision_tower.convs[0].register_forward_hook(grab("conv0"))
+    model.vision_tower.blocks[0][0].register_forward_hook(grab("block0"))
+    start = model.config.text_config.decoder_start_token_id
+    with torch.no_grad():
+        vision = model.vision_tower.forward_features_unpool(pixel_values)          # [B, H*W, C] (unpooled)
+        proj = model._encode_image(pixel_values)                                   # [B, 1+H*W, d_model]
+        # The BART fusion concatenates [image_features, text_embeds] (image first), then encodes; the
+        # decoder cross-attends and the head adds final_logits_bias. Record the encoder output and the
+        # first-step logits for the fusion parity.
+        out = model(input_ids=input_ids, pixel_values=pixel_values,
+                    decoder_input_ids=torch.tensor([[start]]))
+        # Greedy generation for the generation-loop parity check, via a manual argmax loop over the same
+        # forward (the model's own generate override is incompatible with this transformers version). The
+        # sequence begins with the decoder start token.
+        greedy = [start]
+        for _ in range(32):
+            step = model(input_ids=input_ids, pixel_values=pixel_values,
+                         decoder_input_ids=torch.tensor([greedy]))
+            token = int(step.logits[0, -1].argmax())
+            greedy.append(token)
+            if token == model.config.text_config.eos_token_id:
+                break
+        generated = torch.tensor([greedy])
+
+    print("shapes conv0", tuple(seams["conv0"].shape), "block0", tuple(seams["block0"].shape),
+          "vision", tuple(vision.shape), "proj", tuple(proj.shape),
+          "enc_last", tuple(out.encoder_last_hidden_state.shape), "logits", tuple(out.logits.shape))
+    extra = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),                   # [S, S, 3] NHWC
+        "input_ids": input_ids[0].to(torch.int32).contiguous(),                    # [T]
+        "conv0": canon(seams["conv0"]),                                            # [H0*W0, C0]
+        "block0": canon(seams["block0"]),                                          # [H0*W0, C0]
+        "vision": canon(vision),                                                   # [H*W, C]
+        "proj": proj[0].contiguous(),                                              # [1+H*W, d_model]
+        "enc_last": out.encoder_last_hidden_state[0].contiguous(),                 # [1+H*W+T, d_model]
+        "logits": out.logits[0, 0].contiguous(),                                   # [vocab] first step
+        "generated": generated[0].to(torch.int32).contiguous(),                    # [T_gen] incl. start token
+    }
+    globals()["_extra"] = extra
+    return proj[0].clone().contiguous()
+
+
+FLORENCE2_GENERATION_TASKS = ["<CAPTION>", "<DETAILED_CAPTION>", "<MORE_DETAILED_CAPTION>", "<OCR>", "<OD>"]
+
+
+def run_florence2_generate(image, checkpoint):
+    """Florence-2's own `generate` under the release's generation settings (`text_config`: three beams,
+    early stopping, no repeated 3-gram, `<s>` forced first, `</s>` forced at the length limit), per task
+    in FLORENCE2_GENERATION_TASKS with max_new_tokens 1024. Also records `<MORE_DETAILED_CAPTION>` cut to
+    16 new tokens (`generated_truncated`, where the forced `</s>` decides the ending) and greedy
+    `<CAPTION>` under the same constraints (`generated_greedy`). Records the shared preprocessed pixels
+    (NHWC) and, per task index i, `input_ids_<i>` and `generated_<i>` (the start token first).
+    FLORENCE2_REPO picks the release, as in run_florence2; `checkpoint` is unused."""
+    import os as _os
+    from transformers import AutoModelForCausalLM, AutoProcessor
+    from PIL import Image
+
+    repo = _os.environ.get("FLORENCE2_REPO", "microsoft/Florence-2-large")
+    model = AutoModelForCausalLM.from_pretrained(repo, trust_remote_code=True, dtype=torch.float32,
+                                                 attn_implementation="eager").eval()
+    processor = AutoProcessor.from_pretrained(repo, trust_remote_code=True)
+    pil = Image.fromarray((image * 255).astype("uint8")).convert("RGB")
+    # The remote code's cached decode fails under transformers 4.57 (its BART reads a legacy tuple
+    # cache), so generation runs uncached; the settings still come from the release's own config.
+    def generate(task, **overrides):
+        inputs = processor(text=task, images=pil, return_tensors="pt")
+        with torch.no_grad():
+            ids = model.generate(input_ids=inputs["input_ids"], pixel_values=inputs["pixel_values"],
+                                 use_cache=False, **{"max_new_tokens": 1024, **overrides})
+        print(task, overrides, processor.batch_decode(ids, skip_special_tokens=False)[0])
+        return inputs, ids[0].to(torch.int32).contiguous()
+
+    extra = {}
+    for index, task in enumerate(FLORENCE2_GENERATION_TASKS):
+        inputs, ids = generate(task)
+        extra[f"input_ids_{index}"] = inputs["input_ids"][0].to(torch.int32).contiguous()
+        extra[f"generated_{index}"] = ids
+        extra["pixels"] = inputs["pixel_values"][0].permute(1, 2, 0).contiguous()
+    extra["generated_truncated"] = generate("<MORE_DETAILED_CAPTION>", max_new_tokens=16)[1]
+    extra["generated_greedy"] = generate("<CAPTION>", num_beams=1)[1]
+    globals()["_extra"] = extra
+    return extra["pixels"].clone()
+
+
+def run_translategemma(image, checkpoint):
+    """TranslateGemma (google/translategemma-4b-it, `Gemma3ForConditionalGeneration` driven text-only)
+    on a release directory, under the gemma oracle interpreter. Records the ids the release's own
+    chat template renders for one text translation item (English to German, TRANSLATION_SENTENCES[1]),
+    the logits at the last 16 prompt positions, the greedy continuation, and the supervised
+    fine-tuning loss of TRANSLATION_TARGET as the model turn (prompt positions masked)."""
+    from transformers import AutoModelForImageTextToText, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    # The 12B is 24 GB of bfloat16, twice the machine's memory at float32, so TRANSLATEGEMMA_DTYPE=bfloat16
+    # runs the reference at the release's own precision; the port is then compared at .checkpoint.
+    dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "float32"))
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=dtype).eval()
+    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": "en",
+                                              "target_lang_code": "de", "text": TRANSLATION_SENTENCES[1]}]}]
+    # The rendered template already spells `<bos>`, so it is tokenized without a second one.
+    text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    ids = torch.tensor([tokenizer(text, add_special_tokens=False).input_ids])
+    with torch.no_grad():
+        out = model(input_ids=ids, output_hidden_states=True)
+        logits = out.logits[0]
+        generated = model.generate(input_ids=ids, max_new_tokens=48, do_sample=False)
+        target_ids = tokenizer(TRANSLATION_TARGET + "<end_of_turn>", add_special_tokens=False).input_ids
+        full = torch.tensor([ids[0].tolist() + target_ids])
+        labels = full.clone()
+        labels[0, : ids.shape[1]] = -100
+        loss = model(input_ids=full, labels=labels).loss
+    continuation = generated[0, ids.shape[1]:]
+    print("greedy:", tokenizer.decode(continuation, skip_special_tokens=True))
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        "target_ids": torch.tensor(target_ids, dtype=torch.int32),
+        "loss": loss.reshape(1).float().contiguous(),
+    }
+    # The last prompt position's state entering the stack and after every layer (the final norm on
+    # the last), so a half-precision drift is located to a layer rather than guessed at.
+    for index, state in enumerate(out.hidden_states):
+        globals()["_extra"][f"hidden_last.{index}"] = state[0, -1].float().contiguous()
+    return logits[-16:].float().contiguous()
+
+
+def run_trocr_loss(image, checkpoint):
+    """TrOCR's fine-tuning objective on a released model (`checkpoint`, a release directory), as the
+    authors trained it in fairseq (`microsoft/unilm/trocr`: `fairseq-train --task text_recognition`
+    with the default `cross_entropy` criterion, whose token sum the trainer divides by the token count).
+
+    The target is the text's pieces followed by the end token, fairseq's `encode_line` form and the
+    sequence the releases generate after their start token (no `<s>`). The record holds the pixels
+    (NHWC), the text as UTF-8, the target ids the release tokenizer gives, the teacher-forced logits, the
+    loss transformers computes from `labels=` (`hf_loss`; `shift_tokens_right` behind the decoder start
+    token, which the HF fine-tuning recipe sets on the top-level config), and fairseq's normalized
+    cross-entropy on the same logits (the output, and `fairseq_loss_f64` computed in float64). transformers 4.57 scores these labels with
+    `ForCausalLMLoss`, which shifts the logits against the labels a second time, so `hf_loss` is
+    misaligned by one token and is recorded only to show the difference. The text is the release's own
+    greedy transcription. `lr_iam` steps fairseq's own
+    `InverseSquareRootSchedule` (`IK_FAIRSEQ_SRC`, the file the manifest pins) with the IAM recipe's
+    settings: 2e-5, a 500-update warm-up from 1e-8, the rate read at update counts 0 through 1199.
+    """
+    import dataclasses
+    import sys
+    import types
+
+    import torch.nn.functional as F
+    from transformers import VisionEncoderDecoderModel, TrOCRProcessor
+    from PIL import Image
+
+    model = VisionEncoderDecoderModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = TrOCRProcessor.from_pretrained(checkpoint)
+    decoder = model.config.decoder
+    model.config.decoder_start_token_id = decoder.decoder_start_token_id
+    model.config.pad_token_id = decoder.pad_token_id
+    pil = Image.fromarray((image * 255).astype("uint8")).convert("RGB")
+    pixel_values = processor(images=pil, return_tensors="pt").pixel_values
+    # The release's own greedy transcription is the text, so the loss scores a sequence the model rates.
+    greedy = [decoder.decoder_start_token_id]
+    with torch.no_grad():
+        for _ in range(48):
+            token = int(model(pixel_values=pixel_values, decoder_input_ids=torch.tensor([greedy])).logits[0, -1].argmax())
+            greedy.append(token)
+            if token == decoder.eos_token_id:
+                break
+    text = processor.batch_decode(torch.tensor([greedy]), skip_special_tokens=True)[0]
+    target = processor.tokenizer(text, add_special_tokens=False).input_ids + [decoder.eos_token_id]
+    labels = torch.tensor([target])
+    with torch.no_grad():
+        out = model(pixel_values=pixel_values, labels=labels)
+        lprobs = torch.log_softmax(out.logits[0], dim=-1)
+        fairseq = F.nll_loss(lprobs, labels[0], ignore_index=decoder.pad_token_id, reduction="sum") / len(target)
+        # The same criterion in float64: float32's log-sum-exp over the 64k-entry vocabulary rounds to
+        # about 2e-5, which is larger than any difference the port could make.
+        exact = F.nll_loss(torch.log_softmax(out.logits[0].double(), dim=-1), labels[0],
+                           ignore_index=decoder.pad_token_id, reduction="sum") / len(target)
+
+    root = os.path.expanduser(os.environ.get("IK_FAIRSEQ_SRC", "~/.inferkit-validation/sources/fairseq"))
+    stubs = {name: types.ModuleType(name) for name in
+             ["fairseq", "fairseq.dataclass", "fairseq.optim", "fairseq.optim.lr_scheduler"]}
+
+    @dataclasses.dataclass
+    class FairseqDataclass:
+        pass
+
+    class FairseqLRScheduler:
+        def __init__(self, cfg, optimizer):
+            self.cfg, self.optimizer = cfg, optimizer
+
+    stubs["fairseq.dataclass"].FairseqDataclass = FairseqDataclass
+    stubs["fairseq.optim.lr_scheduler"].FairseqLRScheduler = FairseqLRScheduler
+    stubs["fairseq.optim.lr_scheduler"].register_lr_scheduler = lambda name, dataclass=None: (lambda cls: cls)
+    saved = {name: sys.modules.get(name) for name in stubs}
+    sys.modules.update(stubs)
+    try:
+        namespace = {"__name__": "fairseq_inverse_sqrt"}
+        exec(compile(open(os.path.join(root, "inverse_square_root_schedule.py")).read(),
+                     "inverse_square_root_schedule.py", "exec"), namespace)
+    finally:
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+    class _Optimizer:
+        lr = 0.0
+
+        def set_lr(self, lr):
+            self.lr = lr
+
+        def get_lr(self):
+            return self.lr
+
+    config = namespace["InverseSquareRootLRScheduleConfig"](warmup_updates=500, warmup_init_lr=1e-8, lr=[2e-5])
+    schedule = namespace["InverseSquareRootSchedule"](config, _Optimizer())
+    rates = [schedule.step_update(update) for update in range(1200)]
+
+    globals()["_extra"] = {
+        "pixel_values": pixel_values.permute(0, 2, 3, 1).contiguous(),
+        "text_utf8": torch.tensor(list(text.encode("utf-8")), dtype=torch.int32),
+        "target": torch.tensor(target, dtype=torch.int32),
+        "logits": out.logits.contiguous(),
+        "hf_loss": out.loss.reshape(1).contiguous(),
+        "fairseq_loss_f64": exact.float().reshape(1).contiguous(),
+        "lr_iam": torch.tensor(rates, dtype=torch.float64).to(torch.float32),
+    }
+    return fairseq.reshape(1).contiguous()
+
+def run_trocr(image, checkpoint):
+    """TrOCR (microsoft/trocr-*, MIT) VisionEncoderDecoder on the RELEASED weights: a ViT (base, large)
+    or DeiT (small) image encoder and a BART-style `trocr` decoder that cross-attends the image
+    features. `checkpoint` is the local release directory. Records the 8-bit image the processor
+    received (`input_rgb`, so the port's processor is checked on identical bytes), the preprocessed
+    pixel values (NHWC, so the network runs on the identical input), the embeddings output, the first
+    encoder block, the encoder last hidden state (the decoder memory), the first-step logits, the greedy
+    transcription ids, and their decoded text as UTF-8 (`text_utf8`). Runs under llmvenv."""
+    from transformers import VisionEncoderDecoderModel, TrOCRProcessor
+    from PIL import Image
+
+    model = VisionEncoderDecoderModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    processor = TrOCRProcessor.from_pretrained(checkpoint)
+    pil = Image.fromarray((image * 255).astype("uint8")).convert("RGB")
+    pixel_values = processor(images=pil, return_tensors="pt").pixel_values           # [1, 3, 384, 384]
+
+    def grab(name):
+        return lambda m, i, o: seams.__setitem__(name, (o[0] if isinstance(o, (tuple, list)) else o).detach())
+    seams = {}
+    model.encoder.embeddings.register_forward_hook(grab("emb"))
+    model.encoder.encoder.layer[0].register_forward_hook(grab("block0"))
+    start = model.config.decoder.decoder_start_token_id
+    eos = model.config.decoder.eos_token_id
+    with torch.no_grad():
+        enc = model.encoder(pixel_values=pixel_values).last_hidden_state             # [1, 577, 768]
+        out = model(pixel_values=pixel_values, decoder_input_ids=torch.tensor([[start]]))
+        # Greedy generation for the generation-loop parity, a manual argmax loop over the same forward.
+        greedy = [start]
+        for _ in range(48):
+            step = model(pixel_values=pixel_values, decoder_input_ids=torch.tensor([greedy]))
+            token = int(step.logits[0, -1].argmax())
+            greedy.append(token)
+            if token == eos:
+                break
+        generated = torch.tensor([greedy])
+    text = processor.batch_decode(generated, skip_special_tokens=True)[0]
+    print("greedy:", text)
+    print("shapes emb", tuple(seams["emb"].shape), "block0", tuple(seams["block0"].shape),
+          "enc_last", tuple(enc.shape), "logits", tuple(out.logits.shape))
+    globals()["_extra"] = {
+        "pixels": pixel_values[0].permute(1, 2, 0).contiguous(),                     # [384, 384, 3] NHWC
+        "emb": seams["emb"][0].contiguous(),                                         # [577, 768]
+        "block0": seams["block0"][0].contiguous(),                                   # [577, 768]
+        "enc_last": enc[0].contiguous(),                                             # [577, 768] the memory
+        "logits": out.logits[0, 0].contiguous(),                                     # [vocab] first step
+        "generated": generated[0].to(torch.int32).contiguous(),                      # [T_gen] incl. start+eos
+        "input_rgb": torch.from_numpy(np.asarray(pil)).to(torch.int32).contiguous(),  # [H, W, 3] 0...255
+        "text_utf8": torch.tensor(list(text.encode("utf-8")), dtype=torch.int32),    # the decoded transcription
+    }
+    return enc[0].clone().contiguous()
+
+
+def run_flux2(image):
+    """The FLUX.2 transformer velocity at a tiny random configuration, from diffusers'
+    Flux2Transformer2DModel, plus the modulation, double-block and single-block seams.
+
+    FLUX.2 keeps FLUX.1's two block kinds and changes four things. The modulation lives on the MODEL,
+    not in the blocks: three `Flux2Modulation` heads (double image, double text, single) are evaluated
+    once from the timestep embedding and every block of that kind reads the same vector, so a released
+    checkpoint carries three modulation tensors rather than one per block. The feed-forward is a SwiGLU
+    whose gate is the first half of one fused projection. The single-stream block is a PARALLEL block:
+    one projection produces q, k, v and both SwiGLU halves, and one projection takes the attention
+    output concatenated with the gated MLP. The rotary runs over FOUR axes (t, h, w, l) at theta 2000,
+    and the text ids carry the token index in the fourth axis rather than being all zero.
+
+    There is no pooled text embedding: conditioning is the timestep plus the guidance scale. The text
+    sequence is supplied directly (the release encodes it with Mistral-Small 3), so the DiT is verified
+    in isolation, as the FLUX.1, SD3 and LTX DiTs are. Runs under the `qwenimage` oracle env, which
+    carries the diffusers revision that has `Flux2Transformer2DModel`. `image` unused.
+    """
+    from diffusers import Flux2Transformer2DModel
+
+    model = Flux2Transformer2DModel(
+        patch_size=1, in_channels=8, num_layers=2, num_single_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, timestep_guidance_channels=16, mlp_ratio=3.0,
+        axes_dims_rope=(2, 2, 2, 2), rope_theta=2000, eps=1e-6, guidance_embeds=True)
+    model = _randomized(model, seed=31)
+
+    generator = torch.Generator().manual_seed(8)
+    lh, lw, txt = 2, 3, 5                                                  # 6 image tokens, 5 text tokens
+    hidden = torch.randn(2, lh * lw, 8, generator=generator)               # [B, img_seq, in_channels]
+    encoder = torch.randn(2, txt, 24, generator=generator)                 # [B, txt_seq, joint_attention_dim]
+    t = torch.tensor([0.5, 0.5])
+    guidance = torch.tensor([3.5, 3.5])
+
+    # The pipeline's `_prepare_latent_ids` / `_prepare_text_ids`: image ids are (0, row, col, 0), text
+    # ids are (0, 0, 0, token index).
+    img_ids = torch.cartesian_prod(torch.arange(1), torch.arange(lh), torch.arange(lw),
+                                   torch.arange(1)).float()                # [img_seq, 4]
+    txt_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1),
+                                   torch.arange(txt)).float()              # [txt_seq, 4]
+
+    seams = {}
+    model.time_guidance_embed.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("temb", o.detach().clone()))
+    model.double_stream_modulation_img.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("mod_img", o.detach().clone()))
+    model.single_stream_modulation.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("mod_single", o.detach().clone()))
+    model.transformer_blocks[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("double0", (o[0].detach().clone(), o[1].detach().clone())))
+    model.single_transformer_blocks[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("single0", o.detach().clone()))
+    with torch.no_grad():
+        output = model(hidden_states=hidden, encoder_hidden_states=encoder, timestep=t,
+                       img_ids=img_ids, txt_ids=txt_ids, guidance=guidance, return_dict=False)[0]
+
+    extra = {"hidden": hidden.contiguous(), "encoder": encoder.contiguous(),
+             "timestep": t.contiguous(), "guidance": guidance.contiguous(),
+             "img_ids": img_ids.contiguous(), "txt_ids": txt_ids.contiguous(),
+             "temb": seams["temb"].contiguous(), "mod_img": seams["mod_img"].contiguous(),
+             "mod_single": seams["mod_single"].contiguous(),
+             "double0_txt": seams["double0"][0].contiguous(),
+             "double0_img": seams["double0"][1].contiguous(),
+             "single0": seams["single0"].contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()                                             # [B, img_seq, out_channels]
+
+
+def run_flux2_real(image, checkpoint):
+    """The FLUX.2 [klein] transformer velocity on the RELEASED weights, at the precision they ship in.
+
+    `--checkpoint` is the release's `transformer/` directory. `run_flux2` measures the arithmetic
+    exactly at a tiny configuration; this measures the DECLARED geometry against a real checkpoint, so
+    a preset that loads 169 tensors at the right shapes and still computes something else is caught.
+    Both sides run bfloat16, the precision the release ships, so the figure describes that precision
+    rather than the arithmetic's ceiling. klein 4B is 3.88B, about 7.8 GB in bfloat16, which this
+    machine holds; the 9B sizes and [dev] do not reach a numeric run here.
+
+    The spatial input is deliberately tiny (a 2x2 packed-latent grid, 4 image tokens, 8 text tokens) so
+    only the WEIGHTS are large, not the activations. The text conditioning is random rather than the
+    Qwen3 encoder's output, which keeps the transformer measured in isolation, the way `run_flux_real`
+    does for FLUX.1. klein carries no guidance embedding, so `guidance` is None where the config says
+    so. Runs under the `qwenimage` oracle env, which carries the diffusers revision that has
+    `Flux2Transformer2DModel`. `image` unused.
+    """
+    return _flux2_real(checkpoint, "bfloat16")
+
+
+def run_flux2_real_f32(image, checkpoint):
+    """`run_flux2_real` at float32 on the same released weights and the same inputs.
+
+    The bfloat16 record measures the release at the precision it ships; this one measures the
+    arithmetic on real weights, which the tiny configuration cannot, because a precision-specific
+    difference (a dtype promotion, an accumulation order) is invisible at float32 on random weights
+    and at bfloat16 only shows as a lower cosine that could be read as noise. klein 4B is 15.5 GB at
+    float32, which this machine holds in one process. The inputs are drawn exactly as the bfloat16
+    mode draws them, so the two records differ in precision alone. `image` unused.
+    """
+    return _flux2_real(checkpoint, "float32")
+
+
+def _flux2_real(checkpoint, precision):
+    import torch
+    from diffusers import Flux2Transformer2DModel
+
+    dtype = getattr(torch, precision)
+    model = Flux2Transformer2DModel.from_pretrained(checkpoint, torch_dtype=dtype).eval()
+
+    generator = torch.Generator().manual_seed(8)
+    lh, lw, txt = 2, 2, 8                                                  # 4 image tokens, 8 text tokens
+    channels = model.config.in_channels                                    # 128 for klein 4B
+    joint = model.config.joint_attention_dim                               # 7680 = 3 x 2560
+    # Drawn at float32 and rounded to bfloat16 in BOTH modes, so the float32 record starts from the
+    # exact inputs the bfloat16 one does and the two differ in the network's precision alone.
+    hidden = torch.randn(1, lh * lw, channels, generator=generator).to(torch.bfloat16).to(dtype)
+    encoder = torch.randn(1, txt, joint, generator=generator).to(torch.bfloat16).to(dtype)
+    t = torch.tensor([0.5], dtype=dtype)
+    guidance = (torch.tensor([3.5], dtype=dtype)
+                if model.config.guidance_embeds else None)
+
+    img_ids = torch.cartesian_prod(torch.arange(1), torch.arange(lh), torch.arange(lw),
+                                   torch.arange(1)).float()                # (0, row, col, 0)
+    txt_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1),
+                                   torch.arange(txt)).float()              # (0, 0, 0, token index)
+
+    with torch.no_grad():
+        output = model(hidden_states=hidden, encoder_hidden_states=encoder, timestep=t,
+                       img_ids=img_ids, txt_ids=txt_ids, guidance=guidance, return_dict=False)[0]
+
+    extra = {"hidden": hidden.float().clone().contiguous(),
+             "encoder": encoder.float().clone().contiguous(),
+             "timestep": t.float().clone().contiguous(),
+             "img_ids": img_ids.clone().contiguous(),
+             "txt_ids": txt_ids.clone().contiguous(),
+             "num_layers": torch.tensor([model.config.num_layers], dtype=torch.int32),
+             "num_single_layers": torch.tensor([model.config.num_single_layers], dtype=torch.int32)}
+    if guidance is not None:
+        extra["guidance"] = guidance.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return output.float().clone().contiguous()                             # [B, img_seq, out_channels]
+
+
+def run_flux2_real_truncated(image, checkpoint):
+    """A released FLUX.2 transformer cut to its first two double and first two single blocks, at
+    float32 and at bfloat16, on the released weights and `_flux2_real`'s inputs.
+
+    `--checkpoint` is the release's `transformer/` directory. It exists for the 9B release, which is
+    36 GB at float32 and does not fit this machine whole, so `run_flux2_real_f32` cannot separate its
+    bfloat16 figure's precision floor from a defect. The cut keeps everything specific to the
+    geometry (the width, the head count, the 12288-wide text projection, the modulation heads, the
+    output head) and drops only depth, which repeats the same blocks. Only the kept tensors are read,
+    through `safe_open`, so the model never exists whole in memory. The record carries the float32
+    output, the output of the SAME cut at bfloat16 (the reference's own precision gap at this depth),
+    and the inputs.
+    """
+    import json
+    import os
+    import torch
+    from diffusers import Flux2Transformer2DModel
+    from safetensors import safe_open
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    config = {k: v for k, v in config.items() if not k.startswith("_")}
+    config.update(num_layers=2, num_single_layers=2)
+    model = Flux2Transformer2DModel(**config).eval()
+    wanted = set(model.state_dict())
+    state = {}
+    for name in sorted(os.listdir(checkpoint)):
+        if name.endswith(".safetensors"):
+            with safe_open(os.path.join(checkpoint, name), framework="pt") as f:
+                for key in f.keys():
+                    if key in wanted:
+                        state[key] = f.get_tensor(key).float()
+    model.load_state_dict(state, strict=True)
+
+    generator = torch.Generator().manual_seed(8)
+    lh, lw, txt = 2, 2, 8
+    hidden = torch.randn(1, lh * lw, model.config.in_channels, generator=generator).to(torch.bfloat16)
+    encoder = torch.randn(1, txt, model.config.joint_attention_dim, generator=generator).to(torch.bfloat16)
+    t = torch.tensor([0.5])
+    img_ids = torch.cartesian_prod(torch.arange(1), torch.arange(lh), torch.arange(lw),
+                                   torch.arange(1)).float()
+    txt_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1),
+                                   torch.arange(txt)).float()
+
+    def run(dtype):
+        with torch.no_grad():
+            return model.to(dtype)(hidden_states=hidden.to(dtype), encoder_hidden_states=encoder.to(dtype),
+                                   timestep=t.to(dtype), img_ids=img_ids, txt_ids=txt_ids,
+                                   guidance=None, return_dict=False)[0].float()
+
+    output_f32 = run(torch.float32)
+    output_bf16 = run(torch.bfloat16)
+    a, b = output_f32.flatten().double(), output_bf16.flatten().double()
+    print(f"  the reference's own bfloat16 against its float32 on the cut: {float(a @ b / a.norm() / b.norm()):.10f}")
+    globals()["_extra"] = {
+        "hidden": hidden.float().clone().contiguous(), "encoder": encoder.float().clone().contiguous(),
+        "timestep": t.clone().contiguous(), "img_ids": img_ids.clone().contiguous(),
+        "txt_ids": txt_ids.clone().contiguous(), "output_bf16": output_bf16.clone().contiguous()}
+    return output_f32.clone().contiguous()
+
+
+def run_flux2_kv_real(image, checkpoint):
+    """FLUX.2 [klein] 9B KV's reference cache on its RELEASED transformer at bfloat16: the extracting
+    step, a cached step, and ORDINARY reference conditioning on the same tokens as a control.
+
+    `--checkpoint` is the release's `transformer/` directory. The tiny oracle (`run_flux2_kv`) had to
+    raise its weight scale before the reference cache and ordinary conditioning came apart; on the
+    released weights the control answers directly how far apart the two are. 18 GB. `image` unused.
+    """
+    from diffusers import Flux2Transformer2DModel
+
+    model = Flux2Transformer2DModel.from_pretrained(checkpoint, torch_dtype=torch.bfloat16).eval()
+    globals()["_extra"] = _flux2_kv_forwards(model, torch.bfloat16)
+    return globals()["_extra"]["extracted"].clone().contiguous()
+
+
+def run_flux2_kv_real_truncated(image, checkpoint):
+    """`run_flux2_kv_real` on the release cut to its first two double and two single blocks, at
+    float32 and bfloat16. The whole release is 36 GB at float32; the cut keeps the geometry and drops
+    repeated depth, and only its tensors are read. `image` unused.
+    """
+    import json
+    import os
+    from diffusers import Flux2Transformer2DModel
+    from safetensors import safe_open
+
+    config = {k: v for k, v in json.load(open(os.path.join(checkpoint, "config.json"))).items()
+              if not k.startswith("_")}
+    config.update(num_layers=2, num_single_layers=2)
+    model = Flux2Transformer2DModel(**config).eval()
+    wanted, state = set(model.state_dict()), {}
+    for name in sorted(os.listdir(checkpoint)):
+        if name.endswith(".safetensors"):
+            with safe_open(os.path.join(checkpoint, name), framework="pt") as f:
+                for key in f.keys():
+                    if key in wanted:
+                        state[key] = f.get_tensor(key).float()
+    model.load_state_dict(state, strict=True)
+    extra = _flux2_kv_forwards(model, torch.float32)
+    for key, value in _flux2_kv_forwards(model.to(torch.bfloat16), torch.bfloat16).items():
+        if key in ("extracted", "cached", "ordinary"):
+            extra[f"{key}_bf16"] = value
+            a, b = extra[key].flatten().double(), value.flatten().double()
+            print(f"  the reference's own bfloat16 against its float32, {key}: "
+                  f"{float(a @ b / a.norm() / b.norm()):.10f}")
+    globals()["_extra"] = extra
+    return extra["extracted"].clone().contiguous()
+
+
+def _flux2_kv_forwards(model, dtype):
+    """The extracting step, a cached step and ordinary conditioning on fixed tokens: a 2x3 reference
+    grid, a 2x2 generated grid and 8 text tokens, drawn at float32 and rounded to bfloat16 so a float32
+    and a bfloat16 run start from the same values."""
+    from diffusers.models.transformers.transformer_flux2 import (
+        Flux2KVAttnProcessor, Flux2KVParallelSelfAttnProcessor)
+
+    for block in model.transformer_blocks:
+        block.attn.set_processor(Flux2KVAttnProcessor())
+    for block in model.single_transformer_blocks:
+        block.attn.set_processor(Flux2KVParallelSelfAttnProcessor())
+    generator = torch.Generator().manual_seed(29)
+    def draw(*shape):
+        return torch.randn(*shape, generator=generator).to(torch.bfloat16).to(dtype)
+    channels, joint = model.config.in_channels, model.config.joint_attention_dim
+    reference, latents, later = draw(1, 6, channels), draw(1, 4, channels), draw(1, 4, channels)
+    embeds = draw(1, 8, joint)
+    reference_ids = torch.cartesian_prod(torch.tensor([10]), torch.arange(2), torch.arange(3),
+                                         torch.arange(1)).float()
+    latent_ids = torch.cartesian_prod(torch.arange(1), torch.arange(2), torch.arange(2),
+                                      torch.arange(1)).float()
+    text_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1),
+                                    torch.arange(8)).float()
+    t, t_later = torch.tensor([0.8], dtype=dtype), torch.tensor([0.45], dtype=dtype)
+    with torch.no_grad():
+        extracted, cache = model(
+            hidden_states=torch.cat([reference, latents], dim=1), encoder_hidden_states=embeds,
+            timestep=t, img_ids=torch.cat([reference_ids, latent_ids]), txt_ids=text_ids,
+            guidance=None, return_dict=False, kv_cache_mode="extract", num_ref_tokens=6)
+        cached = model(hidden_states=later, encoder_hidden_states=embeds, timestep=t_later,
+                       img_ids=latent_ids, txt_ids=text_ids, guidance=None, return_dict=False,
+                       kv_cache=cache, kv_cache_mode="cached")[0]
+        ordinary = model(hidden_states=torch.cat([latents, reference], dim=1),
+                         encoder_hidden_states=embeds, timestep=t,
+                         img_ids=torch.cat([latent_ids, reference_ids]), txt_ids=text_ids,
+                         guidance=None, return_dict=False)[0][:, :4]
+    e, o = extracted.flatten().double(), ordinary.flatten().double()
+    print(f"  reference cache vs ordinary conditioning ({dtype}): {float(e @ o / e.norm() / o.norm()):.10f}")
+    return {k: v.detach().float().clone().contiguous() for k, v in {
+        "reference": reference, "latents": latents, "later": later, "embeds": embeds,
+        "reference_ids": reference_ids, "latent_ids": latent_ids, "text_ids": text_ids,
+        "timestep": t, "timestep_later": t_later, "extracted": extracted, "cached": cached,
+        "ordinary": ordinary}.items()}
+
+
+def _ltx2_tiny(**over):
+    from diffusers.models.transformers.transformer_ltx2 import LTX2VideoTransformer3DModel
+
+    settings = dict(
+        in_channels=8, out_channels=8, patch_size=1, patch_size_t=1,
+        num_attention_heads=2, attention_head_dim=16, cross_attention_dim=32,
+        vae_scale_factors=(8, 32, 32), pos_embed_max_pos=20, base_height=64, base_width=64,
+        gated_attn=True, cross_attn_mod=True,
+        audio_in_channels=6, audio_out_channels=6, audio_patch_size=1, audio_patch_size_t=1,
+        audio_num_attention_heads=2, audio_attention_head_dim=8, audio_cross_attention_dim=16,
+        audio_scale_factor=4, audio_pos_embed_max_pos=20, audio_sampling_rate=16000,
+        audio_hop_length=160, audio_gated_attn=True, audio_cross_attn_mod=True,
+        num_layers=2, activation_fn="gelu-approximate", qk_norm="rms_norm_across_heads",
+        norm_elementwise_affine=False, norm_eps=1e-6, caption_channels=14,
+        attention_bias=True, attention_out_bias=True, rope_theta=10000.0,
+        rope_double_precision=True, causal_offset=1, timestep_scale_multiplier=1000,
+        cross_attn_timestep_scale_multiplier=1000, rope_type="split",
+        use_prompt_embeddings=False, perturbed_attn=True, ff_bias=True, audio_ff_bias=True,
+        use_prompt_adaln_single=True, use_keyframes_abs_pos_embedding=False)
+    settings.update(over)
+    return LTX2VideoTransformer3DModel(**settings)
+
+
+def run_ltx2(image):
+    """The LTX-2 audio-video transformer (`LTX2VideoTransformer3DModel`, Lightricks) at a tiny random
+    configuration, in BOTH the arrangement the ungated LTX-2.3 release declares and the three switches
+    LTX-2.5 changes.
+
+    One transformer denoises a video latent and an audio latent together. Each block runs SIX
+    attentions: video self-attention, audio self-attention, video-over-text and audio-over-text cross
+    attention, and the two cross-modal directions (audio-to-video, where the video asks and the audio
+    answers, and video-to-audio the other way). Every attention takes an ACROSS-HEADS RMS norm — the
+    query and key are normalized over the whole projected width before the heads are split, not per
+    head — and a per-head gate of `2 · sigmoid(linear(x))`, so a zero-initialized gate leaves the
+    attention unchanged. The rotary is the `split` kind: the channel axis halves into (real, imaginary)
+    blocks rather than interleaving adjacent pairs.
+
+    Modulation is PixArt-alpha's adaptive-norm-single raised to ten heads. Six live on the model (the
+    video and audio timestep embeddings, the two cross-modal scale/shift heads, the two cross-modal
+    gates) and each block adds its own `scale_shift_table` on top, so a block's parameters are the
+    per-layer DELTA of a globally computed vector.
+
+    LTX-2.5 differs from LTX-2.3 in three declared switches: the video feed-forward drops its bias,
+    the prompt cross-attention modulation becomes timestep-independent (`use_prompt_adaln_single`
+    False, which drops the two prompt adaptive-norm heads and makes the text key/value cacheable
+    across denoising steps), and a learned absolute-position embedding marks generated-keyframe
+    tokens. Both arrangements are recorded here, under the `l23.` and `l25.` prefixes, because
+    LTX-2.5's own `config.json` is behind Lightricks' gate: the arithmetic of every switch is measured
+    even where which switch the release sets cannot be read. Runs under the `qwenimage` oracle env.
+    `image` unused.
+    """
+    frames, height, width, audio_frames, text = 2, 2, 3, 4, 5
+    tokens = frames * height * width
+
+    generator = torch.Generator().manual_seed(3)
+    hidden = torch.randn(1, tokens, 8, generator=generator)
+    audio_hidden = torch.randn(1, audio_frames, 6, generator=generator)
+    encoder = torch.randn(1, text, 32, generator=generator)
+    audio_encoder = torch.randn(1, text, 16, generator=generator)
+    timestep = torch.full((1, tokens), 500.0)
+    audio_timestep = torch.full((1, audio_frames), 500.0)
+    sigma = torch.tensor([0.5])
+
+    extra = {"hidden": hidden.contiguous(), "audio_hidden": audio_hidden.contiguous(),
+             "encoder": encoder.contiguous(), "audio_encoder": audio_encoder.contiguous(),
+             "timestep": timestep.contiguous(), "audio_timestep": audio_timestep.contiguous(),
+             "sigma": sigma.contiguous()}
+    outputs = {}
+
+    # `l20` carries the caption projections LTX-2.0 keeps inside the transformer, so that path is
+    # measured too; its text arrives at `caption_channels` width rather than the attention's.
+    caption = torch.randn(1, text, 14, generator=generator)
+    audio_caption = torch.randn(1, text, 14, generator=generator)
+    # The mask marks the tokens whose latent holds a single pixel frame; it broadcasts against the
+    # embedding, so it carries a trailing axis of one.
+    keyframes = torch.tensor([[1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+                             dtype=torch.float32).unsqueeze(-1)
+    extra["caption"] = caption.contiguous()
+    extra["audio_caption"] = audio_caption.contiguous()
+    extra["keyframes"] = keyframes.contiguous()
+
+    for prefix, settings in (("l20", dict(use_prompt_embeddings=True)),
+                             ("l23", {}),
+                             ("l25", dict(ff_bias=False, use_prompt_adaln_single=False,
+                                          use_keyframes_abs_pos_embedding=True))):
+        model = _randomized(_ltx2_tiny(**settings), seed=37)
+        seams = {}
+        model.rope.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("rope", (o[0].detach().clone(), o[1].detach().clone())))
+        model.time_embed.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("temb", o[0].detach().clone()))
+        model.audio_time_embed.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("temb_audio", o[0].detach().clone()))
+        model.transformer_blocks[0].attn1.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("attn1", o.detach().clone()))
+        model.transformer_blocks[0].audio_to_video_attn.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("a2v", o.detach().clone()))
+        model.transformer_blocks[0].register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("block0", (o[0].detach().clone(),
+                                                              o[1].detach().clone())))
+        with torch.no_grad():
+            video, audio = model(
+                hidden_states=hidden, audio_hidden_states=audio_hidden,
+                encoder_hidden_states=caption if prefix == "l20" else encoder,
+                audio_encoder_hidden_states=audio_caption if prefix == "l20" else audio_encoder,
+                timestep=timestep, audio_timestep=audio_timestep, sigma=sigma,
+                num_frames=frames, height=height, width=width, audio_num_frames=audio_frames,
+                video_keyframes_mask=keyframes if prefix == "l25" else None,
+                return_dict=False)
+
+        extra[f"{prefix}.video"] = video.contiguous()
+        extra[f"{prefix}.audio"] = audio.contiguous()
+        extra[f"{prefix}.rope_cos"] = seams["rope"][0].contiguous()
+        extra[f"{prefix}.rope_sin"] = seams["rope"][1].contiguous()
+        extra[f"{prefix}.temb"] = seams["temb"].contiguous()
+        extra[f"{prefix}.temb_audio"] = seams["temb_audio"].contiguous()
+        extra[f"{prefix}.attn1"] = seams["attn1"].contiguous()
+        extra[f"{prefix}.a2v"] = seams["a2v"].contiguous()
+        extra[f"{prefix}.block0_video"] = seams["block0"][0].contiguous()
+        extra[f"{prefix}.block0_audio"] = seams["block0"][1].contiguous()
+        for key, value in model.state_dict().items():
+            extra[f"w::{prefix}.{key}"] = value.float().contiguous()
+        outputs[prefix] = video
+
+    globals()["_extra"] = extra
+    return outputs["l25"].clone().contiguous()
+
+
+def run_flux2_vae(image):
+    """FLUX.2's autoencoder at a tiny random configuration, and the latent codec the pipeline wraps
+    it in, from diffusers' AutoencoderKLFlux2.
+
+    The autoencoder itself is the ordinary `AutoencoderKL` the Stable Diffusion family uses, at 32
+    latent channels with the quantization convolutions kept. What is new is outside it. FLUX.2 has no
+    scalar `scaling_factor`/`shift_factor`: the latent is PATCHIFIED 2x2 into the channel axis and then
+    whitened by a BatchNorm's RUNNING STATISTICS, which the release ships as `bn.running_mean` and
+    `bn.running_var` beside the encoder and decoder. The transformer's 128 input channels are the 32
+    latent channels times that 2x2 patch.
+
+    The patchify order is the trap: `permute(0, 1, 3, 5, 2, 4)` puts the two sub-pixel axes directly
+    after the channel, so a channel's four patch offsets are adjacent. A pixel-unshuffle that groups
+    by spatial position instead produces the same shape and different contents. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderKLFlux2
+
+    model = AutoencoderKLFlux2(
+        in_channels=3, out_channels=3, block_out_channels=(8, 16), layers_per_block=1,
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D"),
+        latent_channels=4, norm_num_groups=4, sample_size=32, use_quant_conv=True,
+        use_post_quant_conv=True, mid_block_add_attention=True, batch_norm_eps=1e-4,
+        patch_size=(2, 2))
+    model = _randomized(model, seed=41)
+    # `_randomized` leaves the BatchNorm buffers alone, so give them values a whitening step would
+    # actually use: a non-zero mean and a positive variance.
+    torch.manual_seed(5)
+    model.bn.running_mean.copy_(torch.randn(model.bn.running_mean.shape) * 0.3)
+    model.bn.running_var.copy_(torch.rand(model.bn.running_var.shape) * 0.5 + 0.5)
+
+    generator = torch.Generator().manual_seed(12)
+    pixels = torch.randn(1, 3, 16, 16, generator=generator)
+
+    # Decoder seams, so a disagreement inside the decode localizes to a stage rather than being
+    # guessed at from the final image.
+    seams = {}
+    model.post_quant_conv.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("post_quant", o.detach().clone()))
+    model.decoder.conv_in.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("dec_conv_in", o.detach().clone()))
+    model.decoder.mid_block.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("dec_mid", o.detach().clone()))
+    model.decoder.up_blocks[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("dec_up0", o.detach().clone()))
+    model.decoder.conv_norm_out.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("dec_norm_out", o.detach().clone()))
+
+    with torch.no_grad():
+        posterior = model.encode(pixels).latent_dist
+        latent = posterior.mode()                                          # [1, 4, 4, 4]
+        patched = _flux2_patchify(latent)                                  # [1, 16, 2, 2]
+        mean = model.bn.running_mean.view(1, -1, 1, 1)
+        std = torch.sqrt(model.bn.running_var.view(1, -1, 1, 1) + model.config.batch_norm_eps)
+        whitened = (patched - mean) / std
+        packed = whitened.reshape(1, whitened.shape[1], -1).permute(0, 2, 1)   # [1, 4, 16]
+
+        restored = packed.permute(0, 2, 1).reshape(whitened.shape)
+        unwhitened = restored * std + mean
+        unpatched = _flux2_unpatchify(unwhitened)
+        decoded = model.decode(unpatched, return_dict=False)[0]
+
+    extra = {f"seam.{k}": v.contiguous() for k, v in seams.items()}
+    extra |= {"pixels": pixels.contiguous(), "latent": latent.contiguous(),
+             "patched": patched.contiguous(), "whitened": whitened.contiguous(),
+             "packed": packed.contiguous(), "unpatched": unpatched.contiguous(),
+             "decoded": decoded.contiguous()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return decoded.clone().contiguous()
+
+
+def run_flux2_vae_real(image, checkpoint):
+    """FLUX.2's autoencoder and latent codec on the RELEASED weights, from diffusers'
+    AutoencoderKLFlux2.
+
+    `--checkpoint` is the release's `vae/` directory. `run_flux2_vae` measures the arithmetic at a
+    tiny random configuration; this measures the shipped 32-channel autoencoder and the BatchNorm
+    running statistics the release carries, which random buffers cannot stand in for. The input is
+    the harness image resized to 64x64 and mapped to [-1, 1], an in-distribution picture rather than
+    noise, because these are trained weights. 64x64 at the release's stride of 8 is an 8x8 latent, a
+    4x4 patched grid, 16 tokens. The model is 84M parameters, so float32 costs nothing here.
+    """
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+    from diffusers import AutoencoderKLFlux2
+
+    model = AutoencoderKLFlux2.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+
+    picture = torch.from_numpy(np.asarray(image, dtype=np.float32)).permute(2, 0, 1).unsqueeze(0)
+    pixels = F.interpolate(picture, size=(64, 64), mode="bilinear", align_corners=False) * 2 - 1
+
+    with torch.no_grad():
+        latent = model.encode(pixels).latent_dist.mode()                   # [1, 32, 8, 8]
+        patched = _flux2_patchify(latent)                                  # [1, 128, 4, 4]
+        mean = model.bn.running_mean.view(1, -1, 1, 1)
+        std = torch.sqrt(model.bn.running_var.view(1, -1, 1, 1) + model.config.batch_norm_eps)
+        whitened = (patched - mean) / std
+        packed = whitened.reshape(1, whitened.shape[1], -1).permute(0, 2, 1)   # [1, 16, 128]
+
+        restored = packed.permute(0, 2, 1).reshape(whitened.shape)
+        unpatched = _flux2_unpatchify(restored * std + mean)
+        decoded = model.decode(unpatched, return_dict=False)[0]
+
+    globals()["_extra"] = {
+        "pixels": pixels.clone().contiguous(), "latent": latent.clone().contiguous(),
+        "patched": patched.clone().contiguous(), "whitened": whitened.clone().contiguous(),
+        "packed": packed.clone().contiguous(), "unpatched": unpatched.clone().contiguous(),
+        "decoded": decoded.clone().contiguous()}
+    return decoded.clone().contiguous()
+
+
+def _flux2_patchify(latents):
+    batch, channels, height, width = latents.shape
+    out = latents.view(batch, channels, height // 2, 2, width // 2, 2)
+    out = out.permute(0, 1, 3, 5, 2, 4)
+    return out.reshape(batch, channels * 4, height // 2, width // 2)
+
+
+def _flux2_unpatchify(latents):
+    batch, channels, height, width = latents.shape
+    out = latents.reshape(batch, channels // 4, 2, 2, height, width)
+    out = out.permute(0, 1, 4, 2, 5, 3)
+    return out.reshape(batch, channels // 4, height * 2, width * 2)
+
+
+def run_flux2_text(image):
+    """FLUX.2 [klein]'s text front end at a tiny random Qwen3, from the reference's own
+    `_get_qwen3_prompt_embeds`.
+
+    The conditioning is not a language model's output. It is THREE of its intermediate hidden states
+    concatenated per token: the release reads layers 9, 18 and 27 of a 36-layer Qwen3 and stacks them
+    on the channel axis, which is why `joint_attention_dim` is three times the language model's
+    width. `output.hidden_states[k]` is the state AFTER k decoder layers, with index 0 the embedding,
+    so the three indices name layer outputs rather than blocks.
+
+    The prompt is padded to `max_sequence_length` on the RIGHT and the whole padded sequence is
+    encoded, attention mask included. That mask matters: a pad position attends to the real tokens and
+    to the earlier pads, so masking the pad KEYS changes the pad positions' own states, and those
+    states are part of the conditioning the transformer reads. The record carries the embedding with
+    the mask and without it, so the difference is measured rather than argued about. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+
+    config = Qwen3Config(
+        hidden_size=32, num_hidden_layers=6, num_attention_heads=4, num_key_value_heads=2,
+        head_dim=8, intermediate_size=64, vocab_size=128, rms_norm_eps=1e-6, rope_theta=1000000.0,
+        tie_word_embeddings=True, max_position_embeddings=64, attention_bias=False)
+    model = _randomized(Qwen3ForCausalLM(config), seed=43)
+
+    layers = [1, 3, 5]
+    length, real = 12, 7
+    tokens = torch.arange(1, real + 1, dtype=torch.long).unsqueeze(0)
+    padding = torch.full((1, length - real), 0, dtype=torch.long)
+    input_ids = torch.cat([tokens, padding], dim=1)                        # right padding
+    attention_mask = torch.cat([torch.ones(1, real, dtype=torch.long),
+                                torch.zeros(1, length - real, dtype=torch.long)], dim=1)
+
+    def embedding(mask):
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=mask, output_hidden_states=True,
+                        use_cache=False)
+        stacked = torch.stack([out.hidden_states[k] for k in layers], dim=1)
+        batch, channels, sequence, width = stacked.shape
+        return (stacked.permute(0, 2, 1, 3).reshape(batch, sequence, channels * width),
+                [h.detach().clone() for h in out.hidden_states])
+
+    masked, states = embedding(attention_mask)
+    unmasked, _ = embedding(None)
+
+    # Every entry is cloned: `contiguous()` returns the tensor itself when it already is, and
+    # safetensors refuses to write two names that alias one buffer.
+    extra = {"input_ids": input_ids[0].to(torch.int32).clone().contiguous(),
+             "attention_mask": attention_mask[0].to(torch.int32).clone().contiguous(),
+             "embedding": masked.clone().contiguous(),
+             "embedding_unmasked": unmasked.clone().contiguous()}
+    for index, state in enumerate(states):
+        extra[f"hidden.{index}"] = state.clone().contiguous()
+    # A tied Qwen3 has `lm_head.weight` aliasing `model.embed_tokens.weight`, which safetensors
+    # refuses to write twice; the clone keeps the record faithful rather than dropping a key.
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return masked.clone().contiguous()
+
+
+def run_flux2_text_mistral(image):
+    """FLUX.2 [dev]'s text front end at a tiny random Mistral-Small 3, from transformers' own
+    MistralForCausalLM.
+
+    [dev] conditions on Mistral-Small 3 where [klein] conditions on Qwen3, and the front end is
+    otherwise the one `run_flux2_text` records: THREE intermediate hidden states concatenated per
+    token, right padding to the context length, and an attention mask that changes the pad positions'
+    own states. The released decoder is 40 layers and `joint_attention_dim` 15360 is three times its
+    5120 width, so the layers read are 10, 20 and 30; this configuration keeps that ratio at 8 layers
+    and reads 2, 4 and 6.
+
+    Two things differ from the Qwen3 front end and are the reason this record exists. Mistral does not
+    normalize queries and keys per head, and its head width is STATED rather than implied: the release
+    sets `head_dim` 128 against a 5120 residual over 32 heads, which divides to 160, so the attention
+    projections are narrower than the residual. `head_dim` 8 against a 40-wide residual over 4 heads
+    reproduces that. `sliding_window` is None because the release sets it null; a reader that took
+    MistralConfig's default would apply a sliding mask the release does not. Runs under the `llm`
+    oracle env. `image` unused.
+    """
+    from transformers import MistralConfig, MistralForCausalLM
+
+    config = MistralConfig(
+        hidden_size=40, num_hidden_layers=8, num_attention_heads=4, num_key_value_heads=2,
+        head_dim=8, intermediate_size=64, vocab_size=128, rms_norm_eps=1e-5,
+        rope_theta=1000000000.0, tie_word_embeddings=False, max_position_embeddings=64,
+        attention_bias=False, sliding_window=None)
+    model = _randomized(MistralForCausalLM(config), seed=47)
+
+    layers = [2, 4, 6]
+    length, real = 12, 7
+    tokens = torch.arange(1, real + 1, dtype=torch.long).unsqueeze(0)
+    padding = torch.full((1, length - real), 0, dtype=torch.long)
+    input_ids = torch.cat([tokens, padding], dim=1)                        # right padding
+    attention_mask = torch.cat([torch.ones(1, real, dtype=torch.long),
+                                torch.zeros(1, length - real, dtype=torch.long)], dim=1)
+
+    def embedding(mask):
+        with torch.no_grad():
+            out = model(input_ids=input_ids, attention_mask=mask, output_hidden_states=True,
+                        use_cache=False)
+        stacked = torch.stack([out.hidden_states[k] for k in layers], dim=1)
+        batch, channels, sequence, width = stacked.shape
+        return (stacked.permute(0, 2, 1, 3).reshape(batch, sequence, channels * width),
+                [h.detach().clone() for h in out.hidden_states])
+
+    masked, states = embedding(attention_mask)
+    unmasked, _ = embedding(None)
+
+    extra = {"input_ids": input_ids[0].to(torch.int32).clone().contiguous(),
+             "attention_mask": attention_mask[0].to(torch.int32).clone().contiguous(),
+             "embedding": masked.clone().contiguous(),
+             "embedding_unmasked": unmasked.clone().contiguous()}
+    for index, state in enumerate(states):
+        extra[f"hidden.{index}"] = state.clone().contiguous()
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return masked.clone().contiguous()
+
+
+def run_flux2_inpaint(image):
+    """FLUX.2 [klein] inpainting, from the reference's OWN `Flux2KleinInpaintPipeline.__call__`, at a
+    tiny random transformer and autoencoder.
+
+    The pipeline conditions on the source image twice. Its whitened latent is the first REFERENCE,
+    appended to the token sequence at time coordinate 10, which is how FLUX.2 edits. It is also the
+    starting point: `get_timesteps` starts the loop `int(N - N * strength)` steps in, from the image
+    noised to that sigma, and after every Euler step the kept region is overwritten with the image
+    noised to the NEXT sigma, with the noise drawn once at the start; the last step blends with the
+    clean image. `scale_noise` picks its sigma by INDEX (`begin_index` before the loop, `step_index`
+    after a step), not by the timestep value it is handed.
+
+    The inputs are chosen to reach every trap. 50 steps at `strength` 0.8 are the pipeline's own
+    defaults and a double-precision case: the loop starts at step 10, where a single-precision 0.8
+    (0.80000001) starts at step 9. Of the step counts 4..50 and strengths 0.01..0.99, 78 pairs start
+    differently in single precision; (10, 0.7) is not one of them, because `10 * 0.7` rounds to
+    exactly 7.0. The mask's white rectangle (rows 2..9, columns 6..13 of 16) has edges that fall
+    BETWEEN the 4x4 packing cells, so the bilinear downsample to the packed grid produces fractional
+    blend weights rather than a clean 0/1 grid. Two runs share the image, mask and noise: `distilled`
+    (klein 4B's own setting, no guidance) and `guided` (a base release, guidance 3 against a negative
+    conditioning). The start noise, the packed mask, the source latent and the latents after every
+    step are captured from inside the reference, so a disagreement names a step. `image` is the
+    harness picture at 16x16. Runs under the `qwenimage` oracle env.
+    """
+    import numpy as np
+    from PIL import Image
+    from diffusers import (AutoencoderKLFlux2, FlowMatchEulerDiscreteScheduler,
+                           Flux2Transformer2DModel)
+    from diffusers.pipelines.flux2.pipeline_flux2_klein_inpaint import Flux2KleinInpaintPipeline
+
+    transformer = _randomized(Flux2Transformer2DModel(
+        patch_size=1, in_channels=16, num_layers=2, num_single_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, timestep_guidance_channels=16, mlp_ratio=3.0,
+        axes_dims_rope=(2, 2, 2, 2), rope_theta=2000, eps=1e-6, guidance_embeds=False), seed=51)
+    vae = _randomized(AutoencoderKLFlux2(
+        in_channels=3, out_channels=3, block_out_channels=(8, 16), layers_per_block=1,
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D"),
+        latent_channels=4, norm_num_groups=4, sample_size=32, use_quant_conv=True,
+        use_post_quant_conv=True, mid_block_add_attention=True, batch_norm_eps=1e-4,
+        patch_size=(2, 2)), seed=53)
+    torch.manual_seed(7)
+    vae.bn.running_mean.copy_(torch.randn(vae.bn.running_mean.shape) * 0.3)
+    vae.bn.running_var.copy_(torch.rand(vae.bn.running_var.shape) * 0.5 + 0.5)
+    # The released klein scheduler config (`scheduler/scheduler_config.json`).
+    scheduler_config = dict(base_image_seq_len=256, base_shift=0.5, max_image_seq_len=4096,
+                            max_shift=1.15, num_train_timesteps=1000, shift=3.0,
+                            use_dynamic_shifting=True, time_shift_type="exponential")
+
+    picture = Image.fromarray((np.asarray(image) * 255).clip(0, 255).astype(np.uint8)).resize(
+        (16, 16), Image.BICUBIC)
+    mask_pixels = np.zeros((16, 16), dtype=np.uint8)
+    mask_pixels[2:10, 6:14] = 255
+    mask = Image.fromarray(mask_pixels, mode="L")
+
+    generator = torch.Generator().manual_seed(21)
+    embeds = torch.randn(1, 5, 24, generator=generator)
+    negative = torch.randn(1, 5, 24, generator=generator)
+
+    extra = {"embeds": embeds.clone().contiguous(), "negative": negative.clone().contiguous()}
+    for name, distilled, guidance in [("distilled", True, 1.0), ("guided", False, 3.0)]:
+        pipe = Flux2KleinInpaintPipeline(
+            scheduler=FlowMatchEulerDiscreteScheduler(**scheduler_config), vae=vae,
+            text_encoder=None, tokenizer=None, transformer=transformer, is_distilled=distilled)
+        captured, steps = {}, []
+        prepare_latents, prepare_mask = pipe.prepare_latents, pipe.prepare_mask_latents
+
+        def capture_latents(image, timestep, *args, **kwargs):
+            out = prepare_latents(image, timestep, *args, **kwargs)
+            captured.update(init_image=image, start=out[0], noise=out[1], source=out[2])
+            return out
+
+        def capture_mask(mask, *args, **kwargs):
+            out = prepare_mask(mask, *args, **kwargs)
+            captured.update(mask_full=mask, mask_packed=out)
+            return out
+
+        pipe.prepare_latents, pipe.prepare_mask_latents = capture_latents, capture_mask
+
+        def on_step(pipeline, index, timestep, tensors):
+            steps.append(tensors["latents"].detach().clone())
+            return {}
+
+        with torch.no_grad():
+            output = pipe(prompt_embeds=embeds,
+                          negative_prompt_embeds=None if distilled else negative,
+                          image=picture, mask_image=mask, strength=0.8, num_inference_steps=50,
+                          guidance_scale=guidance, height=16, width=16,
+                          generator=torch.Generator().manual_seed(9), output_type="pt",
+                          callback_on_step_end=on_step,
+                          callback_on_step_end_tensor_inputs=["latents"]).images
+        for key, value in captured.items():
+            extra[f"{name}.{key}"] = value.detach().float().clone().contiguous()
+        extra[f"{name}.steps"] = torch.stack(steps).float().clone().contiguous()
+        extra[f"{name}.start_step"] = torch.tensor([50 - len(steps)], dtype=torch.int32)
+        extra[f"{name}.output"] = output.float().clone().contiguous()
+        print(f"  {name}: start step {50 - len(steps)}, {len(steps)} steps, "
+              f"mask cells {sorted(set(np.round(captured['mask_packed'].flatten().numpy(), 4)))}")
+
+    for key, value in transformer.state_dict().items():
+        extra[f"w::transformer.{key}"] = value.float().clone().contiguous()
+    for key, value in vae.state_dict().items():
+        if value.is_floating_point():
+            extra[f"w::vae.{key}"] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["distilled.output"].clone().contiguous()
+
+
+def run_flux2_kv(image):
+    """FLUX.2 [klein] 9B KV's reference cache, from the reference's own `Flux2Transformer2DModel` under
+    its KV attention processors and its own `Flux2KleinKVPipeline.__call__`, at a tiny random
+    transformer and autoencoder.
+
+    On the first step the reference tokens LEAD the image stream (`[text, reference, image]` in the
+    joint sequence). They take the modulation of a fixed timestep, 0 by default, spliced in per
+    position; they attend only to one another while the text and generated tokens attend to
+    everything; and their post-rotary keys and values are cached per layer and dropped from the
+    output. Every later step runs the generated tokens alone, with the cached keys and values
+    spliced between the text and the image.
+
+    The transformer half records the extracting velocity, the first double and first single layer's
+    cached keys and values (the reference's `(batch, tokens, heads, head_dim)` layout), and a cached
+    step's velocity. As a control it also records the ORDINARY reference-conditioning velocity on the
+    same tokens. The weights are drawn at scale 0.4 rather than the harness's usual 0.05, and that is
+    load-bearing: at 0.05 the modulation and the attention pattern barely move the output, the
+    reference cache and ordinary conditioning agree to 1e-12, and a port of the WRONG mechanism would
+    pass. At 0.4 they agree only to 0.912, so the parity figure discriminates between them. The pipeline half runs
+    `__call__` at its default of 4 steps with one 64x64 reference image (the pipeline refuses one
+    under 64 pixels), capturing the starting
+    latent, the preprocessed reference pixels and the packed reference tokens. `image` is the harness
+    picture. Runs under the `qwenimage` oracle env.
+    """
+    import numpy as np
+    from PIL import Image
+    from diffusers import (AutoencoderKLFlux2, FlowMatchEulerDiscreteScheduler,
+                           Flux2Transformer2DModel)
+    from diffusers.models.transformers.transformer_flux2 import (
+        Flux2KVAttnProcessor, Flux2KVParallelSelfAttnProcessor)
+    from diffusers.pipelines.flux2.pipeline_flux2_klein_kv import Flux2KleinKVPipeline
+
+    transformer = _randomized(Flux2Transformer2DModel(
+        patch_size=1, in_channels=16, num_layers=2, num_single_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, timestep_guidance_channels=16, mlp_ratio=3.0,
+        axes_dims_rope=(2, 2, 2, 2), rope_theta=2000, eps=1e-6, guidance_embeds=False),
+        seed=61, scale=0.4)
+    for block in transformer.transformer_blocks:
+        block.attn.set_processor(Flux2KVAttnProcessor())
+    for block in transformer.single_transformer_blocks:
+        block.attn.set_processor(Flux2KVParallelSelfAttnProcessor())
+
+    generator = torch.Generator().manual_seed(23)
+    reference = torch.randn(1, 6, 16, generator=generator)                 # a 2x3 reference grid
+    latents = torch.randn(1, 4, 16, generator=generator)                   # a 2x2 generated grid
+    later = torch.randn(1, 4, 16, generator=generator)
+    embeds = torch.randn(1, 5, 24, generator=generator)
+    reference_ids = torch.cartesian_prod(torch.tensor([10]), torch.arange(2), torch.arange(3),
+                                         torch.arange(1)).float()
+    latent_ids = torch.cartesian_prod(torch.arange(1), torch.arange(2), torch.arange(2),
+                                      torch.arange(1)).float()
+    text_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1),
+                                    torch.arange(5)).float()
+    t, t_later = torch.tensor([0.8]), torch.tensor([0.45])
+
+    with torch.no_grad():
+        extracted, cache = transformer(
+            hidden_states=torch.cat([reference, latents], dim=1), encoder_hidden_states=embeds,
+            timestep=t, img_ids=torch.cat([reference_ids, latent_ids]), txt_ids=text_ids,
+            guidance=None, return_dict=False, kv_cache_mode="extract", num_ref_tokens=6)
+        cached = transformer(
+            hidden_states=later, encoder_hidden_states=embeds, timestep=t_later, img_ids=latent_ids,
+            txt_ids=text_ids, guidance=None, return_dict=False, kv_cache=cache,
+            kv_cache_mode="cached")[0]
+        ordinary = transformer(
+            hidden_states=torch.cat([latents, reference], dim=1), encoder_hidden_states=embeds,
+            timestep=t, img_ids=torch.cat([latent_ids, reference_ids]), txt_ids=text_ids,
+            guidance=None, return_dict=False)[0][:, :4]
+
+    extra = {"reference": reference, "latents": latents, "later": later, "embeds": embeds,
+             "reference_ids": reference_ids, "latent_ids": latent_ids, "text_ids": text_ids,
+             "timestep": t, "timestep_later": t_later, "extracted": extracted, "cached": cached,
+             "ordinary": ordinary,
+             "cache.double0.key": cache.get_double(0).k_ref, "cache.double0.value": cache.get_double(0).v_ref,
+             "cache.single0.key": cache.get_single(0).k_ref, "cache.single0.value": cache.get_single(0).v_ref}
+    e, o = extracted.flatten().double(), ordinary.flatten().double()
+    print(f"  reference cache vs ordinary conditioning on the same tokens: cosine "
+          f"{float(e @ o / e.norm() / o.norm()):.12f}")
+
+    # The pipeline, through its own __call__.
+    vae = _randomized(AutoencoderKLFlux2(
+        in_channels=3, out_channels=3, block_out_channels=(8, 16), layers_per_block=1,
+        down_block_types=("DownEncoderBlock2D", "DownEncoderBlock2D"),
+        up_block_types=("UpDecoderBlock2D", "UpDecoderBlock2D"),
+        latent_channels=4, norm_num_groups=4, sample_size=32, use_quant_conv=True,
+        use_post_quant_conv=True, mid_block_add_attention=True, batch_norm_eps=1e-4,
+        patch_size=(2, 2)), seed=63)
+    torch.manual_seed(8)
+    vae.bn.running_mean.copy_(torch.randn(vae.bn.running_mean.shape) * 0.3)
+    vae.bn.running_var.copy_(torch.rand(vae.bn.running_var.shape) * 0.5 + 0.5)
+    pipe = Flux2KleinKVPipeline(
+        scheduler=FlowMatchEulerDiscreteScheduler(
+            base_image_seq_len=256, base_shift=0.5, max_image_seq_len=4096, max_shift=1.15,
+            num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=True,
+            time_shift_type="exponential"),
+        vae=vae, text_encoder=None, tokenizer=None, transformer=transformer)
+    captured = {}
+    prepare_latents, prepare_image_latents = pipe.prepare_latents, pipe.prepare_image_latents
+
+    def capture_latents(*args, **kwargs):
+        out = prepare_latents(*args, **kwargs)
+        captured["start"] = out[0]
+        return out
+
+    def capture_images(*args, **kwargs):
+        out = prepare_image_latents(*args, **kwargs)
+        captured.update(reference_pixels=kwargs["images"][0], reference_tokens=out[0])
+        return out
+
+    pipe.prepare_latents, pipe.prepare_image_latents = capture_latents, capture_images
+    # The pipeline refuses a reference image under 64 pixels on a side.
+    picture = Image.fromarray((np.asarray(image) * 255).clip(0, 255).astype(np.uint8)).resize(
+        (64, 64), Image.BICUBIC)
+    with torch.no_grad():
+        output = pipe(image=[picture], prompt_embeds=embeds, height=16, width=16,
+                      num_inference_steps=4, generator=torch.Generator().manual_seed(4),
+                      output_type="pt").images
+    for key, value in captured.items():
+        extra[f"pipeline.{key}"] = value
+    extra["pipeline.output"] = output
+
+    extra = {k: v.detach().float().clone().contiguous() for k, v in extra.items()}
+    for key, value in transformer.state_dict().items():
+        extra[f"w::transformer.{key}"] = value.float().clone().contiguous()
+    for key, value in vae.state_dict().items():
+        if value.is_floating_point():
+            extra[f"w::vae.{key}"] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["extracted"].clone().contiguous()
+
+
+def run_flux2_scheduler(image):
+    """FLUX.2's sigma schedule, from the release's own scheduler config and the pipeline's ramp.
+
+    FLUX.2 replaces `calculate_shift` with `compute_empirical_mu`, which depends on the STEP COUNT as
+    well as the sequence length: two lines in sequence length are fitted at 10 and 200 steps and the
+    shift interpolates linearly between them in the number of steps, with the 200-step line used alone
+    above a sequence length of 4300. The released `scheduler_config.json` still carries `base_shift`
+    0.5 and `max_shift` 1.15, which the empirical fit replaces rather than reads — a port that took
+    the config at its word would produce a plausible schedule that is not this one.
+
+    The ramp is the pipeline's `np.linspace(1.0, 1 / num_steps, num_steps)`, not the scheduler's own
+    `sigma_min`. Several step counts and sequence lengths are recorded, including one above and one
+    below the 4300 crossover. Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    import numpy as np
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from diffusers.pipelines.flux2.pipeline_flux2_klein import compute_empirical_mu
+
+    cases = [(4, 256), (20, 1024), (28, 4096), (50, 4300), (28, 6000)]
+    extra = {}
+    for steps, sequence in cases:
+        scheduler = FlowMatchEulerDiscreteScheduler.from_config({
+            "base_image_seq_len": 256, "base_shift": 0.5, "invert_sigmas": False,
+            "max_image_seq_len": 4096, "max_shift": 1.15, "num_train_timesteps": 1000,
+            "shift": 3.0, "shift_terminal": None, "stochastic_sampling": False,
+            "time_shift_type": "exponential", "use_beta_sigmas": False,
+            "use_dynamic_shifting": True, "use_exponential_sigmas": False,
+            "use_karras_sigmas": False})
+        mu = compute_empirical_mu(image_seq_len=sequence, num_steps=steps)
+        ramp = np.linspace(1.0, 1 / steps, steps)
+        scheduler.set_timesteps(sigmas=ramp, mu=mu, device="cpu")
+        key = f"{steps}x{sequence}"
+        extra[f"mu.{key}"] = torch.tensor([mu], dtype=torch.float32)
+        extra[f"sigmas.{key}"] = scheduler.sigmas.clone().to(torch.float32).contiguous()
+        extra[f"timesteps.{key}"] = scheduler.timesteps.clone().to(torch.float32).contiguous()
+        print(f"  {key}: mu {mu:.9f}, first sigma {float(scheduler.sigmas[0]):.9f}, "
+              f"last non-zero {float(scheduler.sigmas[-2]):.9f}")
+    globals()["_extra"] = extra
+    return extra["sigmas.20x1024"].clone().contiguous()
+
+
+def run_flux2_text_real(image, checkpoint):
+    """FLUX.2 [klein]'s text conditioning on the RELEASED encoder, from the reference pipeline's OWN
+    `Flux2KleinPipeline._get_qwen3_prompt_embeds`.
+
+    `--checkpoint` is the release ROOT (it reads `text_encoder/` and `tokenizer/`). The oracle calls
+    the reference's static method rather than reconstructing it, so the chat template, the right
+    padding to 512, the attention mask and the layer read (9, 18, 27) are all the reference's own.
+    The encoder runs at float32, the precision `NFKMLXLanguage.loadedRelease` loads it at, so the
+    figure measures the arithmetic on the shipped weights. That matters because this release's
+    encoder is NOT byte-identical to `Qwen/Qwen3-4B` (different sharding, no shard hash in common),
+    so the package's existing Qwen3-4B measurement does not cover it. 16 GB at float32, the largest
+    Qwen3 this machine holds. The padded ids and the mask are recorded beside the embedding, so a
+    pad-token disagreement shows as a failed id comparison rather than a lower cosine.
+    """
+    return _flux2_text_real(checkpoint, "float32")["embedding.0"].clone().contiguous()
+
+
+def run_flux2_text_real_bf16(image, checkpoint):
+    """`run_flux2_text_real` at bfloat16, for an encoder too large for float32 whole: the Qwen3-8B in
+    FLUX.2 [klein] 9B is 30.5 GB at float32 and 15.3 GB as released. `--checkpoint` is the release
+    ROOT. `image` unused.
+    """
+    return _flux2_text_real(checkpoint, "bfloat16")["embedding.0"].clone().contiguous()
+
+
+def _qwen3_cut_config(config, layers):
+    """`config` cut to its first `layers` layers. The installed transformers validates that
+    `layer_types` has one entry a layer, so the two change together."""
+    from transformers import Qwen3Config
+    values = config.to_dict()
+    values["num_hidden_layers"] = layers
+    if values.get("layer_types"):
+        values["layer_types"] = values["layer_types"][:layers]
+    return Qwen3Config(**values)
+
+
+def run_flux2_text_real_truncated(image, checkpoint):
+    """FLUX.2 [klein]'s text conditioning at FLOAT32 on the released 9B encoder cut to 28 layers, and
+    the same cut at bfloat16.
+
+    `--checkpoint` is the release ROOT. The conditioning reads hidden states 9, 18 and 27 of a
+    36-layer Qwen3 and nothing past them, so a cut to 28 layers computes the COMPLETE conditioning;
+    only unread depth and the language-model head are dropped. That brings float32 from 30.5 GB to
+    24 GB. The cut is 28 and not 27 because the last entry of the reference's hidden-state tuple is
+    taken AFTER the final norm: a model cut to 27 layers would hand back a normed state 27. That is
+    checked here on a tiny Qwen3 in the installed transformers before the release is touched. The
+    encoder is built on the meta device and its tensors are read one by one through `safe_open` and
+    assigned, so the release never exists whole in memory. `image` unused.
+    """
+    import os
+    from safetensors import safe_open
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3RotaryEmbedding
+
+    tiny = Qwen3Config(hidden_size=32, num_hidden_layers=6, num_attention_heads=4,
+                       num_key_value_heads=2, head_dim=8, intermediate_size=64, vocab_size=128,
+                       tie_word_embeddings=False)
+    full = _randomized(Qwen3ForCausalLM(tiny), seed=71)
+    cut = Qwen3ForCausalLM(_qwen3_cut_config(tiny, 4)).eval()
+    cut.load_state_dict({k: v for k, v in full.state_dict().items()
+                         if not k.startswith(("model.layers.4.", "model.layers.5."))})
+    ids, mask = torch.arange(1, 9).unsqueeze(0), torch.tensor([[1] * 6 + [0] * 2])
+    with torch.no_grad():
+        kept = cut.float()(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states
+        whole = full(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states
+    assert torch.equal(kept[3], whole[3]), "a cut to N+1 layers changed hidden state N"
+    assert not torch.equal(kept[4], whole[4]), "the cut's last state should be the normed one"
+    print("  a cut to N+1 layers keeps hidden state N exactly; its last state is the normed one")
+
+    config = _qwen3_cut_config(Qwen3Config.from_pretrained(f"{checkpoint}/text_encoder"), 28)
+    with torch.device("meta"):
+        encoder = Qwen3ForCausalLM(config)
+    encoder.lm_head = torch.nn.Identity()
+    wanted = set(encoder.state_dict())
+    state = {}
+    directory = f"{checkpoint}/text_encoder"
+    for name in sorted(os.listdir(directory)):
+        if name.endswith(".safetensors"):
+            with safe_open(os.path.join(directory, name), framework="pt") as f:
+                for key in f.keys():
+                    if key in wanted:
+                        state[key] = f.get_tensor(key).float()
+    assert wanted == set(state), f"the cut lacks {sorted(wanted - set(state))[:4]}"
+    encoder.load_state_dict(state, strict=True, assign=True)
+    encoder.model.rotary_emb = Qwen3RotaryEmbedding(config=config)
+    encoder.eval()
+
+    extra = _flux2_text_real(checkpoint, "float32", text_encoder=encoder)
+    bf16 = _flux2_text_real(checkpoint, "bfloat16", text_encoder=encoder.to(torch.bfloat16))
+    for key, value in bf16.items():
+        if key.startswith("embedding."):
+            extra[key.replace("embedding.", "embedding_bf16.")] = value
+            a, b = extra[key].flatten().double(), value.flatten().double()
+            print(f"  the reference's own bfloat16 against its float32, {key}: "
+                  f"{float(a @ b / a.norm() / b.norm()):.10f}")
+    globals()["_extra"] = extra
+    return extra["embedding.0"].clone().contiguous()
+
+
+def _flux2_text_real(checkpoint, precision, text_encoder=None):
+    import torch
+    from transformers import AutoTokenizer, Qwen3ForCausalLM
+    from diffusers.pipelines.flux2.pipeline_flux2_klein import Flux2KleinPipeline
+
+    dtype = getattr(torch, precision)
+    if text_encoder is None:
+        text_encoder = Qwen3ForCausalLM.from_pretrained(
+            f"{checkpoint}/text_encoder", torch_dtype=dtype).eval()
+    tokenizer = AutoTokenizer.from_pretrained(f"{checkpoint}/tokenizer")
+    prompts = ["a red fox in the snow", "An astronaut riding a horse on Mars, 35mm film still."]
+
+    extra = {}
+    for index, prompt in enumerate(prompts):
+        with torch.no_grad():
+            embeds = Flux2KleinPipeline._get_qwen3_prompt_embeds(
+                text_encoder, tokenizer, prompt, dtype=dtype, max_sequence_length=512)
+        text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}], tokenize=False, add_generation_prompt=True,
+            enable_thinking=False)
+        inputs = tokenizer(text, return_tensors="pt", padding="max_length", truncation=True,
+                           max_length=512)
+        extra[f"embedding.{index}"] = embeds[0].float().clone().contiguous()
+        extra[f"input_ids.{index}"] = inputs["input_ids"][0].to(torch.int32).clone().contiguous()
+        extra[f"attention_mask.{index}"] = inputs["attention_mask"][0].to(torch.int32).clone().contiguous()
+        extra[f"prompt.{index}"] = torch.tensor(list(prompt.encode("utf-8")), dtype=torch.uint8)
+        print(f"  [{index}] {int(inputs['attention_mask'].sum())} real tokens of 512, "
+              f"pad id {tokenizer.pad_token_id}")
+    globals()["_extra"] = extra
+    return extra
+
+
+def run_flux2_prompt(image, checkpoint):
+    """FLUX.2 [klein]'s prompt path: the release's own chat template and tokenizer, on real prompts.
+
+    `--checkpoint` is the release's `tokenizer/` directory (FLUX.2 [klein] 4B is ungated, so this is
+    Black Forest Labs' own). The reference wraps the prompt in a single user message, asks for the
+    generation prompt, and passes `enable_thinking=False`, which makes a Qwen3 template append an
+    EMPTY think block after the assistant header. A port that fed the encoder a bare prompt would read
+    different hidden states and produce a different image with nothing to show for it, so the rendered
+    text and its token ids are both recorded. Runs under the `qwenimage` oracle env.
+    """
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    prompts = ["a red fox in the snow",
+               "An astronaut riding a horse on Mars, 35mm film still.",
+               ""]
+    extra = {}
+    for index, prompt in enumerate(prompts):
+        text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        ids = tokenizer(text, return_tensors="pt")["input_ids"][0]
+        extra[f"ids.{index}"] = ids.to(torch.int32).clone().contiguous()
+        extra[f"length.{index}"] = torch.tensor([len(ids)], dtype=torch.int32)
+        print(f"  [{index}] {len(ids)} ids; rendered {text!r}")
+        # The rendered text as UTF-8 bytes, so the Swift side can compare the template's output
+        # directly rather than only its tokenization.
+        extra[f"text.{index}"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.uint8)
+    globals()["_extra"] = extra
+    return extra["ids.0"].to(torch.float32).clone().contiguous()
+
+
+MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_llava_tiny, "flux2_scheduler": run_flux2_scheduler, "flux2_text": run_flux2_text,
+          "flux2_inpaint": run_flux2_inpaint, "flux2_kv": run_flux2_kv,
+          "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
+          "mimi": run_mimi, "chronos": run_chronos,
           "dcn": run_dcn,
-          "segformer_loss": run_segformer_loss,
+          "segformer_loss": run_segformer_loss, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr}
-CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
+          "gemma4_shared_kv": run_gemma4_shared_kv}
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
-                     "vad": run_vad, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
+                     "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen,
@@ -8229,7 +17188,391 @@ CHECKPOINT_MODELS = {"sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_en
                      "reenhance_irmae": run_reenhance_irmae,
                      "reenhance_cfm": run_reenhance_cfm,
                      "reenhance_denoiser": run_reenhance_denoiser,
-                     "reenhance_e2e": run_reenhance_e2e}
+                     "reenhance_e2e": run_reenhance_e2e,
+                     "pixtral": run_pixtral,
+                     "pixtral_tiny": run_pixtral_tiny,
+                     "flux_real": run_flux_real,
+                     "flux_text": run_flux_text}
+
+
+def run_ltx_pipeline(image, checkpoint):
+    """LTX-Video 0.9.0's text-to-video glue, from diffusers' own LTXPipeline, at a tiny random geometry.
+
+    `--checkpoint` is a directory holding the T5 SentencePiece tokenizer (a FLUX.1 release's
+    `tokenizer_2/` serves: it is the same T5 v1.1 vocabulary). The T5 encoder, the transformer and the
+    autoencoder are tiny random ones, so what this measures is the pipeline: the tokenization padded to
+    `max_sequence_length` with its attention mask, the cross-attention masking, the sigma ramp and its
+    dynamic shift, the rope interpolation scale, classifier-free guidance, the latent denormalization by
+    the autoencoder's stored statistics, and the decode. Each model is measured against its own
+    reference elsewhere.
+
+    The record carries the token ids and masks, the prompt features, the starting latents, the sigmas,
+    the final latents, the decoded video, and the three models' weights in release naming.
+    """
+    import torch
+    from diffusers import (AutoencoderKLLTXVideo, FlowMatchEulerDiscreteScheduler, LTXPipeline,
+                           LTXVideoTransformer3DModel)
+    from transformers import T5Config, T5EncoderModel, T5TokenizerFast
+
+    # The fast tokenizer reads the same vocabulary from tokenizer.json; this environment carries no
+    # sentencepiece for the slow one, and the two agree on plain text.
+    tokenizer = T5TokenizerFast(tokenizer_file=os.path.join(checkpoint, "tokenizer.json"),
+                                eos_token="</s>", unk_token="<unk>", pad_token="<pad>", extra_ids=0)
+    text_encoder = T5EncoderModel(T5Config(
+        vocab_size=32128, d_model=32, d_kv=16, d_ff=64, num_layers=2, num_heads=2,
+        relative_attention_num_buckets=16, relative_attention_max_distance=32,
+        feed_forward_proj="gated-gelu", layer_norm_epsilon=1e-6))
+    _randomized(text_encoder, seed=21, scale=0.1)
+    transformer = LTXVideoTransformer3DModel(
+        in_channels=16, out_channels=16, patch_size=1, patch_size_t=1, num_attention_heads=2,
+        attention_head_dim=8, cross_attention_dim=16, num_layers=2, caption_channels=32,
+        qk_norm="rms_norm_across_heads")
+    _randomized(transformer, seed=22, scale=0.1)
+    vae = AutoencoderKLLTXVideo(
+        in_channels=3, out_channels=3, latent_channels=16, block_out_channels=(8, 16, 16, 16),
+        decoder_block_out_channels=(8, 16, 16, 16), layers_per_block=(1, 1, 1, 1, 1),
+        decoder_layers_per_block=(1, 1, 1, 1, 1), spatio_temporal_scaling=(True, True, True, False),
+        decoder_spatio_temporal_scaling=(True, True, True, False), decoder_inject_noise=(False,) * 5,
+        upsample_residual=(False,) * 4, upsample_factor=(1,) * 4, timestep_conditioning=False,
+        patch_size=4, patch_size_t=1, encoder_causal=True, decoder_causal=False)
+    _randomized(vae, seed=23, scale=0.1)
+    torch.manual_seed(24)
+    vae.latents_mean.copy_(torch.randn(16) * 0.3)
+    vae.latents_std.copy_(torch.rand(16) + 0.5)
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        base_image_seq_len=1024, base_shift=0.95, max_image_seq_len=4096, max_shift=2.05, shift=1.0,
+        shift_terminal=0.1, use_dynamic_shifting=True)
+    pipeline = LTXPipeline(scheduler=scheduler, vae=vae, text_encoder=text_encoder, tokenizer=tokenizer,
+                           transformer=transformer)
+
+    prompt, negative = "A red fox walking through fresh snow, cinematic", "worst quality, blurry"
+    frames, height, width, steps = 9, 64, 64, 4
+    torch.manual_seed(25)
+    latents = torch.randn(1, 2 * 2 * 2, 16)
+    arguments = dict(prompt=prompt, negative_prompt=negative, height=height, width=width,
+                     num_frames=frames, num_inference_steps=steps, guidance_scale=3.0, frame_rate=25,
+                     max_sequence_length=128)
+    with torch.no_grad():
+        embeds, mask, negative_embeds, negative_mask = pipeline.encode_prompt(
+            prompt=prompt, negative_prompt=negative, do_classifier_free_guidance=True,
+            max_sequence_length=128)
+        final = pipeline(latents=latents.clone(), output_type="latent", return_dict=False, **arguments)[0]
+        video = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **arguments)[0]
+    ids = tokenizer(prompt, padding="max_length", max_length=128, truncation=True,
+                    add_special_tokens=True, return_tensors="pt").input_ids
+
+    extra = {"input_ids": ids[0].to(torch.int32).contiguous(), "mask": mask[0].to(torch.int32).contiguous(),
+             "negative_mask": negative_mask[0].to(torch.int32).contiguous(),
+             "prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous(),
+             "latents": latents[0].contiguous(), "sigmas": scheduler.sigmas.float().contiguous(),
+             "final_latents": final[0].contiguous(),
+             "video": video[0].permute(0, 2, 3, 1).contiguous()}           # [F, H, W, C] in 0...1
+    for prefix, model in (("t5::", text_encoder), ("t::", transformer), ("v::", vae)):
+        for key, value in model.state_dict().items():
+            # The T5 encoder ties `encoder.embed_tokens` to `shared`; the release stores `shared` alone.
+            if key == "encoder.embed_tokens.weight":
+                continue
+            extra[prefix + key] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["ltx_pipeline"] = run_ltx_pipeline
+
+
+def run_wan_pipeline(image, checkpoint):
+    """Wan 2.1's text-to-video glue, from diffusers' own WanPipeline, at a tiny random geometry.
+
+    `--checkpoint` is a directory holding a T5 `tokenizer.json`. The release's own umT5 tokenizer has a
+    256k vocabulary no tiny encoder can take; a T5 vocabulary exercises the same path, the cleanup, the
+    padding, the end token, and the mask, with ids a tiny umT5 accepts. The umT5 encoder, the
+    transformer and the Wan 2.1 autoencoder are tiny random ones, so what this measures is the pipeline:
+    the masked umT5 encode, the features cut at the prompt's length and zero-padded, the UniPC flow
+    schedule, classifier-free guidance, the latent statistics, and the decode. The loop is run twice,
+    with and without `expand_timesteps` (Wan 2.2 TI2V's per-token timestep), which for text-to-video
+    gives every token the same step.
+
+    The record carries the token ids and masks, the prompt features, the starting latents, the final
+    latents of both runs, the decoded video, and the three models' weights in release naming.
+    """
+    import types
+
+    import torch
+    from diffusers import AutoencoderKLWan, UniPCMultistepScheduler, WanPipeline, WanTransformer3DModel
+    from diffusers.pipelines.wan import pipeline_wan
+    from transformers import T5TokenizerFast, UMT5Config, UMT5EncoderModel
+
+    # The pipeline's cleanup runs `ftfy.fix_text`, which repairs mis-decoded text and leaves well-formed
+    # text as it is; no oracle environment carries ftfy, and this prompt is well formed.
+    pipeline_wan.ftfy = types.SimpleNamespace(fix_text=lambda text: text)
+
+    tokenizer = T5TokenizerFast(tokenizer_file=os.path.join(checkpoint, "tokenizer.json"),
+                                eos_token="</s>", unk_token="<unk>", pad_token="<pad>", extra_ids=0)
+    text_encoder = UMT5EncoderModel(UMT5Config(
+        vocab_size=32128, d_model=32, d_kv=16, d_ff=64, num_layers=2, num_heads=2,
+        relative_attention_num_buckets=16, relative_attention_max_distance=32,
+        feed_forward_proj="gated-gelu", layer_norm_epsilon=1e-6))
+    _randomized(text_encoder, seed=31, scale=0.1)
+    transformer = WanTransformer3DModel(
+        patch_size=(1, 2, 2), num_attention_heads=2, attention_head_dim=16, in_channels=4, out_channels=4,
+        text_dim=32, freq_dim=256, ffn_dim=48, num_layers=2, cross_attn_norm=True,
+        qk_norm="rms_norm_across_heads", eps=1e-6, rope_max_seq_len=1024)
+    _randomized(transformer, seed=32, scale=0.1)
+    vae = AutoencoderKLWan(base_dim=8, z_dim=4, dim_mult=[1, 2], num_res_blocks=1, temperal_downsample=[True],
+                           latents_mean=[0.1, -0.2, 0.3, -0.4], latents_std=[1.1, 0.9, 1.3, 0.8])
+    _randomized(vae, seed=33, scale=0.1)
+    scheduler = UniPCMultistepScheduler(
+        prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=3.0, num_train_timesteps=1000,
+        solver_order=2, solver_type="bh2", final_sigmas_type="zero", lower_order_final=True, predict_x0=True)
+
+    prompt, negative = "  A red fox   walking through fresh snow, cinematic ", "worst quality, blurry"
+    arguments = dict(prompt=prompt, negative_prompt=negative, height=16, width=16, num_frames=5,
+                     num_inference_steps=4, guidance_scale=5.0, max_sequence_length=64)
+    torch.manual_seed(34)
+    latents = torch.randn(1, 4, 3, 8, 8)
+    extra = {"latents": latents[0].contiguous()}
+    for name, expand in (("", False), ("_expanded", True)):
+        pipeline = WanPipeline(tokenizer=tokenizer, text_encoder=text_encoder, transformer=transformer, vae=vae,
+                               scheduler=scheduler, expand_timesteps=expand)
+        with torch.no_grad():
+            final = pipeline(latents=latents.clone(), output_type="latent", return_dict=False, **arguments)[0]
+            if not expand:
+                video = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **arguments)[0]
+                embeds, negative_embeds = pipeline.encode_prompt(
+                    prompt=prompt, negative_prompt=negative, do_classifier_free_guidance=True,
+                    max_sequence_length=64)
+        extra[f"final_latents{name}"] = final[0].contiguous()
+    from diffusers.pipelines.wan.pipeline_wan import prompt_clean
+    inputs = tokenizer(prompt_clean(prompt), padding="max_length", max_length=64, truncation=True,
+                       add_special_tokens=True, return_attention_mask=True, return_tensors="pt")
+    extra.update({"input_ids": inputs.input_ids[0].to(torch.int32).contiguous(),
+                  "mask": inputs.attention_mask[0].to(torch.int32).contiguous(),
+                  "prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous(),
+                  "video": video[0].permute(0, 2, 3, 1).contiguous()})       # [F, H, W, C] in 0...1
+    for prefix, model in (("t5::", text_encoder), ("t::", transformer), ("v::", vae)):
+        for key, value in model.state_dict().items():
+            if key == "encoder.embed_tokens.weight":
+                continue
+            extra[prefix + key] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["wan_pipeline"] = run_wan_pipeline
+
+
+def run_z_image_pipeline(image, checkpoint):
+    """Z-Image's text-to-image glue, from diffusers' own ZImagePipeline, at a tiny random geometry.
+
+    `--checkpoint` is a Qwen3 tokenizer directory (the Qwen3-4B release's, which the Z-Image release
+    ships as `tokenizer/`). The Qwen3 text encoder, the S3-DiT and the Flux autoencoder are tiny random
+    ones, so what this measures is the pipeline: the chat template with thinking enabled, the padded
+    encode read at the penultimate hidden state and cut to the prompt's tokens, the static-shift flow
+    schedule ending at sigma 0, the `(1000 - t) / 1000` timestep, classifier-free guidance above a scale
+    of 1, the negated velocity, and the centered-latent decode. The loop runs twice: guided (scale 4,
+    with a negative prompt) and unguided (scale 0, the Turbo release's setting).
+
+    The record carries the token ids, the prompt features, the starting latents, the final latents of
+    both runs, the decoded image, and the three models' weights in release naming.
+    """
+    import torch
+    from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, ZImagePipeline, ZImageTransformer2DModel
+    from transformers import AutoTokenizer, Qwen3Config, Qwen3Model
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    text_encoder = Qwen3Model(Qwen3Config(
+        vocab_size=len(tokenizer), hidden_size=24, intermediate_size=48, num_hidden_layers=3,
+        num_attention_heads=2, num_key_value_heads=1, head_dim=12, rms_norm_eps=1e-6, rope_theta=1000000.0,
+        tie_word_embeddings=True, attn_implementation="eager"))
+    _randomized(text_encoder, seed=41, scale=0.1)
+    transformer = ZImageTransformer2DModel(
+        all_patch_size=(2,), all_f_patch_size=(1,), in_channels=4, dim=32, n_layers=2,
+        n_refiner_layers=1, n_heads=2, n_kv_heads=2, norm_eps=1e-5, qk_norm=True, cap_feat_dim=24,
+        rope_theta=256.0, t_scale=1000.0, axes_dims=[4, 6, 6], axes_lens=[1024, 512, 512])
+    _randomized(transformer, seed=42, scale=0.1)
+    vae = AutoencoderKL(
+        in_channels=3, out_channels=3, block_out_channels=[8, 16], layers_per_block=1,
+        latent_channels=4, norm_num_groups=4, use_quant_conv=False, use_post_quant_conv=False,
+        mid_block_add_attention=True, scaling_factor=0.3611, shift_factor=0.1159,
+        down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D"],
+        up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"])
+    _randomized(vae, seed=43, scale=0.1)
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=3.0, use_dynamic_shifting=False)
+    pipeline = ZImagePipeline(scheduler=scheduler, vae=vae, text_encoder=text_encoder, tokenizer=tokenizer,
+                              transformer=transformer)
+
+    prompt, negative = "A red fox walking through fresh snow, cinematic", "blurry, low quality"
+    arguments = dict(prompt=prompt, height=16, width=16, num_inference_steps=5, max_sequence_length=64)
+    torch.manual_seed(44)
+    latents = torch.randn(1, 4, 8, 8)
+    extra = {"latents": latents[0].contiguous()}
+    with torch.no_grad():
+        guided = dict(arguments, negative_prompt=negative, guidance_scale=4.0)
+        extra["final_latents"] = pipeline(latents=latents.clone(), output_type="latent", return_dict=False,
+                                          **guided)[0][0].contiguous()
+        picture = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **guided)[0]
+        extra["final_latents_unguided"] = pipeline(latents=latents.clone(), output_type="latent",
+                                                   return_dict=False, guidance_scale=0.0,
+                                                   **arguments)[0][0].contiguous()
+        embeds, negative_embeds = pipeline.encode_prompt(prompt=prompt, negative_prompt=negative,
+                                                         do_classifier_free_guidance=True,
+                                                         max_sequence_length=64)
+    templated = tokenizer.apply_chat_template([{"role": "user", "content": prompt}], tokenize=False,
+                                              add_generation_prompt=True, enable_thinking=True)
+    extra.update({"input_ids": torch.tensor(tokenizer(templated).input_ids, dtype=torch.int32),
+                  "prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous(),
+                  "image": picture[0].permute(1, 2, 0).contiguous()})        # [H, W, C] in 0...1
+    print("z_image_pipeline template:", repr(templated))
+    for prefix, model in (("te::model.", text_encoder), ("t::", transformer), ("v::", vae)):
+        for key, value in model.state_dict().items():
+            extra[prefix + key] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["z_image_pipeline"] = run_z_image_pipeline
+
+
+def run_sd3_pipeline(image, checkpoint):
+    """Stable Diffusion 3's text-to-image glue, from diffusers' own StableDiffusion3Pipeline, at a tiny
+    random geometry.
+
+    `--checkpoint` is a CLIP tokenizer directory padding with the end marker (CLIP-L's, as a FLUX.1
+    release's `tokenizer/`). IK_SD3_CLIP_G_TOKENIZER names a CLIP tokenizer padding with `!` (bigG's
+    convention; the store's `clip-bang-tokenizer/`, copied from Stable Diffusion 2.1's `tokenizer/`), and
+    IK_SD3_T5_TOKENIZER a T5 v1.1 tokenizer (a FLUX.1 release's `tokenizer_2/`). The three text towers,
+    the MMDiT and the autoencoder are tiny random ones, so what this measures is the pipeline: the two
+    CLIP penultimate states concatenated on channels and zero-padded to T5's width, the T5 sequence
+    appended, the two pooled projections concatenated, the static-shift schedule over the scheduler's
+    own ramp, the raw timestep, classifier-free guidance above a scale of 1, and the decode. The loop
+    runs guided (scale 5, with a negative prompt) and unguided (scale 1).
+
+    The record carries the token ids, the prompt features, the starting latents, the final latents of
+    both runs, the decoded image, and the five models' weights in release naming.
+    """
+    import torch
+    from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, SD3Transformer2DModel, StableDiffusion3Pipeline
+    from transformers import (CLIPTextConfig, CLIPTextModelWithProjection, CLIPTokenizer, T5Config,
+                              T5EncoderModel, T5TokenizerFast)
+
+    # At the usual 0.1 the towers encode both prompts almost alike and guidance moves the final
+    # latents by 1e-6; at 0.5 the guided and unguided records are 0.94 apart.
+    text_scale = 0.5
+    clip_g_directory = os.environ.get("IK_SD3_CLIP_G_TOKENIZER",
+                                      os.path.expanduser("~/.inferkit-validation/clip-bang-tokenizer"))
+    t5_directory = os.environ.get("IK_SD3_T5_TOKENIZER",
+                                  os.path.expanduser("~/.inferkit-validation/flux-schnell-release/tokenizer_2"))
+    tokenizer = CLIPTokenizer.from_pretrained(checkpoint)
+    tokenizer_2 = CLIPTokenizer.from_pretrained(clip_g_directory)
+    # The fast tokenizer reads tokenizer.json directly; from_pretrained converts spiece.model, which
+    # needs protobuf, and the oracle environment carries none.
+    tokenizer_3 = T5TokenizerFast(tokenizer_file=os.path.join(t5_directory, "tokenizer.json"),
+                                  eos_token="</s>", unk_token="<unk>", pad_token="<pad>", extra_ids=0)
+
+    def clip(hidden, projection, act, seed):
+        model = CLIPTextModelWithProjection(CLIPTextConfig(
+            vocab_size=49408, hidden_size=hidden, intermediate_size=2 * hidden, num_hidden_layers=3,
+            num_attention_heads=2, max_position_embeddings=77, hidden_act=act, projection_dim=projection,
+            bos_token_id=49406, eos_token_id=2, pad_token_id=1))
+        return _randomized(model, seed=seed, scale=text_scale)
+
+    text_encoder = clip(8, 8, "quick_gelu", 51)
+    text_encoder_2 = clip(8, 12, "gelu", 52)
+    text_encoder_3 = _randomized(T5EncoderModel(T5Config(
+        vocab_size=32128, d_model=24, d_kv=12, d_ff=48, num_layers=2, num_heads=2,
+        relative_attention_num_buckets=16, relative_attention_max_distance=32,
+        feed_forward_proj="gated-gelu", layer_norm_epsilon=1e-6)), seed=53, scale=text_scale)
+    transformer = _randomized(SD3Transformer2DModel(
+        sample_size=16, patch_size=2, in_channels=4, out_channels=4, num_layers=2, attention_head_dim=8,
+        num_attention_heads=2, joint_attention_dim=24, caption_projection_dim=16, pooled_projection_dim=20,
+        pos_embed_max_size=8, dual_attention_layers=(0,), qk_norm="rms_norm"), seed=54, scale=0.3)
+    vae = _randomized(AutoencoderKL(
+        in_channels=3, out_channels=3, block_out_channels=[8, 16], layers_per_block=1, latent_channels=4,
+        norm_num_groups=4, use_quant_conv=False, use_post_quant_conv=False, mid_block_add_attention=True,
+        scaling_factor=1.5305, shift_factor=0.0609,
+        down_block_types=["DownEncoderBlock2D", "DownEncoderBlock2D"],
+        up_block_types=["UpDecoderBlock2D", "UpDecoderBlock2D"]), seed=55, scale=0.1)
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=3.0)
+    pipeline = StableDiffusion3Pipeline(
+        transformer=transformer, scheduler=scheduler, vae=vae, text_encoder=text_encoder, tokenizer=tokenizer,
+        text_encoder_2=text_encoder_2, tokenizer_2=tokenizer_2, text_encoder_3=text_encoder_3,
+        tokenizer_3=tokenizer_3)
+
+    prompt, negative = "A red fox walking through fresh snow, cinematic", "blurry, low quality"
+    arguments = dict(prompt=prompt, height=16, width=16, num_inference_steps=5, max_sequence_length=32)
+    torch.manual_seed(56)
+    latents = torch.randn(1, 4, 8, 8)
+    extra = {"latents": latents[0].contiguous()}
+    with torch.no_grad():
+        guided = dict(arguments, negative_prompt=negative, guidance_scale=5.0)
+        extra["final_latents"] = pipeline(latents=latents.clone(), output_type="latent", return_dict=False,
+                                          **guided)[0][0].contiguous()
+        picture = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **guided)[0]
+        extra["final_latents_unguided"] = pipeline(latents=latents.clone(), output_type="latent",
+                                                   return_dict=False, guidance_scale=1.0,
+                                                   **arguments)[0][0].contiguous()
+        embeds, negative_embeds, pooled, negative_pooled = pipeline.encode_prompt(
+            prompt=prompt, prompt_2=None, prompt_3=None, negative_prompt=negative,
+            do_classifier_free_guidance=True, max_sequence_length=32)
+    ids = lambda t, length: torch.tensor(t(prompt, padding="max_length", max_length=length, truncation=True).input_ids,
+                                         dtype=torch.int32)
+    extra.update({"ids_l": ids(tokenizer, 77), "ids_g": ids(tokenizer_2, 77), "ids_t5": ids(tokenizer_3, 32),
+                  "prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous(),
+                  "pooled": pooled[0].contiguous(), "negative_pooled": negative_pooled[0].contiguous(),
+                  "image": picture[0].permute(1, 2, 0).contiguous()})        # [H, W, C] in 0...1
+    for prefix, model in (("l::", text_encoder), ("g::", text_encoder_2), ("t5::", text_encoder_3),
+                          ("t::", transformer), ("v::", vae)):
+        for key, value in model.state_dict().items():
+            if key == "encoder.embed_tokens.weight":
+                continue
+            extra[prefix + key] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["sd3_pipeline"] = run_sd3_pipeline
+
+
+UMT5_TOKENIZER_PROMPTS = [
+    "A red fox walking through fresh snow, cinematic",
+    "  Two   cats\tplaying\nin the sun  ",
+    "一只红色的狐狸在雪地里行走，电影感",
+    "Ein roter Fuchs läuft durch frischen Schnee, 4K, HDR!",
+    "キツネが雪の中を歩く 🦊❄️",
+    "Un zorro rojo — cámara lenta, 24 fps, f/1.8",
+    "Лиса бежит по снегу. 1234567890",
+    "naïve café résumé coöperate",
+    "",
+]
+
+
+def run_umt5_tokenizer(image, checkpoint):
+    """Wan's umT5 tokenization, from the release's own fast tokenizer, as WanPipeline hands it to umT5.
+
+    `--checkpoint` is the release's `tokenizer/` directory. Each prompt is cleaned the way the pipeline
+    cleans it (whitespace collapsed and trimmed; `ftfy.fix_text` leaves these well-formed prompts as
+    they are), then tokenized with the end token, padded to 512, and masked. The record carries each
+    prompt's ids and mask, `ids_<n>` and `mask_<n>`.
+    """
+    import re
+
+    import torch
+    from transformers import T5TokenizerFast
+
+    tokenizer = T5TokenizerFast(tokenizer_file=os.path.join(checkpoint, "tokenizer.json"),
+                                eos_token="</s>", unk_token="<unk>", pad_token="<pad>", extra_ids=0)
+    extra = {}
+    for index, prompt in enumerate(UMT5_TOKENIZER_PROMPTS):
+        cleaned = re.sub(r"\s+", " ", prompt).strip()
+        inputs = tokenizer(cleaned, padding="max_length", max_length=512, truncation=True,
+                           add_special_tokens=True, return_attention_mask=True, return_tensors="pt")
+        extra[f"ids_{index}"] = inputs.input_ids[0].to(torch.int32).contiguous()
+        extra[f"mask_{index}"] = inputs.attention_mask[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return torch.tensor([float(len(UMT5_TOKENIZER_PROMPTS))])
+
+
+CHECKPOINT_MODELS["umt5_tokenizer"] = run_umt5_tokenizer
 
 
 def main():
@@ -8261,7 +17604,7 @@ def main():
     else:
         result = MODELS[args.model](image)
     record = {"input_image": torch.from_numpy(image).contiguous(), "output": result.float()}
-    for name, value in globals().get("_extra", {}).items():
+    for name, value in {**globals().get("_extra", {}), **_DIT_PROBES}.items():
         # Integer extras stay integer: class labels are indices, and casting them to float would make
         # the Swift side guess at the conversion back.
         record[name] = value.float() if value.is_floating_point() else value

@@ -16,9 +16,25 @@ and `dtypes.json` into the directory. `HF_TOKEN` is sent when set, for a gated r
 
 import json
 import os
+import socket
 import struct
 import sys
 import urllib.request
+
+
+# `huggingface.co` advertises sixteen IPv6 addresses ahead of its IPv4 ones. On a host with no IPv6
+# route, Python tries each in turn and waits out the connect timeout on every one, so a request that
+# curl answers in under a second takes minutes; the shard walk below never finishes. Ordering the
+# IPv4 addresses first restores the sub-second path and leaves an IPv6-only host working, because the
+# IPv6 addresses stay in the list behind them.
+_resolve = socket.getaddrinfo
+
+
+def _ipv4_first(*args, **kwargs):
+    return sorted(_resolve(*args, **kwargs), key=lambda entry: entry[0] != socket.AF_INET)
+
+
+socket.getaddrinfo = _ipv4_first
 
 
 def _request(url, byte_range=None):
@@ -28,8 +44,21 @@ def _request(url, byte_range=None):
         request.add_header("Authorization", f"Bearer {token}")
     if byte_range is not None:
         request.add_header("Range", f"bytes={byte_range[0]}-{byte_range[1]}")
-    with urllib.request.urlopen(request) as response:
-        return response.read()
+    # A shard resolves to the LFS CDN, and a connect to it can hang indefinitely. urllib applies no
+    # timeout of its own, so a stalled connect blocks the whole run rather than failing; one retry
+    # covers a CDN edge that refuses the first connection.
+    last = None
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.read()
+        # A status the server chose is its answer, not a flaky connection: retrying a 404 three times
+        # only hides it, and the caller below reads one to decide which weight name a release uses.
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            last = error
+    raise SystemExit(f"{url}: {last}")
 
 
 def header(url):
@@ -66,7 +95,17 @@ def main(argv):
         except urllib.error.HTTPError:
             continue
     if shards is None:
-        shards = ["diffusion_pytorch_model.safetensors" if subfolder else "model.safetensors"]
+        # An unsharded release names its single file either way, and the subfolder is no longer the
+        # tell: FLUX.2-small-decoder keeps `config.json` AND `diffusion_pytorch_model.safetensors` at
+        # the repository root. Try the likely name first and fall back rather than 404 on a repository
+        # that is right there.
+        preferred = "diffusion_pytorch_model.safetensors" if subfolder else "model.safetensors"
+        other = "model.safetensors" if subfolder else "diffusion_pytorch_model.safetensors"
+        shards = [preferred]
+        try:
+            header(f"{base}/{preferred}")
+        except urllib.error.HTTPError:
+            shards = [other]
 
     shapes, dtypes = {}, {}
     for shard in shards:

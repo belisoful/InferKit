@@ -228,6 +228,47 @@ class LMCTests(unittest.TestCase):
         status = subprocess.run([sys.executable, script, "status"], capture_output=True, text=True, env=env)
         self.assertEqual(status.stdout.splitlines()[0], "FREE")
 
+    def run_command(self, tests, session, command):
+        script = str(Path(__file__).resolve().parent / "lmc.py")
+        env = dict(os.environ, INFERKIT_LMC_DIR=str(self.dir), CLAUDE_PID=str(self.me))
+        return subprocess.Popen([sys.executable, script, "run", "--test", tests, "--session", session,
+                                 "--root", ROOT_A, "--silent", "--", *command], env=env,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def ended_runs(self):
+        history = (self.dir / "history.log").read_text().splitlines()
+        return [line for line in history if " end " in line]
+
+    def test_a_run_whose_command_exits_zero_is_recorded_as_passed(self):
+        proc = self.run_command("smoke", "s1", ["true"])
+        out, _ = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0, out)
+        ended = self.ended_runs()
+        self.assertEqual(len(ended), 1, ended)
+        self.assertIn("outcome=passed", ended[0])
+        self.assertIn("reason=exit=0", ended[0])
+
+    def test_a_rider_on_a_passing_run_is_satisfied(self):
+        gate = Path(self.tmp.name) / "go"
+        proc = self.run_command("full-check", "s1",
+                                ["sh", "-c", f"while [ ! -e '{gate}' ]; do sleep 0.05; done"])
+        deadline = time.time() + 10
+        while time.time() < deadline:
+            with self.state() as st:
+                run = st.running()
+                if run is not None and run["child_pid"]:
+                    break
+            time.sleep(0.05)
+        rider = self.request(["full-check"], "s2")
+        self.assertEqual(self.req(rider)["state"], "riding")
+        gate.touch()
+        out, _ = proc.communicate(timeout=10)
+        self.assertEqual(proc.returncode, 0, out)
+        self.assertIn("riders_notified=1", out)
+        code, _ = lmc.wait_for(rider, timeout=1, poll=0.1, state_dir_path=self.dir)
+        self.assertEqual(code, lmc.EXIT_SATISFIED_PASSED)
+        self.assertIn("outcome=passed", self.ended_runs()[-1])
+
     def test_run_stopped_by_signal_releases_as_stopped(self):
         script = str(Path(__file__).resolve().parent / "lmc.py")
         env = dict(os.environ, INFERKIT_LMC_DIR=str(self.dir), CLAUDE_PID=str(self.me))

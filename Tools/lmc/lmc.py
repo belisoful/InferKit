@@ -34,9 +34,10 @@ earliest request.
 
 Liveness. A request records its session's process id (`CLAUDE_PID`, or `--pid`). A holder whose
 process is gone is reaped as `stopped`; a queued request whose session is gone is dropped. `run`
-also records the child it spawned. The legacy advisory file `~/.claude/inferkit-test-slot-mlx`
-is written while the lock is held and honored while its holder is alive, so scripts that still
-read it stay coordinated.
+also records the child it spawned. Another process reaps the run as `stopped` when that child is
+gone; `run` itself waits on the child and releases with the command's exit status. The legacy
+advisory file `~/.claude/inferkit-test-slot-mlx` is written while the lock is held and honored while
+its holder is alive, so scripts that still read it stay coordinated.
 
 Exit codes for `wait`, `acquire`, and a `run` that did not run its command:
     0  granted: this session holds the lock; run, then release
@@ -316,7 +317,8 @@ class State:
             run = {
                 "id": uuid.uuid4().hex[:8], "key": key, "tests": tests, "root": root,
                 "priority": priority, "state": "pending", "requests": [], "runner": None,
-                "runner_session": None, "holder_pid": None, "child_pid": None, "log": None,
+                "runner_session": None, "holder_pid": None, "child_pid": None,
+                "supervisor_pid": None, "log": None,
                 "created_at": now(), "started_at": None, "ended_at": None, "outcome": None,
             }
             self.runs[run["id"]] = run
@@ -396,7 +398,9 @@ class State:
         run = self.running()
         if run is not None:
             holder_alive = pid_alive(run["holder_pid"])
-            child_alive = run["child_pid"] is None or pid_alive(run["child_pid"])
+            # The supervisor reaps its own child and reports the exit through `release`.
+            supervising = run.get("supervisor_pid") == os.getpid()
+            child_alive = run["child_pid"] is None or supervising or pid_alive(run["child_pid"])
             if not holder_alive or not child_alive:
                 which = "holder" if not holder_alive else "child"
                 self.end_run(run, "stopped", reason=f"{which}-process-gone")
@@ -436,11 +440,12 @@ class State:
                  tests=",".join(run["tests"]), riders=len(run["requests"]) - 1)
         return run
 
-    def set_child(self, rid, child_pid, log):
+    def set_child(self, rid, child_pid, log, supervisor_pid=None):
         req = self.requests.get(rid)
         run = self.runs.get(req["run"]) if req else None
         if run is not None and run["state"] == "running":
             run["child_pid"] = child_pid
+            run["supervisor_pid"] = supervisor_pid
             run["log"] = log
 
     def acknowledge(self, rid):
@@ -701,7 +706,7 @@ def cmd_run(args):
             return 127
         spawned.append(child)
         with State(args.state_dir) as st:
-            st.set_child(req["id"], child.pid, log)
+            st.set_child(req["id"], child.pid, log, supervisor_pid=os.getpid())
         try:
             for chunk in iter(lambda: child.stdout.read(4096), b""):
                 handle.write(chunk)
