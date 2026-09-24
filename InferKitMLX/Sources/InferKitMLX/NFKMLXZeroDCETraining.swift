@@ -215,10 +215,14 @@ extension NFKMLXZeroDCE {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXTrainer.train(net, optimizer: optimizer ?? NFKMLXL2Adam(learningRate: 1e-4, weightDecay: 1e-4),
-                                steps: steps,
-                                sample: photos, loss: objective.callAsFunction,
-                                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
-                                observer: observer)
+        try NFKMLXFineTune.run(net,
+                               freezing: {},
+                               optimizer: optimizer,
+                               reference: { NFKMLXL2Adam(learningRate: 1e-4, weightDecay: 1e-4) },
+                               referenceSchedule: { .constant },
+                               steps: steps,
+                               sample: photos, loss: objective.callAsFunction,
+                               clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
+                               observer: observer)
     }
 }

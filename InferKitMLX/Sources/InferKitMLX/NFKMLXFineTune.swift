@@ -98,6 +98,32 @@ public enum NFKMLXFineTune {
             checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
+    /// The unlabeled form, for a recipe whose loss reads one array per step and no target, such as a
+    /// reconstruction objective or a loss whose targets travel beside the batch.
+    @discardableResult
+    public static func run<Net: Module>(
+        _ net: Net,
+        freezing: () throws -> Void,
+        optimizer: Optimizer?,
+        reference: () -> Optimizer,
+        referenceSchedule: () -> NFKMLXLearningRateSchedule,
+        steps: Int,
+        sample: (Int) -> MLXArray,
+        loss: @escaping (Net, MLXArray) -> MLXArray,
+        clipGradientNorm: Float?,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
+        checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
+        observer: NFKMLXTrainer.Observer? = nil
+    ) throws -> [Float] {
+        try run(net, freezing: freezing, optimizer: optimizer, reference: reference,
+                referenceSchedule: referenceSchedule, steps: steps,
+                arrays: { [sample($0)] },
+                loss: { net, arrays in loss(net, arrays[0]) },
+                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+    }
+
     /// The supervised form, for a recipe whose loss reads one input and one target.
     @discardableResult
     public static func run<Net: Module>(

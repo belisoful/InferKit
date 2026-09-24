@@ -107,8 +107,12 @@ extension NFKMLXCLIP {
                 "\(embeddings.shape[0]) embeddings and \(labels.shape[0]) labels were supplied; "
                 + "a probe needs one class index per image")
         }
-        return try NFKMLXTrainer.train(
-            probe, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(learningRate: 1e-3, weightDecay: 0.01),
+        return try NFKMLXFineTune.run(
+            probe,
+            freezing: {},
+            optimizer: optimizer,
+            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: 1e-3, weightDecay: 0.01) },
+            referenceSchedule: { .constant },
             steps: steps,
             batch: { step in
                 guard let sampler else {
