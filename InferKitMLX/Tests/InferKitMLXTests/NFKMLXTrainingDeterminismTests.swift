@@ -69,6 +69,11 @@ final class NFKMLXTrainingDeterminismTests: XCTestCase {
     /// the first loss over 20 runs under that default, so the threshold below clears the worst run
     /// measured. The run is on the GPU because training-mode work on the CPU kills its process
     /// about one time in ten, and no consumer fine-tune runs there by default.
+    ///
+    /// This still fails occasionally: a full-suite run on 2026-09-21 measured 0.931, outside the 20
+    /// runs the threshold was fitted to. Do not widen the threshold. The spread comes from the wrong
+    /// GPU backward pass in the pinned mlx core 0.31.1, which core 0.32.0 fixes; see the entry in
+    /// `Docs/agent-reference/mlx-training.md` and the exit condition in `mlx-runtime-gotchas.md`.
     func testASeededRunTrainsDown() throws {
         try requireMLXRuntime()
         var losses: [Float] = []

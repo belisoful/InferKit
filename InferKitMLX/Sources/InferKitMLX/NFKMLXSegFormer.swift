@@ -176,7 +176,7 @@ final class NFKSegFormerStage: Module {
 /// The SegFormer network: a four-stage MiT encoder and an all-MLP decode head.
 ///
 /// Fine-tuning works on this type directly: build one with ``NFKMLXSegFormer/network(weightsURL:classCount:)``,
-/// train it with ``NFKMLXSegFormer/fineTune(_:examples:trainable:objective:optimizer:steps:clipGradientNorm:checkpoint:observer:)``,
+/// train it with ``NFKMLXSegFormer/fineTune(_:examples:trainable:objective:optimizer:steps:clipGradientNorm:learningRateSchedule:checkpoint:observer:)``,
 /// then save it for ``NFKMLXSegFormer/backend(weightsURL:)``.
 public final class NFKMLXSegFormerNet: Module {
     @ModuleInfo(key: "stage1") var stage1: NFKSegFormerStage

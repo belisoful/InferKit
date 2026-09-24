@@ -337,6 +337,17 @@ final class NFKMLXTorchCheckpointTests: XCTestCase {
         XCTAssertTrue(NFKMLXTorchFormat.isTorchCheckpoint(Data([0x80, 0x02])))
     }
 
+    func testASafetensorsHeaderLengthThatReadsAsAPickleProtocolIsStillSafetensors() {
+        // Header lengths 0x0280 … 0x0580 open with the bytes of a protocol 2 … 5 pickle.
+        for protocolByte: UInt8 in 0x02 ... 0x05 {
+            let safetensors = Data([0x80, protocolByte, 0, 0, 0, 0, 0, 0, 0x7b, 0x22])
+            XCTAssertFalse(NFKMLXTorchFormat.isTorchCheckpoint(safetensors), "header length 0x0\(protocolByte)80")
+        }
+        // A legacy torch.save stream (protocol 2, then the LONG1 magic) and a protocol 4 frame.
+        XCTAssertTrue(NFKMLXTorchFormat.isTorchCheckpoint(Data([0x80, 0x02, 0x8a, 0x0a, 0x6c, 0xfc, 0x9c, 0x46, 0xf9, 0x20])))
+        XCTAssertTrue(NFKMLXTorchFormat.isTorchCheckpoint(Data([0x80, 0x04, 0x95, 0x2a, 0, 0, 0, 0, 0, 0])))
+    }
+
     // MARK: - The safetensors writer
 
     func testTheWriterEmitsAFileTheHeaderDescribes() throws {

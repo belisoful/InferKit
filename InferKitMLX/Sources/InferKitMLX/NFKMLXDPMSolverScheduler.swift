@@ -70,7 +70,7 @@ public struct NFKMLXDPMSolverScheduler {
     public mutating func step(velocity: MLXArray, sample: MLXArray, index: Int) -> MLXArray {
         let i = stepIndex
         let lowerOrderFinal = i == timesteps.count - 1                     // final_sigmas_type == zero
-        let x0 = sample - sigmas[i] * velocity                            // flow → data prediction
+        let x0 = sample - NFKReferenceRounding.scaled(velocity, by: sigmas[i])   // flow → data prediction
         modelOutputs.append(x0)
         if modelOutputs.count > configuration.solverOrder { modelOutputs.removeFirst() }
 

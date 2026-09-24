@@ -119,9 +119,16 @@ extension NFKMLXSegFormer {
     ///     class indices `[H, W]`, both from `NFKMLXTrainingData`.
     ///   - trainable: which parameters update. Freezing is applied here and persists on `net`.
     ///   - objective: the supervised loss.
-    ///   - optimizer: the update rule. Nil uses `AdamW`, the reference's choice for the head.
+    ///   - optimizer: the update rule. Nil uses the reference's AdamW (`torch.optim.AdamW` through
+    ///     mmseg, bias-corrected) at 6e-5, and 6e-4 for the decode head, with weight decay 0.01 on every
+    ///     parameter but the encoder's layer norms, which NVlabs' configuration exempts by name.
     ///   - steps: how many examples to train on.
-    ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does
+    ///     not clip.
+    ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's: mmcv's
+    ///     `poly` decay to zero over the run, after a linear warm-up over 1,500 steps from a millionth
+    ///     of the rate, when the reference optimizer runs. With a caller's optimizer, nil holds that
+    ///     optimizer's rate constant.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -134,17 +141,34 @@ extension NFKMLXSegFormer {
         objective: NFKMLXSegFormerObjective = NFKMLXSegFormerObjective(),
         optimizer: Optimizer? = nil,
         steps: Int,
-        clipGradientNorm: Float? = 1.0,
+        clipGradientNorm: Float? = nil,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        apply(trainable, to: net)
-        return try NFKMLXTrainer.train(net, optimizer: optimizer ?? AdamW(learningRate: 6e-5),
-                                       steps: steps,
-                                       batch: { let example = examples($0); return (example.image, example.labels) },
-                                       loss: objective.callAsFunction,
-                                       clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
-                                       observer: observer)
+        try NFKMLXFineTune.run(net,
+                               freezing: { apply(trainable, to: net) },
+                               optimizer: optimizer,
+                               reference: { referenceOptimizer(for: net) },
+                               referenceSchedule: { .poly(steps: steps, power: 1, warmupSteps: 1500,
+                                                          warmupRatio: 1e-6) },
+                               steps: steps,
+                               batch: { let example = examples($0); return (example.image, example.labels) },
+                               loss: objective.callAsFunction,
+                               clipGradientNorm: clipGradientNorm,
+                               learningRateSchedule: learningRateSchedule,
+                               checkpoint: checkpoint, observer: observer)
+    }
+
+    /// The reference's AdamW groups: mmcv matches the configuration's `custom_keys` longest first, then
+    /// alphabetically, so `head` (rate ×10) wins over `norm` (no decay) and the encoder's layer norms
+    /// keep the base rate.
+    private static func referenceOptimizer(for net: NFKMLXSegFormerNet) -> Optimizer {
+        let layerNorms = NFKMLXReferenceOptimizers.layerNormPrefixes(in: net)
+        return NFKMLXReferenceOptimizers.adamW(learningRate: 6e-5, over: net) { key in
+            if !key.hasPrefix("stage") { return (10, 0.01) }
+            return layerNorms.contains { key.hasPrefix($0) } ? (1, 0) : (1, 0.01)
+        }
     }
 
     /// Freezes the encoder for a head-only run, or unfreezes everything.

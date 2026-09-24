@@ -100,7 +100,9 @@ extension NFKMLXWhisper {
     ///     a workstation rather than a device.
     ///   - alpha: the adapter's strength, applied as `alpha / rank`.
     ///   - objective: the next-token loss.
-    ///   - optimizer: the update rule. Nil uses `AdamW`.
+    ///   - optimizer: the update rule. Nil uses the optimizer transformers' `Trainer` defaults to,
+    ///     `torch.optim.AdamW` (bias-corrected) with no weight decay; the reference publishes no training
+    ///     script beyond its model's `labels=` loss, and the learning rate is this package's choice.
     ///   - steps: how many clips to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - checkpoint: writes the network periodically.
@@ -134,7 +136,7 @@ extension NFKMLXWhisper {
             }
         }
         return try NFKMLXTrainer.train(
-            net, optimizer: optimizer ?? AdamW(learningRate: 1e-4), steps: steps,
+            net, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(learningRate: 1e-4, weightDecay: 0), steps: steps,
             batch: { let example = examples($0); return (example.mel, example.tokens) },
             loss: objective.callAsFunction,
             clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)

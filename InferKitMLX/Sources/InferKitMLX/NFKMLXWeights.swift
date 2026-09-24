@@ -147,7 +147,7 @@ public enum NFKMLXWeights {
         /// exists to close.
         public let quantization: Quantization?
 
-        /// True when the file was a raw PyTorch checkpoint read by ``NFKMLXTorchFormat``. A model
+        /// True when the file was a raw PyTorch checkpoint read by `NFKMLXTorchFormat`. A model
         /// whose offline converter pre-permutes a tensor (a transposed-convolution axis swap) reads
         /// this to apply that permutation itself: the raw and converted files can carry identical
         /// key names, so the distinction cannot be recovered from the arrays.
@@ -169,7 +169,7 @@ public enum NFKMLXWeights {
     ///
     /// The format is sniffed from the file's leading bytes rather than its extension: a raw PyTorch
     /// checkpoint (`.pth`, `.pt`, `.ckpt`, `.th`, or an HF `.bin`, which shares its extension with
-    /// nothing that identifies it) routes through ``NFKMLXTorchFormat`` and reports PyTorch layout,
+    /// nothing that identifies it) routes through `NFKMLXTorchFormat` and reports PyTorch layout,
     /// so every model accepts one wherever it accepts a converted safetensors.
     public static func loadCheckpoint(url: URL) throws -> Checkpoint {
         if NFKMLXTorchFormat.isTorchCheckpoint(leadingBytes(of: url)) {
@@ -257,6 +257,8 @@ public enum NFKMLXWeights {
     /// Applies `mapped` (checkpoint keys already remapped and transposed to MLX layout) to `module`,
     /// verifying first that the checkpoint covers every parameter the module expects.
     ///
+    /// - Parameter mapped: the checkpoint's tensors under the module's parameter names.
+    /// - Parameter module: the module the tensors load into.
     /// - Parameter strict: when true (the default), a parameter the checkpoint does not supply throws
     ///   ``NFKMLXError/weightsMismatch(_:)`` rather than leaving it randomly initialized. Pass false only
     ///   for a deliberate partial load.

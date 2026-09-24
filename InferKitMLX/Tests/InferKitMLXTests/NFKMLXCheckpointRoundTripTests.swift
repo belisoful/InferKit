@@ -111,6 +111,15 @@ final class NFKMLXCheckpointRoundTripTests: XCTestCase {
     // SigLIP 2's only transposed weight is the 4-D patch convolution; a fine-tuned save is in the
     // module's layout, so the loader must skip that transpose. The probe and fused attention projection
     // are 2-D/3-D and ride along untouched.
+    // Laya carries no convolution, so nothing is transposed either way; the round trip pins the
+    // numeric Sequential keys of the scorer and the act head and the head's fused attention parameter.
+    func testLayaRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        try assertRoundTrips(NFKMLXLayaNet(.tiny), into: NFKMLXLayaNet(.tiny)) { net, url in
+            try NFKMLXLaya.loadWeights(into: net as! NFKMLXLayaNet, from: url)
+        }
+    }
+
     func testSigLIP2RoundTripsThroughItsOwnLoader() throws {
         try requireMLXRuntime()
         try assertRoundTrips(NFKMLXSigLIP2.makeNet(.tiny), into: NFKMLXSigLIP2.makeNet(.tiny)) { net, url in
@@ -124,6 +133,19 @@ final class NFKMLXCheckpointRoundTripTests: XCTestCase {
         try requireMLXRuntime()
         try assertRoundTrips(NFKMLXTAESD.makeNet(), into: NFKMLXTAESD.makeNet()) { net, url in
             try NFKMLXTAESD.loadWeights(into: net as! NFKMLXTAESDNet, from: url)
+        }
+    }
+
+    // The Cosmos Tokenizer's video variants carry 5-D causal-convolution weights and its image variants
+    // 4-D ones; a fine-tuned save is in the module's layout, so the loader must skip both transposes.
+    func testCosmosTokenizerRoundTripsThroughItsOwnLoader() throws {
+        try requireMLXRuntime()
+        for variant in [NFKMLXCosmosTokenizerVariant.continuousVideo4x8x8, .discreteImage8x8] {
+            let configuration = NFKMLXCosmosTokenizerConfiguration.variant(variant)
+            try assertRoundTrips(NFKMLXCosmosTokenizerNet(configuration: configuration),
+                                 into: NFKMLXCosmosTokenizerNet(configuration: configuration)) { net, url in
+                try NFKMLXCosmosTokenizer.loadWeights(into: net as! NFKMLXCosmosTokenizerNet, from: [url])
+            }
         }
     }
 

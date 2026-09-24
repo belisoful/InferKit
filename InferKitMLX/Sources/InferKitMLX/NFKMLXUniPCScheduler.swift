@@ -67,7 +67,7 @@ public struct NFKMLXUniPCScheduler {
 
     public mutating func step(velocity: MLXArray, sample: MLXArray, index: Int) -> MLXArray {
         let i = stepIndex
-        let x0 = sample - sigmas[i] * velocity                            // flow → data prediction
+        let x0 = sample - NFKReferenceRounding.scaled(velocity, by: sigmas[i])   // flow → data prediction
 
         var corrected = sample
         if i > 0, lastSample != nil {

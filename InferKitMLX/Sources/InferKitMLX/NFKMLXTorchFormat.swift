@@ -165,18 +165,25 @@ enum NFKMLXTorchFormat {
     }
 
     /// Whether the leading bytes look like a PyTorch checkpoint: a ZIP archive or a protocol-2+
-    /// pickle stream. Safetensors starts with its little-endian header length, which collides with
-    /// neither.
+    /// pickle stream. Safetensors starts with its little-endian header length, and a length whose
+    /// low bytes read `80 02` … `80 05` (640, 896, 1152, or 1408 plus a multiple of 65,536) opens
+    /// exactly like a pickle. The JSON header's opening brace at offset 8 tells them apart: a pickle
+    /// holds its magic number or frame length there.
     static func isTorchCheckpoint(_ header: Data) -> Bool {
         let bytes = [UInt8](header.prefix(512))
         guard bytes.count >= 2 else { return false }
         if bytes.count >= 4, bytes[0] == 0x50, bytes[1] == 0x4b, bytes[2] == 0x03, bytes[3] == 0x04 {
             return true
         }
-        if bytes[0] == 0x80, (0x02 ... 0x05).contains(bytes[1]) {
+        if bytes[0] == 0x80, (0x02 ... 0x05).contains(bytes[1]), !isSafetensors(bytes) {
             return true
         }
         return isTar(bytes)
+    }
+
+    /// A safetensors file: an 8-byte little-endian header length, then the header's JSON object.
+    private static func isSafetensors(_ bytes: [UInt8]) -> Bool {
+        bytes.count >= 9 && bytes[8] == 0x7b && bytes[6] == 0 && bytes[7] == 0
     }
 
     /// A POSIX/ustar tar carries its magic at offset 257, so the sniff needs the first block, not
@@ -212,12 +219,15 @@ enum NFKMLXTorchFormat {
 
     // MARK: - The tar wrapper (.nemo)
 
-    /// A `.nemo` (and any tar wrapping a checkpoint) holds a config beside the weights. The first
-    /// member whose bytes are themselves a torch checkpoint is read; the rest (a YAML config) are
-    /// skipped. PAX/GNU metadata entries carry their payload in a data block that is stepped over.
+    /// A `.nemo` (and any tar wrapping a checkpoint) holds a config beside the weights. The member
+    /// NeMo names `model_weights.ckpt` is read; without one, the first member whose bytes are a torch
+    /// checkpoint. An archive can hold more than one (Canary-1B-v2 carries a timestamps model ahead of
+    /// its weights), so the first is not always the model. PAX/GNU metadata entries carry their payload
+    /// in a data block that is stepped over.
     private static func readTar(_ data: Data) throws -> Contents {
         let reader = NFKMLXByteReader(data)
         var offset = 0
+        var first: Range<Int>?
         while offset + 512 <= reader.count {
             // A zero block marks the end of the archive.
             let nameFirst = try reader.u8(offset)
@@ -234,10 +244,18 @@ enum NFKMLXTorchFormat {
                 let head = try reader.bytes(bodyStart, count: min(512, size))
                 if isTorchCheckpoint(head) || isTar([UInt8](head.prefix(512))) {
                     let base = data.startIndex
-                    return try read(data: data[base + bodyStart ..< base + bodyStart + size])
+                    let body = (base + bodyStart) ..< (base + bodyStart + size)
+                    let nameBytes = try reader.bytes(offset, count: 100).prefix { $0 != 0 }
+                    if String(decoding: nameBytes, as: UTF8.self).hasSuffix("model_weights.ckpt") {
+                        return try read(data: data[body])
+                    }
+                    first = first ?? body
                 }
             }
             offset = bodyStart + paddedSize
+        }
+        if let first {
+            return try read(data: data[first])
         }
         throw NFKMLXError.unsupportedConfiguration(
             "the tar archive holds no checkpoint member (a .nemo should carry model_weights.ckpt)")
@@ -470,6 +488,11 @@ enum NFKMLXTorchFormat {
             }
             throw NFKMLXError.unsupportedConfiguration(
                 "the TorchScript archive's root is not a walkable module; use the model's Tools converter")
+        }
+        // A file that saved one tensor (`torch.save(tensor)`, as a Kokoro voicepack is) has that
+        // tensor as its root; it comes back under the single key `tensor`.
+        if let single = tensor(from: root) {
+            return ["tensor": single]
         }
         // A checkpoint that pickled a live `nn.Module` (YOLO's DetectionModel) is walked into its
         // state dict, the same names `module.state_dict()` composes. No class is constructed; only

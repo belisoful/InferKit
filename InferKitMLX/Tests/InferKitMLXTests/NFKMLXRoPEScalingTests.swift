@@ -52,8 +52,8 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
             let dimensions = Int(parameters[0])
             let base = parameters[1]
             let declared = parameters[8]
-            let kinds: [Float: NFKMLXRoPEScaling.Kind] = [0: .linear, 1: .yarn, 2: .llama3]
-            let scaling = NFKMLXRoPEScaling(
+            let kinds: [Float: NFKMLXRoPEScaling.Kind] = [0: .linear, 1: .yarn, 2: .llama3, 3: .longrope]
+            var scaling = NFKMLXRoPEScaling(
                 kind: try XCTUnwrap(kinds[parameters[7]]),
                 factor: parameters[3],
                 originalMaxPositionEmbeddings: Int(parameters[4]),
@@ -63,7 +63,18 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
                 lowFrequencyFactor: parameters.count > 9 ? parameters[9] : 1,
                 highFrequencyFactor: parameters.count > 10 ? parameters[10] : 4)
 
-            let produced = scaling.inverseFrequencies(dimensions: dimensions, base: base)
+            var produced = scaling.inverseFrequencies(dimensions: dimensions, base: base)
+            if scaling.kind == .longrope {
+                // LongRoPE carries its per-pair tables beside the parameters, and the sequence length
+                // the oracle ran picks the table.
+                scaling.shortFactor = try XCTUnwrap(record["case\(index)_short_factor"]).asArray(Float.self)
+                scaling.longFactor = try XCTUnwrap(record["case\(index)_long_factor"]).asArray(Float.self)
+                scaling.maximumPositionEmbeddings = Int(parameters[2])
+                let sequenceLength = Int(try XCTUnwrap(record["case\(index)_sequence_length"]).item(Int32.self))
+                produced = scaling.longRoPEPeriods(
+                    dimensions: dimensions, base: base,
+                    useLongTable: sequenceLength > scaling.originalMaxPositionEmbeddings).map { 1 / $0 }
+            }
             XCTAssertEqual(produced.count, expected.count, "case \(index): pair count")
 
             var worst: Float = 0
@@ -170,11 +181,10 @@ final class NFKMLXRoPEScalingTests: XCTestCase {
         XCTAssertEqual(scaling.kind, .yarn)
     }
 
-    /// `dynamic`, `llama3` and `longrope` all appear in released configs and all compute different
-    /// frequencies. Loading one under a rotary that does not match produces a model that runs and is
-    /// wrong, so it is refused.
+    /// `dynamic` appears in released configs and computes different frequencies. Loading it under a
+    /// rotary that does not match produces a model that runs and is wrong, so it is refused.
     func testAnUnimplementedKindIsRefusedRatherThanApproximated() {
-        for kind in ["dynamic", "longrope"] {
+        for kind in ["dynamic"] {
             XCTAssertThrowsError(try NFKMLXRoPEScaling.read(["rope_type": kind, "factor": 4.0],
                                                             maximumPositions: 4096)) { error in
                 guard case NFKMLXError.unsupportedConfiguration(let message) = error else {

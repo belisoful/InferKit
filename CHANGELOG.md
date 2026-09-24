@@ -424,6 +424,38 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   and Granite 4.0-H's mixture sizes (`NFKMLXGraniteHybrid.loadWeights(into:fromDirectory:precision:residency:)`)
   page the same way.
 
+#### Learning-rate schedules
+
+- `NFKMLXTrainer.train(…learningRateSchedule:)` scales every parameter group's rate by an
+  `NFKMLXLearningRateSchedule` before each step. The schedules are the references' own: fvcore's
+  cosine (SAM 2), mmcv's `poly` with its linear warm-up (SegFormer), SAM 3's inverse square root, and
+  cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
+  follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
+
+#### One fine-tuning sequence, and a per-model customization ledger
+
+- `NFKMLXFineTune.run` holds the sequence every recipe repeats: freeze, take the caller's optimizer or
+  build the reference's, resolve the schedule, and run the loop. Freezing runs before the optimizer is
+  built, so a frozen parameter carries no optimizer state. The schedule resolves against the caller's
+  optimizer rather than the recipe's, so a caller who chose a rate keeps it and a caller who passed
+  none gets the reference's schedule. The reference optimizer builds lazily, so a recipe whose
+  reference walks the parameter tree does not pay for it when the caller supplied one.
+- Each of those three rules is a place a recipe has already been wrong, and each is pinned by a test
+  in `NFKMLXFineTuneTests`. Six recipes run through it: `NFKMLXSegFormer`, `NFKMLXVJEPA2`,
+  `NFKMLXTrOCR`, `NFKMLXTableTransformer`, `NFKMLXFlorence2`, and all three `NFKMLXSa2VA` overloads.
+- A freezing policy may throw, so a LoRA policy whose predicate matches no layer ends the run before
+  the optimizer is built or a step is taken.
+- A caller's optimizer with no schedule now runs untouched. The recipes held its rate by applying a
+  constant schedule, which asks for a single rate per group, so a caller's Adafactor threw
+  `unsupportedConfiguration` from a recipe that never scheduled it.
+- `Docs/agent-reference/mlx-customization-ledger.md` records every model's customization outcome,
+  level, and reachability, triaged over all 164 model entries. Twenty-two recipes ship, sixty-five
+  models are trainable with none written, thirty-eight are offline, and fifteen turn on a reference
+  file nobody has read yet. The ledger names that file for each one.
+- The triage corrected the assumption that detector training is too expensive to port. ultralytics
+  publishes `v8DetectionLoss` over `TaskAlignedAssigner`, and transformers maps the RT-DETR and
+  RF-DETR families onto Hungarian matchers `NFKMLXHungarian` already reproduces.
+
 - **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
   in a process can come back wrong by a factor of about a million, silently and with no infinity or
   not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not

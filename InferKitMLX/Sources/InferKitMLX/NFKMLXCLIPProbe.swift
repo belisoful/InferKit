@@ -83,7 +83,8 @@ extension NFKMLXCLIP {
     ///   - labels: one class index per embedding, `[N]`.
     ///   - sampler: draws which examples each step sees. Nil trains on the whole set every step, which
     ///     is what a few dozen examples want.
-    ///   - optimizer: the update rule. Nil uses `AdamW`.
+    ///   - optimizer: the update rule. Nil uses AdamW, bias-corrected as `torch.optim.AdamW` is. CLIP's
+    ///     own linear probe is an L-BFGS logistic regression, so the optimizer is this package's choice.
     ///   - steps: how many updates to run.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - checkpoint: writes the probe periodically.
@@ -107,7 +108,8 @@ extension NFKMLXCLIP {
                 + "a probe needs one class index per image")
         }
         return try NFKMLXTrainer.train(
-            probe, optimizer: optimizer ?? AdamW(learningRate: 1e-3), steps: steps,
+            probe, optimizer: optimizer ?? NFKMLXReferenceOptimizers.adamW(learningRate: 1e-3, weightDecay: 0.01),
+            steps: steps,
             batch: { step in
                 guard let sampler else {
                     return (embeddings, labels)

@@ -105,7 +105,7 @@ public enum NFKMLXLoRA {
                 + "Load the model at float precision, or exclude these layers in the predicate.")
         }
         do {
-            try model.update(modules: ModuleChildren.unflattened(replacements), verify: .none)
+            try replace(replacements, in: model)
         } catch {
             throw NFKMLXError.loRANotApplicable(
                 "a selected layer cannot be adapted: \(error). A model exposes a layer for replacement "
@@ -155,12 +155,63 @@ public enum NFKMLXLoRA {
                 + "without reporting anything. Merge at float precision, then quantize.")
         }
         do {
-            try model.update(modules: ModuleChildren.unflattened(replacements), verify: .none)
+            try replace(replacements, in: model)
         } catch {
             throw NFKMLXError.loRANotApplicable("an adapter could not be merged back: \(error)")
         }
         model.unfreeze()
         return replacements.count
+    }
+
+    /// Writes each `(path, module)` replacement into `model`. The fast path is one net-wide update. It
+    /// fails when the adapters cover a SUBSET of a module array — a hybrid decoder that adapts only its
+    /// attention layers, whose gapped indices `unflattened` renders as a dictionary that
+    /// `update(modules:)` cannot route into an array. The fallback then reaches each replacement's
+    /// owning module and updates a single-module leaf key, which never crosses an array. It runs only
+    /// after the fast path throws, so a model whose adapters form a full array is updated exactly as
+    /// before.
+    private static func replace(_ replacements: [(String, Module)], in model: Module) throws {
+        do {
+            try model.update(modules: ModuleChildren.unflattened(replacements), verify: .none)
+        } catch {
+            for (path, replacement) in replacements {
+                let components = path.split(separator: ".").map(String.init)
+                guard let leaf = components.last,
+                      let owner = owningModule(Array(components.dropLast()), of: model) else {
+                    throw error
+                }
+                try owner.update(modules: ModuleChildren.unflattened([(leaf, replacement)]), verify: .none)
+            }
+        }
+    }
+
+    /// The module at `components` under `root`, descending `@ModuleInfo` children, module arrays (an
+    /// integer index component), and module dictionaries (a key component).
+    private static func owningModule(_ components: [String], of root: Module) -> Module? {
+        var current = root
+        var index = 0
+        while index < components.count {
+            guard let item = current.items()[components[index]] else { return nil }
+            switch item {
+            case .value(.module(let child)):
+                current = child
+                index += 1
+            case .array(let elements):
+                guard index + 1 < components.count, let position = Int(components[index + 1]),
+                      position >= 0, position < elements.count,
+                      case .value(.module(let child)) = elements[position] else { return nil }
+                current = child
+                index += 2
+            case .dictionary(let entries):
+                guard index + 1 < components.count,
+                      case .value(.module(let child))? = entries[components[index + 1]] else { return nil }
+                current = child
+                index += 2
+            default:
+                return nil
+            }
+        }
+        return current
     }
 
     /// How many parameters a run would train, so a caller can size it before starting.

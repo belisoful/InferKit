@@ -118,6 +118,9 @@ public enum NFKMLXTrainer {
     ///     destroy the pretrained weights. Non-finite entries are zeroed and the norm is computed
     ///     against the largest magnitude present, so a batch whose gradients are large but finite
     ///     cannot overflow the norm and silently scale the whole update to zero.
+    ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step. Every
+    ///     group of a `MultiOptimizer` is scaled from its own base rate, and the rates are restored
+    ///     when the run ends. ``NFKMLXLearningRateSchedule`` builds the recipes' reference schedules.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress. The
     ///     optimizer's own state is not written, because mlx-swift keeps it private: a resumed `SGD`
     ///     run continues exactly, while a resumed `Adam` run rebuilds its moment estimates and shows
@@ -128,7 +131,8 @@ public enum NFKMLXTrainer {
     ///
     /// - Throws: `NFKMLXError.trainingDiverged` when a step's loss stops being finite, before that
     ///   step can reach a checkpoint. `NFKMLXError.nothingToTrain` when every parameter is frozen,
-    ///   which a predicate that matched no layer leaves behind.
+    ///   which a predicate that matched no layer leaves behind. `NFKMLXError.unsupportedConfiguration`
+    ///   when a schedule is given for an optimizer without a single rate to scale.
     ///
     /// The module is put in training mode for the duration and restored afterward, so the group that
     /// trains updates its batch-normalization statistics and returns ready to infer. A subtree whose
@@ -144,6 +148,7 @@ public enum NFKMLXTrainer {
         batch: BatchSource,
         loss: @escaping (Model, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
         observer: Observer? = nil
@@ -151,8 +156,8 @@ public enum NFKMLXTrainer {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { let (input, target) = batch($0); return [input, target] },
                 loss: { model, arrays in loss(model, arrays[0], arrays[1]) },
-                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
-                cachePolicy: cachePolicy, observer: observer)
+                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
     /// Trains `model` for `steps` steps against a loss that needs no ground truth, and returns the
@@ -170,6 +175,7 @@ public enum NFKMLXTrainer {
     ///   - sample: supplies the unlabeled batch for each step.
     ///   - loss: scores the model on that batch alone.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress.
     ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
     ///     gradients correct. See ``NFKMLXTrainingCachePolicy``.
@@ -182,6 +188,7 @@ public enum NFKMLXTrainer {
         sample: (Int) -> MLXArray,
         loss: @escaping (Model, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
         observer: Observer? = nil
@@ -189,11 +196,32 @@ public enum NFKMLXTrainer {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { [sample($0)] },
                 loss: { model, arrays in loss(model, arrays[0]) },
-                clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
-                cachePolicy: cachePolicy, observer: observer)
+                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
-    /// The loop both entry points share, over an arbitrary number of per-step arrays.
+    /// Trains `model` on any number of arrays per step: an image, a prompt, and a target, for instance.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @discardableResult
+    public static func train<Model: Module>(
+        _ model: Model,
+        optimizer: Optimizer,
+        steps: Int,
+        arrays: (Int) -> [MLXArray],
+        loss: @escaping (Model, [MLXArray]) -> MLXArray,
+        clipGradientNorm: Float? = nil,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
+        checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
+        observer: Observer? = nil
+    ) throws -> [Float] {
+        try run(model, optimizer: optimizer, steps: steps, arrays: arrays, loss: loss,
+                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+    }
+
+    /// The loop every entry point shares, over an arbitrary number of per-step arrays.
     private static func run<Model: Module>(
         _ model: Model,
         optimizer: Optimizer,
@@ -201,6 +229,7 @@ public enum NFKMLXTrainer {
         arrays: (Int) -> [MLXArray],
         loss: @escaping (Model, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float?,
+        learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?,
         cachePolicy: NFKMLXTrainingCachePolicy,
         observer: Observer?
@@ -211,6 +240,17 @@ public enum NFKMLXTrainer {
                 + "nothing and leave the weights exactly as they are. Unfreeze the group to train, "
                 + "or check that the LoRA predicate matched the layers it names.")
         }
+
+        var scheduled = [(NFKMLXRateScheduled, Float)]()
+        if learningRateSchedule != nil {
+            guard let groups = NFKMLXLearningRateSchedule.scheduledGroups(of: optimizer) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "a learning-rate schedule needs an optimizer with a single rate per group; "
+                    + "\(type(of: optimizer)) has none to scale")
+            }
+            scheduled = groups
+        }
+        defer { for (group, rate) in scheduled { group.learningRate = rate } }
 
         let wasTraining = model.training
         enterTrainingMode(model)
@@ -242,6 +282,10 @@ public enum NFKMLXTrainer {
         for step in 0 ..< steps {
             if cachePolicy == .reclaimedEachStep {
                 NFKMLXGPU.clearCache()
+            }
+            if let learningRateSchedule {
+                let scale = learningRateSchedule.multiplier(step)
+                for (group, rate) in scheduled { group.learningRate = rate * scale }
             }
             let (values, gradients) = lossAndGradient(model, arrays(step))
             let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
@@ -318,7 +362,12 @@ public enum NFKMLXTrainer {
     /// Individually non-finite entries are replaced with zero first, because one such entry poisons
     /// the norm and with it every other parameter's update.
     static func bounded(_ gradients: ModuleParameters, maxNorm: Float) -> ModuleParameters {
-        let sanitized = gradients.flattened().map { ($0.0, nanToNum($0.1)) }
+        // `where(isFinite)` rather than `nanToNum`: mlx core 0.32 maps an infinity to the float's
+        // largest magnitude even when the binding asks for zero, which makes the reference below
+        // 3.4e38 and overflows the norm to infinity, scaling every FINITE gradient to zero. Testing
+        // finiteness states the intent and does not depend on the core's replacement values.
+        let zero = MLXArray(Float(0))
+        let sanitized = gradients.flattened().map { ($0.0, MLX.where(isFinite($0.1), $0.1, zero)) }
         guard !sanitized.isEmpty else { return gradients }
 
         let magnitudes = sanitized.map { abs($0.1).max() }

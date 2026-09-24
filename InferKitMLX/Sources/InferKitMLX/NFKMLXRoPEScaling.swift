@@ -22,9 +22,14 @@ import Foundation
 
 /// The rotary scaling a release declares, and the inverse frequencies it implies.
 ///
-/// @discussion Three kinds are implemented, and they work differently. `linear` divides every frequency
+/// @discussion Four kinds are implemented, and they work differently. `linear` divides every frequency
 /// by the same factor, which is position interpolation: the model sees a longer sequence squeezed into
 /// its trained range, at the cost of resolution everywhere.
+///
+/// `longrope` (Phi-3, Phi-4) carries two explicit per-channel tables instead of a formula: one used
+/// while the sequence stays within the trained window, one used past it, chosen by length rather than
+/// blended. It also multiplies the rotated queries and keys by a scalar derived from how far the
+/// extended window reaches, applied at every length.
 ///
 /// `yarn` divides only the SLOW channels and leaves the fast ones as they were, blending across a band
 /// between. The direction is worth stating plainly, because the intuitive guess is the opposite one: a
@@ -53,6 +58,12 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
         /// interpolated by `factor`, channels turning at least `highFrequencyFactor` times inside it
         /// are left alone, and the band between is blended linearly in wavelength.
         case llama3
+        /// Phi-3/Phi-4's per-channel table scaling: two explicit lists of per-pair multipliers, one
+        /// for sequences within the trained window (``shortFactor``) and one for longer ones
+        /// (``longFactor``), chosen by the sequence length rather than blended. Each factor divides its
+        /// pair's frequency. A single scalar multiplies the rotated queries and keys, derived from how
+        /// far the extended window reaches past the trained one.
+        case longrope
     }
 
     public var kind: Kind
@@ -80,6 +91,15 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
     /// `llama3`'s `high_freq_factor`: a channel completing at least this many turns is left unscaled.
     /// The release default is 4.
     public var highFrequencyFactor: Float
+
+    /// `longrope`'s per-pair multipliers for a sequence within the trained window. Each divides its
+    /// pair's frequency; a table of all ones is the unscaled rotary. Empty for other kinds.
+    public var shortFactor: [Float] = []
+    /// `longrope`'s per-pair multipliers for a sequence past the trained window. Empty for other kinds.
+    public var longFactor: [Float] = []
+    /// `longrope`'s extended window, `max_position_embeddings`. The attention scalar is derived from
+    /// its ratio to ``originalMaxPositionEmbeddings``.
+    public var maximumPositionEmbeddings: Int = 0
 
     public init(kind: Kind,
                 factor: Float,
@@ -110,9 +130,27 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
     /// The reference derives it as `0.1·ln(factor) + 1` when the config does not state one, and a
     /// config that states one overrides that. `linear` and `llama3` use no such factor.
     public var attentionFactor: Float {
+        if kind == .longrope {
+            if let declared = declaredAttentionFactor { return declared }
+            let scale = Float(maximumPositionEmbeddings) / Float(originalMaxPositionEmbeddings)
+            return scale <= 1 ? 1 : sqrt(1 + log(scale) / log(Float(originalMaxPositionEmbeddings)))
+        }
         guard kind == .yarn else { return 1 }
         if let declared = declaredAttentionFactor { return declared }
         return factor <= 1 ? 1 : 0.1 * log(factor) + 1
+    }
+
+    /// The periods for one `longrope` factor table, which are the per-pair frequency divisors times the
+    /// unscaled period. `useLongTable` selects ``longFactor`` (a sequence past the trained window) over
+    /// ``shortFactor``. Reads nothing for other kinds.
+    public func longRoPEPeriods(dimensions: Int, base: Float, useLongTable: Bool) -> [Float] {
+        let pairs = max(dimensions / 2, 0)
+        guard pairs > 0 else { return [] }
+        let factors = useLongTable ? longFactor : shortFactor
+        return (0 ..< pairs).map { index in
+            let factor = index < factors.count ? factors[index] : 1
+            return factor * powf(base, Float(2 * index) / Float(dimensions))
+        }
     }
 
     /// The scaled inverse frequencies, one per rotary channel pair.
@@ -164,6 +202,11 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
                 let smooth = (window / wavelength - lowFrequencyFactor) / (highFrequencyFactor - lowFrequencyFactor)
                 return (1 - smooth) * frequency / factor + smooth * frequency
             }
+        case .longrope:
+            // The seam-independent default is the within-window table, which is what a rotary
+            // precomputed once uses; a sequence past the trained window switches to the long table
+            // through ``longRoPEPeriods``.
+            return longRoPEPeriods(dimensions: dimensions, base: base, useLongTable: false).map { 1 / $0 }
         }
     }
 
@@ -174,14 +217,26 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
 
     // MARK: Reading a release
 
+    /// `config` without a dynamic-NTK `rope_scaling` block, for a model whose sequences stay under its
+    /// `max_position_embeddings`. Dynamic NTK recomputes the rotary only once a sequence passes that
+    /// length; below it the rotary is the base one, which is what the config then declares.
+    static func droppingDynamic(_ config: [String: Any]) -> [String: Any] {
+        guard let scaling = config["rope_scaling"] as? [String: Any],
+              ((scaling["rope_type"] ?? scaling["type"]) as? String)?.lowercased() == "dynamic" else {
+            return config
+        }
+        var adjusted = config
+        adjusted["rope_scaling"] = nil
+        return adjusted
+    }
+
     /// Reads a checkpoint's `rope_scaling` block.
     ///
     /// - Returns: the scaling, or `nil` when the config declares none or declares the no-op `default`.
     ///
-    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a kind this does not implement —
-    ///   `dynamic` and `longrope` both appear in released configs and both compute different
-    ///   frequencies. Loading one of those under a rotary it does not match produces a model that
-    ///   runs and is wrong, so it is refused.
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a kind this does not implement — `dynamic`
+    ///   appears in released configs and computes different frequencies. Loading it under a rotary it
+    ///   does not match produces a model that runs and is wrong, so it is refused.
     public static func read(_ block: Any?, maximumPositions: Int) throws -> NFKMLXRoPEScaling? {
         guard let scaling = block as? [String: Any] else { return nil }
         // `rope_type` is the current spelling; `type` is what older configs carry.
@@ -193,6 +248,26 @@ public struct NFKMLXRoPEScaling: Sendable, Equatable {
         }
         func integer(_ key: String, _ fallback: Int) -> Int {
             (scaling[key] as? NSNumber)?.intValue ?? fallback
+        }
+        func floatList(_ key: String) -> [Float] {
+            (scaling[key] as? [Any])?.compactMap { ($0 as? NSNumber)?.floatValue } ?? []
+        }
+
+        if name == "longrope" {
+            let short = floatList("short_factor")
+            let long = floatList("long_factor")
+            guard !short.isEmpty, !long.isEmpty else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "longrope rope_scaling needs both short_factor and long_factor tables")
+            }
+            var scaling = NFKMLXRoPEScaling(
+                kind: .longrope, factor: real("factor", 1),
+                originalMaxPositionEmbeddings: integer("original_max_position_embeddings", maximumPositions),
+                declaredAttentionFactor: (scaling["attention_factor"] as? NSNumber)?.floatValue)
+            scaling.shortFactor = short
+            scaling.longFactor = long
+            scaling.maximumPositionEmbeddings = maximumPositions
+            return scaling
         }
 
         guard let kind = Kind(rawValue: name == "deepseek_yarn" ? "yarn" : name) else {

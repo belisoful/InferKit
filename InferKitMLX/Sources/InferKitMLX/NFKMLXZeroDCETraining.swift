@@ -196,7 +196,8 @@ extension NFKMLXZeroDCE {
     ///   - photos: supplies an unlabeled batch `[N, H, W, 3]` in `0...1` for each step. No brightened
     ///     target is needed, because the objective is zero-reference.
     ///   - objective: what "well exposed" means for this consumer.
-    ///   - optimizer: the update rule. Nil uses `Adam` at the reference learning rate.
+    ///   - optimizer: the update rule. Nil uses the reference's `torch.optim.Adam` (bias-corrected) at
+    ///     its learning rate 1e-4 and weight decay 1e-4, which torch's Adam adds to the gradient.
     ///   - steps: how many batches to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
@@ -214,7 +215,8 @@ extension NFKMLXZeroDCE {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXTrainer.train(net, optimizer: optimizer ?? Adam(learningRate: 1e-4), steps: steps,
+        try NFKMLXTrainer.train(net, optimizer: optimizer ?? NFKMLXL2Adam(learningRate: 1e-4, weightDecay: 1e-4),
+                                steps: steps,
                                 sample: photos, loss: objective.callAsFunction,
                                 clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
                                 observer: observer)
