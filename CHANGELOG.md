@@ -550,6 +550,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### GTCRN fine-tunes on a consumer's own recordings
+
+- `NFKMLXGTCRNFactory.network(weightsURL:)`, `spectrogram(for:)`, and `fineTune(_:examples:…)` train
+  every one of GTCRN's 48.2K weights on noisy and clean 16 kHz pairs. The result saves with
+  `NFKMLXWeights.save` and loads through the released factories.
+- `NFKMLXGTCRNObjective` is the repo's own `HybridLoss`, matched exactly on identical spectrograms
+  (96.21211 on both sides, every term to float precision). Its SI-SNR term runs through an inverse STFT
+  built from array operations, so the gradient reaches the network; it matches `torch.istft` at
+  waveform cosine 0.99999999999994.
+
 #### Probes for SigLIP 2, Qwen3-Embedding, and EmbeddingGemma
 
 - `NFKMLXEmbeddingProbe` and `NFKMLXEmbeddingProbeBackend` are the linear probe over any frozen image

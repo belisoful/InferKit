@@ -660,6 +660,26 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(embedder.embedding(forTokens: [3, 17, 42]).count, embedder.embeddingDimensions)
     }
 
+    // Docs/examples.md: Fine-tuning a speech denoiser on your own recordings
+    func testExampleFineTuningGTCRNOnOwnRecordings() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gtcrn-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXGTCRNFactory.network(weightsURL: releasedWeights).
+        let net = try NFKMLXGTCRNFactory.network(weightsURL: nil)
+        let clean = (0 ..< 4000).map { sinf(2 * .pi * 200 * Float($0) / 16000) * 0.3 }
+        let noisy = clean.enumerated().map { $1 + 0.05 * sinf(Float($0) * 1.7) }
+        let history = try NFKMLXGTCRNFactory.fineTune(net, examples: { _ in (noisy, clean) }, steps: 4)
+        XCTAssertEqual(history.count, 4)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let denoiser = try NFKMLXGTCRNFactory.backend(weightsURL: tuned)       // also backendWithWeightsURL:error:
+        XCTAssertTrue(denoiser.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint
