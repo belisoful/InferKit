@@ -189,6 +189,40 @@
 	XCTAssertEqualObjects([gpt2 encode:@"1234aB"], expectedGPT2);
 }
 
+// Qwen3.5 normalizes each segment to NFC before splitting, so a decomposed "e" + combining acute
+// encodes as the composed "é" token; Qwen2 reads the letter and the mark as two pretokens.
+- (void)testTheQwen35PretokenizationComposesBeforeSplitting
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{
+		@"Ã": @0, @"©": @1, @"Ã©": @2, @"e": @3,
+		@"Ì": @4, @"ģ": @5, @"Ìģ": @6,
+	};
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"qwen35-vocab.json"] atomically:YES];
+	NSString *merges = @"#version: 0.2\nÃ ©\nÌ ģ\n";
+	[merges writeToURL:[_directory URLByAppendingPathComponent:@"qwen35-merges.txt"]
+			atomically:YES
+			  encoding:NSUTF8StringEncoding
+				 error:NULL];
+
+	NSError *error = nil;
+	NFKTokenizer *qwen35 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"qwen35-vocab.json", @"merges": @"qwen35-merges.txt",
+		@"pretokenizer": @"qwen35",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(qwen35, @"%@", error);
+	NFKTokenizer *qwen2 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"qwen35-vocab.json", @"merges": @"qwen35-merges.txt",
+		@"pretokenizer": @"qwen2",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(qwen2, @"%@", error);
+
+	NSArray *expectedQwen35 = @[@2];
+	NSArray *expectedQwen2 = @[@3, @6];
+	XCTAssertEqualObjects([qwen35 encode:@"é"], expectedQwen35);
+	XCTAssertEqualObjects([qwen2 encode:@"é"], expectedQwen2);
+}
+
 - (void)testAnUnknownPretokenizationIsRejected
 {
 	NSError *error = nil;

@@ -16,6 +16,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),
   the audio counterpart of `NFKInputImages`. A backend attaches them in order after `NFKInputAudio`.
 
+#### Qwen3.5 tokenizes the way its release declares
+
+- The byte-level BPE tokenizer takes a `qwen35` pre-tokenization: Qwen2's pattern with combining marks
+  kept inside letter runs, and each segment normalized to NFC first, as Qwen3.5's `tokenizer.json` declares.
+
 #### Current Claude and OpenAI reasoning models take the request shape they accept
 
 - `NFKAnthropicBackend` reads the model's generation from `modelName`. From Claude Opus 4.6 on,

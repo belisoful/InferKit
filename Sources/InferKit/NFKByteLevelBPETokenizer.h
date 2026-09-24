@@ -34,7 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 									  bos:(NSInteger)bosTokenId
 									error:(NSError * _Nullable *)outError;
 
-/*! @param pretokenization "gpt2", "qwen2", or nil for the default "gpt2". */
+/*! @param pretokenization "gpt2", "qwen2", "qwen35", "o200k", or nil for the default "gpt2". */
 - (nullable instancetype)initWithVocabURL:(NSURL *)vocabURL
 								mergesURL:(NSURL *)mergesURL
 							specialTokens:(nullable NSDictionary<NSString *, NSNumber *> *)specialTokens

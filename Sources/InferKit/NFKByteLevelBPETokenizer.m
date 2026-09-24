@@ -18,6 +18,12 @@ static NSString * const kNFKBPEPattern =
 static NSString * const kNFKQwen2BPEPattern =
 	@"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
+// Qwen3.5 pre-tokenization, from the released tokenizer.json: Qwen2's, with combining marks (\p{M})
+// counted as part of a letter run and never as punctuation, so a decomposed accent stays in its word.
+// The release also normalizes each segment to NFC first.
+static NSString * const kNFKQwen35BPEPattern =
+	@"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
 // o200k pre-tokenization (OpenAI's o200k_base / o200k_harmony, from the released tokenizer.json): a
 // word is a run of letters and marks whose case pattern is either lower-led or one-capital-led, each
 // optionally led by ONE non-letter/digit character and optionally followed by a case-insensitive
@@ -34,7 +40,7 @@ static NSString * const kNFKO200kBPEPattern =
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
-	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", or "o200k"
+	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", or "o200k"
 	NSRegularExpression *_pattern;
 	unichar _byteToUnicode[256];
 	NSDictionary<NSNumber *, NSNumber *> *_unicodeToByte;	// unichar value -> byte
@@ -70,7 +76,7 @@ static NSString * const kNFKO200kBPEPattern =
 	}
 	if (pretokenization != nil
 		&& ![pretokenization isEqualToString:@"gpt2"] && ![pretokenization isEqualToString:@"qwen2"]
-		&& ![pretokenization isEqualToString:@"o200k"]) {
+		&& ![pretokenization isEqualToString:@"qwen35"] && ![pretokenization isEqualToString:@"o200k"]) {
 		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
 						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
 		return nil;
@@ -179,6 +185,9 @@ static NSString * const kNFKO200kBPEPattern =
 	if ([_pretokenization isEqualToString:@"qwen2"]) {
 		return kNFKQwen2BPEPattern;
 	}
+	if ([_pretokenization isEqualToString:@"qwen35"]) {
+		return kNFKQwen35BPEPattern;
+	}
 	if ([_pretokenization isEqualToString:@"o200k"]) {
 		return kNFKO200kBPEPattern;
 	}
@@ -187,6 +196,9 @@ static NSString * const kNFKO200kBPEPattern =
 
 - (NSString *)normalizedText:(NSString *)text
 {
+	if ([_pretokenization isEqualToString:@"qwen35"]) {
+		return text.precomposedStringWithCanonicalMapping;
+	}
 	return text;
 }
 
