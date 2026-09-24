@@ -35,6 +35,11 @@ public struct NFKMLXParakeetConfiguration: Sendable {
     public var convKernel: Int = 9
     public var subsamplingChannels: Int = 256
     public var subsamplingFactor: Int = 8
+    /// Whether the attention, feed-forward, and convolution projections carry biases. Parakeet-TDT's
+    /// FastConformer has none; the Canary-1B-v2 encoder built on the same layer does (`attention_bias`,
+    /// `convolution_bias`), so the flag lets the one encoder serve both. The subsampling and its linear
+    /// keep their biases in either case.
+    public var useBias: Bool = false
     // Decoder / joint.
     public var vocabulary: Int = 1024
     public var predictionHidden: Int = 640
@@ -178,10 +183,10 @@ final class NFKParakeetAttention: Module {
         heads = config.heads
         headDim = config.dModel / config.heads
         let d = config.dModel
-        _q.wrappedValue = Linear(d, d, bias: false)
-        _k.wrappedValue = Linear(d, d, bias: false)
-        _v.wrappedValue = Linear(d, d, bias: false)
-        _outProj.wrappedValue = Linear(d, d, bias: false)
+        _q.wrappedValue = Linear(d, d, bias: config.useBias)
+        _k.wrappedValue = Linear(d, d, bias: config.useBias)
+        _v.wrappedValue = Linear(d, d, bias: config.useBias)
+        _outProj.wrappedValue = Linear(d, d, bias: config.useBias)
         _pos.wrappedValue = Linear(d, d, bias: false)
         _biasU.wrappedValue = MLXArray.zeros([heads, headDim])
         _biasV.wrappedValue = MLXArray.zeros([heads, headDim])
@@ -223,11 +228,11 @@ final class NFKParakeetConvModule: Module {
 
     init(_ config: NFKMLXParakeetConfiguration) {
         let d = config.dModel
-        _pointwise1.wrappedValue = Conv1d(inputChannels: d, outputChannels: 2 * d, kernelSize: 1, bias: false)
+        _pointwise1.wrappedValue = Conv1d(inputChannels: d, outputChannels: 2 * d, kernelSize: 1, bias: config.useBias)
         _depthwise.wrappedValue = Conv1d(inputChannels: d, outputChannels: d, kernelSize: config.convKernel,
-                                         padding: (config.convKernel - 1) / 2, groups: d, bias: false)
+                                         padding: (config.convKernel - 1) / 2, groups: d, bias: config.useBias)
         _norm.wrappedValue = BatchNorm(featureCount: d)
-        _pointwise2.wrappedValue = Conv1d(inputChannels: d, outputChannels: d, kernelSize: 1, bias: false)
+        _pointwise2.wrappedValue = Conv1d(inputChannels: d, outputChannels: d, kernelSize: 1, bias: config.useBias)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -245,8 +250,8 @@ final class NFKParakeetFeedForward: Module {
 
     init(_ config: NFKMLXParakeetConfiguration) {
         let d = config.dModel, ff = config.dModel * config.feedForwardExpansion
-        _linear1.wrappedValue = Linear(d, ff, bias: false)
-        _linear2.wrappedValue = Linear(ff, d, bias: false)
+        _linear1.wrappedValue = Linear(d, ff, bias: config.useBias)
+        _linear2.wrappedValue = Linear(ff, d, bias: config.useBias)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
@@ -474,7 +479,10 @@ public struct NFKMLXParakeetVocabulary: Sendable {
     public let pieces: [String]
 
     public init(vocabURL: URL) throws {
-        let text = try String(contentsOf: vocabURL, encoding: .utf8)
+        self.init(text: try String(contentsOf: vocabURL, encoding: .utf8))
+    }
+
+    init(text: String) {
         pieces = text.split(separator: "\n", omittingEmptySubsequences: false).filter { !$0.isEmpty }
             .map { String($0.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)[0]) }
     }
@@ -501,7 +509,10 @@ public final class NFKMLXParakeet: NSObject {
     /// preprocessor's stored window and filterbank to the front end and transposing the convolutions to
     /// MLX's channels-last layouts (4-D `[out,in,kH,kW]` → `[out,kH,kW,in]`, 3-D `[out,in,k]` → `[out,k,in]`).
     public static func loadWeights(into net: NFKMLXParakeetNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        try loadWeights(into: net, checkpoint: try NFKMLXWeights.loadCheckpoint(url: url))
+    }
+
+    static func loadWeights(into net: NFKMLXParakeetNet, checkpoint: NFKMLXWeights.Checkpoint) throws {
         var arrays = checkpoint.arrays
         if let window = arrays["preprocessor.featurizer.window"] { net.frontEnd.load(window: window) }
         if let filterbank = arrays["preprocessor.featurizer.fb"] { net.frontEnd.load(filterbank: filterbank) }
@@ -622,17 +633,74 @@ public final class NFKMLXParakeetBackend: NSObject, NFKInferenceBackend {
 }
 
 extension NFKMLXParakeet {
-    /// Builds the recognizer from an UNPACKED `.nemo` release directory (`tar -xf parakeet-tdt-0.6b-v2.nemo`):
+    /// Builds the recognizer from an UNPACKED `.nemo` release directory (`tar -xf parakeet-tdt-0.6b-v3.nemo`):
     /// `model_weights.ckpt` loads through the native checkpoint reader and the `*_tokenizer.vocab` piece
     /// table decodes the ids. Blocking on the load; run off the render thread.
+    ///
+    /// The piece table also SIZES the model: the English v2 ships 1024 pieces and the multilingual v3
+    /// ships 8192, and every other dimension is shared, so the release states its own geometry and both
+    /// load through this one entry.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
-        let net = NFKMLXParakeetNet(.tdt06B)
-        try loadWeights(into: net, from: directoryURL.appendingPathComponent("model_weights.ckpt"))
         let vocabURL = try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
             .first { $0.lastPathComponent.hasSuffix("_tokenizer.vocab") }
         let vocabulary = try vocabURL.map { try NFKMLXParakeetVocabulary(vocabURL: $0) }
+        return try backend(vocabulary: vocabulary, checkpoint: try NFKMLXWeights.loadCheckpoint(
+            url: directoryURL.appendingPathComponent("model_weights.ckpt")))
+    }
+
+    static func backend(vocabulary: NFKMLXParakeetVocabulary?,
+                        checkpoint: NFKMLXWeights.Checkpoint) throws -> any NFKInferenceBackend {
+        var configuration = NFKMLXParakeetConfiguration.tdt06B
+        if let vocabulary {
+            configuration.vocabulary = vocabulary.pieces.count
+        }
+        let net = NFKMLXParakeetNet(configuration)
+        try loadWeights(into: net, checkpoint: checkpoint)
         return NFKMLXParakeetBackend(net: net, vocabulary: vocabulary, identifier: modelName)
+    }
+
+    // A NeMo repo serves the whole release as one `.nemo` archive named after the repo, so the archive
+    // is the weights entry and nothing else is fetched.
+    static let requiredFiles = [String]()
+    static let optionalFiles = [String]()
+    static let weightFiles = ["parakeet-tdt-0.6b-v2.nemo", "parakeet-tdt-0.6b-v3.nemo"]
+
+    /// Downloads a Parakeet-TDT release archive into the hub cache and builds the recognizer from it.
+    ///
+    /// @discussion The download fetches the release's `.nemo` archive, and the build reads
+    /// `model_weights.ckpt` and the `*_tokenizer.vocab` piece table from inside it without unpacking.
+    /// A file already in the cache is not fetched again. The call blocks on the network; run it off the
+    /// render thread. The public releases are `nvidia/parakeet-tdt-0.6b-v2` (English) and
+    /// `nvidia/parakeet-tdt-0.6b-v3` (multilingual).
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+        for name in weightFiles {
+            let archive = hub.isCachedRepo(repo, revision: revision, path: name)
+                ? hub.localURL(forRepo: repo, revision: revision, path: name)
+                : try? hub.downloadRepo(repo, revision: revision, path: name, sha256: nil)
+            if let archive {
+                return try backend(archiveURL: archive)
+            }
+        }
+        throw NFKMLXError.unsupportedConfiguration("\(repo) serves none of \(weightFiles.joined(separator: ", "))")
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) { try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL) }
+    }
+
+    /// Builds the recognizer from a `.nemo` archive read in place.
+    static func backend(archiveURL: URL) throws -> any NFKInferenceBackend {
+        let archive = try NFKMLXNemoArchive(url: archiveURL)
+        let vocabulary = archive.member(suffix: "_tokenizer.vocab").map {
+            NFKMLXParakeetVocabulary(text: String(decoding: $0, as: UTF8.self))
+        }
+        return try backend(vocabulary: vocabulary, checkpoint: try archive.checkpoint(named: "model_weights.ckpt"))
     }
 
     /// A random-weights recognizer at the released geometry (or `configuration`), for shape checks.
@@ -640,5 +708,103 @@ extension NFKMLXParakeet {
         let net = NFKMLXParakeetNet(configuration)
         net.train(false)
         return NFKMLXParakeetBackend(net: net, vocabulary: nil, identifier: modelName)
+    }
+}
+
+// MARK: - The .nemo archive
+
+/// A `.nemo` release read in place: a POSIX tar holding `model_config.yaml`, `model_weights.ckpt`, and
+/// the tokenizer files, each reached by name from the memory-mapped archive.
+///
+/// @discussion A member is looked up by name because an archive can carry more than one checkpoint:
+/// Canary-1B-v2's holds `timestamps_asr_model_weights.ckpt` ahead of `model_weights.ckpt`. GNU long
+/// names (`L` entries) are read; PAX metadata and directory entries are stepped over.
+struct NFKMLXNemoArchive {
+    private let data: Data
+    /// Each regular member's name, without a leading `./`, and the byte range of its body.
+    private let members: [(name: String, range: Range<Int>)]
+
+    init(url: URL) throws {
+        let data = try Data(contentsOf: url, options: .alwaysMapped)
+        var members = [(name: String, range: Range<Int>)]()
+        var longName: String?
+        var offset = 0
+        while offset + 512 <= data.count {
+            let header = [UInt8](data[data.startIndex + offset ..< data.startIndex + offset + 512])
+            if header[0] == 0 {
+                break
+            }
+            let size = Self.size(header)
+            let body = offset + 512
+            guard body + size <= data.count else {
+                throw NFKMLXError.malformedCheckpoint("\(url.lastPathComponent) ends inside a member")
+            }
+            switch header[156] {
+            case 0x4c:
+                longName = Self.string(data[data.startIndex + body ..< data.startIndex + body + size])
+            case 0x30, 0x00:
+                var name = longName ?? Self.name(header)
+                longName = nil
+                if name.hasPrefix("./") {
+                    name.removeFirst(2)
+                }
+                members.append((name, body ..< body + size))
+            default:
+                break
+            }
+            offset = body + (size + 511) / 512 * 512
+        }
+        self.data = data
+        self.members = members
+    }
+
+    /// The body of the member named `name`, or nil when the archive has none.
+    func member(named name: String) -> Data? {
+        members.first { $0.name == name }.map(body)
+    }
+
+    /// The body of the first member whose name ends in `suffix`, or nil when none does.
+    func member(suffix: String) -> Data? {
+        members.first { $0.name.hasSuffix(suffix) }.map(body)
+    }
+
+    /// The torch checkpoint member named `name`, read without copying it out of the archive.
+    func checkpoint(named name: String) throws -> NFKMLXWeights.Checkpoint {
+        guard let bytes = member(named: name) else {
+            throw NFKMLXError.malformedCheckpoint("the .nemo archive holds no \(name)")
+        }
+        let arrays = try NFKMLXTorchFormat.arrays(from: try NFKMLXTorchFormat.read(data: bytes))
+        return NFKMLXWeights.Checkpoint(arrays: arrays, needsConvTranspose: true, quantization: nil, isNativeTorch: true)
+    }
+
+    private func body(_ member: (name: String, range: Range<Int>)) -> Data {
+        data[data.startIndex + member.range.lowerBound ..< data.startIndex + member.range.upperBound]
+    }
+
+    /// The header's name field, joined to the ustar prefix field when the header carries one.
+    private static func name(_ header: [UInt8]) -> String {
+        let name = string(header[0 ..< 100])
+        let isUstar = header[257 ..< 263].elementsEqual([0x75, 0x73, 0x74, 0x61, 0x72, 0x00])   // "ustar\0"
+        let prefix = isUstar ? string(header[345 ..< 500]) : ""
+        return prefix.isEmpty ? name : prefix + "/" + name
+    }
+
+    /// The header's size field: octal, or base-256 when GNU sets the first byte's high bit.
+    private static func size(_ header: [UInt8]) -> Int {
+        if header[124] & 0x80 != 0 {
+            return header[125 ..< 136].reduce(Int(header[124] & 0x7f)) { $0 << 8 | Int($1) }
+        }
+        var value = 0
+        for byte in header[124 ..< 136] {
+            guard (0x30 ... 0x37).contains(byte) else {
+                break
+            }
+            value = value * 8 + Int(byte - 0x30)
+        }
+        return value
+    }
+
+    private static func string<C: Collection>(_ bytes: C) -> String where C.Element == UInt8 {
+        String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
     }
 }

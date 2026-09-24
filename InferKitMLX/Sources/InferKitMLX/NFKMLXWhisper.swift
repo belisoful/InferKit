@@ -298,6 +298,9 @@ final class NFKWhisperAttention: Module {
         let headDim = state / heads
         let scale = powf(Float(headDim), -0.25)
 
+        if NFKReferenceRounding.isReduced(x) {
+            return out(reducedAttention(x, context: context, mask: mask))
+        }
         let q = (query(x) * scale).reshaped([batch, tokens, heads, headDim]).transposed(0, 2, 1, 3)
             .reshaped([batch * heads, tokens, headDim])
         let k = (key(context) * scale).reshaped([batch, contextTokens, heads, headDim]).transposed(0, 2, 1, 3)
@@ -310,6 +313,21 @@ final class NFKWhisperAttention: Module {
         let attended = softmax(scores, axis: -1).matmul(v)
             .reshaped([batch, heads, tokens, headDim]).transposed(0, 2, 1, 3).reshaped([batch, tokens, state])
         return out(attended)
+    }
+
+    /// Half-precision attention rounded as transformers' Whisper attention rounds it: the query scaled
+    /// by `headDim^-0.5` in float32 and rounded once, the scores rounded, the softmax formed in float32.
+    private func reducedAttention(_ x: MLXArray, context: MLXArray, mask: MLXArray?) -> MLXArray {
+        let (batch, tokens, state) = (x.shape[0], x.shape[1], x.shape[2])
+        let headDim = state / heads
+        func split(_ y: MLXArray) -> MLXArray {
+            y.reshaped([batch, -1, heads, headDim]).transposed(0, 2, 1, 3)
+        }
+        let q = split(NFKReferenceRounding.scaled(query(x), by: 1 / Float(headDim).squareRoot()))
+        var scores = q.matmul(split(key(context)).transposed(0, 1, 3, 2))
+        if let mask { scores = scores + mask.asType(scores.dtype) }
+        return softmax(scores, axis: -1, precise: true).matmul(split(value(context)))
+            .transposed(0, 2, 1, 3).reshaped([batch, tokens, state])
     }
 }
 
@@ -324,13 +342,13 @@ final class NFKWhisperBlock: Module {
 
     init(state: Int, heads: Int, cross: Bool) {
         attn = NFKWhisperAttention(state: state, heads: heads)
-        _attnLN.wrappedValue = LayerNorm(dimensions: state)
+        _attnLN.wrappedValue = NFKLayerNorm(dimensions: state)
         if cross {
             _crossAttn.wrappedValue = NFKWhisperAttention(state: state, heads: heads)
-            _crossAttnLN.wrappedValue = LayerNorm(dimensions: state)
+            _crossAttnLN.wrappedValue = NFKLayerNorm(dimensions: state)
         }
         _mlp.wrappedValue = [Linear(state, state * 4), GELU(), Linear(state * 4, state)]
-        _mlpLN.wrappedValue = LayerNorm(dimensions: state)
+        _mlpLN.wrappedValue = NFKLayerNorm(dimensions: state)
     }
 
     func callAsFunction(_ x: MLXArray, audio: MLXArray?, mask: MLXArray?) -> MLXArray {
@@ -338,7 +356,8 @@ final class NFKWhisperBlock: Module {
         if let crossAttn, let crossAttnLN, let audio {
             h = h + crossAttn(crossAttnLN(h), source: audio, mask: nil)
         }
-        let feed = (mlp[2] as! Linear)((mlp[1] as! GELU)((mlp[0] as! Linear)(mlpLN(h))))
+        let activation = mlp[1] as! GELU
+        let feed = (mlp[2] as! Linear)(NFKReferenceRounding.wide((mlp[0] as! Linear)(mlpLN(h))) { activation($0) })
         return h + feed
     }
 }
@@ -351,16 +370,18 @@ final class NFKWhisperEncoder: Module {
     @ModuleInfo(key: "ln_post") var lnPost: LayerNorm
 
     init(_ c: NFKMLXWhisperConfiguration) {
-        _conv1.wrappedValue = Conv1d(inputChannels: c.nMels, outputChannels: c.nAudioState, kernelSize: 3, padding: 1)
-        _conv2.wrappedValue = Conv1d(inputChannels: c.nAudioState, outputChannels: c.nAudioState, kernelSize: 3, stride: 2, padding: 1)
+        _conv1.wrappedValue = NFKConv1d(inputChannels: c.nMels, outputChannels: c.nAudioState, kernelSize: 3, padding: 1)
+        _conv2.wrappedValue = NFKConv1d(inputChannels: c.nAudioState, outputChannels: c.nAudioState, kernelSize: 3, stride: 2, padding: 1)
         _blocks.wrappedValue = (0 ..< c.nAudioLayer).map { _ in NFKWhisperBlock(state: c.nAudioState, heads: c.nAudioHead, cross: false) }
-        _lnPost.wrappedValue = LayerNorm(dimensions: c.nAudioState)
+        _lnPost.wrappedValue = NFKLayerNorm(dimensions: c.nAudioState)
     }
 
     func callAsFunction(_ mel: MLXArray) -> MLXArray {
-        var x = gelu(conv1(mel))
-        x = gelu(conv2(x))
-        x = x + NFKMLXWhisperNet.sinusoids(length: x.shape[1], channels: x.shape[2])
+        var x = NFKReferenceRounding.wide(conv1(mel)) { gelu($0) }
+        x = NFKReferenceRounding.wide(conv2(x)) { gelu($0) }
+        // The float32 table would promote a half-precision encoder to float32; the reference keeps its
+        // table in float32 and rounds the sum once.
+        x = (x + NFKMLXWhisperNet.sinusoids(length: x.shape[1], channels: x.shape[2])).asType(x.dtype)
         for block in blocks { x = block(x, audio: nil, mask: nil) }
         return lnPost(x)
     }
@@ -377,7 +398,7 @@ final class NFKWhisperDecoder: Module {
         _tokenEmbedding.wrappedValue = Embedding(embeddingCount: c.nVocab, dimensions: c.nTextState)
         _positionalEmbedding.wrappedValue = MLXArray.zeros([c.nTextCtx, c.nTextState])
         _blocks.wrappedValue = (0 ..< c.nTextLayer).map { _ in NFKWhisperBlock(state: c.nTextState, heads: c.nTextHead, cross: true) }
-        _ln.wrappedValue = LayerNorm(dimensions: c.nTextState)
+        _ln.wrappedValue = NFKLayerNorm(dimensions: c.nTextState)
     }
 
     func callAsFunction(_ tokens: MLXArray, audio: MLXArray) -> MLXArray {
