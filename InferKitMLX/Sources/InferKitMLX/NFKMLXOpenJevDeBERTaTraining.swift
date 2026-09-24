@@ -155,13 +155,18 @@ extension NFKMLXOpenJevDeBERTa {
         let batches = try stride(from: 0, to: examples.count, by: batchSize).map {
             try trainingBatch(Array(examples[$0 ..< Swift.min($0 + batchSize, examples.count)]))
         }
-        Self.freeze(net, trainable: trainable)
-        let optimizer = NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, over: net) { key in
-            (rateScale: key.hasPrefix("head.") ? headLearningRate / learningRate : 1, weightDecay: 0.01)
-        }
         var current = 0
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer, steps: steps,
+        return try NFKMLXFineTune.run(
+            net,
+            freezing: { Self.freeze(net, trainable: trainable) },
+            optimizer: nil,
+            reference: {
+                NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, over: net) { key in
+                    (rateScale: key.hasPrefix("head.") ? headLearningRate / learningRate : 1, weightDecay: 0.01)
+                }
+            },
+            referenceSchedule: { .openJevDeBERTa(steps: steps) },
+            steps: steps,
             sample: { step in current = step % batches.count; return MLXArray(Int32(current)) },
             loss: { model, _ in
                 let batch = batches[current]
@@ -170,7 +175,7 @@ extension NFKMLXOpenJevDeBERTa {
                 return objective.loss(logits: logits, gold: batch.gold, optionMask: batch.optionMask)
             },
             clipGradientNorm: 1,
-            learningRateSchedule: learningRateSchedule ?? .openJevDeBERTa(steps: steps),
+            learningRateSchedule: learningRateSchedule,
             observer: observer)
     }
 }

@@ -201,10 +201,14 @@ extension NFKMLXLaya {
             }
             return (prompt, example.target, example.question.type)
         }
-        Self.freeze(net, trainable: trainable)
         var current = 0
-        return try NFKMLXTrainer.train(
-            net, optimizer: Adam(learningRate: learningRate, biasCorrection: true), steps: steps,
+        return try NFKMLXFineTune.run(
+            net,
+            freezing: { Self.freeze(net, trainable: trainable) },
+            optimizer: nil,
+            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            referenceSchedule: { .constant },
+            steps: steps,
             sample: { step in current = step % encoded.count; return MLXArray(Int32(current)) },
             loss: { model, _ in
                 let example = encoded[current]
@@ -251,10 +255,14 @@ extension NFKMLXLaya {
             }
             return (prompts, episode.holds)
         }
-        Self.freeze(net, trainable: trainable)
         var current = 0
-        return try NFKMLXTrainer.train(
-            net, optimizer: Adam(learningRate: learningRate, biasCorrection: true), steps: steps,
+        return try NFKMLXFineTune.run(
+            net,
+            freezing: { Self.freeze(net, trainable: trainable) },
+            optimizer: nil,
+            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            referenceSchedule: { .constant },
+            steps: steps,
             sample: { step in current = step % encoded.count; return MLXArray(Int32(current)) },
             loss: { model, _ in
                 let episode = encoded[current]

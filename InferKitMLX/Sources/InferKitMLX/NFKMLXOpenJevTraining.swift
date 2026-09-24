@@ -99,13 +99,18 @@ extension NFKMLXOpenJev {
             }
             return (candidates, example.question.type, MLXArray(example.target))
         }
-        Self.freeze(net)
-        let optimizer = NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, over: net) { key in
-            (rateScale: key.hasPrefix("head.") ? headLearningRate / learningRate : 1, weightDecay: 0.01)
-        }
         var current = 0
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer, steps: steps,
+        return try NFKMLXFineTune.run(
+            net,
+            freezing: { Self.freeze(net) },
+            optimizer: nil,
+            reference: {
+                NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, over: net) { key in
+                    (rateScale: key.hasPrefix("head.") ? headLearningRate / learningRate : 1, weightDecay: 0.01)
+                }
+            },
+            referenceSchedule: { .constant },
+            steps: steps,
             sample: { step in current = step; return MLXArray(Int32(step)) },
             loss: { model, _ in
                 let records = (0 ..< batchSize).map { encoded[(current * batchSize + $0) % encoded.count] }
@@ -114,7 +119,7 @@ extension NFKMLXOpenJev {
                 }
                 return stacked(losses).mean()
             },
-            clipGradientNorm: 1, learningRateSchedule: learningRateSchedule ?? .constant, observer: observer)
+            clipGradientNorm: 1, learningRateSchedule: learningRateSchedule, observer: observer)
     }
 
     /// Writes the model as a release `checkpoint` directory: the adapter in PEFT's layout
