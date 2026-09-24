@@ -21,7 +21,7 @@ Three ways to use it:
   <doc:ModelGallery> for what each does and <doc:ModelIndex> for the class, configuration, and a
   construction line to copy.
 - **Generative pipelines** — Stable Diffusion, Z-Image, and SANA text-to-image; LTX-Video and Wan
-  text-to-video; on-device language models (Qwen3, Qwen3.5, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4, any dense GGUF); and
+  text-to-video; on-device language models (Qwen3, Qwen3.5, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4 and V4.1, any dense GGUF); and
   MiniMax Music 3 text-to-music. See <doc:DiffusionAndSchedulers> and ``NFKMLXLanguageBackend``.
 - **Bring your own** — supply an MLX forward closure and let a base backend handle the InferKit contract
   and the image/audio bridge. See <doc:BringYourOwnBackends>.
@@ -52,6 +52,7 @@ registration:
 - ``NFKStableDiffusionProvider`` → the core's `stable-diffusion` capability (``NFKMLXBackend``, SD 1.5:
   the ungated release, so it activates with no credential).
 - ``NFKMLXWhisperProvider`` → the core's `transcription` capability (`NFKMLXWhisper`).
+- ``NFKMLXTranslationProvider`` → the core's `translation` capability (M2M-100 when its release is cached).
 
 ### Sizing a model against the machine
 
@@ -109,6 +110,13 @@ limits.
 - ``NFKMLXBiRefNet``
 - ``NFKMLXSAM``
 - ``NFKMLXSAM2``
+- ``NFKMLXSAM2TrackerNet``
+- ``NFKMLXSAM2TrackerSession``
+- ``NFKMLXSAM3``
+- ``NFKMLXSAM3ImageModel``
+- ``NFKMLXSAM3VisionNet``
+- ``NFKMLXSAM3TextNet``
+- ``NFKMLXSAM3DetectorNet``
 - ``NFKMLXCodeFormer``
 - ``NFKMLXPhotoFaceBackend``
 - ``NFKMLXFaceAlignment``
@@ -124,6 +132,8 @@ limits.
 - ``NFKMLXRTDetr``
 - ``NFKMLXRTDetrSamplingMethod``
 - ``NFKMLXRFDetr``
+- ``NFKMLXTableTransformer``
+- ``NFKMLXTableTransformerSizing``
 - ``NFKMLXPose``
 - ``NFKMLXVitPose``
 - ``NFKMLXVitPoseBackend``
@@ -138,6 +148,19 @@ limits.
 - ``NFKMLXEmbeddingGemma``
 - ``NFKMLXTextEmbeddingBackend``
 - ``NFKMLXModernBERTReranker``
+- ``NFKMLXLaya``
+- ``NFKMLXLayaBackend``
+- ``NFKMLXLayaVariant``
+- ``NFKMLXOpenJevDeBERTa``
+- ``NFKMLXOpenJev``
+- ``NFKMLXOpenJevVariant``
+- ``NFKMLXOpenJevRelease``
+- ``NFKMLXDecisionBackend``
+- ``NFKMLXDecisionModel``
+- ``NFKMLXDecisionTokenizer``
+- ``NFKMLXQwen3VLEmbedder``
+- ``NFKMLXQwen3VLReranker``
+- ``NFKMLXChronos``
 
 ### Language models
 
@@ -154,6 +177,7 @@ limits.
 - ``NFKMLXJSONSchema``
 - ``NFKMLXChoiceConstraint``
 - ``NFKMLXVocabulary``
+- ``NFKMLXQwen4Exp``
 - ``NFKMLXHybridLanguage``
 - ``NFKMLXGemma3``
 - ``NFKMLXGemma3n``
@@ -165,17 +189,89 @@ limits.
 - ``NFKMLXGemmaLanguage``
 - ``NFKMLXGemmaBackend``
 - ``NFKMLXDeepSeek``
+- ``NFKMLXDeepSeekBackend``
+- ``NFKMLXDeepSeekCache``
+- ``NFKMLXDeepSeekPaging``
+- ``NFKMLXDeepSeekPagingMode``
+- ``NFKMLXDeepSeekLoadOptions``
+- ``NFKMLXDeepSeekExpertStore``
+- ``NFKMLXMappedFile``
+- ``NFKMLXSafetensors``
+- ``NFKMLXDeepSeekImageProcessor``
+- ``NFKMLXDeepSeekImageStack``
+- ``NFKMLXDeepSeekDraftStack``
+- ``NFKMLXDeepSeekVisionNet``
+- ``NFKMLXDeepSeekAligner``
+- ``NFKMLXMamba``
+- ``NFKMLXMambaBackend``
+- ``NFKMLXGraniteHybrid``
+- ``NFKMLXGraniteBackend``
+- ``NFKMLXNemotronH``
+- ``NFKMLXNemotronBackend``
 - ``NFKMLXGemma2Net``
 - ``NFKMLXT5Encoder``
 - ``NFKMLXRoPEScaling``
 - ``NFKMLXModelSizing``
 - ``NFKMLXModelFit``
 
+### Translation
+
+- ``NFKMLXMarian``
+- ``NFKMLXMarianTranslator``
+- ``NFKMLXM2M100``
+- ``NFKMLXM2M100Variant``
+- ``NFKMLXM2M100Translator``
+- ``NFKMLXMADLAD``
+- ``NFKMLXMADLADConfiguration``
+- ``NFKMLXMADLADTranslator``
+- ``NFKMLXTranslateGemma``
+- ``NFKMLXTranslateGemmaTranslator``
+- ``NFKMLXTranslationBackend``
+- ``NFKMLXTranslationParameterKey``
+- ``NFKMLXTranslator``
+- ``NFKMLXSeq2SeqConfiguration``
+- ``NFKMLXSeq2SeqCache``
+- ``NFKMLXSeq2SeqDecoding``
+- ``NFKMLXSeq2SeqDecoder``
+- ``NFKMLXSeq2SeqDecodable``
+- ``NFKMLXSentencePieceModel``
+- ``NFKMLXSentencePieceSegmenter``
+- ``NFKMLXSentencePieceTokenizer``
+
 ### Vision-language
 
 - ``NFKMLXSmolVLM``
 - ``NFKMLXSigLIPNet``
 - ``NFKMLXSmolVLMConnector``
+- ``NFKMLXFlorence2``
+- ``NFKMLXFlorence2Net``
+- ``NFKMLXFlorence2VisionNet``
+- ``NFKMLXFlorence2Projector``
+- ``NFKMLXFlorence2Backend``
+- ``NFKMLXTrOCR``
+- ``NFKMLXTrOCRNet``
+- ``NFKMLXTrOCRVisionNet``
+- ``NFKMLXTrOCRBackend``
+- ``NFKMLXSa2VA``
+- ``NFKMLXSa2VANet``
+- ``NFKMLXSa2VAVisionNet``
+- ``NFKMLXSa2VABackend``
+- ``NFKMLXSa2VAConfiguration``
+- ``NFKMLXSa2VATemplate``
+- ``NFKMLXSa2VAQwen``
+- ``NFKMLXSa2VAQwenNet``
+- ``NFKMLXSa2VALLaVA``
+- ``NFKMLXSa2VALLaVANet``
+- ``NFKMLXInternLM2Tokenizer``
+- ``NFKMLXPhi4MM``
+- ``NFKMLXPhi4MMModel``
+- ``NFKMLXPhi4MMImageNet``
+- ``NFKMLXPhi4MMAudioNet``
+- ``NFKMLXPhi4MMImageProcessor``
+- ``NFKMLXPhi4MMAudioFeatures``
+- ``NFKMLXPhi4MMImageInput``
+- ``NFKMLXPhi4MMAudioInput``
+- ``NFKMLXPhi4MMBackend``
 - ``NFKMLXGemma3Model``
 - ``NFKMLXGemma3VisionNet``
 - ``NFKMLXGemma3MultimodalProjector``
@@ -183,6 +279,13 @@ limits.
 - ``NFKMLXGemma3Tokens``
 - ``NFKMLXQwen3VL``
 - ``NFKMLXQwen3VLVisionNet``
+- ``NFKMLXQwen25VLVisionNet``
+- ``NFKMLXQwen25VLVisionConfiguration``
+- ``NFKMLXMRoPELayout``
+- ``NFKMLXPixtral``
+- ``NFKMLXPixtralVisionNet``
+- ``NFKMLXPixtralConnector``
+- ``NFKMLXPixtralImageProcessor``
 - ``NFKMLXGemma4VisionNet``
 - ``NFKMLXGemma4UnifiedNet``
 - ``NFKMLXGemma4AudioNet``
@@ -198,6 +301,16 @@ limits.
 - ``NFKMLXRIFEv4``
 - ``NFKMLXRAFT``
 - ``NFKMLXVideoSR``
+- ``NFKMLXVJEPA2``
+- ``NFKMLXVJEPA2Configuration``
+- ``NFKMLXVJEPA2Backend``
+- ``NFKMLXCosmosTokenizer``
+- ``NFKMLXCosmosTokenizerVariant``
+- ``NFKMLXCosmosTokenizerConfiguration``
+- ``NFKMLXCosmosTokenizerNet``
+- ``NFKMLXCosmosTokenizerBackend``
+- ``NFKMLXCosmosTokenizerCode``
+- ``NFKMLXCosmosFSQ``
 - ``NFKMLXSDUpscaler``
 - ``NFKMLXVideoBackend``
 - ``NFKMLXVideoFile``
@@ -224,11 +337,23 @@ limits.
 - ``NFKMLXApollo``
 - ``NFKMLXDAC``
 - ``NFKMLXSNAC``
+- ``NFKMLXBigVGAN``
+- ``NFKMLXMimi``
+- ``NFKMLXBasicPitch``
+- ``NFKMLXAllInOne``
+- ``NFKMLXMuScriptor``
+- ``NFKMLXHFTTransformer``
 
 ### Audio → text & labels
 
 - ``NFKMLXWhisper``
 - ``NFKMLXParakeet``
+- ``NFKMLXGraniteSpeech``
+- ``NFKMLXGraniteSpeechBackend``
+- ``NFKMLXVoxtral``
+- ``NFKMLXVoxtralBackend``
+- ``NFKMLXCanary``
+- ``NFKMLXCanaryBackend``
 - ``NFKMLXVAD``
 - ``NFKMLXSileroVAD``
 - ``NFKMLXAudioTagger``
@@ -259,6 +384,7 @@ limits.
 - ``NFKMLXStableDiffusionModels``
 - ``NFKMLXSDTextEncoder``
 - ``NFKMLXSDPromptTokenizer``
+- ``NFKMLXZImageGenerator``
 - ``NFKMLXZImagePipeline``
 - ``NFKMLXZImageTransformerNet``
 - ``NFKMLXSANAPipeline``
@@ -269,18 +395,37 @@ limits.
 
 ### Text → video
 
+- ``NFKMLXLTXVideoGenerator``
+- ``NFKMLXWanVideoGenerator``
 - ``NFKMLXLTXPipeline``
 - ``NFKMLXLTXVideoVAE``
 - ``NFKMLXLTXTransformer``
+- ``NFKMLXLTX2TransformerNet``
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``
 - ``NFKMLXWanVideoVAENet``
+- ``NFKMLXWanAnimate``
+- ``NFKMLXWanAnimateNet``
+- ``NFKMLXWanAnimateKVCache``
+- ``NFKMLXQwenImageGenerator``
+- ``NFKMLXQwenImage``
+- ``NFKMLXQwenImageNet``
+- ``NFKMLXQwenImageVAE``
+- ``NFKMLXQwenImagePipeline``
+- ``NFKMLXSD3Generator``
 - ``NFKMLXSD3Pipeline``
 - ``NFKMLXSD3TransformerNet``
 - ``NFKMLXSD3ControlNetPipeline``
 - ``NFKMLXSD3ControlNetNet``
+- ``NFKMLXFlux``
+- ``NFKMLXFluxTextEncoder``
 - ``NFKMLXFluxPipeline``
 - ``NFKMLXFluxTransformerNet``
+- ``NFKMLXFlux2``
+- ``NFKMLXFlux2TransformerNet``
+- ``NFKMLXFlux2Pipeline``
+- ``NFKMLXFlux2LatentCodec``
+- ``NFKMLXFlux2TextEncoder``
 - ``NFKMLXFluxControlNetPipeline``
 - ``NFKMLXFluxControlNetNet``
 
@@ -298,14 +443,17 @@ limits.
 - ``NFKMLXModelRegistry``
 - ``NFKMLXHub``
 - ``NFKStableDiffusionProvider``
+- ``NFKMLXTranslationProvider``
 - ``NFKMLXWhisperProvider``
 
 ### Customizing a model
 
+- ``NFKMLXFineTune``
 - ``NFKMLXTrainer``
 - ``NFKMLXTrainingCheckpoint``
 - ``NFKMLXTrainingStep``
 - ``NFKMLXTrainingCachePolicy``
+- ``NFKMLXLearningRateSchedule``
 - ``NFKMLXTrainingData``
 - ``NFKMLXBatchSampler``
 - ``NFKMLXLoRA``
@@ -316,11 +464,70 @@ limits.
 - ``NFKMLXSegFormerNet``
 - ``NFKMLXSegFormerObjective``
 - ``NFKMLXSegFormerTrainable``
+- ``NFKMLXSAM2Objective``
+- ``NFKMLXSAM2Trainable``
+- ``NFKMLXSAM3Objective``
+- ``NFKMLXSAM3Trainable``
+- ``NFKMLXCosmosTokenizerObjective``
+- ``NFKMLXCosmosTokenizerTrainable``
+- ``NFKMLXSa2VAObjective``
+- ``NFKMLXSa2VAExample``
+- ``NFKMLXFlorence2Objective``
+- ``NFKMLXTableTransformerNet``
+- ``NFKMLXTableTransformerObjective``
+- ``NFKMLXTableTransformerTrainable``
+- ``NFKMLXTrOCRObjective``
+- ``NFKMLXTrOCRTrainable``
+- ``NFKMLXVJEPA2Net``
+- ``NFKMLXVJEPA2Objective``
+- ``NFKMLXVJEPA2Trainable``
+- ``NFKMLXVJEPA2Processor``
+- ``NFKMLXVGG16Features``
 - ``NFKMLXCLIPNet``
 - ``NFKMLXCLIPProbe``
 - ``NFKMLXCLIPProbeBackend``
+- ``NFKMLXEmbeddingProbe``
+- ``NFKMLXEmbeddingProbeBackend``
+- ``NFKMLXEmbeddingAdapter``
+- ``NFKMLXEmbeddingRankingObjective``
+- ``NFKMLXGTCRNObjective``
+- ``NFKMLXNUWave2Objective``
+- ``NFKMLXAllInOneTargets``
+- ``NFKMLXAllInOneObjective``
+- ``NFKMLXConvTasNetNet``
+- ``NFKMLXConvTasNetObjective``
+- ``NFKMLXVADNet``
+- ``NFKMLXVADObjective``
+- ``NFKMLXVADSpecAugment``
+- ``NFKMLXYOLONet``
+- ``NFKMLXYOLOGenerationNet``
+- ``NFKMLXYOLOBox``
+- ``NFKMLXYOLOObjective``
+- ``NFKMLXYOLOEndToEndObjective``
+- ``NFKMLXYOLOTrainable``
 - ``NFKMLXWhisperNet``
 - ``NFKMLXWhisperObjective``
+- ``NFKMLXSeq2SeqNet``
+- ``NFKMLXT5Seq2SeqNet``
+- ``NFKMLXTranslationObjective``
+- ``NFKMLXTranslateGemmaObjective``
+- ``NFKMLXLayaNet``
+- ``NFKMLXLayaObjective``
+- ``NFKMLXLayaTrainable``
+- ``NFKMLXLayaExample``
+- ``NFKMLXLayaEpisode``
+- ``NFKMLXDeBERTaV2Net``
+- ``NFKMLXOpenJevDeBERTaNet``
+- ``NFKMLXOpenJevDeBERTaObjective``
+- ``NFKMLXOpenJevDeBERTaTrainable``
+- ``NFKMLXOpenJevDeBERTaExample``
+- ``NFKMLXOpenJevNet``
+- ``NFKMLXOpenJevObjective``
+- ``NFKMLXOpenJevExample``
+- ``NFKMLXGraniteHybridNet``
+- ``NFKMLXGraniteObjective``
+- ``NFKMLXNemotronHNet``
+- ``NFKMLXNemotronObjective``
 
 ### Chat templates
 
@@ -336,6 +543,8 @@ limits.
 
 ### Runtime
 
+- ``NFKMLXResidency``
+- ``NFKMLXExpertStore``
 - ``NFKMLXRandom``
 - ``NFKMLXGPU``
 - ``NFKMLXDevice``

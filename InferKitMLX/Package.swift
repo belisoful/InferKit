@@ -17,7 +17,12 @@ let package = Package(
     ],
     dependencies: [
         .package(path: ".."),
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.6"),
+        // A REVISION pin, not a version: no tagged mlx-swift carries mlx core 0.32, and core 0.31.1
+        // (which 0.31.6 vendors) computes the wrong GPU gradient after a fine-tune's first step —
+        // measured at 0 of 25 readings matching the CPU against 60 of 60 on core 0.32.2. This commit
+        // vendors 0.32.2. SwiftPM allows a revision requirement only in a root package, so this cannot
+        // ship: restore a version requirement once upstream tags a release carrying core 0.32.
+        .package(url: "https://github.com/ml-explore/mlx-swift", revision: "901941965d82e4a216d4d117231d847d194c563d"),
         // Dev-only build plugin for `swift package generate-documentation`; not linked into the library.
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
     ],

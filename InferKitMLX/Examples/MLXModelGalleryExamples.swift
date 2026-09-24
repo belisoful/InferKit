@@ -14,6 +14,7 @@ import XCTest
 import CoreGraphics
 import InferKit
 import MLX
+import MLXRandom
 @testable import InferKitMLX
 
 final class MLXModelGalleryExamples: XCTestCase {
@@ -113,7 +114,10 @@ final class MLXModelGalleryExamples: XCTestCase {
         let modnet = try NFKMLXMODNet.backend(weightsURL: nil)
         // BiRefNet: high-resolution background removal (MIT), the same foreground + alpha contract.
         let birefnet = try NFKMLXBiRefNet.backend(weightsURL: nil)
-        for backend in [u2net, rvm, rvmResNet, modnet, birefnet] {
+        // SAM 2.1: promptable segmentation from a click, which the matting contract carries as alpha.
+        let sam2 = try NFKMLXSAM2.backend(variant: .tiny, release: .sam21, weightsURL: nil)
+        XCTAssertEqual(sam2.backendIdentifier, "sam2")
+        for backend in [u2net, rvm, rvmResNet, modnet, birefnet, sam2] {
             XCTAssertTrue(backend.isReady)
         }
         // Representative run: MODNet portrait matte → foreground image + a separate matte.
@@ -294,6 +298,67 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(encoded.shape, [1, 4, 32], "26 mel frames subsample by 4 and reduce by 2")
     }
 
+    func testDeepSeekV41() throws {
+        try requireMLXRuntime()
+        // The released DeepSeek V4.1 Flash loads from its directory:
+        // NFKMLXDeepSeek.backend(directoryURL:), which reads config.json and tokenizer.json, derives
+        // the collapsed token map its n-gram memory addresses through, and generates one token a step
+        // through NFKMLXDeepSeekCache. Nothing here downloads it, because nothing can hold it.
+        //
+        // The fit check is the part a consumer meets first, and it is pure arithmetic over the
+        // configuration: the release stores its weights fp8 and fp4 and a load holds them bf16, so
+        // what it needs is two to four times what the directory measures.
+        let resident = NFKMLXDeepSeek.residentBytes(for: .v41Flash)
+        XCTAssertGreaterThan(Double(resident) / 1_099_511_627_776, 1.25,
+                             "763 billion parameters decode to more than 1.25 TiB of bf16")
+        XCTAssertThrowsError(try NFKMLXDeepSeek.verifyFits(.v41Flash, budget: 512 << 30),
+                             "a 512 GB machine cannot hold the decoded weights either")
+
+        // Paging holds a group as the release stores it and decodes what a step reads: the routed
+        // experts an expert at a time, the n-gram tables a row at a time. Each group moves the
+        // figure, and the two together move it by most of the release.
+        let experts = NFKMLXDeepSeek.residentBytes(for: .v41Flash, paging: .init(routedExperts: true))
+        let everything = NFKMLXDeepSeek.residentBytes(for: .v41Flash, paging: .all)
+        XCTAssertLessThan(experts, resident / 2, "the experts are more than half the decoder")
+        XCTAssertLessThan(everything, experts, "and the n-gram tables are most of what is left")
+
+        // What a load allocates is the decoder, and the decoder is not the release: the enumeration
+        // covers the DSpark draft stack for the structural check's sake and nothing builds it.
+        // Counting it is the difference between a 512 GiB machine being over budget and under it.
+        XCTAssertLessThan(NFKMLXDeepSeek.decoderBytes(for: .v41Flash, paging: .all), 512 << 30,
+                          "fully paged, the decoder's parameters fit a 512 GiB machine")
+        XCTAssertThrowsError(try NFKMLXDeepSeek.verifyFits(.v41Flash, budget: 512 << 30),
+                             "which the same machine cannot do with nothing paged")
+
+        // The release computes in bf16, and so does a decoder loaded from it, matching the
+        // release's own code bit for bit. Float32 is the opt-out,
+        // NFKMLXDeepSeek.backend(directoryURL:computesInFloat32:), at twice the bytes a step reads.
+        XCTAssertTrue(NFKMLXDeepSeekConfiguration.v41Flash.computesInBFloat16)
+        var wide = NFKMLXDeepSeekConfiguration.v41Flash
+        wide.computesInBFloat16 = false
+        XCTAssertLessThan(NFKMLXDeepSeek.decoderBytes(for: .v41Flash, paging: .fullyMapped),
+                          NFKMLXDeepSeek.decoderBytes(for: wide, paging: .fullyMapped),
+                          "bf16 holds less than float32")
+
+        // A picture becomes a span of positions, and the grid it plans is arithmetic over the
+        // release's own settings: the aspect-preserving resize, the pad up to whole patches, and
+        // the aligner's 3x3 pooling. Nothing here needs the weights.
+        let processor = NFKMLXDeepSeekImageProcessor(.v41Flash)
+        let plan = processor.plan(width: 1280, height: 720)
+        XCTAssertEqual(plan.pixelWidth % processor.patchSize, 0, "a whole number of patches across")
+        XCTAssertEqual(plan.pixelHeight % processor.patchSize, 0, "and down")
+        XCTAssertEqual(plan.tokenCount, plan.tokenRows * (plan.tokenColumns + 1) + 2,
+                       "a delimiter each side, and a newline ending every row of tokens")
+        XCTAssertLessThanOrEqual(plan.tokenCount,
+                                 NFKMLXDeepSeekVisionConfiguration.v41Flash.maximumTokenCount,
+                                 "a picture costs no more positions than the release allows")
+
+        // A directory that holds no release is refused rather than half-built. The error it carries
+        // is the one reading config.json gives, so this asserts that it throws and not which code.
+        let absent = URL(fileURLWithPath: "/nonexistent-deepseek-release")
+        XCTAssertThrowsError(try NFKMLXDeepSeek.backend(directoryURL: absent))
+    }
+
     func testQwen3VLVisionTower() throws {
         try requireMLXRuntime()
         // The released Qwen3-VL vision tower loads from its directory:
@@ -310,6 +375,206 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(deepstack.count, 2)
     }
 
+    func testPixtralVisionTower() throws {
+        try requireMLXRuntime()
+        // The released Pixtral loads from its directory: NFKMLXPixtral.model(directoryURL:), then
+        // answer(image:question:maxTokens:). Here a tiny random 2D-rotary tower embeds an 8×6-pixel
+        // image (a 4×3 patch grid) and produces one feature per patch.
+        NFKMLXRandom.seed(1)
+        let config = NFKMLXPixtralVisionConfiguration(
+            hiddenSize: 32, depth: 4, headCount: 2, intermediateSize: 64, patchSize: 2, imageSize: 16)
+        let net = NFKMLXPixtralVisionNet(config)
+        let output = net(MLXRandom.normal([1, 3, 8, 6]))
+        eval(output)
+        XCTAssertEqual(output.shape, [12, 32])
+        let projected = NFKMLXPixtralConnector(visionSize: 32, textSize: 48)(output)
+        eval(projected)
+        XCTAssertEqual(projected.shape, [12, 48])
+    }
+
+    func testStateSpaceLanguageModels() throws {
+        try requireMLXRuntime()
+        // The released state-space decoders load from their directories: NFKMLXMamba.mambaBackend(directoryURL:)
+        // (Codestral Mamba 7B, Mamba-2 blocks), NFKMLXGraniteHybrid.graniteBackend(directoryURL:) (Granite
+        // 4.0-H, Mamba-2 and attention layers, dense or with routed experts), and
+        // NFKMLXNemotronH.nemotronBackend(directoryURL:) (Nemotron Nano 2, Mamba-2, attention, and MLP
+        // layers); each also downloads through its repo factory and registers with register(). Here
+        // shrunk random geometries run each decoder over a short prompt.
+        NFKMLXRandom.seed(5)
+        let prompt = MLXArray([Int32(1), 5, 9, 12, 7]).reshaped([1, 5])
+        let mamba = NFKMLXMamba.makeNet(NFKMLXMamba2Configuration(
+            hiddenSize: 64, layerCount: 2, vocabularySize: 128, rmsEpsilon: 1e-5,
+            intermediateSize: 128, headCount: 8, headDimensions: 16, stateSize: 16,
+            groupCount: 2, convolutionKernel: 4, useConvolutionBias: true,
+            useProjectionBias: false, tiesWordEmbeddings: false))
+        XCTAssertEqual(mamba(prompt).shape, [1, 5, 128])
+
+        let granite = NFKMLXGraniteHybrid.makeNet(NFKMLXGraniteHybridConfiguration(
+            hiddenSize: 64, layerCount: 3, vocabularySize: 128, rmsEpsilon: 1e-5,
+            tiesWordEmbeddings: false, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            mambaHeadCount: 8, mambaHeadDimensions: 16, mambaGroupCount: 1, mambaStateSize: 16,
+            mambaConvolutionKernel: 4, mambaExpand: 2, mambaConvolutionBias: true,
+            mambaProjectionBias: false, sharedIntermediateSize: 96, expertCount: 0,
+            expertsPerToken: 0, expertIntermediateSize: 0,
+            embeddingMultiplier: 2.0, residualMultiplier: 0.5, attentionMultiplier: 0.25,
+            logitsScaling: 3.0, layerTypes: [.mamba, .mamba, .attention]))
+        XCTAssertEqual(granite(prompt).shape, [1, 5, 128])
+
+        let nemotron = NFKMLXNemotronH.makeNet(NFKMLXNemotronHConfiguration(
+            hiddenSize: 64, vocabularySize: 128, rmsEpsilon: 1e-5,
+            headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            mambaHeadCount: 8, mambaHeadDimensions: 16, mambaGroupCount: 2, mambaStateSize: 16,
+            mambaConvolutionKernel: 4, mambaConvolutionBias: true, mambaProjectionBias: false,
+            timeStepMinimum: 0.001, intermediateSize: 96, mlpBias: false,
+            layerTypes: [.mamba, .attention, .mlp]))
+        XCTAssertEqual(nemotron(prompt).shape, [1, 5, 128])
+    }
+
+    func testPhi4Multimodal() throws {
+        try requireMLXRuntime()
+        // The released Phi-4-multimodal loads from its directory: NFKMLXPhi4MM.backend(directoryURL:precision:)
+        // (Objective-C backendWithDirectoryURL:precision:error:), or from the hub through
+        // backend(repo:revision:cacheDirectoryURL:precision:). NFKMLXPhi4MM.model(directoryURL:precision:)
+        // then answers respond(messages:images:audios:options:): a conversation in the release's chat
+        // template, any number of pictures and clips, and sampled or greedy decoding. Here the two
+        // preprocessors read synthetic input, tiny random towers project it (two clips as one padded
+        // batch), and a tiny partial-rotary LongRoPE decoder fuses the image and the clips into one
+        // prompt, as the vision-with-speech mode does.
+        NFKMLXRandom.seed(1)
+        let rgb = (0 ..< 500 * 300 * 3).map { UInt8(($0 * 37) % 256) }
+        let image = NFKMLXPhi4MMImageProcessor.process(rgb: rgb, width: 500, height: 300)
+        XCTAssertEqual(image.pixels.dim(0), 3, "a global view and a 1×2 crop grid")
+        let imageNet = NFKMLXPhi4MMImageNet(NFKMLXSigLIPConfiguration(
+            hiddenSize: 32, layerCount: 2, headCount: 2, intermediateSize: 64, patchSize: 14, imageSize: 448),
+            decoderHidden: 48)
+        let imageFeatures = imageNet.projected(pixels: image.pixels, imageSize: image.imageSize,
+                                               validPatches: image.validPatches)
+        XCTAssertEqual(imageFeatures.dim(0), image.tokenCount, "one embedding per reserved image token")
+
+        let mels = try [NFKMLXPhi4MMAudioFeatures.logMel(Self.tone(44100), sampleRate: 44100),
+                        NFKMLXPhi4MMAudioFeatures.logMel(Array(Self.tone(16000).prefix(8000)), sampleRate: 16000)]
+        let clips = NFKMLXPhi4MMAudioNet(.tiny).projected(clips: mels, mode: .vision)
+        XCTAssertEqual(clips.map { $0.dim(0) }, mels.map { NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0)) },
+                       "one embedding per reserved audio token, per clip")
+        let audioFeatures = concatenated(clips, axis: 0)
+        let audioTokens = audioFeatures.dim(0)
+
+        var configuration = NFKMLXLanguageConfiguration(
+            hiddenSize: 48, layerCount: 2, headCount: 3, keyValueHeadCount: 1, headDimensions: 16,
+            intermediateSize: 96, vocabularySize: 200_064, ropeTheta: 10_000, rmsEpsilon: 1e-5,
+            tiesWordEmbeddings: true, normalizesQueryAndKey: false)
+        configuration.rotaryDimensions = 12
+        var scaling = NFKMLXRoPEScaling(kind: .longrope, factor: 1, originalMaxPositionEmbeddings: 4096)
+        scaling.shortFactor = Array(repeating: 1, count: 6)
+        scaling.longFactor = [1, 1.5, 2, 3, 4, 6]
+        scaling.maximumPositionEmbeddings = 131_072
+        configuration.ropeScaling = scaling
+        let decoder = NFKMLXLanguageNet(configuration)
+        let ids = [NFKMLXPhi4MM.userTokenId]
+            + Array(repeating: NFKMLXPhi4MM.imageTokenId, count: image.tokenCount)
+            + Array(repeating: NFKMLXPhi4MM.audioTokenId, count: audioTokens)
+            + [NFKMLXPhi4MM.endTokenId, NFKMLXPhi4MM.assistantTokenId]
+        let hidden = NFKMLXPhi4MM.fusedHidden(decoder: decoder, inputIds: ids,
+                                              features: [(NFKMLXPhi4MM.imageTokenId, imageFeatures),
+                                                         (NFKMLXPhi4MM.audioTokenId, audioFeatures)])
+        eval(hidden)
+        XCTAssertEqual(hidden.shape, [1, ids.count, 48])
+    }
+
+    func testTypedDecisions() throws {
+        try requireMLXRuntime()
+        // The released model loads from a variant directory: NFKMLXLaya.laya(directoryURL:) (the root,
+        // typed-decisions, or multilingual folder), then laya.decide(state:questions:) answers the same
+        // NFKDecisionQuestions the hosted Jev backend takes. Here a tiny random net stands in.
+        NFKMLXRandom.seed(3)
+        let tokenizer = NFKMLXLayaTokenizer { text in text.unicodeScalars.map { Int($0.value % 500) + 8 } }
+        let laya = try NFKMLXLaya.laya(weightsURL: nil, tokenizer: tokenizer, configuration: .tiny)
+        let answers = laya.decide(state: "Help! My payouts have been failing for 3 days.", questions: [
+            "department": NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team should handle this?",
+                                                             options: ["billing", "technical", "sales"]),
+            "urgent": NFKDecisionQuestion.noulQuestion(withInstructions: "The customer needs an answer today."),
+        ])
+        XCTAssertEqual(answers.count, 2)
+        XCTAssertTrue(["billing", "technical", "sales"].contains(answers["department"]?.choice ?? ""))
+        XCTAssertTrue((0 ... 1).contains(answers["urgent"]?.probability ?? -1))
+        // The same through the contract: NFKInputState + NFKInputQuestions in, NFKOutputAnswers out.
+        let backend = laya.makeBackend()
+        let request = NFKInferenceRequest(inputs: [NFKInputState: "My invoice is wrong.",
+                                                   NFKInputQuestions: ["urgent": NFKDecisionQuestion.noulQuestion(withInstructions: "Urgent?")]])
+        XCTAssertEqual(try backend.runInference(for: request).answers?["urgent"]?.type, .noul)
+    }
+
+    func testTypedDecisionsCommunityReproductions() throws {
+        try requireMLXRuntime()
+        // open-jev-deberta reads the state and every question in one DeBERTa pass:
+        //   NFKMLXOpenJevDeBERTa.openJev(revision: NFKMLXOpenJevDeBERTa.measuredRevision, cacheDirectoryURL: nil)
+        // Open-Jev scores each candidate with a Qwen3.5 text model and a LoRA adapter:
+        //   NFKMLXOpenJev.openJev(variant: .twoB, revision: nil, cacheDirectoryURL: nil)
+        // Both take the NFKDecisionQuestions Laya and the hosted Jev take. Tiny random nets stand in.
+        NFKMLXRandom.seed(4)
+        let questions: [NFKDecisionQuestion] = [
+            .choiceQuestion(withInstructions: "Which team?", options: ["billing", "technical", "sales"]),
+            .noulQuestion(withInstructions: "Urgent?"),
+        ]
+        let characters = NFKMLXDecisionTokenizer { text in text.unicodeScalars.map { Int($0.value % 400) + 10 } }
+        let deberta = NFKMLXOpenJevDeBERTa(net: NFKMLXOpenJevDeBERTaNet(.tiny), tokenizer: characters)
+        let ordered = try deberta.decide(state: "My invoice is wrong.", questions: questions)
+        XCTAssertEqual(ordered.map(\.type), [.choice, .noul])
+
+        let words = NFKMLXDecisionTokenizer { text in
+            text.split(whereSeparator: \.isWhitespace).map { $0.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 500 } + 5 }
+        }
+        let openJev = NFKMLXOpenJev(net: NFKMLXOpenJevNet(.tiny), tokenizer: words)
+        // Behind the contract, as NFKTypeSafeBackend is: NFKInputState + NFKInputQuestions in.
+        let request = NFKInferenceRequest(inputs: [NFKInputState: "My invoice is wrong.",
+                                                   NFKInputQuestions: ["urgent": questions[1]]])
+        XCTAssertEqual(try openJev.makeBackend().runInference(for: request).answers?["urgent"]?.type, .noul)
+    }
+
+    /// A validation-store path from the environment, or else from `~/.inferkit-validation.json`, which
+    /// `Tools/validation-assets/fetch.py` writes.
+    private func validationPath(_ key: String) -> String? {
+        if let value = ProcessInfo.processInfo.environment[key] { return value }
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation.json")
+        let store = (try? JSONSerialization.jsonObject(with: Data(contentsOf: file))) as? [String: Any]
+        return store?[key] as? String
+    }
+
+    // Docs/examples.md "Downloading and setting up Laya": one call fetches a variant into the hub cache
+    // and builds it; a cached file is not fetched again. Here the cache is seeded from the local
+    // validation store (IK_VAL_LAYA), so the call reads it without the network.
+    func testTypedDecisionsDownloadAndSetup() throws {
+        try requireMLXRuntime()
+        guard let root = validationPath("IK_VAL_LAYA") else {
+            throw XCTSkip("set IK_VAL_LAYA to the Laya release")
+        }
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("laya-example-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let snapshot = cache.appendingPathComponent("\(NFKMLXLaya.repository)/\(NFKMLXLaya.measuredRevision)")
+        for path in NFKMLXLaya.releaseFiles(for: .typedDecisions) {
+            let link = snapshot.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: URL(fileURLWithPath: root).appendingPathComponent(path))
+        }
+
+        let laya = try NFKMLXLaya.laya(variant: .typedDecisions, revision: NFKMLXLaya.measuredRevision,
+                                       cacheDirectoryURL: cache)
+        let answer = laya.answer(state: "I was charged twice for one order.",
+                                 question: .choiceQuestion(withInstructions: "Which team should handle this?",
+                                                           options: ["billing", "technical", "sales"]))
+        XCTAssertTrue(["billing", "technical", "sales"].contains(answer.choice ?? ""))
+
+        // The asynchronous form hands the folder to a completion handler on a background queue.
+        let done = expectation(description: "download")
+        NFKMLXLaya.download(variant: .typedDecisions, revision: NFKMLXLaya.measuredRevision,
+                            cacheDirectoryURL: cache) { folder, error in
+            XCTAssertNil(error)
+            XCTAssertEqual(folder?.lastPathComponent, "typed-decisions")
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 30)
+    }
+
     func testReranking() throws {
         try requireMLXRuntime()
         // The released reranker loads from its directory: NFKMLXModernBERTReranker.reranker(directoryURL:),
@@ -322,6 +587,34 @@ final class MLXModelGalleryExamples: XCTestCase {
         // With no tokenizer the request path returns a neutral 0; a release directory supplies the
         // byte-level BPE tokenizer that makes the score meaningful.
         XCTAssertTrue(reranker.score(query: "a query", document: "a candidate document").isFinite)
+    }
+
+    func testMultimodalRetrieval() throws {
+        try requireMLXRuntime()
+        // The released pair loads from its directory: NFKMLXQwen3VLEmbedder.embedder(directoryURL:)
+        // and NFKMLXQwen3VLReranker.reranker(directoryURL:), then embedding(forText:) /
+        // embedding(forImage:text:instruction:) and scores(query:documents:). Both are 4.3 GB, so
+        // what runs here without a download is the prompt each is trained to read and the probe a
+        // consumer trains over the frozen backbone.
+        let prompt = NFKMLXQwen3VLEmbedder.prompt(text: "a red bicycle", imageTokens: 4,
+                                                  instruction: "Represent the photo")
+        XCTAssertTrue(prompt.hasPrefix("<|im_start|>system\nRepresent the photo.<|im_end|>"),
+                      "the instruction is punctuated and goes in the system turn")
+        XCTAssertTrue(prompt.hasSuffix("<|im_start|>assistant\n"))
+        let pair = NFKMLXQwen3VLReranker.prompt(query: "how tall is it", queryImageTokens: 0,
+                                                document: "330 metres", documentImageTokens: 0,
+                                                instruction: nil)
+        XCTAssertTrue(pair.contains("<Query>:how tall is it\n<Document>:330 metres"))
+
+        let adapter = NFKMLXQwen3VLEmbeddingAdapter(dimensions: 8)
+        let embeddings = MLXRandom.normal([2, 8])
+        let adapted = adapter(embeddings)
+        eval(adapted)
+        XCTAssertEqual(adapted.shape, [2, 8])
+        let head = NFKMLXQwen3VLRerankerHead(dimensions: 8)
+        let logits = head(MLXRandom.normal([3, 8]))
+        eval(logits)
+        XCTAssertEqual(logits.shape, [3])
     }
 
     // MARK: Video (frame pair / recurrent, tensor & module backends)
@@ -337,6 +630,11 @@ final class MLXModelGalleryExamples: XCTestCase {
         }
         let result = try videoSR.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(16)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "×4 upscaled frame")
+
+        // Cosmos Tokenizer: an image or a clip → a continuous latent or discrete tokens → a reconstruction.
+        let cosmos = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)
+        let cosmosResult = try cosmos.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(16)]))
+        XCTAssertNotNil(cosmosResult.output(forKey: NFKOutputImage), "a Cosmos Tokenizer reconstruction")
     }
 
     // MARK: Text → image (built by factory)
@@ -348,6 +646,83 @@ final class MLXModelGalleryExamples: XCTestCase {
         let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn"],
                                           parameters: [NFKParameterSteps: 2])
         XCTAssertNotNil(try backend.runInference(for: request).output(forKey: NFKOutputImage))
+    }
+
+    func testFlux2TextToImage() throws {
+        try requireMLXRuntime()
+        // The released path is `NFKMLXFlux2.flux2(directoryURL:)` over a diffusers FLUX.2 [klein]
+        // release — transformer, autoencoder, Qwen3 text encoder and tokenizer — then
+        // `image(forPrompt:)`, which renders the release's own chat template, reads three layers of
+        // the encoder, denoises, and decodes. That is several gigabytes of weights, so what runs here
+        // is the same public pipeline at a tiny geometry with the conditioning supplied directly.
+        var vae = NFKMLXSDVAEConfiguration.flux2
+        vae.latentChannels = 4
+        vae.blockChannels = [8, 16]
+        vae.layersPerBlock = 1
+        vae.normalizationGroups = 4
+        var geometry = NFKMLXFlux2Configuration.tiny
+        geometry.inChannels = 16                                       // 4 latent channels, 2×2 patch
+
+        let pipeline = NFKMLXFlux2Pipeline(
+            transformer: NFKMLXFlux2TransformerNet(geometry),
+            autoencoder: NFKMLXSDAutoencoder(configuration: vae),
+            codec: NFKMLXFlux2LatentCodec(patchedChannels: 16, epsilon: 1e-4, patch: 2))
+        let conditioning = MLXRandom.normal([1, 5, geometry.jointAttentionDim])
+        let image = pipeline.generate(promptEmbeds: conditioning, latentHeight: 2, latentWidth: 3,
+                                      steps: 2, seed: 1)
+        eval(image)
+        XCTAssertEqual(image.shape[3], 3, "the pipeline decodes to RGB")
+        XCTAssertEqual(NFKMLXFlux2.modelName, "flux.2-klein-4b")
+    }
+
+    func testResidencyPagesAMixture() throws {
+        try requireMLXRuntime()
+        // A release directory is held as an NFKMLXResidency says. The language, Gemma, and FLUX factories
+        // take one: `NFKMLXLanguage.backend(directoryURL:residency:)`,
+        // `NFKMLXGemmaLanguage.backend(directoryURL:precision:residency:)`, and
+        // `NFKMLXFlux.flux(directoryURL:residency:)`. `.paged` leaves a mixture's routed experts in the
+        // release and reads each as the router reaches it; what runs here is the same load over a tiny
+        // mixture written as a release.
+        let source = NFKMLXLanguage.makeNet(.tinyMixture)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("residency-example-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try NFKMLXWeights.save(source, to: directory.appendingPathComponent("model.safetensors"))
+
+        let paged = NFKMLXLanguage.makeNet(.tinyMixture)
+        try NFKMLXLanguage.loadWeights(into: paged, fromDirectory: directory, precision: .float32,
+                                       residency: .paged)
+        let store = try XCTUnwrap(paged.expertStore, "the routed experts stay in the release")
+        store.cacheByteBudget = 1 << 20
+
+        let tokens = MLXArray([3, 17, 42, 8].map { Int32($0) }).reshaped([1, 4])
+        XCTAssertEqual(paged(tokens).asArray(Float.self), source(tokens).asArray(Float.self),
+                       "a paged model computes the resident model's logits")
+        XCTAssertGreaterThan(store.materializeCount, 0, "and read only the experts it routed to")
+    }
+
+    func testQwenImageTextToImage() throws {
+        try requireMLXRuntime()
+        // The released pipeline loads each stage from its own directory:
+        // NFKMLXQwenImage.makeNet + loadWeights for the 7.1B transformer,
+        // NFKMLXQwenImageVAE.net(directoryURL:) for the autoencoder, and NFKMLXQwen3VL.decoder for
+        // the text encoder, then generate(promptEmbeddings:height:width:steps:). That is 31 GB of
+        // weights, so what runs here is the same public path at a tiny geometry.
+        NFKMLXRandom.seed(4)
+        var configuration = NFKMLXQwenImageConfiguration.tiny
+        configuration.inChannels = 4
+        configuration.outChannels = 4
+        let pipeline = NFKMLXQwenImagePipeline(
+            transformer: NFKMLXQwenImage.makeNet(configuration),
+            vae: NFKMLXQwenImageVAE.makeNet(.qwenImage21Tiny))
+
+        let embeddings = MLXRandom.normal([8, configuration.contextInDimensions])
+        let image = pipeline.generate(promptEmbeddings: embeddings, height: 64, width: 64, steps: 2)
+        eval(image)
+        // The pipeline's latent grid is the request divided by the release's 16, and this tiny
+        // autoencoder upsamples by 2 rather than the released 16, so 64 pixels in is 8 pixels out.
+        XCTAssertEqual(image.shape, [8, 8, 4])
     }
 
     // MARK: Inpainting & latent diffusion (built by factory)
@@ -557,6 +932,46 @@ final class MLXModelGalleryExamples: XCTestCase {
         let snacMusic = try NFKMLXSNAC.backend(variant: .music32kHz, weightsURL: nil)
         XCTAssertEqual(snacMusic.backendIdentifier, "snac-32khz")
 
+        // BigVGAN v2: an anti-aliased SnakeBeta vocoder, shipped standalone. The backend runs
+        // copy-synthesis (audio → the released mel front end → generator → waveform).
+        let bigvgan = try NFKMLXBigVGANFactory.backend(weightsURL: nil)
+        XCTAssertNotNil(try bigvgan.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // Mimi: a transformer-in-codec neural audio codec. The backend reconstructs audio → codes → audio;
+        // NFKMLXMimi.encode returns the per-codebook token streams (semantic + acoustic).
+        let mimi = try NFKMLXMimi.backend(weightsURL: nil)
+        XCTAssertNotNil(try mimi.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).output(forKey: NFKOutputAudio))
+
+        // Basic Pitch: a recording becomes notes. The result is an NFKMIDISequence under NFKOutputMIDI,
+        // which writes a Standard MIDI File.
+        let basicPitch = try NFKMLXBasicPitch.backend(weightsURL: nil)
+        let transcription = try basicPitch.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave]))
+        let midi = try XCTUnwrap(transcription.midi)
+        XCTAssertGreaterThan(midi.standardMIDIFileData().count, 22)
+
+        // hFT-Transformer: piano transcription, attending across frequency and then across time.
+        // Four heads at two levels; the time level is the answer.
+        let hft = try NFKMLXHFTTransformer.backend(weightsURL: nil)
+        let piano = try hft.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave]))
+        XCTAssertNotNil(piano.midi)
+
+        // MuScriptor: a mixture becomes one MIDI track per instrument. The released weights are CC
+        // BY-NC 4.0 behind a gated repository, and the smallest is 103M parameters, so the gallery
+        // builds the module at a small configuration rather than allocating a release-sized model
+        // with random weights; the factory and the decode path are the same either way.
+        let muScriptorNet = NFKMLXMuScriptor.makeNet(
+            NFKMLXMuScriptorConfiguration(dimension: 64, heads: 4, layers: 2, card: 1395))
+        let muScriptorTokens = muScriptorNet.generate(chunk: Self.tone(16000))
+        XCTAssertTrue(muScriptorTokens.allSatisfy { $0 >= 0 && $0 < 1393 },
+                      "the decode stays inside the tokenizer's vocabulary")
+
+        // All-In-One: a track's structure. It reads the four HT Demucs stems (bass, drums, other,
+        // vocals), and returns labeled sections, beats with their position in the bar, and the tempo.
+        let allInOne = try NFKMLXAllInOne.backend(weightsURL: nil)
+        let stems = [Data](repeating: wave, count: 4)
+        let structure = try allInOne.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: stems]))
+        XCTAssertNotNil(structure.segments)
+
         let tagger = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)
         XCTAssertNotNil(try tagger.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave])).classifications)
 
@@ -582,6 +997,60 @@ final class MLXModelGalleryExamples: XCTestCase {
         let parakeet = NFKMLXParakeet.backend(configuration: .tiny)
         let recognized = try parakeet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave]))
         XCTAssertNotNil(recognized.output(forKey: NFKOutputText), "a transcript (token ids without a vocabulary)")
+
+        // Canary-1B-v2 (NeMo FastConformer encoder + attention encoder-decoder): a multitask
+        // ASR/translation speech model. Random weights at a shrunk geometry run the whole path — the
+        // biased FastConformer encoder (reused from Parakeet) and the Transformer decoder's greedy
+        // generation from a task prompt.
+        let canary = NFKMLXCanaryNet(.tiny)
+        let canaryTokens = canary.recognize(Self.tone(16000), prompt: [4, 5])
+        XCTAssertLessThanOrEqual(canaryTokens.count, canary.configuration.maxDecodeTokens,
+                                 "greedy decode over the encoder frames")
+
+        // The released speech language models load from their directories:
+        // NFKMLXGraniteSpeech.graniteSpeechBackend(directoryURL:) (a Conformer, a BLIP-2 Q-former, and a
+        // Granite decoder with its audio LoRA) and NFKMLXVoxtral.voxtralBackend(directoryURL:) (a Whisper
+        // encoder, a projector, and a Llama decoder); each also downloads through its repo factory and
+        // registers with register(). Here shrunk random geometries fuse a clip's features into the
+        // decoder at the audio-token positions, as the transcription prompt does.
+        let graniteText = NFKMLXGraniteTextConfiguration(
+            hiddenSize: 32, layerCount: 2, headCount: 4, keyValueHeadCount: 2, headDimensions: 8,
+            intermediateSize: 64, vocabularySize: 40, ropeTheta: 1_000_000, rmsEpsilon: 1e-5,
+            embeddingMultiplier: 2.0, residualMultiplier: 0.5, attentionMultiplier: 0.25,
+            logitsScaling: 3.0, tiesWordEmbeddings: false)
+        let graniteSpeech = NFKMLXGraniteSpeechNet(
+            encoder: NFKMLXGraniteSpeechEncoderConfiguration(
+                inputDim: 16, hiddenDim: 32, outputDim: 24, layerCount: 2, headCount: 2, headDimensions: 16,
+                feedForwardMultiplier: 2, convolutionExpansionFactor: 2, convolutionKernel: 5,
+                contextSize: 8, maxPositionEmbeddings: 16),
+            projector: NFKMLXGraniteSpeechProjectorConfiguration(
+                hiddenSize: 32, layerCount: 1, headCount: 2, intermediateSize: 64, encoderHiddenSize: 32,
+                layerNormEpsilon: 1e-12, windowSize: 4, downsampleRate: 2),
+            text: graniteText, audioTokenId: 39)
+        graniteSpeech.train(false)
+        let graniteFeatures = MLXRandom.normal([1, 12, 16])
+        let graniteAudio = graniteSpeech.audioEmbeddings(graniteFeatures)
+        let graniteSlots = graniteAudio.size / graniteText.hiddenSize
+        let graniteTokens = MLXArray([Int32(1)] + Array(repeating: Int32(39), count: graniteSlots) + [Int32(2)])
+            .reshaped([1, -1])
+        XCTAssertEqual(graniteSpeech.logits(tokens: graniteTokens, audioEmbeddings: graniteAudio).shape,
+                       [1, graniteSlots + 2, 40], "fused logits over the prompt")
+
+        let voxtralText = NFKMLXGraniteTextConfiguration(
+            hiddenSize: 64, layerCount: 2, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
+            intermediateSize: 128, vocabularySize: 40, ropeTheta: 10_000, rmsEpsilon: 1e-5,
+            embeddingMultiplier: 1, residualMultiplier: 1, attentionMultiplier: 1.0 / Float(16).squareRoot(),
+            logitsScaling: 1, tiesWordEmbeddings: false)
+        let voxtral = NFKMLXVoxtral.makeNet(NFKMLXVoxtralConfiguration(
+            audioMels: 32, audioState: 64, audioHeads: 4, audioLayers: 2, projectorInputSize: 256,
+            audioTokenId: 39, text: voxtralText))
+        let voxtralMel = MLXRandom.normal([1, 48, 32])
+        let voxtralAudio = voxtral.audioEmbeddings(voxtralMel)
+        let voxtralSlots = voxtralAudio.dim(0)
+        let voxtralTokens = MLXArray([Int32(1)] + Array(repeating: Int32(39), count: voxtralSlots) + [Int32(2)])
+            .reshaped([1, -1])
+        XCTAssertEqual(voxtral.logits(tokens: voxtralTokens, audioEmbeddings: voxtralAudio).shape,
+                       [1, voxtralSlots + 2, 40], "fused logits over the prompt")
 
         // Chatterbox (zero-shot voice cloning TTS): a VoiceEncoder speaker embedding and the S3 speech
         // tokenizer read the voice prompt, T3 samples speech codes for the text, and S3Gen (flow matching +
@@ -617,6 +1086,10 @@ final class MLXModelGalleryExamples: XCTestCase {
             FileManager.default.temporaryDirectory.appendingPathComponent("minimax-music3"))
         XCTAssertEqual(music.backendIdentifier, "minimax-music3")
         XCTAssertFalse(music.isReady, "no weights at that path yet — download the release first")
+        // .staged loads each stage for its turn and releases it; .resident holds them between runs.
+        let staged = try NFKMLXMusic3.backend(directoryURL:
+            FileManager.default.temporaryDirectory.appendingPathComponent("minimax-music3"), residency: .staged)
+        XCTAssertEqual((staged as? NFKMLXMusicBackend)?.residency, .staged)
     }
 
     // MARK: Dynamic discovery (Stable Diffusion / transcription activate when linked)
@@ -630,6 +1103,35 @@ final class MLXModelGalleryExamples: XCTestCase {
     }
 
     // MARK: Helpers
+
+    // MARK: Translation (text → text, seq2seq backend)
+
+    func testTranslationModels() throws {
+        try requireMLXRuntime()
+        // The released translators load from their release directories: NFKMLXMarian.backend(directoryURL:)
+        // (one OPUS-MT pair, or backend(sourceLanguage:targetLanguage:cacheDirectoryURL:) to download it),
+        // NFKMLXM2M100.backend(variant:directoryURL:) (100 languages, or SMaLL-100), and
+        // NFKMLXMADLAD.backend(directoryURL:half:) (400+ languages, T5). Each answers NFKInputPrompt with
+        // NFKOutputText for the NFKParameterTargetLanguage asked. Here tiny random networks exercise the
+        // two architectures and the shared greedy/beam decoder without a download.
+        let marian = try NFKMLXMarian.network(directoryURL: nil, configuration: .tinyMarian)
+        let m2m = try NFKMLXM2M100.network(directoryURL: nil, configuration: .tinyM2M100)
+        for net in [marian, m2m] {
+            let c = net.configuration
+            let decoding = NFKMLXSeq2SeqDecoding(beams: 3, maxTokens: 8, startToken: c.decoderStartTokenId, endToken: c.eosTokenId)
+            let tokens = NFKMLXSeq2SeqDecoder.generate(net, source: [5, 6, 7, c.eosTokenId], decoding: decoding)
+            XCTAssertLessThanOrEqual(tokens.count, 8)
+        }
+        let madlad = try NFKMLXMADLAD.network(directoryURL: nil, configuration: .tiny)
+        let decoding = NFKMLXSeq2SeqDecoding(beams: 1, maxTokens: 8, startToken: 0, endToken: 2)
+        XCTAssertLessThanOrEqual(NFKMLXSeq2SeqDecoder.generate(madlad, source: [5, 6, 7, 2], decoding: decoding).count, 8)
+
+        // TranslateGemma is the shipped Gemma 3 behind the release's translation template:
+        // NFKMLXTranslateGemma.backend(directoryURL:precision:) loads a gated google/translategemma-*-it
+        // release. The template itself renders without weights.
+        let languages = NFKMLXTranslateGemmaTranslator.languageTable(inDirectory: URL(fileURLWithPath: "/nonexistent"))
+        XCTAssertTrue(languages.isEmpty, "the table comes from the release's chat_template.jinja")
+    }
 
     private static func solid(_ side: Int, value: UInt8 = 128) -> CGImage {
         let pixels = [UInt8](repeating: value, count: side * side * 4)

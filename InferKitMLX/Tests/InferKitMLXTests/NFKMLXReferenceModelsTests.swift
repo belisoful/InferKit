@@ -19,8 +19,11 @@ final class NFKMLXReferenceModelsTests: XCTestCase {
                          "real-esrgan-x4", "real-esrgan-x4-anime", "real-esrgan-x2",
                          "depth-anything-v2-small", "depth-anything-v2-base", "depth-anything-v2-large",
                          "u2net", "u2netp", "nafnet", "sam", "rife", "raft", "lama-inpaint", "sd-inpaint",
-                         "marigold-depth", "sd-x4-upscaler"] {
+                         "marigold-depth", "sd-x4-upscaler", "basic-pitch", "allin1", "muscriptor", "muscriptor-small", "muscriptor-large", "hft-transformer"] {
             XCTAssertTrue(names.contains(expected), "registerAll did not register \(expected)")
+        }
+        for variant in NFKMLXCosmosTokenizerVariant.allCases {
+            XCTAssertTrue(names.contains(variant.modelName), "registerAll did not register \(variant.modelName)")
         }
     }
 }

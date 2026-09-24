@@ -176,7 +176,8 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | MODNet | ``NFKMLXMODNet`` | `NFKMLXMODNetNet` | `NFKMLXMODNetConfiguration.base` | `modnet` | ``NFKMLXMattingBackend`` |
 | BiRefNet | ``NFKMLXBiRefNet`` | `NFKMLXBiRefNetModel` (Swin-v1-L backbone + ASPPDeformable decoder) | released `ZhengPeng7/BiRefNet` (`model.safetensors`, MIT); resizes to 1024 | `birefnet` | ``NFKMLXMattingBackend`` |
 | SAM | ``NFKMLXSAM`` | `NFKMLXSAMNet` | ``NFKMLXSAMVariant`` `.vitB` / `.vitL` / `.vitH` (`NFKMLXSAMConfiguration.vitB` …); `.compact` for tests | `sam` | ``NFKMLXMattingBackend`` (point under `NFKSAMPointKey`) |
-| SAM 2 | ``NFKMLXSAM2`` | `NFKMLXSAM2EncoderNet`, `NFKMLXSAM2MemoryEncoderNet`, `NFKMLXSAM2MemoryAttentionNet` | `NFKMLXSAM2Configuration.tiny` / `.small` / `.basePlus` / `.large` | — | Swift API (`MLXArray`) |
+| SAM 3 / SAM 3.1 | ``NFKMLXSAM3`` | ``NFKMLXSAM3ImageModel`` | `NFKMLXSAM3Configuration.base`, `NFKMLXSAM3TextConfiguration.base`, `NFKMLXSAM3DetectorConfiguration.base` | — | Swift API (`MLXArray`) |
+| SAM 2 / SAM 2.1 | ``NFKMLXSAM2`` | ``NFKMLXSAM2TrackerNet`` | `NFKMLXSAM2Variant.tiny` / `.small` / `.basePlus` / `.large`; `NFKMLXSAM2Release.sam2` / `.sam21` | `sam2` | ``NFKMLXMattingBackend`` |
 | RetinaFace | ``NFKMLXRetinaFace`` | `NFKMLXRetinaFaceNet` | `NFKMLXRetinaFaceConfiguration()` = mobile0.25 | `retinaface-mobile025` | detection backend; `detector(weightsURL:)` for landmarks |
 | Face alignment | ``NFKMLXFaceAlignment`` | — | ``NFKMLXRetinaFaceDetector`` (default) or ``NFKMLXVisionFaceDetector`` | — | used by ``NFKMLXPhotoFaceBackend`` |
 
@@ -194,8 +195,20 @@ let backend = try NFKMLXMODNet.backend(weightsURL: url)
 let backend = try NFKMLXBiRefNet.backend(weightsURL: url)
 // SAM
 let backend = try NFKMLXSAM.backend(variant: .vitB, weightsURL: url)
-// SAM 2
-// no public constructor yet — NFKMLXSAM2's makeEncoder / loadWeights(into:from:) and the decoder and memory loaders are internal; only NFKMLXSAM2Configuration is public
+// SAM 3 / SAM 3.1
+let sam3 = try NFKMLXSAM3.makeImageModel(fromHuggingFace: configURL)
+try NFKMLXSAM3.loadWeights(into: sam3, from: url)
+let found = sam3.detect(image: plate, tokens: ids, valid: mask)
+// fine-tune: let detector = try NFKMLXSAM3.network(weightsURL: url, configuration: config)
+//            try NFKMLXSAM3.fineTune(detector, examples: myImages, trainable: .detector, steps: 300)
+
+// SAM 2 / SAM 2.1
+let sam2 = try NFKMLXSAM2.backend(variant: .tiny, release: .sam21, weightsURL: url)
+// fine-tune: let net = try NFKMLXSAM2.network(weightsURL: url, variant: .tiny, release: .sam21)
+//            try NFKMLXSAM2.fineTune(net, examples: myFrames, trainable: .maskDecoder, steps: 300)
+// video: let net = NFKMLXSAM2.makeTracker(variant: .tiny, release: .sam21)
+//        try NFKMLXSAM2.loadWeights(into: net, from: url)
+//        let session = NFKMLXSAM2TrackerSession(frameCount: frames.count)
 // RetinaFace
 let backend = try NFKMLXRetinaFace.backend(weightsURL: url)
 // landmarks: let detector = try NFKMLXRetinaFace.detector(weightsURL: url) then detector.faces(in: image) · [NFKMLXRetinaFace detectorWithWeightsURL:url confidenceThreshold:0.8 suppressionThreshold:0.4 error:&error]
@@ -234,12 +247,15 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 | RF-DETR | ``NFKMLXRFDetr`` | ``NFKMLXRFDetrNet`` | ``NFKMLXRFDetrVariant`` `.nano` / `.small` / `.medium` / `.base` / `.large` | `rf-detr` · `rf-detr-nano` · `-small` · `-medium` · `-large` | ``NFKMLXRFDetrBackend`` (`labels:`); Roboflow naming converted on device |
 | SimpleBaseline pose | ``NFKMLXPose`` | `NFKMLXPoseNet` over `NFKMLXResNetBackbone` | `NFKMLXPoseConfiguration.simpleBaseline` (ResNet-50, 256×192) | `pose-simplebaseline` | ``NFKMLXPoseBackend`` (`jointNames:`) |
 | ViTPose | ``NFKMLXVitPose`` | `NFKMLXVitPoseNet` | ``NFKMLXVitPoseVariant`` `.baseSimple` / `.base` (ViT-B 256×192; ``NFKMLXVitPoseDecoder`` `.simple` / `.classic`) | `vitpose-base-simple` · `vitpose-base` | ``NFKMLXVitPoseBackend`` (`jointNames:`); `backend(directoryURL:jointNames:)` reads a release's own `config.json` |
+| Table Transformer | ``NFKMLXTableTransformer`` | `NFKMLXTableTransformerNet` | read from the release's `config.json` (geometry + `id2label`) | `backend(directoryURL:)`; retargeted: `network(directoryURL:labels:)`, `fineTune`, `save(_:toDirectoryURL:release:)` | ``NFKMLXTableTransformerBackend``; table-structure recognition (Table Transformer, Microsoft), no NMS |
 
 ```swift
 // YOLOv8
 let backend = try NFKMLXYOLO.backend(variant: .nano, weightsURL: url, labels: nil)
+// fine-tuned: NFKMLXYOLO.network(variant:classCount:weightsURL:), then fineTune
 // YOLOv9 / v10 / 11 / v12 / 26
 let backend = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: url, labels: nil)
+// fine-tuned: NFKMLXYOLOGenerations.network(release:classCount:weightsURL:), then fineTune
 // .small / .medium / .large / .extraLarge · …VariantSmall … …VariantExtraLarge
 // RT-DETR
 let backend = try NFKMLXRTDetr.backend(weightsURL: url, labels: nil)
@@ -251,6 +267,8 @@ let backend = try NFKMLXRFDetr.backend(weightsURL: url, labels: nil)
 let backend = try NFKMLXPose.backend(weightsURL: url, jointNames: nil)
 // ViTPose · .baseSimple / .base
 let backend = try NFKMLXVitPose.backend(variant: .base, weightsURL: url, jointNames: nil)
+// Table Transformer (table structure) · reads the release's config.json
+let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 ```
 
 ```objc
@@ -268,6 +286,8 @@ let backend = try NFKMLXVitPose.backend(variant: .base, weightsURL: url, jointNa
 [NFKMLXPose backendWithWeightsURL:url jointNames:nil error:&error]
 // ViTPose · …VariantBaseSimple / …VariantBase
 [NFKMLXVitPose backendWithVariant:NFKMLXVitPoseVariantBase weightsURL:url jointNames:nil error:&error]
+// Table Transformer (table structure) · reads the release's config.json
+[NFKMLXTableTransformer backendWithDirectoryURL:dir error:&error]
 ```
 
 
@@ -282,28 +302,62 @@ let backend = try NFKMLXVitPose.backend(variant: .base, weightsURL: url, jointNa
 | Qwen3-Embedding-0.6B | ``NFKMLXQwen3Embedding`` | ``NFKMLXLanguageNet`` | ``NFKMLXLanguageConfiguration`` read from `config.json`; ``NFKMLXTextEmbedderConfiguration`` (`.lastToken`, appended `<\|endoftext\|>`, Matryoshka `dimensions`) | `backend(directoryURL:)` | ``NFKMLXTextEmbeddingBackend`` |
 | EmbeddingGemma-300M | ``NFKMLXEmbeddingGemma`` | ``NFKMLXGemma3EncoderNet`` | `NFKMLXGemma3EncoderConfiguration.embeddingGemma300M` + the `2_Dense` / `3_Dense` projections | `backend(directoryURL:)` (`embeddinggemma-300m`) | ``NFKMLXTextEmbeddingBackend`` |
 | gte-reranker-modernbert-base | ``NFKMLXModernBERTReranker`` | ``NFKMLXModernBertRerankerNet`` | `NFKMLXModernBertConfiguration.gteReranker` | `reranker(directoryURL:)` | scoring object (`scores(query:documents:)`) |
+| Laya (typed decisions) | ``NFKMLXLaya`` | ``NFKMLXLayaNet`` | `NFKMLXLayaConfiguration.large` / `.multilingual`, or the variant directory | Swift API | ``NFKMLXLayaBackend`` (`backendWithDirectoryURL:error:`, or `backendWithVariant:revision:cacheDirectoryURL:error:` to download) |
+| open-jev-deberta (typed decisions) | ``NFKMLXOpenJevDeBERTa`` | ``NFKMLXOpenJevDeBERTaNet`` (``NFKMLXDeBERTaV2Net`` + scoring head) | `NFKMLXOpenJevDeBERTaConfiguration.v3Large`, or the release directory | Swift API | ``NFKMLXDecisionBackend`` (`backendWithDirectoryURL:error:`, or `backendWithRevision:cacheDirectoryURL:error:` to download) |
+| Open-Jev 2B / 9B / 27B (typed decisions) | ``NFKMLXOpenJev`` | ``NFKMLXOpenJevNet`` (``NFKMLXHybridLanguageNet`` + LoRA + scalar head) | read from the release's `checkpoint` directory and its base | Swift API | ``NFKMLXDecisionBackend`` (`backendWithVariant:revision:cacheDirectoryURL:error:`) |
+| chronos-bolt-base | ``NFKMLXChronos`` | ``NFKMLXChronosNet`` | `NFKMLXChronosConfiguration()` | Swift API | forecasting object (`forecast(context:horizon:)`) |
+| Qwen3-VL-Embedding-2B (text + image) | ``NFKMLXQwen3VLEmbedder`` | ``NFKMLXQwen3VLVisionNet`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` and `preprocessor_config.json` | `embedder(directoryURL:)` / `backend(directoryURL:)` | ``NFKMLXTextEmbeddingBackend`` (text path) |
+| Qwen3-VL-Reranker-2B (text + image) | ``NFKMLXQwen3VLReranker`` | ``NFKMLXQwen3VLVisionNet`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` and `1_LogitScore/config.json` | `reranker(directoryURL:)` | scoring object (`scores(query:documents:)`) |
 | SmolVLM2-500M | ``NFKMLXSmolVLM`` | ``NFKMLXSmolVLMNet`` (``NFKMLXSigLIPNet`` + ``NFKMLXSmolVLMConnector`` + ``NFKMLXLanguageNet``) | `NFKMLXSigLIPConfiguration.smolVLM`, `.smolVLM2Decoder` | `smolVLM(directoryURL:)` | object (`answer(image:question:)`) |
 | Gemma 3 4B (image + text) | ``NFKMLXGemma3`` | ``NFKMLXGemma3Model`` (``NFKMLXGemma3VisionNet`` + ``NFKMLXGemma3MultimodalProjector`` + ``NFKMLXGemma3Net``) | read from the release's `config.json` (`NFKMLXSigLIPConfiguration.gemma3`, `NFKMLXGemma3Configuration.gemma3_4B`) | `load(directoryURL:)` / `backend(directoryURL:)` | ``NFKMLXGemma3Backend`` |
 | Gemma 3n E2B / E4B (image + audio + text) | ``NFKMLXGemma3n`` | ``NFKMLXGemma3nModel`` (``NFKMLXGemma3nVisionNet`` + ``NFKMLXGemma3nAudioNet`` + ``NFKGemma3nMultimodalEmbedder`` + ``NFKMLXGemma3nNet``) | read from the release's `config.json` (``NFKMLXGemma3nConfiguration``, ``NFKMLXGemma3nAudioConfiguration``, ``NFKMLXGemma3nTokens``) | `load(directoryURL:)` / `backend(directoryURL:)` | ``NFKMLXGemma3nBackend`` |
 | Qwen3-VL-2B vision tower | ``NFKMLXQwen3VL`` | ``NFKMLXQwen3VLVisionNet`` | `NFKMLXQwen3VLVisionConfiguration.qwen3VL2B` | — | Swift API |
+| Pixtral 12B (vision + text) | ``NFKMLXPixtral`` | ``NFKMLXPixtralVisionNet`` + ``NFKMLXPixtralConnector`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` | — | Swift API |
+| Florence-2-base / -large (unified vision) | ``NFKMLXFlorence2`` | ``NFKMLXFlorence2Net`` (``NFKMLXFlorence2VisionNet`` + ``NFKMLXFlorence2Projector`` + ``NFKMLXSeq2SeqNet``) | read from the release's `config.json` | `backend(directoryURL:)`; adapted: `network(directoryURL:)`, `fineTune`, `save(_:toDirectoryURL:release:)` | ``NFKMLXFlorence2Backend`` |
+| TrOCR (handwriting reader) | ``NFKMLXTrOCR`` | ``NFKMLXTrOCRNet`` (``NFKMLXTrOCRVisionNet`` + ``NFKMLXSeq2SeqNet`` decoder-only) | read from the release's `config.json` (every small, base, and large release) | `backend(directoryURL:)`; fine-tuned: `network(directoryURL:)`, `fineTune`, `save(_:toDirectoryURL:release:)` | ``NFKMLXTrOCRBackend`` |
+| Sa2VA (segmentation VLM) | ``NFKMLXSa2VA`` | ``NFKMLXSa2VANet`` (InternVL), ``NFKMLXSa2VAQwenNet`` (Qwen-VL), ``NFKMLXSa2VALLaVANet`` (LLaVA) | read from the release's `config.json` | `backend(directoryURL:)`; fine-tuned: `network(directoryURL:)`, `fineTune`, `save(_:toDirectoryURL:release:)` | ``NFKMLXSa2VABackend`` |
+| Phi-4-multimodal (image + speech + text) | ``NFKMLXPhi4MM`` | ``NFKMLXPhi4MMModel`` (``NFKMLXLanguageNet`` with a mixture of LoRAs + ``NFKMLXPhi4MMImageNet`` + ``NFKMLXPhi4MMAudioNet``) | read from the release's `config.json` | `backend(directoryURL:)` | ``NFKMLXPhi4MMBackend`` |
 | Gemma 4 vision / audio / fusion | ``NFKMLXGemma4ConditionalGeneration`` | ``NFKMLXGemma4VisionNet``, ``NFKMLXGemma4AudioNet``, ``NFKMLXGemma4MultimodalEmbedder``, ``NFKMLXGemmaNet`` | ``NFKMLXGemma4VisionConfiguration`` / ``NFKMLXGemma4AudioConfiguration`` read from the release (`useClippedLinears` on) | — | Swift API (``NFKMLXGemma4ImageProcessor``, ``NFKMLXGemma4AudioFeatureExtractor``) |
 
 ```swift
 // CLIP ViT-B/32
 let backend = try NFKMLXCLIP.backend(weightsURL: url)
 // CLIP probe
-let net = try NFKMLXCLIPProbe.network(weightsURL: url, configuration: .base)
+let net = try NFKMLXCLIP.network(weightsURL: url)
 // then trainProbe and probeBackend(net:probe:labels:); Swift only
 // SigLIP 2
 let backend = try NFKMLXSigLIP2.backend(weightsURL: url)
+// probe: model(variant:weightsURL:), imageEmbeddings(for:), NFKMLXEmbeddingProbe.train,
+// then probeBackend(probeURL:labels:) · probeBackendWithProbeURL:labels:error:
 // Qwen3-Embedding-0.6B
 let backend = try NFKMLXQwen3Embedding.backend(directoryURL: dir)
 // Matryoshka: backend(directoryURL: dir, dimensions: 256) · backendWithDirectoryURL:dir outputDimensions:256 error:&error
+// adapter: embeddings(for:), fineTune(adapter:queries:documents:steps:), then loadAdapter(from:) · loadAdapterFromURL:error:
 // EmbeddingGemma-300M
 let backend = try NFKMLXEmbeddingGemma.backend(directoryURL: dir)
 // backend(directoryURL: dir, dimensions: 256) · backendWithDirectoryURL:dir outputDimensions:256 error:&error
+// adapter: as Qwen3-Embedding · loadAdapterFromURL:error:
 // gte-reranker-modernbert-base
 let reranker = try NFKMLXModernBERTReranker.reranker(directoryURL: dir)
+// then scores(query:documents:) · scoresForQuery:documents:
+// Laya (typed decisions)
+let laya = try NFKMLXLaya.laya(directoryURL: dir)
+// or download a variant first: NFKMLXLaya.laya(variant: .typedDecisions, revision: NFKMLXLaya.measuredRevision, cacheDirectoryURL: nil)
+// then decide(state:questions:); fine-tune: fineTune(examples:steps:), reloaded by laya(directoryURL:weightsURL:)
+// open-jev-deberta-v3-large (typed decisions)
+let deberta = try NFKMLXOpenJevDeBERTa.openJev(directoryURL: dir)   // or openJev(revision:cacheDirectoryURL:)
+// then decide(state:questions:) in order; fine-tune: fineTune(examples:steps:), reloaded by openJev(directoryURL:weightsURL:)
+// Open-Jev-2B / -9B (typed decisions)
+let openJev = try NFKMLXOpenJev.openJev(variant: .twoB, revision: nil, cacheDirectoryURL: nil)
+// or openJev(checkpointDirectoryURL:baseDirectoryURL:); fine-tune: fineTune(examples:steps:) then save(to:)
+// chronos-bolt-base (time-series forecasting)
+let chronos = try NFKMLXChronos.chronos(weightsURL: url)
+// then forecast(context:horizon:) · medianForecastForContext:horizon:
+// Qwen3-VL-Embedding-2B (text + image)
+let embedder = try NFKMLXQwen3VLEmbedder.embedder(directoryURL: dir)
+// then embedding(forText:) · embeddingForText:, embedding(forImage:text:instruction:) · embeddingForImage:text:instruction:
+// Qwen3-VL-Reranker-2B (text + image)
+let multimodalReranker = try NFKMLXQwen3VLReranker.reranker(directoryURL: dir)
 // then scores(query:documents:) · scoresForQuery:documents:
 // SmolVLM2-500M
 let vlm = try NFKMLXSmolVLM.load(directoryURL: dir)
@@ -317,6 +371,25 @@ let gemma3n = try NFKMLXGemma3n.load(directoryURL: dir)
 // Qwen3-VL-2B vision tower
 let vision = try NFKMLXQwen3VL.visionNet(directoryURL: dir)
 // Swift only
+// Pixtral 12B (vision + text)
+let pixtral = try NFKMLXPixtral.model(directoryURL: dir)
+// then answer(image:question:maxTokens:) · answerForImage:question:maxTokens:
+
+// Florence-2-base / -large (unified vision)
+let florence = try NFKMLXFlorence2.backend(directoryURL: dir)
+// then a task token (<OD>, <CAPTION>, …) under NFKInputPrompt beside NFKInputImage;
+// NFKOutputText, plus NFKOutputDetections for the localization tasks
+// TrOCR (handwriting reader)
+let trocr = try NFKMLXTrOCR.backend(directoryURL: dir)
+// then NFKInputImage; NFKOutputText carries the transcription
+// Sa2VA-4B (segmentation VLM)
+let sa2va = try NFKMLXSa2VA.backend(directoryURL: dir)
+// then a referring prompt under NFKInputPrompt beside NFKInputImage;
+// NFKOutputText carries the answer, NFKOutputMask the mask when it emits [SEG]
+// Phi-4-multimodal (image + speech + text)
+let phi = try NFKMLXPhi4MM.backend(directoryURL: dir)
+// then NFKInputMessages or NFKInputPrompt, with pictures under NFKInputImage / NFKInputImages and clips
+// under NFKInputAudio / NFKInputAudios; NFKOutputText carries the answer
 // Gemma 4 vision / audio / fusion
 let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vision, visionEmbedder: visionEmbedder)
 // then generate(promptTokens:image:waveform:maxTokens:); the decoder comes from NFKMLXGemmaLanguage's internal makeNet, so end to end this is reachable only inside the package today
@@ -333,6 +406,16 @@ let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vis
 [NFKMLXEmbeddingGemma backendWithDirectoryURL:dir error:&error]
 // gte-reranker-modernbert-base
 [NFKMLXModernBERTReranker rerankerWithDirectoryURL:dir error:&error]
+// Laya (typed decisions)
+[NFKMLXLaya layaWithDirectoryURL:dir error:&error]
+// open-jev-deberta-v3-large (typed decisions)
+[NFKMLXOpenJevDeBERTa openJevWithDirectoryURL:dir error:&error]
+// Open-Jev-2B / -9B (typed decisions)
+[NFKMLXOpenJev openJevWithVariant:NFKMLXOpenJevVariantTwoB revision:nil cacheDirectoryURL:nil error:&error]
+// Qwen3-VL-Embedding-2B (text + image)
+[NFKMLXQwen3VLEmbedder embedderWithDirectoryURL:dir error:&error]
+// Qwen3-VL-Reranker-2B (text + image)
+[NFKMLXQwen3VLReranker rerankerWithDirectoryURL:dir error:&error]
 // SmolVLM2-500M
 [NFKMLXSmolVLM smolVLMWithDirectoryURL:dir error:&error]
 // Gemma 3 4B (image + text)
@@ -350,13 +433,18 @@ let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vis
 | Qwen3 (dense), Qwen2, Llama | ``NFKMLXLanguage`` | ``NFKMLXLanguageNet`` | ``NFKMLXLanguageConfiguration`` from `config.json` (presets `.qwen3_0_6B`, `.qwen3_1_7B`, `.qwen3_4B`, `.qwen3_8B`, `.qwen3_14B`, `.qwen3_32B`); ``NFKMLXGenerationOptions`` per request | `let backend = try NFKMLXLanguage.backend(directoryURL: dir)`<br>`[NFKMLXLanguage backendWithDirectoryURL:dir error:&error]`<br>speculative: `backend(directoryURL: dir, draftDirectoryURL: draftDir)` · `backendWithDirectoryURL:dir draftDirectoryURL:draftDir error:&error` | ``NFKMLXLanguageBackend`` |
 | Qwen3-MoE, Qwen2-MoE, Mixtral, gpt-oss | ``NFKMLXLanguage`` | ``NFKMLXLanguageNet`` + `NFKLMMixtureFeedForward` (+ `NFKLMFusedSwitchGLU` for gpt-oss) | the same reader (`qwen3_moe`, `qwen2_moe`, `mixtral`, `gpt_oss` model types); `.tinyMixture` for tests | `let backend = try NFKMLXLanguage.backend(directoryURL: dir)`<br>`[NFKMLXLanguage backendWithDirectoryURL:dir error:&error]` | ``NFKMLXLanguageBackend`` |
 | Dense GGUF (`llama` / `qwen2` / `qwen3`) | ``NFKMLXLanguage`` | ``NFKMLXLanguageNet`` | `configuration(fromGGUF:)` from the file's metadata | `let backend = try NFKMLXLanguage.backend(ggufURL: url)`<br>`[NFKMLXLanguage backendWithGGUFURL:url error:&error]` | ``NFKMLXLanguageBackend`` |
+| Qwen3.8-Flash-Next (Qwen4-Exp) | ``NFKMLXQwen4Exp`` | ``NFKMLXQwen4ExpNet`` | ``NFKMLXQwen4ExpConfiguration`` from `config.json` (`.qwen3_8FlashNext`, `.tiny` presets) | `let net = try NFKMLXQwen4Exp.backend(directoryURL: dir)`<br>Swift-only: the net is an `MLXNN.Module`, which does not bridge | — (prefill-only) |
 | Qwen3.5 / 3.6 / 3.8 | ``NFKMLXHybridLanguage`` | ``NFKMLXHybridLanguageNet`` | ``NFKMLXHybridConfiguration`` from `config.json` (`.qwen3_8_27B` preset) | `let config = try NFKMLXHybridLanguage.configuration(fromHuggingFace: dir.appendingPathComponent("config.json"))`<br>no public constructor yet — `makeNet` and `loadWeights(into:fromDirectory:)` are internal, so there is no backend factory for the hybrid yet | — (prefill-only) |
 | Gemma 3 270M / 1B / 4B | ``NFKMLXGemma3`` | ``NFKMLXGemma3Net`` | ``NFKMLXGemma3Configuration`` from `config.json` (`.gemma3_270M`, `.gemma3_1B`, `.gemma3_4B`; `gemma3_text` or the multimodal `gemma3`) | `let backend = try NFKMLXGemma3.backend(directoryURL: dir)`<br>`[NFKMLXGemma3 backendWithDirectoryURL:dir error:&error]`<br>also reached through `NFKMLXGemmaLanguage.backend(directoryURL:)`, which dispatches on the model type | ``NFKMLXGemma3Backend`` (hybrid key-value cache, streaming, the release's chat template) |
 | Gemma 3n E2B / E4B | ``NFKMLXGemma3n`` | ``NFKMLXGemma3nNet`` | ``NFKMLXGemma3nConfiguration`` from `config.json` (`gemma3n_text`, or the tri-modal wrapper's `text_config`) | `backend(directoryURL:)` | ``NFKMLXGemma3nBackend`` |
 | Gemma 4 E2B / E4B / 26B-A4B | ``NFKMLXGemmaLanguage`` | ``NFKMLXGemmaNet`` | ``NFKMLXGemmaConfiguration`` from `config.json` (`.e2b`; `enable_moe_block` turns on the routed branch) | `let backend = try NFKMLXGemmaLanguage.backend(directoryURL: dir)`<br>`[NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error]` | ``NFKMLXGemmaBackend`` |
 | Gemma 4 12B unified | ``NFKMLXGemmaLanguage`` | ``NFKMLXGemma4UnifiedNet`` | `unifiedConfiguration(fromHuggingFace:)` (`.twelveB`) | `let backend = try NFKMLXGemmaLanguage.backend(directoryURL: dir)`<br>`[NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error]` | ``NFKMLXGemmaBackend`` |
-| Gemma 2 | — | ``NFKMLXGemma2Net`` | `NFKMLXGemma2Configuration.gemma2_2B` / `.gemma2_9B` / `.gemma2_27B` | `let net = NFKMLXGemma2Net(.gemma2_2B)`<br>no public weight loader yet (the parity test loads through the internal reader); Swift only | SANA's text encoder |
-| DeepSeek V4 Flash / Pro | ``NFKMLXDeepSeek`` | ``NFKMLXDeepSeekNet`` | `NFKMLXDeepSeekConfiguration.v4Flash` / `.v4Pro`; ``NFKMLXDeepSeekQuantization`` decodes the fp8 / fp4 storage | `let config = try NFKMLXDeepSeek.configuration(fromHuggingFace: configURL)`<br>no public constructor yet — `makeNet` is internal; `NFKMLXDeepSeek.dequantized(_:shapes:)` decodes the fp8 / fp4 storage | — (released weights exceed a workstation) |
+| Gemma 2 | — | ``NFKMLXGemma2Net`` | `NFKMLXGemma2Configuration.gemma2_2B` / `.gemma2_9B` / `.gemma2_27B`; `configuration(fromHuggingFace:)` | `let net = try NFKMLXGemma2Net.load(directoryURL: dir)`; Swift only | SANA's text encoder |
+| DeepSeek V4.1 Flash | ``NFKMLXDeepSeek`` | ``NFKMLXDeepSeekNet`` + ``NFKMLXDeepSeekCache`` | ``NFKMLXDeepSeekConfiguration`` `.v41Flash` from `config.json` | `let backend = try NFKMLXDeepSeek.backend(directoryURL: dir)`<br>`let paged = try NFKMLXDeepSeek.backend(directoryURL: dir, paging: .all)`<br>`[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir error:&error]`<br>`[NFKMLXDeepSeek deepSeekPagedBackendWithDirectoryURL:dir expertCacheBytes:1 << 32 error:&error]`<br>`[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir options:options error:&error]` (``NFKMLXDeepSeekLoadOptions``)<br>the directory supplies the collapsed id space its n-gram memory hashes over, derived from its own tokenizer | ``NFKMLXDeepSeekBackend`` (computes in bf16 as the release does, bit for bit against its own code; 763B decodes to 1.39 TiB of bf16 parameters, and with every group mapped out of the release the decoder holds 17.7 GiB) |
+| DeepSeek V4 Flash / Pro | ``NFKMLXDeepSeek`` | ``NFKMLXDeepSeekNet`` + ``NFKMLXDeepSeekCache`` | `NFKMLXDeepSeekConfiguration.v4Flash` / `.v4Pro` from `config.json`; ``NFKMLXDeepSeekQuantization`` decodes the fp8 / fp4 storage | `let backend = try NFKMLXDeepSeek.backend(directoryURL: dir)`<br>`[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir options:options error:&error]` | ``NFKMLXDeepSeekBackend`` (computes in bf16, bit for bit against the release's own code at prefill and decode) |
+| Codestral-Mamba | ``NFKMLXMamba`` | ``NFKMLXMamba2Net`` | ``NFKMLXMamba2Configuration`` from `config.json` (`.codestral7B` preset) | `let backend = try NFKMLXMamba.backend(directoryURL: dir)`<br>`[NFKMLXMamba mambaBackendWithDirectoryURL:dir error:&error]` | ``NFKMLXMambaBackend`` (prefill-only, state-space scan) |
+| Granite 4.0-H | ``NFKMLXGraniteHybrid`` | ``NFKMLXGraniteHybridNet`` | ``NFKMLXGraniteHybridConfiguration`` from `config.json` (dense h-1b, MoE h-tiny / h-small); `network(weightsURL:configuration:)` for a fine-tuned file | `let backend = try NFKMLXGraniteHybrid.backend(directoryURL: dir)`<br>`[NFKMLXGraniteHybrid graniteBackendWithDirectoryURL:dir error:&error]` | ``NFKMLXGraniteBackend`` (prefill-only, hybrid Mamba/attention) |
+| Nemotron Nano 2 | ``NFKMLXNemotronH`` | ``NFKMLXNemotronHNet`` | ``NFKMLXNemotronHConfiguration`` from `config.json` (9B / 12B via `hybrid_override_pattern`); `network(weightsURL:configuration:)` for a fine-tuned file | `let backend = try NFKMLXNemotronH.backend(directoryURL: dir)`<br>`[NFKMLXNemotronH nemotronBackendWithDirectoryURL:dir error:&error]` | ``NFKMLXNemotronBackend`` (prefill-only, hybrid Mamba/attention/MLP) |
 | T5 v1.1 / umT5 | ``NFKMLXT5Encoder`` | `NFKMLXT5EncoderNet` | `NFKMLXT5Configuration.xxl` / `.umt5XXL` | `let t5 = try NFKMLXT5Encoder.encoder(configuration: .xxl, directory: dir)`<br>umT5: `configuration: .umt5XXL`; Swift only | LTX and Wan text conditioning |
 | Chat templates | ``NFKMLXChatTemplateRenderer`` | — | `NFKMLXChatTemplate.jinja(template:bosToken:eosToken:)` / `.chatML` | `options.chatTemplate = .jinja(template: template, bosToken: bos, eosToken: eos)`<br>ObjC: `NFKMLXGenerationParameterKey.chatTemplate` request parameter carrying the Jinja source | used by ``NFKMLXLanguageBackend`` |
 | Constrained decoding | ``NFKMLXJSONConstraint``, ``NFKMLXJSONSchemaConstraint``, ``NFKMLXChoiceConstraint`` | ``NFKMLXVocabulary``, ``NFKMLXJSONSchema`` | `root`, `maximumWhitespaceRun`; `outputFormat` / `choices` request keys; the core `NFKParameterJSONSchema` | `options.jsonSchema = try NFKMLXJSONSchema(jsonText: schema)`<br>ObjC: `NFKParameterJSONSchema` dictionary, `outputFormat` = `"json-object"`, or `choices` request parameter | used by ``NFKMLXLanguageBackend``; JSON comes back parsed under `NFKOutputStructured` |
@@ -370,6 +458,8 @@ backend(directoryURL:)
 backend(ggufURL:)
 // Qwen3.5 / 3.6 / 3.8
 // Swift makeNet / loadWeights
+// Qwen3.8-Flash-Next (Qwen4-Exp)
+NFKMLXQwen4Exp.backend(directoryURL:)
 // Gemma 3 270M / 1B / 4B
 backend(directoryURL:)
 // Gemma 4 E2B / E4B / 26B-A4B
@@ -377,9 +467,15 @@ backend(directoryURL:)
 // Gemma 4 12B unified
 backend(directoryURL:)
 // Gemma 2
-// Swift API
+NFKMLXGemma2Net.load(directoryURL:)
 // DeepSeek V4 Flash / Pro
 // Swift API
+// Codestral-Mamba (Mamba-2 SSM)
+NFKMLXMamba.backend(directoryURL:)
+// Granite 4.0-H (hybrid Mamba/attention, dense + MoE)
+NFKMLXGraniteHybrid.backend(directoryURL:)
+// Nemotron Nano 2 (hybrid Mamba/attention/MLP)
+NFKMLXNemotronH.backend(directoryURL:)
 // T5 v1.1 / umT5
 encoder(configuration:directory:)
 // Chat templates
@@ -388,6 +484,30 @@ encoder(configuration:directory:)
 // —
 ```
 
+
+### Translation
+
+| Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
+| --- | --- | --- | --- | --- | --- |
+| OPUS-MT (Marian) | ``NFKMLXMarian`` | ``NFKMLXSeq2SeqNet`` | ``NFKMLXSeq2SeqConfiguration`` from the release's `config.json`; `.tinyMarian` for tests | `opus-mt` (the registry URL is the release directory) | ``NFKMLXTranslationBackend`` |
+| M2M-100 / SMaLL-100 | ``NFKMLXM2M100`` | ``NFKMLXSeq2SeqNet`` | ``NFKMLXM2M100Variant`` `.m418M` / `.m1_2B` / `.small100`; the configuration from `config.json`; `.tinyM2M100` for tests | `m2m100` · `small100` | ``NFKMLXTranslationBackend`` |
+| TranslateGemma 4B / 12B / 27B | ``NFKMLXTranslateGemma`` | ``NFKMLXGemma3Net`` through ``NFKMLXGemma3Model`` | the release's `config.json` and its `chat_template.jinja` language table | `translategemma` | ``NFKMLXTranslationBackend`` |
+| MADLAD-400 3B-MT | ``NFKMLXMADLAD`` | ``NFKMLXT5Seq2SeqNet`` | ``NFKMLXMADLADConfiguration`` `.mt3B` / `.mt7B` (`.tiny` for tests), read from `config.json` | `madlad400-3b-mt` | ``NFKMLXTranslationBackend`` |
+
+```swift
+// OPUS-MT, by pair (downloads Helsinki-NLP/opus-mt-en-de) or from a release directory
+NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil)
+NFKMLXMarian.backend(directoryURL:)
+// M2M-100 418M / 1.2B, SMaLL-100
+NFKMLXM2M100.backend(variant: .m418M, directoryURL:)
+NFKMLXM2M100.backend(variant: .m418M, revision: nil, cacheDirectoryURL: nil)
+// MADLAD-400 3B-MT, bfloat16
+NFKMLXMADLAD.backend(directoryURL:, half: true)
+// TranslateGemma, at the checkpoint's bfloat16
+NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
+// Fine-tuning
+NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
+```
 
 ### Video
 
@@ -399,6 +519,8 @@ encoder(configuration:directory:)
 | RAFT | ``NFKMLXRAFT`` | `NFKMLXRAFTNet` | RAFT-large (feature 256, 4 levels, radius 4); `iterations` (default 6) | `raft` | ``NFKMLXTensorBackend`` |
 | BasicVSR | ``NFKMLXVideoSR`` | `NFKMLXVideoSRNet` + `NFKVSRSPyNet` | `NFKMLXVideoSRConfiguration.base` (×4) | `video-super-resolution` | ``NFKMLXModuleBackend`` (frame) / `clipBackend(weightsURL:)` |
 | SD ×4 upscaler | ``NFKMLXSDUpscaler`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.upscaler`, `NFKMLXSDVAEConfiguration.upscaler`; `noiseLevel` (20) | `sd-x4-upscaler` | ``NFKMLXDiffusionBackend`` |
+| V-JEPA 2 (video features, video classification) | ``NFKMLXVJEPA2`` | ``NFKMLXVJEPA2Net`` | read from the release's `config.json` (ViT-L, ViT-H, or ViT-g; `id2label` for a classifier) | `backend(directoryURL:)`; fine-tuned: `network(directoryURL:labels:)`, `fineTune`, `save(_:toDirectoryURL:)` | ``NFKMLXVJEPA2Backend``; video / image → mean-pooled embedding, and ranked classes from a classification release (V-JEPA 2, Meta) |
+| Cosmos Tokenizer (image and video tokens) | ``NFKMLXCosmosTokenizer`` | ``NFKMLXCosmosTokenizerNet`` | `NFKMLXCosmosTokenizerConfiguration.variant(_:)` for each ``NFKMLXCosmosTokenizerVariant`` (CI8x8 … DV8x16x16); fine-tuned: `network(variant:weightsURL:)` | `cosmos-tokenizer-<variant>` | ``NFKMLXCosmosTokenizerBackend``; image / clip → reconstruction, `codeForImage:error:` → latent or tokens |
 | Clip backend | ``NFKMLXVideoBackend`` | — | ``NFKMLXVideoConfiguration`` (`frameRateMultiplier`, `outputFramesPerSecond`) | — | ``NFKMLXVideoFile`` under it |
 
 ```swift
@@ -414,6 +536,11 @@ let backend = try NFKMLXVideoSR.backend(weightsURL: url)
 // clip: try NFKMLXVideoSR.clipBackend(weightsURL: url) · [NFKMLXVideoSR clipBackendWithWeightsURL:url error:&error]
 // SD ×4 upscaler
 let backend = try NFKMLXSDUpscaler.backend(unetWeightsURL: unetURL, vaeWeightsURL: vaeURL, textContextURL: contextURL, noiseLevel: 20)
+// V-JEPA 2 (video features) · reads the release's config.json
+let backend = try NFKMLXVJEPA2.backend(directoryURL: dir)
+// Cosmos Tokenizer · the release's autoencoder.jit
+let backend = try NFKMLXCosmosTokenizer.backend(variant: .continuousVideo8x8x8, weightsURL: url)
+// tokens: try NFKMLXCosmosTokenizer.tokenizer(variant: .discreteImage16x16, weightsURL: url).tokens(pixels)
 // Clip backend
 let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames }
 // Swift only
@@ -430,6 +557,10 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 [NFKMLXVideoSR backendWithWeightsURL:url error:&error]
 // SD ×4 upscaler
 [NFKMLXSDUpscaler backendWithUNetWeightsURL:unetURL vaeWeightsURL:vaeURL textContextURL:contextURL noiseLevel:20 error:&error]
+// V-JEPA 2 (video features)
+[NFKMLXVJEPA2 backendWithDirectoryURL:dir error:&error]
+// Cosmos Tokenizer
+[NFKMLXCosmosTokenizer backendWithVariant:NFKMLXCosmosTokenizerVariantContinuousVideo8x8x8 weightsURL:url error:&error]
 ```
 
 
@@ -440,6 +571,9 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | --- | --- | --- | --- | --- | --- |
 | Whisper | ``NFKMLXWhisper`` | ``NFKMLXWhisperNet`` | ``NFKMLXWhisperVariant`` `.tiny` / `.base` / `.small` / `.medium` / `.large` (v1 / v2) / `.largeV3` / `.largeV3Turbo` (`NFKMLXWhisperConfiguration.tiny` …); `emitsTimestamps` | `whisper-tiny` | ``NFKMLXWhisperBackend`` (`backend(variant:weightsURL:tokenizer:timestamps:)`) |
 | Parakeet-TDT | ``NFKMLXParakeet`` | ``NFKMLXParakeetNet`` | `NFKMLXParakeetConfiguration.tdt06B` (0.6B v2: 24 rel-pos conformer layers, TDT durations 0…4) | `parakeet-tdt`; `backend(directoryURL:)` | ``NFKMLXParakeetBackend`` (text + per-token `NFKOutputSegments`) |
+| Granite Speech 3.3-2b | ``NFKMLXGraniteSpeech`` | ``NFKMLXGraniteSpeechNet`` | `net(fromDirectory:)` (Conformer encoder + BLIP-2 Q-former + dense Granite decoder) | `backend(directoryURL:)` | ``NFKMLXGraniteSpeechBackend`` (audio → text) |
+| Voxtral-Mini 3B | ``NFKMLXVoxtral`` | ``NFKMLXVoxtralNet`` | `net(fromDirectory:)` (Whisper encoder + 2-linear projector + Llama decoder) | `backend(directoryURL:)` | ``NFKMLXVoxtralBackend`` (audio → text) |
+| Canary-1B-v2 | ``NFKMLXCanary`` | ``NFKMLXCanaryNet`` | `NFKMLXCanaryConfiguration.v2` (biased FastConformer encoder + Transformer attention encoder-decoder) | `canary-1b-v2`; `backend(directoryURL:)` | ``NFKMLXCanaryBackend`` (audio → text; `src>tgt` translates) |
 | Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on every stage (VoiceEncoder 3×256, S3 tokenizer 6×1280, T3 Llama 520M with llama3 rope, S3Gen flow + HiFT) | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
@@ -464,12 +598,25 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | PANNs Cnn14 | ``NFKMLXAudioTagger`` | `NFKMLXAudioTaggerNet` | `NFKMLXAudioTaggerConfiguration.panns` | `audio-tagger-panns` | ``NFKMLXAudioTaggerBackend`` (`labels:`) |
 | Descript Audio Codec | ``NFKMLXDAC`` | `NFKMLXDACNet` (`NFKDACEncoderNet`, `NFKDACDecoderNet`) | `NFKMLXDACConfiguration.dac44kHz` / `.dac24kHz` / `.dac16kHz` | `dac` | ``NFKMLXDACBackend``; `encode` / `decode` for the tokens |
 | SNAC | ``NFKMLXSNAC`` | `NFKMLXSNACNet` (`NFKSNACEncoderNet`, `NFKSNACDecoderNet`) | ``NFKMLXSNACVariant`` `.speech24kHz` / `.music32kHz` / `.music44kHz` | `snac` · `snac-32khz` · `snac-44khz` | ``NFKMLXSNACBackend``; `decode(_:deterministic:)` |
+| BigVGAN v2 | ``NFKMLXBigVGAN`` | SnakeBeta + anti-aliased `Activation1d` generator | `NFKMLXBigVGANConfiguration()` (24 kHz, 100-band) | `bigvgan-v2-24khz` | ``NFKMLXBigVGANBackend`` |
+| Mimi | ``NFKMLXMimi`` | `NFKMLXMimiNet` (SEANet + RoPE transformers + split RVQ) | `NFKMLXMimiConfiguration()` (24 kHz, 12.5 Hz) | `mimi` | ``NFKMLXMimiBackend``; `encode` / `decode` for the tokens |
+| Basic Pitch | ``NFKMLXBasicPitch`` | `NFKMLXBasicPitchNet` | ``NFKMLXBasicPitchConfiguration`` `.icassp2022` | `basic-pitch` | ``NFKMLXBasicPitchBackend`` (``NFKMLXTranscriptionParameterKey``) |
+| All-In-One | ``NFKMLXAllInOne`` | `NFKMLXAllInOneNet` + ``NFKMLXBarTracker`` | ``NFKMLXAllInOneConfiguration`` `.harmonix` | `allin1` | ``NFKMLXAllInOneBackend`` |
+| MuScriptor | ``NFKMLXMuScriptor`` | `NFKMLXMuScriptorNet` | ``NFKMLXMuScriptorConfiguration`` `.small` / `.medium` / `.large` | `muscriptor` | ``NFKMLXMuScriptorBackend`` |
+| hFT-Transformer | ``NFKMLXHFTTransformer`` | `NFKMLXHFTTransformerNet` | ``NFKMLXHFTTransformerConfiguration`` `.maestro` | `hft-transformer` | ``NFKMLXHFTTransformerBackend`` |
 
 ```swift
 // Whisper
 let backend = try NFKMLXWhisper.backend(variant: .tiny, weightsURL: url, tokenizer: tokenizer, timestamps: false)
 // Parakeet-TDT (an unpacked .nemo directory)
 let backend = try NFKMLXParakeet.backend(directoryURL: dir)
+// Granite Speech 3.3-2b (a release directory; speech → text)
+let speech = try NFKMLXGraniteSpeech.backend(directoryURL: dir)
+// Voxtral-Mini 3B (a release directory; speech → text)
+let voxtral = try NFKMLXVoxtral.backend(directoryURL: dir)
+
+// Canary-1B-v2 (a release directory; speech → text, multitask ASR/translation)
+let canary = try NFKMLXCanary.backend(directoryURL: dir)
 // Chatterbox (a release directory; nil voice = the built-in conds.pt)
 let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // .small / .medium / .largeV3 · …VariantSmall / …VariantMedium / …VariantLargeV3
@@ -481,6 +628,7 @@ let backend = try NFKMLXDenoiser.backend(weightsURL: url)
 let backend = try NFKMLXMPSENetFactory.backend(weightsURL: url)
 // GTCRN (real-time speech enhancement, ~48K params)
 let backend = try NFKMLXGTCRNFactory.backend(weightsURL: url)
+// fine-tuned: let net = try NFKMLXGTCRNFactory.network(weightsURL: url), then fineTune and NFKMLXWeights.save
 // SGMSE+ (score-based generative dereverberation / enhancement)
 let backend = try NFKMLXSGMSE.backend(weightsURL: url)
 // StoRM (few-step stochastic regeneration)
@@ -503,14 +651,17 @@ let backend = try NFKMLXCMGAN.backend(weightsURL: url)
 let backend = try NFKMLXFRCRN.backend(weightsURL: url)
 // NU-Wave 2 (diffusion bandwidth extension, 8-step DDIM)
 let backend = try NFKMLXNUWave2.backend(weightsURL: url)
+// fine-tuned: let net = try NFKMLXNUWave2.network(weightsURL: url), then fineTune and NFKMLXWeights.save
 // Apollo (music codec-artifact restoration)
 let backend = try NFKMLXApollo.backend(weightsURL: url)
 // HT Demucs (v4)
 let backend = try NFKMLXHTDemucs.backend(weightsURL: url)
 // Conv-TasNet
 let backend = try NFKMLXConvTasNet.backend(weightsURL: url)
+// fine-tuned: let net = try NFKMLXConvTasNet.network(weightsURL: url), then fineTune and NFKMLXWeights.save
 // MarbleNet VAD
 let backend = try NFKMLXVAD.backend(weightsURL: url)
+// fine-tuned: let net = try NFKMLXVAD.network(weightsURL: url), then fineTune and NFKMLXWeights.save
 // Silero VAD v6
 let backend = try NFKMLXSileroVAD.backend(weightsURL: url)
 // PANNs Cnn14
@@ -518,9 +669,28 @@ let backend = try NFKMLXAudioTagger.backend(weightsURL: url, labels: nil)
 // Descript Audio Codec
 let backend = try NFKMLXDAC.backend(weightsURL: url)
 // tokens: let codec = try NFKMLXDAC.codec(configuration: .dac44kHz, weightsURL: url) then codec.encode(samples) / codec.decode(codes)
+// hFT-Transformer (piano)
+let backend = try NFKMLXHFTTransformer.backend(weightsURL: url)
+
+// MuScriptor (gated, CC BY-NC 4.0 weights)
+let backend = try NFKMLXMuScriptor.backend(variant: .medium, weightsURL: url)
+
+// All-In-One
+let backend = try NFKMLXAllInOne.backend(weightsURL: url, demucsWeightsURL: demucs)
+// stems: NFKMLXAllInOne.makeNet().analyze(stems: stems, barTracker: NFKMLXBarTracker())
+// fine-tuned: let net = try NFKMLXAllInOne.network(weightsURL: url), then fineTune with NFKMLXAllInOneTargets
+
+// Basic Pitch
+let backend = try NFKMLXBasicPitch.backend(weightsURL: url)
+// notes: let net = NFKMLXBasicPitch.makeNet() then net.transcribe(samples, sampleRate: 22050) -> NFKMIDISequence
+
 // SNAC
 let backend = try NFKMLXSNAC.backend(weightsURL: url)
 // tokens: let codec = try NFKMLXSNAC.codec(configuration: .snac24kHz, weightsURL: url) then codec.encode(samples) / codec.decode(codes, deterministic: true)
+// BigVGAN v2 (anti-aliased SnakeBeta vocoder; copy-synthesis backend, or net(mel) for the generator)
+let backend = try NFKMLXBigVGANFactory.backend(weightsURL: url)
+// Mimi (transformer-in-codec; reconstruction backend, or codec.encode/decode for the tokens)
+let backend = try NFKMLXMimi.backend(weightsURL: url)
 ```
 
 ```objc
@@ -528,6 +698,8 @@ let backend = try NFKMLXSNAC.backend(weightsURL: url)
 [NFKMLXWhisper backendWithVariant:NFKMLXWhisperVariantTiny weightsURL:url tokenizer:tokenizer timestamps:NO error:&error]
 // Parakeet-TDT
 [NFKMLXParakeet backendWithDirectoryURL:dir error:&error]
+// Canary-1B-v2
+[NFKMLXCanary backendWithDirectoryURL:dir error:&error]
 // Chatterbox
 [NFKMLXChatterbox chatterboxBackendWithDirectoryURL:dir voiceURL:voiceWAV error:&error]
 // Demucs v2
@@ -598,13 +770,18 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 | Stable Diffusion 1.5 / 2.1 / SDXL-Turbo | ``NFKMLXBackend``, ``NFKMLXTextToImage`` | ``NFKMLXSDUNet``, ``NFKMLXSDAutoencoder``, ``NFKMLXSDTextEncoderNet`` | `NFKMLXSDTextToImageConfiguration.stableDiffusion15` / `.stableDiffusion21` / `.stableDiffusion21V` / `.sdxlTurbo`; ``NFKMLXWeightPrecision`` | `stable-diffusion`; `backend(model:directoryURL:)`; ``NFKMLXStableDiffusionModel`` release enum on ``NFKMLXBackend`` | ``NFKMLXDiffusionBackend`` + ``NFKDDIMScheduler`` |
 | SD networks | ``NFKMLXSDPipeline`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.stableDiffusion` / `.sdxl` / `.inpainting` / `.marigold` / `.upscaler`; `NFKMLXSDVAEConfiguration.stableDiffusion` / `.upscaler` / `.flux` | — | Swift API |
 | IP-Adapter | ``NFKMLXIPAdapterImageProjection``, ``NFKMLXIPAdapterAttention`` | — | `imageEmbedDim` 1024 → `crossAttentionDim` 768, 4 tokens | — | Swift API |
-| Z-Image | ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXZImageConfiguration.base`; `NFKMLXFlowMatchConfiguration.zImage`; caption from the Qwen3-4B penultimate layer | Swift API (`generate(promptEmbeds:…)`, `generate(image:strength:…)`) | flow scheduler |
+| Z-Image / Z-Image-Turbo | ``NFKMLXZImageGenerator``, ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + Qwen3-4B | `NFKMLXZImageConfiguration`, the Flux VAE configuration, and `NFKMLXFlowMatchConfiguration.zImageTurbo` / `.zImage`, each read from the release | `let zImage = try NFKMLXZImageGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXZImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
 | SANA | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` | `NFKMLXSANAConfiguration.base`; `NFKMLXDCAEConfiguration.sana`; `NFKMLXDPMSolverConfiguration.sana`; caption from ``NFKMLXGemma2Net`` | Swift API | ``NFKMLXDPMSolverScheduler`` |
-| LTX-Video | ``NFKMLXLTXPipeline`` | `NFKMLXLTXTransformerNet` + `NFKMLXLTXVideoVAENet` | `NFKMLXLTXTransformerConfiguration.base`; `NFKMLXLTXVAEConfiguration.base`; `NFKMLXFlowMatchConfiguration.ltxVideo`; `NFKMLXT5Configuration.xxl` | Swift API (`generate(promptTokens:…)`) | ``NFKMLXFlowMatchScheduler`` |
-| Wan | ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` | `NFKMLXWanConfiguration.base`; `NFKMLXWanVAEConfiguration.wan22` / `.wan21`; `NFKMLXUniPCConfiguration.wan`; `NFKMLXT5Configuration.umt5XXL` | Swift API (`generate(textEmbeds:…)`) | ``NFKMLXUniPCScheduler`` |
-| Stable Diffusion 3 / 3.5 | ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSD3Configuration.sd3Medium` / `.sd35Medium` / `.sd35Large`; `NFKMLXFlowMatchConfiguration.sd3`; text from CLIP-L + CLIP-G + T5-XXL | Swift API (`generate(promptEmbeds:pooled:…)`) | ``NFKMLXFlowMatchScheduler`` |
-| FLUX.1 | ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXFluxConfiguration.dev` / `.schnell`; `NFKMLXFlowMatchConfiguration.flux` / `.fluxSchnell`; text from CLIP-L (pooled) + T5-XXL | Swift API (`generate(promptEmbeds:pooled:…)`) | ``NFKMLXFlowMatchScheduler`` |
+| LTX-Video 0.9.0 | ``NFKMLXLTXVideoGenerator``, ``NFKMLXLTXPipeline`` | `NFKMLXLTXTransformerNet` + `NFKMLXLTXVideoVAENet` | `NFKMLXLTXTransformerConfiguration.base`; `NFKMLXLTXVAEConfiguration.base`; `NFKMLXFlowMatchConfiguration.ltxVideo`; `NFKMLXT5Configuration.xxl` | `let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXLTXVideoGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
+| LTX-2 (audio-video transformer) | — | ``NFKMLXLTX2TransformerNet`` | `NFKMLXLTX2Configuration.ltx23` / `.ltx25` | Swift API (the forward takes `MLXArray`) | — |
+| Wan 2.1 T2V / Wan 2.2 TI2V-5B | ``NFKMLXWanVideoGenerator``, ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` | `NFKMLXWanConfiguration.base`; `NFKMLXWanVAEConfiguration.wan22` / `.wan21`; `NFKMLXUniPCConfiguration.wan`; `NFKMLXT5Configuration.umt5XXL` | `let wan = try NFKMLXWanVideoGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXWanVideoGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXUniPCScheduler`` |
+| Qwen-Image 2.1 | ``NFKMLXQwenImageGenerator``, ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + ``NFKMLXWanVideoVAENet`` (`.qwenImage21`) | `NFKMLXQwenImageConfiguration.base`, `NFKMLXWanVAEConfiguration.qwenImage21`, and `NFKMLXFlowMatchConfiguration.qwenImage21`, each read from the release | `let qwen = try NFKMLXQwenImageGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXQwenImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
+| Wan 2.2 Animate | ``NFKMLXWanAnimate`` | ``NFKMLXWanAnimateNet`` | `NFKMLXWanAnimateConfiguration.base` (14B) / `.tiny`; ``NFKMLXWanAnimateKVCache`` holds the reference pass | `let dit = NFKMLXWanAnimate.makeNet(.base)`<br>`let cache = NFKMLXWanAnimateKVCache(layerCount: 40)`; Swift only — the configuration is a Swift struct | — (released weights exceed a workstation) |
+| Stable Diffusion 3 / 3.5 | ``NFKMLXSD3Generator``, ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP-L, CLIP-G and T5-XXL | `NFKMLXSD3Configuration`, the autoencoder configuration, and the flow shift, each read from the release | `let sd3 = try NFKMLXSD3Generator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXSD3Generator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
+| FLUX.1 (text-to-image) | ``NFKMLXFlux`` | ``NFKMLXFluxTextEncoder`` + ``NFKMLXFluxPipeline`` | read from the diffusers release directory | Swift API + `@objc` (`image(forPrompt:…)`) | ``NFKMLXFlowMatchScheduler`` |
+| FLUX.1 (transformer + sampler) | ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXFluxConfiguration.dev` / `.schnell`; `NFKMLXFlowMatchConfiguration.flux` / `.fluxSchnell`; text from CLIP-L (pooled) + T5-XXL | Swift API (`generate(promptEmbeds:pooled:…)`) | ``NFKMLXFlowMatchScheduler`` |
 | SD3 ControlNet | ``NFKMLXSD3ControlNetPipeline`` | ``NFKMLXSD3ControlNetNet`` + ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSD3ControlNetConfiguration.instantXMedium` / `.stabilitySD35Large`; a spatial control image | Swift API (`generate(promptEmbeds:pooled:…controlImage:…)`) | ``NFKMLXFlowMatchScheduler`` |
+| FLUX.2 [klein] (text-to-image, editing, inpainting) | ``NFKMLXFlux2`` | ``NFKMLXFlux2TransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux2`) + ``NFKMLXFlux2LatentCodec`` + a Qwen3 | `NFKMLXFlux2Configuration.klein4B` / `.klein9B` / `.dev`; `NFKMLXFlowMatchConfiguration.flux2` | `@objc` | ``NFKMLXFlowMatchScheduler`` |
 | FLUX.1 ControlNet | ``NFKMLXFluxControlNetPipeline`` | ``NFKMLXFluxControlNetNet`` + ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXFluxControlNetConfiguration.unionPro` / `.single`; a spatial control image | Swift API (`generate(promptEmbeds:pooled:…controlImage:…)`) | ``NFKMLXFlowMatchScheduler`` |
 | Reference diffusion stand-ins | ``NFKMLXReferenceModels`` | oracle `denoise` closures | — | `diffusion-upscaler` · `diffusion-depth` · `diffusion-inpaint` · `diffusion-controlnet` | ``NFKMLXDiffusionBackend`` |
 
@@ -617,11 +794,14 @@ let pipeline = NFKMLXSDPipeline(unet: .stableDiffusion, vae: .stableDiffusion); 
 // Swift only
 // IP-Adapter
 let projection = NFKMLXIPAdapterImageProjection(); let attention = NFKMLXIPAdapterAttention(queryDim: 320, crossAttentionDim: 768, heads: 8, headDim: 40)
+// Stable Diffusion 3 / 3.5 (text-to-image)
+let sd3 = try NFKMLXSD3Generator.generator(directoryURL: releaseDirectory, residency: .automatic)
+let image = try sd3.image(forPrompt: "a red fox in the snow", width: 1024, height: 1024, seed: 0)
+// ObjC: [NFKMLXSD3Generator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&e], then imageForPrompt:negativePrompt:width:height:seed:error:
 // Swift only
-// Stable Diffusion 3 / 3.5
-let dit = NFKMLXSD3TransformerNet(.sd3Medium); try NFKMLXSD3TransformerNet.loadWeights(into: dit, from: dir); let pipeline = NFKMLXSD3Pipeline(transformer: dit, vae: vae)
-// Swift only
-// FLUX.1
+// FLUX.1 (text-to-image)
+let flux = try NFKMLXFlux.flux(directoryURL: dir); let image = try flux.image(forPrompt: "an astronaut on the moon")
+// FLUX.1 (transformer + sampler)
 let dit = NFKMLXFluxTransformerNet(.dev); try NFKMLXFluxTransformerNet.loadWeights(into: dit, from: dir); let pipeline = NFKMLXFluxPipeline(transformer: dit, vae: vae)
 // Swift only
 // SD3 ControlNet
@@ -630,15 +810,28 @@ let cn = NFKMLXSD3ControlNetNet(.instantXMedium); try NFKMLXSD3ControlNetNet.loa
 // FLUX.1 ControlNet
 let cn = NFKMLXFluxControlNetNet(.unionPro); try NFKMLXFluxControlNetNet.loadWeights(into: cn, from: cnDir); let pipeline = NFKMLXFluxControlNetPipeline(transformer: dit, controlnet: cn, vae: vae)
 // Swift only
-// Z-Image
-let dit = NFKMLXZImageTransformerNet(.base); let vae = NFKMLXSDAutoencoder(configuration: .flux)
-// no public constructor yet — NFKMLXZImagePipeline's initializers are internal and the DiT has no public loader; generate(promptEmbeds:negativeEmbeds:latentHeight:…) and generate(image:…strength:…) are public once a pipeline exists
+// FLUX.2 [klein] (text-to-image, editing, inpainting)
+let flux2 = try NFKMLXFlux2.flux2(directoryURL: releaseDirectory)
+let image = try flux2.image(forPrompt: "a red fox in the snow", width: 1024, height: 1024, seed: 0)
+// ObjC: [NFKMLXFlux2 flux2WithDirectoryURL:dir error:&e], then imageForPrompt:negativePrompt:width:height:seed:error:
+// Z-Image (text-to-image; Turbo by default)
+let zImage = try NFKMLXZImageGenerator.generator(directoryURL: releaseDirectory, residency: .automatic)
+let image = try zImage.image(forPrompt: "a red fox in the snow", width: 1024, height: 1024, seed: 0)
+// ObjC: [NFKMLXZImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&e], then imageForPrompt:negativePrompt:width:height:seed:error:
 // SANA
 let dit = NFKMLXSANATransformerNet(.base); let vae = NFKMLXDCAutoencoderNet(.sana); try NFKMLXDCAutoencoderNet.loadWeights(into: vae, from: vaeURL)
 // no public constructor yet — NFKMLXSANAPipeline's initializers are internal and the DiT has no public loader; generate(promptEmbeds:negativeEmbeds:latentHeight:…) is public
 // LTX-Video
 let vae = try NFKMLXLTXVideoVAE.vae(configuration: .base, weightsURL: vaeURL); let t5 = try NFKMLXT5Encoder.encoder(configuration: .xxl, directory: t5Dir)
 // no public constructor yet — NFKMLXLTXTransformerNet and NFKMLXLTXPipeline's initializers are internal; generate(promptTokens:negativeTokens:frames:height:…) is public
+// LTX-2 (audio-video transformer)
+let dit = NFKMLXLTX2TransformerNet(.ltx25); try NFKMLXLTX2TransformerNet.loadWeights(into: dit, from: transformerDir)
+// Swift only — the forward denoises the video and audio latents together and returns both
+// Wan 2.2 Animate
+let animate = NFKMLXWanAnimate.makeNet(.base)
+let cache = NFKMLXWanAnimateKVCache(layerCount: 40)
+// Swift only — NFKMLXWanAnimateConfiguration is a Swift struct
+
 // Wan
 let dit = NFKMLXWanTransformerNet(.base); let vae = NFKMLXWanVideoVAENet(.wan22)
 // no public constructor yet — NFKMLXWanPipeline's initializers are internal and neither net has a public loader; generate(textEmbeds:negativeEmbeds:frames:height:…) is public

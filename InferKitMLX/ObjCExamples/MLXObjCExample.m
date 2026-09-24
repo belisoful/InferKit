@@ -176,6 +176,11 @@
 																   error:&error];
 	XCTAssertNil(backend);
 	XCTAssertNotNil(error);
+
+	// The bundled backend downloads its release on first use, so constructing it reads nothing.
+	NFKMLXBackend *diffusion = [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelStableDiffusion15];
+	XCTAssertEqualObjects(diffusion.backendIdentifier, @"mlx-stable-diffusion");
+	XCTAssertFalse(diffusion.isReady, @"nothing is loaded until the first run");
 }
 
 - (void)testObjectiveCBuildsStableDiffusionInpaintByName
@@ -234,6 +239,32 @@
 	// the transcript under NFKOutputText.
 }
 
+- (void)testObjectiveCBuildsTranslatorsByName
+{
+	// Every translator loads a release directory, so the registry's URL is that directory and a nil
+	// URL is an error rather than a random network. The pair factory names the OPUS-MT repo itself.
+	[NFKMLXMarian register];
+	[NFKMLXM2M100 register];
+	[NFKMLXMADLAD register];
+	[NFKMLXTranslateGemma register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"opus-mt"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"m2m100"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"small100"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"madlad400-3b-mt"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"translategemma"]);
+	XCTAssertEqualObjects([NFKMLXMarian repoWithSourceLanguage:@"en" targetLanguage:@"de"], @"Helsinki-NLP/opus-mt-en-de");
+	NSError *error = nil;
+	id<NFKInferenceBackend> translator = [NFKMLXModelRegistry backendNamed:@"opus-mt" weightsURL:nil error:&error];
+	XCTAssertNil(translator);
+	XCTAssertNotNil(error);
+	// A request names the languages with the core keys and tunes the decode with the MLX keys.
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{NFKInputPrompt: @"Hello world."}
+															   parameters:@{NFKParameterTargetLanguage: @"de",
+																			NFKMLXTranslationParameterKey.beamCount: @4}];
+	XCTAssertEqualObjects([request parameterForKey:NFKParameterTargetLanguage], @"de");
+	XCTAssertEqualObjects(NFKMLXTranslationParameterKey.beamCount, @"NFKMLXParameterBeamCount");
+}
+
 - (void)testObjectiveCBuildsDemucsByName
 {
 	[NFKMLXDemucs register];
@@ -269,6 +300,11 @@
 	XCTAssertNotNil(music, @"%@", error);
 	XCTAssertEqualObjects(music.backendIdentifier, @"minimax-music3");
 	XCTAssertFalse(music.isReady);
+	// NFKMLXResidencyStaged loads each stage for its turn and releases it; Resident holds them.
+	NFKMLXMusicBackend *staged = (NFKMLXMusicBackend *)[NFKMLXMusic3 backendWithDirectoryURL:absent
+	                                                                             residency:NFKMLXResidencyStaged
+	                                                                                 error:&error];
+	XCTAssertEqual(staged.residency, NFKMLXResidencyStaged);
 }
 
 - (void)testObjectiveCBuildsShippedModelsViaDirectFactories
@@ -543,6 +579,30 @@
 	// which reads config.json, the tokenizer, and the shards. Verify the selector is reachable.
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 
+	// A mixture's routed experts can stay in the release and be read as the router reaches them.
+	// NFKMLXResidencyPaged pages them; NFKMLXResidencyAutomatic, the plain factory's choice, pages only
+	// where the release is known not to fit whole. The backend reports the placement:
+	//   id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:dir
+	//                                                               residency:NFKMLXResidencyPaged error:&error];
+	//   BOOL pages = ((NFKMLXLanguageBackend *)llm).pagesExperts;
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:residency:error:)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(pagesExperts)]);
+	// A paged backend's store is reachable: its cache budget can change between requests, and its
+	// counters report what the router read.
+	//   NFKMLXExpertStore *store = ((NFKMLXLanguageBackend *)llm).expertStore;
+	//   store.cacheByteBudget = 8LL << 30;
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(expertStore)]);
+	XCTAssertTrue([NFKMLXGemmaBackend instancesRespondToSelector:@selector(expertStore)]);
+	NFKMLXExpertStore *store = [[NFKMLXExpertStore alloc] initWithCacheByteBudget:1 << 20];
+	store.cacheByteBudget = 0;
+	XCTAssertEqual(store.cacheByteBudget, 0);
+	XCTAssertEqual(store.expertCount, 0);
+	XCTAssertEqual(store.materializeCount, 0);
+	XCTAssertEqual(store.cacheHitCount, 0);
+	XCTAssertEqual(store.heldBytes + store.mappedBytes + store.cachedBytes, 0);
+	[store clearCache];
+	XCTAssertNotEqual(NFKMLXResidencyPaged, NFKMLXResidencyStaged);
+
 	// A GGUF release — the dominant quantized-model format — builds from one file through the native
 	// reader, which turns its metadata into a configuration, remaps and dequantizes its tensors, and
 	// rebuilds its embedded tokenizer:
@@ -553,6 +613,10 @@
 	// own backend, dispatched from the release's config model type:
 	//   NFKInferenceBackend *gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error];
 	XCTAssertTrue([NFKMLXGemmaLanguage respondsToSelector:@selector(gemmaBackendWithDirectoryURL:error:)]);
+	// The 26B-A4B mixture pages its routed experts the same way:
+	//   [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir residency:NFKMLXResidencyPaged error:&error];
+	XCTAssertTrue([NFKMLXGemmaLanguage respondsToSelector:@selector(gemmaBackendWithDirectoryURL:residency:error:)]);
+	XCTAssertTrue([NFKMLXGemmaBackend instancesRespondToSelector:@selector(pagesExperts)]);
 
 	// Gemma 3n is tri-modal and a separate architecture, so it has its own factory. The object form
 	// answers about a picture; the backend takes NFKInputImage or NFKInputAudio beside the text:
@@ -562,6 +626,74 @@
 	XCTAssertTrue([NFKMLXGemma3n respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXGemma3n instancesRespondToSelector:@selector(answerForImage:question:error:)]);
 	XCTAssertTrue([NFKMLXGemma3n instancesRespondToSelector:@selector(answerForQuestion:error:)]);
+
+	// Phi-4-multimodal reads text, pictures, and speech. Its backend takes a conversation under
+	// NFKInputMessages (or NFKInputPrompt), pictures under NFKInputImage and NFKInputImages, and clips
+	// under NFKInputAudio and NFKInputAudios. The directory factory loads the decoder at the released
+	// bfloat16; the precision form chooses, and the repo form downloads the release first:
+	//   id<NFKInferenceBackend> phi = [NFKMLXPhi4MM backendWithDirectoryURL:dir
+	//                                                             precision:NFKMLXWeightPrecisionFloat32
+	//                                                                 error:&error];
+	XCTAssertTrue([NFKMLXPhi4MM respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXPhi4MM respondsToSelector:@selector(backendWithRepo:revision:cacheDirectoryURL:precision:error:)]);
+	XCTAssertTrue([NFKMLXPhi4MM respondsToSelector:
+		@selector(backendWithRepo:revision:cacheDirectoryURL:precision:completionHandler:)]);
+	XCTAssertEqualObjects(NFKMLXPhi4MM.releaseRepo, @"microsoft/Phi-4-multimodal-instruct");
+	NSError *phiError = nil;
+	id<NFKInferenceBackend> phi = [NFKMLXPhi4MM backendWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/phi4mm"]
+															  precision:NFKMLXWeightPrecisionFloat32
+																  error:&phiError];
+	XCTAssertNil(phi, @"a directory without the release is refused");
+	XCTAssertNotNil(phiError);
+
+	// DeepSeek V4.1 Flash generates through its own cache, one token a step. The factory reads the
+	// release's config.json and tokenizer.json and derives the collapsed token map its n-gram memory
+	// addresses through, so a caller supplies the directory alone. The release is held as
+	// NFKMLXResidencyAutomatic decides: resident where the decoded weights fit, paged where they do
+	// not, and refused with the shortfall where even the paged decoder does not fit. The released 763B
+	// decodes to 2.78 TiB of float parameters.
+	//   NFKInferenceBackend *deepSeek = [NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir error:&error];
+	//   NFKInferenceBackend *held = [NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir
+	//                                                                      residency:NFKMLXResidencyResident
+	//                                                                          error:&error];
+	XCTAssertTrue([NFKMLXDeepSeek respondsToSelector:@selector(deepSeekBackendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXDeepSeek respondsToSelector:@selector(deepSeekBackendWithDirectoryURL:residency:error:)]);
+	XCTAssertEqualObjects(NFKMLXDeepSeek.deepSeekModelName, @"deepseek-v4.1-flash");
+
+	// The paged factory holds the routed experts and the n-gram tables as the release stores them,
+	// decoding an expert as the router reaches it and a table row as it is looked up, which is what
+	// a machine smaller than the decoded weights needs. The second argument is what it keeps in
+	// decoded experts; 0 decodes every expert on every chunk:
+	//   NFKInferenceBackend *paged = [NFKMLXDeepSeek deepSeekPagedBackendWithDirectoryURL:dir
+	//                                                                   expertCacheBytes:4 << 30
+	//                                                                              error:&error];
+	XCTAssertTrue([NFKMLXDeepSeek respondsToSelector:
+		@selector(deepSeekPagedBackendWithDirectoryURL:expertCacheBytes:error:)]);
+
+	// Every load choice sits on one options object. The residency decides the paging unless a preset
+	// names it; the presets cross as an enum, because the Swift policy is a struct; mapped leaves the n-gram tables in the release and is the one to
+	// start from on a machine the release does not fit as floats. Speculating also loads the
+	// release's own draft stack, which a request then turns on with
+	// NFKMLXGenerationParameterKey.draftTokens. A load computes in bf16, the release's own dtype,
+	// and matches its inference code bit for bit; quantizesActivations adds that code's round
+	// trips, and computesInFloat32 opts out of bf16 at twice the bytes each step reads:
+	//   NFKMLXDeepSeekLoadOptions *options = [NFKMLXDeepSeekLoadOptions new];
+	//   options.paging = NFKMLXDeepSeekPagingModeMapped;
+	//   options.speculates = YES;
+	//   options.quantizesActivations = YES;
+	//   NFKInferenceBackend *fast = [NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir
+	//                                                                       options:options
+	//                                                                         error:&error];
+	XCTAssertTrue([NFKMLXDeepSeek respondsToSelector:
+		@selector(deepSeekBackendWithDirectoryURL:options:error:)]);
+	NFKMLXDeepSeekLoadOptions *options = [NFKMLXDeepSeekLoadOptions new];
+	XCTAssertEqual(options.paging, NFKMLXDeepSeekPagingModeNone, @"no preset overrides the residency");
+	XCTAssertEqual(options.residency, NFKMLXResidencyAutomatic, @"which holds the release as it fits");
+	XCTAssertFalse(options.speculates || options.quantizesActivations || options.computesInFloat32,
+		@"the defaults are the release's own bf16 arithmetic, unrounded, without the draft stack");
+	NFKMLXDeepSeekPagingMode mode = NFKMLXDeepSeekPagingModeFullyMapped;
+	XCTAssertNotEqual(mode, NFKMLXDeepSeekPagingModeNone);
+	XCTAssertEqual(NFKMLXDeepSeek.defaultExpertCacheBytes, 4LL << 30);
 }
 
 // Docs/examples.md: A release larger than the machine is refused BEFORE any weight is read. The
@@ -725,6 +857,196 @@
 													 error:&error];
 	XCTAssertNil(reranker);
 	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: Laya (typed decisions) from Objective-C. layaWithDirectoryURL:error: loads a
+// variant directory, answersForState:questions: answers NFKDecisionQuestions with NFKDecisionAnswers,
+// backendWithDirectoryURL:error: wraps it as a backend, and layaWithDirectoryURL:weightsURL:error:
+// installs a fine-tuned file. The full run needs the release, so this pins the entry points.
+- (void)testObjectiveCLayaEntryPoints
+{
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(layaWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(layaWithDirectoryURL:weightsURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya instancesRespondToSelector:@selector(answersForState:questions:)]);
+	XCTAssertTrue([NFKMLXLaya instancesRespondToSelector:@selector(answerForState:question:)]);
+	XCTAssertTrue([NFKMLXLaya instancesRespondToSelector:@selector(makeBackend)]);
+	XCTAssertEqualObjects(NFKMLXLaya.modelName, @"laya");
+
+	NSError *error = nil;
+	NFKMLXLaya *laya = [NFKMLXLaya layaWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/laya"] error:&error];
+	XCTAssertNil(laya);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: downloading and setting up Laya from Objective-C. layaWithVariant:revision:
+// cacheDirectoryURL:error: downloads a variant's five files into the hub cache and builds the model;
+// the completion-handler forms do the same on a background queue. The download needs the network, so
+// this pins the entry points and the files each variant names.
+- (void)testObjectiveCLayaDownloadEntryPoints
+{
+	XCTAssertEqualObjects(NFKMLXLaya.repository, @"convaiinnovations/laya");
+	XCTAssertEqual(NFKMLXLaya.measuredRevision.length, 40u);
+	NSArray<NSString *> *files = [NFKMLXLaya releaseFilesForVariant:NFKMLXLayaVariantTypedDecisions];
+	XCTAssertEqual(files.count, 5u);
+	XCTAssertTrue([files containsObject:@"typed-decisions/model.safetensors"]);
+	XCTAssertTrue([[NFKMLXLaya releaseFilesForVariant:NFKMLXLayaVariantRoot] containsObject:@"model.safetensors"]);
+
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(downloadVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(downloadVariant:revision:cacheDirectoryURL:completionHandler:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(layaWithVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(layaWithVariant:revision:cacheDirectoryURL:completionHandler:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXLaya respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:completionHandler:)]);
+
+	// With the network (off the render thread), see below:
+	// NFKMLXLaya *laya = [NFKMLXLaya layaWithVariant:NFKMLXLayaVariantTypedDecisions
+	//                                       revision:NFKMLXLaya.measuredRevision
+	//                              cacheDirectoryURL:nil
+	//                                          error:&error];
+}
+
+// Docs/examples.md: the community Jev reproductions from Objective-C. open-jev-deberta builds from its
+// release directory or downloads it (openJevWithRevision:cacheDirectoryURL:error:); Open-Jev downloads a
+// release and the base revision it names (openJevWithVariant:revision:cacheDirectoryURL:error:). Both
+// answer NFKDecisionQuestions and run behind NFKMLXDecisionBackend. The releases need the network, so
+// this pins the entry points.
+- (void)testObjectiveCCommunityJevReproductionEntryPoints
+{
+	XCTAssertEqualObjects(NFKMLXOpenJevDeBERTa.repository, @"com-kotobalabs/open-jev-deberta-v3-large");
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa.releaseFiles containsObject:@"spm.model"]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(openJevWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(openJevWithDirectoryURL:weightsURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(openJevWithRevision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(openJevWithRevision:cacheDirectoryURL:completionHandler:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(backendWithRevision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa respondsToSelector:@selector(downloadRevision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa instancesRespondToSelector:@selector(answersForState:questions:error:)]);
+	XCTAssertTrue([NFKMLXOpenJevDeBERTa instancesRespondToSelector:@selector(answersForState:questionList:error:)]);
+
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithCheckpointDirectoryURL:baseDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithCheckpointDirectoryURL:baseDirectoryURL:precision:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithVariant:revision:cacheDirectoryURL:completionHandler:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(downloadVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev instancesRespondToSelector:@selector(answersForState:questions:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev instancesRespondToSelector:@selector(answerForState:question:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev instancesRespondToSelector:@selector(saveToDirectoryURL:error:)]);
+	XCTAssertEqual(NFKMLXOpenJevVariantTwentySevenB, 2);
+
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXOpenJevDeBERTa openJevWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/ojd"] error:&error]);
+	XCTAssertNotNil(error);
+
+	// With the network (off the render thread):
+	// NFKMLXOpenJev *model = [NFKMLXOpenJev openJevWithVariant:NFKMLXOpenJevVariantTwoB revision:nil
+	//                                        cacheDirectoryURL:nil error:&error];
+	// NSDictionary<NSString *, NFKDecisionAnswer *> *answers = [model answersForState:record questions:questions error:&error];
+}
+
+// Docs/examples.md: downloading a release from Objective-C. Every model that builds from a release
+// directory also downloads one: the directory factory's selector with `DirectoryURL:` replaced by
+// `Repo:revision:cacheDirectoryURL:`, and a `completionHandler:` peer. The downloads need the
+// network, so this pins that each pair is reachable from Objective-C.
+- (void)testObjectiveCReachesEveryReleaseDownload
+{
+	NSArray<NSArray *> *factories = @[
+		@[ NFKMLXLanguage.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXLanguage.class, @"backendWithRepo:revision:draftRepo:draftRevision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGemmaLanguage.class, @"gemmaBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGemma3.class, @"gemma3WithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGemma3.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGemma3n.class, @"gemma3nWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGemma3n.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGraniteHybrid.class, @"graniteBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXNemotronH.class, @"nemotronBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXMamba.class, @"mambaBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXSmolVLM.class, @"smolVLMWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3VL.class, @"modelWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXPixtral.class, @"modelWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXFlorence2.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXSa2VA.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXTrOCR.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXTableTransformer.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXVJEPA2.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3Embedding.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3Embedding.class, @"backendWithRepo:revision:cacheDirectoryURL:outputDimensions:error:" ],
+		@[ NFKMLXEmbeddingGemma.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXEmbeddingGemma.class, @"backendWithRepo:revision:cacheDirectoryURL:outputDimensions:error:" ],
+		@[ NFKMLXModernBERTReranker.class, @"rerankerWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3VLEmbedder.class, @"embedderWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3VLEmbedder.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXQwen3VLReranker.class, @"rerankerWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXParakeet.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXCanary.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXGraniteSpeech.class, @"graniteSpeechBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXVoxtral.class, @"voxtralBackendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXPhi4MM.class, @"backendWithRepo:revision:cacheDirectoryURL:precision:error:" ],
+		@[ NFKMLXKokoro.class, @"kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:error:" ],
+		@[ NFKMLXChatterbox.class, @"chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:error:" ],
+		@[ NFKMLXVoiceRestore_Factory.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXResembleEnhance_Factory.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXMossFormer2SR_Factory.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXFlux.class, @"fluxWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXFlux.class, @"fluxWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXQwenImageGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXZImageGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXSD3Generator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXLTXVideoGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXWanVideoGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXLanguage.class, @"backendWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXGemmaLanguage.class, @"gemmaBackendWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXFlux2.class, @"flux2WithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXFlux2.class, @"flux2WithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXMusic3.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXMusic3.class, @"backendWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+	];
+	for (NSArray *factory in factories) {
+		Class owner = factory[0];
+		SEL blocking = NSSelectorFromString(factory[1]);
+		SEL async = NSSelectorFromString([factory[1] stringByReplacingOccurrencesOfString:@"error:" withString:@"completionHandler:"]);
+		XCTAssertTrue([owner respondsToSelector:blocking], @"+[%@ %@]", NSStringFromClass(owner), factory[1]);
+		XCTAssertTrue([owner respondsToSelector:async], @"+[%@ %@]", NSStringFromClass(owner), NSStringFromSelector(async));
+	}
+
+	// A gated release (the Gemma family, FLUX) reads the process-wide token, set once from the app's
+	// own secure storage before the first download:
+	// NFKHFHub.defaultAccessToken = token;
+	// id<NFKInferenceBackend> backend = [NFKMLXGemma3 backendWithRepo:@"google/gemma-3-1b-it" revision:nil
+	//                                               cacheDirectoryURL:nil error:&error];
+}
+
+// A model that builds from a release directory registers its name with NFKMLXModelRegistry, whose
+// URL is then the release directory. Registered without one, the name is refused rather than built
+// from random weights.
+- (void)testObjectiveCRegistersTheReleaseDirectoryModels
+{
+	[NFKMLXPhi4MM register];
+	[NFKMLXGraniteSpeech register];
+	[NFKMLXVoxtral register];
+	[NFKMLXCanary register];
+	[NFKMLXMamba register];
+	[NFKMLXGraniteHybrid register];
+	[NFKMLXNemotronH register];
+	NSArray<NSString *> *names = @[ NFKMLXPhi4MM.modelName, NFKMLXGraniteSpeech.graniteSpeechModelName,
+									NFKMLXVoxtral.voxtralModelName, NFKMLXCanary.modelName,
+									NFKMLXMamba.mambaModelName, NFKMLXGraniteHybrid.graniteModelName,
+									NFKMLXNemotronH.nemotronModelName ];
+	for (NSString *name in names) {
+		XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:name], @"%@ is registered", name);
+		NSError *error = nil;
+		id<NFKInferenceBackend> backend = [NFKMLXModelRegistry backendNamed:name weightsURL:nil error:&error];
+		XCTAssertNil(backend, @"%@ needs its release directory", name);
+		XCTAssertNotNil(error, @"%@ says why", name);
+	}
+	// With the release on disk:
+	// id<NFKInferenceBackend> phi = [NFKMLXModelRegistry backendNamed:NFKMLXPhi4MM.modelName
+	//                                                     weightsURL:releaseDirectory error:&error];
 }
 
 // Docs/examples.md: SmolVLM2 from Objective-C. smolVLMWithDirectoryURL:error: loads the model, then
@@ -1022,6 +1344,179 @@
 	XCTAssertNotNil(style, @"%@", error);
 	XCTAssertTrue([style.supportedInputKeys containsObject:NFKInputControl]);
 	XCTAssertTrue([style.supportedParameterKeys containsObject:NFKParameterStrength]);
+}
+
+// Docs/examples.md: Unified vision (NFKMLXFlorence2), Handwriting reading (NFKMLXTrOCR), Referring
+// segmentation (NFKMLXSa2VA), and Table structure recognition (NFKMLXTableTransformer)
+- (void)testObjectiveCReadsImagesThroughTheReleaseDirectoryFactories
+{
+	CGImageRef cgImage = [self examplePlate];
+	NFKInferenceRequest *detect = [NFKInferenceRequest requestWithInputs:@{
+		NFKInputImage: (__bridge id)cgImage,
+		NFKInputPrompt: @"<OD>"
+	}];
+	NFKInferenceRequest *segment = [NFKInferenceRequest requestWithInputs:@{
+		NFKInputImage: (__bridge id)cgImage,
+		NFKInputPrompt: @"<image>Please segment the person on the left."
+	}];
+	NFKInferenceRequest *read = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)cgImage }];
+	CGImageRelease(cgImage);
+	XCTAssertEqualObjects(detect.prompt, @"<OD>", @"the task token rides as the prompt");
+	XCTAssertEqualObjects(segment.prompt, @"<image>Please segment the person on the left.");
+	XCTAssertNotNil([read inputForKey:NFKInputImage]);
+
+	// Building a network initializes MLX, so the factories need a Metal library MLX can find.
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	// Each factory reads the release's own files, so a directory with nothing in it is refused.
+	NSURL *releaseDirectory = [NSURL fileURLWithPath:@"/nonexistent/release"];
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXFlorence2 backendWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXTrOCR backendWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXSa2VA backendWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXTableTransformer backendWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: Pixtral 12B, and Qwen3-VL embedding and reranking
+- (void)testObjectiveCAsksAndRanksThroughTheVisionLanguageFacades
+{
+	XCTAssertTrue([NFKMLXPixtral instancesRespondToSelector:@selector(answerForImage:question:maxTokens:)]);
+	XCTAssertTrue([NFKMLXQwen3VLEmbedder instancesRespondToSelector:@selector(embeddingForText:)]);
+	XCTAssertTrue([NFKMLXQwen3VLEmbedder instancesRespondToSelector:@selector(embeddingForImage:text:instruction:)]);
+	XCTAssertTrue([NFKMLXQwen3VLReranker instancesRespondToSelector:@selector(rankedIndicesForQuery:documents:)]);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	NSURL *releaseDirectory = [NSURL fileURLWithPath:@"/nonexistent/release"];
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXPixtral modelWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXQwen3VLEmbedder embedderWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXQwen3VLReranker rerankerWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: FLUX.1-schnell and FLUX.2 [klein] text-to-image
+- (void)testObjectiveCBuildsTheFluxFacadesFromReleaseDirectories
+{
+	XCTAssertTrue([NFKMLXFlux instancesRespondToSelector:@selector(imageForPrompt:width:height:seed:error:)]);
+	// Both FLUX facades stage a release that does not fit whole: the text encoders load, encode, and
+	// are released before the transformer loads, for every image.
+	//   NFKMLXFlux *flux = [NFKMLXFlux fluxWithDirectoryURL:dir residency:NFKMLXResidencyStaged error:&error];
+	XCTAssertTrue([NFKMLXFlux respondsToSelector:@selector(fluxWithDirectoryURL:residency:error:)]);
+	XCTAssertTrue([NFKMLXFlux instancesRespondToSelector:@selector(holdsStagesResident)]);
+	// Qwen-Image 2.1, Z-Image, Stable Diffusion 3, LTX-Video and Wan assemble from their diffusers release directories the same way,
+	// staging where the release does not fit whole. Qwen-Image answers an RGBA image; the two video
+	// models answer their frames, each element a CGImageRef:
+	//   NFKMLXQwenImageGenerator *qwen = [NFKMLXQwenImageGenerator generatorWithDirectoryURL:dir
+	//                                                                               residency:NFKMLXResidencyAutomatic
+	//                                                                                   error:&error];
+	//   NSArray *frames = [wan framesForPrompt:@"a red fox" negativePrompt:nil frames:33 width:832 height:480
+	//                                     seed:0 error:&error];
+	//   CGImageRef first = (__bridge CGImageRef)frames[0];
+	for (Class generator in @[ NFKMLXQwenImageGenerator.class, NFKMLXZImageGenerator.class, NFKMLXSD3Generator.class ]) {
+		XCTAssertTrue([generator respondsToSelector:@selector(generatorWithDirectoryURL:residency:error:)]);
+		XCTAssertTrue([generator instancesRespondToSelector:
+			@selector(imageForPrompt:negativePrompt:width:height:seed:error:)]);
+	}
+	XCTAssertTrue([NFKMLXZImageGenerator instancesRespondToSelector:@selector(setSteps:)]);
+	XCTAssertTrue([NFKMLXZImageGenerator instancesRespondToSelector:@selector(setGuidance:)]);
+	for (Class generator in @[ NFKMLXLTXVideoGenerator.class, NFKMLXWanVideoGenerator.class ]) {
+		XCTAssertTrue([generator respondsToSelector:@selector(generatorWithDirectoryURL:residency:error:)]);
+		XCTAssertTrue([generator instancesRespondToSelector:
+			@selector(framesForPrompt:negativePrompt:frames:width:height:seed:error:)]);
+		XCTAssertTrue([generator instancesRespondToSelector:@selector(holdsStagesResident)]);
+	}
+	XCTAssertTrue([NFKMLXFlux2 instancesRespondToSelector:
+		@selector(imageForPrompt:negativePrompt:width:height:seed:error:)]);
+	XCTAssertTrue([NFKMLXFlux2 instancesRespondToSelector:
+		@selector(imageForPrompt:negativePrompt:references:width:height:seed:error:)]);
+	XCTAssertTrue([NFKMLXFlux2 instancesRespondToSelector:
+		@selector(inpaintImage:mask:prompt:negativePrompt:strength:seed:error:)]);
+	XCTAssertTrue([NFKMLXFlux2 respondsToSelector:@selector(flux2WithDirectoryURL:residency:error:)]);
+	for (NSString *property in @[ @"holdsStagesResident", @"encodesInFloat32", @"isDistilled", @"setCachesReferences:" ]) {
+		XCTAssertTrue([NFKMLXFlux2 instancesRespondToSelector:NSSelectorFromString(property)], @"%@", property);
+	}
+	XCTAssertTrue([NFKMLXMusic3 respondsToSelector:@selector(backendWithDirectoryURL:residency:error:)]);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	NSURL *releaseDirectory = [NSURL fileURLWithPath:@"/nonexistent/release"];
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXFlux fluxWithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+	error = nil;
+	XCTAssertNil([NFKMLXFlux2 flux2WithDirectoryURL:releaseDirectory error:&error]);
+	XCTAssertNotNil(error);
+}
+
+// Docs/examples.md: V-JEPA 2 video features (NFKMLXVJEPA2)
+- (void)testObjectiveCEmbedsAClipWithVJEPA2
+{
+	NFKVideoAsset *asset = [NFKVideoAsset videoAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/clip.mp4"]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputVideo: asset }];
+	XCTAssertEqualObjects([request inputForKey:NFKInputVideo], asset);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> vjepa2 = [NFKMLXVJEPA2 backendWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/vjepa2"]
+																	  error:&error];
+	XCTAssertNil(vjepa2);
+	XCTAssertNotNil(error, @"the directory factory reads config.json for the geometry");
+}
+
+// Docs/examples.md: Audio → stems (Demucs v4), Dichotomous segmentation (IS-Net), and CodeFormer face
+// restoration. Built with nil weights, which initializes each network at random.
+- (void)testObjectiveCBuildsTheStemCutoutAndFaceBackends
+{
+	[NFKMLXISNet register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"isnet"]);
+	NFKAudioAsset *song = [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/song.wav"]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{NFKInputAudio: song}];
+	XCTAssertEqualObjects([request inputForKey:NFKInputAudio], song);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> htdemucs = [NFKMLXHTDemucs backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(htdemucs.backendIdentifier, @"htdemucs", @"%@", error);
+	XCTAssertTrue([htdemucs.supportedInputKeys containsObject:NFKInputAudio]);
+
+	id<NFKInferenceBackend> dichotomous = [NFKMLXISNet backendWithWeightsURL:nil error:&error];
+	XCTAssertEqualObjects(dichotomous.backendIdentifier, @"isnet", @"%@", error);
+	XCTAssertTrue([dichotomous.supportedInputKeys containsObject:NFKInputImage]);
+
+	id<NFKInferenceBackend> restorer = [NFKMLXCodeFormer photoBackendWithFidelity:0.5
+																	   weightsURL:nil
+															   detectorWeightsURL:nil
+																			error:&error];
+	XCTAssertEqualObjects(restorer.backendIdentifier, @"codeformer-photo", @"%@", error);
+}
+
+// A small opaque plate, for the examples that hand a model an image without running it.
+- (CGImageRef)examplePlate CF_RETURNS_RETAINED
+{
+	CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 64, 64, 8, 0, space,
+												 kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+	CGColorSpaceRelease(space);
+	CGContextSetRGBFillColor(context, 0.2, 0.4, 0.8, 1.0);
+	CGContextFillRect(context, CGRectMake(0, 0, 64, 64));
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	return image;
 }
 
 @end

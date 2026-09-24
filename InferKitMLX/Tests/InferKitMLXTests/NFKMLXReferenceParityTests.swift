@@ -22,6 +22,7 @@ import ImageIO
 import InferKit
 import MLX
 import MLXNN
+import MLXOptimizers
 @testable import InferKitMLX
 
 final class NFKMLXReferenceParityTests: XCTestCase {
@@ -774,6 +775,362 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference Wan DiT")
     }
 
+    // MARK: SAM 2's training objective
+
+    // The loss a SAM 2 fine-tune minimizes, against the reference's own `MultiStepMultiMasksAndIous`
+    // executed on the same tensors. A wrong training loss is invisible in a fine-tune's output —
+    // the run still converges to something — so the oracle is the only check that catches it. The
+    // four terms are compared before they are weighted, so a mismatch names which one.
+    func testSAM2ObjectiveMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM2_LOSS"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM2_LOSS (run_reference.py sam2_loss)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let masks = try XCTUnwrap(arrays["masks"]).expandedDimensions(axis: 0)
+        let target = try XCTUnwrap(arrays["target"]).expandedDimensions(axis: 0)
+        let ious = try XCTUnwrap(arrays["ious"]).expandedDimensions(axis: 0)
+        let objectScore = try XCTUnwrap(arrays["object_score"]).reshaped([1, 1])
+
+        let objective = NFKMLXSAM2Objective()
+        let parts = objective.components(masks: masks, target: target,
+                                         intersectionOverUnion: ious, objectScore: objectScore)
+        let total = objective.loss(masks: masks, target: target,
+                                   intersectionOverUnion: ious, objectScore: objectScore)
+        eval(parts.mask, parts.dice, parts.intersectionOverUnion, parts.object, total)
+
+        func value(_ array: MLXArray) -> Float { array.reshaped([-1]).asArray(Float.self)[0] }
+        let expected = [("mask", parts.mask, "loss_mask"), ("dice", parts.dice, "loss_dice"),
+                        ("iou", parts.intersectionOverUnion, "loss_iou"),
+                        ("class", parts.object, "loss_class")]
+        var report = [String]()
+        for (name, measured, key) in expected {
+            let reference = value(try XCTUnwrap(arrays[key]))
+            report.append("\(name) \(value(measured)) vs \(reference)")
+            XCTAssertEqual(value(measured), reference, accuracy: 1e-5,
+                           "the \(name) term matches the reference")
+        }
+        let referenceTotal = value(try XCTUnwrap(arrays["output"]))
+        print("VALIDATION PARITY sam2_loss: " + report.joined(separator: ", ")
+              + "; total \(value(total)) vs \(referenceTotal)")
+        XCTAssertEqual(value(total), referenceTotal, accuracy: 1e-4,
+                       "the weighted total matches the reference")
+    }
+
+    // MARK: SAM 3's training objective
+
+    // The loss a SAM 3 detector fine-tune minimizes, against the reference's own `Boxes`,
+    // `IABCEMdetr`, and `BinaryHungarianMatcherV2` on the same tensors. The assignment is compared
+    // first and on its own: a matcher that disagrees makes every term disagree, and the four terms
+    // would then say nothing about the arithmetic.
+    func testSAM3ObjectiveMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM3_LOSS"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM3_LOSS (run_reference.py sam3_loss)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let logits = try XCTUnwrap(arrays["logits"])
+        let boxes = try XCTUnwrap(arrays["boxes"]).expandedDimensions(axis: 0)
+        let presence = try XCTUnwrap(arrays["presence"]).reshaped([1, 1])
+        let targets = try XCTUnwrap(arrays["targets"])
+
+        let objective = NFKMLXSAM3Objective()
+        let matched = objective.match(logits: logits, boxes: boxes, targets: targets)
+        let expected = try XCTUnwrap(arrays["matched"]).asArray(Int32.self).map(Int.init)
+        XCTAssertEqual(matched, expected, "the assignment matches the reference's Hungarian matcher")
+
+        let parts = objective.components(logits: logits, boxes: boxes, presence: presence,
+                                         targets: targets, matched: matched)
+        let total = objective.loss(logits: logits, boxes: boxes, presence: presence,
+                                   targets: targets, matched: matched)
+        eval(parts.classification, parts.presence, parts.box, parts.generalizedIoU, total)
+
+        func value(_ array: MLXArray) -> Float { array.reshaped([-1]).asArray(Float.self)[0] }
+        let terms = [("box", parts.box, "loss_bbox"), ("giou", parts.generalizedIoU, "loss_giou"),
+                     ("class", parts.classification, "loss_ce"),
+                     ("presence", parts.presence, "presence_loss")]
+        var report = [String]()
+        for (name, measured, key) in terms {
+            let reference = value(try XCTUnwrap(arrays[key]))
+            report.append("\(name) \(value(measured)) vs \(reference)")
+            XCTAssertEqual(value(measured), reference, accuracy: 1e-5,
+                           "the \(name) term matches the reference")
+        }
+        let referenceTotal = value(try XCTUnwrap(arrays["output"]))
+        print("VALIDATION PARITY sam3_loss: assignment \(matched); " + report.joined(separator: ", ")
+              + "; total \(value(total)) vs \(referenceTotal)")
+        XCTAssertEqual(value(total), referenceTotal, accuracy: 1e-3,
+                       "the weighted total matches the reference")
+    }
+
+    // MARK: SAM 3 vision encoder
+
+    // SAM 3's vision encoder on the released facebook/sam3 weights, against transformers'
+    // Sam3VisionModel: the 32-layer rotary ViT and the FPN neck that reads its one output map at four
+    // scales. Measured at 504 pixels rather than the released 1008, which is what exercises both
+    // edges the full size hides — the 24x24 pretraining position grid is TILED and cropped to a 36x36
+    // input, and 36 is not a whole number of 24-wide windows, so a windowed layer pads and unpads.
+    func testSAM3VisionEncoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM3_VISION"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM3_VISION (run_reference.py sam3_vision)")
+        }
+        guard let weights = config["IK_VAL_SAM3"], FileManager.default.fileExists(atPath: weights) else {
+            throw XCTSkip("set IK_VAL_SAM3 (facebook/sam3 model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let pixels = try XCTUnwrap(arrays["pixel_values"]).expandedDimensions(axis: 0)
+
+        var configuration = NFKMLXSAM3Configuration.base
+        configuration.imageSize = pixels.dim(1)
+        let net = NFKMLXSAM3VisionNet(configuration)
+        try NFKMLXSAM3.loadVisionWeights(into: net, from: URL(fileURLWithPath: weights))
+
+        let backbone = net.backbone(pixels)
+        eval(backbone)
+        let backboneSimilarity = cosine(
+            backbone.reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["backbone"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        let levels = net(pixels)
+        eval(levels)
+        var levelSimilarities = [Double]()
+        for (index, level) in levels.enumerated() {
+            let reference = try XCTUnwrap(arrays["fpn_\(index)"])
+            XCTAssertEqual(Array(level.shape.dropFirst()), reference.shape, "FPN level \(index)'s shape")
+            levelSimilarities.append(cosine(level.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                            reference.reshaped([-1]).asArray(Float.self).map(Double.init)))
+        }
+
+        print("VALIDATION PARITY sam3_vision: ViT cosine \(backboneSimilarity), FPN \(levelSimilarities)")
+        XCTAssertGreaterThan(backboneSimilarity, 0.9999, "the ViT's output matches")
+        for (index, similarity) in levelSimilarities.enumerated() {
+            XCTAssertGreaterThan(similarity, 0.9999, "FPN level \(index) matches")
+        }
+    }
+
+    // SAM 3's prompt side on the released facebook/sam3 weights, against transformers'
+    // CLIPTextModelWithProjection plus the detector's own projection. The prompt is padded to the
+    // trained 32-position context, so the run exercises both masks the tower applies: the causal one
+    // and the padding one. The projection reaches EVERY token, not the pooled end-of-text one.
+    func testSAM3TextEncoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM3_TEXT"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM3_TEXT (run_reference.py sam3_text)")
+        }
+        guard let weights = config["IK_VAL_SAM3"], FileManager.default.fileExists(atPath: weights) else {
+            throw XCTSkip("set IK_VAL_SAM3 (facebook/sam3 model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let ids = try XCTUnwrap(arrays["input_ids"]).expandedDimensions(axis: 0)
+        let attention = try XCTUnwrap(arrays["attention_mask"]).asType(.float32)
+        // The reference's 1/0 mask becomes the additive one the attention takes.
+        let padding = (1 - attention) * -Float.greatestFiniteMagnitude
+
+        let net = NFKMLXSAM3TextNet(.base)
+        try NFKMLXSAM3.loadTextWeights(into: net, from: URL(fileURLWithPath: weights))
+
+        let features = net.features(ids, padding: padding)
+        let prompt = net.prompt(ids, padding: padding)
+        eval(features, prompt)
+        let featureSimilarity = cosine(
+            features.reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["last_hidden_state"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        let promptSimilarity = cosine(
+            prompt.reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+
+        print("VALIDATION PARITY sam3_text: tower cosine \(featureSimilarity), prompt \(promptSimilarity)")
+        XCTAssertGreaterThan(featureSimilarity, 0.9999, "the text tower matches")
+        XCTAssertGreaterThan(promptSimilarity, 0.9999, "the projected prompt matches")
+    }
+
+    // SAM 3's detector on the released facebook/sam3 weights, against transformers' Sam3Model: the
+    // DETR encoder that fuses one vision level with the prompt, the decoder with its 200 queries and
+    // presence token, the scoring head, and the mask decoder. Driven from the reference's own
+    // recorded FPN levels and projected prompt, so a mismatch here is the detector's rather than an
+    // encoder's; the encoders have their own tests. Boxes, per-query logits, the presence logit, the
+    // masks, and the semantic map are all compared, because a query's mask can be right while its
+    // score is not.
+    func testSAM3DetectorMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM3_DETECTOR"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM3_DETECTOR (run_reference.py sam3_detector)")
+        }
+        guard let weights = config["IK_VAL_SAM3"], FileManager.default.fileExists(atPath: weights) else {
+            throw XCTSkip("set IK_VAL_SAM3 (facebook/sam3 model.safetensors)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let levels = try (0 ..< 3).map { try XCTUnwrap(arrays["level_\($0)"]).expandedDimensions(axis: 0) }
+        let positions = try (0 ..< 3).map { try XCTUnwrap(arrays["position_\($0)"]).expandedDimensions(axis: 0) }
+        let prompt = try XCTUnwrap(arrays["prompt"]).expandedDimensions(axis: 0)
+        let valid = try XCTUnwrap(arrays["attention_mask"]).asType(.float32).reshaped([1, -1])
+
+        let net = NFKMLXSAM3DetectorNet(.base)
+        try NFKMLXSAM3.loadDetectorWeights(into: net, from: URL(fileURLWithPath: weights))
+
+        let detection = net(levels: levels, positions: positions, prompt: prompt, promptValid: valid)
+        eval(detection.masks, detection.boxes, detection.logits, detection.presence, detection.semantic)
+
+        func flat(_ array: MLXArray) -> [Double] {
+            array.reshaped([-1]).asArray(Float.self).map(Double.init)
+        }
+        let boxes = cosine(flat(detection.boxes), flat(try XCTUnwrap(arrays["pred_boxes"])))
+        let logits = cosine(flat(detection.logits), flat(try XCTUnwrap(arrays["pred_logits"])))
+        let presence = cosine(flat(detection.presence), flat(try XCTUnwrap(arrays["presence_logits"])))
+        let masks = cosine(flat(detection.masks), flat(try XCTUnwrap(arrays["output"])))
+        let semantic = cosine(flat(detection.semantic), flat(try XCTUnwrap(arrays["semantic_seg"])))
+
+        print("VALIDATION PARITY sam3_detector: boxes \(boxes), logits \(logits), presence \(presence), "
+              + "masks \(masks), semantic \(semantic)")
+        XCTAssertGreaterThan(boxes, 0.9999, "the predicted boxes match")
+        XCTAssertGreaterThan(logits, 0.9999, "the per-query logits match")
+        XCTAssertGreaterThan(masks, 0.9999, "the predicted masks match")
+        XCTAssertGreaterThan(semantic, 0.9999, "the semantic map matches")
+        XCTAssertEqual(flat(detection.presence)[0], flat(try XCTUnwrap(arrays["presence_logits"]))[0],
+                       accuracy: 1e-3, "the presence logit matches")
+        XCTAssertGreaterThan(presence, 0.0, "the presence logit keeps its sign")
+
+        // The same record end to end, from the plate and the token ids: the two encoders and the
+        // detector chained the way a caller runs them, so the wiring between the stages is measured
+        // rather than assumed. Every stage loads from the one checkpoint, read once.
+        var visionConfiguration = NFKMLXSAM3Configuration.base
+        visionConfiguration.imageSize = try XCTUnwrap(arrays["pixel_values"]).dim(0)
+        let model = NFKMLXSAM3ImageModel(vision: NFKMLXSAM3VisionNet(visionConfiguration),
+                                         text: NFKMLXSAM3TextNet(.base),
+                                         detector: NFKMLXSAM3DetectorNet(.base))
+        try NFKMLXSAM3.loadWeights(into: model, from: URL(fileURLWithPath: weights))
+        let chained = model.detect(image: try XCTUnwrap(arrays["pixel_values"]).expandedDimensions(axis: 0),
+                                   tokens: try XCTUnwrap(arrays["input_ids"]).expandedDimensions(axis: 0),
+                                   valid: valid)
+        eval(chained.masks, chained.boxes)
+        let chainedMasks = cosine(flat(chained.masks), flat(try XCTUnwrap(arrays["output"])))
+        let chainedBoxes = cosine(flat(chained.boxes), flat(try XCTUnwrap(arrays["pred_boxes"])))
+        print("VALIDATION PARITY sam3 end to end: masks \(chainedMasks), boxes \(chainedBoxes)")
+        XCTAssertGreaterThan(chainedMasks, 0.9999, "the chained masks match")
+        XCTAssertGreaterThan(chainedBoxes, 0.9999, "the chained boxes match")
+    }
+
+    // MARK: SAM 2.1 video tracker
+
+    // The whole SAM 2.1 tracker over a three-frame clip against transformers' Sam2VideoModel on the
+    // released sam2.1-hiera-tiny: a click on the first frame, then two frames tracked from memory.
+    // Frame 0 exercises the encoder, prompt encoder, and mask decoder; frames 1 and 2 add the memory
+    // encoder, the memory attention, the object pointers, and what 2.1 adds over 2.0 — the occlusion
+    // spatial embedding and the projected temporal encoding on the pointers. The per-frame memory and
+    // pointer are compared alongside the masks, so a divergence localizes to a frame and a stage.
+    func testSAM2VideoTrackerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SAM2_VIDEO"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SAM2_VIDEO (run_reference.py sam2_video)")
+        }
+        guard let weights = config["IK_VAL_SAM2_1_TINY"], FileManager.default.fileExists(atPath: weights) else {
+            throw XCTSkip("set IK_VAL_SAM2_1_TINY (Tools/sam2-to-safetensors on sam2.1_hiera_tiny.pt)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let frames = try XCTUnwrap(arrays["frames"])
+        let point = try XCTUnwrap(arrays["point"]).asArray(Float.self)
+
+        let net = NFKMLXSAM2.makeTracker(variant: .tiny, release: .sam21)
+        try NFKMLXSAM2.loadWeights(into: net, from: URL(fileURLWithPath: weights))
+
+        let session = NFKMLXSAM2TrackerSession(frameCount: frames.dim(0))
+        var maskSimilarities = [Double](), memorySimilarities = [Double](), pointerSimilarities = [Double]()
+        for index in 0 ..< frames.dim(0) {
+            let image = frames[index].expandedDimensions(axis: 0)
+            let prediction = net.track(image: image, frameIndex: index,
+                                       points: index == 0 ? [(point[0], point[1], 1)] : nil,
+                                       session: session)
+            eval(prediction.maskLogits)
+            func flat(_ array: MLXArray) -> [Double] {
+                array.reshaped([-1]).asArray(Float.self).map(Double.init)
+            }
+            maskSimilarities.append(cosine(flat(prediction.maskLogits),
+                                           flat(try XCTUnwrap(arrays["mask_\(index)"]))))
+            let frame = try XCTUnwrap(session.frames[index])
+            memorySimilarities.append(cosine(flat(frame.memory),
+                                             flat(try XCTUnwrap(arrays["memory_\(index)"]))))
+            pointerSimilarities.append(cosine(flat(frame.objectPointer),
+                                              flat(try XCTUnwrap(arrays["pointer_\(index)"]))))
+        }
+
+        print("VALIDATION PARITY sam2_video: mask cosines \(maskSimilarities), "
+              + "memory \(memorySimilarities), object pointer \(pointerSimilarities)")
+        for index in 0 ..< maskSimilarities.count {
+            XCTAssertGreaterThan(maskSimilarities[index], 0.999, "frame \(index)'s mask matches")
+            XCTAssertGreaterThan(memorySimilarities[index], 0.999, "frame \(index)'s memory matches")
+            XCTAssertGreaterThan(pointerSimilarities[index], 0.999, "frame \(index)'s object pointer matches")
+        }
+    }
+
+    // MARK: Wan 2.2 Animate DiT
+
+    // The Wan Animate DiT at a tiny random configuration, against diffusers'
+    // WanAnimate2Transformer3DModel, across both of its passes. The extract pass fills the reference
+    // cache; the generation pass attends over it. The second generation call is a CHUNK shorter than
+    // the video it is scattered into and longer than the cached reference, so the zero-filled key
+    // positions of both buffers enter the softmax denominator — the full-length call exercises neither.
+    func testWanAnimateMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WAN_ANIMATE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_WAN_ANIMATE (run_reference.py wan_animate)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let text = try XCTUnwrap(arrays["text"])
+        let imageEmbeddings = try XCTUnwrap(arrays["image_embeds"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+
+        let net = NFKMLXWanAnimateNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return (name, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let cache = NFKMLXWanAnimateKVCache(layerCount: 2)
+        let extract = try net.extractReference(latent: try XCTUnwrap(arrays["reference_latent"]),
+                                               condition: try XCTUnwrap(arrays["reference_condition"]),
+                                               text: text, imageEmbeddings: imageEmbeddings,
+                                               into: cache)
+        eval(extract)
+        XCTAssertTrue(cache.isPopulated, "the extract pass fills every layer of the cache")
+        let cachedKey = try cache.read(layer: 0).key
+        let keySimilarity = cosine(cachedKey.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                   try XCTUnwrap(arrays["cache_key"]).reshaped([-1])
+                                       .asArray(Float.self).map(Double.init))
+        let extractSimilarity = cosine(extract.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                       try XCTUnwrap(arrays["extract"]).reshaped([-1])
+                                           .asArray(Float.self).map(Double.init))
+
+        let generated = try net.generate(latent: try XCTUnwrap(arrays["latent"]),
+                                         condition: try XCTUnwrap(arrays["condition"]),
+                                         text: text, imageEmbeddings: imageEmbeddings,
+                                         timestep: timestep, cache: cache,
+                                         referenceGrid: (2, 4, 4), videoFrames: 2, videoArea: 16)
+        eval(generated)
+        let generatedSimilarity = cosine(generated.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                         try XCTUnwrap(arrays["output"]).reshaped([-1])
+                                             .asArray(Float.self).map(Double.init))
+
+        let chunk = try net.generate(latent: try XCTUnwrap(arrays["chunk_latent"]),
+                                     condition: try XCTUnwrap(arrays["chunk_condition"]),
+                                     text: text, imageEmbeddings: imageEmbeddings,
+                                     timestep: timestep, cache: cache,
+                                     referenceGrid: (2, 4, 4), videoFrames: 4, videoArea: 16)
+        eval(chunk)
+        let chunkSimilarity = cosine(chunk.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     try XCTUnwrap(arrays["chunk"]).reshaped([-1])
+                                         .asArray(Float.self).map(Double.init))
+
+        print("VALIDATION PARITY wan_animate: cache key cosine \(keySimilarity), extract \(extractSimilarity), "
+              + "generation \(generatedSimilarity), chunk \(chunkSimilarity)")
+        XCTAssertGreaterThan(keySimilarity, 0.9999, "the cached reference keys match")
+        XCTAssertGreaterThan(extractSimilarity, 0.9999, "the reference pass matches")
+        XCTAssertGreaterThan(generatedSimilarity, 0.9999, "the generation pass matches")
+        XCTAssertGreaterThan(chunkSimilarity, 0.9999, "the chunked generation pass matches")
+    }
+
     // MARK: SD3 MMDiT
 
     // The SD3 MMDiT at a tiny random configuration, against diffusers' SD3Transformer2DModel. The tiny
@@ -847,6 +1204,1101 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                 referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
         print("VALIDATION PARITY flux: velocity cosine \(similarity)")
         XCTAssertGreaterThan(similarity, 0.9999, "the predicted velocity matches the reference FLUX transformer")
+    }
+
+    // FLUX.2 [klein]'s prompt path against the release's own tokenizer and chat template. This is
+    // where a silent divergence would live: at `enable_thinking=False` a Qwen3 template appends an
+    // EMPTY think block after the assistant header, so a port that fed the encoder a bare prompt
+    // would read a third of the right sequence and produce a different image with nothing to show
+    // for it. Both the rendered text and its token ids are held to the reference.
+    func testFlux2PromptPathMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let recordPath = config["IK_PARITY_FLUX2_PROMPT"],
+              FileManager.default.fileExists(atPath: recordPath),
+              let tokenizerPath = config["IK_VAL_FLUX2_TOKENIZER"] else {
+            throw XCTSkip("set IK_PARITY_FLUX2_PROMPT and IK_VAL_FLUX2_TOKENIZER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        let directory = URL(fileURLWithPath: tokenizerPath)
+        let template = try String(contentsOf: directory.appendingPathComponent("chat_template.jinja"),
+                                  encoding: .utf8)
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: directory),
+                                      "the release's tokenizer/ reads")
+
+        let prompts = ["a red fox in the snow",
+                       "An astronaut riding a horse on Mars, 35mm film still.",
+                       ""]
+        for (index, prompt) in prompts.enumerated() {
+            let rendered = try NFKMLXChatTemplateRenderer.render(
+                template, messages: [["role": "user", "content": prompt]],
+                addGenerationPrompt: true, variables: ["enable_thinking": false])
+            let referenceBytes = try XCTUnwrap(arrays["text.\(index)"]).asArray(UInt8.self)
+            let referenceText = String(decoding: referenceBytes, as: UTF8.self)
+            XCTAssertEqual(rendered, referenceText,
+                           "the template renders prompt \(index) as the reference does")
+
+            let ids = tokenizer.encode(rendered).map(\.intValue)
+            let referenceIds = try XCTUnwrap(arrays["ids.\(index)"]).asArray(Int32.self).map(Int.init)
+            XCTAssertEqual(ids, referenceIds, "prompt \(index) tokenizes as the reference does")
+            print("SEAM flux2-prompt [\(index)]: \(ids.count) ids, exact")
+        }
+        print("VALIDATION PARITY flux2-prompt: \(prompts.count) prompts, text and ids exact")
+    }
+
+    // FLUX.2 [klein]'s text front end: three intermediate hidden states of a Qwen3, concatenated per
+    // token, over a right-padded sequence. The padding mask is the part that has to be right — the
+    // pad positions' states reach the transformer, and the record carries the reference's embedding
+    // both with and without the mask so the test can prove the port uses it.
+    // FLUX.2 [dev] conditions on Mistral-Small 3 where [klein] conditions on Qwen3. Mistral does not
+    // normalize queries and keys, and its head width is stated rather than implied, so the front end
+    // is measured on its own record rather than assumed from the Qwen3 one.
+    func testFlux2MistralTextEncodingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_TEXT_MISTRAL"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_TEXT_MISTRAL (run_reference.py flux2_text_mistral)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let ids = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self)
+        let attentionMask = try XCTUnwrap(arrays["attention_mask"]).asArray(Int32.self)
+
+        let geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 40, layerCount: 8, headCount: 4, keyValueHeadCount: 2, headDimensions: 8,
+            intermediateSize: 64, vocabularySize: 128, ropeTheta: 1_000_000_000, rmsEpsilon: 1e-5,
+            tiesWordEmbeddings: false, normalizesQueryAndKey: false, attentionBias: false)
+        // The released decoder's own shape: the head width does not divide the residual.
+        XCTAssertNotEqual(NFKMLXLanguageConfiguration.mistralSmall3.headDimensions,
+                          NFKMLXLanguageConfiguration.mistralSmall3.hiddenSize
+                              / NFKMLXLanguageConfiguration.mistralSmall3.headCount)
+        let decoder = NFKMLXLanguageNet(geometry)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: decoder)
+
+        let tokens = MLXArray(ids).reshaped([1, ids.count])
+        let keyPadding = MLXArray(attentionMask.map { $0 != 0 })
+        let encoder = NFKMLXFlux2TextEncoder(decoder: decoder, layers: [2, 4, 6],
+                                             contextLength: ids.count, padToken: 0)
+
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        let states = decoder.layerStates(tokens, keyPadding: keyPadding)
+        for index in 0 ... geometry.layerCount {
+            guard let reference = arrays["hidden.\(index)"] else { continue }
+            let similarity = cosineWith(states[index], reference)
+            print("SEAM flux2-text-mistral hidden.\(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "hidden state \(index) matches the reference")
+        }
+
+        let embedded = encoder.embedding(ids: tokens, keyPadding: keyPadding)
+        let similarity = cosineWith(embedded, try XCTUnwrap(arrays["embedding"]))
+        print("VALIDATION PARITY flux2-text-mistral: conditioning cosine \(similarity)")
+        XCTAssertEqual(embedded.dim(2), 3 * geometry.hiddenSize, "three layers wide")
+        XCTAssertGreaterThan(similarity, 0.9999, "the conditioning matches the reference")
+
+        let unmasked = cosineWith(encoder.embedding(ids: tokens, keyPadding: nil),
+                                  try XCTUnwrap(arrays["embedding"]))
+        print("SEAM flux2-text-mistral conditioning without the key-padding mask: cosine \(unmasked)")
+        XCTAssertLessThan(unmasked, similarity,
+                          "dropping the mask moves the conditioning, which is why the port carries it")
+    }
+
+    // The prompt path end to end on the RELEASED encoder: a prompt string through the facade's own
+    // `tokens(forPrompt:)` and `encode(prompt:)`, against the reference pipeline's own
+    // `_get_qwen3_prompt_embeds`. The facade is built around a tiny transformer because the text path
+    // never reads it, which keeps the run to the encoder's 16 GB at float32.
+    func testFlux2TextEncodingMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_TEXT_REAL"], let release = config["IK_VAL_FLUX2_KLEIN_4B_ROOT"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_TEXT_REAL (run_reference.py flux2_text_real --checkpoint "
+                          + "<release root>) and IK_VAL_FLUX2_KLEIN_4B_ROOT")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let root = URL(fileURLWithPath: release)
+        let tokenizerDirectory = root.appendingPathComponent("tokenizer")
+
+        let (decoder, _) = try NFKMLXLanguage.loadedRelease(at: root.appendingPathComponent("text_encoder"))
+        // The layer read is DERIVED as the facade derives it, and must land on the reference's own
+        // hard-coded (9, 18, 27).
+        let transformerConfiguration = try NFKMLXFlux2TransformerNet.configuration(
+            fromHuggingFace: root.appendingPathComponent("transformer/config.json"))
+        let read = transformerConfiguration.jointAttentionDim / decoder.configuration.hiddenSize
+        let layers = (1 ... read).map { decoder.configuration.layerCount * $0 / (read + 1) }
+        XCTAssertEqual(layers, [9, 18, 27], "the derived layer read is the reference's")
+
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: tokenizerDirectory))
+        let template = try String(contentsOf: tokenizerDirectory.appendingPathComponent("chat_template.jinja"),
+                                  encoding: .utf8)
+        let pipeline = NFKMLXFlux2Pipeline(transformer: NFKMLXFlux2TransformerNet(.tiny),
+                                           autoencoder: NFKMLXSDAutoencoder(configuration: .flux2),
+                                           codec: NFKMLXFlux2LatentCodec())
+        let flux = NFKMLXFlux2(pipeline: pipeline,
+                               textEncoder: NFKMLXFlux2TextEncoder(decoder: decoder, layers: layers),
+                               tokenizer: tokenizer, chatTemplate: template)
+
+        var index = 0
+        while let promptBytes = arrays["prompt.\(index)"] {
+            let prompt = String(decoding: promptBytes.asArray(UInt8.self), as: UTF8.self)
+            let referenceIds = try XCTUnwrap(arrays["input_ids.\(index)"]).asArray(Int32.self).map(Int.init)
+            let mask = try XCTUnwrap(arrays["attention_mask.\(index)"]).asArray(Int32.self)
+            let realCount = mask.filter { $0 != 0 }.count
+
+            let ids = try flux.tokens(forPrompt: prompt)
+            XCTAssertEqual(ids, Array(referenceIds.prefix(realCount)),
+                           "prompt \(index): the template and tokenizer give the reference's ids")
+            // The padding the reference applied, so a pad-token disagreement fails here by name.
+            XCTAssertEqual(Set(referenceIds.dropFirst(realCount)).count <= 1, true)
+            if let pad = referenceIds.dropFirst(realCount).first {
+                XCTAssertEqual(pad, 151_643, "prompt \(index): the reference pads with the encoder's pad id")
+            }
+
+            let embedding = try flux.encode(prompt: prompt)
+            eval(embedding)
+            let reference = try XCTUnwrap(arrays["embedding.\(index)"])
+            XCTAssertEqual(embedding.dim(1), reference.dim(0), "padded to the reference's length")
+            let similarity = cosine(
+                embedding.reshaped([-1]).asArray(Float.self).map(Double.init),
+                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY flux2-text-real prompt \(index) (\(realCount) tokens): "
+                  + "conditioning cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "prompt \(index): the conditioning matches the reference")
+            index += 1
+        }
+        XCTAssertGreaterThan(index, 0, "the record carries prompts")
+    }
+
+    func testFlux2TextEncodingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_TEXT"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_TEXT (run_reference.py flux2_text)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let ids = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self)
+        let attentionMask = try XCTUnwrap(arrays["attention_mask"]).asArray(Int32.self)
+
+        let geometry = NFKMLXLanguageConfiguration(
+            hiddenSize: 32, layerCount: 6, headCount: 4, keyValueHeadCount: 2, headDimensions: 8,
+            intermediateSize: 64, vocabularySize: 128, ropeTheta: 1_000_000, rmsEpsilon: 1e-6,
+            tiesWordEmbeddings: true, normalizesQueryAndKey: true, attentionBias: false)
+        let decoder = NFKMLXLanguageNet(geometry)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            // A tied Qwen3 builds no `lm_head`; the record carries it because the reference's state
+            // dict aliases the embedding there.
+            return name == "lm_head.weight" ? nil : (name, value)
+        }
+        try NFKMLXWeights.apply(weights, to: decoder)
+
+        let tokens = MLXArray(ids).reshaped([1, ids.count])
+        let keyPadding = MLXArray(attentionMask.map { $0 != 0 })
+        let encoder = NFKMLXFlux2TextEncoder(decoder: decoder, layers: [1, 3, 5],
+                                             contextLength: ids.count, padToken: 0)
+
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        // Every hidden state the reference reports, so a divergence names a layer.
+        let states = decoder.layerStates(tokens, keyPadding: keyPadding)
+        for index in 0 ... geometry.layerCount {
+            guard let reference = arrays["hidden.\(index)"] else { continue }
+            let similarity = cosineWith(states[index], reference)
+            print("SEAM flux2-text hidden.\(index): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "hidden state \(index) matches the reference")
+        }
+
+        let embedded = encoder.embedding(ids: tokens, keyPadding: keyPadding)
+        let similarity = cosineWith(embedded, try XCTUnwrap(arrays["embedding"]))
+        print("VALIDATION PARITY flux2-text: conditioning cosine \(similarity)")
+        XCTAssertEqual(embedded.dim(2), 3 * geometry.hiddenSize, "three layers wide")
+        XCTAssertGreaterThan(similarity, 0.9999, "the conditioning matches the reference")
+
+        // The mask is load-bearing: without it the reference itself produces a different embedding,
+        // so a port that ignored it would land on the unmasked figure instead.
+        let unmasked = cosineWith(encoder.embedding(ids: tokens, keyPadding: nil),
+                                  try XCTUnwrap(arrays["embedding"]))
+        print("SEAM flux2-text conditioning without the key-padding mask: cosine \(unmasked)")
+        XCTAssertLessThan(unmasked, similarity,
+                          "dropping the mask moves the conditioning, which is why the port carries it")
+
+        // The padding path itself: the encoder pads a short prompt to its context length.
+        let realCount = attentionMask.filter { $0 != 0 }.count
+        let fromPrompt = encoder.encode(tokens: ids.prefix(realCount).map(Int.init))
+        XCTAssertGreaterThan(cosineWith(fromPrompt, try XCTUnwrap(arrays["embedding"])), 0.9999,
+                             "padding an unpadded prompt reproduces the reference's padded batch")
+    }
+
+    // FLUX.2's autoencoder and the latent codec between it and the transformer. The autoencoder is
+    // the shared `NFKMLXSDAutoencoder` at 32 latent channels; what is measured here is that it is,
+    // plus the patching order and the BatchNorm whitening that replace every earlier release's scalar
+    // scale and shift.
+    // The shipped autoencoder and the BatchNorm statistics the release carries, loaded through the
+    // same entry points `NFKMLXFlux2Pipeline` uses, so the pipeline's own loading is what is measured.
+    func testFlux2AutoencoderMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_VAE_REAL"], let release = config["IK_VAL_FLUX2_KLEIN_4B_VAE"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_VAE_REAL (run_reference.py flux2_vae_real --checkpoint "
+                          + "<vae dir>) and IK_VAL_FLUX2_KLEIN_4B_VAE")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        func channelsLast(_ x: MLXArray) -> MLXArray { x.transposed(0, 2, 3, 1) }
+
+        let vae = NFKMLXSDAutoencoder(configuration: .flux2)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(
+            into: vae, from: directory.appendingPathComponent("diffusion_pytorch_model.safetensors"),
+            precision: .float32)
+        let codec = try NFKMLXFlux2LatentCodec.codec(fromReleaseDirectory: directory)
+
+        func compare(_ name: String, _ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux2-vae-real \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "\(name) matches the reference")
+            return similarity
+        }
+
+        let (mean, _) = vae.encode(channelsLast(try XCTUnwrap(arrays["pixels"])))
+        let latent = compare("latent", mean, channelsLast(try XCTUnwrap(arrays["latent"])))
+        _ = compare("whitened latent", codec.whiten(codec.patchify(mean)),
+                    channelsLast(try XCTUnwrap(arrays["whitened"])))
+        let tokens = codec.encode(latent: mean)
+        _ = compare("packed tokens", tokens, try XCTUnwrap(arrays["packed"]))
+        let restored = codec.decode(tokens: tokens, height: mean.dim(1) / codec.patch,
+                                    width: mean.dim(2) / codec.patch)
+        let decoded = compare("decoded image", vae.decode(restored),
+                              channelsLast(try XCTUnwrap(arrays["decoded"])))
+        print("VALIDATION PARITY flux2-vae-real: latent cosine \(latent), decode cosine \(decoded)")
+    }
+
+    func testFlux2AutoencoderMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_VAE"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_VAE (run_reference.py flux2_vae)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func channelsLast(_ x: MLXArray) -> MLXArray { x.transposed(0, 2, 3, 1) }
+
+        var configuration = NFKMLXSDVAEConfiguration.flux2
+        configuration.latentChannels = 4
+        configuration.blockChannels = [8, 16]
+        configuration.layersPerBlock = 1
+        configuration.normalizationGroups = 4
+        let vae = NFKMLXSDAutoencoder(configuration: configuration)
+        let codec = NFKMLXFlux2LatentCodec(patchedChannels: 16, epsilon: 1e-4, patch: 2)
+
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            guard !name.hasPrefix("bn."), !name.hasSuffix("num_batches_tracked") else { return nil }
+            // The autoencoder is the shared Stable Diffusion one, whose module names differ from
+            // diffusers' in the mid block and the resnets; the same remap every released VAE loads
+            // through applies here. Convolution weights arrive as [out, in, kH, kW] and MLX holds
+            // [out, kH, kW, in].
+            return (NFKMLXStableDiffusionModels.remapVAEKey(name),
+                    value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: vae)
+        try NFKMLXWeights.apply([
+            ("running_mean", try XCTUnwrap(arrays["w::bn.running_mean"])),
+            ("running_var", try XCTUnwrap(arrays["w::bn.running_var"]))], to: codec)
+
+        func compare(_ name: String, _ mine: MLXArray, _ key: String, reference override: MLXArray? = nil) {
+            guard let reference = override ?? arrays[key] else { return XCTFail("the record has no \(key)") }
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux2-vae \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "\(name) matches the reference")
+        }
+
+        // The reference works channels-FIRST and this package channels-last, so every 4-D
+        // intermediate is compared after transposing the reference's. The packed token sequence is
+        // the one tensor both sides already agree on, `[batch, tokens, channels]`.
+        func compareSpatial(_ name: String, _ mine: MLXArray, _ key: String) {
+            guard let reference = arrays[key] else { return XCTFail("the record has no \(key)") }
+            compare(name, mine, key, reference: channelsLast(reference))
+        }
+
+        let pixels = channelsLast(try XCTUnwrap(arrays["pixels"]))
+        let (mean, _) = vae.encode(pixels)
+        compareSpatial("latent", mean, "latent")
+
+        // The patching, whitening and packing, each against the reference's own intermediate.
+        let patched = codec.patchify(mean)
+        compareSpatial("patched latent", patched, "patched")
+        compareSpatial("whitened latent", codec.whiten(patched), "whitened")
+        let tokens = codec.encode(latent: mean)
+        compare("packed tokens", tokens, "packed")
+
+        // The round trip back to the latent, then the decode.
+        let restored = codec.decode(tokens: tokens, height: mean.dim(1) / 2, width: mean.dim(2) / 2)
+        compareSpatial("unpatched latent", restored, "unpatched")
+        let referenceDecoded = channelsLast(try XCTUnwrap(arrays["decoded"]))
+        let decoded = vae.decode(restored); eval(decoded)
+        let similarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux2-vae: decode cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the decoded image matches the reference")
+
+        // The decode from the REFERENCE's own latent, which separates the decoder's own agreement
+        // from whatever the encoder's 1e-9 drift grows into through fifteen convolutions.
+        let referenceLatent = channelsLast(try XCTUnwrap(arrays["unpatched"]))
+
+        // Walked stage by stage against the reference's own hooks, so a disagreement inside the
+        // decode names the stage that introduces it.
+        let afterPostQuant = try XCTUnwrap(vae.postQuantConv)(referenceLatent)
+        compareSpatial("decoder post_quant_conv", afterPostQuant, "seam.post_quant")
+        let afterConvIn = vae.decoder.convIn(afterPostQuant)
+        compareSpatial("decoder conv_in", afterConvIn, "seam.dec_conv_in")
+        let afterMid = vae.decoder.midBlock(afterConvIn)
+        compareSpatial("decoder mid_block", afterMid, "seam.dec_mid")
+        let afterUp0 = vae.decoder.upBlocks[0](afterMid)
+        compareSpatial("decoder up_blocks.0", afterUp0, "seam.dec_up0")
+        var walked = afterUp0
+        for block in vae.decoder.upBlocks.dropFirst() { walked = block(walked) }
+        compareSpatial("decoder conv_norm_out", vae.decoder.normOut(walked), "seam.dec_norm_out")
+
+        let isolated = vae.decode(referenceLatent); eval(isolated)
+        let isolatedSimilarity = cosine(
+            isolated.reshaped([-1]).asArray(Float.self).map(Double.init),
+            referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("SEAM flux2-vae decode from the reference's latent: cosine \(isolatedSimilarity)")
+        XCTAssertGreaterThan(isolatedSimilarity, 0.9999, "the decoder alone matches the reference")
+    }
+
+    // The LTX-2 audio-video transformer, in both released arrangements: the one LTX-2.3 declares and
+    // the three switches LTX-2.5 changes. The record carries both, so the arithmetic of every switch
+    // is measured even though LTX-2.5's own configuration is behind its gate.
+    func testLTX2TransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_LTX2"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_LTX2 (run_reference.py ltx2)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let video = try XCTUnwrap(arrays["hidden"])
+        let audio = try XCTUnwrap(arrays["audio_hidden"])
+        let text = try XCTUnwrap(arrays["encoder"])
+        let audioText = try XCTUnwrap(arrays["audio_encoder"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let audioTimestep = try XCTUnwrap(arrays["audio_timestep"])
+        let sigma = try XCTUnwrap(arrays["sigma"])
+
+        // The caption projections LTX-2.0 keeps inside the transformer, and the keyframe embedding
+        // LTX-2.5 adds, are paths no released arrangement measured here would otherwise exercise, so
+        // the record carries a configuration for each.
+        var tiny20 = NFKMLXLTX2Configuration.tiny
+        tiny20.usesPromptEmbeddings = true
+        let keyframes = try XCTUnwrap(arrays["keyframes"]).reshaped([1, -1])
+
+        for (prefix, configuration) in [("l20", tiny20), ("l23", NFKMLXLTX2Configuration.tiny),
+                                        ("l25", NFKMLXLTX2Configuration.tiny25)] {
+            let net = NFKMLXLTX2TransformerNet(configuration)
+            let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+                key.hasPrefix("w::\(prefix).") ? (String(key.dropFirst(3 + prefix.count + 1)), value) : nil
+            }
+            try NFKMLXWeights.apply(weights, to: net)
+
+            func compare(_ name: String, _ mine: MLXArray, _ key: String) {
+                guard let reference = arrays["\(prefix).\(key)"] else {
+                    return XCTFail("the record has no \(prefix).\(key)")
+                }
+                eval(mine)
+                let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                        reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+                print("SEAM ltx2 \(prefix) \(name): cosine \(similarity)")
+                XCTAssertGreaterThan(similarity, 0.9999, "\(prefix) \(name) matches the reference")
+            }
+
+            let rope = NFKLTX2Rope(dim: configuration.innerDim, heads: configuration.numAttentionHeads,
+                                   theta: configuration.ropeTheta)
+            let positions = NFKLTX2Rope.videoPositions(frames: 2, height: 2, width: 3,
+                                                       configuration: configuration, fps: 24)
+            let (cosTable, sinTable) = rope.table(positions: positions)
+            compare("video rotary cosine", cosTable, "rope_cos")
+            compare("video rotary sine", sinTable, "rope_sin")
+            compare("video timestep modulation", net.timeEmbed(timestep.reshaped([-1])).modulation, "temb")
+            compare("audio timestep modulation",
+                    net.audioTimeEmbed(audioTimestep.reshaped([-1])).modulation, "temb_audio")
+
+            let (predictedVideo, predictedAudio) = net(
+                video: video, audio: audio,
+                text: prefix == "l20" ? try XCTUnwrap(arrays["caption"]) : text,
+                audioText: prefix == "l20" ? try XCTUnwrap(arrays["audio_caption"]) : audioText,
+                timestep: timestep, audioTimestep: audioTimestep, sigma: sigma, frames: 2,
+                height: 2, width: 3, audioFrames: audio.dim(1),
+                keyframes: prefix == "l25" ? keyframes : nil)
+            eval(predictedVideo, predictedAudio)
+            compare("video velocity", predictedVideo, "video")
+            compare("audio velocity", predictedAudio, "audio")
+            let similarity = cosine(
+                predictedVideo.reshaped([-1]).asArray(Float.self).map(Double.init),
+                try XCTUnwrap(arrays["\(prefix).video"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY ltx2-\(prefix): video velocity cosine \(similarity)")
+        }
+    }
+
+    // FLUX.2's transformer at the tiny random configuration. Five seams are recorded so a divergence
+    // is located rather than guessed: the timestep-and-guidance conditioning, the shared double- and
+    // single-stream modulation vectors, and the first block of each kind.
+    // The declared geometry against a REAL checkpoint. `testFlux2TransformerMatchesTheReference`
+    // measures the arithmetic exactly at a tiny configuration, and the structural check proves 169
+    // tensors load at the right shapes; neither catches a preset that loads cleanly and then computes
+    // something else. klein 4B is 3.88B, about 7.8 GB at the released bfloat16, which this machine
+    // holds. Both sides run that precision, so the figure describes it rather than the arithmetic.
+    func testFlux2Klein4BTransformerMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_REAL"], let release = config["IK_VAL_FLUX2_KLEIN_4B"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_REAL (run_reference.py flux2_real --checkpoint <transformer dir>) "
+                          + "and IK_VAL_FLUX2_KLEIN_4B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        XCTAssertFalse(configuration.guidanceEmbeds, "klein carries no guidance embedding")
+        // The released config is the declared preset, read back rather than assumed.
+        XCTAssertEqual(configuration.numLayers, NFKMLXFlux2Configuration.klein4B.numLayers)
+        XCTAssertEqual(configuration.numSingleLayers,
+                       NFKMLXFlux2Configuration.klein4B.numSingleLayers)
+        XCTAssertEqual(configuration.numLayers,
+                       Int(try XCTUnwrap(arrays["num_layers"]).asArray(Int32.self)[0]))
+        XCTAssertEqual(configuration.numSingleLayers,
+                       Int(try XCTUnwrap(arrays["num_single_layers"]).asArray(Int32.self)[0]))
+
+        let net = NFKMLXFlux2TransformerNet(configuration)
+        try NFKMLXFlux2TransformerNet.loadWeights(into: net, from: directory, precision: .checkpoint)
+
+        let output = net(try XCTUnwrap(arrays["hidden"]).asType(.bfloat16),
+                         encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(.bfloat16),
+                         timestep: try XCTUnwrap(arrays["timestep"]).asType(.bfloat16),
+                         guidance: arrays["guidance"].map { $0.asType(.bfloat16) },
+                         imageIds: try XCTUnwrap(arrays["img_ids"]),
+                         textIds: try XCTUnwrap(arrays["txt_ids"]))
+        eval(output)
+        let similarity = cosine(
+            output.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux2-klein-4b-real: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.99,
+                             "the released FLUX.2 [klein] 4B transformer matches the reference")
+    }
+
+    // The 9B geometry against a real checkpoint, the base sibling being the reachable 9B release. It
+    // is 18 GB at the released bfloat16 and 36 GB at float32, which this machine cannot hold, so this
+    // is the bfloat16 run alone, read against the bfloat16 floor klein 4B measured for the same
+    // architecture (the reference's own bfloat16 against its own float32: 0.99919).
+    func testFlux2KleinBase9BTransformerMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_BASE_9B_REAL"],
+              let release = config["IK_VAL_FLUX2_KLEIN_BASE_9B"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_BASE_9B_REAL (run_reference.py flux2_real --checkpoint "
+                          + "<base-9B transformer dir>) and IK_VAL_FLUX2_KLEIN_BASE_9B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        XCTAssertEqual(configuration.numLayers, NFKMLXFlux2Configuration.klein9B.numLayers)
+        XCTAssertEqual(configuration.numSingleLayers, NFKMLXFlux2Configuration.klein9B.numSingleLayers)
+        XCTAssertEqual(configuration.jointAttentionDim, NFKMLXFlux2Configuration.klein9B.jointAttentionDim)
+
+        let net = NFKMLXFlux2TransformerNet(configuration)
+        try NFKMLXFlux2TransformerNet.loadWeights(into: net, from: directory, precision: .checkpoint)
+        let output = net(try XCTUnwrap(arrays["hidden"]).asType(.bfloat16),
+                         encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(.bfloat16),
+                         timestep: try XCTUnwrap(arrays["timestep"]).asType(.bfloat16),
+                         guidance: arrays["guidance"].map { $0.asType(.bfloat16) },
+                         imageIds: try XCTUnwrap(arrays["img_ids"]),
+                         textIds: try XCTUnwrap(arrays["txt_ids"]))
+        eval(output)
+        let similarity = cosine(
+            output.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux2-klein-base-9b-real: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.99,
+                             "the released FLUX.2 [klein] base 9B transformer matches the reference")
+    }
+
+    // The base 9B release cut to its first two double and two single blocks, on its real weights. The
+    // whole release is 36 GB at float32, which does not fit, so its bfloat16 figure alone cannot tell
+    // a precision floor from a defect. The cut keeps everything the 9B geometry adds (width, heads,
+    // the 12288-wide text projection, the heads of the model) and drops only repeated depth; only the
+    // kept tensors are read.
+    func testFlux2KleinBase9BCutMatchesTheReferenceAtFloat32OnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_BASE_9B_TRUNCATED"],
+              let release = config["IK_VAL_FLUX2_KLEIN_BASE_9B"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_BASE_9B_TRUNCATED (run_reference.py flux2_real_truncated "
+                          + "--checkpoint <base-9B transformer dir>) and IK_VAL_FLUX2_KLEIN_BASE_9B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        var configuration = NFKMLXFlux2Configuration.klein9B
+        configuration.numLayers = 2
+        configuration.numSingleLayers = 2
+        func kept(_ key: String) -> String? {
+            for (prefix, count) in [("transformer_blocks.", 2), ("single_transformer_blocks.", 2)]
+            where key.hasPrefix(prefix) {
+                let index = Int(key.dropFirst(prefix.count).prefix { $0.isNumber }) ?? .max
+                return index < count ? key : nil
+            }
+            return key
+        }
+        func output(_ precision: NFKMLXWeightPrecision, _ dtype: DType) throws -> MLXArray {
+            let net = NFKMLXFlux2TransformerNet(configuration)
+            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+                inDirectory: URL(fileURLWithPath: release), precision: precision, remap: kept), to: net)
+            let result = net(try XCTUnwrap(arrays["hidden"]).asType(dtype),
+                             encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(dtype),
+                             timestep: try XCTUnwrap(arrays["timestep"]).asType(dtype), guidance: nil,
+                             imageIds: try XCTUnwrap(arrays["img_ids"]), textIds: try XCTUnwrap(arrays["txt_ids"]))
+                .asType(.float32)
+            eval(result)
+            NFKMLXGPU.clearCache()
+            return result
+        }
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                   reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+        let referenceF32 = try XCTUnwrap(arrays["output"]), referenceBF16 = try XCTUnwrap(arrays["output_bf16"])
+        let float32 = cosineWith(try output(.float32, .float32), referenceF32)
+        let mineBF16 = try output(.checkpoint, .bfloat16)
+        let bf16AgainstBF16 = cosineWith(mineBF16, referenceBF16)
+        let bf16AgainstF32 = cosineWith(mineBF16, referenceF32)
+        let referenceFloor = cosineWith(referenceBF16, referenceF32)
+        print("VALIDATION PARITY flux2-klein-base-9b-cut (2+2 blocks, released weights): float32 \(float32); "
+              + "bfloat16 against the reference's bfloat16 \(bf16AgainstBF16), against its float32 "
+              + "\(bf16AgainstF32); the reference's own bfloat16 against its float32 \(referenceFloor)")
+        XCTAssertGreaterThan(float32, 0.9999, "at float32 the 9B geometry matches the reference on real weights")
+    }
+
+    // The same released weights and inputs at float32. The bfloat16 figure sits near 0.999, and the
+    // reference's OWN bfloat16 output agrees with its own float32 output only to 0.99919, so a
+    // bfloat16 cosine cannot separate this architecture's precision floor from a precision-specific
+    // defect. At float32 it can: the arithmetic on real weights is what this measures, which the tiny
+    // configuration cannot reach. 15.5 GB resident, so it runs as its own process.
+    func testFlux2Klein4BTransformerMatchesTheReferenceAtFloat32OnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_REAL_F32"], let release = config["IK_VAL_FLUX2_KLEIN_4B"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_REAL_F32 (run_reference.py flux2_real_f32 --checkpoint "
+                          + "<transformer dir>) and IK_VAL_FLUX2_KLEIN_4B")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXFlux2TransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXFlux2TransformerNet(configuration)
+        try NFKMLXFlux2TransformerNet.loadWeights(into: net, from: directory, precision: .float32)
+
+        let output = net(try XCTUnwrap(arrays["hidden"]),
+                         encoderHidden: try XCTUnwrap(arrays["encoder"]),
+                         timestep: try XCTUnwrap(arrays["timestep"]),
+                         guidance: arrays["guidance"],
+                         imageIds: try XCTUnwrap(arrays["img_ids"]),
+                         textIds: try XCTUnwrap(arrays["txt_ids"]))
+        eval(output)
+        let similarity = cosine(
+            output.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+            try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux2-klein-4b-real-f32: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999,
+                             "at float32 the released FLUX.2 [klein] 4B transformer matches the reference")
+    }
+
+    // Inpainting against the reference's own `Flux2KleinInpaintPipeline.__call__`, at its own
+    // defaults of 50 steps and strength 0.8, twice: distilled (no guidance) and guided. The mask's
+    // edges fall between packing cells, so its packed grid carries fractional blend weights.
+    func testFlux2InpaintingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_INPAINT"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_INPAINT (run_reference.py flux2_inpaint)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func channelsLast(_ x: MLXArray) -> MLXArray { x.transposed(0, 2, 3, 1) }
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        let transformer = NFKMLXFlux2TransformerNet(NFKMLXFlux2Configuration(
+            inChannels: 16, numLayers: 2, numSingleLayers: 2, attentionHeadDim: 8,
+            numAttentionHeads: 2, jointAttentionDim: 24, timestepGuidanceChannels: 16,
+            axesDimsRope: [2, 2, 2, 2], guidanceEmbeds: false))
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix("w::transformer.") ? (String(key.dropFirst(15)), value) : nil
+        }, to: transformer)
+        var vaeConfiguration = NFKMLXSDVAEConfiguration.flux2
+        vaeConfiguration.latentChannels = 4
+        vaeConfiguration.blockChannels = [8, 16]
+        vaeConfiguration.layersPerBlock = 1
+        vaeConfiguration.normalizationGroups = 4
+        let autoencoder = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::vae."), !key.hasPrefix("w::vae.bn.") else { return nil }
+            return (NFKMLXStableDiffusionModels.remapVAEKey(String(key.dropFirst(7))),
+                    value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }, to: autoencoder)
+        let codec = NFKMLXFlux2LatentCodec(patchedChannels: 16, epsilon: 1e-4, patch: 2)
+        try NFKMLXWeights.apply([
+            ("running_mean", try XCTUnwrap(arrays["w::vae.bn.running_mean"])),
+            ("running_var", try XCTUnwrap(arrays["w::vae.bn.running_var"]))], to: codec)
+        let pipeline = NFKMLXFlux2Pipeline(transformer: transformer, autoencoder: autoencoder, codec: codec)
+
+        // The start step is the reference's double-precision `int(steps - steps * strength)`. A
+        // single-precision strength widens to 0.80000001 and would start one step earlier.
+        let strength = 0.8
+        XCTAssertEqual(Int(max(50.0 - min(50.0 * strength, 50.0), 0)), 10)
+        XCTAssertEqual(Int(max(50.0 - min(50.0 * Double(Float(strength)), 50.0), 0)), 9)
+
+        for name in ["distilled", "guided"] {
+            let image = channelsLast(try XCTUnwrap(arrays["\(name).init_image"]))
+            let mask = channelsLast(try XCTUnwrap(arrays["\(name).mask_full"]))
+            XCTAssertEqual(Int(try XCTUnwrap(arrays["\(name).start_step"]).asArray(Int32.self)[0]), 10,
+                           "\(name): the reference starts where the double-precision rule says")
+
+            // The seams the loop starts from: the source latent and the packed mask.
+            let source = codec.encode(latent: autoencoder.encode(image).mean)
+            let sourceCosine = cosineWith(source, try XCTUnwrap(arrays["\(name).source"]))
+            let packedMask = NFKMLXResample.resizeBilinear(
+                (mask .>= MLXArray(Float(0.5))).asType(.float32), height: 4, width: 4)
+                .reshaped([1, 16, 1])
+            let reference = try XCTUnwrap(arrays["\(name).mask_packed"])
+            XCTAssertEqual(packedMask.asArray(Float.self), reference.reshaped([-1]).asArray(Float.self),
+                           "\(name): the packed mask, fractional edge cells included, is the reference's")
+
+            let output = try pipeline.inpaint(
+                promptEmbeds: try XCTUnwrap(arrays["embeds"]),
+                negativeEmbeds: name == "guided" ? try XCTUnwrap(arrays["negative"]) : nil,
+                image: image, mask: mask, strength: strength, steps: 50, guidanceScale: 3,
+                noise: try XCTUnwrap(arrays["\(name).noise"]))
+            let similarity = cosineWith(output, channelsLast(try XCTUnwrap(arrays["\(name).output"])))
+            print("VALIDATION PARITY flux2-inpaint \(name): source latent \(sourceCosine), "
+                  + "image cosine \(similarity) over 40 steps")
+            XCTAssertGreaterThan(sourceCosine, 0.9999, "\(name): the source latent matches")
+            XCTAssertGreaterThan(similarity, 0.9999, "\(name): the inpainted image matches the reference")
+        }
+    }
+
+    // FLUX.2 [klein] 9B KV's reference cache against the reference transformer under its own KV
+    // processors, and its own `Flux2KleinKVPipeline.__call__`. The weights are drawn at a scale where
+    // the reference cache and ordinary reference conditioning differ (cosine 0.912); at the harness's
+    // usual scale they agree to 1e-12 and a port of the wrong mechanism would pass.
+    func testFlux2ReferenceCacheMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_KV"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2_KV (run_reference.py flux2_kv)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], "the record has no \(key)") }
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+
+        let net = NFKMLXFlux2TransformerNet(NFKMLXFlux2Configuration(
+            inChannels: 16, numLayers: 2, numSingleLayers: 2, attentionHeadDim: 8,
+            numAttentionHeads: 2, jointAttentionDim: 24, timestepGuidanceChannels: 16,
+            axesDimsRope: [2, 2, 2, 2], guidanceEmbeds: false))
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix("w::transformer.") ? (String(key.dropFirst(15)), value) : nil
+        }, to: net)
+
+        let reference = try array("reference"), latents = try array("latents")
+        let embeds = try array("embeds"), textIds = try array("text_ids")
+        let referenceIds = try array("reference_ids"), latentIds = try array("latent_ids")
+        let (extracted, cache) = net.extractingReferences(
+            concatenated([reference, latents], axis: 1), referenceCount: reference.dim(1),
+            encoderHidden: embeds, timestep: try array("timestep"), guidance: nil,
+            imageIds: concatenated([referenceIds, latentIds], axis: 0), textIds: textIds)
+        let extractedCosine = cosineWith(extracted, try array("extracted"))
+
+        // The cache holds post-rotary keys and values; the reference stores them (batch, tokens,
+        // heads, head_dim) where this package holds (batch, heads, tokens, head_dim).
+        XCTAssertEqual(cache.referenceCount, reference.dim(1))
+        for (name, mine) in [("double0.key", cache.double[0].key), ("double0.value", cache.double[0].value),
+                             ("single0.key", cache.single[0].key), ("single0.value", cache.single[0].value)] {
+            let similarity = cosineWith(mine.transposed(0, 2, 1, 3), try array("cache.\(name)"))
+            print("SEAM flux2-kv cached \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "the cached \(name) matches the reference")
+        }
+
+        let cached = net(try array("later"), encoderHidden: embeds, timestep: try array("timestep_later"),
+                         guidance: nil, imageIds: latentIds, textIds: textIds, referenceCache: cache)
+        let cachedCosine = cosineWith(cached, try array("cached"))
+
+        // The discrimination the scale buys: ordinary conditioning is a different function here.
+        let ordinary = try array("ordinary")
+        let ordinaryPort = net(concatenated([latents, reference], axis: 1), encoderHidden: embeds,
+                               timestep: try array("timestep"), guidance: nil,
+                               imageIds: concatenated([latentIds, referenceIds], axis: 0),
+                               textIds: textIds)[0..., 0 ..< latents.dim(1), 0...]
+        let separation = cosineWith(extracted, ordinary)
+        XCTAssertGreaterThan(cosineWith(ordinaryPort, ordinary), 0.9999, "ordinary conditioning is unchanged")
+        XCTAssertLessThan(separation, 0.99, "the reference cache is not ordinary conditioning at this scale")
+
+        // The pipeline, through the reference's own __call__ at its default of 4 steps.
+        var vaeConfiguration = NFKMLXSDVAEConfiguration.flux2
+        vaeConfiguration.latentChannels = 4
+        vaeConfiguration.blockChannels = [8, 16]
+        vaeConfiguration.layersPerBlock = 1
+        vaeConfiguration.normalizationGroups = 4
+        let autoencoder = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::vae."), !key.hasPrefix("w::vae.bn.") else { return nil }
+            return (NFKMLXStableDiffusionModels.remapVAEKey(String(key.dropFirst(7))),
+                    value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }, to: autoencoder)
+        let codec = NFKMLXFlux2LatentCodec(patchedChannels: 16, epsilon: 1e-4, patch: 2)
+        try NFKMLXWeights.apply([("running_mean", try array("w::vae.bn.running_mean")),
+                                 ("running_var", try array("w::vae.bn.running_var"))], to: codec)
+        let pipeline = NFKMLXFlux2Pipeline(transformer: net, autoencoder: autoencoder, codec: codec)
+
+        let pixels = try array("pipeline.reference_pixels").transposed(0, 2, 3, 1)
+        let referenceLatent = autoencoder.encode(pixels).mean
+        let tokensCosine = cosineWith(codec.encode(latent: referenceLatent), try array("pipeline.reference_tokens"))
+        let image = pipeline.generateCachingReferences(
+            promptEmbeds: embeds, latentHeight: 4, latentWidth: 4, steps: 4,
+            references: [referenceLatent], noise: try array("pipeline.start"))
+        let imageCosine = cosineWith(image, try array("pipeline.output").transposed(0, 2, 3, 1))
+
+        print("VALIDATION PARITY flux2-kv: extracting velocity \(extractedCosine), cached velocity "
+              + "\(cachedCosine), reference tokens \(tokensCosine), 4-step image \(imageCosine); "
+              + "ordinary conditioning sits at \(separation)")
+        XCTAssertGreaterThan(extractedCosine, 0.9999, "the extracting step matches the reference")
+        XCTAssertGreaterThan(cachedCosine, 0.9999, "a cached step matches the reference")
+        XCTAssertGreaterThan(tokensCosine, 0.9999, "the reference image's packed tokens match")
+        XCTAssertGreaterThan(imageCosine, 0.9999, "the reference-cache pipeline matches the reference")
+    }
+
+    /// The reference cache on the RELEASED `FLUX.2-klein-9b-kv` transformer, whole at bfloat16 or cut to
+    /// its first two double and two single blocks at float32, against a record from
+    /// `run_reference.py flux2_kv_real` or `flux2_kv_real_truncated`.
+    private func flux2KVReleased(record key: String, cut: Bool) throws -> (extracted: Double, cached: Double,
+                                                                            separation: Double) {
+        guard let path = config[key], let release = config["IK_VAL_FLUX2_KLEIN_9B_KV"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set \(key) and IK_VAL_FLUX2_KLEIN_9B_KV")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ name: String) throws -> MLXArray { try XCTUnwrap(arrays[name], "no \(name) in the record") }
+        var configuration = NFKMLXFlux2Configuration.klein9B
+        if cut {
+            configuration.numLayers = 2
+            configuration.numSingleLayers = 2
+        }
+        func kept(_ name: String) -> String? {
+            guard cut else { return name }
+            for prefix in ["transformer_blocks.", "single_transformer_blocks."] where name.hasPrefix(prefix) {
+                return (Int(name.dropFirst(prefix.count).prefix { $0.isNumber }) ?? .max) < 2 ? name : nil
+            }
+            return name
+        }
+        let dtype: DType = cut ? .float32 : .bfloat16
+        let net = NFKMLXFlux2TransformerNet(configuration)
+        try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+            inDirectory: URL(fileURLWithPath: release), precision: cut ? .float32 : .checkpoint, remap: kept), to: net)
+        func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+            eval(mine)
+            return cosine(mine.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                          reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        }
+        let reference = try array("reference").asType(dtype), latents = try array("latents").asType(dtype)
+        let embeds = try array("embeds").asType(dtype)
+        let (extracted, cache) = net.extractingReferences(
+            concatenated([reference, latents], axis: 1), referenceCount: reference.dim(1),
+            encoderHidden: embeds, timestep: try array("timestep").asType(dtype), guidance: nil,
+            imageIds: concatenated([try array("reference_ids"), try array("latent_ids")], axis: 0),
+            textIds: try array("text_ids"))
+        eval([extracted] + cache.arrays)
+        let cached = net(try array("later").asType(dtype), encoderHidden: embeds,
+                         timestep: try array("timestep_later").asType(dtype), guidance: nil,
+                         imageIds: try array("latent_ids"), textIds: try array("text_ids"),
+                         referenceCache: cache)
+        let result = (cosineWith(extracted, try array("extracted")), cosineWith(cached, try array("cached")),
+                      cosineWith(extracted, try array("ordinary")))
+        NFKMLXGPU.clearCache()
+        return result
+    }
+
+    func testFlux2Klein9BKVReferenceCacheMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        let (extracted, cached, separation) = try flux2KVReleased(record: "IK_PARITY_FLUX2_KV_REAL", cut: false)
+        print("VALIDATION PARITY flux2-klein-9b-kv-real (bfloat16, whole): extracting velocity \(extracted), "
+              + "cached velocity \(cached); ordinary conditioning on the same tokens sits at \(separation)")
+        XCTAssertGreaterThan(extracted, 0.99, "the released KV transformer's extracting step matches")
+        XCTAssertGreaterThan(cached, 0.99, "the released KV transformer's cached step matches")
+    }
+
+    func testFlux2Klein9BKVCutReferenceCacheMatchesTheReferenceAtFloat32OnReleasedWeights() throws {
+        try requireMLXRuntime()
+        let (extracted, cached, separation) = try flux2KVReleased(record: "IK_PARITY_FLUX2_KV_REAL_TRUNCATED",
+                                                                 cut: true)
+        print("VALIDATION PARITY flux2-klein-9b-kv-cut (float32, 2+2 blocks): extracting velocity "
+              + "\(extracted), cached velocity \(cached); ordinary conditioning sits at \(separation)")
+        XCTAssertGreaterThan(extracted, 0.9999, "at float32 the extracting step matches on real weights")
+        XCTAssertGreaterThan(cached, 0.9999, "at float32 the cached step matches on real weights")
+    }
+
+    /// The 9B text conditioning from the prompt string, through the facade's own `encode(prompt:)`,
+    /// with the encoder whole at bfloat16 (through `loadedRelease`, the facade's loader) or cut to 28
+    /// layers at float32, which computes the COMPLETE conditioning because nothing past hidden state
+    /// 27 is read.
+    private func flux2Text9B(record key: String, cut: Bool) throws -> [(tokens: Int, cosine: Double)] {
+        guard let path = config[key], let release = config["IK_VAL_FLUX2_KLEIN_BASE_9B_ROOT"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set \(key) and IK_VAL_FLUX2_KLEIN_BASE_9B_ROOT")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let root = URL(fileURLWithPath: release)
+        let encoderDirectory = root.appendingPathComponent("text_encoder")
+        let decoder: NFKMLXLanguageNet
+        if cut {
+            var configuration = try NFKMLXLanguage.configuration(
+                fromHuggingFace: encoderDirectory.appendingPathComponent("config.json"))
+            configuration.layerCount = 28
+            configuration.tiesWordEmbeddings = true                     // no head: the conditioning never reads one
+            decoder = NFKMLXLanguage.makeNet(configuration)
+            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+                inDirectory: encoderDirectory, precision: .float32, remap: { name in
+                    if name.hasPrefix("lm_head.") { return nil }
+                    if name.hasPrefix("model.layers.") {
+                        let index = Int(name.dropFirst("model.layers.".count).prefix { $0.isNumber }) ?? .max
+                        return index < 28 ? name : nil
+                    }
+                    return name
+                }), to: decoder)
+        } else {
+            decoder = try NFKMLXLanguage.loadedRelease(at: encoderDirectory, precision: .checkpoint).0
+        }
+        let tokenizerDirectory = root.appendingPathComponent("tokenizer")
+        let flux = NFKMLXFlux2(
+            pipeline: NFKMLXFlux2Pipeline(transformer: NFKMLXFlux2TransformerNet(.tiny),
+                                          autoencoder: NFKMLXSDAutoencoder(configuration: .flux2),
+                                          codec: NFKMLXFlux2LatentCodec()),
+            textEncoder: NFKMLXFlux2TextEncoder(decoder: decoder, layers: [9, 18, 27]),
+            tokenizer: try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: tokenizerDirectory)),
+            chatTemplate: try String(contentsOf: tokenizerDirectory.appendingPathComponent("chat_template.jinja"),
+                                     encoding: .utf8))
+        var results = [(tokens: Int, cosine: Double)]()
+        var index = 0
+        while let promptBytes = arrays["prompt.\(index)"] {
+            let prompt = String(decoding: promptBytes.asArray(UInt8.self), as: UTF8.self)
+            let mask = try XCTUnwrap(arrays["attention_mask.\(index)"]).asArray(Int32.self)
+            let realCount = mask.filter { $0 != 0 }.count
+            let referenceIds = try XCTUnwrap(arrays["input_ids.\(index)"]).asArray(Int32.self).map(Int.init)
+            XCTAssertEqual(try flux.tokens(forPrompt: prompt), Array(referenceIds.prefix(realCount)))
+            let embedding = try flux.encode(prompt: prompt).asType(.float32)
+            eval(embedding)
+            let reference = try XCTUnwrap(arrays["embedding.\(index)"])
+            results.append((realCount, cosine(embedding.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                              reference.reshaped([-1]).asArray(Float.self).map(Double.init))))
+            index += 1
+        }
+        NFKMLXGPU.clearCache()
+        XCTAssertFalse(results.isEmpty, "the record carries prompts")
+        return results
+    }
+
+    func testFlux2Klein9BTextEncodingMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        for (index, result) in try flux2Text9B(record: "IK_PARITY_FLUX2_TEXT_9B", cut: false).enumerated() {
+            print("VALIDATION PARITY flux2-text-9b-real (bfloat16, whole) prompt \(index) (\(result.tokens) tokens): "
+                  + "conditioning cosine \(result.cosine)")
+            XCTAssertGreaterThan(result.cosine, 0.99, "prompt \(index): the 9B conditioning matches")
+        }
+    }
+
+    func testFlux2Klein9BTextEncodingCutMatchesTheReferenceAtFloat32OnReleasedWeights() throws {
+        try requireMLXRuntime()
+        for (index, result) in try flux2Text9B(record: "IK_PARITY_FLUX2_TEXT_9B_TRUNCATED", cut: true).enumerated() {
+            print("VALIDATION PARITY flux2-text-9b-cut (float32, 28 of 36 layers, the complete conditioning) "
+                  + "prompt \(index) (\(result.tokens) tokens): conditioning cosine \(result.cosine)")
+            XCTAssertGreaterThan(result.cosine, 0.9999, "prompt \(index): at float32 the 9B conditioning matches")
+        }
+    }
+
+    // FLUX.2 [klein] base 9B end to end through the facade, a prompt string in and an image out. Its
+    // 15.3 GB encoder and 17 GB transformer do not fit a 32 GB machine together, so the facade stages
+    // them: the placement checked is the plan's for THIS machine's budget, not a written-down one.
+    func testFlux2Klein9BRunsEndToEndThroughTheFacadeOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let release = config["IK_VAL_FLUX2_KLEIN_BASE_9B_ROOT"],
+              FileManager.default.fileExists(atPath: release + "/vae/diffusion_pytorch_model.safetensors") else {
+            throw XCTSkip("set IK_VAL_FLUX2_KLEIN_BASE_9B_ROOT to a full base 9B release directory")
+        }
+        let root = URL(fileURLWithPath: release)
+        let expected = try NFKMLXFlux2.plan(
+            encoderStoredBytes: try NFKMLXReleaseWeights.weightBytes(inDirectory: root.appendingPathComponent("text_encoder")),
+            pipelineStoredBytes: try NFKMLXReleaseWeights.weightBytes(inDirectory: root.appendingPathComponent("transformer"))
+                + NFKMLXReleaseWeights.weightBytes(inDirectory: root.appendingPathComponent("vae")),
+            budget: NFKMLXResidencyBudget.current(), residency: .automatic)
+        let start = Date()
+        let flux = try NFKMLXFlux2.flux2(directoryURL: root)
+        XCTAssertEqual(flux.holdsStagesResident, expected.resident)
+        XCTAssertEqual(flux.encodesInFloat32, expected.encoderFloat32)
+        XCTAssertFalse(flux.isDistilled, "the base release guides")
+        flux.steps = 2
+        let image = try flux.image(forPrompt: "a red fox in the snow", width: 256, height: 256, seed: 0)
+        let seconds = Date().timeIntervalSince(start)
+        XCTAssertEqual(image.shape, [1, 256, 256, 3])
+        let values = image.reshaped([-1]).asArray(Float.self)
+        XCTAssertTrue(values.allSatisfy { $0.isFinite && $0 >= 0 && $0 <= 1 }, "a finite image in [0, 1]")
+        if !expected.resident {
+            XCTAssertFalse(flux.isHoldingTextEncoder || flux.isHoldingPipeline, "a staged run holds neither stage after")
+        }
+        print("VALIDATION flux2-klein-base-9b end to end: \(expected.resident ? "resident" : "staged"), "
+              + "encoder \(expected.encoderFloat32 ? "float32" : "as stored"), 256x256 in 2 guided steps, "
+              + String(format: "%.0f s with both loads", seconds))
+        NFKMLXGPU.clearCache()
+    }
+
+    func testFlux2GuidesOnlyWhereTheReferenceDoes() throws {
+        XCTAssertFalse(NFKMLXFlux2.guides(isDistilled: true, guidance: 8), "a distilled release never guides")
+        XCTAssertTrue(NFKMLXFlux2.guides(isDistilled: false, guidance: 4), "a base release guides above 1")
+        XCTAssertFalse(NFKMLXFlux2.guides(isDistilled: false, guidance: 1), "a scale of 1 is no guidance")
+
+        let empty = FileManager.default.temporaryDirectory
+            .appendingPathComponent("flux2-no-index-\(UUID().uuidString)")
+        XCTAssertFalse(NFKMLXFlux2.isDistilled(releaseDirectory: empty),
+                       "an absent model_index.json is the reference's default of false")
+        if let release = config["IK_VAL_FLUX2_KLEIN_4B_ROOT"],
+           FileManager.default.fileExists(atPath: release + "/model_index.json") {
+            XCTAssertTrue(NFKMLXFlux2.isDistilled(releaseDirectory: URL(fileURLWithPath: release)),
+                          "the released klein 4B marks itself step distilled")
+        }
+    }
+
+    func testFlux2TransformerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FLUX2 (run_reference.py flux2)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let hidden = try XCTUnwrap(arrays["hidden"])
+        let encoder = try XCTUnwrap(arrays["encoder"])
+        let timestep = try XCTUnwrap(arrays["timestep"])
+        let guidance = try XCTUnwrap(arrays["guidance"])
+        let imageIds = try XCTUnwrap(arrays["img_ids"])
+        let textIds = try XCTUnwrap(arrays["txt_ids"])
+        let referenceOutput = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXFlux2TransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        func compare(_ name: String, _ mine: MLXArray, _ key: String) {
+            guard let reference = arrays[key] else { return XCTFail("the record has no \(key)") }
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM flux2 \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "\(name) matches the reference")
+        }
+
+        // The ids the reference built with `cartesian_prod` are reproduced here, so the two id helpers
+        // are measured rather than assumed.
+        XCTAssertEqual(NFKMLXFlux2TransformerNet.imageIds(height: 2, width: 3).asArray(Float.self),
+                       imageIds.asArray(Float.self), "the image id grid matches the pipeline's")
+        XCTAssertEqual(NFKMLXFlux2TransformerNet.textIds(length: encoder.dim(1)).asArray(Float.self),
+                       textIds.asArray(Float.self), "the text ids number the tokens as the pipeline does")
+
+        let temb = net.timeGuidanceEmbed(timestep: timestep * 1000, guidance: guidance * 1000)
+        compare("timestep and guidance conditioning", temb, "temb")
+        compare("shared double-stream image modulation", net.doubleModImage(temb), "mod_img")
+        compare("shared single-stream modulation", net.singleMod(temb), "mod_single")
+
+        let (cosTable, sinTable) = net.rope.table(ids: concatenated([textIds, imageIds], axis: 0))
+        let (context0, image0, _) = net.transformerBlocks[0](
+            net.xEmbedder(hidden), encoder: net.contextEmbedder(encoder),
+            modImage: net.doubleModImage(temb), modText: net.doubleModText(temb),
+            cos: cosTable, sin: sinTable)
+        compare("first double block, image stream", image0, "double0_img")
+        compare("first double block, text stream", context0, "double0_txt")
+        compare("first single block", net.singleTransformerBlocks[0](
+            concatenated([context0, image0], axis: 1), mod: net.singleMod(temb),
+            cos: cosTable, sin: sinTable, textCount: context0.dim(1)).output, "single0")
+
+        let output = net(hidden, encoderHidden: encoder, timestep: timestep, guidance: guidance,
+                         imageIds: imageIds, textIds: textIds); eval(output)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                referenceOutput.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux2: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999,
+                             "the predicted velocity matches the reference FLUX.2 transformer")
+    }
+
+    // FLUX.1 [schnell] transformer on the RELEASED 12B weights, at the bfloat16 they ship in. The tiny
+    // configuration above measures the arithmetic exactly; this holds the released weights to diffusers'
+    // FluxTransformer2DModel on a deliberately tiny spatial input (4 image tokens, 8 text tokens) so only
+    // the weights are large. schnell carries no guidance embedding, so guidance is nil. The 12B transformer
+    // needs ~24 GB resident, so this runs only when IK_PARITY_FLUX_REAL and IK_VAL_FLUX_SCHNELL are set,
+    // on a machine that can hold it.
+    func testFluxSchnellTransformerMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_REAL"], let release = config["IK_VAL_FLUX_SCHNELL"] else {
+            throw XCTSkip("set IK_PARITY_FLUX_REAL (run_reference.py flux_real) and IK_VAL_FLUX_SCHNELL")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        let configuration = try NFKMLXFluxTransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        XCTAssertFalse(configuration.guidanceEmbeds, "schnell carries no guidance embedding")
+        let net = NFKMLXFluxTransformerNet(configuration)
+        try NFKMLXFluxTransformerNet.loadWeights(into: net, from: directory, precision: .checkpoint)
+
+        let output = net(try XCTUnwrap(arrays["hidden"]).asType(.bfloat16),
+                         encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(.bfloat16),
+                         pooled: try XCTUnwrap(arrays["pooled"]).asType(.bfloat16),
+                         timestep: try XCTUnwrap(arrays["timestep"]).asType(.bfloat16),
+                         guidance: nil, imageIds: try XCTUnwrap(arrays["img_ids"]))
+        eval(output)
+        let similarity = cosine(output.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                try XCTUnwrap(arrays["output"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux-schnell-real: velocity cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.99, "the released FLUX.1 [schnell] transformer matches the reference")
+    }
+
+    // FLUX.1's text front end (NFKMLXFluxTextEncoder) on the RELEASED CLIP-L and T5-XXL weights, against
+    // transformers' CLIPTextModel and T5EncoderModel. The two encoders are ~10 GB in bfloat16, which fits
+    // where the 24 GB transformer does not, so this measures the whole prompt→conditioning path — the CLIP
+    // byte-level BPE and the T5 SentencePiece tokenization included — that NFKMLXFlux.encode reproduces.
+    func testFluxTextEncodingMatchesTheReferenceOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_TEXT"], let release = config["IK_VAL_FLUX_SCHNELL_FULL"] else {
+            throw XCTSkip("set IK_PARITY_FLUX_TEXT (run_reference.py flux_text) and IK_VAL_FLUX_SCHNELL_FULL")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let encoder = try NFKMLXFluxTextEncoder.textEncoder(directoryURL: URL(fileURLWithPath: release))
+        let (embeds, pooled) = encoder.encode(prompt: "a photograph of an astronaut riding a horse on the moon")
+        eval(embeds, pooled)
+
+        let pooledCosine = cosine(pooled.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                  try XCTUnwrap(arrays["pooled"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        let embedsCosine = cosine(embeds.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                  try XCTUnwrap(arrays["embeds"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY flux-text: CLIP pooled \(pooledCosine), T5 embeds \(embedsCosine)")
+        XCTAssertGreaterThan(pooledCosine, 0.99, "the CLIP-L pooled projection matches the reference")
+        XCTAssertGreaterThan(embedsCosine, 0.99, "the T5-XXL sequence matches the reference")
     }
 
     // MARK: SD3 ControlNet
@@ -2037,6 +3489,63 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(result.segments?.first?.startSeconds ?? -1, 0, accuracy: 1e-9)
     }
 
+    // The multilingual v3 release through the SAME entry, which is the point of sizing from the
+    // release: its tokenizer carries 8192 pieces against v2's 1024, and every other dimension is the
+    // v2 geometry, so the prediction embedding and the joint follow the piece table.
+    func testParakeetV3BackendTranscribesTheValidationClip() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_PARAKEET_V3"], let audio = config["IK_VAL_AUDIO"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_PARAKEET_V3 + IK_VAL_AUDIO")
+        }
+        let backend = try NFKMLXParakeet.backend(directoryURL: URL(fileURLWithPath: directory))
+        let asset = NFKAudioAsset(fileURL: URL(fileURLWithPath: audio), durationSeconds: 3.47, sampleRate: 16000, channelCount: 1)
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
+        print("VALIDATION PARITY parakeet-v3-backend: \(result.text.debugDescription), "
+              + "\(result.segments?.count ?? 0) segments")
+        XCTAssertEqual(result.text, "The quick brown fox jumps over the lazy dog.")
+        XCTAssertGreaterThan(result.segments?.count ?? 0, 0, "one timestamped segment per token")
+        XCTAssertEqual(result.segments?.first?.startSeconds ?? -1, 0, accuracy: 1e-9)
+    }
+
+    // MARK: RF-DETR instance segmentation
+
+    // The mask head on the RELEASED `Roboflow/rf-detr-seg-nano`, fed the reference's own preprocessed
+    // pixels. The detector underneath is already at parity, so the seams that matter are the projector
+    // output the head reads, each decoder layer's queries, and each layer's masks; the reference's
+    // prediction is the last layer's.
+    func testRFDetrSegmentationMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RF_DETR_SEG"], let weights = config["IK_VAL_RF_DETR_SEG"],
+              FileManager.default.fileExists(atPath: weights) else {
+            throw XCTSkip("set IK_PARITY_RF_DETR_SEG + IK_VAL_RF_DETR_SEG "
+                          + "(run_reference.py rf_detr_seg --checkpoint <snapshot> --size 312)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXRFDetrSegmentationNet(.segNano)
+        try NFKMLXRFDetr.loadWeights(into: net, from: URL(fileURLWithPath: weights))
+        net.train(false)
+
+        let pixels = try XCTUnwrap(arrays["pixels"]).expandedDimensions(axis: 0)
+        let out = net(pixels)
+        eval(out.masks, out.logits)
+
+        func check(_ label: String, _ mine: MLXArray, _ reference: MLXArray) {
+            XCTAssertEqual(mine.shape, reference.shape, "rf-detr seg \(label) shape")
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY rf-detr-seg: \(label) cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "rf-detr seg \(label) matches the reference")
+        }
+
+        for layer in 0 ..< out.masksPerLayer.count {
+            guard let reference = arrays["masks.\(layer)"] else { continue }
+            check("masks layer \(layer)", out.masksPerLayer[layer], reference)
+        }
+        check("logits", out.logits, try XCTUnwrap(arrays["logits"]))
+        check("boxes", out.boxes, try XCTUnwrap(arrays["pred_boxes"]))
+    }
+
     // MARK: Chatterbox — voice encoder + S3 speech tokenizer
 
     func testChatterboxVoiceEncoderAndTokenizerMatchTheReference() throws {
@@ -2270,6 +3779,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(conditionals.t3.speakerEmbedding.shape, [256])
         XCTAssertEqual(conditionals.s3gen.mel.dim(0) / 2, conditionals.s3gen.tokens.count, "the prompt codes are trimmed to half the mel frames")
 
+        // The flow's initial noise and the vocoder's source noise are drawn from MLX's global random
+        // state, so an unseeded run synthesizes different audio each time and the transcription below
+        // wobbles on a word. T3's own sampler already runs from a fixed seed.
+        NFKMLXRandom.seed(20260921)
         let text = "The quick brown fox jumps over the lazy dog."
         let samples = tts.synthesize(text: text, conditionals: conditionals)
         let seconds = Double(samples.count) / Double(tts.sampleRate)
@@ -2298,6 +3811,130 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(builtin.s3gen.mel.shape, [2 * builtin.s3gen.tokens.count, 80])
         XCTAssertEqual(builtin.s3gen.xVector.shape, [192])
         XCTAssertEqual(builtin.t3.exaggeration, 0.5, accuracy: 1e-6)
+    }
+
+    // The MULTILINGUAL release through the same entry. The two T3 checkpoints carry the same 292
+    // tensors and differ only in the text embedding's width (704 English against 2454 multilingual),
+    // so the release's own file sizes the model, and `s3gen_v3` drops a `_mel_filters` buffer this
+    // package computes rather than reads. A strict apply proves both.
+    func testChatterboxMultilingualReleaseLoadsAndSpeaks() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_CHATTERBOX_MTL"], let audio = config["IK_VAL_AUDIO"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_CHATTERBOX_MTL + IK_VAL_AUDIO")
+        }
+        let tts = try NFKMLXChatterboxTTS(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(tts.t3.configuration.textVocabulary, 2454,
+                       "the multilingual checkpoint sizes the text embedding, not a constant")
+        // The tokenizer has to be the one that release was trained with. Loading a release beside a
+        // tokenizer that stops short still synthesizes audio, so only the widths catch it.
+        XCTAssertEqual(tts.textTokenizer.vocabularySize, tts.t3.configuration.textVocabulary,
+                       "the tokenizer's table and the checkpoint's text embedding are the same width")
+
+        let voice = try XCTUnwrap(NFKMLXWaveFile.read(try Data(contentsOf: URL(fileURLWithPath: audio))))
+        let conditionals = tts.conditionals(voice: voice.samples, sampleRate: voice.sampleRate)
+        NFKMLXRandom.seed(20260921)
+        let samples = tts.synthesize(text: "The quick brown fox jumps over the lazy dog.",
+                                     conditionals: conditionals)
+        let seconds = Double(samples.count) / Double(tts.sampleRate)
+        let rms = sqrt(samples.reduce(0) { $0 + Double($1 * $1) } / Double(max(samples.count, 1)))
+        print("VALIDATION chatterbox-multilingual: \(tts.t3.configuration.textVocabulary) text tokens, "
+              + String(format: "%.2f s, rms %.4f", seconds, rms))
+        XCTAssertGreaterThan(seconds, 1.5)
+        XCTAssertLessThan(seconds, 10)
+        XCTAssertGreaterThan(rms, 0.01, "the clip is signal, not silence")
+    }
+
+    // The multilingual TEXT layer against the reference's own `MTLTokenizer`: lowercase, NFKD, the
+    // language's rewriting, the bracketed language tag, and the byte-pair encoder, for one line per
+    // language. Chinese Cangjie encoding and Korean Jamo decomposition are ported and measured here.
+    // The reference reaches for an optional package for ja, zh segmentation, he and ru, and passes the
+    // text through when one is absent; the port implements that fallback, and the record is taken with
+    // the two installed ones disabled so it measures the same text layer.
+    func testChatterboxMultilingualTokensMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CHATTERBOX_MTL_TOKENS"],
+              let directory = config["IK_VAL_CHATTERBOX_MTL"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_PARITY_CHATTERBOX_MTL_TOKENS + IK_VAL_CHATTERBOX_MTL "
+                          + "(run_reference.py chatterbox_mtl_tokens --checkpoint <release>)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokenizer = try NFKMLXChatterboxTextTokenizer(
+            url: URL(fileURLWithPath: directory)
+                .appendingPathComponent("grapheme_mtl_merged_expanded_v1.json"))
+        let cases: [(String, String)] = [
+            ("en", "The quick brown fox jumps over the lazy dog."),
+            ("fr", "Le renard brun rapide saute par-dessus le chien paresseux."),
+            ("de", "Gr\u{00f6}\u{00df}e und Wei\u{00df}, sagte er."),
+            ("es", "El veloz zorro marr\u{00f3}n salta sobre el perro perezoso."),
+            ("ru", "\u{0411}\u{044b}\u{0441}\u{0442}\u{0440}\u{0430}\u{044f} \u{043b}\u{0438}\u{0441}\u{0430}."),
+            ("he", "\u{05e9}\u{05dc}\u{05d5}\u{05dd} \u{05e2}\u{05d5}\u{05dc}\u{05dd}."),
+            ("ko", "\u{c548}\u{b155}\u{d558}\u{c138}\u{c694} \u{c138}\u{acc4}."),
+            ("ja", "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{4e16}\u{754c}\u{3002}"),
+            ("zh", "\u{5feb}\u{901f}\u{7684}\u{68d5}\u{8272}\u{72d0}\u{72f8}\u{3002}")
+        ]
+        var report = [String]()
+        for (language, text) in cases {
+            let reference = try XCTUnwrap(arrays["tokens.\(language)"]).asArray(Int32.self).map(Int.init)
+            let mine = tokenizer.encode(NFKMLXChatterboxTextTokenizer.normalizedPunctuation(text),
+                                        language: language)
+            XCTAssertEqual(mine, reference, "\(language) tokenizes as the reference does")
+            report.append("\(language) \(mine == reference ? "exact" : "DIFFERS") (\(reference.count))")
+        }
+        print("VALIDATION PARITY chatterbox-mtl-tokens: " + report.joined(separator: ", "))
+    }
+
+    // The MULTILINGUAL T3 on the released `t3_mtl23ls_v3.safetensors`, teacher-forced over a fixed
+    // speech prefix so nothing is sampled. The graph is the English T3's; only the text embedding's
+    // width differs, so this measures the release rather than the architecture.
+    func testChatterboxMultilingualT3MatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CHATTERBOX_MTL_T3"], let directory = config["IK_VAL_CHATTERBOX_MTL"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_PARITY_CHATTERBOX_MTL_T3 + IK_VAL_CHATTERBOX_MTL "
+                          + "(run_reference.py chatterbox_mtl_t3 --checkpoint <release>)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        let referenceText = try XCTUnwrap(arrays["text_tokens"]).asArray(Int32.self).map(Int.init)
+
+        // The tokenizer reproduces the reference ids for the tagged line, start and stop included.
+        let tokenizer = try NFKMLXChatterboxTextTokenizer(
+            url: release.appendingPathComponent("grapheme_mtl_merged_expanded_v1.json"))
+        let mineText = tokenizer.encodeForSynthesis(
+            NFKMLXChatterboxTextTokenizer.normalizedPunctuation("The quick brown fox jumps over the lazy dog."),
+            language: "en")
+        XCTAssertEqual(mineText, referenceText, "the multilingual T3 text tokens match the reference")
+
+        let net = try NFKMLXChatterbox.makeT3(from: release.appendingPathComponent("t3_mtl23ls_v3.safetensors"))
+        XCTAssertEqual(net.configuration.textVocabulary, 2454)
+        let condition = NFKMLXT3Condition(
+            speakerEmbedding: try XCTUnwrap(arrays["speaker_emb"]),
+            promptTokens: try XCTUnwrap(arrays["cond_tokens"]).asArray(Int32.self).map(Int.init),
+            exaggeration: 0.5)
+        let conditionEmbedding = net.conditionEmbedding(condition)
+        let embeddings = net.inputEmbeddings(condition: conditionEmbedding, textTokens: referenceText,
+                                             guidance: true)
+
+        let forced = try XCTUnwrap(arrays["forced"]).asArray(Int32.self).map(Int.init)
+        let width = embeddings.dim(2)
+        // `inputEmbeddings` already carries the start speech token at position 0, which is the first
+        // entry of the reference's forced sequence, so only the rest is appended.
+        var pieces = [embeddings]
+        for (index, token) in forced.dropFirst().enumerated() {
+            pieces.append(broadcast(net.speechTokenEmbedding(token, position: index + 1), to: [2, 1, width]))
+        }
+        let logits = net.speechLogits(embeddings: concatenated(pieces, axis: 1))
+        eval(logits)
+        let reference = try XCTUnwrap(arrays["output"])
+        XCTAssertEqual(logits.shape, reference.shape, "the teacher-forced logits have the reference's shape")
+        for row in 0 ..< 2 {
+            let similarity = cosine(logits[row].reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference[row].reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY chatterbox-mtl-t3: row \(row) logit cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.9999, "the multilingual T3 matches the reference")
+        }
     }
 
     func testChatterboxBackendSpeaksTheBuiltinVoice() throws {
@@ -3616,7 +5253,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             routedExpertCount: 8, activatedExpertCount: 2,
             expertIntermediateSize: 32, routeScale: 1.5, swigluLimit: 10,
             hashLayerCount: 1, compressRatios: [0, 0, 0, 0])   // every layer sliding, like the oracle
-        let net = NFKMLXDeepSeek.makeNet(geometry)
+        let net = try NFKMLXDeepSeek.makeNet(geometry)
         let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
             key.hasPrefix("w::")
                 ? (NFKMLXDeepSeek.moduleKey(forRelease: String(key.dropFirst(3))), value) : nil
@@ -3790,7 +5427,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         let positional = prompt.positionEncoding.grid(grid, grid)
         let dense = prompt.dense(grid: grid)
-        let (masks, iou, objectScore) = decoder(features: features, positional: positional,
+        let (masks, iou, objectScore, _) = decoder(features: features, positional: positional,
                                                 sparse: sparse, dense: dense,
                                                 highResolution: [levels[0], levels[1]])
         eval(masks, iou, objectScore)
@@ -5081,6 +6718,132 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                        referenceIrrelevant, "the irrelevant pair tokenizes to the reference's ids")
     }
 
+    // MARK: Laya (typed decisions)
+
+    private static let layaState =
+        "Subject: Payouts failing for three days. Hello, my weekly payouts to my bank account have failed "
+        + "three times in a row since Monday with the message 'transfer rejected by the receiving bank'. "
+        + "I have not changed my account details, the account is open, and other merchants pay into it "
+        + "without any problem. Support chat told me to wait 48 hours and it has now been 72. I have "
+        + "staff to pay on Friday and need this resolved today. Account id 88213, plan Pro, region EU. "
+        + "Please escalate this to someone who can actually look at the transfer logs. Thanks, Dana."
+    private static let layaRecord: [String: Any] = [
+        "account": 88213, "body": "Where is my refund? It was promised in 5 business days.", "plan": "Pro",
+        "priority": 2.5, "tags": ["billing", "refund"], "vip": true, "note": NSNull(),
+    ]
+    /// The oracle's four questions, in its order: a described choice, an undescribed six-way choice
+    /// (the `choice:6-10` temperature bucket), a three-level score, and a noul with meanings.
+    private static let layaQuestions: [NFKDecisionQuestion] = [
+        NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team should handle this?",
+                                           options: ["billing", "technical", "sales"],
+                                           descriptions: ["billing": "Payments, invoicing, refunds",
+                                                          "technical": "Bugs, outages, integrations"]),
+        NFKDecisionQuestion.choiceQuestion(withInstructions: "What is the message mainly about?",
+                                           options: ["payouts", "refunds", "login", "pricing", "bug report", "other"]),
+        NFKDecisionQuestion.scoreQuestion(withInstructions: "How severe is the problem?", levels: ["low", "medium", "high"]),
+        NFKDecisionQuestion.noulQuestion(withInstructions: "The customer needs an answer today.",
+                                         trueMeaning: "the customer states or implies a deadline within a day",
+                                         falseMeaning: "no deadline is stated or implied"),
+    ]
+
+    /// One Laya variant against the release's own inference code: the prompt token for token, the raw
+    /// marker logits over the reference's ids, the calibrated probabilities the API answers with, the
+    /// act probability, the record state's serialization byte for byte, and for the first question the
+    /// encoder's per-layer states and the decision head's output through the isolation harness.
+    private func layaParity(name: String, recordKey: String, directory: URL) throws {
+        guard let path = config[recordKey], let root = config["IK_VAL_LAYA"] else {
+            throw XCTSkip("set \(recordKey) and IK_VAL_LAYA")
+        }
+        _ = root
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let laya = try NFKMLXLaya.laya(directoryURL: directory)
+
+        let serialized = NFKMLXLayaPrompt.serialize(state: Self.layaRecord)
+        XCTAssertEqual(Array(serialized.utf8).map { Int32($0) },
+                       try XCTUnwrap(arrays["record_bytes"]).asArray(Int32.self), "the record serializes as the reference writes it")
+
+        var worstLogitCosine = 1.0
+        var worstProbabilityGap: Float = 0
+        for (prefix, state) in [("q", Self.layaState as Any), ("d", Self.layaRecord as Any)] {
+            for (index, question) in Self.layaQuestions.enumerated() {
+                let key = "\(prefix)\(index)"
+                let referenceIds = try XCTUnwrap(arrays["\(key).ids"]).asArray(Int32.self).map(Int.init)
+                let referenceMarkers = try XCTUnwrap(arrays["\(key).markers"]).asArray(Int32.self).map(Int.init)
+                let prompt = try XCTUnwrap(laya.prompt(state: state, question: question))
+                XCTAssertEqual(prompt.tokens, referenceIds, "\(name) \(key): the prompt tokenizes to the reference's ids")
+                XCTAssertEqual(prompt.markers, referenceMarkers, "\(name) \(key): the markers sit where the reference puts them")
+
+                let (logits, act) = laya.net.forward(tokens: referenceIds, markers: referenceMarkers, type: question.type)
+                eval(logits, act)
+                let mine = logits.asArray(Float.self).map(Double.init)
+                let theirs = try XCTUnwrap(arrays["\(key).logits"]).asArray(Float.self).map(Double.init)
+                let similarity = cosine(mine, theirs)
+                worstLogitCosine = min(worstLogitCosine, similarity)
+                let gap = zip(mine, theirs).map { abs($0 - $1) }.max() ?? 0
+                XCTAssertGreaterThan(similarity, 0.9999, "\(name) \(key): logits")
+                XCTAssertLessThan(gap, 2e-2, "\(name) \(key): the largest logit difference")
+
+                let distribution = laya.distribution(state: state, question: question)
+                let referenceProbabilities = try XCTUnwrap(arrays["\(key).probabilities"]).asArray(Float.self)
+                XCTAssertEqual(distribution.probabilities.count, referenceProbabilities.count)
+                for (a, b) in zip(distribution.probabilities, referenceProbabilities) {
+                    worstProbabilityGap = max(worstProbabilityGap, abs(a - b))
+                    XCTAssertEqual(a, b, accuracy: 2e-3, "\(name) \(key): a calibrated probability")
+                }
+                let referenceAct = try XCTUnwrap(arrays["\(key).act_probability"]).asArray(Float.self)[0]
+                XCTAssertEqual(distribution.actProbability, referenceAct, accuracy: 2e-3, "\(name) \(key): the act probability")
+
+                if prefix == "q", index == 0 {
+                    let states = laya.net.encoder.layerStates(MLXArray(referenceIds.map(Int32.init)).reshaped([1, referenceIds.count]))
+                    eval(states)
+                    var firstBad: Int?
+                    var report = [String]()
+                    for (layer, state) in states.enumerated() {
+                        guard let reference = arrays["hidden.\(layer)"] else { break }
+                        let similarity = cosine(state[0].reshaped([-1]).asArray(Float.self).map(Double.init),
+                                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+                        report.append(String(format: "  %-16s cosine %.10f", ((layer == 0 ? "embedding" : "after layer \(layer - 1)") as NSString).utf8String!, similarity))
+                        if similarity < 0.9999 && firstBad == nil { firstBad = layer }
+                    }
+                    let headOut = laya.net.headStates(tokens: referenceIds, type: question.type)[0]
+                    eval(headOut)
+                    let headSimilarity = cosine(headOut.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                                try XCTUnwrap(arrays["head_out"]).reshaped([-1]).asArray(Float.self).map(Double.init))
+                    report.append(String(format: "  %-16s cosine %.10f", ("decision head" as NSString).utf8String!, headSimilarity))
+                    print("VALIDATION isolation \(name):\n" + report.joined(separator: "\n"))
+                    XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+                    XCTAssertGreaterThan(headSimilarity, 0.9999, "the decision head's output")
+                }
+            }
+        }
+        print("VALIDATION PARITY \(name): worst logit cosine \(worstLogitCosine), worst probability gap \(worstProbabilityGap)")
+
+        // The public API over real weights: the choice the reference picked is the one answered.
+        let answers = laya.decide(state: Self.layaState, questions: ["department": Self.layaQuestions[0], "urgent": Self.layaQuestions[3]])
+        let referenceChoice = Int(try XCTUnwrap(arrays["q0.choice"]).asArray(Int32.self)[0])
+        XCTAssertEqual(answers["department"]?.choice, Self.layaQuestions[0].options[referenceChoice])
+        XCTAssertEqual(answers["urgent"]?.probability ?? -1, Double(try XCTUnwrap(arrays["q3.noul"]).asArray(Float.self)[0]), accuracy: 2e-3)
+    }
+
+    func testLayaMatchesTheReference() throws {
+        guard let root = config["IK_VAL_LAYA"] else { throw XCTSkip("set IK_VAL_LAYA") }
+        try layaParity(name: "laya", recordKey: "IK_PARITY_LAYA", directory: URL(fileURLWithPath: root))
+    }
+
+    func testLayaTypedDecisionsMatchesTheReference() throws {
+        guard let root = config["IK_VAL_LAYA"] else { throw XCTSkip("set IK_VAL_LAYA") }
+        try layaParity(name: "laya-typed-decisions", recordKey: "IK_PARITY_LAYA_TYPED_DECISIONS",
+                       directory: URL(fileURLWithPath: root).appendingPathComponent("typed-decisions"))
+    }
+
+    // The multilingual variant is mmBERT-base: a local rotary base equal to the global one, and Gemma's
+    // tokenizer under a Metaspace pre-tokenizer, which is what this covers beyond the other two.
+    func testLayaMultilingualMatchesTheReference() throws {
+        guard let root = config["IK_VAL_LAYA"] else { throw XCTSkip("set IK_VAL_LAYA") }
+        try layaParity(name: "laya-multilingual", recordKey: "IK_PARITY_LAYA_MULTILINGUAL",
+                       directory: URL(fileURLWithPath: root).appendingPathComponent("multilingual"))
+    }
+
     // MARK: SmolVLM2 (vision-language)
 
     // The whole VLM against transformers' own SmolVLMForConditionalGeneration on the released 500M
@@ -5277,7 +7040,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
     // The Qwen3-VL image processor's layout: a 256×256 image smart-resizes to itself (a multiple of
     // patch·merge = 32), giving a 1×16×16 grid of 256 patches, each a 1536-wide flattened block. The
-    // pixel values are approximate (CoreGraphics resize), but the grid and layout are the reference's.
+    // pixel values are measured against the reference in `testEveryFamilysPreprocessingMatchesTheReference`.
     func testQwen3VLImageProcessorLayout() throws {
         try requireMLXRuntime()
         let processor = NFKMLXQwen3VLImageProcessor()
@@ -5304,6 +7067,469 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                   maxTokens: 8)
         print("VALIDATION smoke qwen3vl-answer: \"\(answer)\"")
         XCTAssertFalse(answer.isEmpty, "the consumer path generates a reply")
+    }
+
+    // MARK: Qwen-Image 2.1
+
+    // The Qwen-Image 2.1 transformer at a tiny random configuration, against diffusers' own
+    // QwenImage21Transformer2DModel. The sequence carries one condition image inside the caption and a
+    // target image after it, and the caption's last slot is padding, so the block-causal mask, the
+    // `causal_condition` timestep split, the centered three-axis rotary, and the key-validity mask are
+    // all exercised rather than left inert.
+    func testQwenImageTransformerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE (run_reference.py qwenimage21)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXQwenImage.makeNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            return NFKMLXQwenImage.remapReferenceKey(name).map { ($0, value) }
+        }
+        try NFKMLXWeights.apply(weights, to: net, verifyShapes: true)
+
+        let imageMask = try XCTUnwrap(arrays["img_mask"]).asArray(Int32.self).map { $0 != 0 }
+        let encoderMask = try XCTUnwrap(arrays["encoder_mask"]).asArray(Int32.self).map { $0 != 0 }
+        let shapes = [(frame: 1, height: 2, width: 2), (frame: 1, height: 4, width: 4)]
+
+        // The token metadata and the rotary table are separate seams, so a divergence localizes.
+        let (padMask, imageIds, targetMask) = NFKMLXQwenImageNet.tokenMetadata(imageMask: imageMask,
+                                                                              imageShapes: shapes)
+        XCTAssertEqual(padMask.map { $0 ? Int32(1) : 0 },
+                       try XCTUnwrap(arrays["image_pad_mask"]).asArray(Int32.self))
+        XCTAssertEqual(imageIds.map { Int32($0) },
+                       try XCTUnwrap(arrays["image_ids"]).asArray(Int32.self))
+        XCTAssertEqual(targetMask.map { $0 ? Int32(1) : 0 },
+                       try XCTUnwrap(arrays["target_mask"]).asArray(Int32.self))
+
+        let rope = NFKQwenImageRope(theta: NFKMLXQwenImageConfiguration.tiny.ropeTheta,
+                                    axesDimensions: NFKMLXQwenImageConfiguration.tiny.axesDimensionsRope)
+        let (cosineTable, sineTable) = rope.table(NFKQwenImageRope.positions(imageShapes: shapes,
+                                                                             imagePadMask: padMask))
+        eval(cosineTable, sineTable)
+        let realSimilarity = cosine(cosineTable.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    try XCTUnwrap(arrays["rotary_real"]).reshaped([-1])
+                                        .asArray(Float.self).map(Double.init))
+        let imaginarySimilarity = cosine(sineTable.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                         try XCTUnwrap(arrays["rotary_imag"]).reshaped([-1])
+                                             .asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21: rotary cos \(realSimilarity), sin \(imaginarySimilarity)")
+        XCTAssertGreaterThan(realSimilarity, 0.9999999)
+        XCTAssertGreaterThan(imaginarySimilarity, 0.9999999)
+
+        let output = net(latents: try XCTUnwrap(arrays["latents"]),
+                         encoderHidden: try XCTUnwrap(arrays["encoder_hidden_states"]),
+                         timestep: try XCTUnwrap(arrays["timestep"]).item(Float.self),
+                         imageShapes: shapes, imageMask: imageMask, encoderMask: encoderMask)
+        eval(output)
+        let reference = try XCTUnwrap(arrays["output"])
+        XCTAssertEqual(output.shape, reference.shape)
+        let similarity = cosine(output.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21: output cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.99999, "the transformer matches the reference")
+    }
+
+    // The Qwen-Image 2.1 transformer on the RELEASED 7.1B weights, both sides at the bfloat16 the
+    // release ships in — float32 would be 28 GB per side, which this machine does not hold. The
+    // caption features are random, so this measures the transformer in isolation on real weights; the
+    // tiny-configuration test above is where the arithmetic is measured exactly.
+    func testQwenImageTransformerMatchesTheReferenceOnReleasedWeights() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE_REAL"], let release = config["IK_VAL_QWEN_IMAGE"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE_REAL and IK_VAL_QWEN_IMAGE")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release).appendingPathComponent("transformer")
+        let configuration = try NFKMLXQwenImage.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXQwenImage.makeNet(configuration)
+        try NFKMLXQwenImage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+
+        let imageMask = try XCTUnwrap(arrays["img_mask"]).asArray(Int32.self).map { $0 != 0 }
+        let encoderMask = try XCTUnwrap(arrays["encoder_mask"]).asArray(Int32.self).map { $0 != 0 }
+        let shapes = [(frame: 1, height: 2, width: 2), (frame: 1, height: 8, width: 8)]
+        var mine = [String: MLXArray]()
+        let output = net(latents: try XCTUnwrap(arrays["latents"]).asType(.bfloat16),
+                         encoderHidden: try XCTUnwrap(arrays["encoder_hidden_states"]).asType(.bfloat16),
+                         timestep: try XCTUnwrap(arrays["timestep"]).item(Float.self),
+                         imageShapes: shapes, imageMask: imageMask, encoderMask: encoderMask,
+                         observer: { name, value in mine[name] = value })
+        eval(output)
+        for (key, reference) in arrays.filter({ $0.key.hasPrefix("seam::") }).sorted(by: { $0.key < $1.key }) {
+            guard let ours = mine[String(key.dropFirst("seam::".count))] else { continue }
+            eval(ours)
+            let seam = cosine(ours.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                              reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM qwenimage21-real \(key.dropFirst("seam::".count)): cosine \(seam)")
+        }
+        // The final adaptive norm subtracts each row's mean, and the residual stream's mean is most of
+        // its magnitude, so whatever bfloat16 drift the blocks accumulated is amplified by removing it.
+        // Normalizing BOTH sides' last block output shows that amplification on its own.
+        if let theirs = arrays["seam::block_31"], let ours = mine["block_31"] {
+            func centered(_ x: MLXArray) -> [Double] {
+                let wide = x.asType(.float32)
+                let value = wide - wide.mean(axis: -1, keepDims: true)
+                let scaled = value * rsqrt(value.square().mean(axis: -1, keepDims: true) + 1e-6)
+                eval(scaled)
+                return scaled.reshaped([-1]).asArray(Float.self).map(Double.init)
+            }
+            print("SEAM qwenimage21-real block_31 normalized: cosine \(cosine(centered(ours), centered(theirs)))")
+        }
+
+        let reference = try XCTUnwrap(arrays["output"])
+        XCTAssertEqual(output.shape, reference.shape)
+        let similarity = cosine(output.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21-real: output cosine \(similarity)")
+        // 0.998 rather than the usual 0.999, and the seam above is why: at bfloat16 the residual
+        // stream's mean carries most of its magnitude, so the final adaptive norm's mean subtraction
+        // amplifies the accumulated rounding by an order of magnitude. The same amplification appears
+        // when both sides' own last-block output is normalized, which is a property of the precision
+        // rather than of either implementation. The exact arithmetic is the tiny float32 test.
+        XCTAssertGreaterThan(similarity, 0.998, "the released transformer matches at its own precision")
+    }
+
+    // Qwen-Image 2.1's sampler schedule against diffusers' own FlowMatchEulerDiscreteScheduler at the
+    // release's config: dynamic shifting over the 256…8192 range and the 0.02 terminal stretch, at
+    // three step counts and two sequence lengths. The pipeline passes its own sigma ramp, which is why
+    // the configuration carries `rampEndsAtStepFraction`.
+    func testQwenImageSchedulerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE_SCHEDULER"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE_SCHEDULER (run_reference.py qwenimage21_scheduler)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        for steps in [4, 20, 50] {
+            for sequence in [1024, 4096] {
+                var scheduler = NFKMLXFlowMatchScheduler(.qwenImage21)
+                scheduler.setTimesteps(steps, sequenceLength: sequence)
+                let referenceSigmas = try XCTUnwrap(arrays["sigmas_\(steps)_\(sequence)"]).asArray(Float.self)
+                let referenceTimesteps = try XCTUnwrap(arrays["timesteps_\(steps)_\(sequence)"]).asArray(Float.self)
+                XCTAssertEqual(scheduler.sigmas.count, referenceSigmas.count)
+                var worstSigma = Float(0), worstTimestep = Float(0)
+                for index in 0 ..< referenceSigmas.count {
+                    worstSigma = Swift.max(worstSigma, abs(scheduler.sigmas[index] - referenceSigmas[index]))
+                }
+                for index in 0 ..< referenceTimesteps.count {
+                    worstTimestep = Swift.max(worstTimestep,
+                                              abs(scheduler.timesteps[index] - referenceTimesteps[index]))
+                }
+                print("VALIDATION PARITY qwenimage21-scheduler \(steps) steps at \(sequence): "
+                      + "worst sigma \(worstSigma), worst timestep \(worstTimestep)")
+                XCTAssertLessThan(worstSigma, 1e-6, "the sigma schedule matches the reference")
+                XCTAssertLessThan(worstTimestep, 1e-3, "the timesteps match the reference")
+            }
+        }
+    }
+
+    // Qwen-Image 2.1's autoencoder on the released weights, against diffusers' own
+    // AutoencoderKLQwenImage21. The network is the Wan 2.2 residual VAE under `imageOnly`, so this
+    // measures the single-frame specialization and the 4-D convolution layout at once.
+    func testQwenImageVAEMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE_VAE"], let release = config["IK_VAL_QWEN_IMAGE"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE_VAE and IK_VAL_QWEN_IMAGE")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release).appendingPathComponent("vae")
+        let net = try NFKMLXQwenImageVAE.net(directoryURL: directory)
+        let (mean, standardDeviation) = try NFKMLXQwenImageVAE.latentStatistics(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+
+        let frame = try XCTUnwrap(arrays["frame"]).expandedDimensions(axis: 0)      // [1, T, H, W, C]
+        let moments = net.encodeMoments(frame)
+        eval(moments)
+        let zDim = net.configuration.zDim
+        let referenceMoments = try XCTUnwrap(arrays["moments"]).expandedDimensions(axis: 0)
+        XCTAssertEqual(moments.shape, referenceMoments.shape)
+        // The reference's posterior clamps its log-variance, so the measured half is the mean.
+        let mineMean = moments[0..., 0..., 0..., 0..., 0 ..< zDim]
+        let theirsMean = referenceMoments[0..., 0..., 0..., 0..., 0 ..< zDim]
+        let momentSimilarity = cosine(mineMean.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      theirsMean.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21-vae: encoder mean cosine \(momentSimilarity)")
+        XCTAssertGreaterThan(momentSimilarity, 0.9999, "the encoder matches the reference")
+
+        let latent = (mineMean - mean) / standardDeviation
+        eval(latent)
+        let referenceLatent = try XCTUnwrap(arrays["latent"]).expandedDimensions(axis: 0)
+        let latentSimilarity = cosine(latent.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceLatent.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21-vae: normalized latent cosine \(latentSimilarity)")
+        XCTAssertGreaterThan(latentSimilarity, 0.9999, "the latent normalization matches the reference")
+
+        let decoded = net.decode(referenceLatent * standardDeviation + mean)
+        eval(decoded)
+        let referenceDecoded = try XCTUnwrap(arrays["decoded"]).expandedDimensions(axis: 0)
+        XCTAssertEqual(decoded.shape, referenceDecoded.shape)
+        let decodeSimilarity = cosine(decoded.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      referenceDecoded.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21-vae: decoded cosine \(decodeSimilarity)")
+        XCTAssertGreaterThan(decodeSimilarity, 0.9999, "the decoder matches the reference")
+    }
+
+    // The Qwen-Image 2.1 pipeline glue against diffusers' own QwenImage21Pipeline, at tiny random
+    // models: the latent packing, the image mask the transformer reads, the sampling loop, the slice
+    // that takes the target image's rows out of the joint sequence, and the latent normalization
+    // across the transformer and the autoencoder. The reference is run twice, with and without the
+    // prefix KV cache it uses by default, and this port's single path is held to both — the cache is
+    // an optimization over `causal_condition`, so the two must agree.
+    func testQwenImagePipelineMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE_PIPELINE"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE_PIPELINE (run_reference.py qwenimage21_pipeline)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+
+        var configuration = NFKMLXQwenImageConfiguration.tiny
+        configuration.inChannels = 4
+        configuration.outChannels = 4
+        let transformer = NFKMLXQwenImage.makeNet(configuration)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("t::") else { return nil }
+            return NFKMLXQwenImage.remapReferenceKey(String(key.dropFirst(3))).map { ($0, value) }
+        }, to: transformer, verifyShapes: true)
+
+        let vae = NFKMLXQwenImageVAE.makeNet(.qwenImage21Tiny)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("v::") else { return nil }
+            return NFKMLXQwenImageVAE.adapted(key: String(key.dropFirst(3)), value: value)
+        }, to: vae, verifyShapes: true)
+
+        let mean = MLXArray([Float(0.1), -0.2, 0.3, -0.4]).reshaped([1, 1, 1, 1, 4])
+        let standardDeviation = MLXArray([Float(1.1), 0.9, 1.3, 0.8]).reshaped([1, 1, 1, 1, 4])
+        let pipeline = NFKMLXQwenImagePipeline(transformer: transformer, vae: vae, latentMean: mean,
+                                               latentStandardDeviation: standardDeviation)
+
+        let embeddings = try XCTUnwrap(arrays["prompt_embeds"])
+        let latents = try XCTUnwrap(arrays["latents"])
+        let denoised = pipeline.denoise(promptEmbeddings: embeddings, height: 64, width: 64, steps: 4,
+                                        latents: latents)
+        eval(denoised)
+        for variant in ["uncached", "cached"] {
+            let reference = try XCTUnwrap(arrays["final_latents_\(variant)"])
+            XCTAssertEqual(denoised.shape, reference.shape)
+            let similarity = cosine(denoised.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("VALIDATION PARITY qwenimage21-pipeline: \(variant) latents cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, 0.99999, "the loop matches the reference (\(variant))")
+        }
+
+        // The reference postprocesses to 0…1, which is the decode rescaled.
+        let image = pipeline.decode(denoised, height: 4, width: 4)
+        let scaled = clip(image / 2 + 0.5, min: 0, max: 1)
+        eval(scaled)
+        let referenceImage = try XCTUnwrap(arrays["image_uncached"])
+        XCTAssertEqual(scaled.shape, referenceImage.shape)
+        let imageSimilarity = cosine(scaled.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     referenceImage.reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwenimage21-pipeline: image cosine \(imageSimilarity)")
+        XCTAssertGreaterThan(imageSimilarity, 0.99999, "the decode matches the reference")
+    }
+
+    // Qwen-Image 2.1's prompt encoding on the released 8B text encoder, at the bfloat16 it ships in.
+    // Three things are measured together: the raw prompt template tokenizes to the reference's ids,
+    // the system turn's dropped length is the same, and the features the transformer reads — the last
+    // decoder layer BEFORE its final normalization — match.
+    func testQwenImagePromptEncodingMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN_IMAGE_TEXT"], let release = config["IK_VAL_QWEN_IMAGE"] else {
+            throw XCTSkip("set IK_PARITY_QWEN_IMAGE_TEXT and IK_VAL_QWEN_IMAGE")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let root = URL(fileURLWithPath: release)
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(
+            inDirectory: root.appendingPathComponent("processor")))
+
+        let prompt = "A calico cat asleep on a stack of books, warm afternoon light"
+        let ids = tokenizer.encode(NFKMLXQwenImagePipeline.promptText(prompt)).map { Int32($0.intValue) }
+        XCTAssertEqual(ids, try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self),
+                       "the prompt template tokenizes to the reference's ids")
+        XCTAssertEqual(NFKMLXQwenImagePipeline.systemTokenCount(tokenizer: tokenizer),
+                       Int(try XCTUnwrap(arrays["drop_index"]).asArray(Int32.self)[0]),
+                       "the system turn's dropped length is the reference's")
+
+        let decoder = try NFKMLXQwen3VL.decoder(
+            directoryURL: root.appendingPathComponent("text_encoder"), precision: .checkpoint)
+        // Where a bfloat16 encoder's drift comes from: the per-layer states, against the reference's own.
+        let states = decoder.layerStates(MLXArray(ids).reshaped([1, ids.count]))
+        for index in [0, 1, 9, 18, 27, 30, 33, 34, 35] {
+            guard let theirs = arrays["seam::hidden_\(index)"], index < states.count else { continue }
+            let ours = states[index][0]
+            eval(ours)
+            let seam = cosine(ours.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                              theirs.reshaped([-1]).asArray(Float.self).map(Double.init))
+            // The features the pipeline keeps are the tokens after the system turn, and the system
+            // turn's states are the ones that carry the sequence's magnitude, so the same drift reads
+            // differently over the whole sequence and over the slice.
+            let drop = Int(try XCTUnwrap(arrays["drop_index"]).asArray(Int32.self)[0])
+            let sliced = cosine(ours[drop...].asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                theirs[drop...].reshaped([-1]).asArray(Float.self).map(Double.init))
+            let first = cosine(ours[drop].asType(.float32).asArray(Float.self).map(Double.init),
+                               theirs[drop].asArray(Float.self).map(Double.init))
+            let row: [Float] = theirs[drop].asArray(Float.self)
+            var square: Double = 0
+            for element in row { square += Double(element) * Double(element) }
+            print("SEAM qwenimage21-text hidden_\(index): cosine \(seam), after the system turn "
+                  + "\(sliced), its first token \(first) at norm \(Int(square.squareRoot()))")
+        }
+
+        // The two ways to reach the same pre-norm states: the multimodal path this pipeline uses, and
+        // the decoder's own rotary. For a text-only sequence they are the same arithmetic.
+        let tokens = MLXArray(ids).reshaped([1, ids.count])
+        let direct = decoder.hiddenStates(fromEmbeddings: decoder.embed(tokens), applyFinalNorm: false)[0]
+        if let theirs = arrays["seam::hidden_36"] {
+            eval(direct)
+            let full = cosine(direct.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                              theirs.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM qwenimage21-text direct pre-norm: cosine \(full)")
+        }
+
+        let embeddings = NFKMLXQwenImagePipeline.promptEmbeddings(prompt, decoder: decoder,
+                                                                  tokenizer: tokenizer)
+        eval(embeddings)
+        let reference = try XCTUnwrap(arrays["prompt_embeds"])
+        XCTAssertEqual(embeddings.shape, reference.shape)
+        let similarity = cosine(embeddings.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+        // Per token, to tell an even drift from a few bad positions.
+        var perToken = [String]()
+        for index in 0 ..< reference.dim(0) {
+            let ours = embeddings[index].asType(.float32).asArray(Float.self).map(Double.init)
+            let theirs = reference[index].asArray(Float.self).map(Double.init)
+            perToken.append(String(format: "%.5f", cosine(ours, theirs)))
+        }
+        print("SEAM qwenimage21-text per token: \(perToken.joined(separator: " "))")
+        var norms = [Int]()
+        for index in 0 ..< reference.dim(0) {
+            let value: [Float] = reference[index].asArray(Float.self)
+            var total: Double = 0
+            for element in value { total += Double(element) * Double(element) }
+            norms.append(Int(total.squareRoot()))
+        }
+        print("SEAM qwenimage21-text reference token norms: \(norms)")
+        print("VALIDATION PARITY qwenimage21-text: prompt features cosine \(similarity)")
+        // One token of the twenty-two is responsible for the aggregate, and the seam prints say why:
+        // that position carries a MASSIVE ACTIVATION, a residual of norm ~9390 from layer 18 through
+        // layer 34, which the last two layers cancel down to ~717. Bfloat16 keeps three decimal
+        // digits, so the rounding of the large residual survives the cancellation as a few percent of
+        // the small result. The encoder's agreement is what the per-token floor measures.
+        // The record is transformers at bf16 with eager attention, the rounding a bf16 load reproduces.
+        // The reference does not agree with itself more closely than 0.998 per token: its own SDPA run
+        // reads 0.99873 on token 1 and 0.97649 on token 0 against its eager run.
+        XCTAssertGreaterThan(similarity, 0.995, "the prompt features match at the released precision")
+        for index in 1 ..< reference.dim(0) {
+            let ours = embeddings[index].asType(.float32).asArray(Float.self).map(Double.init)
+            let theirs = reference[index].asArray(Float.self).map(Double.init)
+            XCTAssertGreaterThan(cosine(ours, theirs), 0.998,
+                                 "token \(index) matches at the released precision")
+        }
+    }
+
+    // MARK: Qwen3-VL retrieval (embedding and reranking)
+
+    // Qwen3-VL-Embedding on the released weights, end to end on the text path: the prompt this port
+    // builds tokenizes to the reference's exact ids (including the `<|endoftext|>` the release's
+    // tokenizer post-processor appends, which is the position that is pooled), and the pooled,
+    // normalized embedding matches the reference's.
+    func testQwen3VLEmbeddingMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN3_VL_EMBEDDING"],
+              let directory = config["IK_VAL_QWEN3_VL_EMBEDDING"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_VL_EMBEDDING and IK_VAL_QWEN3_VL_EMBEDDING")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let embedder = try NFKMLXQwen3VLEmbedder.embedder(directoryURL: URL(fileURLWithPath: directory))
+
+        let text = "A photograph of a red bicycle."
+        let recordedIds = try XCTUnwrap(arrays["text_prompt_ids"]).asArray(Int32.self).map(Int.init)
+        let ids = embedder.promptTokens(text: text)
+        print("VALIDATION PARITY qwen3vl-embedding: prompt ids \(ids == recordedIds ? "exact" : "\(ids) vs \(recordedIds)")")
+        XCTAssertEqual(ids, recordedIds, "the prompt tokenizes to the reference's ids")
+
+        let reference = try XCTUnwrap(arrays["text_embedding"]).asArray(Float.self).map(Double.init)
+        let mine = embedder.embedding(forText: text).map(\.doubleValue)
+        XCTAssertEqual(mine.count, reference.count)
+        let similarity = cosine(mine, reference)
+        print("VALIDATION PARITY qwen3vl-embedding: text embedding cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the text embedding matches the reference")
+
+        // The image path's pixel values come from the reference's resize, so the comparison starts at
+        // the vision tower and runs through the decoder to the pooled embedding.
+        let pixelValues = try XCTUnwrap(arrays["pixel_values"])
+        let grid = try XCTUnwrap(arrays["image_grid_thw"]).asArray(Int32.self).map(Int.init)
+        let visionNet = try NFKMLXQwen3VL.visionNet(directoryURL: URL(fileURLWithPath: directory))
+        let (visionOutput, deepstack) = visionNet(pixelValues, grid: (grid[0], grid[1], grid[2]))
+        eval(visionOutput)
+        let visionSimilarity = cosine(visionOutput.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                      try XCTUnwrap(arrays["vision_output"]).reshaped([-1])
+                                          .asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY qwen3vl-embedding: vision tower cosine \(visionSimilarity)")
+        XCTAssertGreaterThan(visionSimilarity, 0.9999, "the vision tower matches the reference")
+
+        let imageIds = try XCTUnwrap(arrays["image_prompt_ids"]).asArray(Int32.self).map(Int.init)
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: URL(fileURLWithPath: directory))
+        let hidden = NFKMLXQwen3VL.hiddenStates(decoder: decoder, inputIds: imageIds,
+                                                visionFeatures: visionOutput, deepstack: deepstack,
+                                                gridT: grid[0], gridH: grid[1], gridW: grid[2])
+        let pooled = NFKMLXQwen3VLEmbedder.pooled(hidden)
+        eval(pooled)
+        let imageSimilarity = cosine(pooled.asArray(Float.self).map(Double.init),
+                                     try XCTUnwrap(arrays["image_embedding"]).asArray(Float.self)
+                                         .map(Double.init))
+        print("VALIDATION PARITY qwen3vl-embedding: image embedding cosine \(imageSimilarity)")
+        XCTAssertGreaterThan(imageSimilarity, 0.9999, "the image embedding matches the reference")
+    }
+
+    // Qwen3-VL-Reranker on the released weights, end to end on the text path: the pair prompt
+    // tokenizes to the reference's ids, and the score — the sigmoid of the difference between the
+    // "yes" and "no" logits at the last position — matches the reference's to the printed precision.
+    func testQwen3VLRerankerMatchesTheReference() throws {
+        guard let path = config["IK_PARITY_QWEN3_VL_RERANKER"],
+              let directory = config["IK_VAL_QWEN3_VL_RERANKER"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_VL_RERANKER and IK_VAL_QWEN3_VL_RERANKER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let url = URL(fileURLWithPath: directory)
+        let reranker = try NFKMLXQwen3VLReranker.reranker(directoryURL: url)
+
+        // The release names the two scored tokens in its own `1_LogitScore` module.
+        let scored = try XCTUnwrap(arrays["scored_token_ids"]).asArray(Int32.self).map(Int.init)
+        let (yes, no) = NFKMLXQwen3VLReranker.scoredTokens(inDirectory: url)
+        XCTAssertEqual([yes, no], scored, "the scored token ids are the release's")
+
+        let query = "How tall is the Eiffel Tower?"
+        let pairs = [("relevant", "The Eiffel Tower stands 330 metres tall, including its antennas."),
+                     ("irrelevant", "Sourdough bread needs a starter kept at room temperature.")]
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: url))
+        var measured = [Double]()
+        for (name, document) in pairs {
+            let ids = tokenizer.encode(NFKMLXQwen3VLReranker.prompt(
+                query: query, queryImageTokens: 0, document: document, documentImageTokens: 0,
+                instruction: nil)).map(\.intValue)
+            let recordedIds = try XCTUnwrap(arrays["\(name)_ids"]).asArray(Int32.self).map(Int.init)
+            XCTAssertEqual(ids, recordedIds, "the \(name) pair tokenizes to the reference's ids")
+
+            let reference = Double(try XCTUnwrap(arrays["\(name)_score"]).asArray(Float.self)[0])
+            let mine = reranker.score(query: query, document: document)
+            measured.append(mine)
+            print("VALIDATION PARITY qwen3vl-reranker: \(name) score \(mine) vs \(reference)")
+            XCTAssertEqual(mine, reference, accuracy: 1e-4, "the \(name) score matches the reference")
+        }
+        XCTAssertGreaterThan(measured[0], measured[1], "the relevant document outranks the irrelevant")
+
+        // The image pair starts at the reference's pixel values, the way the embedding test does.
+        let pixelValues = try XCTUnwrap(arrays["image_pixel_values"])
+        let grid = try XCTUnwrap(arrays["image_grid_thw"]).asArray(Int32.self).map(Int.init)
+        let visionNet = try NFKMLXQwen3VL.visionNet(directoryURL: url)
+        let (visionOutput, deepstack) = visionNet(pixelValues, grid: (grid[0], grid[1], grid[2]))
+        let imageIds = try XCTUnwrap(arrays["image_ids"]).asArray(Int32.self).map(Int.init)
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: url)
+        let hidden = NFKMLXQwen3VL.hiddenStates(decoder: decoder, inputIds: imageIds,
+                                                visionFeatures: visionOutput, deepstack: deepstack,
+                                                gridT: grid[0], gridH: grid[1], gridW: grid[2])
+        let last = hidden[0..., (hidden.dim(1) - 1)...]
+        let score = NFKMLXQwen3VLReranker.score(logits: decoder.logits(fromHidden: last),
+                                                yesToken: yes, noToken: no)
+        let reference = Double(try XCTUnwrap(arrays["image_score"]).asArray(Float.self)[0])
+        print("VALIDATION PARITY qwen3vl-reranker: image score \(score) vs \(reference)")
+        XCTAssertEqual(score, reference, accuracy: 1e-4, "the image pair's score matches the reference")
     }
 
     // MARK: GGUF reader
@@ -5398,6 +7624,82 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
             XCTAssertEqual(ourBest, theirBest, "position \(position) predicts the same token")
         }
+        try mixtureInBFloat16(mode: mode, label: label, geometry: geometry)
+    }
+
+    /// The same tiny geometry at bf16 against the reference at bf16 (`IK_TINY_DTYPE=bfloat16
+    /// run_reference.py <mode>`, `records/<mode>_tiny_bf16`), with float32 arithmetic on the same
+    /// bf16-rounded weights (`_bf16w`) as the floor: each layer on the reference's own bf16 input within
+    /// a quarter of the floor, and the logits within twice it (see NFKMLXBFloat16ParityTests).
+    private func mixtureInBFloat16(mode: String, label: String, geometry: NFKMLXLanguageConfiguration) throws {
+        let records = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation/records")
+        let bf16URL = records.appendingPathComponent("\(mode)_tiny_bf16.safetensors")
+        let floorURL = records.appendingPathComponent("\(mode)_tiny_bf16w.safetensors")
+        guard FileManager.default.fileExists(atPath: bf16URL.path),
+              FileManager.default.fileExists(atPath: floorURL.path) else { return }
+        let bf16 = try loadArrays(url: bf16URL), exact = try loadArrays(url: floorURL)
+        let net = NFKMLXLanguage.makeNet(geometry)
+        let weights = bf16.compactMap { key, value -> (String, MLXArray)? in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value.dtype == .float32 ? value.asType(.bfloat16) : value) : nil
+        }
+        try NFKMLXWeights.apply(NFKMLXLanguage.releaseWeights(weights), to: net, verifyShapes: true)
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Double {
+            1 - cosine(a.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init),
+                       b.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init))
+        }
+        let tokens = MLXArray(try XCTUnwrap(bf16["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+        let mask = NFKMLXLanguageNet.causalMask(tokens.dim(1), offset: 0)
+        // gpt-oss softmaxes two kept logits into weights that scale whole rows, so the last float32 bit
+        // of Metal's `exp` against torch's moves a weight by one bf16 unit and a row with it: measured,
+        // every expert output exact and one weight in eight one unit apart
+        // (`testTheClampedSwiGLUStepsMatchTorchInBFloat16`). It is held to half the floor.
+        let bound = geometry.clampedSwiGLU == nil ? 0.25 : 0.5
+        var lines = [String]()
+        for (index, layer) in net.model.layers.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            var output = layer(input, mask: mask, cache: nil, layer: index)
+            if index == net.model.layers.count - 1 { output = net.model.norm(output) }
+            eval(output)
+            let reference = try XCTUnwrap(bf16["hidden.\(index + 1)"]), floor = distance(reference, try XCTUnwrap(exact["hidden.\(index + 1)"]))
+            let ours = distance(output[0], reference)
+            lines.append(String(format: "  layer %d isolated %.4f of the floor (%.3e / %.3e)", index, ours / max(floor, 1e-30), ours, floor))
+            XCTAssertLessThan(ours, bound * floor, "\(label) layer \(index) at bf16 on the reference's input")
+        }
+        // Where the record carries layer 0's pieces (`IK_PROBE_LAYERS=0`), each on its recorded input.
+        if let mlpIn = bf16["0.mlp.in"], let mlpOut = bf16["0.mlp.out"],
+           let normed = bf16["0.input_layernorm.out"], let attended = bf16["0.self_attn.out"] {
+            let layer = net.model.layers[0]
+            func differing(_ ours: MLXArray, _ theirs: MLXArray) -> Int {
+                eval(ours)
+                return (ours.asType(.float32).reshaped([-1]) .!= theirs.reshaped([-1])).sum().item(Int.self)
+            }
+            lines.append("  layer 0 pieces: mlp \(differing(layer.feedForward(mlpIn.asType(.bfloat16).expandedDimensions(axis: 0))[0], mlpOut)) of \(mlpOut.size) differ, attention \(differing(layer.attention(normed.asType(.bfloat16).expandedDimensions(axis: 0), mask: mask, cache: nil, layer: 0)[0], attended)) of \(attended.size)")
+            if let feedForward = layer.feedForward as? NFKLMMixtureFeedForward, let routerOut = bf16["0.mlp.router.out"],
+               let routerIn = bf16["0.mlp.router.in"] {
+                // The reference's router returns dense `[tokens, experts]` scores; the record keeps row 0.
+                let (weights, chosen) = feedForward.route(routerIn.asType(.bfloat16))
+                let dense = putAlong(MLXArray.zeros([routerIn.dim(0), routerOut.dim(0)], dtype: weights.dtype),
+                                     chosen, values: weights, axis: -1)
+                lines.append("  layer 0 router, first row: \(differing(dense[0], routerOut)) of \(routerOut.size) differ")
+                if let expertsIn = bf16["0.mlp.experts.in"], let expertsOut = bf16["0.mlp.experts.out"] {
+                    let (w, c) = feedForward.route(expertsIn.asType(.bfloat16))
+                    let routed = NFKReferenceRounding.combined(feedForward.experts(expertsIn.asType(.bfloat16), experts: c),
+                                                               weights: w, chosen: c)
+                    lines.append("  layer 0 experts: \(differing(routed, expertsOut)) of \(expertsOut.size) differ")
+                }
+            }
+            if let feedForward = layer.feedForward as? NFKLMMixtureFeedForward, let shared = feedForward.sharedExpert,
+               let sharedOut = bf16["0.mlp.shared_expert.out"] {
+                // The reference runs it on a `[tokens, hidden]` view, so the record keeps its first row.
+                lines.append("  layer 0 shared expert, first row: \(differing(shared(mlpIn.asType(.bfloat16))[0], sharedOut)) of \(sharedOut.size) differ")
+            }
+        }
+        let logits = net(tokens)[0]
+        let referenceLogits = try XCTUnwrap(bf16["output"]), exactLogits = try XCTUnwrap(exact["output"])
+        let (oursExact, floor) = (distance(logits, exactLogits), distance(referenceLogits, exactLogits))
+        lines.append(String(format: "  logits ours-vs-f32 %.3e, floor %.3e", oursExact, floor))
+        print("VALIDATION bf16 \(label):\n" + lines.joined(separator: "\n"))
+        XCTAssertLessThanOrEqual(oursExact, 2 * floor, "\(label) logits at bf16 within twice the floor")
     }
 
     func testQwen3MoeTinyMatchesTheReferenceLayerByLayer() throws {
@@ -6364,6 +8666,65 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let similarity = cosine(mine, theirs)
         print("VALIDATION PARITY gemma4-moe-tiny: logit cosine \(similarity)")
         XCTAssertGreaterThan(similarity, 0.9999, "the mixture block's arithmetic matches the reference")
+    }
+
+    // MARK: Gemma 4 shared key and value projections (the 26B-A4B, 12B and 31B releases)
+
+    // A release that sets `attention_k_eq_v` does two things on its FULL-attention layers only: it
+    // drops `v_proj` and takes the value from the key PROJECTION, read before the key norm and the
+    // rotary, and it runs `num_global_key_value_heads` in place of `num_key_value_heads`. Neither
+    // behavior appears in a release that leaves the flag off, and the three releases that set it are
+    // all too large for this machine, so the arithmetic is measured at a tiny random configuration.
+    // The reference record carries no `v_proj` for the full layer, so a strict apply also proves the
+    // net does not ask for one.
+    func testGemma4SharedKeyValueTinyMatchesTheReferenceLayerByLayer() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_SHARED_KV"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_SHARED_KV (run_reference.py gemma4_shared_kv)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+
+        XCTAssertNil(arrays["w::model.layers.1.self_attn.v_proj.weight"],
+                     "the reference drops v_proj on a full-attention layer")
+
+        let net = NFKMLXGemmaLanguage.makeNet(.sharedKeyValueTiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let ours = net.hiddenStates(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(ours)
+
+        var firstBad: Int?
+        var report = [String]()
+        for index in 0 ..< ours.count {
+            guard let reference = arrays["hidden.\(index)"] else { break }
+            let mine = ours[index].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+            guard mine.count == theirs.count else {
+                report.append("\(index): shape \(ours[index].shape) vs \(reference.shape)")
+                firstBad = firstBad ?? index
+                break
+            }
+            let similarity = cosine(mine, theirs)
+            let label = index == 0 ? "embedding" : "after layer \(index - 1)"
+            report.append(String(format: "  %-18s cosine %.10f", (label as NSString).utf8String!, similarity))
+            if similarity < 0.9999 && firstBad == nil { firstBad = index }
+        }
+        print("VALIDATION isolation gemma4-shared-kv-tiny:\n" + report.joined(separator: "\n"))
+        XCTAssertNil(firstBad, "first divergence at \(firstBad.map { $0 == 0 ? "the embedding" : "layer \($0 - 1)" } ?? "-")")
+
+        let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
+        eval(logits)
+        let mine = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(mine, theirs)
+        print("VALIDATION PARITY gemma4-shared-kv-tiny: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the shared key-value layer matches the reference")
     }
 
     // The Gemma text-generation backend end to end: build it from the released E2B directory and
@@ -7878,7 +10239,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         compare("mlp_out", mlp, "mlp_out")
 
         let lifted = residual + layer.postFeedForwardNorm(mlp)
-        compare("ple_gate", layer.perLayerGate(lifted), "ple_gate")
+        compare("ple_gate", try XCTUnwrap(layer.perLayerGate)(lifted), "ple_gate")
         print("VALIDATION isolation gemma4-layer0: sub-steps above")
     }
 
@@ -7993,6 +10354,136 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let similarity = cosine(ours, theirs)
         print("VALIDATION PARITY qwen3.5-4b: logit cosine \(similarity)")
         XCTAssertGreaterThan(similarity, 0.9999, "the hybrid decoder matches the reference")
+
+        let vocabulary = referenceLogits.shape[1]
+        for position in 0 ..< referenceLogits.shape[0] {
+            let base = position * vocabulary
+            let ourBest = (0 ..< vocabulary).max { ours[base + $0] < ours[base + $1] }
+            let theirBest = (0 ..< vocabulary).max { theirs[base + $0] < theirs[base + $1] }
+            XCTAssertEqual(ourBest, theirBest, "position \(position) predicts the same token")
+        }
+    }
+
+    // MARK: Qwen4-Exp
+
+    // Qwen3.8-Flash-Next is 360 GB, so the architecture is measured at the size the oracle builds.
+    // The seams are checked before the logits: a mismatch in the hyper-connections, the hashed n-gram
+    // lookup, the indexer, or one branch localizes to that mechanism instead of to the stack.
+    func testQwen4ExpMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN4_EXP"] else { throw XCTSkip("set IK_PARITY_QWEN4_EXP") }
+        try qwen4ExpParity(path: path, configuration: .tiny)
+    }
+
+    // The same measurement with the indexer widened to eight heads (`IK_QWEN4_INDEXER_HEADS=8
+    // run_reference.py qwen4_exp`, `IK_PARITY_QWEN4_EXP_HEADS8`). At two heads a quarter of the
+    // query/block scores rectify to exactly zero and tie, and which tied block `torch.topk` keeps is not
+    // a rule, so a matching selection there proves little. At eight a tie needs all eight at zero.
+    func testQwen4ExpWithADeterminedIndexerMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN4_EXP_HEADS8"] else { throw XCTSkip("set IK_PARITY_QWEN4_EXP_HEADS8") }
+        var configuration = NFKMLXQwen4ExpConfiguration.tiny
+        configuration.indexerHeadCount = 8
+        try qwen4ExpParity(path: path, configuration: configuration)
+    }
+
+    private func qwen4ExpParity(path: String, configuration: NFKMLXQwen4ExpConfiguration) throws {
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let referenceLogits = try XCTUnwrap(arrays["output"])
+
+        let net = NFKMLXQwen4Exp.makeNet(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            let name = String(key.dropFirst(3))
+            guard !NFKMLXQwen4Exp.isDropped(key: name) else { return nil }
+            return NFKMLXQwen4Exp.adapted(key: name, value: value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+
+        let ids = MLXArray(tokens).reshaped([1, tokens.count])
+        let rows = [tokens.map { Int($0) }]
+
+        // The hash tables are derived from the configuration rather than read; the release ships them
+        // as buffers, so the derivation is held to the reference's own values.
+        let ple = try XCTUnwrap(net.model.languageModel.layers[0].ple)
+        let recordedMultipliers = try XCTUnwrap(arrays["w::model.language_model.layers.0.ple.ple_embedding.layer_multipliers"])
+        XCTAssertEqual(ple.embedding.multipliers, recordedMultipliers.asArray(Int64.self),
+                       "the SplitMix64 hash multipliers match the release's own")
+        let recordedSizes = try XCTUnwrap(arrays["w::model.language_model.layers.0.ple.ple_embedding.ngram_heads_vocab_sizes"])
+        XCTAssertEqual(ple.embedding.headVocabularySizes, recordedSizes.asArray(Int64.self).map(Int.init),
+                       "each head's prime vocabulary size matches")
+        let recordedOffsets = try XCTUnwrap(arrays["w::model.language_model.layers.0.ple.ple_embedding.ngram_heads_offsets"])
+        XCTAssertEqual(ple.embedding.headOffsets, recordedOffsets.asArray(Int64.self).map(Int.init),
+                       "the heads' offsets into the one table match")
+
+        let ngramIndices = ple.embedding.indices(tokens: rows)
+        eval(ngramIndices)
+        let referenceIndices = try XCTUnwrap(arrays["seam.ngram_ids"])
+        XCTAssertEqual(ngramIndices[0].asArray(Int32.self), referenceIndices.asArray(Int32.self),
+                       "the hashed n-gram rows match, end-of-sequence boundaries included")
+
+        func compare(_ name: String, _ mine: MLXArray, _ key: String, floor: Double = 0.9999) {
+            guard let reference = arrays[key] else { return XCTFail("the record has no \(key)") }
+            eval(mine)
+            let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("SEAM qwen4-exp \(name): cosine \(similarity)")
+            XCTAssertGreaterThan(similarity, floor, "\(name) matches the reference")
+        }
+
+        compare("ngram features", ple.embedding(ngramIndices), "seam.ngram_features")
+
+        let embedded = net.model.languageModel.embedTokens(ids)
+        let hyper = concatenated(Array(repeating: embedded, count: 3), axis: -1)
+        compare("ple", ple(hyper, indices: ngramIndices), "seam.ple")
+
+        let layer0 = net.model.languageModel.layers[0]
+        let afterPLE = hyper + ple(hyper, indices: ngramIndices)
+        let (read, shares) = layer0.attentionResidual(afterPLE)
+        compare("hyper-connection read", read, "seam.hc_read")
+        compare("hyper-connection shares", try XCTUnwrap(shares), "seam.hc_shares")
+        let recurrence = try XCTUnwrap(layer0.linearAttention)(read)
+        compare("linear attention", recurrence, "seam.linear_attn")
+        let writeShares = try XCTUnwrap(shares)
+        let branched = afterPLE + (recurrence.expandedDimensions(axis: -2)
+            * writeShares.expandedDimensions(axis: -1)).reshaped([1, tokens.count, -1])
+        compare("mixture of experts", layer0.feedForward(layer0.feedForwardResidual(branched).read),
+                "seam.moe")
+
+        // The indexer decides what the one sparse layer may see, before any projection runs.
+        let positions = broadcast(MLXArray((0 ..< tokens.count).map { Int32($0) }).reshaped([1, 1, tokens.count]),
+                                  to: [3, 1, tokens.count])
+        let (cosTable, sinTable) = net.rotaryTable(positions: positions)
+        let states = net.hiddenStates(ids)
+        let sparse = net.model.languageModel.layers[3]
+        let selected = try XCTUnwrap(sparse.attention).indexer(
+            sparse.attentionResidual(states[3]).read, cos: cosTable, sin: sinTable)
+        eval(selected)
+        let referenceMask = try XCTUnwrap(arrays["seam.indexer_mask"]).reshaped([tokens.count, tokens.count])
+        XCTAssertEqual(selected[0].asType(.int32).asArray(Int32.self),
+                       referenceMask.asType(.int32).asArray(Int32.self),
+                       "the indexer selects the same tokens")
+
+        let queryPosition = MLXArray((0 ..< tokens.count).map { Int32($0) }).reshaped([tokens.count, 1])
+        let keyPosition = MLXArray((0 ..< tokens.count).map { Int32($0) }).reshaped([1, tokens.count])
+        let causal = (keyPosition .<= queryPosition).reshaped([1, 1, tokens.count, tokens.count])
+        compare("sparse attention",
+                try XCTUnwrap(sparse.attention)(sparse.attentionResidual(states[3]).read,
+                                                cos: cosTable, sin: sinTable, mask: causal),
+                "seam.attn")
+
+        for (index, state) in states.enumerated() {
+            compare("hidden \(index)", state[0], "hidden.\(index)")
+        }
+
+        let logits = net(ids)
+        eval(logits)
+        let ours = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let similarity = cosine(ours, theirs)
+        print("VALIDATION PARITY qwen4-exp: logit cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.9999, "the Qwen4-Exp decoder matches the reference")
 
         let vocabulary = referenceLogits.shape[1]
         for position in 0 ..< referenceLogits.shape[0] {
@@ -8171,6 +10662,364 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let expected = reference.item(Float.self)
         print("PARITY segformer-loss: ours \(ours), reference \(expected)")
         XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-4, 1e-7))
+    }
+
+    // GTCRN's objective against the repo's own `HybridLoss` module, on spectrograms of the same clean
+    // and noisy clips. The waveforms are a seam: they isolate the differentiable inverse STFT the SI-SNR
+    // term runs through.
+    func testGTCRNTrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GTCRN_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_GTCRN_LOSS to a record from run_reference.py gtcrn_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        guard let predicted = arrays["predicted"], let target = arrays["target"],
+              let predictedWaveform = arrays["predicted_waveform"], let reference = arrays["output"] else {
+            throw NFKMLXError.noOutput
+        }
+        // [F, T, 2] → real and imaginary [1, F, T], the network's layout.
+        func split(_ spectrum: MLXArray) -> (real: MLXArray, imaginary: MLXArray) {
+            (spectrum[0..., 0..., 0].expandedDimensions(axis: 0), spectrum[0..., 0..., 1].expandedDimensions(axis: 0))
+        }
+        let objective = NFKMLXGTCRNObjective()
+        let waveform = NFKGTCRNSynthesis.waveform(real: split(predicted).real, imaginary: split(predicted).imaginary)
+        let waveformCosine = cosine(waveform.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    predictedWaveform.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let terms = objective.components(predicted: split(predicted), target: split(target))
+        let ours = objective.loss(predicted: split(predicted), target: split(target)).item(Float.self)
+        let expected = reference.item(Float.self)
+        print("PARITY gtcrn-loss: ours \(ours), reference \(expected); waveform cosine \(waveformCosine); "
+              + "real \(terms.real.item(Float.self)) vs \(arrays["real_term"]?.item(Float.self) ?? .nan), "
+              + "imaginary \(terms.imaginary.item(Float.self)) vs \(arrays["imag_term"]?.item(Float.self) ?? .nan), "
+              + "magnitude \(terms.magnitude.item(Float.self)) vs \(arrays["magnitude_term"]?.item(Float.self) ?? .nan)")
+        XCTAssertGreaterThan(waveformCosine, 0.99999)
+        XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-4, 1e-6))
+    }
+
+    // NU-Wave 2's objective against `NuWave2.common_step` on the released weights: the recorded clip,
+    // narrow-band input, band, diffusion time, and noise draw go through the same noising and the same
+    // network, and the L1 between the predicted and the drawn noise is compared. The noise estimate is a
+    // seam, so a disagreement says whether it is the network or the schedule.
+    func testNUWave2TrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_NUWAVE2_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_NUWAVE2_LOSS to a record from run_reference.py nuwave2_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        guard let audio = arrays["waveform"], let narrowband = arrays["waveform_low"], let band = arrays["band"],
+              let time = arrays["time"], let noise = arrays["noise"], let estimate = arrays["estimate"],
+              let logSNR = arrays["logsnr"], let reference = arrays["output"] else {
+            throw NFKMLXError.noOutput
+        }
+        let net = try NFKMLXNUWave2.network(weightsURL: weights("IK_VAL_NUWAVE2"))
+        let objective = NFKMLXNUWave2Objective()
+        let batch = { (x: MLXArray) in x.expandedDimensions(axis: 0) }
+        let ours = objective.loss(net, audio: batch(audio), narrowband: batch(narrowband), band: batch(band),
+                                  time: time, noise: batch(noise)).item(Float.self)
+        let ourLogSNR = objective.logSNR(time: time, configuration: net.configuration).item(Float.self)
+
+        let c = net.configuration
+        let alpha = sigmoid(MLXArray(ourLogSNR)).sqrt(), sigma = sigmoid(MLXArray(-ourLogSNR)).sqrt()
+        let level = MLXArray([(c.logSNRMaximum - ourLogSNR) / (c.logSNRMaximum - c.logSNRMinimum)])
+        let ourEstimate = net(batch(alpha * audio + sigma * noise), narrowband: batch(narrowband),
+                              band: batch(band), level: level)
+        let estimateCosine = cosine(ourEstimate.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    estimate.asArray(Float.self).map(Double.init))
+        let expected = reference.item(Float.self)
+        print("PARITY nuwave2-loss: ours \(ours), reference \(expected); logSNR \(ourLogSNR) vs "
+              + "\(logSNR.item(Float.self)); noise estimate cosine \(estimateCosine)")
+        XCTAssertEqual(ourLogSNR, logSNR.item(Float.self), accuracy: 1e-4)
+        XCTAssertGreaterThan(estimateCosine, 0.9999)
+        XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-3, 1e-6))
+    }
+
+    // All-In-One's training path against the authors' own sources: the frame targets a fixed
+    // annotation becomes, `compute_losses` on seeded logits, and twelve steps of timm's RAdam from
+    // recorded gradients (the first five below the rectification threshold, the rest above it).
+    func testAllInOneTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ALLIN1_TRAINING"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_ALLIN1_TRAINING to a record from run_reference.py allin1_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let labels = NFKMLXAllInOneConfiguration.harmonix.labels
+        let frames = try array("widen_true_beat").dim(0)
+        let targets = try NFKMLXAllInOneTargets(
+            beatTimes: try array("beat_times").asArray(Float.self).map(Double.init),
+            downbeatTimes: try array("downbeat_times").asArray(Float.self).map(Double.init),
+            sectionBoundaries: try array("section_times").asArray(Float.self).map(Double.init),
+            sectionLabels: try array("section_labels").asArray(Int32.self).map { labels[Int($0)] },
+            frameCount: frames)
+        XCTAssertEqual(targets.beat.reshaped([-1]).asArray(Float.self), try array("widen_true_beat").asArray(Float.self))
+        XCTAssertEqual(targets.downbeat.reshaped([-1]).asArray(Float.self), try array("widen_true_downbeat").asArray(Float.self))
+        XCTAssertEqual(targets.section.reshaped([-1]).asArray(Float.self), try array("widen_true_section").asArray(Float.self))
+        XCTAssertEqual(targets.function.reshaped([-1]).asArray(Int32.self), try array("true_function").asArray(Int32.self))
+
+        let logits = NFKMLXAllInOneLogits(beat: try array("logits_beat").expandedDimensions(axis: 0),
+                                          downbeat: try array("logits_downbeat").expandedDimensions(axis: 0),
+                                          section: try array("logits_section").expandedDimensions(axis: 0),
+                                          function: try array("logits_function").expandedDimensions(axis: 0))
+        let objective = NFKMLXAllInOneObjective()
+        let terms = objective.components(logits, targets: targets)
+        let ours = objective.loss(logits, targets: targets).item(Float.self)
+        let expected = try array("output").item(Float.self)
+        print("PARITY allin1-loss: ours \(ours), reference \(expected); beat \(terms.beat.item(Float.self)) vs "
+              + "\(try array("loss_beat").item(Float.self)), downbeat \(terms.downbeat.item(Float.self)) vs "
+              + "\(try array("loss_downbeat").item(Float.self)), section \(terms.section.item(Float.self)) vs "
+              + "\(try array("loss_section").item(Float.self)), function \(terms.function.item(Float.self)) vs "
+              + "\(try array("loss_function").item(Float.self))")
+        XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-5, 1e-7))
+
+        final class Pair: Module {
+            @ParameterInfo(key: "weight") var weight: MLXArray
+            @ParameterInfo(key: "bias") var bias: MLXArray
+            init(weight: MLXArray, bias: MLXArray) {
+                _weight.wrappedValue = weight
+                _bias.wrappedValue = bias
+            }
+        }
+        let pair = Pair(weight: try array("radam_weight_start"), bias: try array("radam_bias_start"))
+        let optimizer = NFKMLXReferenceOptimizers.rAdam(learningRate: try array("radam_rate").item(Float.self),
+                                                        weightDecay: try array("radam_weight_decay").item(Float.self))
+        var worst: Float = 0
+        for step in 0 ..< 12 {
+            let gradients = ModuleParameters.unflattened([("weight", try array("radam_weight_grad_\(step)")),
+                                                          ("bias", try array("radam_bias_grad_\(step)"))])
+            optimizer.update(model: pair, gradients: gradients)
+            eval(pair.weight, pair.bias)
+            let expectedWeight = try array("radam_weight_\(step)"), expectedBias = try array("radam_bias_\(step)")
+            worst = max(worst, abs(pair.weight - expectedWeight).max().item(Float.self),
+                        abs(pair.bias - expectedBias).max().item(Float.self))
+        }
+        print("PARITY allin1-radam: worst parameter difference over 12 steps \(worst)")
+        XCTAssertLessThan(worst, 1e-6)
+    }
+
+    // MarbleNet's objective and schedule against the release: NeMo's masked cross-entropy on the
+    // release's own logits and on ours for the same clip, and `PolynomialHoldDecayAnnealing` as the
+    // release configures it over a 40-step run.
+    func testVADTrainingMatchesTheRelease() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_VAD_TRAINING"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_VAD_TRAINING to a record from run_reference.py vad_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let referenceLogits = try array("logits").expandedDimensions(axis: 0)
+        let labels = try array("labels").expandedDimensions(axis: 0)
+        let mask = try array("mask").expandedDimensions(axis: 0)
+        let expected = try array("output").item(Float.self)
+        let objective = NFKMLXVADObjective()
+        let onTheirs = objective.loss(logits: referenceLogits, labels: labels, mask: mask).item(Float.self)
+
+        let net = try NFKMLXVAD.network(weightsURL: weights("IK_VAL_VAD"))
+        let (ourMel, validFrames) = net.frontEnd.logMelAndLength(try array("waveform").asArray(Float.self))
+        let ourLogits = net.logits(ourMel, validFrames: validFrames)
+        // Seams: the mel, and where along the clip the logits part ways.
+        if let features = arrays["features"] {
+            let melCosine = cosine(ourMel.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                   features.reshaped([-1]).asArray(Float.self).map(Double.init))
+            let perFrame = abs(ourLogits[0] - referenceLogits[0]).max(axis: -1).asArray(Float.self)
+            let worst = perFrame.indices.max { perFrame[$0] < perFrame[$1] } ?? 0
+            let interior = perFrame.dropLast(max(1, perFrame.count / 5)).max() ?? 0
+            print("SEAM vad-training: mel shape \(ourMel.shape) vs \(features.shape), mel cosine \(melCosine); "
+                  + "valid mel frames ours \(validFrames), reference \(arrays["feature_length"]?.item(Int32.self) ?? -1); logit frames "
+                  + "\(perFrame.count), worst frame \(worst) at \(perFrame[worst]), worst in the first 80% \(interior); "
+                  + "last five \(Array(perFrame.suffix(5)))")
+        }
+        let logitCosine = cosine(ourLogits.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                 referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let onOurs = objective.loss(logits: ourLogits, labels: labels, mask: mask).item(Float.self)
+
+        let schedule = NFKMLXLearningRateSchedule.nemoPolynomialHoldDecay(steps: 40, warmupRatio: 0.05, holdRatio: 0.15,
+                                                                          power: 2, minimumScale: 1e-8 / 0.01)
+        let rates = try array("schedule").asArray(Float.self)
+        let worstRate = rates.indices.map { abs(schedule.multiplier($0) - rates[$0]) }.max() ?? .infinity
+        print("PARITY vad-training: loss on the reference logits \(onTheirs), on ours \(onOurs), reference \(expected); "
+              + "logit cosine \(logitCosine); worst schedule difference over \(rates.count) steps \(worstRate); "
+              + "optimizer \(try array("optimizer").asArray(Float.self))")
+        XCTAssertEqual(onTheirs, expected, accuracy: max(abs(expected) * 1e-5, 1e-7))
+        XCTAssertEqual(onOurs, expected, accuracy: max(abs(expected) * 1e-3, 1e-6))
+        XCTAssertLessThan(worstRate, 1e-6)
+        XCTAssertEqual(try array("optimizer").asArray(Float.self), [0.01, 0.9, 0.001])
+    }
+
+    // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
+    // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
+    // loss under the best assignment.
+    func testConvTasNetTrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CONVTASNET_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_CONVTASNET_LOSS to a record from run_reference.py convtasnet_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let objective = NFKMLXConvTasNetObjective()
+        let estimates = try array("estimates"), sources = try array("sources")
+        let pairwise = objective.pairwise(estimates: estimates, sources: sources)
+        let worstPair = abs(pairwise - (try array("pairwise"))).max().item(Float.self)
+        let ours = objective.loss(estimates: estimates, sources: sources).item(Float.self)
+        let expected = try array("output").item(Float.self)
+        print("PARITY convtasnet-loss: ours \(ours), reference \(expected); worst pairwise difference \(worstPair) "
+              + "over \(pairwise.asArray(Float.self))")
+        XCTAssertLessThan(worstPair, 1e-4)
+        XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-5, 1e-5))
+    }
+
+    // YOLO's objective against ultralytics' own `v8DetectionLoss` on the same head outputs and boxes:
+    // the assigned anchors (a seam, since every term follows from them), each gained term, and the
+    // batch-scaled total.
+    func testYOLOTrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_YOLO_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_YOLO_LOSS to a record from run_reference.py yolo_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let distribution = try array("box_distribution"), logits = try array("class_logits")
+        let strides = try array("strides").asArray(Int32.self).map(Int.init)
+        let size = Int(try array("image_size").item(Int32.self))
+        let rows = try array("targets").asArray(Float.self)
+        var targets = [[NFKMLXYOLOBox]](repeating: [], count: logits.dim(0))
+        for row in stride(from: 0, to: rows.count, by: 6) {
+            targets[Int(rows[row])].append(NFKMLXYOLOBox(classIndex: Int(rows[row + 1]), x1: rows[row + 2],
+                                                         y1: rows[row + 3], x2: rows[row + 4], y2: rows[row + 5]))
+        }
+        let sizes = strides.map { (height: size / $0, width: size / $0) }
+        let objective = NFKMLXYOLOObjective()
+
+        let points = NFKMLXYOLOObjective.anchors(featureSizes: sizes, strides: strides)
+        let regMax = distribution.dim(2) / 4
+        let bins = MLXArray((0 ..< regMax).map { Float($0) })
+        let (batch, anchorCount) = (logits.dim(0), logits.dim(1))
+        let distances = (softmax(distribution.reshaped([batch, anchorCount, 4, regMax]), axis: -1) * bins).sum(axis: -1)
+        let decoded = concatenated([points.points - distances[0..., 0..., 0 ..< 2], points.points + distances[0..., 0..., 2 ..< 4]], axis: -1)
+            * points.strides
+        eval(decoded)
+        let assignment = NFKYOLOTaskAlignedAssigner(topK: objective.topK, secondTopK: nil, alpha: objective.alpha,
+                                                   beta: objective.beta, strides: strides, classes: logits.dim(2))
+            .assign(scores: sigmoid(logits).asArray(Float.self), boxes: decoded.asArray(Float.self),
+                    anchors: (points.points * points.strides).asArray(Float.self), batch: batch,
+                    anchorCount: anchorCount, targets: targets)
+        let referenceForeground = try array("foreground").asArray(Int32.self).map(Int.init)
+        XCTAssertEqual(assignment.foreground, referenceForeground, "the same anchors are assigned")
+
+        let terms = objective.components(boxDistribution: distribution, classLogits: logits, featureSizes: sizes,
+                                         strides: strides, targets: targets)
+        let ours = [terms.box, terms.classification, terms.dfl].map { $0.item(Float.self) }
+        let expected = try array("components").asArray(Float.self)
+        let total = objective.loss(boxDistribution: distribution, classLogits: logits, featureSizes: sizes,
+                                   strides: strides, targets: targets).item(Float.self)
+        let expectedTotal = try array("output").item(Float.self)
+        print("PARITY yolo-loss: ours \(total), reference \(expectedTotal); box, class, dfl \(ours) vs \(expected); "
+              + "foreground \(assignment.foreground.count) vs \(referenceForeground.count)")
+        for (a, e) in zip(ours, expected) {
+            XCTAssertEqual(a, e, accuracy: max(abs(e) * 1e-4, 1e-6))
+        }
+        XCTAssertEqual(total, expectedTotal, accuracy: max(abs(expectedTotal) * 1e-4, 1e-6))
+    }
+
+    // ultralytics' training setup for a three-class YOLOv8n against the trainer's own methods: the
+    // decay groups (counted, since the two frameworks name parameters differently), the `auto` rate and
+    // decay, the schedule with its warm-up over 20 updates, and `ModelEMA` over three updates.
+    func testYOLOTrainingSetupMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_YOLO_TRAINING_SETUP"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_YOLO_TRAINING_SETUP to a record from run_reference.py yolo_training_setup")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+
+        let net = try NFKMLXYOLO.network(classCount: 3, weightsURL: nil)
+        net.detect.dfl.freeze()
+        let keys = net.trainableParameters().flattened().map(\.0)
+        let bias = keys.filter { $0.contains("bias") }.count
+        let norm = keys.filter { !$0.contains("bias") && $0.hasSuffix(".bn.weight") }.count
+        let counts = [keys.count - bias - norm, norm, bias]
+        let expectedCounts = try array("group_counts").asArray(Int32.self).map(Int.init)
+
+        let optimizer = NFKMLXYOLO.referenceOptimizer(classCount: 3, batchSize: 2)
+        let rates = try XCTUnwrap(NFKMLXLearningRateSchedule.scheduledGroups(of: optimizer))
+        let ourDecays = try XCTUnwrap(optimizer as? MultiOptimizer).optimizers.compactMap { ($0 as? AdamW)?.weightDecay }
+        let expectedRate = try array("rate").item(Float.self)
+        let decays = try array("group_decays").asArray(Float.self)
+        let schedule = NFKMLXLearningRateSchedule.ultralytics(steps: 20, stepsPerEpoch: 5)
+        let reference = try array("schedule").asArray(Float.self)
+        let worstRate = reference.indices.map { abs(schedule.multiplier($0) - reference[$0]) }.max() ?? .infinity
+
+        let linear = Linear(3, 2)
+        linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]), "bias": MLXArray.zeros([2])]))
+        var average = NFKYOLOWeightAverage(linear)
+        for step in 0 ..< 3 {
+            linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]) * Float(step + 2),
+                                                                    "bias": MLXArray.ones([2]) * Float(-(step + 1))]))
+            average.update(from: linear)
+        }
+        average.apply(to: linear)
+        let averageGap = max(abs(linear.weight.reshaped([-1]) - (try array("ema_weight"))).max().item(Float.self),
+                             abs(linear.bias! - (try array("ema_bias"))).max().item(Float.self))
+
+        print("PARITY yolo-setup: groups \(counts) vs \(expectedCounts); rate \(rates.map(\.1)) vs \(expectedRate); "
+              + "decays \(decays); worst schedule difference \(worstRate) over \(reference.count) updates; "
+              + "warm-up \(try array("output").item(Float.self)); weight average gap \(averageGap)")
+        XCTAssertEqual(counts, expectedCounts)
+        XCTAssertTrue(rates.allSatisfy { $0.1 == expectedRate })
+        XCTAssertEqual(decays, [0.0005, 0, 0])
+        XCTAssertEqual(ourDecays, [0, 0.0005], "no decay on biases and normalization weights, the reference's on the rest")
+        XCTAssertLessThan(worstRate, 1e-6)
+        XCTAssertLessThan(averageGap, 1e-5)
+    }
+
+    // The end-to-end generations' objective against ultralytics' own `E2ELoss`, for YOLOv10n (DFL) and
+    // YOLO26n (`reg_max` 1): each branch's terms under its own assigner, and the weighted total at
+    // epoch 0 and after the first epoch's weight update.
+    func testYOLOEndToEndLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_YOLO_E2E_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_YOLO_E2E_LOSS to a record from run_reference.py yolo_e2e_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let size = Int(try array("image_size").item(Int32.self))
+        let rows = try array("targets").asArray(Float.self)
+        var targets = [[NFKMLXYOLOBox]](repeating: [], count: 2)
+        for row in stride(from: 0, to: rows.count, by: 6) {
+            targets[Int(rows[row])].append(NFKMLXYOLOBox(classIndex: Int(rows[row + 1]), x1: rows[row + 2],
+                                                         y1: rows[row + 3], x2: rows[row + 4], y2: rows[row + 5]))
+        }
+        let objective = NFKMLXYOLOEndToEndObjective()
+        for prefix in ["v10", "y26"] {
+            let strides = try array("\(prefix)_strides").asArray(Int32.self).map(Int.init)
+            let sizes = strides.map { (height: size / $0, width: size / $0) }
+            let many = (distribution: try array("\(prefix)_many_distribution"), logits: try array("\(prefix)_many_logits"))
+            let one = (distribution: try array("\(prefix)_one_distribution"), logits: try array("\(prefix)_one_logits"))
+            for (name, branch, branchObjective) in [("many", many, objective.oneToMany), ("one", one, objective.oneToOne)] {
+                let terms = branchObjective.components(boxDistribution: branch.distribution, classLogits: branch.logits,
+                                                       featureSizes: sizes, strides: strides, targets: targets)
+                let ours = [terms.box, terms.classification, terms.dfl].map { $0.item(Float.self) }
+                let expected = try array("\(prefix)_\(name)_components").asArray(Float.self)
+                print("PARITY yolo-e2e \(prefix) \(name): \(ours) vs \(expected)")
+                for (a, e) in zip(ours, expected) {
+                    XCTAssertEqual(a, e, accuracy: max(abs(e) * 1e-4, 1e-6), "\(prefix) \(name)")
+                }
+            }
+            let totals = try array("\(prefix)_totals").asArray(Float.self)
+            for (epoch, expected) in totals.enumerated() {
+                let ours = objective.loss(oneToMany: many, oneToOne: one, featureSizes: sizes, strides: strides,
+                                          targets: targets, epoch: epoch, epochs: 4).item(Float.self)
+                print("PARITY yolo-e2e \(prefix) total at epoch \(epoch): ours \(ours), reference \(expected)")
+                XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-4, 1e-6))
+            }
+        }
     }
 
     // MARK: Stable Diffusion text conditioning

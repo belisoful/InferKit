@@ -542,6 +542,41 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   single-token steps, with every carried buffer compared after each, match at 0.99999999999999 and
   0.99999999999999 at each step, every token the reference's.
 
+#### Half precision rounds where the reference rounds
+
+- A `.checkpoint` load of a bf16 release now places each rounding where transformers places it at
+  bf16, so the port reproduces the reference's own bf16 run rather than a different bf16 answer.
+  `NFKMLXReferenceRounding` holds the placements: norms computed wide and rounded once, `gelu`,
+  `silu` and `softplus` rounded once, the rotary tables rounded before the three-op rotation, eager
+  attention's rounded scores and probabilities, and a tensor times a non-representable scalar
+  multiplied in float32. A float32 forward takes the fused path it took before, byte for byte.
+- It covers the Gemma 2, 3, 3n and 4 decoders, the dense decoder that Qwen3, Llama, Mistral, Qwen3-VL
+  and Granite Speech share, Granite 4.0-H, Nemotron-H's attention, and the Mamba-2 mixer that
+  Codestral, Granite and Nemotron-H share. Each layer, run alone on the reference's own bf16 input,
+  now reads at most 0.17 of the reference's own bf16-versus-float32 distance, and what remains is
+  GEMM summation order and Metal's `tanh`. Where it was measured before the change, the first layer read 3.3 of that distance
+  (Gemma 3 270M), 1.0 (Qwen3-0.6B) and 1.6 (Granite 4.0-H 1B).
+- The same holds for the rest of the bf16 loads: the Qwen3.5 and Qwen3.8 hybrid decoders, Qwen4-Exp,
+  the Qwen2-MoE, Qwen3-MoE, Mixtral and gpt-oss routers, Gemma 4's mixture (26B-A4B) and unified (12B)
+  stacks, Granite Speech's Conformer, projector and decoder, Voxtral's Whisper encoder,
+  Phi-4-multimodal's decoder and towers, the MiniMax Music 3 depth decoder, and the FLUX, FLUX.2,
+  Qwen-Image and Wan transformers with the SD3, SANA and Z-Image pieces they share. New placements:
+  layer, group and batch norms and biased convolutions computed in float32 and rounded once
+  (`NFKLayerNorm`, `NFKGroupNorm`, `NFKBatchNorm`, `NFKConv1d`, `NFKConv2d`); torch's MATH attention
+  and its default CPU flash attention, each where the reference calls it; a Swish written as
+  `x * sigmoid(x)`; diffusers' float32 rotary. FLUX, FLUX.2 and the Gemma 4 mixture and unified
+  stacks are bit-exact against their tiny references at bf16; every other piece reads at most 0.24 of
+  the reference's own bf16-versus-float32 distance.
+- `NFKMLXGemma2Net.load(directoryURL:precision:)` loads a released Gemma 2 directory, and
+  `NFKMLXGemma2Configuration.configuration(fromHuggingFace:)` reads its geometry. The 2B release
+  matches transformers at float32 in every hidden state, the worst at 0.99999999999838.
+- `Tools/validation-assets/truncate.py` cuts a release to its first N layers by fetching only those
+  tensors, so a size too large for float32 here is measured at float32 on its first layers. Qwen3 14B
+  and 32B, Gemma 3 12B and 27B, Gemma 2 27B, Nemotron-Nano 9B, and Codestral-Mamba 7B, previously held
+  only by shape or at bf16,
+  match transformers at float32 on their first four layers (every state 0.99999999999 or closer) and
+  at bf16 within the same bounds as the sizes that run whole.
+
 #### Learning-rate schedules
 
 - `NFKMLXTrainer.train(…learningRateSchedule:)` scales every parameter group's rate by an
