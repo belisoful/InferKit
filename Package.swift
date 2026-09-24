@@ -26,6 +26,11 @@ let package = Package(
             ],
             linkerSettings: [
                 .linkedFramework("CoreML"),
+                .linkedFramework("Vision"),
+                .linkedFramework("VideoToolbox"),
+                .linkedFramework("Speech"),
+                .linkedFramework("SoundAnalysis"),
+                .linkedFramework("NaturalLanguage"),
                 .linkedFramework("CoreVideo"),
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ImageIO"),

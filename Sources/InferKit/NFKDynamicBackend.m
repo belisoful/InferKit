@@ -10,20 +10,42 @@ NSString * const NFKCapabilityStableDiffusion = @"stable-diffusion";
 NSString * const NFKCapabilityTextGeneration = @"text-generation";
 NSString * const NFKCapabilityTranscription = @"transcription";
 NSString * const NFKCapabilityControlNet = @"controlnet";
+NSString * const NFKCapabilityTextRecognition = @"text-recognition";
+NSString * const NFKCapabilitySegmentation = @"segmentation";
+NSString * const NFKCapabilityPose = @"pose";
+NSString * const NFKCapabilityFaceDetection = @"face-detection";
+NSString * const NFKCapabilityImageEmbedding = @"image-embedding";
+NSString * const NFKCapabilityUpscaling = @"upscaling";
+NSString * const NFKCapabilityOpticalFlow = @"optical-flow";
+NSString * const NFKCapabilityTranslation = @"translation";
 
-// The default provider class name tried for each built-in capability when the consumer registers
-// nothing. A consumer that names their provider this needs no registration call; a companion package
-// (InferKitMLX, InferKitFoundationModels) ships the class so linking it activates the capability.
-static NSDictionary<NSString *, NSString *> *NFKBuiltInDefaultProviders(void)
+// The provider class names tried for each built-in capability when the consumer registers nothing,
+// in order. A companion package (InferKitMLX, InferKitFoundationModels) ships the first names, so
+// linking it activates the capability with a chosen model. The core's own Apple-framework engines
+// come last: they need no download and no companion, so they answer when nothing else is linked.
+static NSDictionary<NSString *, NSArray<NSString *> *> *NFKBuiltInDefaultProviders(void)
 {
 	static NSDictionary *providers;
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
 		providers = @{
-			NFKCapabilityStableDiffusion: @"NFKStableDiffusionProvider",
-			NFKCapabilityTextGeneration:  @"NFKFoundationModelsProvider",
-			NFKCapabilityTranscription:   @"NFKMLXWhisperProvider",
-			NFKCapabilityControlNet:      @"NFKControlNetProvider",
+			NFKCapabilityStableDiffusion: @[ @"NFKStableDiffusionProvider" ],
+			NFKCapabilityTextGeneration:  @[ @"NFKFoundationModelsProvider" ],
+			// Whisper where the consumer brought it, then Apple's newer analyzer where the Swift
+			// companion is linked, then the core's own recognizer, which is always present.
+			NFKCapabilityTranscription:   @[ @"NFKMLXWhisperProvider", @"NFKSpeechAnalyzerProvider",
+											 @"NFKSpeechRecognitionProvider" ],
+			NFKCapabilityControlNet:      @[ @"NFKControlNetProvider" ],
+			NFKCapabilityTextRecognition: @[ @"NFKVisionTextProvider" ],
+			NFKCapabilitySegmentation:    @[ @"NFKVisionSegmentationProvider" ],
+			NFKCapabilityPose:            @[ @"NFKVisionPoseProvider" ],
+			NFKCapabilityFaceDetection:   @[ @"NFKVisionFaceProvider" ],
+			NFKCapabilityImageEmbedding:  @[ @"NFKVisionFeaturePrintProvider" ],
+			NFKCapabilityUpscaling:       @[ @"NFKVideoToolboxUpscalingProvider" ],
+			NFKCapabilityOpticalFlow:     @[ @"NFKVideoToolboxOpticalFlowProvider" ],
+			// The core ships no translator; the Swift companion's wrapper answers when linked, and a
+			// model-backed one registers ahead of it.
+			NFKCapabilityTranslation:     @[ @"NFKMLXTranslationProvider", @"NFKTranslationProvider" ],
 		};
 	});
 	return providers;
@@ -109,9 +131,9 @@ static NSDictionary<NSString *, NSString *> *NFKBuiltInDefaultProviders(void)
 	@synchronized (self.lock) {
 		names = [self.registry[capability] mutableCopy] ?: [NSMutableArray array];
 	}
-	// A built-in capability has a default provider, tried last (a registered override wins).
-	NSString *builtIn = NFKBuiltInDefaultProviders()[capability];
-	if (builtIn != nil) {
+	// A built-in capability has default providers, tried last and in their own order (a registered
+	// override wins over all of them).
+	for (NSString *builtIn in NFKBuiltInDefaultProviders()[capability]) {
 		[names removeObject:builtIn];
 		[names addObject:builtIn];
 	}
@@ -132,15 +154,21 @@ static NSDictionary<NSString *, NSString *> *NFKBuiltInDefaultProviders(void)
 												  error:(NSError * _Nullable * _Nullable)error
 {
 	for (NSString *className in [self providerNamesForCapability:capability]) {
-		if ([self isProviderAvailable:className]) {
-			return [self backendForProviderClassName:className error:error];
+		if (![self isProviderAvailable:className]) {
+			continue;
+		}
+		// A linked provider that cannot serve this machine returns nil, which is a pass rather than
+		// a failure: the VideoToolbox engines answer only where the hardware carries the processor.
+		id<NFKInferenceBackend> backend = [self backendForProviderClassName:className error:NULL];
+		if (backend != nil) {
+			return backend;
 		}
 	}
 	if (error != NULL) {
 		*error = [NSError errorWithDomain:NFKInferenceErrorDomain
 									 code:kNFKError_InferenceUnsupported
 								 userInfo:@{ NSLocalizedDescriptionKey:
-												 [NSString stringWithFormat:@"No provider for capability '%@' is linked.", capability] }];
+												 [NSString stringWithFormat:@"No provider for capability '%@' answered on this machine.", capability] }];
 	}
 	return nil;
 }

@@ -222,6 +222,51 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKVisionClassificationBackend` names what an image shows from Vision's taxonomy, filtered by a
   confidence floor or by Vision's own precision-recall curve.
 - `NFKVisionAnimalBackend` finds cats and dogs, and reports which animals the installed revision
+#### The rest of what Vision reports
+
+- `NFKVisionMeasurementBackend` reads the numbers Vision puts a name to: the aesthetics score, and
+  whether a photograph is a utility shot such as a screenshot or a receipt, and the horizon's angle.
+  They arrive under `NFKOutputStructured`, which is where a named reading belongs. The horizon angle
+  is the one geometry in the toolkit left in Vision's bottom-left space, because Vision hands back a
+  transform meant to be applied to pixels and flipping it would describe a different rotation.
+- `NFKVisionContourBackend` traces outlines, each a normalized point list under `contours`.
+- `NFKVisionRegistrationBackend` aligns two frames and reports either the translation or the
+  homography. Vision answers a sparse or repeating image confidently and wrongly, so a caller
+  measuring alignment on synthetic frames gives it texture that does not repeat.
+- `NFKVisionCoreMLBackend` hands a Core ML model to Vision, which resizes and crops the image the way
+  the model's description asks. `NFKCoreMLBackend` remains the path for tensors the caller builds.
+- `NFKVisionTrackingBackend` follows a region across frames. It holds state, which no other backend
+  in the toolkit does: `startTrackingBoundingBox:` sets the region, each run takes the next frame and
+  returns the region's new position, and `reset` ends the sequence.
+
+#### Sound, speech, and text, from frameworks already on the machine
+
+- `NFKSoundClassificationBackend` runs Apple's classifier over several hundred everyday sounds. Each
+  analysis window becomes an `NFKAudioSegment` under `NFKOutputSegments`, and the clip's best guesses
+  arrive under `NFKOutputClassifications`.
+- `NFKSpeechSynthesisBackend` speaks text into an `NFKAudioAsset`, answering the contract the remote
+  and MLX voices already answer. Three conditions govern `AVSpeechSynthesizer`'s offline write, and
+  each one alone yields a silent file with no error reported: the buffers arrive on the main run loop
+  and nowhere else, the synthesizer has to outlive the call that starts the utterance, and an
+  utterance with no voice set is speakable but not writable. The backend resolves a voice for every
+  request and reports `kNFKError_InferenceUnsupported` when a named voice or language does not
+  resolve.
+- `NFKTextEmbeddingBackend` returns NaturalLanguage's word and sentence vectors under
+  `NFKOutputEmbedding`, with no model to ship.
+- `Package.swift` and the podspec link SoundAnalysis and NaturalLanguage alongside Vision,
+  VideoToolbox, and Speech.
+
+#### The Apple engines answer through discovery
+
+- `NFKDynamicBackend` names an ordered list of default providers per capability instead of one, and
+  the core's Apple-framework engines are last on each list. Eight capabilities now resolve with no
+  companion linked: text recognition, segmentation, pose, face detection, image embedding,
+  upscaling, optical flow, and transcription, which falls back to Apple's recognizer behind
+  `NFKMLXWhisperProvider`. A registered provider still wins over every default.
+- A provider that returns nil from `makeInferenceBackend` is passed over and the next candidate gets
+  a turn, so an engine that cannot serve the machine is not a failed lookup. The VideoToolbox
+  providers use it to decline where the hardware has no such processor.
+
 #### The machine reports its neural accelerators
 
 - `NFKHardwareProfile` gains `graphicsGeneration` and `hasNeuralAccelerators`, the matrix units Apple
@@ -248,6 +293,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   and the `refusal` stop reason on the Messages API, streamed or not; an Anthropic stream error event
   maps its type the same way.
 
+#### Apple's own engines behind the contract
+
+- Seven backends wrap the Apple frameworks that overlap the model gallery, so a consumer reaches
+  them through `NFKInferenceBackend` with nothing to download. `NFKVisionTextBackend` recognizes
+  text, which no shipped model does; `NFKVisionSegmentationBackend` produces the subject, person, or
+  saliency mask; `NFKVisionPoseBackend` estimates body and hand pose; `NFKVisionFaceBackend` finds
+  faces and landmarks; `NFKVisionFeaturePrintBackend` embeds an image; `NFKVideoToolboxBackend` runs
+  Apple's neural upscaling, frame interpolation, and optical flow; `NFKSpeechRecognitionBackend`
   transcribes a recording.
 - Vision normalizes from the lower left and the contract from the top left, so every box and point
   is flipped on the way out and a face landmark is mapped out of its face box first.
@@ -298,6 +351,31 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 ### InferKitMLX (companion)
 
 #### Every mixture of experts pages its routed experts
+
+- `NFKMLXResidency.paged` leaves a mixture's routed experts in the release and reads each as the
+  router reaches it, through a bounded cache of recently used experts. Every other tensor loads as
+  before. A paged model computes the resident model's logits exactly, which a test holds for every
+  layout the loaders read and on the released gpt-oss-20b (max abs difference 0.0, 9.5 GiB of MXFP4
+  experts left in the release).
+- One plan chooses staging and paging together. `.automatic` holds a model resident where it fits,
+  pages where its largest stage is known not to fit whole and has experts to page, and stages
+  otherwise. A machine that reports no budget is never paged.
+- `NFKMLXExpertStore` is the store every paged mixture reads: experts filed by layer and index, held in
+  memory or as byte ranges of the mapped release, with an LRU cache whose `cacheByteBudget` can change
+  between requests. `materializeCount`, `cacheHitCount`, `heldBytes`, `mappedBytes` and `cachedBytes`
+  report what it did. `NFKMLXDeepSeekExpertStore` keeps its API and files its experts there.
+- The language family takes a residency: `NFKMLXLanguage.backend(directoryURL:residency:)`
+  (`backendWithDirectoryURL:residency:error:`) and the download and async `residency:` forms, reading
+  Qwen2-MoE, Qwen3-MoE, Mixtral, gpt-oss at bf16 or as its released MXFP4 blocks, and a quantized
+  checkpoint this package saved. `NFKMLXLanguageBackend.pagesExperts` and `expertStore` report it.
+  Under the default `.automatic`, a mixture too large for the working set now pages where it was
+  refused before.
+- The Gemma 4 26B-A4B mixture (`gemmaBackendWithDirectoryURL:residency:error:` and the download
+  forms, `NFKMLXGemmaBackend.pagesExperts`), the Qwen3-VL 30B-A3B decoder
+  (`NFKMLXQwen3VL.decoder(directoryURL:precision:residency:)`, its fused experts split per expert), Qwen4-Exp (`NFKMLXQwen4Exp.backend(directoryURL:precision:residency:)`)
+  and Granite 4.0-H's mixture sizes (`NFKMLXGraniteHybrid.loadWeights(into:fromDirectory:precision:residency:)`)
+  page the same way.
+
 - **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
   in a process can come back wrong by a factor of about a million, silently and with no infinity or
   not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not

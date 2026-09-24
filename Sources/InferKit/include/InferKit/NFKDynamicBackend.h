@@ -96,6 +96,35 @@ extern NSString * const NFKCapabilityTranscription;
 	named NFKControlNetProvider) under this capability. */
 extern NSString * const NFKCapabilityControlNet;
 
+/*! Reading the text in an image. The core answers it with Vision, so it resolves with nothing
+	linked. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityTextRecognition;
+
+/*! A mask over the subject of an image. The core answers it with Vision. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilitySegmentation;
+
+/*! Body or hand joints. The core answers it with Vision. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityPose;
+
+/*! Faces and their landmarks. The core answers it with Vision. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityFaceDetection;
+
+/*! A vector for comparing images. The core answers it with Vision. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityImageEmbedding;
+
+/*! Enlarging a frame. The core answers it with VideoToolbox where the machine has the processor.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityUpscaling;
+
+/*! Motion between two frames. The core answers it with VideoToolbox where the machine has the
+	processor. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKCapabilityOpticalFlow;
+
+/*! Turning text from one language into another. The core ships no translator; `InferKitAppleSwift`
+	answers it with Apple's, and an MLX translation model registers ahead of it. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKCapabilityTranslation;
+
 NS_ASSUME_NONNULL_END
 
 #endif /* NFKDynamicBackend_h */

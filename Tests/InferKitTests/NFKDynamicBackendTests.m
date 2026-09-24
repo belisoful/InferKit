@@ -105,4 +105,66 @@
 	XCTAssertEqualObjects(backend.backendIdentifier, @"test-dynamic");
 }
 
+#pragma mark The core's own Apple engines
+
+- (void)testTheAppleEnginesAnswerTheirCapabilitiesWithNothingLinked
+{
+	// These ship in the core, so they resolve in a test bundle that links no companion.
+	NSDictionary<NSString *, NSString *> *expected = @{
+		NFKCapabilityTextRecognition: @"vision-text",
+		NFKCapabilitySegmentation:    @"vision-segmentation",
+		NFKCapabilityPose:            @"vision-pose",
+		NFKCapabilityImageEmbedding:  @"vision-feature-print",
+	};
+	for (NSString *capability in expected) {
+		XCTAssertTrue([NFKDynamicBackend isCapabilityAvailable:capability], @"%@", capability);
+		NSError *error = nil;
+		id<NFKInferenceBackend> backend = [NFKDynamicBackend backendForCapability:capability error:&error];
+		XCTAssertNotNil(backend, @"%@: %@", capability, error);
+		XCTAssertEqualObjects(backend.backendIdentifier, expected[capability]);
+	}
+}
+
+- (void)testTranscriptionFallsBackToApplesRecognizer
+{
+	// InferKitMLX is not linked here, so NFKMLXWhisperProvider is absent and the core's own
+	// recognizer is what answers.
+	XCTAssertFalse([NFKDynamicBackend isProviderAvailable:@"NFKMLXWhisperProvider"]);
+	XCTAssertTrue([NFKDynamicBackend isCapabilityAvailable:NFKCapabilityTranscription]);
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKDynamicBackend backendForCapability:NFKCapabilityTranscription
+																		error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+	XCTAssertEqualObjects(backend.backendIdentifier, @"apple-speech");
+}
+
+- (void)testARegisteredProviderStillWinsOverTheCoresOwn
+{
+	// The registry is process-wide, so this test owns face detection and no other test asserts on it.
+	XCTAssertEqualObjects([NFKDynamicBackend backendForCapability:NFKCapabilityFaceDetection error:NULL].backendIdentifier,
+						  @"vision-face", @"the core's own answers before anything is registered");
+
+	[NFKDynamicBackend registerProviderClassName:@"NFKTestProvider" forCapability:NFKCapabilityFaceDetection];
+	XCTAssertEqualObjects([NFKDynamicBackend backendForCapability:NFKCapabilityFaceDetection error:NULL].backendIdentifier,
+						  @"test-dynamic", @"a registered provider wins; the core's own is the last resort");
+}
+
+- (void)testAProviderThatCannotServeTheMachineIsPassedOver
+{
+	// The VideoToolbox providers return nil where the hardware has no such processor. Either the
+	// capability resolves to that engine, or it reports that nothing answered; a linked provider
+	// returning nil must not surface as a hard failure with candidates left untried.
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKDynamicBackend backendForCapability:NFKCapabilityUpscaling
+																		error:&error];
+	if (backend != nil) {
+		XCTAssertEqualObjects(backend.backendIdentifier, @"videotoolbox");
+		XCTAssertTrue(backend.isReady);
+	} else {
+		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+		XCTAssertTrue([error.localizedDescription containsString:@"answered on this machine"]);
+	}
+}
+
 @end
