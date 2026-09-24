@@ -700,6 +700,29 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(extender.isReady)
     }
 
+    // Docs/examples.md: Teaching music structure analysis your own annotations
+    func testExampleFineTuningAllInOneOnOwnAnnotations() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("allin1-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads a release: NFKMLXAllInOne.network(weightsURL: releasedWeights).
+        let net = try NFKMLXAllInOne.network(weightsURL: nil)
+        let stems = (0 ..< 4).map { stem in (0 ..< 44100).map { sinf(Float($0 * (stem + 1)) * 0.01) * 0.3 } }
+        let spectrograms = net.spectrograms(stems: stems)                    // bass, drums, other, vocals
+        let targets = try NFKMLXAllInOneTargets(beatTimes: [0, 0.5], downbeatTimes: [0],
+                                                sectionBoundaries: [0, 0.6], sectionLabels: ["start", "intro", "verse"],
+                                                frameCount: spectrograms.dim(2))
+        let history = try NFKMLXAllInOne.fineTune(net, examples: { _ in (spectrograms, targets) }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let analyzer = try NFKMLXAllInOne.backend(weightsURL: tuned)            // also backendWithWeightsURL:error:
+        XCTAssertTrue(analyzer.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint

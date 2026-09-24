@@ -550,6 +550,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### All-In-One fine-tunes on a consumer's own annotated tracks
+
+- `NFKMLXAllInOne.network(weightsURL:)`, `NFKMLXAllInOneTargets`, and `fineTune(_:examples:…)` port the
+  authors' trainer: annotations become widened frame targets as their dataset builds them, the
+  objective is their `compute_losses`, and the optimizer is timm's `RAdam`, now in the package as
+  `NFKMLXRAdam` with timm's decay groups. Every target, every loss term, and twelve RAdam steps match
+  the authors' sources.
+- The network runs the reference's dropouts and stochastic depth while it trains and starts in
+  evaluation mode. The loader transposes convolution weights only for a PyTorch-layout checkpoint, so a
+  fine-tuned save reloads; it had transposed every file.
+
 #### NU-Wave 2 fine-tunes on a consumer's own wide-band audio
 
 - `NFKMLXNUWave2.network(weightsURL:)`, `trainingPair(wideband:narrowbandRate:)`, and

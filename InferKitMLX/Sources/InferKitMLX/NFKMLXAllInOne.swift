@@ -59,6 +59,15 @@ public struct NFKMLXAllInOneConfiguration: Sendable {
     /// The functional labels the model scores.
     public var labels: [String]
     public var layerNormEpsilon: Float
+    /// The dropout after each convolution stage of the embedding, `drop_conv`. Active only in training.
+    public var convolutionDropout: Float = 0.2
+    /// The dropout on the attention probabilities and the attention output, `drop_attention`.
+    public var attentionDropout: Float = 0.2
+    /// The dropout on the feed-forward output, `drop_hidden`.
+    public var hiddenDropout: Float = 0.2
+    /// The largest stochastic-depth rate, `drop_path`, reached at the last block; the rates rise
+    /// linearly from 0 at the first.
+    public var dropPath: Float = 0.1
     /// The frames per beat at the fastest tempo the model considers, which sets the width of the
     /// local-maximum filter the section post-processing uses.
     public var minimumFramesPerBeat: Int
@@ -192,8 +201,11 @@ final class NFKAllInOneAttention: Module {
     let kernelSize: Int
     let dilation: Int
     let twoDimensional: Bool
+    let probabilityDropout: Dropout
 
-    init(dimension: Int, heads: Int, kernelSize: Int, dilation: Int, twoDimensional: Bool, bias: Bool = true) {
+    init(dimension: Int, heads: Int, kernelSize: Int, dilation: Int, twoDimensional: Bool, bias: Bool = true,
+         dropout: Float = 0) {
+        probabilityDropout = Dropout(p: dropout)
         self.heads = heads
         self.headDimension = dimension / heads
         self.kernelSize = kernelSize
@@ -225,7 +237,7 @@ final class NFKAllInOneAttention: Module {
             let bias = take(rpb, window.biases(at: step), axis: 1)               // [heads, T]
             scores.append(((q * gathered).sum(axis: -1) + bias).expandedDimensions(axis: -1))
         }
-        let probabilities = softmax(concatenated(scores, axis: -1), axis: -1)    // [B, heads, T, kernel]
+        let probabilities = probabilityDropout(softmax(concatenated(scores, axis: -1), axis: -1))    // [B, heads, T, kernel]
 
         var context = MLXArray.zeros(like: v)
         for step in 0 ..< kernelSize {
@@ -266,7 +278,7 @@ final class NFKAllInOneAttention: Module {
                 scores.append(((q * gathered).sum(axis: -1) + bias(rowStep, columnStep)).expandedDimensions(axis: -1))
             }
         }
-        let probabilities = softmax(concatenated(scores, axis: -1), axis: -1)     // [B, heads, rows, columns, kernel²]
+        let probabilities = probabilityDropout(softmax(concatenated(scores, axis: -1), axis: -1))     // [B, heads, rows, columns, kernel²]
 
         var context = MLXArray.zeros(like: v)
         var offset = 0
@@ -294,20 +306,42 @@ final class NFKAllInOneDense: Module {
 final class NFKAllInOneAttentionModule: Module {
     @ModuleInfo(key: "self") var attention: NFKAllInOneAttention
     @ModuleInfo(key: "output") var output: NFKAllInOneDense
+    let outputDropout: Dropout
 
-    init(dimension: Int, heads: Int, kernelSize: Int, dilation: Int, twoDimensional: Bool) {
+    init(dimension: Int, heads: Int, kernelSize: Int, dilation: Int, twoDimensional: Bool, dropout: Float = 0) {
         _attention.wrappedValue = NFKAllInOneAttention(dimension: dimension, heads: heads,
                                                        kernelSize: kernelSize, dilation: dilation,
-                                                       twoDimensional: twoDimensional)
+                                                       twoDimensional: twoDimensional, dropout: dropout)
         _output.wrappedValue = NFKAllInOneDense(dimension, dimension)
+        outputDropout = Dropout(p: dropout)
     }
 
     func callAsFunction(_ hidden: MLXArray) -> MLXArray {
-        output(attention(hidden))
+        outputDropout(output(attention(hidden)))
     }
 
     func callAsFunction2D(_ hidden: MLXArray) -> MLXArray {
-        output(attention.callAsFunction2D(hidden))
+        outputDropout(output(attention.callAsFunction2D(hidden)))
+    }
+}
+
+/// Stochastic depth (`DinatDropPath`): in training, each sample's residual branch is dropped whole
+/// with probability `rate` and the kept ones scaled by `1 / (1 − rate)`. The identity at inference.
+final class NFKAllInOneDropPath: Module {
+    let rate: Float
+
+    init(rate: Float) {
+        self.rate = rate
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard training, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        var shape = [x.dim(0)]
+        shape += [Int](repeating: 1, count: x.ndim - 1)
+        return x * MLXRandom.bernoulli(MLXArray(keep), shape).asType(x.dtype) / keep
     }
 }
 
@@ -329,9 +363,14 @@ final class NFKAllInOneLayer: Module {
     let doubleAttention: Bool
     /// The positions a layer needs before its neighborhood fits; a shorter input is padded to it.
     let windowSize: Int
+    let hiddenDropout: Dropout
+    let dropPath: NFKAllInOneDropPath
 
     init(dimension: Int, heads: Int, kernelSize: Int, dilation: Int, mlpRatio: Double,
-         doubleAttention: Bool, twoDimensional: Bool, epsilon: Float) {
+         doubleAttention: Bool, twoDimensional: Bool, epsilon: Float,
+         attentionDropout: Float = 0, hiddenDropout: Float = 0, dropPath: Float = 0) {
+        self.hiddenDropout = Dropout(p: hiddenDropout)
+        self.dropPath = NFKAllInOneDropPath(rate: dropPath)
         self.twoDimensional = twoDimensional
         self.doubleAttention = doubleAttention
         windowSize = kernelSize * dilation * (doubleAttention ? 2 : 1)
@@ -340,10 +379,12 @@ final class NFKAllInOneLayer: Module {
         _normAfter.wrappedValue = LayerNorm(dimensions: after, eps: epsilon)
         _attention.wrappedValue = NFKAllInOneAttentionModule(dimension: dimension, heads: heads,
                                                              kernelSize: kernelSize, dilation: dilation,
-                                                             twoDimensional: twoDimensional)
+                                                             twoDimensional: twoDimensional,
+                                                             dropout: attentionDropout)
         _attention2.wrappedValue = doubleAttention
             ? NFKAllInOneAttentionModule(dimension: dimension, heads: heads, kernelSize: kernelSize,
-                                         dilation: dilation * 2, twoDimensional: twoDimensional)
+                                         dilation: dilation * 2, twoDimensional: twoDimensional,
+                                         dropout: attentionDropout)
             : nil
         _intermediate.wrappedValue = NFKAllInOneDense(after, Int(Double(after) * mlpRatio))
         _output.wrappedValue = NFKAllInOneDense(Int(Double(after) * mlpRatio), dimension)
@@ -374,7 +415,7 @@ final class NFKAllInOneLayer: Module {
                 attended = twoDimensional ? attended[0..., 0 ..< rows, 0 ..< columns, 0...]
                                           : attended[0..., 0 ..< rows, 0...]
             }
-            outputs.append(shortcut + attended)
+            outputs.append(shortcut + dropPath(attended))
         }
 
         let hiddenStates: MLXArray
@@ -386,7 +427,7 @@ final class NFKAllInOneLayer: Module {
             hiddenStates = outputs[0]
             residual = outputs[0]
         }
-        return residual + output(gelu(intermediate(normAfter(hiddenStates))))
+        return residual + dropPath(hiddenDropout(output(gelu(intermediate(normAfter(hiddenStates))))))
     }
 }
 
@@ -397,20 +438,25 @@ final class NFKAllInOneBlock: Module {
 
     let instruments: Int
 
-    init(_ configuration: NFKMLXAllInOneConfiguration, dilation: Int) {
+    init(_ configuration: NFKMLXAllInOneConfiguration, dilation: Int, dropPath: Float = 0) {
         instruments = configuration.instruments
         _timeLayer.wrappedValue = NFKAllInOneLayer(dimension: configuration.embedDimension,
                                                    heads: configuration.heads,
                                                    kernelSize: configuration.kernelSize,
                                                    dilation: dilation, mlpRatio: configuration.mlpRatio,
                                                    doubleAttention: true, twoDimensional: false,
-                                                   epsilon: configuration.layerNormEpsilon)
+                                                   epsilon: configuration.layerNormEpsilon,
+                                                   attentionDropout: configuration.attentionDropout,
+                                                   hiddenDropout: configuration.hiddenDropout, dropPath: dropPath)
         _instrumentLayer.wrappedValue = NFKAllInOneLayer(dimension: configuration.embedDimension,
                                                          heads: configuration.heads,
                                                          kernelSize: configuration.kernelSize,
                                                          dilation: 1, mlpRatio: configuration.mlpRatio,
                                                          doubleAttention: false, twoDimensional: true,
-                                                         epsilon: configuration.layerNormEpsilon)
+                                                         epsilon: configuration.layerNormEpsilon,
+                                                         attentionDropout: configuration.attentionDropout,
+                                                         hiddenDropout: configuration.hiddenDropout,
+                                                         dropPath: dropPath)
     }
 
     /// `[B·instruments, T, C]` → the same shape.
@@ -432,8 +478,14 @@ final class NFKAllInOneEmbeddings: Module {
     @ModuleInfo(key: "norm") var norm: LayerNorm
 
     private let pool = MaxPool2d(kernelSize: [1, 3], stride: [1, 3])
+    let drop0: Dropout
+    let drop1: Dropout
+    let dropout: Dropout
 
     init(_ configuration: NFKMLXAllInOneConfiguration) {
+        drop0 = Dropout(p: configuration.convolutionDropout)
+        drop1 = Dropout(p: configuration.convolutionDropout)
+        dropout = Dropout(p: configuration.convolutionDropout)
         let width = configuration.embedDimension
         // The convolutions pad in time and not in frequency, so each stage narrows the band axis.
         _conv0.wrappedValue = Conv2d(inputChannels: 1, outputChannels: width / 2,
@@ -447,10 +499,10 @@ final class NFKAllInOneEmbeddings: Module {
 
     /// `[B·instruments, T, bands, 1]` → `[B·instruments, T, C]`.
     func callAsFunction(_ spectrogram: MLXArray) -> MLXArray {
-        var x = elu(pool(conv0(spectrogram)))
-        x = elu(pool(conv1(x)))
+        var x = drop0(elu(pool(conv0(spectrogram))))
+        x = drop1(elu(pool(conv1(x))))
         x = elu(pool(conv2(x)))
-        return norm(x.squeezed(axis: 2))
+        return dropout(norm(x.squeezed(axis: 2)))
     }
 }
 
@@ -524,6 +576,10 @@ public final class NFKMLXAllInOneNet: Module {
         _downbeatHead.wrappedValue = NFKAllInOneHead(inputDimension: joined, classes: 1)
         _sectionHead.wrappedValue = NFKAllInOneHead(inputDimension: joined, classes: 1)
         _functionHead.wrappedValue = NFKAllInOneHead(inputDimension: joined, classes: configuration.labels.count)
+        super.init()
+        // A module starts in training mode, which would run the dropouts at inference; the trainer
+        // switches them on for a run and restores this.
+        train(false)
     }
 
     /// `[B, instruments, T, bands]` → the four sets of logits, for the first item of the batch.
@@ -547,8 +603,10 @@ public final class NFKAllInOneEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKAllInOneBlock]
 
     init(_ configuration: NFKMLXAllInOneConfiguration) {
-        _layers.wrappedValue = (0 ..< configuration.depth).map {
-            NFKAllInOneBlock(configuration, dilation: configuration.dilation(atBlock: $0))
+        let depth = configuration.depth
+        _layers.wrappedValue = (0 ..< depth).map {
+            NFKAllInOneBlock(configuration, dilation: configuration.dilation(atBlock: $0),
+                             dropPath: depth > 1 ? configuration.dropPath * Float($0) / Float(depth - 1) : 0)
         }
     }
 
@@ -955,7 +1013,7 @@ public final class NFKMLXAllInOne: NSObject {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
-            mapped.append((key, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value))
+            mapped.append((key, value.ndim == 4 && checkpoint.needsConvTranspose ? value.transposed(0, 2, 3, 1) : value))
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }
