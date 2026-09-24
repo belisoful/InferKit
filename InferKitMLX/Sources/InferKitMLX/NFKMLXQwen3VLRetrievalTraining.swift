@@ -18,33 +18,11 @@ import MLX
 import MLXNN
 import MLXOptimizers
 
-/// A linear adapter over a frozen Qwen3-VL embedding.
-///
-/// The adapter starts as the identity, so an untrained one reproduces the released embedding space
-/// exactly and training moves away from it. The result is re-normalized, so a dot product between two
-/// adapted embeddings stays a cosine similarity.
-public final class NFKMLXQwen3VLEmbeddingAdapter: Module {
+/// A linear adapter over a frozen Qwen3-VL embedding: the shared ``NFKMLXEmbeddingAdapter``.
+public typealias NFKMLXQwen3VLEmbeddingAdapter = NFKMLXEmbeddingAdapter
 
-    /// How wide the embeddings it adapts are.
-    public let dimensions: Int
-
-    @ModuleInfo(key: "projection") public var projection: Linear
-
-    /// Builds an identity adapter over `dimensions`-wide embeddings.
-    public init(dimensions: Int) {
-        self.dimensions = dimensions
-        self._projection.wrappedValue = Linear(dimensions, dimensions, bias: false)
-        super.init()
-        projection.update(parameters: ModuleParameters.unflattened(
-            ["weight": MLXArray.eye(dimensions)]))
-    }
-
-    /// The adapted embeddings, `[batch, dimensions]` in and out, normalized.
-    public func callAsFunction(_ embeddings: MLXArray) -> MLXArray {
-        let projected = projection(embeddings)
-        return projected / sqrt((projected * projected).sum(axis: -1, keepDims: true))
-    }
-}
+/// The contrastive objective the embedder is trained with: the shared ``NFKMLXEmbeddingRankingObjective``.
+public typealias NFKMLXQwen3VLEmbeddingObjective = NFKMLXEmbeddingRankingObjective
 
 /// The pair scorer a Qwen3-VL reranker fine-tune trains.
 ///
@@ -79,50 +57,6 @@ public final class NFKMLXQwen3VLRerankerHead: Module {
     }
 }
 
-/// The contrastive objective the embedder is trained with.
-///
-/// This is sentence-transformers' `MultipleNegativesRankingLoss` at its defaults, which is the loss
-/// the release is packaged for: cosine similarity between each query and every document in the batch,
-/// scaled by 20, read as a classification over the batch whose right answer is the query's own
-/// positive. Every other document is a negative, so a batch of `n` pairs carries `n - 1` negatives per
-/// query at no extra cost, and explicit hard negatives add to them.
-public struct NFKMLXQwen3VLEmbeddingObjective: Sendable {
-
-    /// The inverse temperature the similarities are multiplied by before the softmax.
-    public var scale: Float
-
-    public init(scale: Float = 20) {
-        self.scale = scale
-    }
-
-    /// The loss over a batch of queries and their document groups.
-    ///
-    /// - Parameters:
-    ///   - queries: `[batch, dimensions]`, one query embedding per row.
-    ///   - documents: one `[batch, dimensions]` group per document column: the positives first, then
-    ///     a group per hard negative. Row `i` of every group belongs to query `i`.
-    public func loss(queries: MLXArray, documents: [MLXArray]) -> MLXArray {
-        let batch = queries.dim(0)
-        let candidates = concatenated(documents.map { Self.normalized($0) }, axis: 0)
-        let scores = matmul(Self.normalized(queries), candidates.transposed(1, 0)) * scale
-        let positions = MLXArray((0 ..< batch).map { Int32($0) }).reshaped([batch, 1])
-        let positive = takeAlong(scores, positions, axis: 1).reshaped([batch])
-        return (logSumExp(scores, axis: 1) - positive).mean()
-    }
-
-    /// The loss of an adapter over frozen embeddings: the queries are the batch's input and the
-    /// document groups its target, stacked `[groups, batch, dimensions]`.
-    public func callAsFunction(_ adapter: NFKMLXQwen3VLEmbeddingAdapter, queries: MLXArray,
-                               documents: MLXArray) -> MLXArray {
-        loss(queries: adapter(queries),
-             documents: (0 ..< documents.dim(0)).map { adapter(documents[$0]) })
-    }
-
-    static func normalized(_ values: MLXArray) -> MLXArray {
-        values / sqrt((values * values).sum(axis: -1, keepDims: true))
-    }
-}
-
 /// The pointwise objective the reranker is trained with.
 ///
 /// This is sentence-transformers' `BinaryCrossEntropyLoss` at its defaults, which is the loss the
@@ -154,13 +88,10 @@ extension NFKMLXQwen3VLEmbedder {
     /// A nil `weightsURL` is the identity adapter, which is where a fine-tune starts. A file written
     /// by ``NFKMLXWeights/save(_:to:)`` after a run loads here and reproduces that run's embeddings.
     public func makeAdapter(weightsURL: URL? = nil) throws -> NFKMLXQwen3VLEmbeddingAdapter {
-        let adapter = NFKMLXQwen3VLEmbeddingAdapter(dimensions: embeddingDimensions)
-        if let weightsURL {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
-            try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: adapter,
-                                    verifyShapes: true)
+        guard let weightsURL else {
+            return NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions)
         }
-        return adapter
+        return try NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions, weightsURL: weightsURL)
     }
 
     /// Installs a fine-tuned adapter from a file, so every later embedding is the adapted one.
@@ -191,14 +122,8 @@ extension NFKMLXQwen3VLEmbedder {
                          documents: [MLXArray], steps: Int, learningRate: Float = 1e-3,
                          objective: NFKMLXQwen3VLEmbeddingObjective = NFKMLXQwen3VLEmbeddingObjective(),
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
-        let stacked = stacked(documents, axis: 0)
-        return try NFKMLXFineTune.run(
-            adapter, freezing: {}, optimizer: nil,
-            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
-            referenceSchedule: { .constant }, steps: steps,
-            batch: { _ in (queries, stacked) },
-            loss: { model, queries, documents in objective(model, queries: queries, documents: documents) },
-            clipGradientNorm: 1, observer: observer)
+        try NFKMLXEmbeddingAdapter.train(adapter, queries: queries, documents: documents, steps: steps,
+                                         learningRate: learningRate, objective: objective, observer: observer)
     }
 }
 

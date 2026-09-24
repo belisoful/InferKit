@@ -550,6 +550,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   cosmos-predict1's linear warm-up (the Cosmos Tokenizer). A recipe running its reference optimizer
   follows its reference's schedule; a caller's own optimizer keeps its rate unless a schedule is given.
 
+#### Probes for SigLIP 2, Qwen3-Embedding, and EmbeddingGemma
+
+- `NFKMLXEmbeddingProbe` and `NFKMLXEmbeddingProbeBackend` are the linear probe over any frozen image
+  embedding: cross entropy over cached vectors, and a backend that ranks classes under
+  `NFKOutputClassifications`. `NFKMLXCLIPProbe` and `NFKMLXCLIPProbeBackend` are now CLIP's names for
+  them. `init(weightsURL:)` reads a saved probe's width and class count from the file.
+- SigLIP 2 trains the same probe over its attention-pooled image embedding.
+  `NFKMLXSigLIP2.model(variant:weightsURL:)` builds the model object from Objective-C,
+  `imageEmbeddings(for:)` encodes a consumer's images once, and `probeBackend(probeURL:labels:)` installs
+  a saved probe, from Objective-C as `probeBackendWithProbeURL:labels:error:`.
+- `NFKMLXEmbeddingAdapter` and `NFKMLXEmbeddingRankingObjective` are the retrieval adapter the Qwen3-VL
+  embedder trained under its own names, which now alias them. `NFKMLXTextEmbeddingBackend` carries the
+  adapter for Qwen3-Embedding and EmbeddingGemma. `embeddings(for:)` encodes a corpus once without it,
+  `fineTune(adapter:queries:documents:steps:)` trains it under `MultipleNegativesRankingLoss`, and
+  `loadAdapter(from:)` (`loadAdapterFromURL:error:`) installs a saved one for every later embedding.
+- The customization ledger records the three as shipped probes. An unloaded SigLIP 2 tower embeds every
+  image identically because its pooling attention is built as zeros for a checkpoint to fill, so a
+  weight-free probe test first asserts that its categories embed apart.
+
 #### One fine-tuning sequence, and a per-model customization ledger
 
 - `NFKMLXFineTune.run` holds the sequence every recipe repeats: freeze, take the caller's optimizer or
@@ -559,6 +578,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   none gets the reference's schedule. The reference optimizer builds lazily, so a recipe whose
   reference walks the parameter tree does not pay for it when the caller supplied one.
 - Each of those three rules is a place a recipe has already been wrong, and each is pinned by a test
+  in `NFKMLXFineTuneTests`. Every recipe runs through it: `NFKMLXSegFormer`, `NFKMLXVJEPA2`,
+  `NFKMLXTrOCR`, `NFKMLXTableTransformer`, `NFKMLXFlorence2`, all three `NFKMLXSa2VA` overloads,
+  `NFKMLXSAM2`, `NFKMLXSAM3`, the Cosmos Tokenizer, `NFKMLXZeroDCE`, `NFKMLXWhisper`, the CLIP probe,
+  both `NFKMLXLaya` recipes, the two Open-Jev recipes, the Marian, M2M-100, and MADLAD-400
+  translators, `NFKMLXTranslateGemma`, the Granite and Nemotron hybrids, and the Qwen3-VL embedding
+  adapter and reranker head. It takes the trainer's `batch:`, `sample:`,
+  and `arrays:` forms.
   in `NFKMLXFineTuneTests`. Six recipes run through it: `NFKMLXSegFormer`, `NFKMLXVJEPA2`,
   `NFKMLXTrOCR`, `NFKMLXTableTransformer`, `NFKMLXFlorence2`, and all three `NFKMLXSa2VA` overloads.
 - A freezing policy may throw, so a LoRA policy whose predicate matches no layer ends the run before
@@ -573,6 +599,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The triage corrected the assumption that detector training is too expensive to port. ultralytics
   publishes `v8DetectionLoss` over `TaskAlignedAssigner`, and transformers maps the RT-DETR and
   RF-DETR families onto Hungarian matchers `NFKMLXHungarian` already reproduces.
+- Ten model entries now agree with the code and the references. Basic Pitch is trainable at full, as
+  its reference publishes `train.py` and its losses. Granite Speech, Voxtral, and Canary are trainable
+  at LoRA, because the shipped Whisper recipe already trains on audio-and-transcript pairs. The
+  SegFormer, Zero-DCE, Whisper, and CLIP entries name the recipes they ship, and BigVGAN and Mimi are
+  offline on their unshipped discriminators.
+
 
 #### Typed decisions on device
 

@@ -11,9 +11,9 @@
 //  step costs one 512-wide matrix multiply rather than a transformer forward, and a run finishes in
 //  seconds on a few dozen photos.
 //
-//  Contrast with a contrastive fine-tune of CLIP itself, which needs large batches for negatives and is
-//  not a device workload. The probe is a separate small model, so what it saves is a companion file
-//  rather than modified CLIP weights.
+//  A contrastive fine-tune of CLIP itself needs large batches for its negatives and is not a device
+//  workload. The probe is the shared `NFKMLXEmbeddingProbe`, so what it saves is a companion file and
+//  CLIP's weights stay as released.
 //
 
 import CoreGraphics
@@ -23,27 +23,11 @@ import MLX
 import MLXNN
 import MLXOptimizers
 
-/// A linear classifier over a CLIP embedding.
-public final class NFKMLXCLIPProbe: Module {
+/// A linear classifier over a CLIP embedding: the shared ``NFKMLXEmbeddingProbe``.
+public typealias NFKMLXCLIPProbe = NFKMLXEmbeddingProbe
 
-    @ModuleInfo(key: "classifier") var classifier: Linear
-
-    /// How many categories it predicts.
-    public let classCount: Int
-
-    /// - Parameters:
-    ///   - embedDimensions: the CLIP embedding width, 512 for ViT-B/32.
-    ///   - classCount: the consumer's own categories.
-    public init(embedDimensions: Int = 512, classCount: Int) {
-        self.classCount = classCount
-        _classifier.wrappedValue = Linear(embedDimensions, classCount)
-    }
-
-    /// Scores cached embeddings `[N, embedDimensions]`, returning logits `[N, classCount]`.
-    public func callAsFunction(_ embeddings: MLXArray) -> MLXArray {
-        classifier(embeddings)
-    }
-}
+/// The backend a trained CLIP probe answers through: the shared ``NFKMLXEmbeddingProbeBackend``.
+public typealias NFKMLXCLIPProbeBackend = NFKMLXEmbeddingProbeBackend
 
 extension NFKMLXCLIP {
 
@@ -77,19 +61,8 @@ extension NFKMLXCLIP {
 
     /// Trains a probe on cached embeddings, returning the loss from each step.
     ///
-    /// - Parameters:
-    ///   - probe: the classifier to train.
-    ///   - embeddings: cached vectors `[N, embedDimensions]` from ``embeddings(for:using:colorSpace:)``.
-    ///   - labels: one class index per embedding, `[N]`.
-    ///   - sampler: draws which examples each step sees. Nil trains on the whole set every step, which
-    ///     is what a few dozen examples want.
-    ///   - optimizer: the update rule. Nil uses AdamW, bias-corrected as `torch.optim.AdamW` is. CLIP's
-    ///     own linear probe is an L-BFGS logistic regression, so the optimizer is this package's choice.
-    ///   - steps: how many updates to run.
-    ///   - clipGradientNorm: bounds the global gradient norm before the update.
-    ///   - checkpoint: writes the probe periodically.
-    ///   - observer: receives each step and can end the run early.
-    ///
+    /// This is ``NFKMLXEmbeddingProbe/train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:checkpoint:observer:)``.
+    /// CLIP's own linear probe is an L-BFGS logistic regression, so the optimizer is this package's choice.
     @discardableResult
     public static func trainProbe(
         _ probe: NFKMLXCLIPProbe,
@@ -102,108 +75,26 @@ extension NFKMLXCLIP {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        guard embeddings.shape[0] == labels.shape[0] else {
-            throw NFKMLXError.trainingDataMismatch(
-                "\(embeddings.shape[0]) embeddings and \(labels.shape[0]) labels were supplied; "
-                + "a probe needs one class index per image")
-        }
-        return try NFKMLXFineTune.run(
-            probe,
-            freezing: {},
-            optimizer: optimizer,
-            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: 1e-3, weightDecay: 0.01) },
-            referenceSchedule: { .constant },
-            steps: steps,
-            batch: { step in
-                guard let sampler else {
-                    return (embeddings, labels)
-                }
-                let indices = MLXArray(sampler.indices(forStep: step).map { Int32($0) })
-                return (embeddings[indices], labels[indices])
-            },
-            loss: { probe, batch, targets in
-                crossEntropy(logits: probe(batch), targets: targets, reduction: .mean)
-            },
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+        try NFKMLXEmbeddingProbe.train(probe, embeddings: embeddings, labels: labels, sampler: sampler,
+                                       optimizer: optimizer, steps: steps, clipGradientNorm: clipGradientNorm,
+                                       checkpoint: checkpoint, observer: observer)
     }
 
     /// Wraps a trained probe as an InferKit backend: an image under `NFKInputImage` becomes ranked
     /// `NFKClassification`s under `NFKOutputClassifications`.
     public static func probeBackend(net: NFKMLXCLIPNet, probe: NFKMLXCLIPProbe,
                                     labels: [String]? = nil) -> any NFKInferenceBackend {
-        NFKMLXCLIPProbeBackend(net: net, probe: probe, identifier: "clip-probe", labels: labels)
+        let encoder = NFKCLIPEncoderHolder(net)
+        return NFKMLXEmbeddingProbeBackend(probe: probe, identifier: "clip-probe", labels: labels) { value in
+            let tensor = try NFKMLXImageBridge.tensor(from: value, channels: 3,
+                                                      colorSpace: CGColorSpaceCreateDeviceRGB())
+            return encoder.net.encodeImage(tensor)
+        }
     }
 }
 
-/// Holds the networks and labels for capture in the backend's `@Sendable` closure.
-private final class NFKCLIPProbeHolder: @unchecked Sendable {
+/// Holds the CLIP network for capture in the probe backend's embedder.
+private final class NFKCLIPEncoderHolder: @unchecked Sendable {
     let net: NFKMLXCLIPNet
-    let probe: NFKMLXCLIPProbe
-    let labels: [String]?
-    init(net: NFKMLXCLIPNet, probe: NFKMLXCLIPProbe, labels: [String]?) {
-        self.net = net
-        self.probe = probe
-        self.labels = labels
-    }
-}
-
-/// A consumer's own image classifier, built on a frozen CLIP embedding. Reads `NFKInputImage`; returns
-/// ranked classes under `NFKOutputClassifications`.
-@objc(NFKMLXCLIPProbeBackend)
-public final class NFKMLXCLIPProbeBackend: NSObject, NFKInferenceBackend {
-
-    private let holder: NFKCLIPProbeHolder
-    private let identifier: String
-
-    init(net: NFKMLXCLIPNet, probe: NFKMLXCLIPProbe, identifier: String, labels: [String]?) {
-        holder = NFKCLIPProbeHolder(net: net, probe: probe, labels: labels)
-        self.identifier = identifier
-        super.init()
-    }
-
-    @objc public var isReady: Bool { true }
-    @objc public var backendIdentifier: String { identifier }
-
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
-
-    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
-
-    @objc(runInferenceForRequest:error:)
-    public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
-        guard let value = request.input(forKey: NFKInputImage) else {
-            throw NFKMLXError.unsupportedInput
-        }
-        let tensor = try NFKMLXImageBridge.tensor(from: value, channels: 3,
-                                                  colorSpace: CGColorSpaceCreateDeviceRGB())
-        let embedding = holder.net.encodeImage(tensor)
-        let logits = holder.probe(embedding.reshaped([1, embedding.shape[0]]))
-        return NFKInferenceResult(outputs: [NFKOutputClassifications: Self.ranked(logits, labels: holder.labels)])
-    }
-
-    @objc(submitInferenceJobForRequest:)
-    public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
-        let job = NFKInferenceJob()
-        Task.detached(priority: .userInitiated) {
-            do {
-                job.finish(with: try self.runInference(for: request))
-            } catch {
-                job.finish(withError: error as NSError)
-            }
-        }
-        return job
-    }
-
-    /// Softmax over the logits, most confident first, so the confidences read as probabilities over
-    /// the consumer's categories.
-    private static func ranked(_ logits: MLXArray, labels: [String]?) -> [NFKClassification] {
-        let probabilities = softmax(logits, axis: -1).reshaped([logits.shape[1]]).asArray(Float.self)
-        return probabilities.enumerated()
-            .sorted { $0.element > $1.element }
-            .map { index, score in
-                NFKClassification(label: labels.flatMap { index < $0.count ? $0[index] : nil },
-                                  classIndex: index, confidence: Double(score))
-            }
-    }
+    init(_ net: NFKMLXCLIPNet) { self.net = net }
 }

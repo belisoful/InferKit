@@ -304,7 +304,7 @@ final class NFKMLXSigLIP2Net: Module {
 }
 
 /// Holds the network for capture in the backend's `@Sendable` closure.
-private final class NFKSigLIP2Holder: @unchecked Sendable {
+final class NFKSigLIP2Holder: @unchecked Sendable {
     let net: NFKMLXSigLIP2Net
     init(_ net: NFKMLXSigLIP2Net) { self.net = net }
 }
@@ -446,7 +446,7 @@ public final class NFKMLXSigLIP2: NSObject {
                                completionHandler: completionHandler)
     }
 
-    private let holder: NFKSigLIP2Holder
+    let holder: NFKSigLIP2Holder
 
     init(net: NFKMLXSigLIP2Net) { holder = NFKSigLIP2Holder(net) }
 

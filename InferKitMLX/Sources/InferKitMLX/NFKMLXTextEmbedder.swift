@@ -124,9 +124,19 @@ final class NFKMLXTextEmbedder: NFKTextEmbedding {
 private final class NFKTextEmbedderHolder: @unchecked Sendable {
     let embedder: any NFKTextEmbedding
     let tokenize: ((String) -> [Int])?
+    var adapter: NFKMLXEmbeddingAdapter?
     init(_ embedder: any NFKTextEmbedding, _ tokenize: ((String) -> [Int])?) {
         self.embedder = embedder
         self.tokenize = tokenize
+    }
+
+    /// The embedding the backend reports: the model's, through the installed adapter when there is one.
+    func embed(tokens: [Int]) -> MLXArray {
+        let embedding = embedder.embed(tokens: tokens)
+        guard let adapter else {
+            return embedding
+        }
+        return adapter(embedding.reshaped([1, embedding.dim(0)])).reshaped([embedding.dim(0)])
     }
 }
 
@@ -176,7 +186,86 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     /// pooling, truncation, and normalization the backend was configured with all apply.
     @objc(embeddingForTokens:)
     public func embedding(forTokens tokens: [NSNumber]) -> [NSNumber] {
-        Self.numbers(holder.embedder.embed(tokens: tokens.map(\.intValue)))
+        Self.numbers(holder.embed(tokens: tokens.map(\.intValue)))
+    }
+
+    // MARK: - Customization
+
+    /// The adapter every embedding passes through, from ``makeAdapter(weightsURL:)`` or
+    /// ``loadAdapter(from:)``. Nil reports the released embedding. Introduced in InferKit 0.5.0.
+    public var adapter: NFKMLXEmbeddingAdapter? {
+        get { holder.adapter }
+        set { holder.adapter = newValue }
+    }
+
+    /// The model's own embeddings of token sequences the caller tokenized, `[N, embeddingDimensions]`,
+    /// without the installed adapter: the frozen values an adapter fine-tune trains over.
+    ///
+    /// Encode a corpus once and train over the result; re-encoding per step would be the whole cost of
+    /// the run. Encoding is multi-second over many texts; call it off the render thread.
+    /// Introduced in InferKit 0.5.0.
+    public func embeddings(forTokenSequences sequences: [[Int]]) throws -> MLXArray {
+        guard !sequences.isEmpty else {
+            throw NFKMLXError.trainingDataMismatch("an adapter needs at least one text to encode")
+        }
+        let encoded = sequences.map { tokens -> MLXArray in
+            let embedding = holder.embedder.embed(tokens: tokens)
+            eval(embedding)
+            return embedding
+        }
+        return stacked(encoded, axis: 0)
+    }
+
+    /// The model's own embeddings of texts, `[N, embeddingDimensions]`, through the tokenizer the
+    /// backend was built with and without the installed adapter. Introduced in InferKit 0.5.0.
+    public func embeddings(for texts: [String]) throws -> MLXArray {
+        guard let tokenize = holder.tokenize else {
+            throw NFKMLXError.unsupportedConfiguration("text embedding needs a tokenizer; build the backend with one")
+        }
+        return try embeddings(forTokenSequences: texts.map(tokenize))
+    }
+
+    /// Builds an adapter over this backend's embeddings, loading `weightsURL` when one is given.
+    ///
+    /// A nil `weightsURL` is the identity adapter, which is where a fine-tune starts. A file written by
+    /// `NFKMLXWeights.save` after a run loads here and reproduces that run's embeddings.
+    /// Introduced in InferKit 0.5.0.
+    public func makeAdapter(weightsURL: URL? = nil) throws -> NFKMLXEmbeddingAdapter {
+        guard let weightsURL else {
+            return NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions)
+        }
+        return try NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions, weightsURL: weightsURL)
+    }
+
+    /// Installs a fine-tuned adapter from a file, so every later embedding is the adapted one.
+    ///
+    /// This is the Objective-C reach into a fine-tune: a consumer trains through
+    /// ``fineTune(adapter:queries:documents:steps:learningRate:objective:observer:)`` in Swift, saves,
+    /// and an app installs the result here. Introduced in InferKit 0.5.0.
+    @objc(loadAdapterFromURL:error:)
+    public func loadAdapter(from url: URL) throws {
+        adapter = try makeAdapter(weightsURL: url)
+    }
+
+    /// Removes the installed adapter, so later embeddings are the released ones. Introduced in
+    /// InferKit 0.5.0.
+    @objc public func removeAdapter() {
+        adapter = nil
+    }
+
+    /// Trains an adapter over frozen embeddings from ``embeddings(for:)``, returning the loss from each
+    /// step. This is ``NFKMLXEmbeddingAdapter/train(_:queries:documents:steps:learningRate:objective:observer:)``.
+    ///
+    /// Only the adapter trains; the model is not in the graph. Assign the result to ``adapter``, or
+    /// save it with `NFKMLXWeights.save` and install it with ``loadAdapter(from:)``.
+    /// Introduced in InferKit 0.5.0.
+    @discardableResult
+    public func fineTune(adapter: NFKMLXEmbeddingAdapter, queries: MLXArray, documents: [MLXArray],
+                         steps: Int, learningRate: Float = 1e-3,
+                         objective: NFKMLXEmbeddingRankingObjective = NFKMLXEmbeddingRankingObjective(),
+                         observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
+        try NFKMLXEmbeddingAdapter.train(adapter, queries: queries, documents: documents, steps: steps,
+                                         learningRate: learningRate, objective: objective, observer: observer)
     }
 
     @objc(runInferenceForRequest:error:)
@@ -207,7 +296,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
                     throw NFKMLXError.unsupportedConfiguration(
                         "text embedding needs a tokenizer; build the backend with one")
                 }
-                let embedding = Self.numbers(holder.embedder.embed(tokens: tokenize(text)))
+                let embedding = Self.numbers(holder.embed(tokens: tokenize(text)))
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputEmbedding: embedding]))
             } catch {
                 job.finish(withError: error as NSError)

@@ -609,6 +609,57 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(result.classifications?.count, 2)
     }
 
+    // Docs/examples.md: A custom image classifier over SigLIP 2
+    func testExampleSigLIP2ProbeClassifiesThroughABackend() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let saved = FileManager.default.temporaryDirectory
+            .appendingPathComponent("siglip2-probe-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: saved) }
+
+        // A real run builds a release: NFKMLXSigLIP2.model(variant: .basePatch16At224, weightsURL: url).
+        let siglip = try NFKMLXSigLIP2.model(configuration: .tiny, weightsURL: nil)
+        let myPhotos = [Self.gray(64, level: 40), Self.gray(64, level: 220)]
+        let cached = try siglip.imageEmbeddings(for: myPhotos)                  // run once
+        let probe = NFKMLXEmbeddingProbe(embedDimensions: siglip.embeddingDimensions, classCount: 2)
+        try NFKMLXEmbeddingProbe.train(probe, embeddings: cached, labels: MLXArray([Int32(0), 1]), steps: 20)
+        try NFKMLXWeights.save(probe, to: saved)
+
+        // The saved probe reloads through the model, which is also the Objective-C path
+        // (probeBackendWithProbeURL:labels:error:).
+        let classifier = try siglip.probeBackend(probeURL: saved, labels: ["dark", "bright"])
+        let result = try classifier.runInference(
+            for: NFKInferenceRequest(inputs: [NFKInputImage: myPhotos[0]]))
+        XCTAssertEqual(result.classifications?.count, 2)
+    }
+
+    // Docs/examples.md: Adapting a text embedder to a consumer's own corpus
+    func testExampleAdaptingATextEmbedderOnOwnPairs() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("text-adapter-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run builds a release, NFKMLXQwen3Embedding.backend(directoryURL:) or
+        // NFKMLXEmbeddingGemma.backend(directoryURL:), and encodes text with embeddings(for:).
+        let built = try NFKMLXQwen3Embedding.backend(
+            weightsURL: nil, tokenizer: nil, configuration: .tiny,
+            embedding: NFKMLXTextEmbedderConfiguration(pooling: .lastToken, appendedToken: 1, normalizes: true))
+        let embedder = try XCTUnwrap(built as? NFKMLXTextEmbeddingBackend)
+        let queries = try embedder.embeddings(forTokenSequences: [[3, 17, 42], [5, 9, 11], [21, 8, 30]])
+        let documents = try embedder.embeddings(forTokenSequences: [[44, 13], [27, 3, 3], [9, 50, 18]])
+
+        // Only the adapter trains; the model encoded each text once and is not in the graph.
+        let adapter = try embedder.makeAdapter()
+        let history = try embedder.fineTune(adapter: adapter, queries: queries, documents: [documents], steps: 8)
+        XCTAssertEqual(history.count, 8)
+
+        try NFKMLXWeights.save(adapter, to: tuned)
+        try embedder.loadAdapter(from: tuned)                  // also the Objective-C path
+        XCTAssertEqual(embedder.embedding(forTokens: [3, 17, 42]).count, embedder.embeddingDimensions)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint
