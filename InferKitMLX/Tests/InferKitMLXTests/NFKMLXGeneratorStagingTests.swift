@@ -143,8 +143,11 @@ final class NFKMLXGeneratorStagingTests: XCTestCase {
         // The release may sit on a network share this process is not granted, or be mid-download.
         let last = URL(fileURLWithPath: release)
             .appendingPathComponent("transformer/diffusion_pytorch_model-00002-of-00002.safetensors")
-        try XCTSkipUnless(FileManager.default.isReadableFile(atPath: last.path),
-                          "the Wan release at \(release) is not readable from this process")
+        // `access` answers yes on a share the privacy layer then refuses to open, so the guard reads.
+        let handle = try? FileHandle(forReadingFrom: last)
+        let readable = (try? handle?.read(upToCount: 8))??.count == 8
+        try? handle?.close()
+        try XCTSkipUnless(readable, "the Wan release at \(release) is not readable from this process")
         let start = Date()
         let generator = try NFKMLXWanVideoGenerator.generator(directoryURL: URL(fileURLWithPath: release))
         generator.steps = 20

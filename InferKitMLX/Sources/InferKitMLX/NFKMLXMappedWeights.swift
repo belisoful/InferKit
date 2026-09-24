@@ -127,6 +127,29 @@ public final class NFKMLXMappedFile: @unchecked Sendable {
         return MLXArray(buffer).reshaped(shape)
     }
 
+    /// `count` bytes from `offset`, copied once into an array of `dtype` and `shape`.
+    ///
+    /// @discussion MLX copies the bytes into a buffer of its own as it builds the array, so the
+    /// array never refers to the mapping, which is the property ``bytes(at:shape:)`` keeps, at one
+    /// copy where that path makes two.
+    func array(at offset: Int, count: Int, shape: [Int], dtype: DType) -> MLXArray {
+        let bytes = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: base + offset), count: count,
+                         deallocator: .none)
+        return MLXArray(bytes, shape, dtype: dtype)
+    }
+
+    /// Asks the system to read `offset ..< offset + count` ahead of a copy out of it.
+    ///
+    /// @discussion The advice covers whole pages and returns at once; the reads it starts overlap one
+    /// another and whatever runs before the copy, where a copy alone faults its pages in one at a time.
+    func prefetch(offset: Int, count: Int) {
+        let page = Int(getpagesize())
+        let start = offset / page * page
+        let end = Swift.min(byteCount, (offset + count + page - 1) / page * page)
+        guard end > start else { return }
+        _ = madvise(UnsafeMutableRawPointer(mutating: base + start), end - start, MADV_WILLNEED)
+    }
+
     /// Whether `offset ..< offset + count` lies inside the mapping.
     func contains(offset: Int, count: Int) -> Bool {
         offset >= 0 && count >= 0 && offset + count <= byteCount

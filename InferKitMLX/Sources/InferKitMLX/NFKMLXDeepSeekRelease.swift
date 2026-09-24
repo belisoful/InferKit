@@ -557,7 +557,7 @@ public extension NFKMLXDeepSeek {
     ///   and runs in. Off, the decoder is the release's own arithmetic, bit for bit; on, it is the
     ///   model that arithmetic approximates, at twice the bytes a step reads.
     static func backend(directoryURL: URL,
-                        paging: NFKMLXDeepSeekPaging = .none,
+                        paging: NFKMLXDeepSeekPaging,
                         speculates: Bool = false,
                         quantizesActivations: Bool = false,
                         computesInFloat32: Bool = false,
@@ -604,20 +604,90 @@ public extension NFKMLXDeepSeek {
                                      images: images, draft: draft, options: resolved)
     }
 
+    /// Builds a text-generation backend from a released directory, holding it as `residency` says.
+    ///
+    /// @discussion ``paging(for:residency:budget:includesDraftStack:)`` turns the residency into a
+    /// paging policy; the other arguments are ``backend(directoryURL:paging:speculates:quantizesActivations:computesInFloat32:options:)``'s.
+    /// Under the default ``NFKMLXResidency/automatic`` a release that fits loads resident and one that
+    /// does not is paged, where it was refused before.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL,
+                        residency: NFKMLXResidency = .automatic,
+                        speculates: Bool = false,
+                        quantizesActivations: Bool = false,
+                        computesInFloat32: Bool = false,
+                        options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
+        throws -> any NFKInferenceBackend {
+        var configuration = try self.configuration(
+            fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
+        if computesInFloat32 { configuration.computesInBFloat16 = false }
+        let paging = try self.paging(for: configuration, residency: residency, budget: NFKMLXResidencyBudget.current(),
+                                     includesDraftStack: speculates && makeDraftStack(configuration) != nil)
+        return try backend(directoryURL: directoryURL, paging: paging, speculates: speculates,
+                           quantizesActivations: quantizesActivations, computesInFloat32: computesInFloat32,
+                           options: options)
+    }
+
+    /// The paging policy a residency comes to for a configuration, planned by
+    /// ``NFKMLXResidencyBudget`` like every other paged model.
+    ///
+    /// @discussion The release is one stage whose pageable bytes are what ``NFKMLXDeepSeekPaging/fullyMapped``
+    /// leaves in the release: the routed experts and the n-gram tables.
+    /// - `.resident` and `.staged` → ``NFKMLXDeepSeekPaging/none``. One stage has nothing to take turns
+    ///   with, so staging it is loading it; `.resident` throws where the decoded weights are known not
+    ///   to fit.
+    /// - `.paged` → ``NFKMLXDeepSeekPaging/fullyMapped``, every paged group left in the release.
+    /// - `.automatic` → `none` where the decoded weights fit; otherwise ``NFKMLXDeepSeekPaging/mapped``
+    ///   where the experts held stored in memory fit beside the cache, which decodes without reading
+    ///   the release; otherwise `fullyMapped`.
+    ///
+    /// A paged policy's `expertCacheBytes` is the plan's cache.
+    static func paging(for configuration: NFKMLXDeepSeekConfiguration, residency: NFKMLXResidency, budget: Int,
+                       includesDraftStack: Bool) throws -> NFKMLXDeepSeekPaging {
+        func bytes(_ paging: NFKMLXDeepSeekPaging) -> Int {
+            decoderBytes(for: configuration, paging: paging)
+                + (includesDraftStack ? draftStackBytes(for: configuration, paging: paging) : 0)
+        }
+        let whole = bytes(.none)
+        let plan = try NFKMLXResidencyBudget.plan(
+            [NFKMLXStageFootprint(bytes: whole, pageableBytes: whole - bytes(.fullyMapped))],
+            residency: residency, budget: budget)
+        guard plan.pagesExperts else { return .none }
+        let holdsStored = residency == .automatic
+            && NFKMLXResidencyBudget.holds(bytes(.mapped) + plan.expertCacheBytes, budget: budget)
+        var paging: NFKMLXDeepSeekPaging = holdsStored ? .mapped : .fullyMapped
+        paging.expertCacheBytes = plan.expertCacheBytes
+        return paging
+    }
+
     /// ``NFKMLXDeepSeekPaging/defaultExpertCacheBytes``, where Objective-C can read it: the policy
     /// itself is a Swift struct and does not bridge.
     @objc static let defaultExpertCacheBytes = NFKMLXDeepSeekPaging.defaultExpertCacheBytes
 
-    /// The Objective-C entry: builds a DeepSeek text-generation backend from a release directory.
+    /// The Objective-C entry: builds a DeepSeek text-generation backend from a release directory, held
+    /// as ``NFKMLXResidency/automatic`` decides.
     @objc(deepSeekBackendWithDirectoryURL:error:)
     static func deepSeekBackend(directoryURL: URL) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: directoryURL)
+        try backend(directoryURL: directoryURL, residency: .automatic)
+    }
+
+    /// The Objective-C entry that holds the release as `residency` says. Introduced in InferKit 0.4.0.
+    @objc(deepSeekBackendWithDirectoryURL:residency:error:)
+    static func deepSeekBackend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, residency: residency)
     }
 
     /// The Objective-C entry that reaches every load choice.
     @objc(deepSeekBackendWithDirectoryURL:options:error:)
     static func deepSeekBackend(directoryURL: URL,
                                 options: NFKMLXDeepSeekLoadOptions) throws -> any NFKInferenceBackend {
+        guard options.paging != .none else {
+            return try backend(directoryURL: directoryURL, residency: options.residency,
+                               speculates: options.speculates,
+                               quantizesActivations: options.quantizesActivations,
+                               computesInFloat32: options.computesInFloat32)
+        }
         var policy = options.paging.policy
         policy.expertCacheBytes = options.expertCacheBytes
         return try backend(directoryURL: directoryURL, paging: policy,

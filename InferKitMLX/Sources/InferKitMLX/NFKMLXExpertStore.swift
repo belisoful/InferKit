@@ -25,6 +25,12 @@ protocol NFKMLXExpertSource {
     var mappedBytes: Int { get }
     /// The array the layer computes with. The result may be lazy; the store evaluates it.
     func materialize() -> MLXArray
+    /// Starts reading what ``materialize()`` will read, where the source is left in a release.
+    func prefetch()
+}
+
+extension NFKMLXExpertSource {
+    func prefetch() {}
 }
 
 /// An expert tensor read as stored, then passed through `transform`.
@@ -60,9 +66,13 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
         case .held(let array):
             return transform(array)
         case .mapped(let file, let offset):
-            let bytes = file.bytes(at: offset, shape: [byteCount])
-            let typed = dtype == .uint8 ? bytes : bytes.view(dtype: dtype)
-            return transform(typed.reshaped(shape))
+            return transform(file.array(at: offset, count: byteCount, shape: shape, dtype: dtype))
+        }
+    }
+
+    func prefetch() {
+        if case .mapped(let file, let offset) = storage {
+            file.prefetch(offset: offset, count: byteCount)
         }
     }
 
@@ -109,11 +119,13 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
 /// token meets the same matrix it would meet resident, so a paged decoder produces the same values
 /// as a resident one.
 ///
-/// The store is Swift-only because its contents are `MLXArray`s. An Objective-C caller chooses
-/// paging through ``NFKMLXResidency/paged`` on a factory that takes a residency.
+/// An Objective-C caller chooses paging through ``NFKMLXResidency/paged`` on a factory that takes a
+/// residency, and reaches the store through the backend's `expertStore` to read its counters and
+/// set its cache budget. Filing experts in a store takes `MLXArray`s and stays Swift-only.
 ///
 /// Introduced in InferKit 0.4.0.
-public final class NFKMLXExpertStore: @unchecked Sendable {
+@objc(NFKMLXExpertStore)
+public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
 
     private struct Address: Hashable {
         let group: String
@@ -137,33 +149,34 @@ public final class NFKMLXExpertStore: @unchecked Sendable {
     ///
     /// @discussion Lowering it evicts down to the new bound immediately. Zero materializes every
     /// routed expert on every step that reaches it, which is the least memory and the most work.
-    public var cacheByteBudget: Int {
+    @objc public var cacheByteBudget: Int {
         get { locked { budget } }
         set { locked { budget = newValue; evictDownToBudget() } }
     }
 
     /// How many experts have been materialized from their sources.
-    public var materializeCount: Int { locked { materialized } }
+    @objc public var materializeCount: Int { locked { materialized } }
 
     /// How many requests for an expert the cache answered without materializing it.
-    public var cacheHitCount: Int { locked { hits } }
+    @objc public var cacheHitCount: Int { locked { hits } }
 
     /// The bytes the sources keep in memory, which is what the store adds to the working set
     /// before any expert is materialized.
-    public var heldBytes: Int { locked { held } }
+    @objc public var heldBytes: Int { locked { held } }
 
     /// The bytes the sources leave in the release.
-    public var mappedBytes: Int { locked { mapped } }
+    @objc public var mappedBytes: Int { locked { mapped } }
 
     /// What the materialized experts currently cached occupy.
-    public var cachedBytes: Int { locked { cachedBytesHeld } }
+    @objc public var cachedBytes: Int { locked { cachedBytesHeld } }
 
     /// How many experts the store holds, across every group.
-    public var expertCount: Int { locked { sources.count } }
+    @objc public var expertCount: Int { locked { sources.count } }
 
     /// A store whose cache holds up to `cacheByteBudget` bytes of materialized experts.
-    public init(cacheByteBudget: Int) {
+    @objc public init(cacheByteBudget: Int) {
         budget = cacheByteBudget
+        super.init()
     }
 
     /// Takes one part of one expert.
@@ -192,7 +205,7 @@ public final class NFKMLXExpertStore: @unchecked Sendable {
 
     /// Expert `index` of `group`, every part materialized, or nil where the store does not hold it.
     func expert(group: String, index: Int) -> [String: MLXArray]? {
-        locked { acquire(Address(group: group, expert: index)) }
+        locked { acquire([Address(group: group, expert: index)])?.first }
     }
 
     /// The experts `experts` names, each part stacked `[experts.count, …]` in that order.
@@ -202,8 +215,8 @@ public final class NFKMLXExpertStore: @unchecked Sendable {
     /// materialized experts, so it holds what was routed to and nothing else.
     func bank(group: String, experts: [Int]) -> [String: MLXArray] {
         locked {
-            let members = experts.compactMap { acquire(Address(group: group, expert: $0)) }
-            guard members.count == experts.count, let parts = members.first?.keys else { return [:] }
+            guard let members = acquire(experts.map { Address(group: group, expert: $0) }),
+                  let parts = members.first?.keys else { return [:] }
             var bank = [String: MLXArray]()
             for part in parts {
                 bank[part] = stacked(members.compactMap { $0[part] }, axis: 0)
@@ -213,7 +226,7 @@ public final class NFKMLXExpertStore: @unchecked Sendable {
     }
 
     /// Drops every materialized expert, keeping the sources.
-    public func clearCache() {
+    @objc public func clearCache() {
         locked {
             cache.removeAll()
             lastUse.removeAll()
@@ -228,29 +241,45 @@ public final class NFKMLXExpertStore: @unchecked Sendable {
         return try body()
     }
 
-    /// The cached expert, or a fresh materialization cached where the budget has room. Runs on the
-    /// lock.
-    private func acquire(_ address: Address) -> [String: MLXArray]? {
+    /// The experts `addresses` names, each from the cache or freshly materialized, or nil where the
+    /// store lacks one. Runs on the lock.
+    ///
+    /// @discussion Every source a miss reads is asked to prefetch before any is copied, so their reads
+    /// overlap, and the misses are evaluated together, one synchronization for the batch. A fresh
+    /// expert is cached where the budget has room.
+    private func acquire(_ addresses: [Address]) -> [[String: MLXArray]]? {
         clock += 1
-        if let cached = cache[address] {
-            hits += 1
-            lastUse[address] = clock
-            return cached
+        var members = [[String: MLXArray]?](repeating: nil, count: addresses.count)
+        var misses = [(slot: Int, address: Address, parts: [String: any NFKMLXExpertSource])]()
+        for (slot, address) in addresses.enumerated() {
+            if let cached = cache[address] {
+                hits += 1
+                lastUse[address] = clock
+                members[slot] = cached
+                continue
+            }
+            guard let parts = sources[address] else { return nil }
+            misses.append((slot, address, parts))
         }
-        guard let parts = sources[address] else { return nil }
-        let arrays = parts.mapValues { $0.materialize() }
+        for miss in misses {
+            miss.parts.values.forEach { $0.prefetch() }
+        }
+        let fresh = misses.map { miss in (miss.slot, miss.address, miss.parts.mapValues { $0.materialize() }) }
         // A materialization is a lazy graph over the source bytes, and an unevaluated one pins them
         // along with every intermediate of a decode. Evaluating here is what lets them go.
-        eval(Array(arrays.values))
-        materialized += 1
-        let cost = arrays.values.reduce(0) { $0 + $1.nbytes }
-        guard cost <= budget else { return arrays }
-        cache[address] = arrays
-        lastUse[address] = clock
-        costs[address] = cost
-        cachedBytesHeld += cost
+        eval(fresh.flatMap { Array($0.2.values) })
+        for (slot, address, arrays) in fresh {
+            materialized += 1
+            members[slot] = arrays
+            let cost = arrays.values.reduce(0) { $0 + $1.nbytes }
+            guard cost <= budget else { continue }
+            cache[address] = arrays
+            lastUse[address] = clock
+            costs[address] = cost
+            cachedBytesHeld += cost
+        }
         evictDownToBudget()
-        return arrays
+        return members.compactMap { $0 }
     }
 
     /// Evicts least-recently-used experts until the cache is within its budget. Runs on the lock.

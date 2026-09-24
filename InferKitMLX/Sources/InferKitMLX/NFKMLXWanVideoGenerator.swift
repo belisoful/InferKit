@@ -157,8 +157,8 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Whether the text encoder and the transformer stay loaded together between clips.
     @objc public var holdsStagesResident: Bool { staging.resident }
 
-    /// Whether umT5 runs at float32 rather than at bfloat16. It does where the stored float32 encoder
-    /// fits the working set on its own.
+    /// Whether umT5 runs at float32 rather than at bfloat16. It does where the residency plan affords
+    /// the float32 encoder.
     @objc public internal(set) var encodesInFloat32 = true
 
     init(resident: Bool, segmenter: NFKMLXSentencePieceSegmenter, compression: (spatial: Int, temporal: Int),
@@ -201,8 +201,8 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Assembles the model from a downloaded release directory, holding it as `residency` says.
     ///
     /// @discussion Wan 2.1 T2V 1.3B stores umT5-XXL at float32 (22.7 GB) beside a 5.7 GB transformer.
-    /// The encoder runs at float32 where that fits the working set on its own and at bfloat16, the
-    /// reference pipeline's precision, otherwise; the transformer and the autoencoder load as stored.
+    /// The encoder runs at float32 where the plan affords it (beside the transformer when resident,
+    /// on its own when staged) and at bfloat16, the reference pipeline's precision, otherwise; the transformer and the autoencoder load as stored.
     /// The 14B transformer alone is beyond a 32 GB machine in any placement. A machine that cannot hold the stages together stages under
     /// ``NFKMLXResidency/automatic``. The release has no routed experts, so ``NFKMLXResidency/paged``
     /// holds it as ``NFKMLXResidency/staged`` does.
@@ -221,16 +221,15 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let schedule = try NFKMLXWanRelease.schedule(
             fromHuggingFace: directoryURL.appendingPathComponent("scheduler/scheduler_config.json"))
 
-        // umT5-XXL is stored at float32 (22.7 GB). It runs at float32 where that is known to fit the
-        // working set on its own, and at the bfloat16 the reference pipeline runs it at otherwise.
-        let budget = NFKMLXResidencyBudget.current()
-        let storedText = try NFKMLXStageWeights.bytes(inDirectory: textDirectory, precision: .checkpoint)
-        let textInFloat32 = NFKMLXResidencyBudget.holds(storedText, budget: budget)
+        // umT5-XXL (stored at float32, 22.7 GB) takes float32 as its wider precision over the bfloat16
+        // the reference pipeline runs it at.
         let plan = try NFKMLXResidencyBudget.plan(
-            [NFKMLXStageFootprint(bytes: textInFloat32 ? storedText : storedText / 2),
+            [NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .bfloat16),
+                                  widenedBytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .float32)),
              NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: transformerDirectory, precision: .checkpoint)
                                      + NFKMLXStageWeights.bytes(inDirectory: vaeDirectory, precision: .float32))],
-            residency: residency, budget: budget)
+            residency: residency, budget: NFKMLXResidencyBudget.current())
+        let textInFloat32 = plan.widens(0)
         let generator = NFKMLXWanVideoGenerator(
             resident: plan.holdsStagesResident, segmenter: segmenter,
             compression: compression(of: vae.configuration),

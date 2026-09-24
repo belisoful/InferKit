@@ -30,6 +30,12 @@ public struct NFKMLXFlowMatchConfiguration: Sendable {
     /// (`np.linspace(1.0, 1 / num_inference_steps, num_inference_steps)`), so every sigma after the
     /// first differs from the default schedule at the same step count, the last one most.
     public var rampEndsAtStepFraction: Bool
+    /// Whether the linear sigma ramp ends at 0.
+    ///
+    /// @discussion The Z-Image pipeline sets the scheduler's `sigma_min` to 0 before building the
+    /// schedule, so the last of its steps sits at sigma 0 and moves nothing: a release sampled at nine
+    /// steps evaluates its transformer eight times. Takes precedence over ``rampEndsAtStepFraction``.
+    public var rampEndsAtZero: Bool = false
     /// Whether `mu` comes from FLUX.2's empirical fit rather than the linear interpolation in
     /// sequence length every earlier release uses.
     ///
@@ -69,10 +75,20 @@ public struct NFKMLXFlowMatchConfiguration: Sendable {
         shiftTerminal: nil, useDynamicShifting: true, rampEndsAtStepFraction: true,
         usesEmpiricalShift: true)
 
-    /// Z-Image's schedule: a smaller resolution shift, no terminal stretch (its `sigma_min` is 0).
-    public static let zImage = NFKMLXFlowMatchConfiguration(
-        baseShift: 0.5, maxShift: 1.15, baseSequenceLength: 256, maxSequenceLength: 4096,
-        shiftTerminal: nil, useDynamicShifting: true)
+    /// Z-Image's schedule, the released `Tongyi-MAI/Z-Image` scheduler config: a static shift of 6.0
+    /// over a ramp ending at sigma 0.
+    public static let zImage = NFKMLXFlowMatchConfiguration.staticShiftToZero(6.0)
+
+    /// Z-Image-Turbo's schedule, its released scheduler config: a static shift of 3.0 over a ramp
+    /// ending at sigma 0.
+    public static let zImageTurbo = NFKMLXFlowMatchConfiguration.staticShiftToZero(3.0)
+
+    static func staticShiftToZero(_ shift: Float) -> NFKMLXFlowMatchConfiguration {
+        var configuration = NFKMLXFlowMatchConfiguration(baseShift: shift, shiftTerminal: nil,
+                                                         useDynamicShifting: false)
+        configuration.rampEndsAtZero = true
+        return configuration
+    }
 
     /// A static-shift flow schedule at SANA's `flow_shift` (3.0). SANA's released sampler is a
     /// `DPMSolverMultistepScheduler` (flow prediction); this is the rectified-flow stand-in the pipeline
@@ -154,7 +170,9 @@ public struct NFKMLXFlowMatchScheduler {
         // `1/train` at construction and, under a static shift, shifts it there as well, so the ramp's
         // end is the shifted value and the shift below is applied to it a second time.
         let end: Float
-        if configuration.rampEndsAtStepFraction {
+        if configuration.rampEndsAtZero {
+            end = 0
+        } else if configuration.rampEndsAtStepFraction {
             end = 1 / Float(steps)
         } else if configuration.useDynamicShifting {
             end = 1 / train

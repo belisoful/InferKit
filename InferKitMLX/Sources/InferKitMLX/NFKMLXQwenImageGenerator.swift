@@ -19,6 +19,16 @@ enum NFKMLXStageWeights {
     static func bytes(inDirectory directory: URL, precision: NFKMLXWeightPrecision) throws -> Int {
         try NFKMLXExpertInventory(inDirectory: directory, precision: precision) { _, _ in [] }.totalBytes
     }
+
+    /// The weights a release occupies with its floating tensors held at `dtype`.
+    static func bytes(inDirectory directory: URL, holding dtype: DType) throws -> Int {
+        let widths = ["F64": 8, "F32": 4, "F16": 2, "BF16": 2]
+        return try NFKMLXReleaseWeights.files(inDirectory: directory).reduce(0) { total, url in
+            try NFKMLXSafetensors.entries(inFile: url).values.reduce(total) { total, entry in
+                total + (widths[entry.dtype].map { entry.byteCount / $0 * dtype.size } ?? entry.byteCount)
+            }
+        }
+    }
 }
 
 /// The pipeline stage of a Qwen-Image release: the transformer, the autoencoder, and the latent

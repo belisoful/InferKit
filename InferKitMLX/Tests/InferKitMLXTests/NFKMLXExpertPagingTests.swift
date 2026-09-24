@@ -484,4 +484,50 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         XCTAssertEqual(pagedTokens, resident.generate(prompt: [976, 9029, 328, 10128, 382], options: greedy),
                        "and generates what it generates")
     }
+
+    // Throughput of a paged gathered multiply over a synthetic stacked release, left mapped: the cost of
+    // reading routed experts out of the mapping with no cache, and with every expert cached. Runs only
+    // where IK_BENCH_EXPERT_PAGING is set, since it writes a 384 MB file and measures rather than checks.
+    func testPagedGatherThroughput() throws {
+        try requireMLXRuntime()
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["IK_BENCH_EXPERT_PAGING"] != nil,
+                          "set IK_BENCH_EXPERT_PAGING to measure paged throughput")
+        let (experts, output, input) = (64, 1536, 2048)
+        // A fixed name, so a run that dies before its cleanup leaves one file that the next run reuses.
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("inferkit-expert-paging-bench.safetensors")
+        MLXRandom.seed(51)
+        let stack = MLXRandom.normal([experts, output, input]).asType(.bfloat16)
+        try MLX.save(arrays: ["proj.weight": stack], url: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        let entry = try XCTUnwrap(try NFKMLXSafetensors.entries(inFile: url)["proj.weight"])
+        let file = try NFKMLXMappedFile(url: url)
+        let store = NFKMLXExpertStore(cacheByteBudget: 0)
+        for expert in 0 ..< experts {
+            store.store(try XCTUnwrap(NFKMLXExpertTensor.mapped(entry, expert: expert, in: file)),
+                        group: "proj", expert: expert, part: "weight")
+        }
+        let paged = NFKLMPagedSwitchLinear(pager: NFKMLXExpertPager(store: store, group: "proj"), experts: experts,
+                                           outputSize: output, inputSize: input)
+        let x = MLXRandom.normal([1, 32, 1, 1, input]).asType(.bfloat16)
+        let routes = (0 ..< 10).map { call in
+            MLXArray((0 ..< 32 * 8).map { UInt32(($0 * 7 + call * 13) % experts) }).reshaped([1, 32, 8])
+        }
+        eval(paged(x, experts: routes[0]))
+
+        func milliseconds(_ body: () -> Void) -> Double {
+            let start = Date()
+            body()
+            return Date().timeIntervalSince(start) * 1000
+        }
+        let uncached = milliseconds { for route in routes { eval(paged(x, experts: route)) } } / Double(routes.count)
+        let expertBytes = Double(output * input * 2)
+        let readPerCall = Double(store.materializeCount - 1) / Double(routes.count + 1) * expertBytes
+        store.cacheByteBudget = experts * output * input * 2
+        eval(paged(MLXRandom.normal([1, experts, 1, 1, input]).asType(.bfloat16),
+                   experts: MLXArray((0 ..< experts).map { UInt32($0) }).reshaped([1, experts, 1])))
+        let cached = milliseconds { for route in routes { eval(paged(x, experts: route)) } } / Double(routes.count)
+        print("VALIDATION bench expert-paging: uncached \(String(format: "%.1f", uncached)) ms/call "
+              + "(\(String(format: "%.2f", readPerCall / uncached / 1e6)) GB/s of experts), cached "
+              + "\(String(format: "%.1f", cached)) ms/call, \(store.cacheHitCount) cache hits")
+    }
 }

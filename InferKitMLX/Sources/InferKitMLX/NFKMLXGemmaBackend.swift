@@ -42,7 +42,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     /// The store a paged mixture reads its routed experts from, or nil where they are resident. Its
     /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
-    public let expertStore: NFKMLXExpertStore?
+    @objc public let expertStore: NFKMLXExpertStore?
 
     /// Whether the 26B-A4B mixture's routed experts are paged: left in the release and read as the
     /// router reaches them. Introduced in InferKit 0.4.0.

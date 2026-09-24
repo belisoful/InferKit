@@ -105,15 +105,20 @@ public struct NFKMLXDeepSeekPaging: Sendable, Equatable {
 /// @discussion Each property is a construction-time choice, because each changes what the decoder
 /// holds: the paging preset decides which groups stay in the release, speculation loads the draft
 /// stack's parameters, and the two numeric modes decide what the modules hold and compute in.
-/// Every default reproduces a plain resident load computing in bf16, the release's own dtype.
+/// Every default reproduces a load computing in bf16, the release's own dtype, held as
+/// ``NFKMLXResidency/automatic`` decides.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXDeepSeekLoadOptions)
 public final class NFKMLXDeepSeekLoadOptions: NSObject {
-    /// Which groups stay in the release. `NFKMLXDeepSeekPagingModeMapped` is the one to start from
-    /// on a machine the release does not fit as floats.
+    /// How the release is held where ``paging`` names no preset: ``NFKMLXResidency/automatic``
+    /// loads resident where the decoded weights fit and pages otherwise. Introduced in InferKit 0.4.0.
+    @objc public var residency: NFKMLXResidency = .automatic
+    /// Which groups stay in the release, chosen explicitly. Any preset but `none` overrides
+    /// ``residency``.
     @objc public var paging: NFKMLXDeepSeekPagingMode = .none
-    /// What a paged load keeps in decoded experts.
+    /// What a load with an explicit ``paging`` preset keeps in decoded experts; a residency plan sizes
+    /// its own cache.
     @objc public var expertCacheBytes: Int = NFKMLXDeepSeekPaging.defaultExpertCacheBytes
     /// Loads the release's draft stack, which a request then turns on with
     /// `NFKMLXGenerationParameterKey.draftTokens`.

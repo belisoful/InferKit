@@ -248,6 +248,28 @@ public struct NFKMLXSDPromptTokenizer: @unchecked Sendable {
 /// Building a text encoder and loading a released checkpoint into it.
 public enum NFKMLXSDTextEncoder {
 
+    /// The tower geometry a `transformers` `CLIPTextConfig` (`text_encoder/config.json`) describes, read
+    /// at `output`. A `projection_dim` is read where the release is a `CLIPTextModelWithProjection`.
+    static func configuration(fromHuggingFace url: URL, output: NFKSDTextOutput) throws -> NFKMLXSDTextEncoderConfiguration {
+        let json = try NFKMLXWanRelease.json(url)
+        var configuration = NFKMLXSDTextEncoderConfiguration()
+        configuration.width = json["hidden_size"] as? Int ?? configuration.width
+        configuration.layers = json["num_hidden_layers"] as? Int ?? configuration.layers
+        configuration.heads = json["num_attention_heads"] as? Int ?? configuration.heads
+        configuration.intermediate = json["intermediate_size"] as? Int ?? configuration.intermediate
+        configuration.vocabularySize = json["vocab_size"] as? Int ?? configuration.vocabularySize
+        configuration.contextLength = json["max_position_embeddings"] as? Int ?? configuration.contextLength
+        switch json["hidden_act"] as? String ?? "quick_gelu" {
+        case "quick_gelu": configuration.activation = .quickGELU
+        case "gelu": configuration.activation = .gelu
+        case let other: throw NFKMLXError.unsupportedConfiguration("the text tower's activation \(other) is not ported")
+        }
+        configuration.output = output
+        let projects = (json["architectures"] as? [String])?.contains("CLIPTextModelWithProjection") ?? false
+        configuration.projectionDimensions = projects ? json["projection_dim"] as? Int ?? configuration.width : nil
+        return configuration
+    }
+
     /// Builds the tower and loads `weightsURL` when one is given.
     public static func net(configuration: NFKMLXSDTextEncoderConfiguration,
                            weightsURL: URL? = nil,

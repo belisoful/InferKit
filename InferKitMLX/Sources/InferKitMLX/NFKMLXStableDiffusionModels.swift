@@ -1025,6 +1025,28 @@ public final class NFKMLXStableDiffusionModels: NSObject {
         try NFKMLXWeights.apply(NFKMLXWeights.converted(mapped, to: precision), to: net)
     }
 
+    /// The autoencoder geometry a diffusers `vae/config.json` describes: its widths, depth, groups,
+    /// latent width, latent scale and shift, and whether the `1×1` quantization convolutions are present.
+    ///
+    /// @discussion A config keeping one quantization convolution and dropping the other is refused; the
+    /// module holds both or neither.
+    static func vaeConfiguration(fromHuggingFace url: URL) throws -> NFKMLXSDVAEConfiguration {
+        let json = try NFKMLXWanRelease.json(url)
+        let quant = json["use_quant_conv"] as? Bool ?? true
+        guard quant == (json["use_post_quant_conv"] as? Bool ?? true) else {
+            throw NFKMLXError.unsupportedConfiguration("the autoencoder keeps one quantization convolution of two")
+        }
+        var configuration = NFKMLXSDVAEConfiguration()
+        configuration.latentChannels = json["latent_channels"] as? Int ?? configuration.latentChannels
+        configuration.blockChannels = json["block_out_channels"] as? [Int] ?? configuration.blockChannels
+        configuration.layersPerBlock = json["layers_per_block"] as? Int ?? configuration.layersPerBlock
+        configuration.normalizationGroups = json["norm_num_groups"] as? Int ?? configuration.normalizationGroups
+        configuration.scaleFactor = (json["scaling_factor"] as? NSNumber)?.floatValue ?? configuration.scaleFactor
+        configuration.shiftFactor = (json["shift_factor"] as? NSNumber)?.floatValue ?? 0
+        configuration.useQuantConv = quant
+        return configuration
+    }
+
     /// Loads a diffusers autoencoder checkpoint into `net`.
     public static func loadVAEWeights(into net: NFKMLXSDAutoencoder, from url: URL,
                                       precision: NFKMLXWeightPrecision = .float32) throws {

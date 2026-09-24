@@ -43,6 +43,35 @@ enum NFKMLXReleaseWeights {
         return merged
     }
 
+    /// The arrays a release holds with every floating tensor converted to `dtype`, evaluated in groups
+    /// as they are read.
+    ///
+    /// @discussion A float32 release held at a 16-bit type loads this way so the stored copy never sits
+    /// whole beside the converted one: each group of about 256 MB converts and evaluates before the next
+    /// is read, and each stored array is dropped once converted.
+    static func arrays(inDirectory directory: URL, converting dtype: DType,
+                       remap: (String) -> String? = { $0 }) throws -> [(String, MLXArray)] {
+        var merged = [(String, MLXArray)]()
+        for url in try files(inDirectory: directory) {
+            var stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+            var group = [MLXArray](), groupBytes = 0
+            for key in stored.keys.sorted() {
+                guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
+                let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
+                merged.append((name, converted))
+                group.append(converted)
+                groupBytes += value.nbytes
+                if groupBytes >= 256 << 20 {
+                    eval(group)
+                    group.removeAll()
+                    groupBytes = 0
+                }
+            }
+            eval(group)
+        }
+        return merged
+    }
+
     /// The bytes a release's weight files occupy on disk, which is what they occupy resident once
     /// materialized at the stored element type.
     static func weightBytes(inDirectory directory: URL) throws -> Int {

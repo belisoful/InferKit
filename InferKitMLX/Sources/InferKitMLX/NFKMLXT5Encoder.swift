@@ -301,8 +301,8 @@ public final class NFKMLXT5Encoder: NSObject {
     ///   reference pipelines run it at.
     static func loadWeights(into net: NFKMLXT5EncoderNet, from directory: URL,
                             precision: NFKMLXWeightPrecision = .float32, dtype: DType? = nil) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: dtype == nil ? precision : .checkpoint)
-            .map { key, value in (key, dtype.map { value.dtype.isFloatingPoint ? value.asType($0) : value } ?? value) }
+        let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0) }
+            ?? NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
         try NFKMLXWeights.apply(arrays, to: net)
     }
 }

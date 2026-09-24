@@ -341,7 +341,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     /// The store a paged model reads its routed experts from, or nil where they are resident. Its
     /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
-    public var expertStore: NFKMLXExpertStore? { holder.net.expertStore }
+    @objc public var expertStore: NFKMLXExpertStore? { holder.net.expertStore }
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads: the core sampling keys, the schema and the two

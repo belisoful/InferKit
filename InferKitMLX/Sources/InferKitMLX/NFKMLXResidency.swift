@@ -42,15 +42,19 @@ import MLX
     case paged
 }
 
-/// What one stage weighs: every byte it holds resident, and how many of those are routed experts a
-/// paged load leaves in the release.
+/// What one stage weighs: every byte it holds resident, how many of those are routed experts a paged
+/// load leaves in the release, and what it would hold at a wider precision it prefers.
 struct NFKMLXStageFootprint: Equatable {
     let bytes: Int
     let pageableBytes: Int
+    /// The stage at a wider precision it takes where the plan can afford it, such as a text encoder
+    /// stored at bfloat16 and run at float32; nil for a stage with one precision.
+    let widenedBytes: Int?
 
-    init(bytes: Int, pageableBytes: Int = 0) {
+    init(bytes: Int, pageableBytes: Int = 0, widenedBytes: Int? = nil) {
         self.bytes = bytes
         self.pageableBytes = pageableBytes
+        self.widenedBytes = widenedBytes
     }
 
     /// What the stage holds with its routed experts paged.
@@ -66,11 +70,16 @@ struct NFKMLXResidencyPlan: Equatable {
     let pagesExperts: Bool
     /// The bytes a paged load's cache may hold in materialized experts; zero where nothing is paged.
     let expertCacheBytes: Int
+    /// The positions of the stages that load at their wider precision.
+    var widenedStages: Set<Int> = []
 
     static let resident = NFKMLXResidencyPlan(holdsStagesResident: true, pagesExperts: false,
                                               expertCacheBytes: 0)
     static let staged = NFKMLXResidencyPlan(holdsStagesResident: false, pagesExperts: false,
                                             expertCacheBytes: 0)
+
+    /// Whether the stage at `index` loads at its wider precision.
+    func widens(_ index: Int) -> Bool { widenedStages.contains(index) }
 }
 
 /// The working set a staged model plans against, and the rule it plans by.
@@ -133,6 +142,12 @@ enum NFKMLXResidencyBudget {
     /// unpaged weights and the reserve are counted, and never more than that stage's experts. The
     /// other half is left to the operating system's page cache, which holds the release's recently
     /// read experts. The split is a policy choice that no measurement here has tuned.
+    ///
+    /// A stage with a wider precision takes it where that is known to fit, and residency is decided
+    /// first, at each stage's own precision:
+    /// - held resident → stages widen in order while the total, widened, still fits.
+    /// - staged or paged → a stage widens where it fits alone, widened.
+    /// - a machine that reports no budget → no stage widens.
     static func plan(_ stages: [NFKMLXStageFootprint], residency: NFKMLXResidency,
                      budget: Int) throws -> NFKMLXResidencyPlan {
         let total = stages.reduce(0) { $0 + $1.bytes }
@@ -150,6 +165,7 @@ enum NFKMLXResidencyBudget {
             return NFKMLXResidencyPlan(holdsStagesResident: false, pagesExperts: true,
                                        expertCacheBytes: max(0, min(largestPageable, headroom)))
         }
+        let placement: NFKMLXResidencyPlan
         switch residency {
         case .resident:
             guard admits(total, budget: budget) else {
@@ -158,19 +174,55 @@ enum NFKMLXResidencyBudget {
                     + "\(gib(budget)) working set; hold them staged"
                     + (pageable ? " or paged" : ""))
             }
-            return .resident
+            placement = .resident
         case .staged:
-            return .staged
+            placement = .staged
         case .paged:
-            return pageable ? try paged() : .staged
+            placement = pageable ? try paged() : .staged
         case .automatic:
             if holds(total, budget: budget) {
-                return .resident
+                placement = .resident
+            } else if pageable, budget > 0, !holds(largest.bytes, budget: budget) {
+                placement = try paged()
+            } else {
+                placement = .staged
             }
-            if pageable, budget > 0, !holds(largest.bytes, budget: budget) {
-                return try paged()
+        }
+        var widened = placement
+        widened.widenedStages = widenedStages(stages, resident: placement.holdsStagesResident, budget: budget)
+        return widened
+    }
+
+    /// The stages that take their wider precision under a placement.
+    private static func widenedStages(_ stages: [NFKMLXStageFootprint], resident: Bool, budget: Int) -> Set<Int> {
+        var total = stages.reduce(0) { $0 + $1.bytes }
+        var widened = Set<Int>()
+        for (index, stage) in stages.enumerated() {
+            guard let wide = stage.widenedBytes else { continue }
+            let fits = resident ? holds(total - stage.bytes + wide, budget: budget) : holds(wide, budget: budget)
+            if fits {
+                widened.insert(index)
+                total += wide - stage.bytes
             }
-            return .staged
+        }
+        return widened
+    }
+
+    /// Throws where a staged placement has a stage known not to load on its own, at the precision
+    /// `plan` chose for it: the refusal a single release's `verifyFits` gives, made before any stage
+    /// loads. A resident placement was checked whole when it was planned.
+    static func verifyEachStageLoads(_ stages: [NFKMLXStageFootprint], plan: NFKMLXResidencyPlan,
+                                     budget: Int, names: [String]) throws {
+        guard !plan.holdsStagesResident else { return }
+        for (index, stage) in stages.enumerated() {
+            let bytes = plan.widens(index) ? stage.widenedBytes ?? stage.bytes
+                : (plan.pagesExperts ? stage.unpagedBytes : stage.bytes)
+            guard admits(bytes, budget: budget) else {
+                let name = index < names.count ? names[index] : "stage \(index)"
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(name) alone needs \(gib(bytes)) plus a \(gib(reserve)) reserve, against a "
+                    + "\(gib(budget)) working set")
+            }
         }
     }
 

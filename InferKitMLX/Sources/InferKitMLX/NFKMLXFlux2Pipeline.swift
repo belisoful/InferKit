@@ -17,8 +17,8 @@ import MLXRandom
 // schedule (`NFKMLXFlowMatchScheduler` in its `.flux2` preset) — and this chains them.
 //
 // The pipeline is FLUX.2 [klein]'s, whose text encoder is a Qwen3. FLUX.2 [dev] reads
-// Mistral-Small 3, which `NFKMLXLanguageConfiguration.mistralSmall3` carries, but its repository is
-// gated, so no [dev] release has been read here.
+// Mistral-Small 3, which `NFKMLXLanguageConfiguration.mistralSmall3` carries; no [dev] release has
+// been run here.
 
 /// FLUX.2's denoising loop over a packed latent.
 public final class NFKMLXFlux2Pipeline {
@@ -410,55 +410,20 @@ public final class NFKMLXFlux2: NSObject {
     /// How a release is held: whether the text encoder and the transformer stay loaded together, and
     /// whether the encoder runs at float32 or as stored.
     ///
-    /// @discussion Every placement keeps ``NFKMLXResidencyBudget``'s reserve against `budget`, the rule
-    /// every staged model here plans by. A resident placement prefers a
-    /// float32 encoder and falls back to the stored precision, which is diffusers' own default of a
-    /// bfloat16 pipeline; a staged one takes float32 where the encoder alone fits it. ``automatic``
-    /// takes the resident placement where one is known to fit and the staged one otherwise, so a machine
-    /// that reports no budget is staged with its encoder as stored. On a 32 GB machine (a 21.25 GiB
-    /// budget) klein 4B is resident with a bfloat16 encoder, and klein 9B is staged with one, its 17 GB
-    /// transformer stage 0.2 GiB inside the budget.
+    /// @discussion The shared ``NFKMLXResidencyBudget`` plan decides, with the encoder's float32 form as
+    /// its wider precision: a resident placement takes float32 where the whole still fits, which is
+    /// diffusers' own default of a bfloat16 pipeline otherwise; a staged one takes it where the encoder
+    /// alone fits. A staged stage known not to load on its own is refused. On a 32 GB machine (a
+    /// 21.25 GiB budget) klein 4B is resident with a bfloat16 encoder, and klein 9B is staged with one, its
+    /// 17 GB transformer stage 0.2 GiB inside the budget.
     static func plan(encoderStoredBytes encoder: Int, pipelineStoredBytes pipeline: Int, budget: Int,
                      residency: NFKMLXResidency) throws -> (resident: Bool, encoderFloat32: Bool) {
-        let reserve = NFKMLXResidencyBudget.reserve
-        let gib = NFKMLXResidencyBudget.gib
-        func holds(_ bytes: Int) -> Bool { NFKMLXResidencyBudget.holds(bytes, budget: budget) }
-        func admits(_ bytes: Int) -> Bool { NFKMLXResidencyBudget.admits(bytes, budget: budget) }
-        switch residency {
-        case .resident:
-            if holds(2 * encoder + pipeline) {
-                return (true, true)
-            }
-            if admits(encoder + pipeline) {
-                return (true, false)
-            }
-            throw NFKMLXError.unsupportedConfiguration(
-                "the text encoder and transformer need \(gib(encoder + pipeline)) together, plus a "
-                + "\(gib(reserve)) reserve, against a \(gib(budget)) working set; load it staged")
-        case .staged, .paged:
-            // Neither stage has routed experts, so a paged release is held as a staged one.
-            guard admits(pipeline) else {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "the transformer alone needs \(gib(pipeline)) plus a \(gib(reserve)) reserve, "
-                    + "against a \(gib(budget)) working set")
-            }
-            if holds(2 * encoder) {
-                return (false, true)
-            }
-            if admits(encoder) {
-                return (false, false)
-            }
-            throw NFKMLXError.unsupportedConfiguration(
-                "the text encoder alone needs \(gib(encoder)) plus a \(gib(reserve)) reserve, "
-                + "against a \(gib(budget)) working set")
-        case .automatic:
-            if holds(encoder + pipeline) {
-                return try plan(encoderStoredBytes: encoder, pipelineStoredBytes: pipeline,
-                                budget: budget, residency: .resident)
-            }
-            return try plan(encoderStoredBytes: encoder, pipelineStoredBytes: pipeline, budget: budget,
-                            residency: .staged)
-        }
+        let stages = [NFKMLXStageFootprint(bytes: encoder, widenedBytes: 2 * encoder),
+                      NFKMLXStageFootprint(bytes: pipeline)]
+        let placement = try NFKMLXResidencyBudget.plan(stages, residency: residency, budget: budget)
+        try NFKMLXResidencyBudget.verifyEachStageLoads(stages, plan: placement, budget: budget,
+                                                       names: ["the text encoder", "the transformer"])
+        return (placement.holdsStagesResident, placement.widens(0))
     }
 
     /// The component folders ``flux2(directoryURL:)`` reads, as a download fetches them.

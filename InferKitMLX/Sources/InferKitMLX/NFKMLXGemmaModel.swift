@@ -525,15 +525,19 @@ final class NFKGemmaRouter: Module {
         super.init()
     }
 
-    /// `x` `[tokens, hidden]` → the kept routing weights and expert indices, each `[tokens, k]`.
-    func callAsFunction(_ x: MLXArray) -> (weights: MLXArray, indices: MLXArray) {
+    /// `x` `[tokens, hidden]` → each expert's score `[tokens, experts]`, in `x`'s type, before the softmax.
+    func scores(_ x: MLXArray) -> MLXArray {
         let normed = NFKReferenceRounding.isReduced(x)
             ? NFKReferenceRounding.scaledNorm(x, weight: nil, eps: epsilon)
             : x * rsqrt(mean(x * x, axis: -1, keepDims: true) + epsilon)
-        let scored = proj(NFKReferenceRounding.scaled(normed * scale, by: rootSize))
+        return proj(NFKReferenceRounding.scaled(normed * scale, by: rootSize))
+    }
+
+    /// `x` `[tokens, hidden]` → the kept routing weights and expert indices, each `[tokens, k]`.
+    func callAsFunction(_ x: MLXArray) -> (weights: MLXArray, indices: MLXArray) {
         // The reference keeps the probabilities, their renormalization, and the per-expert scale in
         // float32, so the weights reach the experts unrounded.
-        let probabilities = softmax(scored.asType(.float32), axis: -1, precise: true)
+        let probabilities = softmax(scores(x).asType(.float32), axis: -1, precise: true)
         let chosen = argPartition(-probabilities, kth: activeExperts - 1, axis: -1)[.ellipsis, 0 ..< activeExperts]
         var weights = takeAlong(probabilities, chosen, axis: -1)
         weights = weights / weights.sum(axis: -1, keepDims: true)
