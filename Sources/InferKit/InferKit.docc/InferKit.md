@@ -89,6 +89,19 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKRemoteVideoBackend``
 - ``NFKRemoteModerationBackend``
 - ``NFKRemoteReranker``
+- ``NFKRemoteResponsesBackend``
+- ``NFKGeminiInteractionsBackend``
+- ``NFKRemoteCompletionBackend``
+- ``NFKRemoteOCRBackend``
+- ``NFKRemoteClassifierBackend``
+- ``NFKRemoteTokenCounter``
+- ``NFKRealtimeSession``
+- ``NFKRealtimeWebSocket``
+- ``NFKRemoteFileStore``
+- ``NFKRemoteFile``
+- ``NFKRemoteRetrievalStore``
+- ``NFKRemoteUsageReporter``
+- ``NFKTypeSafeBackend``
 
 ### Media coding
 
@@ -110,6 +123,8 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKKeypoint``
 - ``NFKClassification``
 - ``NFKAudioSegment``
+- ``NFKDecisionQuestion``
+- ``NFKDecisionAnswer``
 
 ### Media value types
 

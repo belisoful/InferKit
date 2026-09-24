@@ -25,6 +25,10 @@ if (backend.isReady) {
   that has to know in advance: a router picking the engine a request needs, or a bridge presenting
   the backend to another framework. Both are optional, and a backend that declares nothing is used
   the way it always was.
+- A failure is an `NSError` in `NFKInferenceErrorDomain` whose code says what to do:
+  `kNFKError_InferenceRefused` means the engine declined the content and retrying will not help,
+  `kNFKError_InferenceRateLimited` means back off, and `kNFKError_RemoteUnreachable` means nothing
+  answered. An engine wrapping another framework keeps the original under `NSUnderlyingErrorKey`.
 - `NFKInferencePrepare(backend, &error)` prepares a backend whether or not it implements
   `prepareWithError:`, the way `NFKInferenceSubmit` submits whether or not it implements
   `submitInferenceJobForRequest:`.

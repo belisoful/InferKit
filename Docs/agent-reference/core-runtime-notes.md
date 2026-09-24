@@ -36,7 +36,10 @@ factory is the public entry, so a new type needs no header change.
   Qwen2 pretoken because a letter run may absorb one leading punctuation character; digits split
   singly; a punctuation run absorbs trailing newlines; whitespace runs ending in a newline hold
   together). Found by the MiniMax Music 3 prompt parity record, which mis-tokenized under the
-  default; the Qwen3 text path (`NFKMLXLanguage.backend(directoryURL:)`) now names `qwen2` too. An
+  default; the Qwen3 text path (`NFKMLXLanguage.backend(directoryURL:)`) now names `qwen2` too.
+  `"qwen35"` is Qwen3.5's: Qwen2's pattern with combining marks (`\p{M}`) inside letter runs and out of
+  punctuation runs, and each segment NFC-normalized first, as the release's `tokenizer.json` declares.
+  `NFKMLXLanguage.pretokenizationName` selects it from a `[\p{L}\p{M}]+` in the `Split` regex. An
   unknown pretokenization name is refused rather than silently defaulted.
 - `clip` → `NFKCLIPTokenizer`, which the CLIP image-text model and every Stable Diffusion text encoder
   take. It **subclasses** the byte-level tokenizer through four hooks — `normalizedText:`,
@@ -138,7 +141,16 @@ brought by the consumer and discovered at runtime.
 - Resolve by provider class name (`+backendForProviderClassName:error:`) or by capability: a consumer
   registers provider class names under a capability string (`+registerProviderClassName:forCapability:`),
   and `+backendForCapability:error:` activates the first present one (most-recently-registered first).
-- Each built-in capability has a default provider class name (a `capability → class name` map in the
+- 2026-09-22: a built-in capability names an ORDERED LIST of default providers, not one. The
+  companion providers stay first and the core's own Apple-framework engines (`NFKAppleProviders.h`)
+  come last, so a consumer who links nothing still resolves text recognition, segmentation, pose,
+  face detection, image embedding, upscaling, optical flow, and transcription. Two rules that go
+  with it: a provider returning nil from `makeInferenceBackend` is PASSED OVER rather than treated as
+  a failure, which is how the VideoToolbox providers decline on hardware without the processor; and
+  the registry is process-wide, so a test that registers into a built-in capability owns that
+  capability for the whole run (`testARegisteredProviderStillWinsOverTheCoresOwn` owns face
+  detection for exactly this reason).
+- Each built-in capability has default provider class names (a `capability → class names` map in the
   core), tried last so a registered override wins:
   - `NFKCapabilityStableDiffusion` (`"stable-diffusion"`) → `NFKStableDiffusionProvider` — **InferKitMLX
     ships it** (wraps `NFKMLXBackend`), so linking InferKitMLX makes `stableDiffusionBackend()` work.
@@ -152,3 +164,46 @@ brought by the consumer and discovered at runtime.
   Providers build lazily (construction is cheap; weights/pipeline initialize on first use, off the
   render thread). This is how the **existing** SD / Whisper / Foundation Models implementations activate
   in the core only when the companion is linked, with no build dependency.
+
+## Hugging Face hub cache policy
+
+`NFKHFHub` manages its cache in snapshots, one `<cache>/<repo>/<revision>` folder each (added
+2026-09-22, InferKit 0.4.0).
+
+- Two marker files, each a separate flag:
+  - `.inferkit-owned` → the hub owns the snapshot and may evict it. Its modification date is the
+    snapshot's last use; a download and a cache hit both write it. The hub writes it into every
+    snapshot it downloads into, so a new snapshot is owned from the start.
+  - `.inferkit-keep` → pinned. Eviction skips it; `removeCachedRepo:` still removes it. Pinning
+    creates the folder, so a model can be pinned before its first download.
+- Ownership is positive on purpose. A missing marker means "not the hub's", so a user-chosen folder
+  never loses converted packages, fine-tuned weights, or other files the hub cannot re-download. The
+  layout alone cannot find snapshot boundaries (an org-less repo such as `gpt2/main` looks like
+  `org/model`), and the marker is the only reliable last-use date (atime is lax on macOS).
+- A cache written before 0.4.0 has no markers. A snapshot becomes owned on its next download or cache
+  hit, or through `adoptCachedRepo:revision:error:`, which needs the repo name because the layout
+  cannot be walked for it.
+- Eviction runs after every successful fetch, never on a cache hit. It removes whole snapshots, least
+  recently used first, and skips the snapshot just requested and any holding a `*.download` file. The
+  transfer itself lands in the system temporary folder and is moved into the snapshot only at the
+  end, so an in-flight download elsewhere is visible only briefly. A trim failure never fails the
+  download.
+- Size is `NSURLTotalFileAllocatedSizeKey` over every regular file, so a 5-byte file counts as one
+  allocation block. Tests size their limits from `cacheSize` after one download, never from byte
+  counts.
+- The limit and the backup exclusion each have a process-wide class default that `init` copies.
+  `NFKMLXDownload` and `NFKMLXSDRelease.download` create a hub per call, so the class default is the
+  only setting that reaches them.
+- The access token has a process-wide default too, `defaultAccessToken`, for the same reason: every
+  InferKitMLX download factory (`NFKMLXReleaseDownload`, `NFKMLXDownload`, the SD release) makes its own
+  hub, so before it existed a gated repository was reachable through them only from a process with
+  `HF_TOKEN` set, which an app is not. Unlike the limit and the exclusion, it is read on each request
+  rather than copied at `init`: a hub's own `accessToken`, then the default, then `HF_TOKEN`.
+- Backup exclusion is `NSURLIsExcludedFromBackupKey` on the cache root: the xattr `tmutil
+  addexclusion` (without `-p`) sets on macOS, the iCloud backup exclusion on iOS and tvOS. It defaults
+  to on because App Review expects re-downloadable content kept out of iCloud backup, and the same
+  reasoning holds for Time Machine. `NO` means the hub leaves the attribute alone; it never clears it.
+  `isExcludedFromBackup:` drops the URL's cached resource value first, or a change made through
+  another `NSURL` instance reads stale.
+- `Tools/validation-assets/fetch.py` sets the same exclusion on its asset root and on the
+  huggingface_hub cache the reference oracles fill (`--keep-in-backup` skips it).

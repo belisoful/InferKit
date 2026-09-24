@@ -40,10 +40,11 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   tensors, an on-device Core ML language-model runner, OpenAI-compatible and Anthropic chat clients
   that stream, cancel, call tools, return structured output, and take images, audio, documents, and
   video beside the prompt, remote embeddings / speech / image generation / transcription / video
-  generation / reranking / moderation clients, and a submit-poll-fetch base for job-style services.
-- **Remote providers** — `NFKRemoteProvider` names thirteen services (OpenAI, Anthropic, xAI, Gemini,
-  Groq, Mistral, DeepSeek, Together, OpenRouter, and the local runners Ollama, LM Studio, llama.cpp,
-  and vLLM), lists each one's models from the server rather than a constant, probes the local ports to
+  generation / reranking / moderation clients, a typed-decision client for TypeSafe's Jev, and a
+  submit-poll-fetch base for job-style services.
+- **Remote providers** — `NFKRemoteProvider` names fourteen services (OpenAI, Anthropic, xAI, Gemini,
+  Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, and the local runners Ollama, LM Studio,
+  llama.cpp, and vLLM), lists each one's models from the server rather than a constant, probes the local ports to
   find which runner is actually up so calling code names none, and reaches a local runner's native
   API — what is installed and loaded, and Ollama's pull and delete.
 - **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, image and video coding

@@ -214,6 +214,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKRemoteTransport` retries HTTP 529, the overload status Anthropic and TypeSafe answer with,
   the way it retries a 503.
 
+#### Four corners, where a box will not do
+
+- `NFKQuadrilateral` holds the four corners of a shape an axis-aligned box cannot: a page
+  photographed at an angle, a barcode in perspective. Corners are normalized 0...1 with the origin at
+  the top left, the geometry every engine reports, and the type archives with the rest of the family.
 - `NFKDetection` gains a nullable `quadrilateral` and an initializer that takes one, deriving the
   bounding box from it. A detection from an engine that reports no corners is unchanged.
 
@@ -222,6 +227,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKVisionClassificationBackend` names what an image shows from Vision's taxonomy, filtered by a
   confidence floor or by Vision's own precision-recall curve.
 - `NFKVisionAnimalBackend` finds cats and dogs, and reports which animals the installed revision
+  knows rather than assuming the list.
+- `NFKVisionRectangleBackend` finds rectangles, the page in a photograph, and barcodes, each with its
+  corners. A barcode's payload is its label, and the symbologies to look for are chosen on the way in.
+- `NFKVisionPoseBackend` gains animal pose, and `NFKVisionSegmentationBackend` gains the mask over
+  the people in a frame. Both need macOS 14.
+
 #### The rest of what Vision reports
 
 - `NFKVisionMeasurementBackend` reads the numbers Vision puts a name to: the aesthetics score, and
@@ -292,6 +303,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the model declined as a refusal: a content-filter stop or a `refusal` message on the OpenAI shape,
   and the `refusal` stop reason on the Messages API, streamed or not; an Anthropic stream error event
   maps its type the same way.
+
+#### The result value types archive
+
+- `NFKDetection`, `NFKKeypoint`, `NFKClassification`, `NFKAudioSegment`, `NFKMIDINote`,
+  `NFKMusicBeat`, and `NFKMIDISequence` conform to `NSSecureCoding`. A consumer that records a
+  result per frame archives the array a backend returned through `NSKeyedArchiver` with secure
+  coding on, instead of flattening each object to plist form by hand. A rect and a point go out as
+  separate numbers rather than an `NSValue`, so every platform reads them back the same way, and a
+  label decodes through `decodeObjectOfClass:`. A sequence names its notes' class as well as the
+  array's when it decodes them, which is what secure coding requires of a container.
+- `NFKMIDISequence` gains `isEqual:` and `hash`, so it compares by its notes and its meter the way
+  every other value type in the family compares by its fields. It compared by pointer identity
+  before, which a round trip through an archive made visible.
 
 #### Apple's own engines behind the contract
 

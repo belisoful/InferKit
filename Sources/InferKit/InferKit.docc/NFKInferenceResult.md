@@ -17,6 +17,7 @@ result.detections;       // NFKOutputDetections     → NSArray<NFKDetection *>
 result.pose;             // NFKOutputPose           → NSArray<NFKKeypoint *>
 result.classifications;  // NFKOutputClassifications→ NSArray<NFKClassification *>
 result.segments;         // NFKOutputSegments       → NSArray<NFKAudioSegment *>
+result.answers;          // NFKOutputAnswers        → NSDictionary<NSString *, NFKDecisionAnswer *>
 
 [result outputForKey:NFKOutputImage];  // CVPixelBuffer / texture / CGImage — backend's choice
 ```
@@ -32,3 +33,4 @@ backend or caller.
 - ``NFKKeypoint``
 - ``NFKClassification``
 - ``NFKAudioSegment``
+- ``NFKDecisionAnswer``

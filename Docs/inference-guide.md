@@ -62,6 +62,14 @@ with a single natural type have typed accessors (`result.text`, `result.structur
 `result.embedding`, `result.toolCalls`, `request.prompt`, `request.messages`), each returning nil on
 a type mismatch rather than crashing.
 
+A failure is an `NSError` in `NFKInferenceErrorDomain`, and the code says what to do about it:
+`kNFKError_InferenceNotReady` (wait, the engine is loading or unavailable),
+`kNFKError_InferenceMissingInput` (a key is absent), `kNFKError_InferenceUnsupported` (the engine
+cannot take this request as written), `kNFKError_InferenceRefused` (the engine declined the content,
+so retrying gives the same answer), `kNFKError_InferenceRateLimited` (back off and try later),
+`kNFKError_RemoteUnreachable` (nothing answered), and `kNFKError_InferenceBackendFailure` for the
+rest. An engine that wraps another framework keeps the original error under `NSUnderlyingErrorKey`.
+
 A backend states what it acts on. `supportedParameterKeys` and `supportedInputKeys` are optional
 members of the protocol: a caller that has to know in advance reads them, a router picks the engine
 that honors the key a request needs, and the Foundation Models bridge derives Apple's capabilities
@@ -468,6 +476,12 @@ name the provider does not know, so it is the cheap check before a request carri
   `anthropic-version` header is required, `max_tokens` is required, and a system prompt is a top-level
   field. The backend lifts a leading system turn out of `NFKInputMessages` into that field, so the
   request is written the same way for both.
+- **`typesafe`**, served by `NFKTypeSafeBackend`: TypeSafe AI's System One API, which serves Jev. It
+  answers typed questions about a state rather than generating text, so the request is a state under
+  `NFKInputState` (or the prompt, or the messages) and `NFKDecisionQuestion`s under
+  `NFKInputQuestions`, and the reply is an `NFKDecisionAnswer` per question under `NFKOutputAnswers`.
+  The key is a Bearer token and the model is required; `jev-latest` is the alias of the current
+  release, and `modelsWithAPIKey:error:` lists the rest.
 
 ```objc
 NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:@"ollama"];
@@ -477,19 +491,22 @@ id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:provider
 ```
 
 The contract's sampling keys reach a service under the name it reads: `NFKParameterMaxTokens` goes
-out as `max_tokens`, `NFKParameterTopP` as `top_p`, `NFKParameterTopK` as `top_k`, and
+out as `max_tokens` (`max_completion_tokens` for OpenAI's reasoning models, such as `gpt-5.6-sol` and
+`gpt-5.6-luna`), `NFKParameterTopP` as `top_p`, `NFKParameterTopK` as `top_k`, and
 `NFKParameterStopSequences` as `stop` (`stop_sequences` on Anthropic). `NFKParameterRepetitionPenalty`
 goes out as both `repetition_penalty` and `repeat_penalty`, since the servers disagree on the name and
 agree on the meaning. `NFKParameterReasoningEffort` goes out as `reasoning_effort` with the level
-renamed to the one the service reads (light → low, moderate → medium, deep → high), and on the
-Messages API as a `thinking` budget in tokens, which is the control that API takes. What came back
+renamed to the one the service reads (light → low, moderate → medium, deep → high). On the Messages
+API it goes out as adaptive thinking at the same named effort from Claude Opus 4.6 on, and as a
+`thinking` budget in tokens on earlier models. Claude models from Opus 4.7 on refuse sampling, so the
+backend drops `temperature`, `top_p`, and `top_k` for them. What came back
 rides under `NFKOutputReasoning` and `NFKOutputUsage`. Every other parameter folds into the request body under its own name, which is
 how a caller reaches a field the contract does not name, and a parameter written in the service's own
 spelling keeps the value the caller wrote.
 
 `backendForProvider:apiKey:modelName:` returns whichever backend the provider's protocol needs, so
-switching from a local server to Anthropic changes one argument. Both backends speak the synchronous
-text protocol and block, so run them off the render thread. `NFKRemoteTranscriptionBackend` is the
+switching from a local server to Anthropic changes one argument. The chat backends speak the
+synchronous text protocol and block, so run them off the render thread. `NFKRemoteTranscriptionBackend` is the
 audio→text counterpart for an OpenAI-compatible transcription endpoint, and
 `NFKAsyncGenerationBackend` is the base for a service that answers with a job identifier to poll.
 `NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`, which the hosted
@@ -541,7 +558,12 @@ under `NFKOutputStructured` — a `json_schema` response format on the OpenAI sh
 Anthropic's, which has none. Several images go under `NFKInputImages`. Every blocking remote call
 retries a rate limit or gateway error after the provider's `Retry-After` or an exponential delay,
 bounded by `NFKRemoteTransport.retryAttempts` and `maximumRetryDelay`; a refused connection is not
-retried. Streaming and the tool call are measured against a live Ollama.
+retried. A status that survives the retries arrives under the code an app acts on: a rate limit, a
+quota, or an overload is `kNFKError_InferenceRateLimited` with the provider's reset date under
+`NFKRemoteErrorRetryAfterKey`; a request the provider will not take as written, a content-policy
+rejection included, is `kNFKError_InferenceRefused`; a rejected key or an unknown model is
+`kNFKError_InferenceBackendFailure`. A reply the model itself declined (a content-filter stop, a
+`refusal` message, Anthropic's `refusal` stop reason) is a refusal too, streamed or not. Streaming and the tool call are measured against a live Ollama.
 
 **Audio, documents, and video in; speech out.** Beside images, the chat backends take `NFKInputAudio`
 (an `input_audio` part; the Messages API refuses audio rather than dropping it), `NFKInputDocument` /
@@ -551,9 +573,12 @@ measured against a live Ollama, which names the colours of a sampled clip. `NFKP
 asks an OpenAI-compatible chat model to speak its reply, which arrives as an `NFKAudioAsset` under
 `NFKOutputAudio` beside the text, streamed or not. The transcription backend gains `emitsTimestamps`
 (segments under `NFKOutputSegments`, as the on-device Whisper backend emits) and `translates`. Three
-more services complete the surface: `NFKRemoteVideoBackend` (OpenAI's job-style videos API on
-`NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart), `NFKRemoteReranker` (Together,
+more services complete the surface: `NFKRemoteVideoBackend` (job-style video generation on
+`NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart, speaking Gemini Veo, xAI, Together,
+OpenRouter, and OpenAI's videos API, which OpenAI removes on 2026-09-24), `NFKRemoteReranker` (Together,
 OpenRouter; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
+`NFKTypeSafeBackend` is the one remote backend that does not generate: Jev answers typed questions
+about a state, with the probabilities behind each answer, at the latency and price of a classifier.
 
 ## Speech in, text out
 
@@ -564,6 +589,13 @@ match against the reference decoder, with `emitsTimestamps` adding per-segment t
 `NFKOutputSegments`. `NFKMLXVADBackend` (voice activity) and `NFKMLXAudioTaggerBackend` (audio
 tagging) answer the questions around a transcript; the text→speech direction is `NFKMLXVoice`.
 [Companion packages](companions.md) lists them all.
+
+`NFKSpeechRecognitionBackend` is the third, in the core: Apple's own recognizer, with no weights to
+download. It needs the user's consent, which the app asks for once through
+`requestAuthorizationWithCompletionHandler:`, and it keeps the audio on the machine unless
+`requiresOnDeviceRecognition` is turned off. Each word arrives under `NFKOutputSegments` with its
+time range. Whisper keeps translation, word timestamps for any locale, and a chosen model size;
+Apple's recognizer keeps the download at zero.
 
 ## Optional engines discovered at runtime
 
@@ -580,6 +612,14 @@ default provider the companions ship:
 
 A consumer's own engine registers under a capability with `registerProviderClassName:forCapability:`,
 and the most recently registered present provider wins.
+
+Eight capabilities resolve with nothing linked at all, because the core's own Apple-framework engines
+are named last for them: `NFKCapabilityTextRecognition`, `NFKCapabilitySegmentation`,
+`NFKCapabilityPose`, `NFKCapabilityFaceDetection`, `NFKCapabilityImageEmbedding`,
+`NFKCapabilityUpscaling`, `NFKCapabilityOpticalFlow`, and `NFKCapabilityTranscription`. Linking
+InferKitMLX puts its model in front for the capabilities it serves; linking nothing still answers.
+A provider that cannot serve the machine returns nil and discovery moves to the next candidate, which
+is how upscaling and optical flow decline on hardware without the processor.
 
 ## Choosing and combining engines
 
