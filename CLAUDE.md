@@ -11,16 +11,18 @@ here. An agent that learns something durable about a subject adds it to that sub
 
 **InferKit** is a small, cross-platform inference toolkit for Objective-C. It provides a swappable
 backend protocol, request/result value types, an async job handle, the shipped backends (mock,
-in-process Core ML, an on-device Core ML language-model runner, OpenAI-compatible chat and
-transcription clients, a submit-poll-fetch base, and runtime discovery — plus the companion-package
-MLX and Foundation Models backends), a texture-tensor conversion, tokenizers, and a Hugging Face
-model-download layer. It has no host-framework dependency, so any Metal/Apple app (macOS, iOS, tvOS)
+in-process Core ML, an on-device Core ML language-model runner, the Apple-framework engines over
+Vision, VideoToolbox, Speech, SoundAnalysis, AVFoundation's voices, and NaturalLanguage,
+OpenAI-compatible chat and transcription clients, a
+submit-poll-fetch base, and runtime discovery — plus the companion-package MLX and Foundation Models
+backends), a texture-tensor conversion, tokenizers, and a Hugging Face model-download layer. It has no host-framework dependency, so any Metal/Apple app (macOS, iOS, tvOS)
 can use it. The class prefix is `NFK`.
 
-The package is source-distributed through both Swift Package Manager and CocoaPods. Two optional
+The package is source-distributed through both Swift Package Manager and CocoaPods. Three optional
 companion packages build on the core without raising its platform floor or adding dependencies to
 it: `InferKitMLX/` (MLX-backed inference, plus on-device fine-tuning of the models it ships, on Apple
-Silicon) and `InferKitFoundationModels/` (a bridge to Apple's on-device system language model).
+Silicon), `InferKitFoundationModels/` (a bridge to Apple's on-device system language model), and
+`InferKitAppleSwift/` (Apple's Swift-only inference APIs, wrapped so Objective-C reaches them).
 
 ## Build & Test Commands
 
@@ -39,6 +41,9 @@ cd InferKitMLX && swift build --build-tests && ../Tools/mlx-metallib.sh && swift
 
 # Foundation Models companion (macOS 26 / iOS 26)
 cd InferKitFoundationModels && swift build && swift test
+
+# Apple Swift-only companion (macOS 26 / iOS 26)
+cd InferKitAppleSwift && swift build && swift test
 
 # CocoaPods spec (fast, no build)
 pod lib lint InferKit.podspec --quick
@@ -63,7 +68,19 @@ The reasons behind each step, and how to find the offender when a leg breaks, ar
    `swift test` must still exit 0 with the MLX tests skipped; a crash mid-run prints "0 failures" and
    is a truncated run, not a green one. Read the exit code.
 5. `InferKitFoundationModels/`: `swift build` + `swift test` when a change touches that companion
-   (all 74 tests across its three test targets).
+   (all 86 tests across its three test targets).
+6. `InferKitAppleSwift/`: `swift build` + `swift test` when a change touches that companion (all 26
+   tests across its three test targets, one of which skips without an installed translation model).
+7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C block in `README.md`,
+   `Docs/examples.md`, or `Docs/inference-guide.md`, or a public API a block names: **0 failed**.
+
+**Large Model Coordination (LMC).** Sessions share the machine, so every large-model test run (the
+full check, a released-weight suite, anything that loads gigabytes) goes through
+`Tools/lmc/lmc.py`: request the lock, run only once it is granted, and release it as the first
+thing after the run ends (`lmc.py run --test <name> -- <command>` does all three). Requests for
+the same test from the same tree become one run that satisfies every requester; a full check
+always queues last; when a run is stopped mid-way its riders re-request. Rules and commands:
+`Docs/agent-reference/build-and-verification.md` ("Large Model Coordination").
 
 ## Distribution
 
@@ -85,6 +102,7 @@ Docs/                            # Consumer docs; Docs/agent-reference/ holds th
 InferKit.xcworkspace             # Core + both companions in one Xcode window (rules in the full tree)
 InferKitMLX/                     # MLX companion package (own Package.swift, tests, examples, DocC)
 InferKitFoundationModels/        # Foundation Models companion package
+InferKitAppleSwift/              # Apple's Swift-only inference APIs, wrapped for Objective-C
 Tools/                           # Converters, validation assets, reference-parity oracles, xcframework,
                                  #   DocC build, mlx-metallib.sh; ships in no distribution
 Package.swift, InferKit.podspec  # The two distribution manifests
@@ -95,7 +113,8 @@ The full tree with per-directory notes is `Docs/agent-reference/project-structur
 ## Core subsystems
 
 The core's notes are split by subject under `Docs/agent-reference/`: `core-runtime-notes.md`
-(value-type accessors, tokenizers, grammar-constrained sampling, dynamic backend discovery),
+(value-type accessors, tokenizers, grammar-constrained sampling, dynamic backend discovery, the
+hub cache's size limit and backup exclusion),
 `remote-providers.md` (every preset, the transport, catalogs, runners, streaming, tools, media),
 `coreml-compute-plan.md` (where Core ML places a model, measured), and
 `hardware-and-model-sizing.md` (`NFKHardwareProfile` and model sizing). Two rules from them apply
@@ -130,6 +149,20 @@ Standing rules for the package:
   the tests that prove it: `Docs/agent-reference/mlx-training.md` ("Customization is part of parity").
 - Every `Task.detached` passes `priority: .userInitiated`; every test that reaches MLX calls its class's
   `requireMLXRuntime()` first; a test that loads many models clears the cache in `tearDown`.
+
+## InferKitAppleSwift (companion package)
+
+A separate SwiftPM package (macOS 26 / iOS 26) depending only on the core, hosting the Apple
+inference APIs that ship in Swift alone: `SpeechAnalyzer` (an actor), Vision's
+`RecognizeDocumentsRequest` and `DetectLensSmudgeRequest` (no `VN*` header), and the Translation
+framework. The core cannot host them because it is a pure Objective-C target. Every type the package
+adds is `@objc`, which is its whole purpose. Notes:
+`Docs/agent-reference/apple-framework-backends.md`.
+
+One rule the package earns the hard way: a framework that answers asynchronously is given a bounded
+wait. The Translation framework returns nothing at all in a test bundle, neither an answer nor a
+refusal, so an unbounded `DispatchSemaphore.wait()` hangs the calling thread for the life of the
+process. Every wait carries a deadline and reports reaching it.
 
 ## InferKitFoundationModels (companion package)
 
@@ -257,7 +290,11 @@ Every package carries its examples in both languages, so a documented snippet ca
 either: core `Examples/` (ObjC) + `SwiftExamples/` (Swift, which also pins what the ObjC importer
 renames — `runInference(for:)`, throwing instead of `NSError **`); `InferKitMLX/Examples` (Swift) +
 `InferKitMLX/ObjCExamples`; `InferKitFoundationModels/Examples` (Swift) +
-`InferKitFoundationModels/ObjCExamples`.
+`InferKitFoundationModels/ObjCExamples`; `InferKitAppleSwift/Examples` (Swift) +
+`InferKitAppleSwift/ObjCExamples`.
+Every Objective-C block in `README.md`, `Docs/examples.md`, and `Docs/inference-guide.md` also compiles
+through `Tools/doc-snippets/check-objc.py`, mirrored or not. A new free variable in a block is declared in
+`Tools/doc-snippets/snippet-context.h`, or in an `objc-check: given` directive above that block.
 `InferKitMLX/Examples/MLXModelGalleryExamples.swift` is the live example of every shipped MLX model:
 it builds each through its public `@objc` factory and runs a representative forward per modality (mirrors
 the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forwards stay in the individual
@@ -278,17 +315,20 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
 
 - Repository: `build-and-verification.md`, `project-structure.md`, `distribution-and-packaging.md`,
   `documentation-docc.md`, `mlx-parity-checklist.md`.
-- Core: `core-runtime-notes.md`, `remote-providers.md`, `coreml-compute-plan.md`,
+- Core: `core-runtime-notes.md`, `apple-framework-backends.md`, `remote-providers.md`,
+  `remote-provider-capabilities.md`, `coreml-compute-plan.md`,
   `hardware-and-model-sizing.md`.
 - InferKitMLX: `mlx-companion.md`, `mlx-runtime-gotchas.md`, `mlx-weights-and-formats.md`,
   `mlx-training.md`, and the model classes `mlx-models-diffusion.md`, `mlx-models-dit-generation.md`,
   `mlx-models-image-restoration.md`, `mlx-models-depth-segmentation-matting.md`,
   `mlx-models-detection-pose.md`, `mlx-models-video.md`, `mlx-models-embeddings-retrieval.md`,
-  `mlx-models-language.md`, `mlx-models-gemma.md`, `mlx-models-vision-language.md`,
+  `mlx-models-language.md`, `mlx-models-gemma.md`, `mlx-models-vision-language.md`, `mlx-models-translation.md`,
   `mlx-models-speech-recognition.md`, `mlx-models-text-to-speech.md`,
   `mlx-models-source-separation.md`, `mlx-models-speech-restoration.md`,
-  `mlx-models-audio-codecs-music.md`.
+  `mlx-models-audio-codecs-music.md`, `mlx-models-music-transcription-structure.md`.
 - InferKitFoundationModels: `foundation-models-companion.md`.
+- InferKitAppleSwift: covered by `apple-framework-backends.md`, which holds every Apple-framework
+  engine, in the core and in that companion.
 
 Consumer-facing documents stay in `Docs/` (`inference-guide.md`, `examples.md`, `installation.md`,
 `coreml-llm.md`, `companions.md`, `model-index.md`, `model-parity.md`, `mlx-runtime-hazards.md`) and

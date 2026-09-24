@@ -22,11 +22,16 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
 
 ## Core
 
+- [apple-framework-backends.md](apple-framework-backends.md) — the core's Vision, VideoToolbox, and
+  Speech engines: the coordinate flip, the pixel formats and scale factors the frame processors
+  actually take, and what was left out of each.
 - [core-runtime-notes.md](core-runtime-notes.md) — value-type accessors, the tokenizer class cluster,
-  grammar-constrained sampling, and dynamic backend discovery.
+  grammar-constrained sampling, dynamic backend discovery, and the Hugging Face hub cache policy.
 - [remote-providers.md](remote-providers.md) — the provider presets, the shared transport, model
   catalogs, local runners, streaming, tools, structured output, media in and out, and the probes that
   verified each endpoint.
+- [remote-provider-capabilities.md](remote-provider-capabilities.md) — every inference mode each
+  preset serves, set against the backend that reaches it, and the build order for the gaps.
 - [coreml-compute-plan.md](coreml-compute-plan.md) — `NFKComputePlan` and what was measured about
   where Core ML places a language model.
 - [hardware-and-model-sizing.md](hardware-and-model-sizing.md) — `NFKHardwareProfile`, the memory
@@ -61,10 +66,12 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   Qwen3-Embedding, EmbeddingGemma, the ModernBERT reranker.
 - [mlx-models-language.md](mlx-models-language.md) — the dense decoder and its generation runtime
   (cache, quantized cache, speculative decoding, mixtures of experts, constrained decoding), the hybrid
-  decoder, DeepSeek V4, rotary scaling, the Jinja chat-template renderer.
+  decoder, Qwen4-Exp, DeepSeek V4, rotary scaling, the Jinja chat-template renderer.
 - [mlx-models-gemma.md](mlx-models-gemma.md) — Gemma 2, Gemma 3, Gemma 3n, and the Gemma 4 text,
   vision, audio, and fusion stack.
 - [mlx-models-vision-language.md](mlx-models-vision-language.md) — SmolVLM2 and Qwen3-VL.
+- [mlx-models-translation.md](mlx-models-translation.md) — OPUS-MT (Marian), M2M-100 and SMaLL-100,
+  MADLAD-400; the SentencePiece reader, the BART-family and T5 encoder-decoders, greedy and beam decoding.
 - [mlx-models-speech-recognition.md](mlx-models-speech-recognition.md) — Whisper, Parakeet, MarbleNet
   and Silero VAD, PANNs audio tagging.
 - [mlx-models-text-to-speech.md](mlx-models-text-to-speech.md) — Chatterbox, the phonemizers,
@@ -74,6 +81,9 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
 - [mlx-models-speech-restoration.md](mlx-models-speech-restoration.md) — the shared STFT primitives and
   the fifteen restoration models from MP-SENet to Apollo.
 - [mlx-models-audio-codecs-music.md](mlx-models-audio-codecs-music.md) — DAC, SNAC, MiniMax Music 3.
+- [mlx-models-music-transcription-structure.md](mlx-models-music-transcription-structure.md) — the
+  audio → MIDI and music-structure survey, the core MIDI and beat value types, Basic Pitch,
+  All-In-One, and the build order behind them.
 
 ## InferKitFoundationModels
 

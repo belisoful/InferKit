@@ -45,6 +45,28 @@ and places the library beside the InferKitMLX SwiftPM test binary, so `swift tes
 MLX-dependent tests SwiftPM's own build cannot (it compiles no shaders). Also `inferkit-convert/`,
 the offline HF-causal-LM → Core ML model-directory exporter.
 
+### Large Model Coordination — `lmc/`
+
+`lmc.py` is the lock every agent session takes before a large-model test run, so one run at a time
+holds the machine's memory. A session requests the lock for a named test (`full-check`, or a model's
+released-weight suite), waits until it is granted, runs, and releases as the first thing it does
+when the run ends; `lmc.py run --test <name> -- <command>` does all four. Requests for the same
+test set from the same working tree combine into one run whose outcome satisfies every requester;
+`full-check` always queues last; a holder whose process is gone is reaped, and the sessions riding
+on a stopped run are told to re-request. State lives in `~/.claude/inferkit-lmc/`, and the legacy
+`~/.claude/inferkit-test-slot-mlx` file is written and honored alongside it. `test_lmc.py` runs
+the tool's own tests. The rule that binds sessions to it is in
+`Docs/agent-reference/build-and-verification.md`.
+
+### Documentation snippets — `doc-snippets/`
+
+`check-objc.py` type-checks every Objective-C code block in `README.md`, `Docs/examples.md`, and
+`Docs/inference-guide.md` with `clang -fsyntax-only` against the core's public headers and the
+Objective-C headers the three companions generate. `snippet-context.h` declares the variables the
+blocks take from their prose. A block that differs uses an `<!-- objc-check: … -->` directive above
+its fence (`given`, `continues`, or `skip`); the script's own help lists them. The check is step 5 of
+the Full Check in `Docs/agent-reference/build-and-verification.md`.
+
 ## Requirements
 
 The converters need `torch` and `safetensors`; the reference oracles additionally need the model's own

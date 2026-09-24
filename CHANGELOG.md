@@ -1858,6 +1858,16 @@ First public release.
 - `NFKMLXRandom`, `NFKMLXGPU`, and `NFKMLXDevice` expose MLX's global runtime knobs to Objective-C.
 - Every model's weight loader reads through `NFKMLXWeights.loadCheckpoint`, so a checkpoint written by
   fine-tuning reloads through the model's existing factory without being transposed twice.
+  carries three modulation tensors where FLUX.1 carries one per block. The feed-forward is a SwiGLU
+  behind one fused projection, the single-stream block fuses its attention and MLP into one projection
+  each way, the rotary runs over four axes at theta 2000, and the text ids number their tokens rather
+  than sitting at zero. Velocity cosine 0.9999999999999934 against diffusers on the first numeric run.
+  The released FLUX.2 [klein] 4B is held to the module by shape (169 tensors, none missing, mismatched
+  or unaccounted); it is the one FLUX.2 release that is not gated, so the inventory is Black Forest
+  Labs' own rather than a mirror's. FLUX.2 [dev] is gated, and its published parameter total pins the
+  geometry in the headers' place: the declared 32B configuration sums to 32,223,281,152 parameters,
+  the release's own figure to the tensor. FLUX.2 [klein] 9B gets no preset, because its total leaves
+  the split between double and single blocks open — a double block costs exactly two single blocks, so
 
 ### InferKitFoundationModels (companion)
 

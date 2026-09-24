@@ -28,7 +28,9 @@ build_companion() {
     local out="$ROOT/.docc-build/$pkg.doccarchive"
     echo "==> Building $pkg DocC (swift-docc-plugin)"
     mkdir -p "$ROOT/.docc-build"
-    ( cd "$ROOT/$pkg" && swift package --allow-writing-to-directory "$out" \
+    # Xcode 27's default build system runs `clang -extract-api` over mlx-swift's C++ Cmlx target
+    # and fails on a C++ header parsed as C; the native build system skips that step.
+    ( cd "$ROOT/$pkg" && swift package --build-system native --allow-writing-to-directory "$out" \
         generate-documentation --target "$pkg" --output-path "$out" )
     local pages
     pages="$(find "$out/data/documentation" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"

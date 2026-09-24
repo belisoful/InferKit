@@ -44,3 +44,13 @@ Local/
 # DocC build output
 .docc-build/
 xcframework-build/
+
+# Python bytecode
+#
+# The oracle harness and the asset fetchers under Tools/ are run as scripts, so their caches land
+# beside the sources rather than in a build directory.
+__pycache__/
+*.pyc
+
+# Stray build logs redirected beside a package (`swift build 2> build.err`)
+*.err

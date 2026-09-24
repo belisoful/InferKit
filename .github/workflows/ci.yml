@@ -1,8 +1,8 @@
 # CI mirrors the Full Check in CLAUDE.md, scoped to what a hosted runner can do.
 #
 # What runs here: the core's build + 177 tests with a zero-warning gate, the iOS and tvOS compile
-# legs, the static analyzer at a fresh derived-data path, the podspec lint, and compile checks for
-# both companion packages.
+# legs, the static analyzer at a fresh derived-data path, the podspec lint, compile checks for
+# the companion packages, and a type check of every Objective-C block in the consumer documents.
 #
 # What deliberately does NOT run here: the MLX test schemes (563/35/22). They evaluate real MLX
 # arrays, which needs the Metal toolchain's default.metallib and a GPU the runner may not expose,
@@ -68,7 +68,7 @@ jobs:
         run: pod lib lint InferKit.podspec --quick
 
   mlx:
-    name: InferKitMLX (compile)
+    name: InferKitMLX (compile) and documented Objective-C snippets
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +97,36 @@ jobs:
       - name: Build (iOS)
         run: xcodebuild build -scheme InferKitMLX -destination 'generic/platform=iOS' -skipPackagePluginValidation -derivedDataPath "$RUNNER_TEMP/dd-mlx-ios"
         working-directory: InferKitMLX
+
+      # Every Objective-C block in README.md, Docs/examples.md, and Docs/inference-guide.md compiles
+      # against the core's headers and the header each companion's build generates. The job has
+      # already built InferKitMLX; the checker builds the other two companions, whose floor is the
+      # macOS 26 SDK, so a runner on an older image reports the check as skipped.
+      - name: Documented Objective-C snippets
+        run: |
+          SDK=$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)
+          if [ "$SDK" -lt 26 ]; then
+            echo "macOS SDK $SDK < 26 — the snippet check needs every companion's header; skipped."
+            exit 0
+          fi
+          python3 Tools/doc-snippets/check-objc.py
+
+  apple-swift:
+    name: InferKitAppleSwift (build + test, when the SDK allows)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # SpeechAnalyzer, the document reader, and Translation are macOS 26 APIs, so the package needs
+      # that SDK. A runner on an older image reports what it skipped rather than failing.
+      - name: Build and test, or state why not
+        run: |
+          SDK=$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)
+          if [ "$SDK" -lt 26 ]; then
+            echo "macOS SDK $SDK < 26 — InferKitAppleSwift needs the macOS 26 SDK; skipped."
+            exit 0
+          fi
+          swift build --package-path InferKitAppleSwift
+          swift test --package-path InferKitAppleSwift
 
   foundation-models:
     name: InferKitFoundationModels (build + test, when the SDK allows)
