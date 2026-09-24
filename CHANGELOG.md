@@ -456,6 +456,66 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   publishes `v8DetectionLoss` over `TaskAlignedAssigner`, and transformers maps the RT-DETR and
   RF-DETR families onto Hungarian matchers `NFKMLXHungarian` already reproduces.
 
+#### Typed decisions on device
+
+- `NFKMLXLaya` ports Laya (`convaiinnovations/laya`, Apache-2.0), the open reproduction of TypeSafe's
+  Jev. It answers the core's `NFKDecisionQuestion`s with `NFKDecisionAnswer`s, the objects
+  `NFKTypeSafeBackend` returns, so a feature moves between the hosted model and the device by
+  swapping the object, and `NFKMLXLayaBackend` answers the same request through the contract. The
+  network is the ModernBERT encoder the reranker already ships plus a decision head that scores every
+  option at its own mask token. The three released variants load from their directories: the root
+  (ModernBERT-large), `typed-decisions`, and `multilingual` (mmBERT-base under Gemma's tokenizer with
+  its Metaspace pre-tokenizer, whose local rotary base equals the global one). Each is at reference
+  parity against the release's own inference code, the prompt token for token.
+- Customization ships with it: `NFKMLXLaya.network(weightsURL:)`, a `NFKMLXLayaTrainable` policy
+  (the head, or the encoder too), `NFKMLXLayaObjective` (the reference's proper-scoring reward,
+  measured against `rl_common.proper_reward` on identical tensors), `NFKMLXLayaExample`, and
+  `fineTune(examples:steps:)`, with the fine-tuned file reloading through
+  `layaWithDirectoryURL:weightsURL:error:`.
+- The reference's conversation-prefix training path ships too: `NFKMLXLayaEpisode` is a context, the
+  turns, a noul, and the outcome; `fineTune(episodes:steps:lambda:)` trains every sampled prefix
+  toward a TD(λ) target built from the outcome and the model's own next-prefix prediction. The prefix
+  sampling, the left-cut prompts, and the targets are measured against the release's `rl_common`.
+- Laya downloads in one call: `NFKMLXLayaVariant` names the three releases,
+  `NFKMLXLaya.laya(variant:revision:cacheDirectoryURL:)` (`layaWithVariant:revision:cacheDirectoryURL:error:`)
+  fetches a variant's five files through the `NFKHFHub` cache and builds it, and `download(variant:…)` and
+  `backend(variant:…)` fetch alone or build the backend. Each has a completion-handler form.
+  `NFKMLXLaya.measuredRevision` names the commit the parity measurements were taken at. The `NFKMLXLaya`
+  DocC article covers variant choice, pinning, the cache, and the tuned-weights reload.
+- Two community reproductions of Jev ship at reference parity, both answering `NFKDecisionQuestion`s
+  with `NFKDecisionAnswer`s and running behind the new `NFKMLXDecisionBackend`:
+  `NFKMLXOpenJevDeBERTa` (`com-kotobalabs/open-jev-deberta-v3-large`: one DeBERTa-v3-large pass over the
+  state and every question, on the package's first DeBERTa encoder, `NFKMLXDeBERTaV2Net`) and
+  `NFKMLXOpenJev` (`ZefanCai/Open-Jev-2B`, `-9B`, and `-27B-v1.1`: a LoRA adapter and scalar head over
+  the Qwen3.5 or Qwen3.8 text model, each candidate its own prompt). Each downloads through the `NFKHFHub` cache, Open-Jev fetching
+  the exact base revision its adapter names, and each ships its release's fine-tune with the objective
+  measured against the reference training code, the releases' AdamW groups, and open-jev-deberta's
+  warm-up-then-decay schedule (`NFKMLXLearningRateSchedule.openJevDeBERTa(steps:)`). Open-Jev saves a
+  tuned model in the release's own layout.
+- `NFKMLXSentencePieceSegmenter` can sum piece scores in double precision, as the `tokenizers` library
+  does; the default stays SentencePiece's float.
+- Every model that builds from a release directory now downloads one: each directory factory has a
+  peer taking the Hugging Face repository (`…WithRepo:revision:cacheDirectoryURL:…`, blocking and
+  completion-handler forms) that fetches exactly the files the model reads and builds from the cache.
+  That adds downloads to 31 classes across the language, vision-language, embedding, speech-recognition,
+  speech, and generation models. Parakeet and Canary read their weights straight from the `.nemo`
+  archive their repositories serve; Kokoro reads its released `.pt` voicepacks directly.
+- The shared release download fetches a shard index's shards beside the index (a component folder's
+  index had asked the repository root for them), returns the snapshot root rather than the last
+  required file's folder, and reports what each weights candidate's download said instead of "serves
+  none".
+- The native checkpoint reader takes a file that saved one bare tensor, and prefers a `.nemo` archive's
+  `model_weights.ckpt` to whichever checkpoint member comes first.
+- Florence-2 builds the geometry its release's `config.json` states, so Florence-2-base loads (at
+  reference parity: projector, encoder, and logits 1.0000002, greedy generation token for token). The
+  `.base` vision preset carries base's 768-wide projection, and `NFKMLXFlorence2Net.bartBase` is added.
+- A release that cannot be read without its tokenizer is refused when it is built: the language backend
+  (`NFKMLXLanguage.backend(directoryURL:)` and the speculative pair), SmolVLM2, and Open-Jev throw
+  instead of building a model whose every answer would be empty. The language backend's `isReady` now
+  reports whether it has a tokenizer, since it reads text prompts only.
+- Pixtral's references name its current repository, `mistral-experimental/pixtral-12b`; the former
+  `mistral-community/pixtral-12b` redirects there.
+
 - **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
   in a process can come back wrong by a factor of about a million, silently and with no infinity or
   not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not
