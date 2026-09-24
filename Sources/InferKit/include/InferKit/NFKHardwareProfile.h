@@ -43,6 +43,48 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The GPU architecture Metal reports. Empty when there is no Metal device. */
 @property (nonatomic, readonly, copy) NSString *graphicsArchitecture;
 
+/*!
+	@property   graphicsGeneration
+	@abstract   The GPU architecture's generation: 13 for "applegpu_g13s".
+	@discussion 0 when the machine reports no Metal device, an architecture name in another shape, or
+				an OS too old to name an architecture at all. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) NSInteger graphicsGeneration;
+
+/*!
+	@property   hasNeuralAccelerators
+	@abstract   YES when this GPU has the matrix units Apple silicon carries from the M5 on.
+	@discussion The accelerators speed up what is matmul-bound: prefill, vision towers, diffusion,
+				and the restoration models. Decode stays bandwidth-bound, so NFKMLXModelFit's sizing
+				keeps its meaning either way.
+
+				This is MLX's own gate, so a reading here and a kernel there agree: the OS is 26.2 or
+				newer, and the architecture is new enough by
+				architectureHasNeuralAccelerators:. NO on every machine that fails either half.
+				Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) BOOL hasNeuralAccelerators;
+
+/*!
+	@method     graphicsGenerationForArchitecture:
+	@abstract   The generation an architecture name states.
+	@discussion Read the way MLX reads it, which is positional rather than by prefix: the two
+				characters before the last one, each taken as 0 when it is not a digit. So
+				"applegpu_g13s" is 13 and "Apple M1 Max" is 0. A caller passes a name the machine
+				does not have, which is how a test pins the answer for hardware it cannot run on.
+				Introduced in InferKit 0.4.0.
+*/
++ (NSInteger)graphicsGenerationForArchitecture:(NSString *)architecture;
+
+/*!
+	@method     architectureHasNeuralAccelerators:
+	@abstract   YES when an architecture name is new enough for the neural accelerators.
+	@discussion Generation 17 and up, or 18 and up when the name ends in "p", which is a phone GPU.
+				This is the hardware half of the gate; hasNeuralAccelerators adds the OS half.
+				Introduced in InferKit 0.4.0.
+*/
++ (BOOL)architectureHasNeuralAccelerators:(NSString *)architecture;
+
 /*! Performance cores, or 0 when the system does not report a split. */
 @property (nonatomic, readonly) NSInteger performanceCoreCount;
 

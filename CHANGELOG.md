@@ -222,6 +222,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKVisionClassificationBackend` names what an image shows from Vision's taxonomy, filtered by a
   confidence floor or by Vision's own precision-recall curve.
 - `NFKVisionAnimalBackend` finds cats and dogs, and reports which animals the installed revision
+#### The machine reports its neural accelerators
+
+- `NFKHardwareProfile` gains `graphicsGeneration` and `hasNeuralAccelerators`, the matrix units Apple
+  silicon carries from the M5 on. Both are MLX's gate verbatim, so a reading here and a kernel there
+  agree: the OS is 26.2 or newer and the architecture generation is at least 17, or 18 on a phone
+  GPU. `graphicsGenerationForArchitecture:` and `architectureHasNeuralAccelerators:` take a name, so
+  a caller asks about hardware the machine does not have.
+- The accelerators speed up matmul-bound work. Decode stays bandwidth-bound, so `NFKMLXModelFit`'s
+  sizing keeps its meaning on the new hardware.
+
 #### Two error codes an app can act on
 
 - `kNFKError_InferenceRefused` and `kNFKError_InferenceRateLimited` join `NFKInferenceError`. A

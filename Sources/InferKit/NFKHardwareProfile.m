@@ -114,6 +114,49 @@ static NSInteger NFKSysctlInteger(const char *name)
 	return self;
 }
 
+#pragma mark Neural accelerators
+
+// MLX parses the generation positionally, from the two characters before the last, and treats a
+// non-digit as zero. Mirrored rather than improved: a reading that disagreed with MLX would say the
+// kernels run where they do not.
++ (NSInteger)graphicsGenerationForArchitecture:(NSString *)architecture
+{
+	if (architecture.length < 3) {
+		return 0;
+	}
+	NSInteger tens = [architecture characterAtIndex:architecture.length - 3] - '0';
+	NSInteger ones = [architecture characterAtIndex:architecture.length - 2] - '0';
+	tens = (tens >= 0 && tens < 10) ? tens : 0;
+	ones = (ones >= 0 && ones < 10) ? ones : 0;
+	return tens * 10 + ones;
+}
+
++ (BOOL)architectureHasNeuralAccelerators:(NSString *)architecture
+{
+	if (architecture.length == 0) {
+		return NO;
+	}
+	unichar last = [architecture characterAtIndex:architecture.length - 1];
+	NSInteger required = (last == 'p') ? 18 : 17;
+	return [self graphicsGenerationForArchitecture:architecture] >= required;
+}
+
+- (NSInteger)graphicsGeneration
+{
+	return [self.class graphicsGenerationForArchitecture:self.graphicsArchitecture];
+}
+
+- (BOOL)hasNeuralAccelerators
+{
+	if (![self.class architectureHasNeuralAccelerators:self.graphicsArchitecture]) {
+		return NO;
+	}
+	if (@available(macOS 26.2, iOS 26.2, tvOS 26.2, *)) {
+		return YES;
+	}
+	return NO;
+}
+
 - (void)dealloc
 {
 	NARC_RELEASE(_chipName);

@@ -93,4 +93,45 @@
 	}
 }
 
+#pragma mark Neural accelerators
+
+- (void)testTheGenerationIsReadTheWayMLXReadsIt
+{
+	// Positional, from the two characters before the last, which is what mlx's device.cpp does. The
+	// M5 and M6 names are checked here because the machine running this test does not have one.
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@"applegpu_g13s"], 13);
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@"applegpu_g16p"], 16);
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@"applegpu_g17s"], 17);
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@"applegpu_g18p"], 18);
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@""], 0);
+	XCTAssertEqual([NFKHardwareProfile graphicsGenerationForArchitecture:@"Apple M1 Max"], 0,
+				   @"a device name is not an architecture name, and reads as no generation");
+}
+
+- (void)testTheAcceleratorGateMatchesMLXsThresholds
+{
+	// 17 on a Mac GPU, 18 on a phone GPU, which is the ternary in mlx's is_nax_available().
+	XCTAssertFalse([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g13s"]);
+	XCTAssertFalse([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g16s"]);
+	XCTAssertTrue([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g17s"]);
+	XCTAssertTrue([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g17g"]);
+	XCTAssertFalse([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g17p"],
+				   @"a phone GPU needs 18");
+	XCTAssertTrue([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g18p"]);
+	XCTAssertFalse([NFKHardwareProfile architectureHasNeuralAccelerators:@""]);
+}
+
+- (void)testTheMachineAgreesWithItsOwnArchitecture
+{
+	NFKHardwareProfile *profile = NFKHardwareProfile.currentProfile;
+	XCTAssertEqual(profile.graphicsGeneration,
+				   [NFKHardwareProfile graphicsGenerationForArchitecture:profile.graphicsArchitecture]);
+	if (!profile.hasNeuralAccelerators) {
+		return;
+	}
+	// On hardware that has them, both halves of the gate hold and the generation is at least 17.
+	XCTAssertTrue([NFKHardwareProfile architectureHasNeuralAccelerators:profile.graphicsArchitecture]);
+	XCTAssertGreaterThanOrEqual(profile.graphicsGeneration, 17);
+}
+
 @end
