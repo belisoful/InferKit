@@ -376,8 +376,7 @@ def run_convtasnet(image, checkpoint):
     generator = np.random.default_rng(3)
     wave = (0.4 * np.sin(2 * np.pi * 220 * time) + 0.3 * np.sin(2 * np.pi * 587 * time)
             + 0.02 * generator.standard_normal(samples).astype(np.float32)).astype(np.float32)
-    globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
-                           "waveform": torch.from_numpy(wave).contiguous()}
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous()}
     with torch.no_grad():
         estimates = model(torch.from_numpy(wave).reshape(1, 1, -1))
     return estimates[0].contiguous()                            # [speakers, samples]
@@ -473,8 +472,7 @@ def run_demucs(image, checkpoint):
     padded = F.pad(torch.from_numpy(wave)[None], (0, model.valid_length(length) - length))
     with torch.no_grad():
         estimates = model(padded)
-    globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
-                           "waveform": torch.from_numpy(wave).contiguous()}
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous()}
     return _center_trim(estimates, length)[0].contiguous()      # [stems, channels, samples]
 
 
@@ -940,8 +938,7 @@ def run_denoiser(image, checkpoint):
 
     with torch.no_grad():
         cleaned = model(torch.from_numpy(wave).reshape(1, 1, -1))
-    globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
-                           "waveform": torch.from_numpy(wave).contiguous()}
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous()}
     return cleaned[0, 0].contiguous()                           # [samples]
 
 
@@ -1209,8 +1206,7 @@ def run_audio_tagger(image, checkpoint):
         batch = torch.from_numpy(wave)[None]
         mel = model.logmel_extractor(model.spectrogram_extractor(batch))    # [1, 1, frames, mels]
         output = model(batch)
-    globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
-                           "waveform": torch.from_numpy(wave).contiguous(),
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous(),
                            "features": mel[0, 0].contiguous(),
                            "embedding": output["embedding"][0].contiguous()}
     return output["clipwise_output"][0].contiguous()            # [classes]
@@ -3941,8 +3937,7 @@ def run_vad(image, checkpoint):
                        input_signal_length=torch.tensor([samples]))
     # The mel spectrogram is the seam between the front end and the encoder: agreeing here and
     # disagreeing at the output isolates the network, and vice versa.
-    globals()["_extra"] = {"prompt": torch.tensor(prompt_ids, dtype=torch.int32).contiguous(),
-                           "waveform": torch.from_numpy(wave).contiguous(),
+    globals()["_extra"] = {"waveform": torch.from_numpy(wave).contiguous(),
                            "features": features[0].transpose(0, 1).contiguous()}   # [frames, mels]
     return torch.softmax(logits, dim=-1)[0, :, 1].contiguous()  # [frames]
 
