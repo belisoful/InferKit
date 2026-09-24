@@ -39,8 +39,10 @@ extern NSString * const NFKInputMask;
 	over several frames. A vision backend attaches them in order after NFKInputImage. Introduced in
 	InferKit 0.3.0. */
 extern NSString * const NFKInputImages;
-/*! A document for a text model to read (an NSURL to a PDF file, or NSData holding one). A chat backend
-	attaches it to the user turn in its provider's document shape. Introduced in InferKit 0.3.0. */
+/*! A document for a text model to read: an NSURL to a PDF or text file, NSData holding a PDF, an
+	NSString of text, or an NFKRemoteFile the service already keeps, which rides as the service's file
+	reference. A chat backend attaches it to the user turn in its provider's document shape.
+	Introduced in InferKit 0.3.0. */
 extern NSString * const NFKInputDocument;
 /*! Further documents beside NFKInputDocument (NSArray of NSURL or NSData). Introduced in InferKit 0.3.0. */
 extern NSString * const NFKInputDocuments;
@@ -49,8 +51,20 @@ extern NSString * const NFKInputDocuments;
 extern NSString * const NFKInputControl;
 /*! The source clip (NFKVideoAsset). */
 extern NSString * const NFKInputVideo;
+/*! The image a generated clip ends on (CGImage, CVPixelBuffer, or texture). NFKInputImage is the
+	first frame; the two together ask for an interpolation. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputLastFrame;
+/*! A recording of the voice a speech service should speak in (NFKAudioAsset, or NSData holding an
+	encoded file), for a service that clones a voice from a clip. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputVoiceReference;
+/*! The text after the gap a fill-in-the-middle model writes into (NSString); NFKInputPrompt is the
+	text before it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputSuffix;
 /*! The source audio (NFKAudioAsset, or NSData PCM / AVAudioPCMBuffer for in-memory samples). */
 extern NSString * const NFKInputAudio;
+/*! Further clips beside NFKInputAudio (NSArray of NFKAudioAsset or NSData), for a question over several
+	recordings. An audio backend attaches them in order after NFKInputAudio. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputAudios;
 /*! The chat messages, an OpenAI-style array of {role, content} dictionaries (NSArray). A text
 	backend uses this when present, otherwise it wraps NFKInputPrompt as one user message. */
 extern NSString * const NFKInputMessages;
@@ -58,6 +72,14 @@ extern NSString * const NFKInputMessages;
 	[chorus] each go on their own line. Distinct from NFKInputPrompt, which describes the music.
 	Introduced in InferKit 0.2.0. */
 extern NSString * const NFKInputLyrics;
+/*! The state a decision model judges (NSString, or a JSON-serializable NSDictionary or NSArray): a
+	message, a record, a conversation. A decision backend reads NFKInputPrompt, then NFKInputMessages,
+	when this key is absent. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputState;
+/*! The typed questions a decision model answers about NFKInputState (NSDictionary keyed by the
+	caller's question identifiers, each an NFKDecisionQuestion or its dictionaryRepresentation). The
+	answers come back under NFKOutputAnswers under the same keys. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInputQuestions;
 
 #pragma mark Parameter keys (scalar controls)
 
@@ -104,12 +126,61 @@ extern NSString * const NFKParameterFrameCount;
 extern NSString * const NFKParameterFramesPerSecond;
 /*! The output duration in seconds (NSNumber). */
 extern NSString * const NFKParameterDurationSeconds;
+/*! The output aspect ratio as width:height (NSString), for example "16:9". A backend whose service
+	takes a ratio rather than a size reads it; one that takes a size derives the ratio from
+	NFKParameterWidth and NFKParameterHeight when it is absent. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterAspectRatio;
+/*! The output resolution tier (NSString), for example "720p" or "1080p", for a service that names
+	tiers rather than sizes. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterResolution;
+/*! Whether a video service generates a soundtrack with the clip (NSNumber, BOOL). Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKParameterGenerateAudio;
+/*! What a video request does with its source clip (NSString): NFKVideoOperationEdit or
+	NFKVideoOperationExtend. Absent, the request generates a new clip. The source is NFKInputVideo or
+	NFKParameterSourceVideoIdentifier. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterVideoOperation;
+/*! The service's identifier of a clip it generated earlier (NSString), the source an edit or an
+	extension reads where the service takes an identifier rather than a file. Introduced in InferKit
+	0.4.0. */
+extern NSString * const NFKParameterSourceVideoIdentifier;
+
+/*! Whether a transcription names who speaks in each segment (NSNumber, BOOL). The speaker lands on
+	NFKAudioSegment.speaker. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterSpeakerDiarization;
+/*! Whether a transcription times each word (NSNumber, BOOL). The words come back under NFKOutputWords.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterWordTimestamps;
+/*! Terms a transcription should favor: names, jargon, product words (NSArray of NSString). Each
+	backend sends them as its service's keyword or context-bias list. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterVocabulary;
+
+/*! Whether a text model cites the documents it was given (NSNumber, BOOL). The citations come back
+	under NFKOutputCitations. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterCitations;
+
+/*! The identifier of an earlier reply the request continues from (NSString): the Responses API's
+	previous_response_id, Gemini's previous_interaction_id. The service keeps the history, so the
+	request carries only the new turn. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterPreviousResponseIdentifier;
+
+/*! Edits the source clip according to the prompt. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKVideoOperationEdit;
+/*! Continues the source clip according to the prompt. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKVideoOperationExtend;
 /*! The amount of motion for image-to-video, 0 to 1 (NSNumber). */
 extern NSString * const NFKParameterMotionScale;
 /*! The output audio sample rate in hertz (NSNumber). */
 extern NSString * const NFKParameterSampleRate;
 /*! The output audio channel count (NSNumber), e.g. 1 for mono, 2 for stereo. */
 extern NSString * const NFKParameterChannelCount;
+
+/*! The language the input is in (NSString, a BCP-47 tag such as "en", "de", or "pt-BR"). Absent
+	means the engine detects it, which every translator here can do. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterSourceLanguage;
+/*! The language to produce (NSString, a BCP-47 tag). A translation backend requires it. Introduced
+	in InferKit 0.4.0. */
+extern NSString * const NFKParameterTargetLanguage;
 
 #pragma mark Parameter keys (text generation)
 
@@ -146,15 +217,36 @@ extern NSString * const NFKReasoningEffortDeep;
 
 /*! The generated image (CVPixelBuffer or texture). */
 extern NSString * const NFKOutputImage;
+/*! Every image a request generated (NSArray of CVPixelBuffer or texture), present when there is more
+	than one; NFKOutputImage holds the first. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputImages;
 /*! The generated clip (NFKVideoAsset). */
 extern NSString * const NFKOutputVideo;
+/*! Every clip a request generated (NSArray of NFKVideoAsset), present when there is more than one;
+	NFKOutputVideo holds the first. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputVideos;
+/*! Each transcribed word with its time span (NSArray of NFKAudioSegment, the word as the label).
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputWords;
+/*! The sources a reply cites (NSArray of NSDictionary). Each entry carries "text" (the cited span
+	or the claim it supports) and whichever of "url", "title", "documentIndex", "start", and "end"
+	the service reports, with the service's own record under "raw". Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputCitations;
+/*! The tools the service ran itself while answering: web search, code execution, a fetch (NSArray of
+	NSDictionary {name, input, output}). Distinct from NFKOutputToolCalls, which the caller runs.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputServerToolResults;
+/*! The service's identifier for the reply (NSString), which a later request names under
+	NFKParameterPreviousResponseIdentifier to continue from it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputResponseIdentifier;
 /*! The generated audio (NFKAudioAsset, or NSData PCM / AVAudioPCMBuffer for in-memory samples). */
 extern NSString * const NFKOutputAudio;
 /*! A generated alpha matte or mask (CVPixelBuffer, texture, or CGImage), separate from the image. */
 extern NSString * const NFKOutputMask;
 /*! The generated text (NSString). */
 extern NSString * const NFKOutputText;
-/*! A structured result keyed by field name (NSDictionary), for a backend that generates to a schema. */
+/*! A structured result keyed by field name (NSDictionary): the fields a backend generating to a
+	schema filled, or the named readings an engine produced that have no key of their own. */
 extern NSString * const NFKOutputStructured;
 /*! A feature embedding vector (NSArray<NSNumber *> of floats), for a model that encodes an image or
     text into a shared representation. An encoder that L2-normalizes returns a unit vector, so a
@@ -176,6 +268,21 @@ extern NSString * const NFKOutputClassifications;
 /*! Time spans (NSArray<NFKAudioSegment *>), for a backend that locates events over time (voice-activity
     or sound-event detection). */
 extern NSString * const NFKOutputSegments;
+
+/*! A transcribed performance (NFKMIDISequence), for a music-transcription backend that turns audio
+    into notes. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputMIDI;
+/*! The beats of a track (NSArray<NFKMusicBeat *>), ordered in time, for a music-structure backend.
+    Its functional sections come back as NFKAudioSegments under NFKOutputSegments. Introduced in
+    InferKit 0.4.0. */
+extern NSString * const NFKOutputBeats;
+/*! The estimated tempo in beats per minute (NSNumber), beside NFKOutputBeats. Introduced in
+    InferKit 0.4.0. */
+extern NSString * const NFKOutputTempo;
+
+/*! A decision model's typed answers (NSDictionary of NFKDecisionAnswer keyed as NFKInputQuestions
+	was), for a backend that judges a state rather than generating text. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputAnswers;
 
 /*! The reasoning a model showed before its answer (NSString), separate from the answer under
 	NFKOutputText. Present only where the provider returns it; a provider that hides its reasoning

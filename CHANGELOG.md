@@ -11,6 +11,27 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Several clips in one request
+
+- `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),
+  the audio counterpart of `NFKInputImages`. A backend attaches them in order after `NFKInputAudio`.
+
+#### Two error codes an app can act on
+
+- `kNFKError_InferenceRefused` and `kNFKError_InferenceRateLimited` join `NFKInferenceError`. A
+  refusal is the request's fault and sending it again gives the same answer; a rate limit is not,
+  and a later request may succeed. The core flattened both into `kNFKError_InferenceBackendFailure`
+  before, which left a caller unable to tell "change this" from "wait".
+- The remote family fills them. `NFKRemoteTransport` maps a failing status to the code an app acts
+  on: 429, 402, and 529 are rate limited, with the provider's `Retry-After` as a date under
+  `NFKRemoteErrorRetryAfterKey`; 400, 413, and 422 are refused; the rest stay backend failures, with
+  the status and body under `NFKRemoteErrorStatusCodeKey` and `NFKRemoteErrorBodyKey`. Every remote
+  backend, the catalog, the local runners, and `NFKAsyncGenerationBackend`, whose own transport used
+  to parse a failing status as a job body, go through it. The two chat backends also report a reply
+  the model declined as a refusal: a content-filter stop or a `refusal` message on the OpenAI shape,
+  and the `refusal` stop reason on the Messages API, streamed or not; an Anthropic stream error event
+  maps its type the same way.
+
 - The contract's text parameters reach a remote service. The core keys are camelCase
   (`maxTokens`, `topP`, `topK`, `stopSequences`) and `NFKRemoteBackend` folded every untranslated
   parameter into the request body under its own name, so those four never reached an
