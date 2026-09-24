@@ -240,6 +240,11 @@ Tools/lmc/lmc.py status                                      # holder, queue, ou
 - The holder is the session process (`CLAUDE_PID`); `run` also records the child it spawned. A
   holder or child that is gone is reaped as `stopped` at the next command, so a stale hold cannot
   outlive the process that took it. A queued request whose session is gone is dropped.
+- The `run` process that spawned the child skips that child's liveness check. It waits on the
+  child itself and releases with the child's exit status. Before 2026-09-24 the release's own reap
+  saw the already-waited child as gone, so every `run` ended `stopped reason=child-process-gone`,
+  whatever the command's exit status, and every rider exited 12. A `run` started before the fix
+  still has the old code in memory and still ends that way.
 - `wait` and `acquire` take `--timeout`; the harness caps a foreground command at ten minutes, so a
   wait that returns 13 keeps its request and is called again with the same id. A run longer than
   that goes through `run` in the background.
@@ -250,6 +255,11 @@ Tools/lmc/lmc.py status                                      # holder, queue, ou
   a live holder of that file as holding the lock, so a script that still reads the file stays
   coordinated through the transition. State and per-run logs are in `~/.claude/inferkit-lmc/`;
   `history` tails the event log. `Tools/lmc/test_lmc.py` is the tool's test suite.
+- A hung test holds the lock for every session. `NFKMLXTranslationTests.testDetectionNamesEnglish`
+  (`NLLanguageRecognizer.dominantLanguage`) never returned in one `swift test` process on 2026-09-24
+  and held the lock for 30 minutes at about 25% CPU. A run whose log stops advancing for several
+  minutes is killed by its owner (`kill` on the `xctest` and `swift-test` processes it started), which
+  releases the lock as `failed`; a filter that excludes the test lets the rest of the run proceed.
 
 ## The oracle interpreters break when Xcode is renamed
 
@@ -328,3 +338,28 @@ shown otherwise; check its key before its code.
 `flux-schnell-release` is a directory of symbolic links into `~/.cache/huggingface/hub`, so `du`
 reports it at 10 MB while it resolves to 31 GB. Moving it relocates the links and frees nothing. Any
 asset directory is worth a `du -shL` before it is counted or moved.
+
+### A partial release file is resumed, not accepted
+
+`Tools/validation-assets/fetch.py` fetches a release directory file by file, and the manifest records
+no sizes for them. Until 2026-09-24 the loop skipped any destination that existed with more than zero
+bytes, so a file left partial by an interrupted run (a hibernation mid-download left
+`facebook/vjepa2-vitl-fpc16-256-ssv2/model.safetensors` at 1,254,178,263 of 1,502,018,592 bytes) was
+never resumed, and the release still printed `ready (N files)`. The safetensors header is intact in
+such a file, so the truncation shows up only when a tensor past the cut is read.
+
+The loop now takes each release's sizes from the Hub tree listing
+(`https://huggingface.co/api/models/{repo}/tree/{revision}?recursive=true`, fetched with `curl -4`
+because `huggingface.co` advertises IPv6 addresses this host cannot route, with `HF_TOKEN` as a bearer
+header when set) and routes every file through the same `download` helper the assets use:
+
+- file present at the listed size → skipped without a request
+- file present at another size → `curl --continue-at -` resumes it, then the size is checked
+- listing unavailable, or the file not in it → resumed blind; a complete file answers the range
+  request with 416, which curl 8 reports as exit 0 with the file untouched and older curls as exit 33,
+  and both count as complete
+- a release with no `repo` (a `git` or `hf` entry fetched by hand) → files are checked for presence only
+
+A release prints `ready` only when every file landed; a failed file names its own reason.
+`Tools/validation-assets/test_fetch.py` covers the helper and the loop against a fake curl and a fake
+listing, so it runs without a network.

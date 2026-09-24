@@ -47,6 +47,9 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   reader, and the native GGUF and PyTorch checkpoint readers.
 - [mlx-training.md](mlx-training.md) — the trainer, training data, LoRA, and the fine-tuning recipes;
   the "Customization is part of parity" rule (levels, minimum shipped set, tests, measured gaps).
+- [mlx-customization-ledger.md](mlx-customization-ledger.md) — every model's customization outcome,
+  level, and reachability, with the reference file that decides each unsettled row. Read a model's
+  row before picking it up; update it when a recipe ships.
 
 ### Model classes
 

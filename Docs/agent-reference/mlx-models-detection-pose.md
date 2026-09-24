@@ -64,6 +64,28 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   their C2f stages repeat `[3, 6, 6, 3]`, and x is wider again. The records must be made at
   `--size 640`, where the reference's letterboxing is an identity — generating one at another size
   produces a different anchor count and looks like a model failure.
+  **Customization ships: a class retarget and ultralytics' full fine-tune** (`NFKMLXYOLOTraining.swift`,
+  ultralytics 8.4.120). `NFKMLXYOLO.network(variant:classCount:weightsURL:)` builds the now-public
+  `NFKMLXYOLONet` for the consumer's class count, starts the head at `Detect.bias_init`'s priors (box
+  outputs at 2, class outputs at `log(5 / classes / (640 / stride)²)`), and transfers every tensor
+  shaped alike (`intersect_dicts`): at another class count the class branches, whose hidden width is
+  `max(ch₀, min(classes, 100))`, stay fresh, and any other uncovered parameter throws.
+  `NFKMLXYOLOObjective` is `v8DetectionLoss` with `TaskAlignedAssigner` on the host (the reference's
+  `no_grad` assignment; the candidates inside the box, a box narrower than the first stride grown to
+  the second, the top ten by `score^0.5 · CIoU^6`, a doubly claimed anchor to its best-overlapping
+  box, targets scaled by normalized alignment) and the decode, CIoU, DFL, and BCE in MLX, gained 7.5,
+  0.5, 1.5 and scaled by the batch. `fineTune(_:examples:trainable:…)` trains every weight by default
+  (`.head` freezes the backbone and neck; `.dfl` is always fixed) with `optimizer=auto`'s choice for a
+  short run (AdamW at `round(0.002 · 5 / (4 + classes), 6)`, decay `0.0005 · batch · accumulate / 64`
+  on convolution weights only), `NFKMLXLearningRateSchedule.ultralytics` (the warm-up over
+  `round(min(3, epochs − 1) · batches)` updates, then the per-epoch linear fall to 0.01), clipping at
+  10, BatchNorm momentum 0.03, and `ModelEMA`'s average left in the network at the end, which is what
+  the reference saves. Measured against ultralytics' own code: the loss (`run_reference.py yolo_loss`)
+  97.40741 vs 97.407425 with the same 29 anchors assigned; the setup (`yolo_training_setup`, the
+  trainer's `build_optimizer`, `_setup_scheduler`, `_get_warmup_iterations`, and `ModelEMA`) with
+  groups 63 / 57 / 63, rate 0.001429, the schedule exact over 20 updates, and the average exact.
+  `backend(variant:weightsURL:labels:)` reads the class count from the checkpoint. Not ported: the
+  64-image nominal batch the reference accumulates to, and its mosaic and jitter augmentation.
 - `NFKMLXYOLOGenerations` (`@objc`) — YOLOv9, YOLOv10, YOLO11, YOLOv12 and YOLO26, the generations
   after the shipped v8, as one graph interpreter rather than five ports. The reference states each
   release as a YAML list of `(from, repeats, module, args)` rows that `parse_model` scales by the
@@ -90,6 +112,18 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   consumer path on a non-square frame for YOLO11, YOLOv10 and YOLO26 (same detection counts, same
   classes, worst box IoU 0.9993941187858582). The licence is ultralytics' AGPL-3.0, the same as the
   shipped v8; `NFKMLXRTDetr` and `NFKMLXRFDetr` remain the licence-clean detectors.
+  **Customization ships as YOLOv8's** (`NFKMLXYOLOGenerationsTraining.swift`):
+  `NFKMLXYOLOGenerations.network(release:classCount:weightsURL:)` and `fineTune` with the same
+  optimizer, schedule, average, bias priors (both branches), and retarget. v9, 11, and 12 train under
+  `v8DetectionLoss`; v10 and YOLO26 under `NFKMLXYOLOEndToEndObjective`, `E2ELoss`: the one-to-many
+  branch at ten candidates and the one-to-one branch at seven cut to one, weighted 0.8 / 0.2 falling
+  linearly by epoch to 0.1 / 0.9, the one-to-one branch reading features with their gradient stopped
+  as the reference detaches them. YOLO26's `reg_max` 1 head replaces DFL with an L1 on the side
+  distances normalized by the input size. Measured (`run_reference.py yolo_e2e_loss`): YOLOv10n
+  107.25517 vs 107.25522 and YOLO26n 111.36084 vs 111.36083 at epoch 0, and both again after the
+  first epoch's weight update, each branch's terms within 1e-6 relative. The attention blocks (the PSA
+  attention of v10, 11, and YOLO26, and v12's area attention) had reshaped with a batch of one, which
+  inference never exceeds; they follow the input's batch now, and every release still matches.
 - `NFKMLXRTDetr` (`@objc`) — real object detection, the license-clean (Apache-2.0) alternative to the
   AGPL YOLO: RT-DETR (`RTDetrForObjectDetection`, PekingU/lyuwenyu) in `MLXNN` — a **ResNet-D**
   backbone (deep 3-conv stem, avgpool-in-shortcut bottleneck), a **hybrid encoder** (an AIFI transformer
@@ -204,6 +238,114 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   oracle's converted weights and the released parity loads the raw file through `loadWeights`, so both the
   network and the on-device naming conversion are measured. Oracle: `run_reference.py rf_detr` /
   `rf_detr_real` under the `rfdetr` env (transformers 5.16.1).
+
+- `NFKMLXRFDetrSegmentationNet` (`NFKMLXRFDetrSegmentation.swift`) — **RF-DETR instance segmentation**
+  (`RfDetrForInstanceSegmentation`, the seven released `Roboflow/rf-detr-seg-*` sizes, Apache-2.0). The
+  detector underneath is the one already at parity; the mask head is the only new network. It resamples
+  the PROJECTOR's output (the reference's `backbone_features`, the tensor whose flatten becomes the
+  encoder's source) to a quarter of the input, then walks one ConvNeXt-style block per decoder layer —
+  depthwise 3×3, channels-last LayerNorm, pointwise linear, gelu, residual — and after each block
+  projects that layer's queries through a normalized feed-forward and a linear, multiplies them against
+  the block's 1×1-projected output, and adds a scalar bias. One set of masks per decoder layer; the
+  reference's prediction is the LAST. Reference parity on the released seg-nano on the first numeric
+  run: masks 0.9999999999502163 / 0.9999999999478614 / 0.999999999908166 / 0.9999999998673923 by layer,
+  logits 0.9999999999925121, boxes 0.9999999998186787 (`run_reference.py rf_detr_seg`,
+  `IK_PARITY_RF_DETR_SEG`). **Three details were load-bearing.** The activation is the EXACT
+  error-function gelu, which is what the config's `gelu` names; the tanh approximation is a different
+  function (`gelu_pytorch_tanh`) and costs real digits. The head's query feed-forward is a PyTorch
+  `Sequential` whose index 1 is the activation, so its second linear arrives as `layers.2` where the
+  module's array holds it at `layers.1`, which is the one remap the head needs; everything else in
+  `segmentation_head.` passes through unchanged. And the decoder had to give up every layer's
+  normalized output rather than only the last, which it already computed and discarded
+  (`NFKRFDetrDecoder.states`). The seg configurations differ from the detector's in geometry alone —
+  patch 12, `mask_downsample_ratio` 4, a 1024-wide head feed-forward, and per size the resolution,
+  window count, decoder depth and query count. Reached from Objective-C through `NFKMLXRFDetrSegmentation`,
+  whose factory set honors the `NFKMLXRFDetrSegmentationVariant` for all seven sizes and registers each
+  under its own name; `NFKMLXRFDetrSegmentationBackend` emits the instances under `NFKOutputDetections`
+  and their per-pixel maximum under `NFKOutputMask`, with the PER-INSTANCE masks on
+  `segment(_:labels:)`, because the mask key carries one image.
+- `NFKMLXTableTransformer` (`@objc`) — table-structure recognition (`TableTransformerForObjectDetection`,
+  microsoft/table-transformer-structure-recognition, MIT), a vanilla DETR ported into `MLXNN`. A timm
+  ResNet-18 backbone with frozen batch norm (a 7x7 stride-2 stem, a 3x3 max pool, four stages of two
+  basic blocks each, the last stage 512 channels at stride 32), a 1x1 convolution to `dModel` 256, a
+  normalized 2D sine position embedding, a six-layer transformer encoder, a six-layer decoder over 125
+  learned object queries, and the class / box heads (`class_labels_classifier` a `Linear` to the six
+  structure classes plus a no-object class, `bbox_predictor` a three-layer perceptron whose sigmoid is
+  the box). Run through `NFKMLXTableTransformerBackend` (`NFKInputImage` → `NSArray<NFKDetection *>`
+  under `NFKOutputDetections`, boxes normalized 0…1, origin top-left, labeled from the release's
+  `id2label`). The six classes are `table`, `table column`, `table row`, `table column header`, `table
+  projected row header`, and `table spanning cell`.
+  One fact is load-bearing and is the only difference from post-norm DETR. Table Transformer is
+  **pre-norm**: a layer norm precedes each sub-block (`self_attn_layer_norm` before the attention,
+  `encoder_attn_layer_norm` before the cross-attention, `final_layer_norm` before the feed-forward), and
+  a final `layernorm` follows each of the encoder and decoder stacks. Reading the DETR layer as post-norm
+  loads cleanly and scores near 1 on the backbone while the encoder and decoder diverge. The other DETR
+  facts were correct as first written: the attention adds the position embedding to the queries and keys
+  and projects the values without it (the encoder's spatial sine embedding for its self-attention, and
+  for the decoder the object queries on the self-attention and the spatial embedding on the
+  cross-attention's keys); the frozen batch norm is a per-channel affine at epsilon 1e-5; the sine
+  embedding is normalized (`normalize=True`, the row channels before the column channels, a shared
+  frequency's sine and cosine interleaved); and DETR is one-to-one, so there is no non-max suppression.
+  The image processor resizes the shortest edge to 800 (the longest capped at 1000, aspect preserved),
+  then applies the ImageNet normalization; the resize is a uniform scale, so a normalized box maps to the
+  original frame unchanged. Post-processing softmaxes the class logits, drops the trailing no-object
+  class, takes the best remaining class per query, and converts the center-format box to corners.
+  Reference parity against transformers' own `TableTransformerForObjectDetection` on the released weights,
+  on the first numeric run: the ResNet-18 feature map 1.0000001, the encoder output 0.9999998, the
+  decoder output 1.0, the class logits 0.9999999, and the predicted boxes 0.99999994; the backend
+  recognizes a clean grid end to end as a table with its rows and columns. `NFKMLXTableTransformer` reads
+  the geometry and the class labels from the release's `config.json`, so the same code serves the
+  detection checkpoint (two classes) and the structure-recognition checkpoint (six). Reached from
+  Objective-C through `backend(directoryURL:)` and its asynchronous peer; the model loads a whole release
+  directory, so it takes a directory factory rather than the file-based registry, like Florence-2 and
+  TrOCR.
+- **Customization: head retarget, or the reference's own run.** microsoft/table-transformer trains
+  with its vendored DETR: `SetCriterion` behind a `HungarianMatcher` (class 1, L1 5, GIoU 2 in the cost;
+  `loss_ce` × 1, `loss_bbox` × 5, `loss_giou` × 2; the no-object class weighted 0.4), scored on the last
+  decoder layer, because both released configurations set `aux_loss` false; AdamW with weight decay 1e-4
+  on every parameter, 5e-5 and 1e-5 for the backbone; gradient norm clipped at 0.1; `StepLR` 0.9 per
+  epoch. DETR trains only the backbone's last three stages, and every batch norm is frozen.
+  `NFKMLXTableTransformerObjective` is that criterion, its matching on the shared `NFKMLXHungarian`
+  solver and its boxes through the SAM 3 recipe's generalized IoU; a target is an `[N, 5]` array of
+  `[class, cx, cy, w, h]`. `NFKMLXTableTransformerTrainable` is `.heads`, `.transformer`, or
+  `.everything` (the reference). `NFKMLXTableTransformer.network(directoryURL:labels:)` retargets to
+  a new class set (a fresh classifier; everything else loads), `fineTune` runs the reference optimizer
+  and schedule (`stepsPerEpoch` sets the epoch), and `save(_:toDirectoryURL:release:)` writes the weights
+  and a `config.json` carrying the new `id2label`, which `backendWithDirectoryURL:` loads. Measured
+  (`run_reference.py table_transformer_loss`, `IK_PARITY_TABLE_TRANSFORMER_<RELEASE>_LOSS`, the
+  reference's own `detr/models/matcher.py` and `SetCriterion` run on each release's outputs, pinned in
+  the manifest): the matching equals the reference's on both releases; on the detection release
+  `loss_ce` 5.9600515 against 5.96005, `loss_bbox` 0.55771196 against 0.557712, `loss_giou` 0.9057374
+  exactly, the total 10.560086 against 10.560085; on the v1.1 structure release `loss_ce` 1.3405254
+  against 1.3405252, `loss_bbox` and `loss_giou` exact, the total 3.6116304 against 3.6116302; the port's
+  own forward reaches 10.560083 and 3.6116328. transformers' `labels=` loss equals the reference on both.
+  `NFKMLXTableTransformerTrainingTests` also holds each policy's frozen set and a retargeted release's
+  save and factory reload.
+- **Every release** (2026-09-23; the five on the Hugging Face API) is at reference parity:
+  - `table-transformer-detection`: 15 queries, two classes (`table`, `table rotated`).
+  - `table-transformer-structure-recognition`: the v1.0 structure release.
+  - `-structure-recognition-v1.1-all` / `-fin` / `-pub`: the v1.0 geometry.
+  The v1.1 releases set `use_timm_backbone` false, so their backbone is transformers' `ResNetBackbone`
+  under other names. `NFKMLXTableTransformerNet.timmBackboneKey` maps them onto the timm layout:
+  - `embedder.embedder.{convolution,normalization}` → `conv1` / `bn1`
+  - `encoder.stages.S.layers.B.layer.{0,1}` → `layer{S+1}.B.{conv,bn}{1,2}`
+  - `shortcut` → `downsample`
+  The input size comes from each release's `preprocessor_config.json` (`NFKMLXTableTransformerSizing`):
+  - structure v1.0: shortest edge 800, longest capped at 1000.
+  - detection: 800 capped at 800.
+  - v1.1: `longest_edge` 800 alone. transformers 4.57's `DetrImageProcessor.resize` rejects that size,
+    so the oracle bounds both edges with the processor's own `max_height` / `max_width` path, which
+    truncates. The port follows it: 1234×567 becomes 800×367, not 368.
+  Cosines, all seams:
+  - detection: backbone 1.0, encoder 0.99999994, decoder 1.0, logits 0.99999976, boxes 1.0.
+  - v1.1-all: backbone 1.0, encoder 1.0, decoder 1.0, logits 0.9999998, boxes 0.99999994.
+  - v1.1-fin: backbone 1.0, encoder 1.0, decoder 0.99999994, logits 1.0000001, boxes 1.0000001.
+  - v1.1-pub: backbone 0.9999999, encoder 0.9999998, decoder 1.0000001, logits 0.99999994, boxes
+    1.0000001.
+  Records: `run_reference.py table_transformer` per release directory, under `~/.inferkit-validation`
+  (`IK_{VAL,PARITY}_TABLE_TRANSFORMER_{DETECTION,V11_ALL,V11_FIN,V11_PUB}`). Oracle: `run_reference.py table_transformer`
+  under the `llm` oracle env (transformers, needs Pillow), which records the preprocessed pixels, the
+  backbone feature map, the encoder and decoder outputs, the boxes, and the post-processed detections.
 - `NFKMLXPose` (`@objc`) — real top-down pose estimation (SimpleBaseline): `NFKMLXResNetBackbone` as
   ResNet-50 and a transposed-convolution head produce one heatmap per joint in `MLXNN`; the argmax of
   each heatmap is a joint location, refined a quarter cell toward its larger neighbor as the reference

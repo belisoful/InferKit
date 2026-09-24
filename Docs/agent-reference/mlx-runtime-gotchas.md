@@ -54,14 +54,130 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   against the inventory in both directions, reporting consumed / missing / mismatched / named-dropped /
   unaccounted, with a closure naming what the loader deliberately drops. Every structural row in
   `Docs/model-parity.md` reads 0 missing, 0 mismatched, 0 unaccounted; the manifest's `shapes` section
-  lists the 27 repositories captured. A structural pass is not a numeric one (the DeepSeek and Gemma 4
+  lists the repositories captured. A structural pass is not a numeric one (the DeepSeek and Gemma 4
   lessons above), so a family's arithmetic rests on the size that is measured, and a checkpoint header
   captured by hand rather than by `shapes.py` is a record nobody can regenerate.
+  Two defects in that script made hand capture look necessary, and both are fixed. `huggingface.co`
+  advertises SIXTEEN IPv6 addresses ahead of its IPv4 ones; on a host with no IPv6 route Python tries
+  each in turn and waits out the connect timeout on every one, so a request curl answers in under a
+  second took 161 seconds and a 131-shard walk would have taken twelve hours. `shapes.py` now orders
+  the IPv4 addresses first, which leaves an IPv6-only host working because the IPv6 addresses stay in
+  the list behind them; the same walk then finishes in minutes. Separately, its retry wrapper caught
+  `HTTPError` along with the connection errors, so the 404 that tells the script a release names its
+  weights `diffusion_pytorch_model` rather than `model` became a fatal exit instead of the signal the
+  caller reads: a diffusers component under a subfolder could not be captured at all. A status the
+  server chose now propagates. Together they took SD3.5-large from "capture it with curl" to a
+  `shapes.py` run that reproduces the stored inventory's 1227 tensors exactly.
+
+  The same IPv6 stall reaches every other Hugging Face client on this host, and only `shapes.py` is
+  patched. `hf download` (the `huggingface_hub` CLI) sat for two minutes on FLUX.2 [klein] 4B without
+  writing a byte or logging a line, where `curl -4` fetched the same `config.json` in 0.25 seconds. A
+  download that produces no files and no output is this, not a permissions or token problem. Give
+  `curl` the `-4` flag for a release fetch, or expect the wait. Give it `-f` too: without it curl saves
+  the server's error body (`Entry not found`, 15 bytes) under the requested name and exits 0, so a
+  script that checks the exit code reports every missing file as fetched. Its sibling trap: `hf download` takes
+  `--include` once per pattern, and several patterns after one flag are read as explicit FILENAMES,
+  which it reports as "Ignoring `--include` since filenames have been explicitly set" before
+  downloading nothing.
+- A block shared between two references takes their epsilons with it. `NFKSDResnetBlock` serves both
+  the Stable Diffusion UNet and the autoencoder, and hard-coded the UNet's `eps` of 1e-5; diffusers
+  builds every AUTOENCODER block with `resnet_eps=1e-6`. Five shipped models decode through that
+  block, and every one of their parity tests passed for months, because the error is RELATIVE: at the
+  released 512-channel widths the gap between the two epsilons is nothing against the variance. A
+  deliberately tiny FLUX.2 autoencoder configuration (8 and 16 channels, 4 groups) was the first
+  geometry small enough to show it, at a decode cosine of 0.99996 where every neighboring seam read
+  1e-9. Correcting it moved the FLUX.1 tiny VAE's latent from 0.99999985919 to 0.9999999999999535 —
+  the recorded row had been reporting the bug. The epsilon is now the caller's, defaulting to the
+  UNet's 1e-5 with the autoencoder's wrapper passing 1e-6, so no UNet behavior moves.
+  Two lessons, both general. A constant that two references disagree about belongs in the caller, not
+  in the shared type. And a parity suite that measures one regime will hold a relative error
+  indefinitely: the released widths are the comfortable case, and the small configuration is the one
+  that tests the arithmetic. Where a model ships only at large widths, measure a tiny one anyway.
+- Python's `range(a, b)` yields nothing when `b < a`; Swift's `a ..< b` TRAPS. A loop transcribed
+  literally from a reference therefore turns a silently-empty pass into a process kill, and because
+  the trap is a precondition failure rather than a thrown error it takes the whole test binary down,
+  so every later suite reports nothing. Found in the port of NumPy's `SeedSequence`, whose mixer folds
+  leftover entropy with `for i_src in range(pool_size, len(entropy))` — empty for every seed that fits
+  in the pool, which is all of them here, so `4 ..< 1` aborted the process during a net's init. Write
+  `entropy.indices.dropFirst(4)`, or clamp the bound, wherever a reference loop's start can exceed its
+  end. The same shape hides in slice bounds computed from a look-back window, a sequence length, or a
+  rotary tail: any `a ..< b` whose operands are both derived quantities deserves the check.
+- A top-k over scores that a RELU has flattened is full of exact ties, and `torch.topk` breaks them
+  by an artifact of its partial sort rather than by a rule. Measured: five zeros at indices 0-4 with
+  three larger values above, `topk(4)` keeps index 3 — neither the lowest tied index nor the highest,
+  and no index order reproduces it in general. A port that selects by thresholding at the k-th value
+  keeps EVERY tied entry instead of k of them, which is a different set and a different result. Found
+  in DeepSeek V4.1's indexer, where a compressed position whose every head scores at or below zero
+  gives exactly 0.0, so with two index heads about a quarter of the positions tie. Two conclusions:
+  select by the k indices a partition returns rather than by a threshold, and pick an oracle
+  configuration wide enough that the ties are not load-bearing — raising that oracle's index heads
+  from 2 to 8 drops the tie probability to about 2^-8 and took the selection from eight differing
+  queries to zero. Where a tie survives, say so: which member the reference keeps is its sort's
+  behaviour, not the model's. It recurs per oracle, not per port: the SAME architecture's draft-stack
+  oracle was still on two heads a day later and read 7e-7 where the widened one reads 6.7e-12, so
+  when a tie-prone score appears in one configuration, check every configuration that scores it.
+- `MLXArray` is a CLASS, and its subscript setter writes THROUGH rather than rebinding. `var copy =
+  original; copy[range] = rows` does not copy: both names refer to one object, `_updateInternal`
+  replaces its context in place, and the original is modified. A function that scatters into a
+  parameter and returns it therefore mutates its caller's array while reading as pure. Swift cannot
+  warn about the aliasing — from the language's side nothing is mutated at all, so the only trace is
+  a "variable was never mutated; consider changing to `let`" note on a binding that plainly is being
+  written to. Treat that note as the signal it is. Found in DeepSeek V4.1's image merge, which
+  overwrote the text embedding it was handed. Slice (`original[0...]`) to get a separate array to
+  scatter into, and assert in a test that the input is unchanged.
+- A quantization block size is the RELEASE's to state, not the format's. DeepSeek V4 blocks its fp8
+  weights at 128 and V4.1 at 32, each saying so in `quantization_config.weight_block_size`, and the
+  reference reads it. A dequantizer holding the constant decodes a V4.1 weight against a quarter of
+  its scale grid and produces wrong values with no error. The structural check could not catch it
+  either: it asserts the scale shapes the release HAS, never the shape the block size IMPLIES, so
+  two halves of the port held different answers and nothing compared them. Where a decode depends on
+  a number a config states, test that the stated number reproduces the stored shapes.
+- Swift's String is the wrong key for anything a reference keys by code points, and three separate
+  behaviours say so. `==` and `hashValue` compare under CANONICAL EQUIVALENCE, so two combining
+  marks in either order are one key to a `[String: Int]` and two to a Python dict. `String.contains`
+  matches GRAPHEME CLUSTERS, so searching for a bare U+FFFD does not find one that a combining mark
+  has joined into a cluster. `String(data:encoding:.utf8)` STRIPS a leading byte-order mark, where
+  `String(decoding:as: UTF8.self)` keeps it and substitutes U+FFFD for an invalid sequence, which is
+  what a Python `decode(errors="replace")` does. All three appeared in one function while porting
+  DeepSeek V4.1's token collapse, each costing a rebuild to find. Key such a dictionary by
+  `Data(key.utf8)`, search `unicodeScalars`, and decode with the stdlib.
+- Timing a test suite by reasoning about the slow test is how to be wrong five times. A DeepSeek
+  test that reads 0.054 s ALONE read 67 s inside its suite, and the cost belonged to a different
+  test entirely — one that ran earlier, allocated heavily, and left the process in a state the
+  GPU-touching tests afterwards paid for. A per-token regex, an autorelease pool and three redundant
+  JSON parses were each blamed and each fixed with no measurable change. `swift test --filter <class>
+  --skip <test>` answers in one run what none of those guesses did: run the suite without the
+  suspect and compare. Do that before changing code, and never write a benchmark into a comment
+  that was not run.
+- A reference can DEQUANTIZE ON LOOKUP rather than at load, and a port that dequantizes at load has
+  to fold the scale in itself. DeepSeek V4.1's n-gram table stays fp8 in memory and
+  `ParallelEngramEmbedding.forward` multiplies each fetched row by its per-row block scale as it
+  gathers it, so the table's `weight` alone is not the table. Applying the raw weight to a float
+  module read cosine 0.96 — wrong, but close enough to read as a precision problem rather than a
+  missing factor, and the layers after it inherited the error. When a reference's `forward` touches a
+  parameter's companion scale, the port's LOADER owes that multiplication.
+- A GATED Hugging Face repository still serves its `README.md`. That file renders the gate page (the
+  `extra_gated_prompt` front matter lives in it), so a range request on it returns 206 for any
+  authenticated caller while `config.json` and every weight return 403. A 206 on the README is
+  therefore no evidence of access, and one earlier note in this repository claimed access on exactly
+  that basis and was wrong. Probe a real file, and read `gated` from the model DETAIL endpoint rather
+  than the list endpoint, which reports `null` for every repository whether gated or not. Accepting a
+  license is a user action; an agent does not click through one. When a release is gated, look for an
+  ungated sibling of the same architecture before writing the structural check off — FLUX.2 [klein] 4B
+  and the diffusers organization's LTX-2.3 conversion each rescued one — and where none exists, a
+  release's published parameter total can still pin a declared configuration exactly, as it does for
+  FLUX.2 [dev].
 - A test process that loads many models back to back must clear MLX's cache between them. The
   GPU cache survives from test to test, and the accumulation starves the largest float32 forward
   (Gemma E2B, ~20 GB) into a Metal command-buffer timeout — a process kill that truncates the run
   with "0 failures" reported. Measured: the same test passes in 25 s alone and dies mid-suite.
   `NFKMLXReferenceParityTests` clears in `tearDown` (`NFKMLXGPU.clearCache()`).
+- MLX's `/` on integer arrays is TRUE division: it promotes to float rather than truncating, where
+  the PyTorch or Python line it is ported from divided integers. It raises nothing, and the result is
+  usually still a number the next operation accepts, so the failure surfaces far away — in Qwen4-Exp
+  it made `(position + 1) / ratio` a half-integer block count, which let a query attend to the block
+  it sits halfway through and cost only the layers that read the index. Use `.floorDivide(_:)` where
+  the source means `//`.
 - Never assign to a `@ParameterInfo` or `@ModuleInfo` property. `attention.sink = newValue` aborts
   the process with "please call update() on the array rather than setting it" — not a thrown error, a
   fatal one, which in a test run kills the process and silently truncates the reported test count (a
@@ -99,6 +215,14 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   wholly frozen subtree to evaluation mode after `train(true)`; a subtree with no parameters at all
   follows its parent, so a dropout in the trainable group still drops. Consumer-facing write-up and
   probes: `Docs/mlx-runtime-hazards.md`.
+
+- **A module starts in training mode.** mlx-swift's `Module.training` is `true` until something calls
+  `train(false)`. A network with no `Dropout`, `BatchNorm`, or stochastic depth never notices, which is
+  how an inference port can ship without ever setting the flag. The day a recipe adds those layers,
+  inference starts running them: All-In-One's released parity fell to an embedding cosine of 0.867
+  when its training dropouts arrived, with the loader blamed first. A network that holds a
+  training-only layer calls `train(false)` in its own initializer, and `NFKMLXTrainer` switches it on
+  for a run and restores the prior flag.
 
 - **A seed fixes the weights; it does not fix the gradients.** `NFKMLXRandom.seed` makes a net's
   initialization exactly reproducible, and a test that reads a training loss looks deterministic

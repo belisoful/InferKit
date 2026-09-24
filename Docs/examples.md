@@ -23,6 +23,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Image → image + mask](#image--image--mask) — matting
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
+- [Text → video](#text--video) — LTX-Video and Wan, staged
 - [Structured output and tools](#structured-output-and-tools) — Apple
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
@@ -60,6 +61,7 @@ the following cells; each links to its example.
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
 | audio | text | `NFKRemoteTranscriptionBackend` (remote), `NFKMLXWhisper` (local) | [Audio → text](#audio--text-transcription) |
+| text | text (translation) | `NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXMADLAD`, `NFKMLXTranslateGemma` (local) | [Translation](#translation-nfkmlxmarian-nfkmlxm2m100-nfkmlxmadlad-swift-and-objective-c) |
 | text | audio | `NFKMLXSpeechBackend` | [Text → audio](#text--audio-speech) |
 | audio | audio(s) | `NFKMLXDemucsBackend` / `NFKMLXHTDemucsBackend` (stem separation) | [Audio → stems](#audio--stems-demucs) |
 | any | unchanged | `NFKPassthroughBackend` | [Testing](#testing-without-weights) |
@@ -169,6 +171,30 @@ let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory)
 let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Explain diffraction in one sentence."])
 let text = try backend.runInference(for: request).text
 ```
+
+The Mamba-2 state-space decoder (Codestral-Mamba) loads the same way through
+`NFKMLXMamba.backend(directoryURL:)` (`mambaBackendWithDirectoryURL:error:`); every layer is a selective
+scan rather than attention, so it carries a fixed-size state and runs prefill-only.
+
+The Granite 4.0-H hybrid decoder loads through `NFKMLXGraniteHybrid.backend(directoryURL:)`
+(`graniteBackendWithDirectoryURL:error:`); most layers are the Mamba-2 scan and the few its
+`layer_types` names are grouped-query attention, so it too runs prefill-only. The dense sizes carry a shared MLP and the MoE
+sizes add a routed mixture of experts.
+
+The Nemotron Nano 2 hybrid decoder loads through `NFKMLXNemotronH.backend(directoryURL:)`
+(`nemotronBackendWithDirectoryURL:error:`); its layers interleave the Mamba-2 scan, a ReLU-squared
+feed-forward, and grouped-query attention with no positional embedding, one mixer per block from the
+release's `hybrid_override_pattern`, so it too runs prefill-only.
+
+Granite Speech 3.3-2b transcribes audio through `NFKMLXGraniteSpeech.backend(directoryURL:)`
+(`graniteSpeechBackendWithDirectoryURL:error:`): a Conformer encoder and a BLIP-2 Q-former projector
+turn the audio into embeddings that scatter into a dense Granite decoder's prompt. Pass the clip under
+`NFKInputAudio` and an optional instruction under `NFKInputPrompt`; the transcript comes back under
+`NFKOutputText`.
+
+Voxtral-Mini 3B transcribes through `NFKMLXVoxtral.backend(directoryURL:)` (`voxtralBackendWithDirectoryURL:error:`): the Whisper encoder and a projector feed a Llama decoder. Pass the clip under `NFKInputAudio` and a language code (default `en`) under `NFKInputPrompt`; the transcript comes back under `NFKOutputText`.
+
+Canary-1B-v2 transcribes and translates through `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`): the biased FastConformer encoder feeds a Transformer attention encoder-decoder. Pass the clip under `NFKInputAudio` and, under `NFKInputPrompt`, a language code (default `en`, transcribe) or a `src>tgt` pair (`en>de`, translate); the transcript comes back under `NFKOutputText`.
 
 **Bounding the cache.** A key-value cache that keeps every position grows with the conversation, and
 past a certain length that growth is what ends the run. `contextWindow` drops the oldest positions
@@ -363,6 +389,35 @@ configuration.isMixtureOfExperts        // true; expertCount 128, activeExpertCo
 let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory)
 ```
 
+**Paging a mixture's routed experts.** A token reaches a few of a mixture's experts, so most of what
+a resident load holds is not read on any one step. `NFKMLXResidency.paged` leaves the routed experts
+in the release and reads each one as the router reaches it, through a bounded cache of recently used
+experts; every other tensor loads as usual. `.automatic`, the default, pages only where the release is
+known not to fit the machine's working set whole. A paged model computes the resident model's logits
+exactly, and runs slower by what each step reads from the release. The release directory stays in
+place for the life of the backend. The same residency reaches Qwen3-MoE, Qwen2-MoE, Mixtral, gpt-oss
+(bf16 or MXFP4), a quantized checkpoint this package saved, the Gemma 4 26B-A4B mixture, the Qwen3-VL
+30B-A3B decoder, Qwen4-Exp, and Granite 4.0-H's mixture sizes. A dense release has nothing to page and loads resident.
+
+```swift
+let paged = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, residency: .paged)
+if let language = paged as? NFKMLXLanguageBackend, let store = language.expertStore {
+    store.cacheByteBudget = 8 << 30          // what the cache may hold in materialized experts
+    print(language.pagesExperts, store.mappedBytes, store.materializeCount, store.cacheHitCount)
+}
+```
+
+```objc
+id<NFKInferenceBackend> paged = [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory
+                                                              residency:NFKMLXResidencyPaged error:&error];
+NFKMLXLanguageBackend *language = (NFKMLXLanguageBackend *)paged;
+if (language.pagesExperts) {
+    language.expertStore.cacheByteBudget = 8LL << 30;
+    NSLog(@"%ld mapped bytes, %ld materialized", (long)language.expertStore.mappedBytes,
+          (long)language.expertStore.materializeCount);
+}
+```
+
 **Gemma 4's mixture.** The Gemma 4 26B-A4B release (`enable_moe_block`) is a different shape of
 mixture: each layer keeps its dense feed-forward and adds a routed-expert branch beside it, and the two
 are summed. `NFKMLXGemmaLanguage.configuration(fromHuggingFace:)` reads the flag from the release
@@ -419,6 +474,94 @@ let reply = try backend.runInference(for: request).text
 ```objc
 NFKMLXGemma3n *gemma = [NFKMLXGemma3n gemma3nWithDirectoryURL:releaseDirectory error:&error];
 NSString *answer = [gemma answerForImage:cgImage question:@"Describe this image." error:&error];
+```
+
+**DeepSeek V4.1 Flash.** `NFKMLXDeepSeek` runs the V4 and V4.1 decoders. Generation is incremental
+through `NFKMLXDeepSeekCache`, which carries what a step cannot recompute: each layer's sliding
+window, the compressed key-value its four source layers publish, the index keys those sources
+publish, the group a compressor has pooled but not emitted, and the n-gram memory's id history. The
+factory derives the collapsed token map that memory addresses through from the release's own
+tokenizer.
+
+A load computes in bf16, the dtype the release declares and its own inference code runs in, and
+matches that code bit for bit. The release stores its weights fp8 and fp4, so a load needs two to four
+times what the directory measures: V4.1 Flash is 510 GB stored and 1.39 TiB decoded to bf16. The
+directory factory holds the release as an `NFKMLXResidency` says. Under the default `.automatic` a
+release that fits loads resident, one that does not is paged, holding its experts stored where that fits
+and mapping every paged group otherwise, and one that does not fit even mapped is refused before any
+weight is read. `.resident` loads decoded or refuses.
+
+```swift
+let automatic = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory)
+let decoded = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory, residency: .resident)
+```
+
+The `paging:` presets choose the groups explicitly.
+
+`NFKMLXDeepSeekPaging` holds a group in the form the release stores it and decodes only what a step
+reads: the routed experts an expert at a time as the router reaches them, and the n-gram tables a
+row at a time as they are looked up. The release stores those tables with one scale per row per 32
+channels precisely so a row can decode on its own.
+
+```swift
+let paged = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory, paging: .all)
+```
+
+`.mapped` and `.fullyMapped` go further: a mapped group is left in the release and only the bytes a
+step reads are copied out, so its cost becomes the operating system's page cache. What the V4.1
+Flash decoder allocates goes 1396.4 GiB resident, 475.5 with both groups held stored, 286.6 with the
+n-gram tables mapped, and 17.7 GiB with every group mapped. The release has to stay where it was
+loaded from, and a mapped decoder produces the same logits as a held one.
+
+```swift
+let mapped = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory, paging: .fullyMapped)
+```
+
+`quantizesActivations` adds the release's own activation rounding: activations and GEMM inputs
+rounded where its inference code rounds them.
+`computesInFloat32` opts out of bf16 for the float32 model the release's arithmetic approximates,
+at twice the bytes a step reads (a fully mapped decoder goes from 17.7 GiB to 32.7).
+
+```swift
+let served = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory, paging: .fullyMapped,
+                                        quantizesActivations: true)
+let wide = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory, paging: .fullyMapped,
+                                      computesInFloat32: true)
+```
+
+A long prompt prefills in chunks through the same cache, which bounds the peak by the chunk rather
+than by the prompt, and a release carrying an image tower answers about a picture.
+
+```swift
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "What is in this picture?",
+                                           NFKInputImage: photograph],
+                                  parameters: [NFKMLXGenerationParameterKey.prefillChunkSize: 512])
+let answer = try paged.runInference(for: request).output(forKey: NFKOutputText)
+```
+
+```swift
+let backend = try NFKMLXDeepSeek.backend(directoryURL: releaseDirectory)
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Explain latent attention in one sentence."],
+                                  parameters: [NFKParameterMaxTokens: 64])
+let text = try backend.runInference(for: request).text
+
+// What a load would need, without reading the release:
+let bytes = NFKMLXDeepSeek.residentBytes(for: .v41Flash)
+try NFKMLXDeepSeek.verifyFits(.v41Flash)               // throws, naming the shortfall
+```
+
+```objc
+id<NFKInferenceBackend> deepSeek =
+	[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:releaseDirectory error:&error];
+id<NFKInferenceBackend> decoded =
+	[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:releaseDirectory residency:NFKMLXResidencyResident error:&error];
+
+// Every load choice sits on one options object; a paging preset overrides its residency.
+NFKMLXDeepSeekLoadOptions *options = [NFKMLXDeepSeekLoadOptions new];
+options.paging = NFKMLXDeepSeekPagingModeFullyMapped;
+options.quantizesActivations = YES;
+id<NFKInferenceBackend> served =
+	[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:releaseDirectory options:options error:&error];
 ```
 
 **Constraining the output.** A grammar mask over the logits admits only the tokens that keep the
@@ -530,6 +673,193 @@ biases, and no absolute position embeddings. Reference parity against transforme
 the relevant and irrelevant scores reproduced to within 5e-3. The tokenizer is GPT-2-family byte-level
 BPE, read from the release's `tokenizer.json`.
 
+### Typed decisions on device (`NFKMLXLaya`)
+
+Laya (`convaiinnovations/laya`, Apache-2.0) is the open reproduction of TypeSafe's Jev: it answers the
+same three question types about a state in one bidirectional pass, without generating text. It takes the
+same `NFKDecisionQuestion`s and returns the same `NFKDecisionAnswer`s as `NFKTypeSafeBackend`, so a
+feature written against the hosted model runs on device by swapping the object. Every option is scored
+at its own mask token; a softmax over the question's markers is the answer distribution.
+
+```objc
+NFKMLXLaya *laya = [NFKMLXLaya layaWithDirectoryURL:releaseDirectory error:&error];   // the root, typed-decisions, or multilingual folder
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [laya answersForState:@"Help! My payouts have been failing for 3 days."
+                questions:@{ @"department": [NFKDecisionQuestion choiceQuestionWithInstructions:@"Which team should handle this?"
+                                                                                       options:@[ @"billing", @"technical", @"sales" ]],
+                             @"urgent":     [NFKDecisionQuestion noulQuestionWithInstructions:@"The customer needs an answer today."] }];
+answers[@"department"].choice;          // "technical"
+answers[@"urgent"].probability;         // 0.9
+
+// The same through the contract, the request NFKTypeSafeBackend reads:
+NFKMLXLayaBackend *backend = [NFKMLXLaya backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceResult *decided = [backend runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputState: record, NFKInputQuestions: questions }] error:&error];
+decided.answers[@"urgent"].probability;
+```
+
+```swift
+let laya = try NFKMLXLaya.laya(directoryURL: releaseDirectory)
+let answers = laya.decide(state: "Help! My payouts have been failing for 3 days.", questions: [
+    "department": .choiceQuestion(withInstructions: "Which team should handle this?", options: ["billing", "technical", "sales"]),
+    "urgent": .noulQuestion(withInstructions: "The customer needs an answer today."),
+])
+```
+
+The network is the ModernBERT encoder plus a decision head: a question-type embedding, two pre-norm
+transformer layers, a scorer read at each marker, and an act-or-escalate head whose probability rides
+under `raw["rl_agent"]["act_probability"]`. Three variants ship: the root (ModernBERT-large, 421M),
+`typed-decisions` (the same geometry fine-tuned on that benchmark), and `multilingual` (mmBERT-base
+with Gemma's tokenizer, 100-plus languages). Reference parity against the release's own inference code
+on all three: the prompt token for token, the raw logits, the calibrated probabilities, and the act
+probability. The release's README says the base checkpoints sit near chance on a new decision task
+and that the capability comes from fine-tuning, which is the recipe under "Customizing a model".
+
+#### Downloading and setting up Laya
+
+The weights are on Hugging Face as `convaiinnovations/laya` (Apache-2.0, ungated, no token). Each
+variant is five files in its own folder; `NFKMLXLayaVariant` names the three, and one call downloads a
+variant into the `NFKHFHub` cache and builds it. A cached file is read from disk, so later launches make
+no network request.
+
+| Variant | Folder | Download | Memory once loaded |
+| --- | --- | --- | --- |
+| `NFKMLXLayaVariantRoot` | repository root | 846 MB | about 1.7 GB |
+| `NFKMLXLayaVariantTypedDecisions` | `typed-decisions/` | 846 MB | about 1.7 GB |
+| `NFKMLXLayaVariantMultilingual` | `multilingual/` | 678 MB | about 1.3 GB |
+
+```objc
+// Blocks on the network and the load: call it off the main thread.
+NFKMLXLaya *laya = [NFKMLXLaya layaWithVariant:NFKMLXLayaVariantTypedDecisions
+                                      revision:NFKMLXLaya.measuredRevision   // the commit parity was measured at
+                             cacheDirectoryURL:nil                          // Application Support/InferKit/models
+                                         error:&error];
+
+// Or on a background queue, delivered to the handler there:
+[NFKMLXLaya backendWithVariant:NFKMLXLayaVariantMultilingual revision:NFKMLXLaya.measuredRevision
+             cacheDirectoryURL:nil completionHandler:^(NFKMLXLayaBackend *backend, NSError *error) { /* keep it */ }];
+```
+
+```swift
+let laya = try NFKMLXLaya.laya(variant: .typedDecisions, revision: NFKMLXLaya.measuredRevision,
+                               cacheDirectoryURL: nil)
+
+// Fetch now, build later (an onboarding download); the folder holds the five files.
+let folder = try NFKMLXLaya.download(variant: .root, revision: NFKMLXLaya.measuredRevision, cacheDirectoryURL: nil)
+let later = try NFKMLXLaya.laya(directoryURL: folder)
+
+// Keep the release through a cache size limit; eviction removes a whole repo revision at once.
+try NFKHFHub(cacheDirectoryURL: NFKHFHub.defaultCacheDirectoryURL())
+    .pinCachedRepo(NFKMLXLaya.repository, revision: NFKMLXLaya.measuredRevision)
+```
+
+A nil revision caches `main` and never re-checks it, so pin `measuredRevision` when two devices must
+answer identically. The cache folder is excluded from backup by default. An app that bundles the
+release skips the download and passes the variant folder to `laya(directoryURL:)`. The weights load at
+float32, twice their download size, and the factory refuses a release the machine cannot hold. The
+DocC article for `NFKMLXLaya` covers the cache, sandboxed folders, and the tuned-weights reload.
+
+### Community Jev reproductions (`NFKMLXOpenJevDeBERTa`, `NFKMLXOpenJev`)
+
+Two more open reproductions of Jev take the same `NFKDecisionQuestion`s and return the same
+`NFKDecisionAnswer`s as Laya and `NFKTypeSafeBackend`. Each is a different design, so the choice is a
+trade between cost and how each question is read:
+
+| Model | Design | Download | A question costs |
+| --- | --- | --- | --- |
+| `NFKMLXOpenJevDeBERTa` (`com-kotobalabs/open-jev-deberta-v3-large`, Apache-2.0) | DeBERTa-v3-large reads the state and every question in one pass; a head scores each option from the mean of its text and its question's text | 1.76 GB | a share of one 512-token pass |
+| `NFKMLXOpenJev`, `.twoB` (`ZefanCai/Open-Jev-2B`) | a LoRA adapter on Qwen3.5-2B scores each candidate as its own Yes/No prompt | 10 MB adapter + the 4.6 GB base | one prompt per option |
+| `NFKMLXOpenJev`, `.nineB` (`ZefanCai/Open-Jev-9B`) | the same recipe on Qwen3.5-9B | 24 MB adapter + the 19.3 GB base | one prompt per option |
+| `NFKMLXOpenJev`, `.twentySevenB` (`ZefanCai/Open-Jev-27B-v1.1`) | the same recipe on Qwen3.8-27B | 62 MB adapter + the base, about 54 GB | one prompt per option |
+
+```objc
+// One DeBERTa pass answers every question; the list form keeps your order, which the model reads by.
+NFKMLXOpenJevDeBERTa *deberta = [NFKMLXOpenJevDeBERTa openJevWithRevision:NFKMLXOpenJevDeBERTa.measuredRevision
+                                                         cacheDirectoryURL:nil error:&error];
+NSArray<NFKDecisionAnswer *> *ordered = [deberta answersForState:@"I was charged twice." questionList:questions error:&error];
+
+// Open-Jev downloads the adapter and the Qwen3.5 base revision the adapter names.
+NFKMLXOpenJev *openJev = [NFKMLXOpenJev openJevWithVariant:NFKMLXOpenJevVariantTwoB revision:nil
+                                         cacheDirectoryURL:nil error:&error];
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [openJev answersForState:record questions:@{ @"intent": intent, @"refund": refund } error:&error];
+```
+
+```swift
+let deberta = try NFKMLXOpenJevDeBERTa.openJev(revision: NFKMLXOpenJevDeBERTa.measuredRevision, cacheDirectoryURL: nil)
+let ordered = try deberta.decide(state: "I was charged twice.", questions: [intent, refund])
+
+let openJev = try NFKMLXOpenJev.openJev(variant: .twoB, revision: nil, cacheDirectoryURL: nil)
+let backend = openJev.makeBackend()        // NFKInputState + NFKInputQuestions in, NFKOutputAnswers out
+```
+
+Both download through the `NFKHFHub` cache the way Laya does, and both build from local folders too:
+`openJev(directoryURL:)` for the DeBERTa release, `openJev(checkpointDirectoryURL:baseDirectoryURL:)`
+for an Open-Jev `package/checkpoint` folder and its base. Open-Jev loads the base at its own bfloat16 by
+default; `precision: .float32` doubles the memory and is what a fine-tune needs.
+
+- **open-jev-deberta** refuses questions that cannot fit in 512 tokens beside the state, and cuts the
+  state to 256 tokens or to whatever room the questions leave. The confidence is the largest
+  probability, at the release's fitted temperature of 1.05.
+- **Open-Jev** refuses a candidate prompt longer than 4,096 tokens rather than truncating it. A noul
+  takes both meanings or neither. The confidence follows the loader's formulas: a choice's is how far
+  its top probability sits above uniform, a score's is how concentrated it is around its mode.
+- A described option reads as `name: description` in both, as in Laya.
+
+Reference parity against each release's own code: open-jev-deberta through its bundled
+`typed_decisions` package (every encoder layer, the logits, the answers, a padded batch), and
+Open-Jev-2B through the loader's `DecisionModel` at float32 (every candidate's tokens, every hidden
+state of the adapted text model, the logits, the answers). The 9B release does not fit at float32 on a
+32 GB machine, so it is compared at bfloat16 against the loader at bfloat16: the same decisions, with
+probabilities within 0.004.
+
+### Time-series forecasting (`NFKMLXChronos`)
+
+Chronos-Bolt reads a numeric context window and forecasts a horizon as quantiles (0.1 … 0.9), so the
+median row is the point forecast and the outer rows form a prediction interval. It is an object, not a
+backend — a numeric series has no core input key.
+
+```swift
+let chronos = try NFKMLXChronos.chronos(weightsURL: weightsURL)    // amazon/chronos-bolt-base
+let rows = chronos.forecast(context: history, horizon: 64)          // [9 quantiles][64 steps]
+let median = rows[4]                                                // the 0.5-quantile point forecast
+```
+
+Chronos-Bolt is a patched T5 encoder-decoder: it standardizes the series, splits it into 16-sample
+patches, runs the encoder and a single-token decoder, and maps that vector to `quantiles × horizon`.
+Reference parity against the `chronos` package's own `ChronosBoltPipeline`: every seam ~1.0 and all nine
+quantile rows matching.
+
+### Multimodal retrieval (`NFKMLXQwen3VLEmbedder`, `NFKMLXQwen3VLReranker`)
+
+The two embedders above read text. `NFKMLXQwen3VLEmbedder` is the released `Qwen3-VL-Embedding-2B`,
+which embeds a text, an image, or both into one space, so a text query retrieves an image and an image
+query retrieves a document. `NFKMLXQwen3VLReranker` is `Qwen3-VL-Reranker-2B`, the cross-encoder over
+the same backbone. An instruction conditions both.
+
+```objc
+NFKMLXQwen3VLEmbedder *embedder =
+    [NFKMLXQwen3VLEmbedder embedderWithDirectoryURL:releaseDirectory error:&error];
+NSArray<NSNumber *> *query = [embedder embeddingForText:@"a red bicycle leaning on a wall"];
+NSArray<NSNumber *> *picture = [embedder embeddingForImage:cgImage text:@"" instruction:@""];
+// Both are L2-normalized, so their dot product is a cosine similarity.
+
+NFKMLXQwen3VLReranker *reranker =
+    [NFKMLXQwen3VLReranker rerankerWithDirectoryURL:rerankerDirectory error:&error];
+NSArray<NSNumber *> *order =                                    // documents, most relevant first
+    [reranker rankedIndicesForQuery:@"How tall is the Eiffel Tower?"
+                          documents:@[ @"Sourdough needs a starter kept at room temperature.",
+                                       @"The Eiffel Tower stands 330 metres tall." ]];   // → [1, 0]
+```
+
+The embedder pools the last position of the prompt and normalizes it; the reranker reads the same
+position through the output projection and takes the difference between the "yes" and "no" logits
+through a sigmoid, which is a relevance between 0 and 1. The pooled position differs between the two
+releases because their tokenizer files differ: the embedding release appends `<|endoftext|>` to every
+encoding and the reranker release does not. Reference parity against each release's own script on the
+released 2B weights: the prompts tokenize to the reference's ids exactly, the text embedding cosine is
+0.9999999999866735, the image embedding 0.9999999999305262, and the reranker's scores agree to 2.4e-6.
+
 ### Vision-language (`NFKMLXSmolVLM`)
 
 SmolVLM2-500M answers a question about an image. A SigLIP vision encoder turns each tile into patch
@@ -546,6 +876,152 @@ processor, and the network is at reference parity against transformers'
 `SmolVLMForConditionalGeneration`: the vision encoder, the connector, and the fused decoder logits are
 exact, and the greedy continuation matches token for token. The image processor is CoreGraphics-based, so
 a caption is not token-identical to the reference's PIL pipeline; it is coherent and accurate.
+
+### Vision-language (`NFKMLXPixtral`)
+
+Pixtral 12B answers a question about an image. A from-scratch 2D-rotary vision tower reads the picture at
+its native aspect ratio, a two-layer GELU connector projects the patch features to the decoder width, and
+a Mistral-Nemo decoder reads the text with the projected vision tokens spliced in at the `[IMG]`
+positions.
+
+```objc
+NFKMLXPixtral *model = [NFKMLXPixtral modelWithDirectoryURL:releaseDirectory error:&error];   // mistral-experimental/pixtral-12b
+NSString *answer = [model answerForImage:cgImage question:@"Describe this image in detail." maxTokens:64];
+```
+
+The vision tower and connector are at reference parity against transformers'
+`LlavaForConditionalGeneration` (patch embedding, ln_pre, blocks, and connector measured in float32), and
+the whole fused pipeline matches a tiny float32 oracle with the reference's argmax at every position. The
+image processor is CoreGraphics-based, so a caption is not token-identical to the reference's PIL
+pipeline; it is coherent and accurate.
+
+### Unified vision (`NFKMLXFlorence2`)
+
+Florence-2 (base or large, whichever release directory it is given) reads one image and a task token and writes text: a caption, detected objects, or
+grounded regions. A DaViT vision tower (windowed spatial attention paired with grouped channel attention
+in every block) feeds a projector, whose image tokens concatenate before the prompt for a BART
+encoder-decoder; the localization tasks come back as `NFKDetection`s with boxes.
+
+```objc
+id<NFKInferenceBackend> florence = [NFKMLXFlorence2 backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage,
+    NFKInputPrompt: @"<OD>"                                   // or <CAPTION>, <DENSE_REGION_CAPTION>, …
+}];
+NFKInferenceResult *result = [florence runInferenceForRequest:request error:&error];
+NSArray<NFKDetection *> *objects = result.detections;        // for the localization tasks
+```
+
+The DaViT tower, projector, BART encoder, and first-step logits are at reference parity against the
+release's own implementation. Generation follows the release's settings (three beams, no repeated
+3-gram) and matches the release's own `generate` token for token on captioning, OCR, and detection.
+`NFKParameterMaxTokens` and `NFKMLXTranslationParameterKey.beamCount` override them per request.
+
+### Handwriting reading (`NFKMLXTrOCR`)
+
+TrOCR reads a line of handwriting into text. A plain `google/vit` image encoder patchifies the 384-square
+image; its patch tokens are the memory a BART-style decoder cross-attends while generating the
+transcription.
+
+```objc
+id<NFKInferenceBackend> trocr = [NFKMLXTrOCR backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage
+}];
+NFKInferenceResult *result = [trocr runInferenceForRequest:request error:&error];
+NSString *transcription = [result outputForKey:NFKOutputText];
+```
+
+The ViT encoder and the decoder's first-step logits are at reference parity against transformers' own
+`VisionEncoderDecoderModel`, and greedy generation matches its transcription token for token.
+
+### Referring segmentation (`NFKMLXSa2VA`)
+
+Sa2VA reads an image and a referring prompt, answers in text, and segments the object it refers to. An
+InternViT-300M encoder and a pixel-shuffle projector feed a Qwen2.5-3B decoder; when the decoder emits a
+`[SEG]` token, its hidden state becomes a prompt for a SAM 2 grounding encoder, which returns the mask
+under `NFKOutputMask`.
+
+```objc
+id<NFKInferenceBackend> sa2va = [NFKMLXSa2VA backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage,
+    NFKInputPrompt: @"<image>Please segment the person on the left."
+}];
+NFKInferenceResult *result = [sa2va runInferenceForRequest:request error:&error];
+NSString *answer = [result outputForKey:NFKOutputText];
+CGImageRef mask = (__bridge CGImageRef)[result outputForKey:NFKOutputMask];
+```
+
+Every seam is at reference parity against the model's own code — the InternViT tower, the projector, the
+image/text fusion, the `[SEG]` bridge, and the mask itself (IoU 0.9998) — and generation is token-exact.
+
+### Image, speech, and text in one model (`NFKMLXPhi4MM`)
+
+Phi-4-multimodal answers a prompt or a conversation that may carry pictures, clips, or both. The inputs
+choose the mode: a picture runs the decoder's vision adapter, audio alone runs its speech adapter, and text
+alone runs the base decoder. Audio with no prompt is transcribed. WAV audio at any rate from 8 kHz up is
+read the way the release's own processor reads it.
+
+```objc
+id<NFKInferenceBackend> phi = [NFKMLXPhi4MM backendWithDirectoryURL:releaseDirectory error:&error];
+
+// Caption or question over a picture.
+NFKInferenceRequest *describe = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage,
+    NFKInputPrompt: @"Describe the image in one sentence."
+}];
+NSString *caption = [[phi runInferenceForRequest:describe error:&error] outputForKey:NFKOutputText];
+
+// A spoken question about the same picture: both inputs in one request.
+NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage,
+    NFKInputAudio: wavData
+}];
+NSString *answer = [[phi runInferenceForRequest:ask error:&error] outputForKey:NFKOutputText];
+
+// A conversation over two pictures, sampled. Pictures and clips open the first user turn unless the text
+// places them with <|image_1|>… and <|audio_1|>…; further ones go under NFKInputImages and NFKInputAudios.
+NFKInferenceRequest *chat = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputMessages: @[
+        @{ @"role": @"system", @"content": @"You answer in one short sentence." },
+        @{ @"role": @"user", @"content": @"<|image_1|><|image_2|>How many pictures are there?" },
+        @{ @"role": @"assistant", @"content": @"There are two pictures." },
+        @{ @"role": @"user", @"content": @"What differs between them?" },
+    ],
+    NFKInputImage: (__bridge id)firstImage,
+    NFKInputImages: @[ (__bridge id)secondImage ],
+} parameters:@{ NFKParameterTemperature: @0.7, NFKParameterTopP: @0.95, NFKParameterSeed: @7 }];
+NSString *reply = [[phi runInferenceForRequest:chat error:&error] outputForKey:NFKOutputText];
+```
+
+`backendWithDirectoryURL:precision:error:` loads the decoder at float32 instead of the released bfloat16,
+and `backendWithRepo:revision:cacheDirectoryURL:precision:error:` downloads the release
+(`NFKMLXPhi4MM.releaseRepo`) first. Every mode is at reference parity against the release's own code, with
+token-exact answers from raw inputs, including a multi-turn conversation over two pictures and two clips
+and a clip past 40 seconds; both preprocessors match the reference processor. The compiled weight-free
+counterpart is `testPhi4Multimodal` in `InferKitMLX/Examples/MLXModelGalleryExamples.swift`, which runs both
+preprocessors, tiny towers (two clips as one batch), and a tiny LongRoPE decoder fusing a picture and the
+clips.
+
+### Table structure recognition (`NFKMLXTableTransformer`)
+
+Table Transformer recognizes the structure of a table crop. A ResNet-18 backbone reads the image, and a
+DETR encoder-decoder predicts one box per structural element: the table, its rows, its columns, and its
+headers. The backend reads the release's `config.json` for the class names, so the detections arrive
+labeled.
+
+```objc
+id<NFKInferenceBackend> tableTransformer = [NFKMLXTableTransformer backendWithDirectoryURL:releaseDirectory error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputImage: (__bridge id)cgImage
+}];
+NFKInferenceResult *result = [tableTransformer runInferenceForRequest:request error:&error];
+NSArray<NFKDetection *> *structure = [result outputForKey:NFKOutputDetections];   // "table", "table row", "table column", …
+```
+
+Every seam is at reference parity against transformers' own `TableTransformerForObjectDetection` on the
+released weights, and the backend recognizes a clean grid end to end as a table with its rows and columns.
 
 ### Vision-language (`NFKMLXGemma3`, the 4B)
 
@@ -664,6 +1140,46 @@ BOOL tools = capabilities.toolCalling;                          // NFKParameterT
 BOOL images = capabilities.vision;                              // NFKInputImage
 BOOL declared = [remote.supportedParameterKeys containsObject:NFKParameterJSONSchema];
 ```
+
+### Translation (`NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXMADLAD`, Swift and Objective-C)
+
+Three open-weight translators answer the same contract Apple's translator does in
+`InferKitAppleSwift`: text under `NFKInputPrompt`, the target under `NFKParameterTargetLanguage`
+(BCP-47, required), the source under `NFKParameterSourceLanguage` (optional; M2M-100 detects it), and
+the translation under `NFKOutputText`. OPUS-MT is one small model per language pair, named by two
+tags; M2M-100 covers 100 languages in one release; MADLAD-400 covers 400+ through a `<2xx>` marker;
+TranslateGemma (`NFKMLXTranslateGemma`, gated on Hugging Face) is Gemma 3 driven by its translation
+template, the strongest of the four and the largest.
+
+```swift
+let translator = try NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil)
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "The quick brown fox jumps over the lazy dog."],
+                                  parameters: [NFKParameterTargetLanguage: "de",
+                                               NFKMLXTranslationParameterKey.beamCount: 4])
+let result = try translator.runInference(for: request)
+print(result.text ?? "")                      // Der schnelle Braunfuchs springt über den faulen Hund.
+
+let manyToMany = try NFKMLXM2M100.backend(variant: .m418M, revision: nil, cacheDirectoryURL: nil)
+let japanese = try manyToMany.runInference(for: NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "Where is the station?"],
+    parameters: [NFKParameterTargetLanguage: "ja"]))   // the source is detected
+```
+
+```objc
+NSError *error = nil;
+id<NFKInferenceBackend> translator = [NFKMLXMADLAD backendWithRepo:@"google/madlad400-3b-mt" revision:nil
+                                                  cacheDirectoryURL:nil halfPrecision:YES error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{NFKInputPrompt: @"Good morning."}
+                                                           parameters:@{NFKParameterTargetLanguage: @"zh-Hant",
+                                                                        NFKMLXTranslationParameterKey.beamCount: @4}];
+NFKInferenceResult *result = [translator runInferenceForRequest:request error:&error];
+```
+
+The decode follows each release's generation config (Marian 4 beams, M2M-100 5, MADLAD greedy);
+`NFKMLXTranslationParameterKey.beamCount`, `.lengthPenalty`, and `NFKParameterMaxTokens` override it.
+Input is translated paragraph by paragraph; `NFKMLXTranslationParameterKey.splitsSentences` splits each
+paragraph into sentences first. Linking InferKitMLX also registers `NFKMLXTranslationProvider` for the
+core's `translation` capability (M2M-100 when its release is cached; Apple's translator otherwise).
 
 ### Streaming and cancellation
 
@@ -949,6 +1465,217 @@ The directory is the release's own tree: `unet/`, `vae/`, `text_encoder/`, `toke
 module's own precision, which is what the parity records were measured at; `.checkpoint` runs it as
 published.
 
+### FLUX.2 [klein] text-to-image, editing and inpainting
+
+A diffusers FLUX.2 [klein] release directory in, an image out. The facade renders the release's own
+chat template, reads three intermediate layers of its Qwen3 text encoder, denoises over FLUX.2's
+empirical sigma schedule, and decodes through the autoencoder and its latent codec.
+
+```swift
+let flux2 = try NFKMLXFlux2.flux2(directoryURL: releaseDirectory)
+flux2.steps = 28
+let image = try flux2.image(forPrompt: "a red fox in the snow", width: 1024, height: 1024, seed: 0)
+```
+
+```objc
+NSError *error = nil;
+NFKMLXFlux2 *flux2 = [NFKMLXFlux2 flux2WithDirectoryURL:releaseDirectory error:&error];
+CGImageRef image = [flux2 imageForPrompt:@"a red fox in the snow"
+                          negativePrompt:nil width:1024 height:1024 seed:0 error:&error];
+```
+
+Editing conditions on reference images, and inpainting repaints the white part of a mask and keeps
+the rest. `strength` is how far into the schedule inpainting starts from the image: 1 regenerates the
+masked region from noise, and lower values keep more of it. It is a `Double`, because the start step
+is computed in double precision and a `Float` strength can start one step off. Guidance applies only
+where the release is not step distilled (`isDistilled`, read from its `model_index.json`).
+
+```swift
+let edited = try flux2.image(forPrompt: "the same fox, at night", references: [photo])
+let repainted = try flux2.inpaint(prompt: "a snowman", image: photo, mask: mask, strength: 0.8)
+```
+
+<!-- objc-check: continues -->
+```objc
+CGImageRef edited = [flux2 imageForPrompt:@"the same fox, at night" negativePrompt:nil
+                               references:@[(__bridge id)photo] width:1024 height:1024 seed:0
+                                    error:&error];
+CGImageRef repainted = [flux2 inpaintImage:photo mask:mask prompt:@"a snowman" negativePrompt:nil
+                                  strength:0.8 seed:0 error:&error];
+```
+
+A `CGImageRef` goes into the references array as `(__bridge id)`, because an array of a Core
+Foundation type is not an Objective-C collection.
+
+A release that does not fit the machine whole is staged: the text encoder loads, encodes, and is
+released before the transformer loads, for every image. `.automatic` decides from the machine's
+working set; FLUX.2 [klein] 9B stages on a 32 GB machine.
+
+```swift
+let nine = try NFKMLXFlux2.flux2(directoryURL: klein9BDirectory, residency: .automatic)
+print(nine.holdsStagesResident, nine.encodesInFloat32)
+```
+
+<!-- objc-check: given NSURL *klein9BDirectory = nil; -->
+```objc
+NFKMLXFlux2 *nine = [NFKMLXFlux2 flux2WithDirectoryURL:klein9BDirectory
+                                             residency:NFKMLXResidencyAutomatic error:&error];
+```
+
+FLUX.2 [klein] 9B KV runs its references once and reuses their keys and values on every later step.
+Its files do not mark it, so the caller says so; it has no guidance and is meant for few steps.
+
+```swift
+let kv = try NFKMLXFlux2.flux2(directoryURL: kleinKVDirectory)
+kv.cachesReferences = true
+kv.steps = 4
+let edited = try kv.image(forPrompt: "the same fox, at night", references: [photo])
+```
+
+FLUX.2 [dev] is gated, so the end-to-end path is [klein]'s. Its text front end ships: [dev] conditions
+on Mistral-Small 3, which `NFKMLXLanguageConfiguration.mistralSmall3` carries and
+`NFKMLXFlux2TextEncoder` drives at [dev]'s own layer spacing.
+
+### Qwen-Image 2.1 (`NFKMLXQwenImagePipeline`)
+
+Qwen-Image 2.1 is a 7.1B block-causal DiT with a vision-language text encoder. The weights are under
+the Qwen Research License, which is non-commercial. `NFKMLXQwenImageGenerator` assembles the whole model
+from the release directory and holds it as an `NFKMLXResidency` says. The 16 GB text encoder and the
+14 GB transformer do not fit a 32 GB machine together, so `.automatic` stages them there: the encoder
+loads, encodes, and is released before the transformer loads. A staged 256×256 image at 4 steps took
+29 s on a 32 GB M-series machine.
+
+```swift
+let qwen = try NFKMLXQwenImageGenerator.generator(directoryURL: release, residency: .automatic)
+let rgba = try qwen.image(forPrompt: "a calico cat asleep on a stack of books",
+                          width: 1024, height: 1024, seed: 0)          // [1024, 1024, 4] in 0…1
+```
+
+```objc
+NFKMLXQwenImageGenerator *qwen = [NFKMLXQwenImageGenerator generatorWithDirectoryURL:releaseDirectory
+                                                                            residency:NFKMLXResidencyAutomatic
+                                                                                error:&error];
+CGImageRef cat = [qwen imageForPrompt:@"a calico cat asleep on a stack of books" negativePrompt:nil
+                                width:1024 height:1024 seed:0 error:&error];
+```
+
+`guidance` is 1 by default, the reference's: the release is meant to be sampled without guidance, and a
+negative prompt guides only above 1. Each stage also loads on its own, and the pipeline chains them:
+
+```swift
+let release = URL(fileURLWithPath: "…/Qwen-Image-2.1")
+
+// The transformer is 7.1B in bfloat16, which is the precision it runs at.
+let transformer = NFKMLXQwenImage.makeNet(try NFKMLXQwenImage.configuration(
+    fromHuggingFace: release.appending(path: "transformer/config.json")))
+try NFKMLXQwenImage.loadWeights(into: transformer,
+                                fromDirectory: release.appending(path: "transformer"))
+
+let vaeDirectory = release.appending(path: "vae")
+let vae = try NFKMLXQwenImageVAE.net(directoryURL: vaeDirectory)
+let (mean, deviation) = try NFKMLXQwenImageVAE.latentStatistics(
+    fromHuggingFace: vaeDirectory.appending(path: "config.json"))
+
+let pipeline = NFKMLXQwenImagePipeline(transformer: transformer, vae: vae, latentMean: mean,
+                                       latentStandardDeviation: deviation)
+
+// The text encoder is Qwen3-VL at the 8B geometry; its tokenizer lives in the release's processor.
+let decoder = try NFKMLXQwen3VL.decoder(directoryURL: release.appending(path: "text_encoder"),
+                                        precision: .checkpoint)
+let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: release.appending(path: "processor"))!
+let embeddings = NFKMLXQwenImagePipeline.promptEmbeddings(
+    "a calico cat asleep on a stack of books", decoder: decoder, tokenizer: tokenizer)
+
+let image = pipeline.generate(promptEmbeddings: embeddings, height: 1024, width: 1024, steps: 40)
+```
+
+The image comes back `[height, width, 4]` in −1…1, and the fourth channel is the release's own: its
+autoencoder reads and writes four channels rather than three. Generation is multi-second per step at
+this size; run it off the render thread.
+
+### Z-Image (`NFKMLXZImageGenerator`)
+
+Z-Image is a 6B single-stream DiT conditioned on Qwen3-4B, under the Apache 2.0 license.
+`NFKMLXZImageGenerator` assembles it from a diffusers release directory (`Tongyi-MAI/Z-Image-Turbo` or
+`Tongyi-MAI/Z-Image`) and holds it as an `NFKMLXResidency` says. The text encoder loads at its stored
+bfloat16, about 8 GB, and the transformer at bfloat16, about 12 GB. A 32 GB machine runs the two staged.
+The schedule is read from the release's `scheduler_config.json`.
+
+```swift
+let zImage = try NFKMLXZImageGenerator.generator(directoryURL: release, residency: .automatic)
+let rgb = try zImage.image(forPrompt: "a red fox walking through fresh snow",
+                           width: 1024, height: 1024, seed: 0)          // [1024, 1024, 3] in 0…1
+```
+
+```objc
+NFKMLXZImageGenerator *zImage = [NFKMLXZImageGenerator generatorWithDirectoryURL:releaseDirectory
+                                                                        residency:NFKMLXResidencyAutomatic
+                                                                            error:&error];
+CGImageRef fox = [zImage imageForPrompt:@"a red fox walking through fresh snow" negativePrompt:nil
+                                  width:1024 height:1024 seed:0 error:&error];
+```
+
+The defaults are Turbo's published settings: 9 steps, the last of which lands on sigma 0, and a
+`guidance` of 0. The base release samples at the reference pipeline's 50 steps and a guidance of 5; above
+1 the image guides against the negative prompt, or against an empty one. The sides are multiples of 16.
+
+### Stable Diffusion 3 and 3.5 (`NFKMLXSD3Generator`)
+
+`NFKMLXSD3Generator` assembles SD3 Medium or SD3.5 Medium or Large from a diffusers release directory
+and holds it as an `NFKMLXResidency` says. The text stage is CLIP-L, OpenCLIP bigG and T5-XXL; T5 runs at
+float32 where it fits the working set on its own and at bfloat16 otherwise, and a release without
+`text_encoder_3/` conditions on zeros in its place. The transformer loads at bfloat16. The repositories
+are gated: the license is accepted once on the Hub.
+
+```swift
+let sd3 = try NFKMLXSD3Generator.generator(directoryURL: release, residency: .automatic)
+let rgb = try sd3.image(forPrompt: "a red fox walking through fresh snow",
+                        width: 1024, height: 1024, seed: 0)             // [1024, 1024, 3] in 0…1
+```
+
+```objc
+NFKMLXSD3Generator *sd3 = [NFKMLXSD3Generator generatorWithDirectoryURL:releaseDirectory
+                                                               residency:NFKMLXResidencyAutomatic
+                                                                   error:&error];
+CGImageRef fox = [sd3 imageForPrompt:@"a red fox walking through fresh snow" negativePrompt:nil
+                               width:1024 height:1024 seed:0 error:&error];
+```
+
+`steps` and `guidance` default to the reference pipeline's 28 and 7. Above a guidance of 1 the image
+guides against the negative prompt, or against an empty one. The sides are multiples of 16.
+
+### FLUX.1 [schnell] (`NFKMLXFlux`)
+
+FLUX.1 [schnell] turns a prompt into an image in four steps. `NFKMLXFlux` assembles the whole model
+from a diffusers release directory — the 12B transformer, the autoencoder, and the two text encoders
+(CLIP-L for the pooled projection, T5-XXL for the sequence) — and `image(forPrompt:)` runs the text
+encoding, the flow-match sampler, and the decode.
+
+```objc
+NFKMLXFlux *flux = [NFKMLXFlux fluxWithDirectoryURL:releaseDirectory error:&error];   // black-forest-labs/FLUX.1-schnell
+CGImageRef image = [flux imageForPrompt:@"a photograph of an astronaut riding a horse on the moon"
+                                  width:1024 height:1024 seed:0 error:&error];
+```
+
+The text front end is at reference parity against transformers' `CLIPTextModel` and `T5EncoderModel`
+(CLIP-L pooled 0.99997, T5-XXL sequence 0.9995), and the transformer at released-weight parity against
+diffusers' `FluxTransformer2DModel`.
+
+A release that does not fit the machine whole is staged as FLUX.2 is: CLIP-L and T5-XXL (about 19 GB at
+the float32 T5 runs at) load, encode, and are released before the 12B transformer (about 24 GB) loads,
+for every image. `.automatic` decides from the machine's working set.
+
+```swift
+let staged = try NFKMLXFlux.flux(directoryURL: releaseDirectory, residency: .staged)
+print(staged.holdsStagesResident)                       // false
+let image = try staged.image(forPrompt: "a red fox in the snow")
+```
+
+```objc
+NFKMLXFlux *staged = [NFKMLXFlux fluxWithDirectoryURL:releaseDirectory
+                                            residency:NFKMLXResidencyStaged error:&error];
+```
+
 ## Image → image
 
 ### Bring-your-own MLX image model (`NFKMLXModuleBackend`, Swift)
@@ -1229,7 +1956,39 @@ let mask = result.output(forKey: NFKOutputMask)
 
 The ViT encoder uses real windowed attention (with global-attention layers) and decomposed
 relative-position embeddings, matching the reference; `Tools/sam-to-safetensors/convert.py --list-keys`
-covers the remaining block/neck key remap. SAM 2's Hiera encoder / video memory are future variants.
+covers the remaining block/neck key remap.
+
+SAM 2 and SAM 2.1 ship as `NFKMLXSAM2`, registered as `sam2`, over the same plate-and-click contract.
+A clip is tracked rather than segmented frame by frame: one session carries the memory of what came
+before, and a frame without clicks reads it.
+
+```swift
+let net = NFKMLXSAM2.makeTracker(variant: .tiny, release: .sam21)
+try NFKMLXSAM2.loadWeights(into: net, from: checkpointURL)
+
+let session = NFKMLXSAM2TrackerSession(frameCount: frames.count)
+for (index, frame) in frames.enumerated() {
+    // The click is in pixels of the model's 1024-square input, on the frame that starts the track.
+    let prediction = net.track(image: frame, frameIndex: index,
+                               points: index == 0 ? [(512, 512, 1)] : nil, session: session)
+    masks.append(sigmoid(prediction.maskLogits))
+}
+```
+
+SAM 3 takes a prompt in words instead of a click, and returns every instance the words name. Its
+three networks load from one released checkpoint, and `detect` returns masks, boxes, a logit per
+query, and a single presence logit saying whether the prompt names anything in the plate at all.
+Box prompts and video tracking are not ported.
+
+```swift
+let sam3 = try NFKMLXSAM3.makeImageModel(fromHuggingFace: configURL)
+try NFKMLXSAM3.loadWeights(into: sam3, from: checkpointURL)
+
+// `ids` is the prompt through a CLIP tokenizer, padded to the trained 32-position context, and
+// `valid` marks the real tokens.
+let found = sam3.detect(image: plate, tokens: ids, valid: valid)
+let keep = (0 ..< found.logits.dim(1)).filter { found.logits[0, $0].item(Float.self) > 0 }
+```
 
 ### Arbitrary style transfer (`NFKMLXAdaIN`, a shipped MLX model)
 
@@ -1683,13 +2442,14 @@ The released weights come as two diffusers checkpoints, one per network, plus th
 trained UNet cross-attends to. The text tower is not part of the model here — the caller supplies the
 embedding, and a model that takes no prompt still expects the embedding of an empty one.
 
+<!-- objc-check: given id mask = nil; -->
 ```objc
 id<NFKInferenceBackend> inpainter = [NFKMLXStableDiffusionInpaint backendWithUNetWeightsURL:unetURL
                                                                              vaeWeightsURL:vaeURL
                                                                             textContextURL:promptURL
                                                                                      error:&error];
-NFKInferenceRequest *request = [[NFKInferenceRequest alloc] initWithInputs:@{NFKInputImage: plate,
-                                                                            NFKInputMask: mask}];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{NFKInputImage: plate,
+                                                                        NFKInputMask: mask}];
 CGImageRef filled = (__bridge CGImageRef)[[inpainter runInferenceForRequest:request error:&error]
                                           outputForKey:NFKOutputImage];
 ```
@@ -1731,8 +2491,40 @@ error) to the handler, so the caller does not hand-thread it off the render thre
 
 `NFKHFHub` itself has no MLX and does not run models — it fetches files. The bundled Stable Diffusion
 backend downloads through it as well, into `NFKMLXBackend.cacheDirectoryURL`. A gated repository needs
-an access token: set `NFKHFHub.accessToken`, or leave it nil and let `HF_TOKEN` in the environment
-supply one.
+an access token: set `accessToken` on a hub you make, or `NFKHFHub.defaultAccessToken` for the hubs the
+download-and-build factories make on their own. With neither, `HF_TOKEN` in the environment supplies
+one, which a command-line tool has and an app does not.
+
+### Downloading a whole release
+
+Every model that builds from a release directory has a download peer: the directory selector with
+`DirectoryURL:` replaced by `Repo:revision:cacheDirectoryURL:`, plus its `…completionHandler:` form. It
+fetches the files the model reads, and nothing else, into the `NFKHFHub` cache, then builds from the
+snapshot folder. That covers the language models (`NFKMLXLanguage`, the Gemma family, Granite 4.0-H,
+Nemotron-H, Mamba), the vision-language models (SmolVLM2, Qwen3-VL, Pixtral, Florence-2, Sa2VA, TrOCR,
+Table Transformer, V-JEPA 2), the embedders and rerankers, the speech recognizers (Parakeet and Canary
+from their `.nemo` archives, Granite Speech, Voxtral), Kokoro (one voice), Chatterbox, VoiceRestore,
+Resemble Enhance, MossFormer2 super-resolution, FLUX, FLUX.2, and MiniMax Music 3.
+
+```objc
+NFKHFHub.defaultAccessToken = token;     // only for a gated repository; from the app's own secure storage
+id<NFKInferenceBackend> chat = [NFKMLXLanguage backendWithRepo:@"Qwen/Qwen3-0.6B" revision:nil
+                                              cacheDirectoryURL:nil error:&error];
+[NFKMLXParakeet backendWithRepo:@"nvidia/parakeet-tdt-0.6b-v2" revision:nil cacheDirectoryURL:nil
+              completionHandler:^(id<NFKInferenceBackend> backend, NSError *error) { /* background queue */ }];
+```
+
+```swift
+let speculative = try NFKMLXLanguage.backend(repo: "Qwen/Qwen3-4B", revision: nil,
+                                             draftRepo: "Qwen/Qwen3-0.6B", draftRevision: nil,
+                                             cacheDirectoryURL: nil)
+let embedder = try NFKMLXQwen3Embedding.backend(repo: "Qwen/Qwen3-Embedding-0.6B", revision: nil,
+                                                cacheDirectoryURL: nil)
+```
+
+Pass a commit as `revision` to pin a release; nil follows `main`, and a cached `main` is not checked
+again. The weights of the larger releases run from several gigabytes (Qwen3-VL-2B) to tens of gigabytes
+(FLUX, MiniMax Music 3), and the download blocks until every shard is in the cache.
 
 ### MLX runtime knobs from Objective-C
 
@@ -1762,8 +2554,10 @@ double pressure = NFKMLXGPU.memoryPressure;            // active memory as a sha
 // cap plus a soft memory limit derived from that budget.
 [NFKMLXGPU applyStandingLimits];
 
+__block NFKInferenceResult *result = nil;
+__block NSError *deviceError = nil;
 [NFKMLXDevice performOnDeviceType:NFKMLXDeviceTypeCPU block:^{
-    result = [backend runInferenceForRequest:request error:&error];
+    result = [backend runInferenceForRequest:request error:&deviceError];
 }];
 ```
 
@@ -1772,6 +2566,41 @@ thread, so it wraps a synchronous `runInferenceForRequest:` and not `submitInfer
 whose queue takes the global device. Run the synchronous call inside the block from your own background
 thread. Selecting the CPU does not avoid shipping the Metal library: MLX builds the Metal device when it
 initializes, whichever device the work names.
+
+## Text → video
+
+`NFKMLXLTXVideoGenerator` (LTX-Video 0.9.0) and `NFKMLXWanVideoGenerator` (Wan 2.1 T2V and Wan 2.2
+TI2V-5B) assemble a text-to-video model from its diffusers release directory, and hold it as an
+`NFKMLXResidency` says. The T5 text encoder runs once per clip and the transformer and autoencoder
+after it, so `.automatic` stages a release that does not fit whole: LTX-Video's float32 T5-XXL is 19 GB
+beside a 7.7 GB transformer. Each generator's glue (the prompt padded and masked, the schedule, guidance,
+the latent statistics, the decode) matches diffusers' own `LTXPipeline` and `WanPipeline`.
+
+```swift
+let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: ltxRelease, residency: .automatic)
+let clip = try ltx.video(forPrompt: "a red fox walking through fresh snow", frames: 121,
+                         width: 704, height: 480, seed: 0)           // [121, 480, 704, 3] in 0…1
+
+let wan = try NFKMLXWanVideoGenerator.generator(repo: nil, revision: nil, cacheDirectoryURL: nil,
+                                                residency: .automatic)  // Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+wan.steps = 30
+let frames = try wan.video(forPrompt: "a red fox walking through fresh snow", frames: 33)
+```
+
+<!-- objc-check: given NSURL *wanRelease; -->
+```objc
+NFKMLXWanVideoGenerator *wan = [NFKMLXWanVideoGenerator generatorWithDirectoryURL:wanRelease
+                                                                        residency:NFKMLXResidencyAutomatic
+                                                                            error:&error];
+NSArray *frames = [wan framesForPrompt:@"a red fox walking through fresh snow" negativePrompt:nil
+                                frames:33 width:832 height:480 seed:0 error:&error];
+CGImageRef first = (__bridge CGImageRef)frames[0];
+```
+
+A frame count rounds down to one more than a multiple of the autoencoder's temporal compression (8 for
+LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both negative prompts
+default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its
+own, beyond a 32 GB machine in any placement.
 
 ## Video (clip → clip)
 
@@ -1800,6 +2629,58 @@ let custom = NFKMLXVideoBackend(identifier: "my-video-model", configuration: con
 
 Run a clip off the render thread: it is one forward pass per frame. `NFKMLXVideoFile` is the
 decode/encode layer underneath, and is usable on its own.
+
+### V-JEPA 2 video features (`NFKMLXVJEPA2`)
+
+V-JEPA 2 is a self-supervised video encoder: a clip (or a single image) becomes a mean-pooled feature
+embedding for retrieval or as a video encoder for a vision-language model. A classification release
+(Something-Something v2 or Diving48) also ranks its classes. The directory factory reads the release's
+`config.json` for the geometry (ViT-L, ViT-H, or ViT-g), and the backend accepts a video or an image.
+
+```objc
+NSError *error = nil;
+id<NFKInferenceBackend> vjepa2 = [NFKMLXVJEPA2 backendWithDirectoryURL:releaseDirectory error:&error];
+
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputVideo: asset }];
+NFKInferenceResult *result = [vjepa2 runInferenceForRequest:request error:&error];
+NSArray<NSNumber *> *embedding = [result outputForKey:NFKOutputEmbedding];   // the pooled feature vector
+NSArray<NFKClassification *> *classes = [result outputForKey:NFKOutputClassifications];   // a classifier's
+```
+
+Each release is at reference parity against transformers' own `VJEPA2Model` or
+`VJEPA2ForVideoClassification`; [model-parity.md](model-parity.md) lists the measured cosines. A probe on
+your own classes trains on the device ("Training a video classifier on your own clips").
+
+### Cosmos image and video tokens (`NFKMLXCosmosTokenizer`)
+
+The Cosmos Tokenizer compresses an image or a clip into a continuous latent or a grid of discrete tokens
+and reconstructs it. Each of the ten releases (`nvidia/Cosmos-0.1-Tokenizer-*`) is one
+`NFKMLXCosmosTokenizerVariant`, and each loads from the release's own `autoencoder.jit`. The backend
+reconstructs an image (and, for a video variant, a clip under `NFKInputVideo`); the tokenizer object
+returns the tokens themselves.
+
+<!-- objc-check: given NSURL *autoencoderJIT = nil; -->
+```objc
+NSError *error = nil;
+id<NFKInferenceBackend> cosmos = [NFKMLXCosmosTokenizer backendWithVariant:NFKMLXCosmosTokenizerVariantContinuousVideo8x8x8
+                                                                 weightsURL:autoencoderJIT
+                                                                      error:&error];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputVideo: asset }];
+NFKInferenceResult *result = [cosmos runInferenceForRequest:request error:&error];
+NFKVideoAsset *reconstruction = [result outputForKey:NFKOutputVideo];
+
+// Discrete tokens for an image: a 64,000-entry vocabulary, one token per 16×16 block.
+NFKMLXCosmosTokenizer *tokenizer = [NFKMLXCosmosTokenizer tokenizerWithVariant:NFKMLXCosmosTokenizerVariantDiscreteImage16x16
+                                                                    weightsURL:autoencoderJIT
+                                                                         error:&error];
+NFKMLXCosmosTokenizerCode *tokens = [tokenizer codeForImage:photo error:&error];   // int32 [h, w]
+NSArray *decoded = [tokenizer framesForCode:tokens error:&error];                   // one CGImage
+```
+
+The image's sides must be multiples of 16 for `codeForImage:error:` (the backend pads and crops as the
+reference does), and a clip for `codeForFrames:error:` holds one more frame than a multiple of the
+temporal compression. Every variant is at reference parity against NVIDIA's own tokenizer modules on
+its released weights.
 
 ## Faces in a photograph
 
@@ -2063,6 +2944,7 @@ which every OpenAI-compatible vision model reads, local runners included; `NFKAn
 it there as an `image` block. Measured against a live Ollama with `qwen3.5:27b`: a flat blue square
 and "what color is this?" come back "blue".
 
+<!-- objc-check: given CGImageRef frame = NULL; -->
 ```objc
 id<NFKInferenceBackend> eyes = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.ollama
                                                               apiKey:nil modelName:@"qwen3.5:27b"];
@@ -2370,6 +3252,7 @@ let dichotomous = try NFKMLXISNet.backend(weightsURL: nil)                     /
 let highRes  = try NFKMLXBiRefNet.backend(weightsURL: nil)                     // "birefnet"; resizes to 1024
 let videoKey = try NFKMLXRVM.backend(weightsURL: nil)                          // "robust-video-matting" (MobileNetV3); .resNet50 is the heavier release
 let portrait = try NFKMLXMODNet.backend(weightsURL: nil)                       // "modnet"
+let sam2     = try NFKMLXSAM2.backend(variant: .tiny, release: .sam21, weightsURL: nil)  // "sam2"; a click under NFKSAMPointKey
 
 // Semantic segmentation (image → grayscale label map; index = round(gray·(classCount−1)))
 let segformer = try NFKMLXSegFormer.backend(weightsURL: nil)                   // "segformer-b0"
@@ -2387,9 +3270,15 @@ let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          /
 let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text); every release under NFKMLXSigLIP2Variant
 let taesd   = try NFKMLXTAESD.backend(weightsURL: nil)                         // tiny AE: image → latent → image (NFKMLXTAESD.encode/decode for previews)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"
+let cosmos  = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)  // image/clip → latent or tokens → reconstruction; "cosmos-tokenizer-di8x8" (one name per variant)
 let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey; .vitB / .vitL / .vitH
 
 // Audio
+// Translation (text → text; every translator loads a release directory)
+let opusMT     = try NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil) // "opus-mt"; downloads Helsinki-NLP/opus-mt-en-de
+let m2m100     = try NFKMLXM2M100.backend(variant: .m418M, directoryURL: m2mDir)   // "m2m100"; .m1_2B, .small100 → "small100"
+let madlad     = try NFKMLXMADLAD.backend(directoryURL: madladDir, half: true)     // "madlad400-3b-mt"; 400+ languages, bfloat16
+let tgemma     = try NFKMLXTranslateGemma.backend(directoryURL: tgDir, precision: .checkpoint) // "translategemma"; Gemma 3 + the translation template
 let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText; .tiny … .largeV3Turbo
 let stems       = try NFKMLXDemucs.backend(weightsURL: nil)                    // audio → "drums"/"bass"/"other"/"vocals"
 let speakers    = try NFKMLXConvTasNet.backend(weightsURL: nil)               // audio → "speaker-1"/"speaker-2"
@@ -2412,7 +3301,13 @@ let vad         = try NFKMLXVAD.backend(weightsURL: nil)                       /
 let sileroVAD   = try NFKMLXSileroVAD.backend(weightsURL: nil)                  // Silero v6: result.segments : [NFKAudioSegment]
 let dac         = try NFKMLXDAC.backend(weightsURL: nil)                        // neural codec: audio → codes → audio (NFKMLXDAC.encode for the tokens)
 let snac        = try NFKMLXSNAC.backend(weightsURL: nil)                       // multi-scale codec (NFKMLXSNAC.encode → per-codebook streams at different rates); .music32kHz / .music44kHz
+let bigvgan     = try NFKMLXBigVGANFactory.backend(weightsURL: nil)             // BigVGAN v2 vocoder: audio → mel → waveform copy-synthesis (net(mel) is the generator)
+let mimi        = try NFKMLXMimi.backend(weightsURL: nil)                       // Mimi: transformer-in-codec (NFKMLXMimi.encode → per-codebook streams, semantic + acoustic); audio → codes → audio
 let tagger      = try NFKMLXAudioTagger.backend(weightsURL: nil, labels: nil)  // result.classifications : [NFKClassification]
+let basicPitch  = try NFKMLXBasicPitch.backend(weightsURL: nil)                 // music transcription: result.midi : NFKMIDISequence (notes, bends, standardMIDIFileData())
+let hft         = try NFKMLXHFTTransformer.backend(weightsURL: nil)             // piano transcription: onset/offset/multi-pitch/velocity → result.midi
+let muscriptor  = try NFKMLXMuScriptor.backend(variant: .medium, weightsURL: nil)  // multi-instrument transcription: result.midi, one program per instrument
+let allinone    = try NFKMLXAllInOne.backend(weightsURL: nil)                   // music structure: result.segments (sections), result.beats, NFKOutputTempo. Four stems in, or a mixture with demucsWeightsURL:
 
 // Music generation (MiniMax Music 3): a description under NFKInputPrompt and lyrics under
 // NFKInputLyrics become a stereo 44.1 kHz NFKAudioAsset. The factory takes the downloaded release
@@ -2427,6 +3322,10 @@ let music = try NFKMLXMusic3.backend(directoryURL: releaseDirectory)           /
 // to ~9 GiB; the same factory takes the result, and a stack that small stays loaded between runs:
 try NFKMLXMusic3.quantizeRelease(at: releaseDirectory, to: quantizedDirectory)
 let residentMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory)
+// The plain factory decides at each run whether the stages stay loaded (.automatic). .staged loads
+// each stage for its turn and releases it; .resident holds them and fails a run they do not fit.
+// Either choice writes the same audio.
+let stagedMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory, residency: .staged)
 ```
 
 Video models expose a clip-level Swift API, while the module/matting backend does one frame at a time.
@@ -2490,6 +3389,117 @@ segmentation backends emit, so a mask painted in the app and a mask the model ou
 thing. `NFKMLXBatchSampler` draws reshuffled passes from a seed, because cycling a handful of examples
 in a fixed order lets the optimizer chase the sequence rather than the data.
 
+The optimizer and schedule default to NVlabs' configuration: the head at 6e-4, the `poly` decay, and a
+1,500-step linear warm-up, which a 300-step run never leaves. Pass `learningRateSchedule: .constant` to
+hold the rate instead.
+
+### Retargeting a promptable segmenter to your own subject
+
+SAM 2 already segments what a click points at; what a consumer usually wants changed is what it reads
+as the subject in THEIR images. That is the prompt encoder and mask decoder, with the Hiera trunk and
+the whole memory path frozen — about 5M parameters of the tiny release's 39M.
+
+```swift
+let net = try NFKMLXSAM2.network(weightsURL: releasedWeights, variant: .tiny, release: .sam21)
+
+try NFKMLXSAM2.fineTune(net, examples: { step in
+    let index = sampler.indices(forStep: step)[0]
+    // The click is in pixels of the model's own 1024-square input.
+    return (image: myFrames[index], points: [(myClicks[index].x, myClicks[index].y, 1)],
+            target: myMasks[index])
+}, trainable: .maskDecoder, steps: 300)
+
+try NFKMLXWeights.save(net, to: tuned)
+let backend = try NFKMLXSAM2.backend(variant: .tiny, release: .sam21, weightsURL: tuned)
+```
+
+The objective is the reference's own, and its shape matters: an annotated frame with nothing in it
+still trains, because the mask terms are multiplied by whether the target holds an object and the
+object-score term is not. A consumer's negative examples are worth collecting.
+
+### Retargeting a text-prompted detector to your own instances
+
+SAM 3 names what a consumer asks for in words. What changes between datasets is what counts as an
+instance, which is a detector problem: the ViT and the text tower stay frozen, and because they are
+separate modules their output is computed once per image and reused at every step.
+
+```swift
+let detector = try NFKMLXSAM3.network(weightsURL: releasedWeights,
+                                      configuration: try NFKMLXSAM3.detectorConfiguration(fromHuggingFace: configURL))
+
+// The frozen half runs once per image, not once per step.
+let encoded = myImages.map { NFKMLXSAM3.encode(image: $0.plate, tokens: $0.ids, valid: $0.mask,
+                                               using: frozenModel) }
+
+try NFKMLXSAM3.fineTune(detector, examples: { step in
+    let index = sampler.indices(forStep: step)[0]
+    let cached = encoded[index]
+    // Boxes are (cx, cy, w, h) in 0...1. An empty set is an image the prompt names nothing in,
+    // which trains the presence head.
+    return (cached.levels, cached.positions, cached.prompt, myImages[index].mask, myBoxes[index])
+}, trainable: .detector, steps: 300)
+
+try NFKMLXWeights.save(detector, to: tuned)
+```
+
+### Adapting retrieval to your own corpus
+
+Qwen3-VL-Embedding and Qwen3-VL-Reranker are general retrievers, and a consumer's corpus has its own
+vocabulary and its own notion of relevance. What changes is small: a linear adapter over the
+embeddings, or the pair scorer. The 2B backbone stays frozen and produces its embeddings once, so
+nothing about it enters the training graph.
+
+```swift
+let embedder = try NFKMLXQwen3VLEmbedder.embedder(directoryURL: releaseDirectory)
+
+// The frozen half runs once per example, not once per step.
+let queries = MLXArray(myPairs.flatMap { embedder.embedding(forText: $0.query).map(\.floatValue) })
+    .reshaped([myPairs.count, embedder.embeddingDimensions])
+let documents = MLXArray(myPairs.flatMap { embedder.embedding(forText: $0.document).map(\.floatValue) })
+    .reshaped([myPairs.count, embedder.embeddingDimensions])
+
+// The adapter starts as the identity, so training moves away from the released space rather than
+// from a random one. Every other document in the batch is a negative.
+let adapter = try embedder.makeAdapter()
+try embedder.fineTune(adapter: adapter, queries: queries, documents: [documents], steps: 200)
+
+try NFKMLXWeights.save(adapter, to: tuned)
+try embedder.loadAdapter(from: tuned)        // every later embedding is the adapted one
+```
+
+The reranker retargets the same way, over the last-position hidden states of labeled pairs and a
+binary objective:
+
+```swift
+let head = try reranker.makeHead()           // starts at the release's own scoring direction
+try reranker.fineTune(head: head, hidden: myPairStates, labels: myLabels, steps: 200)
+try NFKMLXWeights.save(head, to: tunedHead)
+try reranker.loadHead(from: tunedHead)
+```
+
+Both objectives are the ones sentence-transformers trains these releases with:
+`MultipleNegativesRankingLoss` at its defaults for the embedder, `BinaryCrossEntropyLoss` over the
+raw pair logit for the reranker. A full fine-tune of the backbone is an offline run: it needs the
+optimizer state of 2 billion parameters and a batch of negatives large enough for the contrastive
+objective to mean anything.
+
+The text embedders carry the same adapter. `NFKMLXQwen3Embedding` and `NFKMLXEmbeddingGemma` return an
+`NFKMLXTextEmbeddingBackend`, which encodes a corpus once, trains an adapter over the cached vectors, and
+installs it so every later embedding is the adapted one:
+
+```swift
+let embedder = try NFKMLXEmbeddingGemma.backend(directoryURL: releaseDirectory) as! NFKMLXTextEmbeddingBackend
+
+let queries = try embedder.embeddings(for: myPairs.map(\.query))          // run once
+let documents = try embedder.embeddings(for: myPairs.map(\.document))
+
+let adapter = try embedder.makeAdapter()
+try embedder.fineTune(adapter: adapter, queries: queries, documents: [documents], steps: 200)
+
+try NFKMLXWeights.save(adapter, to: tuned)
+try embedder.loadAdapter(from: tuned)        // Objective-C: loadAdapterFromURL:error:
+```
+
 ### LoRA, for models with no small head to train
 
 A transformer stack has nowhere cheap to fine-tune: adapting CLIP or Whisper to a domain means reaching
@@ -2538,6 +3548,21 @@ A probe is a separate small model, so `NFKMLXWeights.save(probe, to:)` writes a 
 than modified CLIP weights. Contrast a contrastive fine-tune of CLIP itself, which needs large batches
 for negatives and is not a device workload.
 
+SigLIP 2 trains the same probe, `NFKMLXEmbeddingProbe` (`NFKMLXCLIPProbe` is its CLIP name), over its
+attention-pooled image embedding. The model encodes the photos, and a saved probe reloads through the
+model, which is also how an Objective-C app installs one:
+
+```swift
+let siglip = try NFKMLXSigLIP2.model(variant: .basePatch16At224, weightsURL: releasedWeights)
+let cached = try siglip.imageEmbeddings(for: myPhotos)                  // run once
+
+let probe = NFKMLXEmbeddingProbe(embedDimensions: siglip.embeddingDimensions, classCount: 3)
+try NFKMLXEmbeddingProbe.train(probe, embeddings: cached, labels: myLabels, steps: 300)
+try NFKMLXWeights.save(probe, to: savedProbe)
+
+let classifier = try siglip.probeBackend(probeURL: savedProbe, labels: ["cat", "dog", "neither"])
+```
+
 ### Adapting speech recognition to your own domain
 
 Whisper has no small head to retrain, so this is the recipe LoRA exists for. Only the decoder's query and
@@ -2556,6 +3581,409 @@ try NFKMLXWeights.save(net, to: tuned)
 
 `spectrogram` pads or trims to the 30-second window Whisper is trained on. That is not a detail: it was
 the single biggest accuracy factor when this model was brought to reference parity.
+
+### Fine-tuning a speech denoiser on your own recordings
+
+GTCRN is 48.2K parameters, so every weight trains on a device. Pair each noisy recording with the same
+speech recorded clean, at 16 kHz. The objective is the reference's own `HybridLoss`: compressed spectral
+errors plus the scale-invariant SNR of the resynthesized waveform.
+
+```swift
+let net = try NFKMLXGTCRNFactory.network(weightsURL: releasedWeights)
+try NFKMLXGTCRNFactory.fineTune(net, examples: { step in
+    (noisy: myPairs[step].noisy, clean: myPairs[step].clean)
+}, steps: 500)
+
+try NFKMLXWeights.save(net, to: tuned)
+let denoiser = try NFKMLXGTCRNFactory.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching bandwidth extension your own audio
+
+NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the
+kind it will restore trains every weight on the reference's own objective: the clip is noised along
+the diffusion schedule and the network learns to predict the noise, given the narrow-band copy.
+
+```swift
+let net = try NFKMLXNUWave2.network(weightsURL: releasedWeights)
+try NFKMLXNUWave2.fineTune(net, examples: { step in
+    // 48 kHz wide-band audio; the narrow-band copy is band-limited to the rate you will restore from.
+    NFKMLXNUWave2.trainingPair(wideband: myClips[step], narrowbandRate: 16000)
+}, steps: 500)
+
+try NFKMLXWeights.save(net, to: tuned)
+let extender = try NFKMLXNUWave2.backend(weightsURL: tuned)       // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching music structure analysis your own annotations
+
+All-In-One reads a track's four stems and marks its beats, downbeats, section boundaries, and section
+functions. Fine-tuning trains every weight on annotated tracks with the authors' own objective and
+optimizer; the annotation becomes frame targets the way their dataset builds them.
+
+```swift
+let net = try NFKMLXAllInOne.network(weightsURL: releasedWeights)
+let examples = try myTracks.map { track in
+    let spectrograms = net.spectrograms(stems: track.stems)            // bass, drums, other, vocals
+    let targets = try NFKMLXAllInOneTargets(beatTimes: track.beats, downbeatTimes: track.downbeats,
+                                            sectionBoundaries: track.boundaries,
+                                            sectionLabels: track.labels,      // e.g. start, intro, verse, …, end
+                                            frameCount: spectrograms.dim(2))
+    return (spectrograms: spectrograms, targets: targets)
+}
+try NFKMLXAllInOne.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 500)
+
+try NFKMLXWeights.save(net, to: tuned)
+let analyzer = try NFKMLXAllInOne.backend(weightsURL: tuned)      // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching voice activity detection your own audio
+
+The MarbleNet VAD trains every weight with the release's own recipe: masked per-frame cross-entropy,
+SGD with momentum, NeMo's warm-up, hold, and polynomial decay, and SpecAugment, dither, and dropout
+while it trains. Label each 20 ms frame from the spans that hold speech.
+
+```swift
+let net = try NFKMLXVAD.network(weightsURL: releasedWeights)
+let examples = myClips.map { clip in                     // 16 kHz samples and the seconds that are speech
+    (samples: clip.samples,
+     labels: NFKMLXVAD.frameLabels(speech: clip.speechSpans,
+                                   frameCount: NFKMLXVAD.frameCount(samples: clip.samples.count)))
+}
+try NFKMLXVAD.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 1000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let detector = try NFKMLXVAD.backend(weightsURL: tuned)            // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching speech separation your own speakers
+
+Conv-TasNet trains every weight on mixtures paired with each speaker's own signal, with asteroid's
+recipe for the release: the permutation-invariant negative SI-SDR, Adam at 1e-3, and gradient clipping
+at 5. The speakers can come back in either order; the objective scores the better assignment.
+
+```swift
+let net = try NFKMLXConvTasNet.network(weightsURL: releasedWeights)     // the geometry comes from the file
+try NFKMLXConvTasNet.fineTune(net, examples: { step in
+    (mixture: myMixtures[step].samples, sources: myMixtures[step].speakers)   // 16 kHz, one length
+}, steps: 1000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let separator = try NFKMLXConvTasNet.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
+### Retargeting YOLO to your own classes
+
+ultralytics' recipe, whole: a release transfers everything shaped alike into a network built for your
+class count (the class branches start fresh at the reference's bias priors), every weight trains under
+`v8DetectionLoss` with AdamW sized to the class count, the warm-up and per-epoch linear schedule, and
+clipping at 10, and a moving average of the weights is what the run leaves behind. Boxes are corners in
+each image's own pixels; augmentation is yours.
+
+```swift
+let net = try NFKMLXYOLO.network(variant: .nano, classCount: 3, weightsURL: releasedWeights)
+try NFKMLXYOLO.fineTune(net, examples: { step in
+    (images: myBatches[step].images,        // [batch, 640, 640, 3] in 0…1
+     targets: myBatches[step].boxes)        // [[NFKMLXYOLOBox]], one list per image
+}, steps: 3000, stepsPerEpoch: myBatches.count)
+
+try NFKMLXWeights.save(net, to: tuned)
+let detector = try NFKMLXYOLO.backend(variant: .nano, weightsURL: tuned, labels: ["cat", "dog", "fox"])
+```
+
+The later generations take the same shape: `NFKMLXYOLOGenerations.network(release:classCount:weightsURL:)`
+and `fineTune`, and the end-to-end releases (v10, YOLO26) train both branches under `E2ELoss`.
+
+### Adapting a language model to your own text
+
+Granite 4.0-H is a decoder with no small head to retrain, so LoRA is the recipe. Only the attention
+query and value projections are adapted; the Mamba layers, the embeddings, and the feed-forward stay
+frozen. The objective is causal language-model teacher forcing: each position predicts the next token.
+
+```swift
+let config = try NFKMLXGraniteHybrid.configuration(fromDirectory: releaseDirectory)
+let net = try NFKMLXGraniteHybrid.network(weightsURL: releaseWeights, configuration: config)
+try NFKMLXGraniteHybrid.fineTune(net, examples: { step in myTokenizedText[step % myTokenizedText.count] },
+                                 rank: 8, steps: 500)
+
+try NFKMLXLoRA.merge(into: net)
+try NFKMLXWeights.save(net, to: tuned)                       // reloads through network(weightsURL:)
+```
+
+Each example is one token sequence (the consumer's own text as ids). After `merge` the file carries no
+adapter keys, so `NFKMLXGraniteHybrid.network(weightsURL:configuration:)` reads it back.
+
+Nemotron Nano 2 uses the identical recipe through `NFKMLXNemotronH` — `configuration(fromDirectory:)`,
+`network(weightsURL:configuration:)`, `fineTune`, and `NFKMLXNemotronObjective` — with the same LoRA
+target (the attention query and value projections, its Mamba layers and feed-forwards frozen). Swap the
+type name and the same four calls apply.
+
+### Adapting a decision model to your own decisions
+
+Laya's own README says the base checkpoints are near chance on a new decision task and that the
+capability comes from fine-tuning on that task's examples. An example is a state, the question, and the
+right answer; the objective is the reference's strictly proper scoring rule (`rl_common.proper_reward`:
+log plus half the spherical score, minus the ranked probability score for an ordinal question), so
+honest probabilities are the only way to lower it. The head alone trains by default, which a device
+holds comfortably; `.all` trains the encoder too.
+
+```swift
+let laya = try NFKMLXLaya.laya(directoryURL: releaseDirectory)
+let department = NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team?", options: ["billing", "technical"])
+let examples = [
+    NFKMLXLayaExample(state: "My invoice is wrong.", question: department, label: 0),
+    NFKMLXLayaExample(state: "The app crashes on launch.", question: department, label: 1),
+    NFKMLXLayaExample(state: "I need this today.", question: .noulQuestion(withInstructions: "Urgent?"), holds: true),
+]
+let history = try laya.fineTune(examples: examples, steps: 200, learningRate: 1e-4, trainable: .head)
+try NFKMLXWeights.save(laya.net, to: tunedURL)
+
+// The fine-tuned file reloads through the factory, from Swift or Objective-C.
+let tuned = try NFKMLXLaya.laya(directoryURL: releaseDirectory, weightsURL: tunedURL)
+```
+
+```objc
+NFKMLXLaya *tuned = [NFKMLXLaya layaWithDirectoryURL:releaseDirectory weightsURL:tunedURL error:&error];
+```
+
+### Adapting a decision model to your own conversations
+
+The reference trains a conversation as its prefixes, so the model learns to judge the outcome early:
+each prefix is the context plus the turns so far under `conversation`, cut from the left so the newest
+turns survive, and a longer conversation is sampled evenly down to the release's `max_prefixes` (6).
+Every prefix asks the same noul, and its target is a TD(λ) blend of the outcome and the model's own
+prediction on the next prefix; λ = 1, the release's setting, trains every prefix toward the outcome.
+
+```swift
+let resolved = NFKDecisionQuestion.noulQuestion(withInstructions: "The problem will be resolved by the end of the conversation.")
+let episodes = [
+    NFKMLXLayaEpisode(context: ["account": 88213, "channel": "chat"],
+                      turns: [["role": "customer", "text": "My payouts keep failing."],
+                              ["role": "agent", "text": "Escalating to payments now."]],
+                      question: resolved, holds: true),
+]
+let history = try laya.fineTune(episodes: episodes, steps: 200, learningRate: 1e-4, lambda: 1)
+laya.prefixes(of: episodes[0]).map(\.length)      // [1, 2]: the prompts each prefix builds
+```
+
+The prefix builder and the TD targets are measured against the release's own `rl_common`: an
+eight-turn episode samples to prefixes `[1, 2, 4, 5, 7, 8]`, each token for token, and the targets at
+λ = 1 and λ = 0.5 match.
+
+### Adapting the community Jev reproductions
+
+open-jev-deberta trains its head, or the encoder too, on labeled states with the release's objective,
+cross-entropy plus the Brier score. One state carries any number of questions, and each label indexes
+the right option:
+
+```swift
+let model = try NFKMLXOpenJevDeBERTa.openJev(directoryURL: releaseDirectory)
+let examples = [
+    NFKMLXOpenJevDeBERTaExample(state: "Charged twice, refund me.", questions: [team, refund], labels: [0, 1]),
+    NFKMLXOpenJevDeBERTaExample(state: "The app crashes.", question: team, label: 1),
+]
+try model.fineTune(examples: examples, steps: 200, trainable: .head, batchSize: 8)   // .all: the encoder too, at 3e-5
+try NFKMLXWeights.save(model.net, to: tunedURL)
+let tuned = try NFKMLXOpenJevDeBERTa.openJev(directoryURL: releaseDirectory, weightsURL: tunedURL)
+```
+
+Open-Jev trains its LoRA adapter and head at the release's rates, the base frozen, and saves in the
+release's own `checkpoint` layout, so the same factory reloads it over the same base:
+
+```swift
+let release = try NFKMLXOpenJev.download(variant: .twoB, revision: nil, cacheDirectoryURL: nil)
+let model = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: release.checkpointDirectoryURL,
+                                      baseDirectoryURL: release.baseDirectoryURL, precision: .float32)
+try model.fineTune(examples: [NFKMLXOpenJevExample(state: record, question: intent, label: 0),
+                              NFKMLXOpenJevExample(state: record, question: refund, holds: true)],
+                   steps: 100, batchSize: 4)
+try model.save(to: tunedDirectory)          // adapter/, head.safetensors, model.json, temperature.json
+let tuned = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: tunedDirectory, baseDirectoryURL: release.baseDirectoryURL)
+```
+
+Both objectives are measured against the reference training code: open-jev-deberta's `decision_loss`
+on a padded batch at Brier weights 1 and 0.5, and Open-Jev's per-record loss on each of the 2B record's
+questions. Both recipes use PyTorch's AdamW with the releases' two learning rates. open-jev-deberta
+follows its release's schedule, a warm-up over the first 6% of the run then a linear decay to zero,
+unless `learningRateSchedule:` names another; Open-Jev's release trains at a constant rate. The
+temperature is not refitted by a fine-tune.
+
+### Adapting a translator to your own sentence pairs
+
+The three translators share one recipe: LoRA on the decoder's query and value projections, the encoder
+frozen, teacher forcing as the objective. The release's tokenizers produce each pair's ids:
+
+```swift
+let net = try NFKMLXMarian.network(directoryURL: releaseDir)
+let release = try NFKMLXMarian.translator(net: net, directoryURL: releaseDir)
+try NFKMLXMarian.fineTune(net, examples: { step in
+    let pair = myPairs[step % myPairs.count]
+    return (source: MLXArray(release.sourceIds(for: pair.source, target: nil).map { Int32($0) }),
+            target: MLXArray((release.targetTokenizer.encode(pair.target, dummyPrefix: nil) + [0]).map { Int32($0) }))
+}, rank: 8, steps: 500)
+
+try NFKMLXLoRA.merge(into: net)
+try NFKMLXWeights.save(net, to: tunedDir.appendingPathComponent("model.safetensors"))
+let tuned = try NFKMLXMarian.translator(net: try NFKMLXMarian.network(directoryURL: tunedDir), directoryURL: releaseDir)
+```
+
+`NFKMLXM2M100.fineTune` and `NFKMLXMADLAD.fineTune` take the same shape (M2M-100's target ids lead with
+the `__xx__` marker; MADLAD adapts a float32 load). `NFKMLXTranslateGemma.fineTune` adapts the Gemma 3
+decoder on (prompt ids, model-turn ids) pairs from `promptTokens(text:sourceCode:targetCode:)`, the prompt
+positions masked in the loss.
+
+### Adapting an image or video tokenizer to your own footage
+
+NVIDIA post-trains the Cosmos Tokenizers to new domains, and the recipe fits a device: the network is
+about 80M parameters and trains on crops. The objective is the reference's post-training one, a mean
+absolute pixel error plus 0.1 times a VGG-16 perceptual term, so it needs the VGG-16 ImageNet weights
+(`timm/vgg16.tv_in1k`, `model.safetensors`):
+
+```swift
+let net = try NFKMLXCosmosTokenizer.network(variant: .continuousVideo8x8x8, weightsURL: autoencoderJIT)
+let objective = try NFKMLXCosmosTokenizerObjective(vggWeightsURL: vggWeights)
+
+try NFKMLXCosmosTokenizer.fineTune(net, examples: { step in
+    myClips[step % myClips.count]          // [1, 17, 256, 256, 3] in [-1, 1]
+}, trainable: .decoder, objective: objective, steps: 1_000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let backend = try NFKMLXCosmosTokenizer.backend(variant: .continuousVideo8x8x8, weightsURL: tuned)
+```
+
+`.decoder` keeps the encoder, and so every latent and token, exactly as released, which is what a world
+model trained on the released latents needs; `.everything` trains the whole network as the reference's
+post-training does. The optimizer defaults to the reference's AdamW (1e-4, betas 0.5 and 0.999, weight
+decay 0.01) and its 5,000-step linear warm-up; pass `learningRateSchedule: .constant` to hold the rate.
+
+### Teaching Sa2VA your own referring segmentation
+
+Sa2VA's authors fine-tune it with LoRA on the language model while training the `[SEG]` bridge and SAM's
+mask decoder, scoring the answer text and each mask together. An example is an image, a turn in the
+release's template whose answer carries one `[SEG]` per object, the labels with the prompt masked, and
+one mask per `[SEG]`:
+
+```swift
+let net = try NFKMLXSa2VA.network(directoryURL: sa2vaRelease)                  // float32
+let tokenizer = NFKMLXSa2VA.tokenizer(inDirectory: sa2vaRelease)!
+let examples = try myPhotos.map { photo, request, mask in                        // CGImage, String, [1, H, W]
+    let tiles = try NFKMLXSa2VAProcessor.dynamicTiles(photo, side: net.configuration.imageSize)
+    let prompt = NFKMLXSa2VAProcessor.promptText("<image>" + request, imageTokens: tiles.count * net.configuration.tokensPerTile,
+                                                 template: net.configuration.template)
+    let promptIds = tokenizer.encode(prompt).map(\.int32Value)
+    let answerIds = tokenizer.encode("Sure, [SEG].<|im_end|>").map(\.int32Value)
+    return NFKMLXSa2VAExample(pixelValues: NFKMLXSa2VAProcessor.tilePixels(tiles, side: net.configuration.imageSize),
+                              inputIds: MLXArray(promptIds + answerIds),
+                              labels: MLXArray([Int32](repeating: -100, count: promptIds.count) + answerIds),
+                              groundingImage: try NFKMLXSa2VAProcessor.groundingPixels(photo).transposed(0, 2, 3, 1),
+                              masks: mask)
+}
+try NFKMLXSa2VA.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 2_000)
+
+try NFKMLXLoRA.merge(into: net)
+try NFKMLXSa2VA.save(net, toDirectoryURL: tuned, release: sa2vaRelease)
+let backend = try NFKMLXSa2VA.backend(directoryURL: tuned)
+```
+
+The defaults are the authors' (LoRA rank 128, AdamW at 4e-5 with weight decay 0.05, a 5% warm-up then a
+cosine to zero); a smaller `rank` fits a smaller device. A Qwen-VL release builds its example through
+`NFKMLXSa2VAQwenNet.imageProcessor` and passes the patch grid as `grid`; the LLaVA release uses
+`NFKMLXSa2VALLaVA.pixelValues`. Both fine-tune through their own `fineTune` overloads.
+
+### Adapting Florence-2 to your own task
+
+Florence-2 answers a task prompt about an image. LoRA on its text decoder teaches it a new answer
+format or domain from a few hundred examples; the objective is the release's own training loss:
+
+```swift
+let net = try NFKMLXFlorence2.network(directoryURL: florenceRelease)
+let tokenizer = NFKMLXFlorence2Processor.tokenizer(inDirectory: florenceRelease)!
+let prompt = NFKMLXFlorence2Processor.encodePrompt(NFKMLXFlorence2Processor.expandPrompt("<CAPTION>"),
+                                                   tokenizer: tokenizer, eosTokenId: 2).reshaped([-1])
+let examples = try myPhotos.map { image, caption in
+    (try NFKMLXFlorence2Processor.pixelValues(image), prompt,
+     NFKMLXFlorence2Processor.encodePrompt(caption, tokenizer: tokenizer, eosTokenId: 2).reshaped([-1]))
+}
+try NFKMLXFlorence2.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 1_000)
+
+try NFKMLXLoRA.merge(into: net)
+try NFKMLXFlorence2.save(net, toDirectoryURL: tuned, release: florenceRelease)
+let backend = try NFKMLXFlorence2.backend(directoryURL: tuned)
+```
+
+The adapters sit on the decoder's query and value projections (rank 8); `rank: nil` trains the whole
+language model with the image tower frozen. Microsoft publishes no fine-tuning script, so the optimizer is
+the translators' default (AdamW at 1e-4, clip 1).
+
+### Retargeting a table detector to your own document classes
+
+Table Transformer is a DETR detector; its authors train it with DETR's set objective, which assigns each
+labeled box its query before scoring the class and the box. A new class set replaces the class head and
+keeps everything else:
+
+```swift
+let net = try NFKMLXTableTransformer.network(directoryURL: tatrRelease, labels: ["table", "figure", "chart"])
+
+// Each page: its pixels and an [N, 5] array of [class, cx, cy, w, h] rows, the box normalized to 0...1.
+let pages = try myPages.map { image, boxes in
+    (try NFKMLXTableTransformerProcessor.pixelValues(image, sizing: .release(at: tatrRelease)), boxes)
+}
+try NFKMLXTableTransformer.fineTune(net, examples: { pages[$0 % pages.count] }, steps: 2_000,
+                                    stepsPerEpoch: pages.count)
+
+try NFKMLXTableTransformer.save(net, toDirectoryURL: tuned, release: tatrRelease)
+let backend = try NFKMLXTableTransformer.backend(directoryURL: tuned)     // detects "table", "figure", "chart"
+```
+
+The default trains what the reference trains (the transformer, the heads, and the backbone's last three
+stages) with its AdamW, its gradient clip at 0.1, and its 0.9-per-epoch decay; `trainable: .heads`
+trains the class and box heads alone.
+
+### Adapting a handwriting reader to your own writing
+
+TrOCR's authors fine-tuned every release the same way: all the weights, teacher-forced on transcribed
+lines. The recipe runs on the device, from any release directory:
+
+```swift
+let net = try NFKMLXTrOCR.network(directoryURL: trocrRelease)
+let tokenizer = NFKMLXTrOCRProcessor.tokenizer(inDirectory: trocrRelease)!
+let lines = try myLines.map { image, text in                      // CGImage, its transcription
+    (try NFKMLXTrOCRProcessor.pixelValues(image), NFKMLXTrOCRProcessor.targetIds(for: text, tokenizer: tokenizer, endToken: 2))
+}
+try NFKMLXTrOCR.fineTune(net, examples: { lines[$0 % lines.count] }, steps: 3_000)
+
+try NFKMLXTrOCR.save(net, toDirectoryURL: tuned, release: trocrRelease)
+let backend = try NFKMLXTrOCR.backend(directoryURL: tuned)
+```
+
+The small releases resize with a bicubic filter: pass `bicubic: true` to `pixelValues` for them, as the
+backend does when the release's `preprocessor_config.json` names it. The optimizer is the reference's
+(Adam with decoupled weight decay 1e-4 at 2e-5, a 500-update warm-up, then an inverse-square-root
+decay); `trainable: .decoder` freezes the image encoder for a lighter run.
+
+### Training a video classifier on your own clips
+
+V-JEPA 2's authors classify video by training an attentive probe on the frozen encoder: a few attention
+layers and a linear classifier over the encoder's tokens. The recipe is the same on a device. Start from
+an encoder release, or from a classification release to reuse its trained pooler:
+
+```swift
+let net = try NFKMLXVJEPA2.network(directoryURL: vjepa2Release, labels: ["pour", "stir", "whisk"])
+
+let clips = try myClips.map { frames, label in                   // [CGImage], class index
+    (try NFKMLXVJEPA2Processor.clip(frames: frames, configuration: net.configuration), label)
+}
+try NFKMLXVJEPA2.fineTune(net, examples: { clips[$0 % clips.count] }, steps: 2_000)
+
+try NFKMLXVJEPA2.save(net, toDirectoryURL: tuned)
+let backend = try NFKMLXVJEPA2.backend(directoryURL: tuned)     // ranks "pour", "stir", "whisk"
+```
+
+`.probe` trains the pooler and the classifier and `.classifier` the classifier alone; the encoder stays
+frozen in both. The optimizer is the reference's AdamW at 5e-3 with weight decay 0.01 on a cosine to
+zero. The reference sweeps twenty rate and decay pairs and keeps the best on validation; pass
+`learningRate:` and `weightDecay:` to run another. The saved directory loads through the Objective-C
+`+[NFKMLXVJEPA2 backendWithDirectoryURL:error:]` as well.
 
 ### Any model
 
@@ -2790,6 +4218,71 @@ let audio = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputPr
     .output(forKey: NFKOutputAudio) as? NFKAudioAsset                   // a playable WAV
 ```
 
+## Audio → notes and structure (music)
+
+A music-transcription backend returns its notes as an `NFKMIDISequence` under `NFKOutputMIDI`, and a
+music-structure backend returns labeled spans under `NFKOutputSegments`, beats under
+`NFKOutputBeats`, and the tempo under `NFKOutputTempo`. All four are core value types, so a consumer
+reads them without linking InferKitMLX.
+
+```objc
+NFKMIDINote *root = [NFKMIDINote noteWithPitch:60 startSeconds:0.0 endSeconds:0.5 velocity:100];
+NFKMIDINote *third = [[NFKMIDINote alloc] initWithPitch:64
+										   startSeconds:0.5
+											 endSeconds:1.0
+											   velocity:90
+												program:4
+											 percussion:NO
+											  pitchBend:@[ @0.0, @0.25, @0.5 ]];
+NFKMIDISequence *sequence = [NFKMIDISequence sequenceWithNotes:@[ third, root ] tempoBPM:96.0];
+
+// The notes are ordered by time whatever order they arrive in.
+sequence.notes.firstObject.pitch;            // 60
+sequence.durationSeconds;                    // 1.0
+
+// A Standard MIDI File a DAW opens: a conductor track with the tempo, one track per program,
+// percussion on channel 10, and each note's pitch bend written across it.
+NSData *midi = [sequence standardMIDIFileData];
+[sequence writeToURL:url error:&error];
+```
+
+The structure result reads the same way. `positionInBar` counts from 1, so position 1 is a downbeat
+and the highest position a track reaches is its bar length.
+
+```objc
+NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];   // a music-structure backend
+for (NFKAudioSegment *section in result.segments) {
+	NSLog(@"%@ %.2f–%.2fs", section.label, section.startSeconds, section.endSeconds);
+}
+result.beats.firstObject.isDownbeat;         // YES when the beat starts a bar
+[[result outputForKey:NFKOutputTempo] doubleValue];
+```
+
+In Swift the importer renames the file writer to a method:
+
+```swift
+let sequence = NFKMIDISequence(notes: notes, tempoBPM: 96)
+let data = sequence.standardMIDIFileData()
+result.midi?.notes.count
+result.segments?.first?.label                // "intro"
+result.beats?.first?.isDownbeat              // true
+```
+
+The models behind these results are in InferKitMLX: `NFKMLXBasicPitch` transcribes any instrument to
+notes, `NFKMLXHFTTransformer` transcribes piano more accurately, `NFKMLXMuScriptor` transcribes a
+mixture to one MIDI track per instrument, and `NFKMLXAllInOne` divides a track into sections and
+tracks its beats.
+
+```swift
+let transcriber = try NFKMLXBasicPitch.backend(weightsURL: basicPitchURL)
+let midi = try transcriber.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset])).midi
+
+// All-In-One reads the four HT Demucs stems, so it takes either an array of them or a mixture with a
+// separator attached.
+let analyzer = try NFKMLXAllInOne.backend(weightsURL: allInOneURL, demucsWeightsURL: demucsURL)
+let structure = try analyzer.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: mixture]))
+```
+
 ## Audio → stems (Demucs)
 
 `NFKMLXDemucsBackend` separates a music mix into stems (drums, bass, other, vocals) — a time-domain
@@ -2811,7 +4304,7 @@ are added. Same request and result shape as `NFKMLXDemucs`.
 
 ```objc
 id<NFKInferenceBackend> htdemucs = [NFKMLXHTDemucs backendWithWeightsURL:checkpointURL error:&error];
-NFKInferenceRequest *request = [[NFKInferenceRequest alloc] initWithInputs:@{NFKInputAudio: song}];
+NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{NFKInputAudio: song}];
 NFKAudioAsset *vocals = [[htdemucs runInferenceForRequest:request error:&error] outputForKey:@"vocals"];
 ```
 
@@ -2881,7 +4374,7 @@ embedded byte-level BPE tokenizer:
 
 ```objc
 // Objective-C — the dominant path for a quantized release.
-NFKInferenceBackend *llm = [NFKMLXLanguage backendWithGGUFURL:ggufURL error:&error];
+id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithGGUFURL:ggufURL error:&error];
 NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
     initWithInputs:@{ NFKInputPrompt: @"The capital of France is" } parameters:@{}];
 NFKInferenceResult *result = [llm runInferenceForRequest:request error:&error];   // off the render thread
@@ -2900,12 +4393,20 @@ key-value cache), and its byte-fallback BPE tokenizer is read from the release:
 
 ```objc
 // Objective-C.
-NFKInferenceBackend *gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory error:&error];
+id<NFKInferenceBackend> gemma = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory error:&error];
 ```
 
 ```swift
 let gemma = try NFKMLXGemmaLanguage.backend(directoryURL: releaseDirectory)   // Swift
 // "The capital of France is" → " Paris." on the released E2B.
+```
+
+The 26B-A4B mixture takes a residency, and pages its routed experts as the language backend does:
+
+```objc
+id<NFKInferenceBackend> mixture = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory
+                                                                          residency:NFKMLXResidencyPaged
+                                                                              error:&error];
 ```
 
 ## Choosing a backend at runtime

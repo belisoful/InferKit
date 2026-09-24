@@ -97,6 +97,38 @@ weights:
   choices). Each
   family is measured against `transformers`' own implementation, and every option reaches
   Objective-C as a request parameter.
+- **`NFKMLXMambaBackend`** — on-device text generation for Codestral-Mamba
+  (`NFKMLXMamba.backend(directoryURL:)` / `mambaBackendWithDirectoryURL:error:`), the toolkit's first
+  state-space model. Every layer is a Mamba-2 selective scan (SSD) instead of attention, carrying a
+  fixed-size state rather than a growing key-value cache, and it runs prefill-only. The tokenizer is the
+  Mistral byte-fallback BPE (`NFKMLXMistralTokenizer`) read from the release's `tokenizer.json`. At
+  reference parity against transformers' `Mamba2ForCausalLM`: the released Codestral-Mamba-7B matches by
+  shape across all 579 tensors and, at bfloat16, reproduces the prefill logits (cosine 0.9999146) and
+  the greedy continuation token for token. One selective-scan mixer serves the SSM class, so the hybrid
+  Mamba-attention decoders (Granite 4.0-H, Nemotron Nano 2) build on it.
+- **`NFKMLXGraniteBackend`** — on-device text generation for Granite 4.0-H
+  (`NFKMLXGraniteHybrid.backend(directoryURL:)` / `graniteBackendWithDirectoryURL:error:`), IBM's hybrid
+  decoder. Most layers are the Mamba-2 selective scan reused from Codestral; the few its `layer_types` names
+  are grouped-query attention with no positional embedding, and Granite's scalar multipliers scale the embedding, each
+  residual, the attention logits, and the output logits. The dense sizes (h-350m, h-1b) carry a
+  gated-linear shared MLP; the MoE sizes (h-tiny, h-small) add a routed mixture of experts beside it. The
+  tokenizer is Granite's byte-level BPE, read from the release's `tokenizer.json`, and it runs
+  prefill-only. At reference parity against transformers' `GraniteMoeHybridForCausalLM`: the released
+  granite-4.0-h-1b matches by shape across all 466 tensors and reproduces the float32 prefill logits and
+  greedy continuation, and the routed mixture is measured at a tiny configuration. Adapts to a
+  consumer's own text with LoRA on the attention projections through `NFKMLXGraniteHybrid.fineTune`.
+- **`NFKMLXNemotronBackend`** — on-device text generation for Nemotron Nano 2
+  (`NFKMLXNemotronH.backend(directoryURL:)` / `nemotronBackendWithDirectoryURL:error:`), NVIDIA's hybrid
+  decoder. Its 56 layers interleave three mixers from a `hybrid_override_pattern`: the Mamba-2 selective
+  scan reused from Codestral, a ReLU-squared dense feed-forward, and grouped-query attention with no
+  positional embedding at the standard scale. There are no scalar multipliers, each block carries a
+  single pre-norm, and the output projection is untied. The Mamba mixer's gated norm is grouped by
+  `n_groups`, the one numeric difference from the Codestral/Granite mixer. The tokenizer is Nemotron's
+  byte-level BPE, read from the release's `tokenizer.json`, and it runs prefill-only. At reference parity
+  against transformers' `NemotronHForCausalLM`: the tiny config reaches logit cosine 1.0, and the
+  released Nemotron-Nano-9B-v2 matches by shape across all 341 tensors (its `backbone.*` naming remapped
+  to `model.*`). Adapts to a consumer's own text with LoRA on the attention projections through
+  `NFKMLXNemotronH.fineTune`.
 - **`NFKMLXGemmaBackend`** — text generation for the Gemma 4 decoders (`NFKMLXGemmaLanguage.backend(directoryURL:)`
   / `gemmaBackendWithDirectoryURL:error:`), dispatching on a release's config model type across the
   E-series, the 26B-A4B mixture, and the 12B unified decoder. Gemma runs prefill-only, so generation
@@ -165,6 +197,57 @@ weights:
   sliding window elsewhere), GeGLU, and LayerNorm without biases. Reference parity against transformers'
   own `ModernBertForSequenceClassification` (every one of the 22 layers exact, scores to within 5e-3);
   the byte-level BPE tokenizer is read from the release's `tokenizer.json`.
+- **`NFKMLXLaya`** — Laya (`convaiinnovations/laya`, Apache-2.0), the open reproduction of TypeSafe's
+  Jev: a typed-decision model that answers a choice, a score, or a noul about a state in one
+  bidirectional pass, without generating text. It takes the core's `NFKDecisionQuestion`s and returns
+  `NFKDecisionAnswer`s, the objects `NFKTypeSafeBackend` returns, so a feature moves between the hosted
+  model and the device by swapping the object; `NFKMLXLayaBackend` answers the same request through the
+  contract. The network is the ModernBERT encoder plus a decision head (a type embedding, two pre-norm
+  transformer layers, a marker scorer, an act-or-escalate head); every option is scored at its own mask
+  token. Three variants: the root (ModernBERT-large, 421M), `typed-decisions` (fine-tuned on that
+  benchmark), and `multilingual` (mmBERT-base, Gemma's tokenizer, 100-plus languages). Reference parity
+  against the release's own inference code on all three, the prompt token for token. Customization is a
+  head fine-tune (or the encoder too) with the reference's proper-scoring objective, reloaded through
+  `layaWithDirectoryURL:weightsURL:error:`. `layaWithVariant:revision:cacheDirectoryURL:error:` (and its
+  completion-handler form) downloads one variant's five files through the `NFKHFHub` cache and builds it;
+  `NFKMLXLaya.measuredRevision` pins the download to the commit parity was measured at.
+- **`NFKMLXOpenJevDeBERTa`** — open-jev-deberta-v3-large (`com-kotobalabs/open-jev-deberta-v3-large`,
+  Apache-2.0), a community reproduction of Jev on DeBERTa-v3-large (`NFKMLXDeBERTaV2Net`, the package's
+  disentangled-attention encoder): one pass reads `[CLS] [STATE] state ([Q] question ([OPT] option)*)*
+  [SEP]`, and a head scores each option from the mean of its text, the mean of its question's text, and
+  their product. Reference parity against the release's bundled `typed_decisions` code (every encoder
+  layer, the logits, a padded batch, the SentencePiece tokenizer token for token). Customization is a head
+  or full fine-tune on the release's cross-entropy-plus-Brier objective, measured against its
+  `decision_loss`.
+- **`NFKMLXOpenJev`** — Open-Jev 2B / 9B / 27B (`ZefanCai/Open-Jev-2B`, `-9B`, `-27B-v1.1`; weights
+  Apache-2.0, loader MIT), a rank-8 LoRA adapter and a scalar head over a Qwen3.5-architecture text model
+  (`NFKMLXHybridLanguageNet`: Qwen3.5-2B, Qwen3.5-9B, Qwen3.8-27B). Each
+  candidate answer is its own chat-templated Yes/No prompt; the head reads the last token. The factory
+  downloads the adapter and the exact base revision it names. Reference parity on the 2B release against
+  the loader's own `DecisionModel` at float32 (every candidate's tokens, every hidden state, the logits);
+  the 9B release agrees with the loader at bfloat16, both sides' own precision; the 27B release is
+  checked structurally against its base's shard headers.
+  Customization trains the adapter and head at the release's rates and saves in its own layout.
+  `NFKMLXDecisionBackend` puts either behind the request `NFKTypeSafeBackend` reads.
+- **`NFKMLXChronos`** — Chronos-Bolt (`amazon/chronos-bolt-base`, Amazon, Apache-2.0), a time-series
+  forecaster: a patched T5 encoder-decoder that standardizes a numeric context window, patchifies it into
+  16-sample patches, runs an encoder and a single-token decoder, and emits a quantile forecast over a
+  horizon. Not a backend (a numeric series has no core key); `forecast(context:horizon:)` returns one row
+  per quantile level (0.1 … 0.9) and `medianForecastForContext:horizon:` the point forecast. At reference
+  parity against the `chronos` package's own `ChronosBoltPipeline`, every seam ~1.0 and all nine quantile
+  rows matching.
+- **`NFKMLXQwen3VLEmbedder`** and **`NFKMLXQwen3VLReranker`** — multimodal retrieval
+  (`Qwen3-VL-Embedding-2B`, `Qwen3-VL-Reranker-2B`): a text, an image, or both embed into one space,
+  and a reranker reads a query and a document together whichever of them carries the image. An
+  instruction conditions both, so the same corpus is searched differently under a different task
+  description. Both are the Qwen3-VL backbone the package already runs, pooled at the last position:
+  the embedder normalizes it, and the reranker reads its preference for "yes" over "no" through a
+  sigmoid. `embeddingForText:` / `embeddingForImage:text:instruction:` and
+  `scoresForQuery:documents:` / `rankedIndicesForQuery:documents:` are the entry points. Reference
+  parity against each release's own script on the released 2B weights: prompt ids exact, text
+  embedding cosine 0.9999999999866735, image embedding 0.9999999999305262, and the reranker's scores
+  to 2.4e-6. A consumer customizes either on their own corpus by training a small probe over the
+  frozen backbone, against the objectives sentence-transformers trains these releases with.
 - **`NFKMLXSmolVLM`** — a vision-language model (SmolVLM2-500M): an image and a question in, an answer
   out. A SigLIP vision encoder turns each image tile into patch features, a pixel-shuffle connector
   projects them to the decoder width, and a Llama decoder (the dense stack the language model runs)
@@ -180,6 +263,68 @@ weights:
   transformers' own Qwen3-VL vision model (patch embedding, position embedding, merged output, and every
   deepstack feature exact). The decoder is the Qwen3 dense stack; its Qwen3-VL-specific M-RoPE and
   deepstack injection are the remaining integration.
+- **`NFKMLXPixtral`** — Pixtral 12B (`mistral-experimental/pixtral-12b`, Mistral, Apache-2.0), a third VLM
+  and a third vision architecture: a from-scratch 2D-rotary vision tower (`NFKMLXPixtralVisionNet`) with
+  native variable resolution, a two-layer GELU connector (`NFKMLXPixtralConnector`), and a Mistral-Nemo
+  dense decoder the package already runs, the projected patch features splicing in at the `[IMG]`
+  positions. At reference parity against transformers' own `LlavaForConditionalGeneration`: the vision
+  tower and connector measured in float32 seam by seam, and the whole fused pipeline against a tiny
+  float32 oracle with the reference's argmax at every position. The 12B decoder's released-weight fused
+  pass needs ~24 GB resident, so it runs behind an opt-in. Customization is offline-only, the decoder
+  being a language model above 4B.
+- **`NFKMLXFlorence2`** — Florence-2 (`microsoft/Florence-2-base` and `-large` and their fine-tuned `-ft` releases, Microsoft, MIT; the geometry
+  read from the release's `config.json`), a unified
+  vision model that reads one image and a task token and writes text: a caption, detected objects, or
+  grounded regions, with boxes carried as location tokens. The vision encoder is DaViT
+  (`NFKMLXFlorence2VisionNet`), whose every block pairs a windowed spatial attention with a grouped
+  channel attention; a projector (`NFKMLXFlorence2Projector`) turns the vision grid into tokens that
+  concatenate before the prompt for a BART encoder-decoder (the shared `NFKMLXSeq2SeqTransformer`). At
+  reference parity against the repo's own implementation seam by seam (the DaViT tower, the projector,
+  the encoder, the first-step logits), and token for token in the release's own generation (three
+  beams, no repeated 3-gram) on captioning, detailed captioning, OCR, and detection, on all four releases.
+  The backend detects objects end to end. The oracle is the repo's `trust_remote_code` code, since the
+  native transformers integration does not load the released checkpoint. Adapts to your own task on the
+  device with LoRA on the BART decoder, scored by the release's own `labels=` loss:
+  `NFKMLXFlorence2.network(directoryURL:)`, `fineTune`, `NFKMLXLoRA.merge(into:)`, then
+  `save(_:toDirectoryURL:release:)`, which the same factory loads.
+- **`NFKMLXTrOCR`** — TrOCR (`microsoft/trocr-base-handwritten`, Microsoft, MIT), a handwriting-line
+  reader that turns one image into its transcription. A `VisionEncoderDecoder`: a plain `google/vit`
+  image encoder (`NFKMLXTrOCRVisionNet`) whose patch tokens are the memory for a BART-style decoder (the
+  shared `NFKMLXSeq2SeqTransformer` in its decoder-only shape, cross-attending the 768-wide features
+  under a 1024-wide decoder). At reference parity against transformers' own `VisionEncoderDecoderModel`
+  seam by seam (the embeddings, the first block, the encoder output, the first-step logits) and token
+  for token in greedy generation; the backend reads a rendered line end to end. The decoder is entirely
+  the shared seq2seq (which grew a cross-attention width and a decoder-only shape for it); the new work
+  is the ViT encoder. Every release (small, base, and large; handwritten, printed, scene text, and the
+  stage-1 pretrained ones) loads from its directory. Fine-tunes on your own lines on the device the way
+  the authors fine-tuned it: `NFKMLXTrOCR.network(directoryURL:)`, `fineTune`, then
+  `save(_:toDirectoryURL:release:)`, which the same factory loads.
+- **`NFKMLXSa2VA`** — Sa2VA (ByteDance, Apache-2.0), a segmentation VLM: one image and a referring
+  prompt in, an answer out, and a mask for each `[SEG]` the answer carries. One directory factory,
+  `NFKMLXSa2VA.backend(directoryURL:)`, serves the four families the releases span: InternVL
+  (`Sa2VA-1B`/`-4B`/`-8B`/`-26B`, `Sa2VA-InternVL3-2B`/`-8B`/`-14B`; InternViT-300M or -6B under a qwen2,
+  phi3, or InternLM2 decoder), Qwen-VL (`Sa2VA-Qwen3-VL-2B`/`-4B`, `Sa2VA-Qwen2_5-VL-3B`/`-7B`), LLaVA-1.5
+  (`Sa2VA-LLaVA-1.5-7B`), and SAM 3 grounding (`Sa2VA-Qwen3-VL-4B-SAM3`); the rest ground with SAM 2's
+  tracker. Each release's own chat template, end token, and tokenizer (InternLM2's SentencePiece included)
+  are read from its directory. At reference parity at float32 against the repos' own code, every seam
+  within about 1e-6 of 1 and the mask at IoU 1.0, with token-exact generation and the backend returning
+  the reference's decoded answer. Fine-tunes on the device with the authors' own recipe (LoRA on the
+  language model, the mask decoder and `[SEG]` bridge trained, a language-plus-mask objective):
+  `NFKMLXSa2VA.network(directoryURL:)` (or the Qwen-VL and LLaVA nets' `load(directoryURL:)`),
+  `fineTune`, `NFKMLXLoRA.merge(into:)`, then `save(_:toDirectoryURL:release:)`, which the same factory
+  loads.
+- **`NFKMLXPhi4MM`** — Phi-4-multimodal (`microsoft/Phi-4-multimodal-instruct`, Microsoft, MIT), one model
+  that reads text, images, and speech: a prompt or a multi-turn conversation with any number of pictures
+  and clips in, an answer out, so it captions, answers questions about pictures, transcribes, and answers
+  a spoken question about a picture. Greedy by default, sampled on request. A Phi-4-mini decoder (the shared `NFKMLXLanguageNet`, with partial rotary
+  and LongRoPE) is fed by a SigLIP image tower laid out in Phi-3.5's dynamic-HD crops and by a
+  Conformer speech tower, and the release's per-modality LoRAs ride on the decoder as a mixture, one
+  adapter active per request. At reference parity against the release's own code in all four of its
+  modes, with token-exact answers from raw inputs; both preprocessors match the reference processor
+  (the image pixels exactly), including its handling of 44.1, 48, 8, and 11.025 kHz audio; a multi-turn
+  conversation over two pictures and two clips, and a clip past 40 seconds, answer as the reference does.
+  Loads from a release directory or the hub, at the released bfloat16 or float32; offline-only to
+  customize (5.6 billion parameters).
 - **`NFKMLXGGUF`** — a native GGUF reader, the sequel to the native PyTorch checkpoint reader. GGUF is
   the format most quantized language models are distributed in. This reads the container's metadata and
   tensor table and dequantizes the block-quant formats a real model uses (`Q4_K`, `Q6_K`, `Q8_0`, `Q5_0`,
@@ -333,6 +478,27 @@ models.
   network with attention refinement and feature fusion, emitting a grayscale class-label map.
 - **`NFKMLXVideoSR`** — real recurrent video super-resolution: a ConvGRU propagates a hidden state
   along the clip; single frame through the module backend, or a sequence via `upscaleSequence`.
+- **`NFKMLXVJEPA2`** — V-JEPA 2 (Meta, MIT), a self-supervised video encoder: a video (`NFKInputVideo`)
+  or an image (`NFKInputImage`) becomes a mean-pooled feature embedding under `NFKOutputEmbedding`, for
+  retrieval or as a video encoder for a vision-language model, and a classification release also ranks
+  its classes under `NFKOutputClassifications` (Something-Something v2 or Diving48). A ViT with a 3D
+  tubelet patch embedding and 3D rotary attention, no class token and no learned position table; the
+  classifiers add an attentive pooler. Build with `NFKMLXVJEPA2.backend(directoryURL:)` from any
+  `facebook/vjepa2-*` release (ViT-L, ViT-H, or ViT-g), whose `config.json` supplies the geometry, or
+  download with `backend(repo:revision:cacheDirectoryURL:)`; at reference parity against transformers'
+  own `VJEPA2Model` and `VJEPA2ForVideoClassification`. A probe on your own classes trains on the device
+  the way the authors evaluate the encoder: `network(directoryURL:labels:)`, `fineTune`, then
+  `save(_:toDirectoryURL:)`, which the same factory loads.
+- **`NFKMLXCosmosTokenizer`** — the Cosmos Tokenizer (NVIDIA, Open Model License): all ten released
+  image and video tokenizers (`nvidia/Cosmos-0.1-Tokenizer-*`), continuous (a 16-channel latent) or
+  discrete (FSQ tokens from a 64,000-entry codebook), at 8× or 16× spatial and 4× or 8× temporal
+  compression. An image (`NFKInputImage`) or, for a video variant, a clip (`NFKInputVideo`) is encoded and
+  reconstructed under `NFKOutputImage` / `NFKOutputVideo`; the latent or token grid itself comes from
+  `NFKMLXCosmosTokenizer`'s `codeForImage:error:` / `codeForFrames:error:` and decodes back through
+  `framesForCode:error:`. Build with `backendWithVariant:weightsURL:error:` over the release's
+  `autoencoder.jit` (read directly, no conversion), or register every variant under
+  `cosmos-tokenizer-<variant>`; at reference parity against NVIDIA's own modules on every variant, and
+  fine-tunable on a consumer's own footage with the reference's post-training objective.
 - **`NFKMLXSpeechBackend`** — a bring-your-own MLX text-to-speech backend: a `(String) -> MLXArray`
   waveform closure, written to a WAV file and returned as an `NFKAudioAsset` (text → audio).
 - **`NFKMLXMusicBackend`** — real music generation (MiniMax Music 3): a music description under
@@ -350,14 +516,35 @@ models.
   `transformerBits: 6` trades the DiT down to a measured velocity cosine of 0.99844 (0.99990 at
   8-bit) for roughly 0.6 GB more — do a listening A/B first, because the DiT's error compounds over
   the sampling loop.
+- **`NFKMLXQwen4Exp`** — the Qwen4-Exp decoder, which Qwen3.8-Flash-Next is the released 180B
+  instance of: the hybrid family's recurrence and gated attention, carried over a residual stream
+  held four times over by hyper-connections, with a per-layer embedding over hashed n-grams, a
+  query-sparse-attention indexer choosing what each query may see, and 512 experts.
 - **`NFKMLXHybridLanguage`** — the Qwen3.5 / 3.6 / 3.8 decoder: a gated delta-rule recurrence in three
   of every four layers (a fixed-size state instead of a growing cache) with gated full attention in the
   fourth. At reference parity on the released Qwen3.5-4B, layer by layer; the 27B is accounted for by
   shape against its checkpoint headers.
-- **`NFKMLXDeepSeek`** — the DeepSeek V4 decoder: multi-head latent attention over a mixture of
+- **`NFKMLXDeepSeek`** — the DeepSeek V4 and V4.1 decoders: multi-head latent attention over a mixture of
   experts, hyper-connections, the compressor and sparse indexer, and the release's fp8 / fp4 block-scaled
-  storage decoded exactly. The arithmetic is measured against transformers at a tiny configuration; the
-  released weights exceed a workstation, so the checkpoint is verified structurally.
+  storage decoded exactly. V4.1 adds a shared compressed cache read by layers that own no compressor,
+  candidate block selection, an n-gram memory of 384 million rows a layer, an image tower, and the
+  DSpark draft stack with its speculative loop. `NFKMLXDeepSeek.backend(directoryURL:)` generates from
+  a release directory, one token a step through `NFKMLXDeepSeekCache`, which carries the sliding
+  window, the shared compressed cache, the index keys, a compressor's unfinished group and the n-gram
+  id history by absolute position. Both versions are measured against their releases' own inference
+  code at a tiny configuration, decode included; a load computes in bf16, the release's own dtype,
+  and matches that code bit for bit: every decoder layer, every buffer a decode step carries, V4.1's
+  draft stack and image tower, and V4's overlapping compressor and indexer.
+  V4.1 Flash's weights decode to 1.39 TiB of bf16 parameters, so a plain load is refused with the
+  shortfall and the checkpoint is verified structurally. Passing `paging: .all` holds the routed
+  experts and the n-gram tables as the release stores them, decoding an expert as the router reaches
+  it and a table row as it is looked up. Paging the experts alone takes the fit figure from 1423.0
+  GiB to 679.4 GiB, paging both takes it to 502.0 GiB, and mapping them out of the release rather
+  than reading them in takes the decoder to 17.7 GiB. The release's own draft stack also verifies at
+  decode, so a greedy run keeps the proposals that match the decoder's own argmax and produces the
+  same tokens. `quantizesActivations` adds the rounding the release's inference code applies, and
+  `computesInFloat32` opts out of bf16 at twice the bytes a step reads. A long prompt prefills in
+  chunks, and a release carrying an image tower accepts `NFKInputImage`.
 - **`NFKMLXLanguage.backend(ggufURL:)`** — text generation straight from a dense `llama` / `qwen2` /
   `qwen3` GGUF file through the native `NFKMLXGGUF` reader, undoing llama.cpp's rotary permutation and
   rebuilding the embedded tokenizer; at parity against transformers loading the same file.
@@ -389,6 +576,15 @@ models.
   deformable decoder; no non-max suppression. `rf-detr`; at parity on the released weights end to end.
   `loadWeights` converts the original Roboflow naming on device (and splits the fused self-attention
   projection), so the released file loads directly.
+- **`NFKMLXTableTransformer`** — table detection and table-structure recognition under MIT (Table
+  Transformer, Microsoft), a vanilla DETR with a ResNet-18 backbone; no non-max suppression.
+  `backend(directoryURL:)` reads the release's `config.json` for the geometry and the class names and
+  its `preprocessor_config.json` for the input size, so one code path serves the detection release and
+  the v1.0 and v1.1 structure releases. A table image in yields the table with its rows, columns, and
+  headers under `NFKOutputDetections`. All five releases are at reference parity against transformers'
+  `TableTransformerForObjectDetection` on the released weights. Retargets to your own document classes on
+  the device with the authors' DETR objective: `network(directoryURL:labels:)`, `fineTune`, then
+  `save(_:toDirectoryURL:release:)`, which the same factory loads.
 - **`NFKMLXRetinaFace`** — real face detection with five-point landmarks (mobile0.25, the detector the
   CodeFormer reference pipeline uses); `retinaface-mobile025`. `NFKMLXPhotoFaceBackend` restores every
   face in a photograph through `NFKMLXFaceAlignment` (RetinaFace or a weight-free Vision detector) and
@@ -409,6 +605,28 @@ models.
   DiT (`NFKMLXLTXTransformer`, 3-D rotary + adaLN + cross-attention), a T5-XXL prompt, and the
   rectified-flow sampler (`NFKMLXFlowMatchScheduler`, exact against diffusers). Every stage at parity;
   the caller stages the 19 GB encoder and the 7.7 GB DiT in turn.
+- **`NFKMLXLTX2TransformerNet`** — the LTX-2 audio-video transformer: one 22B transformer denoises a
+  video latent and an audio latent together, so a generated clip carries its own sound. Six attentions
+  a block (video and audio self-attention, each stream over its own text, and the two cross-modal
+  directions), an across-heads RMS query/key norm, per-head sigmoid gates, and a split rotary whose
+  positions are each patch's midpoint in seconds and pixels. At reference parity against diffusers in
+  BOTH released arrangements (LTX-2.3's and LTX-2.5's three switches), and held to the released
+  LTX-2.3 headers by shape (4186 tensors, 0 missing / mismatched / unaccounted). The two VAEs, the
+  Gemma-4 text front end, the vocoder and the pipeline are the remaining stages.
+- **`NFKMLXQwenImagePipeline`** — Qwen-Image 2.1 text-to-image: a 7.1B block-causal DiT, a
+  vision-language text encoder, and a single-frame autoencoder. The caption and the image latents share
+  one sequence, read causally, while each image block stays bidirectional within itself, and the text
+  half modulates from timestep zero so its keys and values are the same at every denoising step. The
+  text encoder is the Qwen3-VL decoder this package already runs, read one layer before its final
+  normalization; the autoencoder is the Wan 2.2 residual VAE specialized to one frame. Every stage is
+  at reference parity against diffusers on its own, and the glue against diffusers' own pipeline. The
+  weights are under the Qwen Research License, which is non-commercial.
+- **`NFKMLXWanAnimate`** — the Wan 2.2 Animate 2 denoising transformer
+  (`NFKMLXWanAnimateNet`): the Wan block with an image cross-attention branch, and an in-context
+  reference mechanism built on `NFKMLXWanAnimateKVCache` — one pass stores the reference latents'
+  keys and values, each denoising pass attends over them per frame. The released 14B weights exceed a
+  workstation, so the arithmetic is measured at a tiny configuration and the release is held to the
+  module by shape.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
@@ -423,7 +641,35 @@ models.
   the FLUX autoencoder (`NFKMLXSDAutoencoder`, `.flux`), a CLIP-L pooled + T5-XXL text context, and the
   rectified-flow sampler over a packed latent. Presets `.dev` (guidance-distilled) / `.schnell`
   (four-step); the released sizes held to the module by shape (FLUX.1 [schnell] 1156, FLUX.1 [dev] 1160
-  tensors, 0 missing / mismatched / unaccounted).
+  tensors, 0 missing / mismatched / unaccounted). The released FLUX.1 [schnell] transformer is also at
+  numeric parity against diffusers at the bfloat16 it ships in (velocity 0.99998).
+- **`NFKMLXFlux2`** — FLUX.2 [klein] text-to-image end to end, a prompt string in and an image out,
+  with editing against reference images and inpainting under a mask (`inpaint`, and
+  `inpaintImage:mask:prompt:negativePrompt:strength:seed:error:` from Objective-C). FLUX.2 [klein] 9B KV
+  caches its references' keys and values after the first step (`cachesReferences`). A release too
+  large to hold whole is staged, the text encoder released before the transformer loads
+  (`NFKMLXResidency`), which is how the 9B sizes run on a 32 GB machine.
+  The transformer moves its modulation onto the model, uses a SwiGLU feed-forward behind one fused
+  projection, fuses the single-stream block's attention and MLP into one projection each way, and
+  rotates over four axes (velocity 0.9999999999999934). The autoencoder is the shared
+  `NFKMLXSDAutoencoder` at 32 latent channels, and `NFKMLXFlux2LatentCodec` carries what FLUX.2 puts
+  between it and the transformer: a 2×2 patch folded into the channel axis and a BatchNorm's running
+  statistics in place of a scalar scale and shift (decode 0.9999999999998801). The conditioning is
+  THREE intermediate layers of a Qwen3 concatenated per token, over a right-padded sequence whose
+  attention mask is load-bearing (1.0000000000000013). The prompt runs through the release's own chat
+  template, which appends an empty think block at `enable_thinking=False` (text and ids exact on three
+  prompts). The sigma schedule uses FLUX.2's empirical shift, which depends on the step count as well
+  as the sequence length. The 32B [dev] size is gated, so the end-to-end path is klein's. Its
+  text front end ships: [dev] conditions on Mistral-Small 3, carried as
+  `NFKMLXLanguageConfiguration.mistralSmall3` and measured at conditioning cosine 1.0. The 9B sizes
+  read `NFKMLXFlux2Configuration.klein9B`, held to the released headers by shape.
+- **`NFKMLXFlux`** — the end-to-end FLUX.1 text-to-image path, a prompt string in and an image out.
+  It assembles the transformer, the autoencoder, and the two text encoders (`NFKMLXFluxTextEncoder`:
+  CLIP-L for the pooled projection, T5-XXL for the sequence) from a diffusers release directory, and
+  `image(forPrompt:)` runs the text encoding, the sampler, and the decode. The text front end is at
+  reference parity against transformers' `CLIPTextModel` and `T5EncoderModel` (CLIP-L pooled 0.99997,
+  T5-XXL sequence 0.9995). A full generation loads the 24 GB transformer beside the encoders, so it runs
+  on a machine that can hold it; the text encoding alone fits more widely.
 - **`NFKMLXSD3ControlNetPipeline`** — Stable Diffusion 3 ControlNet: a partial MMDiT
   (`NFKMLXSD3ControlNetNet`, at reference parity against diffusers' `SD3ControlNetModel`) that steers a
   generation with a spatial control image, emitting per-block residuals the base `NFKMLXSD3TransformerNet`
@@ -436,12 +682,46 @@ models.
   double- and single-block residuals the base `NFKMLXFluxTransformerNet` injects. The union control-type
   embedding (`.unionPro`) and the `input_hint_block` full-resolution-image pyramid are both built; a
   single-control ControlNet is `.single`.
-- **`NFKMLXSAM2`** — SAM 2's Hiera image encoder (tiny, small, base_plus, large), prompt encoder, mask decoder,
-  and the video memory encoder and memory attention, each at parity against facebookresearch's sources.
+- **`NFKMLXSAM3`** — SAM 3 and SAM 3.1: every instance a worded prompt names, segmented, at
+  released-weight parity. `NFKMLXSAM3VisionNet` is a 32-layer 2-D-rotary ViT under a windowed
+  schedule with an FPN neck reading its one output map at four scales; `NFKMLXSAM3TextNet` is a
+  causal CLIP text tower and the projection that carries its tokens to the detector's width; and
+  `NFKMLXSAM3DetectorNet` is the DETR encoder, the 200-query decoder with its presence token, the
+  scoring head, and the mask decoder. `NFKMLXSAM3ImageModel.detect(image:tokens:valid:)` chains them
+  and returns masks, boxes, per-query logits, and a presence logit. Box prompts and video tracking
+  are not ported, so there is no backend yet.
+- **`NFKMLXSAM2`** — SAM 2 and SAM 2.1 promptable segmentation and video tracking. The Hiera image
+  encoder (tiny, small, base_plus, large), the prompt encoder and mask decoder, and the video memory
+  path, assembled by `NFKMLXSAM2TrackerNet`: one released checkpoint loads whole, and
+  `track(image:frameIndex:points:session:)` follows a clicked object across a clip through
+  `NFKMLXSAM2TrackerSession`. Registered as `sam2`, which segments a single plate from a click under
+  `NFKSAMPointKey`. `NFKMLXSAM2Release` selects 2.0 or 2.1; 2.1 adds an occlusion embedding and a
+  temporal encoding on the object pointers.
 - **`NFKMLXDemucs`** / **`NFKMLXHTDemucs`** — real four-stem music separation: the Demucs v2 time-domain
   U-Net (`demucs`) and the v4 Hybrid Transformer Demucs (`htdemucs`; the six-stem `htdemucs-6s`; the
   fine-tuned four-checkpoint bag through `backend(fineTunedWeightsURLs:)`), a spectrogram branch and a
   waveform branch joined by a cross-transformer; all at parity on the released weights.
+- **`NFKMLXMarian`** — OPUS-MT translation, one Helsinki-NLP release per language pair (or per target
+  group, named with a `>>xxx<<` marker): a 6 + 6 Marian transformer with a source and a target
+  SentencePiece model, built from a release directory, a repo, or a pair of language tags
+  (`backend(sourceLanguage:targetLanguage:cacheDirectoryURL:)` names `Helsinki-NLP/opus-mt-<s>-<t>`);
+  `opus-mt`; at reference parity against transformers' `MarianMTModel` (tokens, greedy and 4-beam
+  outputs exact on en-de).
+- **`NFKMLXM2M100`** — M2M-100 many-to-many translation over 100 languages (`.m418M`, `.m1_2B`) and its
+  SMaLL-100 distillation (`.small100`), the source language detected when a request omits it; `m2m100`
+  and `small100`; at reference parity against transformers' `M2M100ForConditionalGeneration` (tokens,
+  greedy and 5-beam outputs exact on 418M).
+- **`NFKMLXMADLAD`** — MADLAD-400 3B-MT, Google's T5 translator over 400+ languages named by a `<2xx>`
+  marker, loaded at float32 or bfloat16 (`half`); `madlad400-3b-mt`; at reference parity against
+  transformers' `T5ForConditionalGeneration` (tokens, greedy and 4-beam outputs exact). All three read
+  `NFKParameterSourceLanguage` / `NFKParameterTargetLanguage`, tune the decode through
+  `NFKMLXTranslationParameterKey`, fine-tune with LoRA on the decoder, and `NFKMLXTranslationProvider`
+  answers the core's `translation` capability with M2M-100 when its release is cached.
+- **`NFKMLXTranslateGemma`** — TranslateGemma (4B, 12B, 27B; Gemma terms), Gemma 3 fine-tuned for
+  translation and driven by the release's own chat template, rendered in Swift with the language table
+  read from `chat_template.jinja`; the shipped Gemma 3 model underneath, greedy decoding, LoRA on the
+  decoder; `translategemma`; at reference parity against transformers' `Gemma3ForConditionalGeneration`
+  (template ids, logits, and the greedy translation exact on the 4B).
 - **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder at every released size (tiny, base, small, medium, large-v1/v2, large-v3, large-v3-turbo)
   with the reference's suppression rules and timestamped decoding (`emitsTimestamps` → segments);
   `whisper-tiny`; exact token matches against openai-whisper. Also the core's `transcription`
@@ -497,6 +777,38 @@ models.
   SNAC (`snac`, 24 kHz speech; `snac-32khz` / `snac-44khz` music, four codebooks and bottleneck
   attention; multi-scale codebooks at different rates). `encode` returns the tokens,
   `decode` reconstructs; both match the reference's codes exactly.
+- **`NFKMLXBigVGAN`** — BigVGAN v2 (`bigvgan-v2-24khz`, nvidia/bigvgan_v2_24khz_100band_256x, MIT), an
+  anti-aliased SnakeBeta vocoder (SnakeBeta periodic activations and a kaiser-sinc up/down filter around
+  each one). `callAsFunction` is the generator (mel → waveform) a TTS or restoration chain calls;
+  `NFKMLXBigVGANBackend` runs copy-synthesis (audio → the released mel front end → generator → waveform).
+  At reference parity against BigVGAN's own generator, the mel → waveform cosine 0.9999997.
+- **`NFKMLXMimi`** — Mimi (`mimi`, kyutai/mimi, Kyutai, CC-BY-4.0), a transformer-in-codec neural audio
+  codec: a SEANet encoder/decoder with a RoPE Transformer on each side and a split residual vector
+  quantizer (one semantic codebook beside 31 acoustic ones). 24 kHz audio in, 12.5 Hz discrete codes,
+  audio back. `encode` returns the per-codebook token streams (codebook 0 semantic), `decode`
+  reconstructs, and `NFKMLXMimiBackend` runs the round trip. At reference parity against transformers'
+  own `MimiModel`, every seam 0.9999999–1.0 with the 32 codebook codes matching exactly.
+- **`NFKMLXBasicPitch`** — music transcription (`basic-pitch`): a recording in, notes out. A nine-octave
+  constant-Q front end, harmonic stacking, and three small convolutional heads score a pitch contour, a
+  note activation, and an onset per frame; note creation turns them into notes with a pitch-bend curve
+  each. The result is an `NFKMIDISequence` under `NFKOutputMIDI`, which writes a Standard MIDI File a DAW
+  opens. 35,736 parameters, at reference parity against Spotify's own released graph.
+- **`NFKMLXAllInOne`** — music structure analysis (`allin1`): a track in, its parts out. Eleven blocks
+  of dilated neighborhood attention across time and across the four HT Demucs stems score, per frame, a
+  beat, a downbeat, a section boundary, and which of ten functional labels is playing. The sections come
+  back as `NFKAudioSegment`s under `NFKOutputSegments`, the beats as `NFKMusicBeat`s under
+  `NFKOutputBeats` with their position in the bar, and the tempo under `NFKOutputTempo`.
+  `NFKMLXBarTracker` decodes the beats with the bar-pointer model madmom uses. At reference parity on
+  the released Harmonix weights, seam by seam and through the post-processing.
+- **`NFKMLXHFTTransformer`** — piano transcription (`hft-transformer`): the accuracy counterpart to
+  Basic Pitch. A convolutional stem, a transformer attending across frequency that turns mel bins into
+  88 note queries, and a second attending across time. Onset, offset, multi-pitch, and velocity at two
+  levels; 5.5M parameters, MIT, at reference parity on the released MAESTRO weights.
+- **`NFKMLXMuScriptor`** — multi-instrument transcription (`muscriptor`): a mixture in, one MIDI track
+  per instrument out. Five seconds of mel spectrogram condition a causal decoder that writes an MT3
+  event stream, which becomes notes with their programs. Three released sizes, at reference parity on
+  the released medium weights. The weights are CC BY-NC 4.0 behind a gated repository: accept the
+  license on the model page and supply a token (`NFKHFHub.accessToken` or `HF_TOKEN`).
 - **`NFKMLXVoice`** / **`NFKMLXFastSpeech2`** / **`NFKMLXHiFiGAN`** — a complete text-to-speech voice:
   the espnet FastSpeech2 conformer on the released LJSpeech weights (durations exact frame for frame)
   with its paired HiFi-GAN vocoder, exposed through `makeSpeechBackend(phonemize:)`. The package's own
@@ -544,6 +856,29 @@ models.
   Whisper: a FastConformer encoder and a token-and-duration transducer, greedy TDT decoding, a
   timestamp per token under `NFKOutputSegments`. `backend(directoryURL:)` reads an unpacked `.nemo`;
   at reference parity against NeMo (tokens and timestamps exact).
+- **`NFKMLXGraniteSpeech`** — Granite Speech 3.3-2b (IBM, Apache-2.0), the first speech language model:
+  a Conformer acoustic encoder, a BLIP-2 Q-former projector, and a dense Granite decoder that generates
+  the transcription with the audio embeddings scattered into the prompt. The released audio LoRA adapter
+  is folded into the decoder on load. `NFKMLXGraniteSpeech.backend(directoryURL:)`
+  (`graniteSpeechBackendWithDirectoryURL:error:`) reads `NFKInputAudio` and an instruction under
+  `NFKInputPrompt`. At reference parity against transformers' `GraniteSpeechForConditionalGeneration`:
+  the released 2b matches by shape across all 937 base tensors and reproduces the float32 logits and
+  greedy continuation, and the backend transcribes the validation clip.
+- **`NFKMLXVoxtral`** — Voxtral-Mini 3B (Mistral, Apache-2.0), a second speech language model: the
+  Whisper large-v3 encoder (reused), a two-linear projector, and a Llama decoder (reused).
+  `NFKMLXVoxtral.backend(directoryURL:)` (`voxtralBackendWithDirectoryURL:error:`) reads `NFKInputAudio`
+  and a language code under `NFKInputPrompt`; the tokenizer is Mistral's tekken. At reference parity
+  against transformers' `VoxtralForConditionalGeneration`: the released 3B matches by shape across all
+  761 base tensors and reproduces the float32 logits and greedy continuation, and the backend
+  transcribes the validation clip.
+- **`NFKMLXCanary`** — Canary-1B-v2 (NVIDIA NeMo, CC-by-4.0), a multitask speech model that transcribes
+  and translates: the biased FastConformer encoder (reused from Parakeet) and a Transformer attention
+  encoder-decoder that generates from a task prompt of control tokens.
+  `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`) reads `NFKInputAudio` and a
+  language code or a `src>tgt` pair under `NFKInputPrompt`; the tokenizer is the release's Metaspace
+  BPE. At reference parity against NeMo's `EncDecMultiTaskModel`: the released model matches by shape
+  across all 1475 base tensors and reproduces the encoder and decoder seams, and the backend transcribes
+  the validation clip exactly.
 - **`NFKMLXVideoBackend`** — the first backend that produces video: an `NFKVideoAsset` in, every frame
   through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
   `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.

@@ -80,6 +80,31 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (86), so the generated mel is `2n − 1` frames rather than `2n`. Weights: `ResembleAI/chatterbox`
   (`ve.safetensors` 7 MB, `t3_cfg.safetensors` 2.1 GB, `s3gen.safetensors` 1.1 GB, `tokenizer.json`,
   `conds.pt`). pyannote diarization stays blocked (gated `pyannote/segmentation-3.0`, no token here).
+  **The MULTILINGUAL release (2026-06-10) is an in-place update to the same repository**, not a new
+  one, which is why no `Chatterbox-Multilingual` repository exists to find. It adds
+  `t3_mtl23ls_v3.safetensors` (2.1 GB), `s3gen_v3.safetensors` (1.1 GB) and
+  `grapheme_mtl_merged_expanded_v1.json` beside the English files, and
+  `NFKMLXChatterboxTTS(directoryURL:)` prefers each of the three when the directory carries it. The
+  two T3 checkpoints hold the SAME 292 tensors and differ only in the text embedding's width, 704
+  against 2454, so `NFKMLXChatterbox.makeT3(from:)` reads the width from the checkpoint rather than a
+  constant; `s3gen_v3` drops the one `tokenizer._mel_filters` buffer, which this package computes.
+  **The tokenizer is the grapheme file, and `mtl_tokenizer.json` in the same repository is NOT it**:
+  the grapheme file holds 2454 entries, exactly the text embedding's width, where `mtl_tokenizer.json`
+  stops at 2352 and pads with placeholders where the grapheme file gives real characters. Both
+  synthesize English identically, because the divergence is in ids the Latin text never reaches, so
+  only holding the tokenizer's width against the checkpoint's catches the wrong pairing.
+  The text layer (`encode(_:language:)`, `NFKMLXChatterboxMultilingual.swift`) follows the reference's
+  order: lowercase, NFKD, the language's own rewriting, the bracketed `[xx]` tag, then the byte-pair
+  encoder. **Chinese Cangjie encoding and Korean Jamo decomposition are ported**; the reference reaches
+  for an optional package for Japanese (`pykakasi`), Chinese word segmentation (`spacy_pkuseg`), Hebrew
+  (`dicta_onnx`) and Russian (`russian_text_stresser`) and passes the text through unchanged when one
+  is absent, which is the path this implements for all four. A reference with pykakasi or pkuseg
+  installed therefore produces DIFFERENT text for ja and zh, so the parity record is taken with those
+  two disabled; full fidelity there wants a kanji-to-hiragana converter and a word segmenter.
+  One reference detail was load-bearing and had been missing from the English path too: `punc_norm`'s
+  sentence enders include the CJK marks, so a line already closed by one of them takes no second Latin
+  full stop. Without it, ja and zh each gained one trailing token.
+  Language ids: `NFKMLXChatterbox.supportedLanguages`, the 23 the reference lists.
 - `NFKMLXPhonemizer` (protocol) + two paths for the TTS text→phoneme front-end. `NFKMLXEspeakPhonemizer`
   (macOS only) shells out to a **system-installed** espeak-ng — InferKit does not bundle it (GPLv3);
   `Tools/espeak/install.sh` installs it and the phonemizer uses it only when present (`isInstalled`).

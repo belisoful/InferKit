@@ -58,11 +58,16 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     embedding pack — the model is untied, so the embedding is separate from the packed `lm_head`, and
     at 1.6 GiB it is the stack's largest tensor (`includeEmbeddings: true`, reclaiming 1.10 GiB). The
     vocoder and condition encoder copy through unquantized; the LICENSE copies too — it travels with
-    the weights. Whether the stages stay loaded between runs is decided from the weights
-    (`keepsStagesResident`): stack bytes + a 4 GB reserve (activations + the CFG pair's KV cache)
-    against the recommended working set — deliberately not live free memory, which a resident
-    backend's own weights would count against and evict themselves. The quantized stack goes
-    resident (measured: two consecutive 2-s generations at 34.5 s / 32.5 s with `resident true`);
+    the weights. Whether the stages stay loaded between runs is `NFKMLXResidency`, the residency every
+    staged model here shares (`mlx-companion.md`, "Staged models"): `.automatic` by default, decided
+    at each run from the weights present then (`keepsStagesResident`, stack bytes + a 4 GB reserve for
+    activations and the CFG pair's KV cache, against 0.85 of the recommended working set, deliberately
+    not live free memory, which a resident backend's own weights would count against and evict
+    themselves). `.staged` and `.resident` are the factories' `residency:` forms. The quantized stack goes
+    resident (measured: two consecutive 2-s generations at 34.5 s / 32.5 s with `resident true`,
+    21.2 s / 20.6 s on 2026-09-23). A `.staged` and a `.resident` backend over the same 7.7 GiB
+    quantized stack write the same WAV to the byte
+    (`testAStagedMusicBackendMatchesAResidentOne`);
     the full-precision stack stages per run, with each stage now scoped so the language
     model releases before the DiT loads (the original code's locals lived to function exit, so the
     claimed staging never actually happened — found while making residency real).
@@ -80,7 +85,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     `audio_embeddings` table of 7 × 1024): forward 0.999999999997, heads 0.999999999996, projection
     0.9999999999995, embedding 1.0 — the record covers all four parameter families because the
     pipeline reads them through different paths and a forward alone touches only the first. 47/47
-    tensors accounted both directions; ships bf16, loads at float32 by default.
+    tensors accounted both directions; ships bf16, loads at float32 by default, and the music
+    backend loads it at `.checkpoint`. At bf16 its attention is torch's default CPU kernel, the flash
+    kernel (`flashAttention`), and its SwiGLU's `silu` rounds once: every block piece then reads at
+    most 0.07 of diffusers' own bf16-versus-float32 distance (0.30 with MLX's fused attention), and
+    the output 0.99 of it from float32 (`IK_MUSIC_DEPTH_DTYPE=bfloat16 run_reference.py music_depth`).
   - **Condition encoder** (`NFKMusic3ConditionEncoderNet`): 0.9999999999997. A learned softmax
     blend of the 8 per-codebook hidden states, a scalar gain, a 3-wide convolution, and PyTorch's
     exact nearest-neighbor resample onto the latent rate — `floor(i · frames/latents)` with the
@@ -180,4 +189,53 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `attentionWindow` 32: a LayerNorm, bias-free `to_qkv` / `to_out`, `headDim = min(64, dim)`, rotate-half
   rotary over the positions within the window, fused attention per window), which shifts every later
   `Sequential` slot by one in the remap and raises the padding multiple to `hop · lcm(stride₀, window)`.
+- `NFKMLXBigVGAN` (`@objc` backend) — BigVGAN v2 (`nvidia/bigvgan_v2_24khz_100band_256x`, MIT), an
+  anti-aliased **SnakeBeta** vocoder, shipped standalone after arriving as VoiceRestore's vocoder. A
+  HiFi-GAN-style generator with two BigVGAN additions: the periodic `SnakeBeta` activation
+  (`x + sin²(exp(α)·x) / (exp(β) + 1e-9)`, per-channel logscale `α` and `β`) and an anti-aliased
+  `Activation1d` (`NFKVRActivation1d`: a fixed kaiser-sinc up/down FIR around each activation, the filter
+  recomputed at build and held off `parameters()`). `conv_pre` → six upsample stages (a `ConvTranspose1d`
+  then the summed AMP blocks) → a final anti-aliased SnakeBeta → `conv_post` → clamp to `[-1, 1]`.
+  `loadWeights(from:)` fuses the weight-normalized convolutions (`g·v/‖v‖`, reusing
+  `NFKMLXMusic3.fusedWeightNorm`), drops the fixed FIR buffers, collapses the single-element `ups.N.0`
+  ModuleList, and transposes the convolutions to MLX's NLC layout. `callAsFunction` is the generator
+  (mel → waveform) a TTS or restoration chain calls; the standalone `NFKMLXBigVGANBackend` runs
+  copy-synthesis (audio → the released mel front end `NFKMLXVoiceRestoreMel` → generator → waveform under
+  `NFKOutputAudio`), a vocoder being a pure function of its mel. `+register` under `bigvgan-v2-24khz`.
+  Reference parity against BigVGAN's own generator (`run_reference.py bigvgan`, the VoiceRestore `vrvenv`
+  oracle over the vendored `BigVGAN/` package): the mel → waveform cosine 0.9999997.
+  `NFKMLXBigVGANConfiguration` carries the generator geometry and the released mel front end's parameters
+  (24 kHz, 1024-point, hop 256, 100 bands, fmax 12000); the native torch reader loads
+  `bigvgan_generator.pt` directly. The other v2 releases (22 kHz 80-band, 44 kHz 128-band, the 512× hop)
+  are the same architecture at other configuration values and are not yet shipped as variants.
+  Customization is offline: a GAN vocoder trains against multi-resolution and multi-period
+  discriminators the release ships no weights for, so a fine-tune first trains those discriminators.
+- `NFKMLXMimi` (`@objc`) — Mimi (`kyutai/mimi`, Kyutai, CC-BY-4.0), the transformer-in-codec neural
+  audio codec, distinct from the purely convolutional DAC and SNAC. 24 kHz audio in, 12.5 Hz discrete
+  codes, audio back. A SEANet encoder (causal `NFKMimiConv1d` + residual blocks, downsampling ratios
+  `[4, 5, 6, 8]`) and a matching decoder, each with an 8-layer **RoPE Transformer** over its latent
+  (pre-norm attention and a gelu MLP, each residual branch scaled by a learned per-channel
+  `NFKMimiLayerScale` init 0.01, causal with a 250-frame sliding window that is inert at codec sequence
+  lengths). A `downsample` convolution (25 → 12.5 Hz, replicate-padded) precedes a **split residual
+  vector quantizer**: one semantic codebook beside 31 acoustic ones, each quantizing the same latent
+  through its own k1 projections, the codes concatenated (semantic first) and the decodes summed. Each
+  Euclidean codebook reconstructs its table from the released EMA state (`embed_sum / max(cluster_usage,
+  1e-5)`), matches each frame to the nearest entry, and the RVQ codes the residual each codebook leaves.
+  A depthwise `upsample` transposed convolution returns 12.5 → 25 Hz. `NFKMLXMimi.encode(_:)` returns the
+  per-codebook token streams (codebook 0 semantic), `decode(_:)` reconstructs, and `NFKMLXMimiBackend`
+  runs the round trip (audio → codes → audio under `NFKOutputAudio`). `+register` under `mimi`. The
+  released `model.safetensors` loads directly: the loader folds each codebook's EMA state into `embed`,
+  squeezes the k1 projection convolutions to `Linear`, and transposes the Conv1d weights to MLX's NLC
+  layout. **The transposed convolutions are assembled from a forward convolution** (zero-insertion +
+  `kernel-1` pad + a flipped-kernel convolution, then a right trim), because MLX's grouped
+  `ConvTransposed1d` disagrees with PyTorch (the GTCRN finding); the assembly is exact for both the
+  depthwise upsample and the grouped-1 decoder stages. The one load-bearing detail found on the way: the
+  reference's `MimiConvTranspose1d` carries a bias (the decoder stages have one, the upsample does not),
+  so `NFKMimiConvTranspose1d` defaults `bias` true. Reference parity against transformers' own
+  `MimiModel` (`run_reference.py mimi`, the `llmvenv` oracle) seam by seam on the first numeric run:
+  encoder 0.9999999, both transformers and the quantizer decode 1.0, downsample 0.9999999, upsample and
+  the reconstructed waveform 1.0000001, the 32 codebook codes matching exactly, and the end-to-end
+  reconstruction 1.0000001. `NFKMLXMimiConfiguration` carries the 24 kHz geometry; the native torch
+  reader loads the release directly. Customization is offline: the codec trains adversarially against
+  discriminators the release does not ship, so a fine-tune first trains those discriminators.
   Codes 60/60 exact on both, reconstruction 0.99999999999978 / 0.99999999999984.

@@ -147,6 +147,10 @@ Standing rules for the package:
   the path cannot be implemented (offline-only, or untrainable), the model's entry names why. A
   numeric parity figure alone is the inference half of done. The levels, the minimum shipped set, and
   the tests that prove it: `Docs/agent-reference/mlx-training.md` ("Customization is part of parity").
+  Every model's outcome, level, and reachability is in `Docs/agent-reference/mlx-customization-ledger.md`;
+  read a model's row before picking it up, and update the row when a recipe ships. A recipe runs its
+  freezing, optimizer, and schedule through `NFKMLXFineTune.run` rather than calling the trainer
+  directly.
 - Every `Task.detached` passes `priority: .userInitiated`; every test that reaches MLX calls its class's
   `requireMLXRuntime()` first; a test that loads many models clears the cache in `tearDown`.
 
@@ -319,7 +323,8 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   `remote-provider-capabilities.md`, `coreml-compute-plan.md`,
   `hardware-and-model-sizing.md`.
 - InferKitMLX: `mlx-companion.md`, `mlx-runtime-gotchas.md`, `mlx-weights-and-formats.md`,
-  `mlx-training.md`, and the model classes `mlx-models-diffusion.md`, `mlx-models-dit-generation.md`,
+  `mlx-training.md`, `mlx-customization-ledger.md`, and the model classes
+  `mlx-models-diffusion.md`, `mlx-models-dit-generation.md`,
   `mlx-models-image-restoration.md`, `mlx-models-depth-segmentation-matting.md`,
   `mlx-models-detection-pose.md`, `mlx-models-video.md`, `mlx-models-embeddings-retrieval.md`,
   `mlx-models-language.md`, `mlx-models-gemma.md`, `mlx-models-vision-language.md`, `mlx-models-translation.md`,

@@ -6,6 +6,47 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 Gemma 2, Gemma 3, Gemma 3n, and Gemma 4 (text, vision, audio, fusion).
 
+Every Gemma decoder at bf16 (`.checkpoint`) places its roundings as transformers does at bf16
+(`NFKMLXReferenceRounding`; the method is in `mlx-parity-checklist.md`, "Half precision against the
+half-precision reference"). Transformers' Gemma norm computes in float32 and rounds once, where the
+port rounded at each op; its rotary rounds the tables to bf16 and then rounds three times; eager
+attention rounds the scores and the probabilities; and its `gelu_pytorch_tanh` rounds once. Before the
+change Gemma 3 270M's first layer read 3.3 times the reference's own bf16-versus-float32 distance on
+the reference's own input; after it every probed piece of every block is exact except a few GEMM and
+`tanh` elements. Gemma 3n's AltUp magnitude floor was a float32 array, which promoted the whole
+stream to float32 from the first layer; it now takes the stream's type, and the test asserts every
+state stays bf16. Its LAuReL average divides by `sqrt(2)` in float32, as torch divides by a Python
+float. Its AltUp mean and power run in float32 as torch reduces a bf16 tensor; MLX's bf16 `mean`
+reduces differently. `NFKMLXBFloat16ParityTests` holds Gemma 2 2B, Gemma 3 270M / 1B / 4B, Gemma 3n
+E2B, and Gemma 4 E2B to their bf16 references, and Gemma 4's mixture and unified stacks at their tiny
+configurations (`IK_DIT_DTYPE=bfloat16 run_reference.py gemma4_moe` / `gemma4_unified`), where both are
+bit-exact. The mixture router keeps its softmax, its top-k renormalization and its per-expert scale in
+float32, and each expert's output times its float32 weight rounds once; MLX's `softmax` returns the
+input's type even with `precise`, which is how the router had rounded its probabilities to bf16. The
+released sizes are cut to six layers, which end on the first full-attention layer
+(`testGemma4LargerSizePrefixesMatchTheReferenceAtBothPrecisions`). The 12B matches transformers at
+float32 in every state (worst 0.9999999999746) and reads 0.16 of the bf16 floor at worst, 0.053 at its
+full-attention layer. The 31B, whose float32 record is streamed from a bf16 load because the whole
+float32 model does not fit this machine beside the oracle, matches at float32 to 0.9999999999961 in
+every state and reads 0.0073 of the bf16 floor at worst; its first full-attention layer, the first
+`attention_k_eq_v` layer measured on released weights, reads 0.0009. The 26B-A4B matches at float32 to
+0.9999999999978 in every state, with its routed experts paged from the release (a paged load computes
+the resident one's values element for element) because 22 GB of float32 experts do not fit beside the
+rest. Its bf16 check differs from the dense sizes' in two ways, each measured on transformers' own layer:
+
+- Routing ties. A router score is a bf16 projection, so two experts can score the same at the top-`k`
+  boundary. At layer 5, token 0, experts 58 and 67 tie and `torch.topk` keeps 67. Its tie-break follows
+  no rule (over 4,122 random boundary ties: the higher index 1,880 times, the lower 1,812, neither 430),
+  so no port reproduces it. A token whose `k`-th and `(k + 1)`-th scores lie within one bf16 step is
+  left out of that layer's isolated measurement, and the row names the count.
+- Accumulation order. transformers' layer with each expert matmul accumulated once in float32, at the
+  same roundings, reads 0.27 of the floor at layer 0. A mixture layer's isolated bar is 0.5 of the
+  floor; a dense layer's stays 0.25.
+
+With those, the worst isolated layer reads 0.32 of the floor, and the logits sit at 1.705e-04 from float32
+against a floor of 8.321e-04. The prompt is five tokens, and layer 5 leaves three out, so that layer
+rests on two tokens.
+
 - `NFKMLXGemma3` / `NFKMLXGemma3Net` / `NFKMLXGemma3Model` / `NFKMLXGemma3Backend` — the Gemma 3 line,
   end to end (`gemma3_text` for the 270M and 1B, the multimodal `gemma3` for the 4B and up), at
   reference parity on the released weights against transformers' own Gemma 3 for every size and
@@ -243,6 +284,26 @@ Gemma 2, Gemma 3, Gemma 3n, and Gemma 4 (text, vision, audio, fusion).
   gemmaBackendWithDirectoryURL:error:`), which reads a release directory and dispatches on its config's
   model type; internally it builds through `configuration(fromHuggingFace:)` plus `makeNet` /
   `loadWeights` (the path the parity tests use). See the `NFKMLXGemmaBackend` entry below.
+  **Three further release-only behaviors were invisible on the E-series, and all three reached the
+  sizes that use them unimplemented.** A release that sets `attention_k_eq_v` (the 31B, the 26B-A4B,
+  and the 12B unified) drops `v_proj` on its FULL-attention layers and takes the value from the key
+  PROJECTION, read before the key norm and before the rotary. The same releases run
+  `num_global_key_value_heads` on those layers in place of `num_key_value_heads`. All three set
+  `hidden_size_per_layer_input` to 0 and carry none of the per-layer input tensors, so
+  `embed_tokens_per_layer`, `per_layer_model_projection`, `per_layer_projection_norm` and each block's
+  gate, projection and norm are built only when `hasPerLayerInput`. Both readers dropped the two
+  fields, the dense `configuration(fromHuggingFace:)` and `unifiedConfiguration(fromHuggingFace:)`
+  alike, and `NFKGemmaAttention` built both projections at one head count for every layer, so the
+  26B-A4B and the 12B could not have loaded their released weights at all: a full-attention layer came
+  out 8192 wide where the 31B's checkpoint carries 2048, and ten `v_proj` tensors were demanded that no
+  release contains. It survived because the two sizes that set the flag are measured at random-tiny
+  only, where the oracle takes the port's own parameters and cannot disagree, while the two measured on
+  released weights (E2B, E4B) are the ones that leave the flag off. Measured at `run_reference.py
+  gemma4_shared_kv` (`IK_PARITY_GEMMA4_SHARED_KV`, the gemma oracle), whose tiny configuration sets the
+  flag and sets the two key-value head counts apart (2 sliding, 1 full): logit cosine
+  0.9999999999999719, every hidden state matching, with the E2B, E4B, mixture and unified numbers
+  byte-identical afterwards. `NFKMLXReleasedSizesTests.testGemma4LargerSizesMatchTheReleasedShapes`
+  holds all three sizes against their released inventories, the check whose absence let this stand.
 - `NFKMLXGemma4UnifiedNet` (`NFKMLXGemma4Unified.swift`) — the **12B `gemma4_unified_text` decoder**, a
   Different architecture from the E-series: no per-layer input embeddings and no mixture, only the
   sandwich block with a per-layer scalar. Its attention is the same one the E-series runs — learned
@@ -401,4 +462,9 @@ Gemma 2, Gemma 3, Gemma 3n, and Gemma 4 (text, vision, audio, fusion).
   run (`run_reference.py gemma2`, the `llm` oracle env). The released sizes are presets
   (`.gemma2_9B`: 3584 / 42 layers / 16 heads / 8 kv / head 256 / 14336, `query_pre_attn_scalar` 256;
   `.gemma2_27B`: 4608 / 46 / 32 / 16 / 128 / 36864, scalar 144), each held to its released headers by
-  shape (464 / 508 tensors, 0 missing, 0 mismatched, 0 unaccounted).
+  shape (464 / 508 tensors, 0 missing, 0 mismatched, 0 unaccounted), and each equal to what
+  `NFKMLXGemma2Configuration.configuration(fromHuggingFace:)` reads from its release.
+  `NFKMLXGemma2Net.load(directoryURL:precision:)` loads a released directory (the `model.` prefix
+  stripped, the tied `lm_head` never read). On the released 2B (`unsloth/gemma-2-2b-it`, an ungated
+  re-export of Google's gated release) every one of the 27 hidden states matches transformers at
+  float32, the worst at 0.9999999999983818 (`run_reference.py hf_layer_probe`).

@@ -78,6 +78,21 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   before, and training moves the slopes apart from there. Tested by saving a shared-slope model,
   loading it into a per-channel one, and asserting the separation is unchanged. Forward, separation,
   and round-trip tested.
+  **Customization is a FULL fine-tune and it ships** (`NFKMLXConvTasNetTraining.swift`): asteroid
+  v0.5.2's `egs/librimix/ConvTasNet`, the recipe the release's model card names.
+  `NFKMLXConvTasNet.network(weightsURL:)` builds the net at the checkpoint's own geometry, and
+  `fineTune(_:examples:…)` trains every weight on a mixture and each speaker's signal.
+  `NFKMLXConvTasNetObjective` is `PITLossWrapper(pairwise_neg_sisdr, pit_from="pw_mtx")`: the zero-mean
+  negative SI-SDR matrix and the assignment with the lowest mean. Measured against asteroid's own
+  modules (`run_reference.py convtasnet_loss`, `testConvTasNetTrainingLossMatchesTheReference`):
+  −11.85322 vs −11.853218, every pairwise entry within 8e-6 of values near 50. The optimizer is
+  `torch.optim.Adam` at 1e-3 with gradient clipping at 5; the reference's halve-on-plateau schedule and
+  early stopping need a validation set, so the recipe holds the rate. The network has no dropout and no
+  batch normalization, so training computes the inference function. `backend(weightsURL:)` (`@objc
+  backendWithWeightsURL:error:`) reads the filters, kernel, speaker count, bottleneck, and hidden widths
+  from the checkpoint through `configuration(matching:)`. It had built `.base` (kernel 16) for every
+  file, and the loader applies weights without a shape check, so the kernel-32 16 kHz release loaded
+  into the wrong stride and separated wrongly without an error.
 - `NFKMLXDenoiser` (`@objc`) — real speech noise suppression (Défossez et al.): the same Demucs
   time-domain U-Net as `NFKMLXDemucs` configured with `stems == 1`, so it reuses `NFKMLXDemucsNet` and
   `NFKMLXDemucs.loadWeights` (DRY). `NFKMLXDenoiserBackend` reads `NFKInputAudio` → one cleaned

@@ -39,6 +39,20 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `(2·dilation, 1)` and no crop; and MLX's grouped `ConvTranspose` does not match PyTorch, so a grouped
   deconv runs each group as its own `groups=1` transpose. STFT is sqrt-Hann. The oracle
   (`run_reference.py gtcrn`) runs from the cloned source via `IK_GTCRN_SRC` (torch only, 3.9).
+  **Customization is a FULL fine-tune and it ships** (`NFKMLXGTCRNTraining.swift`):
+  `NFKMLXGTCRNFactory.network(weightsURL:)` builds the net, `spectrogram(for:)` is the reference's
+  sqrt-Hann STFT, and `fineTune(_:examples:…)` trains every weight on `(noisy, clean)` 16 kHz pairs, the
+  batch normalizations on each clip's statistics as the reference's train. `NFKMLXGTCRNObjective` is
+  the repo's own `HybridLoss` (`loss.py`): 30 × (compressed real + imaginary MSE) + 70 × compressed
+  magnitude MSE − log₁₀ SI-SNR. Measured against the reference module on the same spectrograms
+  (`run_reference.py gtcrn_loss`, `testGTCRNTrainingLossMatchesTheReference`): 96.21211 vs 96.21211,
+  real 0.61326736 vs 0.6132673, imaginary 0.5681186 vs 0.56811845, magnitude 0.87366974 vs 0.8736699.
+  The SI-SNR term runs through an inverse STFT, and the inference path's overlap-add runs on the host
+  with no gradient, so `NFKGTCRNSynthesis` rebuilds it from array operations: the real inverse DFT as
+  two matrix products and the overlap-add as padded chunk sums. It matches `torch.istft` at waveform
+  cosine 0.99999999999994. The repo publishes no training script (the author's SEtrain template is
+  separate), so the optimizer (bias-corrected Adam at 1e-3) is this package's choice.
+  `testAFineTunedCheckpointLoadsThroughTheFactory` reloads a saved run through the released loader.
 - `NFKMLXSGMSE` (`@objc`) / `NFKMLXNCSNppNet` — SGMSE+ (`sp-uhh/sgmse`, MIT), score-based generative
   speech **dereverberation** / enhancement, the third restoration port and the first generative one. A
   forward OUVE variance-exploding SDE walks a clean complex spectrogram toward the observation; inference
@@ -390,6 +404,24 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   start; a step count other than eight walks the logSNR range evenly, as the reference does.
   `+register` under `nuwave2`; weights: the README's Google Drive checkpoint (20.9 MB, manifest route
   `gdrive`), which the native torch reader opens.
+  **Customization is a FULL fine-tune and it ships** (`NFKMLXNUWave2Training.swift`):
+  `NFKMLXNUWave2.network(weightsURL:)` builds the net, `trainingPair(wideband:narrowbandRate:)` builds a
+  step's input the way `dataloader.py` does (the clip peak-normalized and trimmed to the hop, a copy
+  band-limited to the lower rate and brought back to 48 kHz, the band below that rate's Nyquist), and
+  `fineTune(_:examples:…)` trains every weight with a random gain of 0.5 to 1, the reference's
+  stratified time draw, and a fresh noise draw per step. `NFKMLXNUWave2Objective` is
+  `NuWave2.common_step`: noise the clip along `Diffusion.snr`'s continuous schedule, predict the noise,
+  mean absolute error. Measured on the official checkpoint against the repository's own `Diffusion`
+  with the time and noise fixed (`run_reference.py nuwave2_loss`, `IK_PARITY_NUWAVE2_LOSS`,
+  `testNUWave2TrainingLossMatchesTheReference`): 0.025521424 vs 0.025521573, logSNR 0.84046423 vs
+  0.8404646, noise estimate cosine 0.9999999999995. The reference optimizer is `hparameter.yaml`'s
+  Adam (2e-4, betas 0.9 and 0.99, epsilon 1e-9, bias-corrected), with no schedule and no clipping.
+  The reference's narrow-band copy runs a random Chebyshev type I pre-filter (order 1 to 11, one of
+  five ripples) before `resample_poly` as augmentation; `trainingPair` band-limits with the package's
+  windowed-sinc resampler, and a consumer who needs the reference's degradation builds the copy and
+  calls the objective directly. The schedule's `logsnr_max` end is reached only at t = 0 (at t = 1e-6
+  it is already 19.93), and float32 resolves the t = 1 end to about 1e-3. The spectral branches'
+  complex FFTs carry the gradient (`testAGradientReachesTheSpectralBranches`).
 - `NFKMLXApollo` / `NFKMLXApolloNet` / `NFKMLXApolloBackend` (`@objc`) — **Apollo** (JusperLee,
   **CC-by-SA-4.0** code and weights, `JusperLee/Apollo/pytorch_model.bin`, 66 MB), music restoration
   of lossy-codec artifacts (MP3 at 24–128 kbps → lossless), the last of the audio fillers and the one

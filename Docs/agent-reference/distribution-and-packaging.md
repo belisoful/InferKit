@@ -126,3 +126,30 @@ The dylib links `-all_load` and **without `-dead_strip`**: `NFKDynamicBackend` r
 through `NSClassFromString`, so a class with no static reference is still reachable. It costs about
 1.3 MB against a dead-stripped link, which is the right trade for a binary whose discovery mechanism
 is by name.
+
+## The mlx-swift pin blocks shipping the companion
+
+`InferKitMLX/Package.swift` pins `mlx-swift` by **revision**
+(`901941965d82e4a216d4d117231d847d194c563d`, 2026-09-17, vendoring mlx core 0.32.2) rather than by
+version. The reason is a defect rather than a preference: mlx core 0.31.1, which the newest tagged
+release 0.31.6 vendors, computes the wrong GPU gradient after a fine-tune's first step, measured at
+0 of 25 readings matching the CPU against 60 of 60 on core 0.32.2.
+
+**SwiftPM accepts a revision requirement only in a root package.** A consumer that declares
+`InferKitMLX` as a dependency cannot resolve it while that pin stands, so the companion is buildable
+and testable here and not consumable elsewhere. The core package is unaffected: it does not depend on
+mlx-swift.
+
+What clears it: upstream tags an `mlx-swift` release carrying mlx core 0.32 or newer, and the pin
+goes back to a version requirement (`from: "0.32.x"`). As of 2026-09-21 the newest tag is 0.31.6
+(2026-07-02), so the block stands. When the tag lands:
+
+1. Change the requirement in `InferKitMLX/Package.swift` back to `from:` with the new version, and
+   delete the comment explaining the revision pin.
+2. Resolve, and check the vendored core in
+   `InferKitMLX/.build/checkouts/mlx-swift/Source/Cmlx/mlx/mlx/version.h`. The mlx-swift version and
+   the mlx core version differ, and the core version is the one that matters.
+3. Rebuild the Metal library with `Tools/mlx-metallib.sh`; a core bump changes the kernels.
+4. Run the companion's full check, and specifically the fine-tuning gradient tests that motivated the
+   revision pin, since a tagged release must carry the fix for the pin to move.
+5. Record the new core version in `mlx-runtime-gotchas.md` if any kernel behavior moved with it.

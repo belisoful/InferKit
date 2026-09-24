@@ -74,18 +74,133 @@ that true: a recipe that slips back behind `internal` breaks the examples build 
 found by a consumer. Every other file in that target still imports `@testable`, because a gallery
 example reaches for internals a consumer does not need.
 
-**Gaps against this rule, measured 2026-09-10.** These are package-level:
+**The default optimizer is PyTorch's.** mlx-swift's `Adam` and `AdamW` leave out the bias correction
+of the moment estimates unless `biasCorrection: true` is passed, and every PyTorch Adam applies it.
+Without it each update is `(1 − β1ᵗ) / √(1 − β2ᵗ)` times the reference's: 3.2 at step one with betas
+0.9 and 0.999, about 6.5 near step ten, 1.3 at step one thousand, and 16 at step one with β1 0.5. Ten
+recipes shipped with the uncorrected default until 2026-09-23. `NFKMLXReferenceOptimizers` builds them
+now: `adamW(learningRate:betas:eps:weightDecay:)` is `torch.optim.AdamW`,
+`adamW(learningRate:weightDecay:exempting:)` splits the parameters into a decayed and an undecayed
+group through `MultiOptimizer`, `adamW(learningRate:betas:over:group:)` gives each parameter its own
+rate multiple and weight decay (one optimizer per distinct pair), and `NFKMLXL2Adam` is
+`torch.optim.Adam` with its `weight_decay` added to the gradient. `NFKMLXReferenceOptimizersTests`
+holds each to PyTorch's first step.
 
-- Four models conform: Zero-DCE, SegFormer, Whisper, CLIP. Every `makeNet` is internal, 69 of 77
-  loaders are internal, and the language decoder's builder and initializer are internal, so no
-  language-model fine-tune is reachable at all.
+**The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
+group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the
+run ends. A `MultiOptimizer`'s groups keep their ratios. The schedules are the references' own formulas,
+checked against their code at sample steps:
+
+- `cosine(steps:endScale:)` → fvcore's `CosineParamScheduler`, with step `k` at `k / steps`, as SAM 2's
+  trainer passes `where`.
+- `poly(steps:power:warmupSteps:warmupRatio:)` → mmcv's `poly` policy and its linear warm-up.
+- `inverseSquareRoot(steps:timescale:warmupSteps:cooldownSteps:)` → SAM 3's
+  `InverseSquareRootParamScheduler`. It returns 0 at step zero, as the reference does.
+- `linearWarmup(steps:)` → cosmos-predict1's `WarmupLambdaLR`, `(k + 1) / warmup`.
+- `fairseqInverseSquareRoot(warmupSteps:initialScale:)` → fairseq's `inverse_sqrt`, a linear warm-up then
+  `√(warmup / k)`, update `k` at count `k`; equal to the reference at every count (`run_reference.py trocr_loss`).
+- `mmengineWarmupCosine(steps:warmupRatio:startFactor:)` → mmengine's `LinearLR` then `CosineAnnealingLR`,
+  the warm-up `end − begin − 1` steps long as `LinearParamScheduler` counts it; equal to mmengine's own
+  schedulers at every step (`run_reference.py sa2va_loss`).
+- `warmupCosine(steps:warmupSteps:startScale:endScale:)` → V-JEPA 2's `WarmupCosineLRSchedule`, which
+  steps before each update, so update `k` runs at step `k + 1`; equal to the reference at every step
+  (`run_reference.py vjepa2_probe`).
+
+A recipe's nil `learningRateSchedule` is its reference's schedule when the recipe builds the reference
+optimizer, and a constant rate when the caller passes an optimizer, since the caller then chose the rate.
+An explicit schedule applies to either. `.constant` holds the rate. A warm-up counted in steps runs at its full
+length: SegFormer's 1,500 steps and the Cosmos Tokenizer's 5,000 keep a shorter run below the base rate
+throughout.
+
+Each recipe's reference, and what it still sets that the recipe's defaults do not:
+
+| Recipe | Reference optimizer | Not reproduced |
+| --- | --- | --- |
+| Zero-DCE | `lowlight_train.py`: `torch.optim.Adam`, 1e-4, weight decay 1e-4 (added to the gradient), clip 0.1 | — |
+| SegFormer | NVlabs `segformer.*.py` (mmseg): AdamW 6e-5 and 6e-4 for the decode head (`head` ×10), betas 0.9 / 0.999, decay 0.01, none on `norm` parameters (the encoder's layer norms), no clip; `poly` (power 1) after a 1,500-step linear warm-up from 1e-6 | — |
+| SAM 2 | `sam2.1_hiera_b+_MOSE_finetune.yaml`: AdamW 5e-6, and 3e-6 for the image encoder with the trunk decayed 0.9 per layer (`pos_embed` exempt), decay 0.1, none on `*bias*` or `nn.LayerNorm` (`LayerNorm2d` decays), clip 0.1; cosine to a tenth | — |
+| SAM 3 | `odinw_text_only_train.yaml`: AdamW 8e-5 for the transformer, decay 0.1, the same exemptions, clip 0.1; inverse square root (timescale 20) with a 20-step warm-up and a 20-step cool-down | the backbones' rates (2.5e-5 vision, 5e-6 language, layer decay 0.9): the recipe trains from precomputed features, so neither backbone is in it |
+| Cosmos Tokenizer | cosmos-predict1 post-training: AdamW 1e-4, betas 0.5 / 0.999, decay 0.01, no clip; a 5,000-step linear warm-up | — |
+| Sa2VA | `sa2va_finetune.py` (xtuner/mmengine): AdamW 4e-5, betas 0.9 / 0.999, decay 0.05 on every trained parameter, clip 1; `LinearLR` from 1e-5 over 5% of the run, then `CosineAnnealingLR` to zero; LoRA rank 128, alpha 256, with the embeddings and head whole | LoRA dropout 0.05, the bfloat16 autocast, and the batch of two with 16-step accumulation |
+| Florence-2 | none published; the release's `labels=` loss with the translators' defaults: AdamW 1e-4, no decay, clip 1, LoRA rank 8 on the decoder's query and value projections | the rate and the level are this package's |
+| Table Transformer | microsoft/table-transformer `structure_config.json` / `detection_config.json`: AdamW 5e-5, 1e-5 for the backbone (its last three stages; DETR freezes the stem and the first stage), decay 1e-4 on every parameter, clip 0.1; `StepLR` 0.9 per epoch | the batch of two (the recipe steps on one image) |
+| TrOCR | microsoft/unilm `trocr` (fairseq): `adam` with decoupled decay 1e-4 at 2e-5 (IAM, receipts) or 5e-5 (SROIE), betas 0.9 / 0.999, no clip; `inverse_sqrt` with a 500- (800-) update warm-up from 1e-8; every weight trained | fairseq's Adam places epsilon before the second-moment bias correction; the fp16 flag |
+| V-JEPA 2 probe | `evals/video_classification_frozen`: AdamW over the whole `AttentiveClassifier`, decay on every parameter, no clip; `WarmupCosineLRSchedule` stepped before each update, no warm-up, a cosine to zero (`NFKMLXLearningRateSchedule.warmupCosine`). The configurations sweep twenty heads (rates 5e-3, 3e-3, 1e-3, 3e-4, 1e-4 by decays 0.01, 0.1, 0.4, 0.8); the default is the first | the sweep itself (the recipe trains one head; `learningRate:` and `weightDecay:` pick another), and the bfloat16 autocast with its gradient scaler |
+| open-jev-deberta | `train_encoder.py`: AdamW 3e-5 for the encoder and 1e-3 for the head, decay 0.01, clip 1; a linear warm-up over the first 6% of the run, then a linear decay to zero (`NFKMLXLearningRateSchedule.openJevDeBERTa(steps:)`) | the encoder's dropout (0.1): a step here is deterministic |
+| Open-Jev | `jev/train.py`: AdamW for the adapter and the head (5e-5 and 1e-4 for 2B and 9B, 2e-5 and 5e-5 for 27B, from each release's `provenance.json`), decay 0.01, clip 1, a constant rate, gradient accumulation 4 (`batchSize`) | — |
+| Whisper, the translators, TranslateGemma, Granite 4.0-H, Nemotron-H | no script beyond the model's `labels=` loss: transformers' `Trainer` default, AdamW with no decay, clip 1.0 | the rate (1e-4 here, 5e-5 there) is this package's, and so is the constant schedule (the `Trainer` default decays linearly to zero) |
+| Qwen3-VL retrieval | sentence-transformers' trainer default: AdamW with no decay, a bias-corrected Adam | the rate (1e-3 here, 5e-5 there) |
+| CLIP probe | CLIP's own probe is an L-BFGS logistic regression; AdamW 1e-3 with decay 0.01 is this package's | — |
+| Laya | the release publishes no optimizer; a bias-corrected Adam | — |
+
+**Per-model status lives in the ledger.** [mlx-customization-ledger.md](mlx-customization-ledger.md)
+carries one row per model entry with its outcome, its level, whether the path is reachable, and the
+reference file that decides it. A session picking up a model reads its row first. A session shipping
+a recipe updates that row along with the model's entry and the parity checklist's listings. The
+counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
+
+| Outcome | Rows |
+| --- | --- |
+| `ships` | 22 |
+| `trainable`, no recipe yet | 65 |
+| `offline` | 38 |
+| `uncertain`, a reference is unread | 15 |
+| `untrainable` | 7 |
+
+**Gaps against this rule.** These are package-level rather than per-model:
+
 - No text data adapter (tokenize, template, mask) and no audio example adapter exist; no
   response-masked SFT objective exists.
-- `NFKMLXTrainer` has no learning-rate schedule, gradient accumulation, validation hook, or bf16
-  training, and does not checkpoint optimizer state.
+- The dense Qwen, hybrid, and Gemma 3 decoders are LoRA-feasible at 4B and under and have no public
+  builder, so no fine-tune of them is reachable. Feasibility and reachability are separate questions,
+  and a public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
+  builders and are offline on size.
+- `NFKMLXTrainer` has no gradient accumulation, validation hook, or bf16 training, and does not
+  checkpoint optimizer state. (2026-09-23) It schedules the learning rate.
 - `NFKMLXLoRA` adapts `Linear` only, never `Conv2d` or the expert switch layers, and only through
   `@ModuleInfo` properties.
 
+- `NFKMLXFineTune` — the sequence every recipe runs, hoisted out of the recipes that were writing it
+  by hand. `run(_:freezing:optimizer:reference:referenceSchedule:steps:…)` freezes, takes the caller's
+  optimizer or builds the reference's, resolves the schedule, and calls `NFKMLXTrainer.train`. Three
+  of those four steps are places a recipe has already been wrong, which is the argument for writing
+  them once.
+  - **Freezing runs before the optimizer is built**, so a frozen parameter carries no optimizer state.
+    Building the optimizer first gives it state for the whole model, which costs the memory the run
+    was frozen to save and reports nothing. The freezing closure may throw, because a LoRA policy
+    installs its adapters there and throws when its predicate matches no layer; the error ends the
+    run before the optimizer is built or a step is taken (Sa2VA's `prepare`, Florence-2's adapter).
+  - **The schedule resolves against the CALLER's optimizer, not the recipe's.** A caller who passed
+    an optimizer chose its rate, so the trainer runs it with no schedule; a caller who passed none
+    gets the reference's schedule. Passing the recipe's own reference optimizer into that decision
+    makes every run constant-rate, and nothing reports it. The two parameters are separate for exactly
+    that reason, and `testACallersOptimizerHoldsItsRateAgainstTheReferenceSchedule` pins it.
+  - **Holding a caller's rate means applying no schedule, not a constant one.** `NFKMLXLearningRateSchedule.resolved`
+    answers `.constant` there, and the trainer asks any scheduled optimizer for a single rate per
+    group, which Adafactor does not have: a caller's Adafactor threw `unsupportedConfiguration` from a
+    recipe that never scheduled it. `run` passes nil instead, which holds the rate the same way and
+    works with every optimizer (`testACallersOptimizerWithNoSingleRateRunsWithoutASchedule`).
+  - **The reference optimizer is built lazily**, so a recipe whose reference walks the parameter tree
+    (SAM 2's layer decay, SegFormer's norm exemptions) does not pay for it when the caller supplied
+    one.
+  - What stays in the recipe is what a caller reads: the example tuple, the objective's call shape,
+    the knobs the reference exposes, and the preconditions. The recipe keeps its own public signature.
+  - It serves both recipe shapes. A static recipe takes a net (`NFKMLXSegFormer.fineTune`); an
+    instance recipe lives on a built model that holds the tokenizer and release directory and takes
+    `[Example]` (`NFKMLXLaya.fineTune`). `run` takes the net and closures, so either composes with it.
+  - Every recipe runs through it: `NFKMLXSegFormer`, `NFKMLXVJEPA2`, `NFKMLXTrOCR`,
+    `NFKMLXTableTransformer`, `NFKMLXFlorence2`, `NFKMLXSa2VA` (one internal `run` serving the InternVL,
+    Qwen-VL, and LLaVA overloads, over five or six arrays a step), `NFKMLXSAM2`, `NFKMLXSAM3`, the
+    Cosmos Tokenizer, `NFKMLXZeroDCE`, `NFKMLXWhisper`, the CLIP probe, both Laya recipes, the two
+    Open-Jev recipes, the translators (one internal recipe in `NFKMLXTranslationTraining` serving
+    Marian, M2M-100, and MADLAD-400), `NFKMLXTranslateGemma`, the Granite and Nemotron hybrids, and
+    the Qwen3-VL embedding adapter and reranker head. `run` has the trainer's three forms: `batch:` for an input and a target,
+    `sample:` for an unlabeled step (SAM 3, whose targets travel beside the batch, the Cosmos
+    Tokenizer's reconstruction, and the instance recipes that index their own encoded examples), and
+    `arrays:` for any count. A recipe with no freezing policy passes an empty closure (Zero-DCE, the
+    CLIP probe). A recipe that takes no caller optimizer passes `optimizer: nil`, so its reference
+    optimizer always runs and the caller's `learningRateSchedule` still overrides the reference's
+    (Laya, Open-Jev, Qwen3-VL retrieval). `NFKMLXFineTuneTests` pins the rules directly.
 - `NFKMLXTrainer` — the supervised and zero-reference training loop, for customizing a shipped model
   on a consumer's own data, in the app. Two entry points (`batch:loss:` with a target,
   `sample:loss:` without one) share a private loop: gradient clipping, per-step progress and early
@@ -153,6 +268,26 @@ example reaches for internals a consumer does not need.
   The backend emits `NSArray<NFKClassification *>` under the core key `NFKOutputClassifications`,
   softmaxed and ranked. A probe is a **separate small model**, so what it saves is a companion file
   rather than modified CLIP weights.
+- `NFKMLXEmbeddingProbe` / `NFKMLXEmbeddingProbeBackend` — the probe itself, shared by every image
+  embedder: `NFKMLXCLIPProbe` and `NFKMLXCLIPProbeBackend` are CLIP's names for it, and SigLIP 2 trains
+  it over its pooled image embedding (`NFKMLXSigLIP2Probe.swift`). `init(weightsURL:)` reads the width
+  and class count from a saved file, which is what lets an Objective-C app install a Swift-trained probe
+  (`NFKMLXSigLIP2 probeBackendWithProbeURL:labels:error:`). A model whose unloaded tower is built with
+  zero placeholders embeds every input identically, so a weight-free probe test first asserts that its
+  categories embed apart.
+- `NFKMLXEmbeddingAdapter` / `NFKMLXEmbeddingRankingObjective` — the retrieval probe, shared by every
+  text embedder: an identity-initialized linear map over the frozen embedding under sentence-transformers'
+  `MultipleNegativesRankingLoss`. The Qwen3-VL embedder carries it under its own names, and
+  `NFKMLXTextEmbeddingBackend` carries it for Qwen3-Embedding and EmbeddingGemma: `embeddings(for:)`
+  encodes a corpus once without the adapter, `fineTune(adapter:…)` trains, and `loadAdapter(from:)`
+  (`@objc loadAdapterFromURL:error:`) installs the result for every later embedding.
+- `NFKMLXTranslationTraining` — the translators (OPUS-MT, M2M-100, MADLAD-400) adapt with LoRA on
+  the decoder's query and value projections through `NFKMLXMarian.fineTune`, `NFKMLXM2M100.fineTune`,
+  and `NFKMLXMADLAD.fineTune`, the encoder frozen. `NFKMLXTranslationObjective` is teacher forcing
+  (target shifted right behind the start token, mean cross-entropy over every target position), the
+  reference's `labels=` loss; measured on released weights within 3e-5 for all three
+  (`mlx-models-translation.md`). The round trip goes through `network(directoryURL:)` and
+  `translator(net:directoryURL:)`.
 - `NFKMLXWhisperTraining` — domain adaptation for speech (jargon, accents, recording conditions), and
   the recipe LoRA exists for. `NFKMLXWhisperObjective` is teacher forcing: the decoder sees the whole
   target sequence at once and each position is scored on the next token, so a step is one forward pass
@@ -161,6 +296,27 @@ example reaches for internals a consumer does not need.
   choice, and the encoder's audio features transfer across domains. `NFKMLXWhisper.spectrogram` pads or
   trims to the 30-second window, the single biggest accuracy factor in reaching reference parity. **`NFKWhisperAttention.query`/`value`/`out` gained `@ModuleInfo`** so they
   can receive adapters; the wrapper keys equal the property names, so checkpoints are unchanged.
+- `NFKMLXGraniteTraining` — the first on-device language-decoder fine-tune, adapting Granite 4.0-H to a
+  consumer's own text with LoRA on the attention query and value projections through
+  `NFKMLXGraniteHybrid.fineTune`; the Mamba layers, the embeddings, and the feed-forward stay frozen.
+  `NFKMLXGraniteObjective` is causal language-model teacher forcing (each position scored on the next
+  token, mean cross-entropy over the `T − 1` shifted positions), the reference's `labels=` loss;
+  `loss(logits:tokens:)` is separable from the forward for the oracle, as in the other decoder
+  objectives. Measured against transformers' `GraniteMoeHybridForCausalLM` loss on the tiny dense
+  config (`run_reference.py granite_hybrid_loss`) within 1e-3. The round trip goes through
+  `network(weightsURL:configuration:)`, which reads the merged single-file checkpoint (the release
+  itself is a directory). Granite gives only a minority of layers attention, so the LoRA target set is
+  the reference's attention choice restricted to those layers; a run whose configuration is all-Mamba
+  would adapt nothing, which `apply` reports rather than hiding.
+- `NFKMLXNemotronTraining` — the Nemotron Nano 2 fine-tune, the same shape as the Granite one:
+  `NFKMLXNemotronH.fineTune` adapts the attention query and value projections with LoRA, the Mamba
+  layers, feed-forwards, embeddings, and `lm_head` frozen. `NFKMLXNemotronObjective` is causal
+  language-model teacher forcing, `loss(logits:tokens:)` separable from the forward, measured against
+  transformers' `NemotronHForCausalLM` loss (`run_reference.py nemotron_h_loss`) within 1e-3 (4.851059
+  vs 4.8510590). The round trip goes through `network(weightsURL:configuration:)`. Nemotron's attention
+  sits under each block's `mixer` (not `self_attn`), so the LoRA target predicate matches the `q_proj` /
+  `v_proj` suffix; only the attention blocks carry those, a sparse subset of the layer array that
+  `NFKMLXLoRA` reaches through its per-owner fallback.
 - `NFKMLXLoRA` / `NFKMLXLoRALinear` — low-rank adaptation, for the models with no small head to train
   (CLIP, Whisper: adapting them means reaching into the attention blocks, and doing that fully needs
   optimizer state proportional to the whole model). `NFKMLXLoRALinear` **subclasses `Linear`**, which is
@@ -193,7 +349,9 @@ example reaches for internals a consumer does not need.
   shipped. Reference parity: `NFKMLXSegFormerObjective.loss(logits:labels:)` is separable from the
   forward pass so the oracle can score identical logits, and matches transformers'
   `SegformerForSemanticSegmentation` loss (`run_reference.py segformer_loss`,
-  `IK_PARITY_SEGFORMER_LOSS`).
+  `IK_PARITY_SEGFORMER_LOSS`). The default optimizer trains the decode head at 6e-4, ten times the
+  encoder's 6e-5, as the configuration's `head` key sets, and follows its `poly` schedule after a
+  1,500-step warm-up; the configuration does not clip.
 - `NFKMLXZeroDCETraining` — the first customization recipe, and the template for the rest.
   Zero-DCE is zero-reference: the reference trains it with no ground truth, so a consumer
   customizes it from their own dark photos with nothing to annotate, which is the only kind of data an
@@ -223,3 +381,21 @@ example reaches for internals a consumer does not need.
   mlx-swift 0.31.6 vendors core 0.31.1, so the policy is retired on the release that brings core
   0.32.0 into the package. Do not pin a training run to the CPU: a CPU
   training-mode forward kills its process about one time in ten, in MLX's own convolution.
+
+- **`testASeededRunTrainsDown` still fails occasionally, and the threshold is not the thing to
+  change.** Observed 2026-09-21 in a full `swift test` run of the companion: twelve seeded steps went
+  0.5203694 to 0.4844541, a ratio of 0.931 against the test's 0.85. The test's own comment calibrates
+  that threshold over 20 runs whose worst ratio was 0.656, so 0.931 is outside the sample the
+  threshold was fitted to. Five isolated repeats of the same test passed. The run that failed sits
+  after roughly 1200 other tests, with the GPU in a state the isolated repeats do not reproduce, so
+  the isolated passes do not settle the in-suite case.
+
+  Do not recalibrate the threshold over more runs. The distribution being fitted is produced by the
+  wrong-backward-pass defect above: the package pins mlx-swift 0.31.6, which vendors mlx core 0.31.1,
+  the version measured at 0 of 25 GPU gradients matching the CPU. Twelve steps on wrong gradients
+  give exactly this spread. The remedy is the dependency bump the exit condition in
+  `mlx-runtime-gotchas.md` describes, and this test is a concrete instance of the one condition that
+  note records as still unmeasured on 0.32.x: a training loop with the cache left on. The bump was
+  put to the developer on 2026-09-21 with these numbers and deliberately not taken, because it
+  touches every model in the package; the failure is recorded here instead. Whoever makes the bump
+  should run this test 20 or more times on both cores and record the two distributions.

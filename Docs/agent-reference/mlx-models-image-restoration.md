@@ -139,6 +139,13 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   `NFKMLXModuleBackend` (dark image → brightened image). Enhancement applies `x = x + r·(x²−x)` eight
   times. `+register` under `zero-dce`. Names match the reference (`e_conv1`…`e_conv7`), so
   `Tools/zero-dce-to-safetensors` only extracts. Forward + round-trip tested.
+  **Customization is zero-reference and it ships** (`NFKMLXZeroDCETraining.swift`): `fineTune` trains
+  on unlabeled photos against `NFKMLXZeroDCEObjective`, the reference's four `Myloss.py` losses at its
+  weights (exposure 10, color 5, smoothness 200, spatial 1), with `wellExposedLevel` as the consumer's
+  brightness preference. All four match the reference to float precision
+  (`run_reference.py zero_dce_losses`, `testZeroDCETrainingLossesMatchTheReference`). The reference
+  optimizer is torch's Adam at 1e-4 with its L2 weight decay 1e-4 (`NFKMLXL2Adam`).
+  `testAFineTunedCheckpointLoadsThroughThePublicFactory` reloads the result through `backend(weightsURL:)`.
 - `NFKMLXZeroDCEPlus` (`@objc`) — Zero-DCE++, the authors' own successor, registered as `zero-dce-plus`.
   The seven convolutions become depthwise-separable pairs (`CSDN_Tem`: a grouped 3×3 followed by a 1×1),
   the 24 curve channels collapse to ONE shared three-channel curve reused across all eight iterations,

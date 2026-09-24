@@ -126,10 +126,26 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   tensors are the same `_rebuild_tensor_v2` records. The earlier "TorchScript needs its `code/` IR"
   claim was wrong: the probe showed `data.pkl` carries every attribute name (`visual.conv1.weight`,
   `transformer.resblocks.0.attn.in_proj_weight`), matched against the real ViT-B/32's 302-key
-  state dict; (3) a `.nemo` PAX/ustar tar is unwrapped to the checkpoint inside it (`readTar`). The
+  state dict; (3) a `.nemo` PAX/ustar tar is unwrapped to the checkpoint inside it (`readTar`), the
+  member named `model_weights.ckpt` first, because an archive can carry more than one checkpoint
+  (Canary-1B-v2 holds `timestamps_asr_model_weights.ckpt` AHEAD of its weights, so "the first
+  checkpoint member" read the wrong model); (4) a file that saved one bare tensor (`torch.save(tensor)`,
+  a Kokoro voicepack) comes back under the single key `tensor`, and the released `af_heart.pt` reads
+  identical to the converted `.safetensors` element for element. The
   scripted walk is scoped to archives carrying `constants.pkl` (the TorchScript marker), so the eager
   path is untouched; its int config attributes (`input_resolution`) are surfaced and ignored by the
   loaders' coverage the way `num_batches_tracked` is.
+  The sniff tells a safetensors file from a pickle by more than its first two bytes: a safetensors file
+  opens with its little-endian header length, and a length of 640, 896, 1152, or 1408 bytes (plus any
+  multiple of 65,536) opens `80 02` … `80 05`, which is a protocol 2–5 pickle's opening. Such a file was
+  read as a pickle and failed to load (found through a Cosmos Tokenizer record whose header was 1152
+  bytes). A safetensors file carries its header's `{` at offset 8, where a torch pickle holds its magic
+  number or a frame length, and the sniff now checks it
+  (`testASafetensorsHeaderLengthThatReadsAsAPickleProtocolIsStillSafetensors`).
+  A TorchScript release can also carry its module's derived constants at the storage precision. The
+  Cosmos Tokenizer releases keep their Haar wavelet taps as a persistent bfloat16 buffer (0.70703125 for
+  1/√2). A loader reads the parameters and computes such constants itself; a float32 oracle that loads
+  the stored copy measures its own rounding (4e-4 from the first convolution).
   Every converter's rename/transform is ported into its model's Swift loader, so all non-excluded
   models load a raw checkpoint end to end, each verified by an `NFKMLXTorchParityTests` equivalence
   test: the raw file and the converted file must land identical parameters through the model's own

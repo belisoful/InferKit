@@ -411,7 +411,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXExpertStore` is the store every paged mixture reads: experts filed by layer and index, held in
   memory or as byte ranges of the mapped release, with an LRU cache whose `cacheByteBudget` can change
   between requests. `materializeCount`, `cacheHitCount`, `heldBytes`, `mappedBytes` and `cachedBytes`
-  report what it did. `NFKMLXDeepSeekExpertStore` keeps its API and files its experts there.
+  report what it did. The store is an Objective-C class, reached through the language and Gemma
+  backends' `expertStore`, so an Objective-C caller sets the budget and reads the counters too.
+  `NFKMLXDeepSeekExpertStore` keeps its API and files its experts there.
+- A paged request reads its missed experts in one batch: each mapped byte range is hinted to the
+  kernel ahead of the read, copied once into its array, and the batch is evaluated together. An
+  uncached call on a 64-expert bf16 bench layer takes 20 ms instead of 426 ms (about 20 GB/s of
+  experts against 0.95 GB/s); a cached call is unchanged at 9 ms.
 - The language family takes a residency: `NFKMLXLanguage.backend(directoryURL:residency:)`
   (`backendWithDirectoryURL:residency:error:`) and the download and async `residency:` forms, reading
   Qwen2-MoE, Qwen3-MoE, Mixtral, gpt-oss at bf16 or as its released MXFP4 blocks, and a quantized
@@ -433,7 +439,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `image(forPrompt:width:height:seed:)` and `encode(prompt:)` now throw, since a staged image loads its
   stages.
 
-#### Qwen-Image, LTX-Video and Wan run end to end, staged
+#### Qwen-Image, Z-Image, Stable Diffusion 3, LTX-Video and Wan run end to end, staged
 
 - `NFKMLXQwenImageGenerator`, `NFKMLXLTXVideoGenerator` and `NFKMLXWanVideoGenerator` (`@objc`) assemble
   a model from its diffusers release directory (`generatorWithDirectoryURL:residency:error:`) or download
@@ -459,6 +465,44 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   release's umT5 tokenizer reproduces the reference's ids on 9 of 9 prompts across several scripts. Every
   tensor of the released Wan 2.1 1.3B and Wan 2.2 5B transformer, autoencoder and umT5, and of
   LTX-Video's transformer and autoencoder, is held to its loader by shape.
+- `NFKMLXZImageGenerator` (`@objc`) assembles Z-Image-Turbo and Z-Image from their diffusers release
+  directories, with the same factories and staging. The prompt runs through the Qwen3 chat template with
+  thinking enabled and is read at Qwen3-4B's penultimate hidden state; the transformer's geometry comes
+  from `transformer/config.json`, and the Turbo release's float32 transformer loads at bfloat16. The
+  defaults are Turbo's published 9 steps and guidance 0. Measured against diffusers' `ZImagePipeline`:
+  prompt features 0.9999999999999989, final latents 0.9999999999973 (unguided 0.9999999999975), image
+  0.9999999999999971.
+- `NFKMLXSD3Generator` (`@objc`) assembles SD3 Medium and SD3.5 Medium and Large from their diffusers
+  release directories, with the same factories and staging. The text stage is CLIP-L and OpenCLIP bigG
+  read at their penultimate states with their pooled projections, and T5-XXL at float32 where it fits
+  alone and at bfloat16 otherwise; a release without T5 conditions on zeros, as the reference does. The
+  transformer loads at bfloat16. Measured against diffusers' `StableDiffusion3Pipeline`: joint sequence
+  0.99999999999993, pooled projection 0.99999999999999, final latents 0.9999999998 (unguided
+  0.99999999998), image 0.9999999999999. `NFKMLXSD3Pipeline` gained
+  `denoise(_:promptEmbeds:pooled:negativeEmbeds:negativePooled:steps:guidance:)` and `decode(_:)`, guides
+  only above a guidance of 1, and runs its transformer in the transformer's parameter type. The
+  autoencoder and CLIP config readers it uses read any diffusers `AutoencoderKL` and `CLIPTextConfig`.
+- The residency plan chooses precision as well as placement. A stage may declare a wider precision
+  (`NFKMLXStageFootprint.widenedBytes`, such as a float32 text encoder stored at bfloat16); a resident
+  placement takes it where the total still fits, and a staged one where the stage fits alone. FLUX.2's
+  planner is now the shared one with its encoder declared that way, and Wan's umT5 and SD3's T5-XXL
+  choose float32 by the same rule. Wan's umT5 had taken float32 wherever it fit alone, even beside a
+  resident transformer that it then pushed into staging.
+- DeepSeek loads under an `NFKMLXResidency`: `NFKMLXDeepSeek.backend(directoryURL:residency:)`,
+  `deepSeekBackendWithDirectoryURL:residency:error:`, and `NFKMLXDeepSeekLoadOptions.residency`. The
+  default `.automatic` loads resident where the decoded weights fit, holds the experts stored and maps
+  the n-gram tables where that fits, and maps every paged group otherwise, with the plan's expert cache;
+  `backend(directoryURL:)` and `deepSeekBackendWithDirectoryURL:error:` had refused a release larger than
+  the machine. The explicit `paging:` presets remain.
+- `NFKMLXFlowMatchConfiguration.zImage` is now the base release's schedule (a static shift of 6 over a
+  ramp to sigma 0, `rampEndsAtZero`, new) and `.zImageTurbo` (new) Turbo's (a static shift of 3); the
+  resolution-dependent shift it carried before is not what either release's scheduler config states. A
+  step onto the same sigma is skipped, so nine Turbo steps evaluate the transformer eight times.
+  `NFKMLXZImagePipeline` gained `denoise(_:promptEmbeds:negativeEmbeds:steps:guidance:)` and `decode(_:)`,
+  guides only above a guidance of 1 as the reference does, and runs its transformer in the transformer's
+  parameter type.
+- A float32 release held at a 16-bit type converts a group of tensors at a time as it is read, so the
+  stored copy never sits whole beside the converted one (umT5-XXL in Wan, Z-Image-Turbo's transformer).
 - `NFKMLXLTXPipeline` and `NFKMLXWanPipeline` split into `denoise` and `decode`. `NFKMLXLTXPipeline` no
   longer holds the text encoder, and `NFKMLXWanPipeline`'s `latentsStd` is the release's standard
   deviation, multiplied in as the reference does.
@@ -577,6 +621,101 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   match transformers at float32 on their first four layers (every state 0.99999999999 or closer) and
   at bf16 within the same bounds as the sizes that run whole.
 
+#### Fixed
+
+- Four presets built a different model from their release while every shape check passed:
+  `NFKMLXLanguageConfiguration.mistralSmall3` normalized queries and keys, which Mistral does not;
+  `NFKMLXGemmaConfiguration.e2b` made every layer sliding where the release attends globally every
+  fifth layer; `.twelveB` carried the E-series shape (per-layer inputs, 20 key-value-sharing layers,
+  separate values); and `NFKMLXGraniteHybridConfiguration.h1B` placed attention every sixth layer
+  where the release places it at 5, 15, 25 and 35. A test now compares every preset that has a reader
+  with its release's `config.json`, field by field.
+- A bf16 Gemma 3n load drifted to float32 partway through the stream: the AltUp magnitude floor was a
+  float32 array, which promotes. The multimodal rotary tables of the dense decoder did the same.
+- A bf16 load of Voxtral, FLUX or FLUX.2 computed its activations in float32 against bf16 weights: a
+  float32 table (Voxtral's computed Whisper sinusoids, FLUX's rotary tables, the sinusoidal timestep
+  projections) promoted every operation after it. Each now takes the stream's type where the
+  reference casts it.
+- The FLUX, FLUX.2, Qwen-Image and Wan pipelines handed a bf16 transformer float32 latents and
+  conditioning, so the transformer ran its activations in float32. They now run them in the
+  transformer's type and take each step as diffusers does. A bf16 load's images change accordingly;
+  a float32 load's do not.
+- The Gemma 4 mixture router rounded its probabilities to bf16 and weighted the experts in bf16. The
+  reference keeps the probabilities, their renormalization and the per-expert scale in float32, and
+  rounds each weighted expert output once.
+- MLXNN's `BatchNorm` at bf16 added its epsilon to the bf16 variance and took the reciprocal root
+  there. Granite Speech's Conformer, whose convolution module normalizes by running statistics, now
+  forms the scale and shift in float32 (`NFKBatchNorm`).
+- The Mamba-2 mixer summed its convolution in bf16 at each tap, never rounded the step size, and
+  rounded the scan output before the gated norm rather than after it. A Codestral load also ignored
+  `residual_in_fp32`, which the release sets: the residual stream between blocks now stays float32,
+  as the reference keeps it.
+- A DeepSeek V4 or V4 Pro layer that compresses never attended to its compressed positions: the
+  compressor and indexer ran and their output was dropped. It now attends to them, and to the
+  release's sliding window, where every V4 layer previously attended to every earlier position.
+  Decoding carries the ratio-4 compressor's two overlapping windows, its per-slot bias, and the
+  indexer's own compressor and keys, as the release's buffers do.
+- The DeepSeek rotary multiplied its channels by YaRN's attention factor, about 1.28 on every
+  release, and again on the de-rotation. The releases interpolate the frequencies and rotate at unit
+  magnitude.
+- `NFKMLXDeepSeek.configuration(fromHuggingFace:)` left two version switches at their defaults, so a
+  V4.1 release read from its directory normalized its query heads and rotated its compressed layers at
+  the wrong base, unlike the `v41Flash` preset. The `v4Pro` preset carried V4 Flash's routing scale,
+  output groups, index top-k and layout, and no preset carried YaRN. Every preset now equals its
+  release's configuration in every field, which a test checks by reflection.
+- DeepSeek V4, V4 Pro and V4.1 never mixed the residual across the hyper-connection copies. Copy j
+  of the release's `hc_post` receives the sum over i of `comb[i, j]` times residual copy i; the port
+  summed `comb[i, j]` times copy j, which is copy j scaled by a column sum the Sinkhorn projection
+  makes 1. The oracles' copies never diverge far enough to show it, so the decoders measured
+  0.9999999992 (V4.1) and 0.99999999991 (V4) end to end. A probe with independent copies now holds
+  `hc_post` and `hc_pre` exact, and the decoders measure 0.99999999999998 and 0.99999999999999.
+- `NFKMLXDeepSeek.dequantized(_:shapes:)` decoded a parameter against itself. It derived a block
+  scale's name by replacing `.weight` with `.scale`, so any key without that substring — the
+  hyper-connection weights, the n-gram memory's `q_weight` and `k_weight`, a router bias — found
+  itself as its own scale and was decoded through the fp8 table against its own bytes. The name is
+  now derived from the suffix, and a parameter that legitimately ends in `.scale` is told from a
+  block scale by what the module declares.
+- Ten fine-tuning recipes built mlx-swift's `Adam` or `AdamW` without bias correction, which PyTorch
+  always applies, so their first steps were three to sixteen times the reference's. Every recipe now
+  defaults to its reference's optimizer, bias-corrected, with the reference's parameter groups: no
+  weight decay on the groups its configuration exempts, SegFormer's decode head at ten times the base
+  rate, and SAM 2's image encoder at its own rate, decayed per trunk layer. SAM 2 and SAM 3 clip at
+  0.1, SAM 3 trains at 8e-5, and SegFormer no longer clips, each as its configuration sets.
+- Florence-2 captioning and OCR degenerated to a run of `<s>` under the greedy decode the backend
+  used. Generation now follows the release's settings (three beams, early stopping, no repeated
+  3-gram, `<s>` forced first and `</s>` at the length limit), which the shared seq2seq decoder gained.
+  A request sets `NFKParameterMaxTokens` and `NFKMLXTranslationParameterKey.beamCount`; the
+  process-wide `NFKMLXFlorence2.beams` is removed. Both releases match the release's own `generate`
+  token for token on captioning, OCR, and detection.
+- A forced token (M2M-100's target language, Florence-2's `<s>`) kept its own log-probability in a beam
+  hypothesis's score. transformers scores a forced token 0, and the difference changes which
+  hypothesis wins once scores are divided by length.
+- The Sa2VA backend returned the whole prompt, thousands of image-context markers included, before its
+  answer under `NFKOutputText`, and never stopped at the template's `<|end|>`: it matched the stop word
+  as the token run the word encodes to alone, which the model's own tokens around it never reproduce.
+  The answer is now the generated text alone, trimmed, and generation stops the way the reference's
+  `StopWordStoppingCriteria` does, on the decoded text. An end-to-end test on Sa2VA-4B returns the
+  reference's answer and a mask.
+- A Sa2VA answer that ends on the release's end token (`<|im_end|>` under the qwen template, `</s>`
+  under Vicuna) lost that token. The reference decodes `generate`'s output with its special tokens, and
+  that output keeps the end token, so the answer now keeps it too.
+- A TrOCR release with sinusoidal positions (the stage-1 releases and `trocr-large-printed`) crashed
+  the loader on the `_float_tensor` placeholder fairseq stores beside the table.
+- Sa2VA's own preprocessing now matches each release's code on any image, where every seam test fed the
+  reference's recorded pixels. InternVL's tiles and thumbnail and every family's grounding image resize
+  with PIL's bicubic on 8-bit pixels (they resized bilinearly), and the grounding image is normalized by
+  the bfloat16-rounded ImageNet statistics the releases' `preprocess_image` builds. On a 640×360 picture
+  every family's pixels and grounding image are exact.
+- `NFKMLXQwen3VLImageProcessor` resizes as `Qwen2VLImageProcessorFast` does: torchvision's antialiased
+  bicubic on the 8-bit image, whose `int16` weights round differently from PIL's (one to two levels in
+  thousands of pixels). It resized through CoreGraphics. The Qwen3-VL retrieval models share it.
+- On the Sa2VA Qwen3-VL releases the `[SEG]` bridge read the normalized final hidden state, where the
+  releases train and infer on transformers 4.57's `hidden_states[-1]`, the last layer's output before the
+  final norm (decoder seam 0.66, now 1.0000002).
+- A saved Sa2VA-Qwen fine-tune reloaded with a tied head and failed to apply its trained one. The Qwen2.5-VL
+  releases were refused by the decoder reader, whose `text_config.architectures` names the wrapper, and
+  their prompt lacked the default system turn their chat template opens with.
+
 #### Learning-rate schedules
 
 - `NFKMLXTrainer.train(…learningRateSchedule:)` scales every parameter group's rate by an
@@ -684,8 +823,6 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   translators, `NFKMLXTranslateGemma`, the Granite and Nemotron hybrids, and the Qwen3-VL embedding
   adapter and reranker head. It takes the trainer's `batch:`, `sample:`,
   and `arrays:` forms.
-  in `NFKMLXFineTuneTests`. Six recipes run through it: `NFKMLXSegFormer`, `NFKMLXVJEPA2`,
-  `NFKMLXTrOCR`, `NFKMLXTableTransformer`, `NFKMLXFlorence2`, and all three `NFKMLXSa2VA` overloads.
 - A freezing policy may throw, so a LoRA policy whose predicate matches no layer ends the run before
   the optimizer is built or a step is taken.
 - A caller's optimizer with no schedule now runs untouched. The recipes held its rate by applying a
@@ -1080,6 +1217,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKFoundationModelsBackend.responseSchema`, `NFKFoundationToolParameter`, and `NFKToolParameterType`.
   `NFKFoundationTool.parameters` is a JSON Schema dictionary. The core keys above replace them; a
   request written for a remote or MLX backend now runs here unchanged.
+
+### Documentation
+
+- Every Objective-C code block in `README.md`, `Docs/examples.md`, and `Docs/inference-guide.md`
+  compiles. Fourteen did not: seven called an `-initWithInputs:` initializer that
+  `NFKInferenceRequest` does not declare (the single-argument form is `+requestWithInputs:`), two
+  typed a backend as `NFKInferenceBackend *` (it is a protocol, so `id<NFKInferenceBackend>`), one
+  called `NFKVisionCoreMLBackend` through a `backendWithModelURL:error:` it does not have (the factory
+  is `backendWithCompiledModelURL:error:`), one assigned to captured variables inside a block without
+  `__block`, one called a method no type declares, and two were fragments of a statement.
 
 ## [0.3.1] — 2026-09-15
 
@@ -2419,6 +2566,20 @@ First public release.
 - `NFKMLXRandom`, `NFKMLXGPU`, and `NFKMLXDevice` expose MLX's global runtime knobs to Objective-C.
 - Every model's weight loader reads through `NFKMLXWeights.loadCheckpoint`, so a checkpoint written by
   fine-tuning reloads through the model's existing factory without being transposed twice.
+- `NFKMLXQwen3VLEmbedder` and `NFKMLXQwen3VLReranker` put the Qwen3-VL retrieval releases on the
+  embedding and rerank surface: one backbone, an image or a text or both, pooled at the last position.
+  The pooled position is set by the release's `tokenizer.json`, not by any configuration — the
+  embedder's template post-processor appends `<|endoftext|>` to every encoding and that appended token
+  is what carries the embedding, while the reranker ships no such post-processor and pools elsewhere.
+  Both fine-tune on device: a multiple-negatives objective for the embedder, binary cross-entropy for
+  the reranker, each measured against sentence-transformers' own loss.
+- `NFKMLXQwenImage` runs Qwen-Image 2.1 end to end — the block-causal DiT, the autoencoder (the Wan 2.2
+  residual VAE specialized to one frame), the release's flow schedule, and `NFKMLXQwenImagePipeline`
+  chaining them with the Qwen3-VL text encoder this package already carries. The weights are
+  research-licensed, which is the constraint on shipping it in a product.
+- `NFKMLXFlux2TransformerNet` runs the FLUX.2 transformer (`Flux2Transformer2DModel`). It keeps
+  FLUX.1's two block kinds and moves the modulation onto the model: three heads are evaluated once
+  from the timestep embedding and every block of a kind reads the same vector, so the checkpoint
   carries three modulation tensors where FLUX.1 carries one per block. The feed-forward is a SwiGLU
   behind one fused projection, the single-stream block fuses its attention and MLP into one projection
   each way, the rotary runs over four axes at theta 2000, and the text ids number their tokens rather
@@ -2429,6 +2590,178 @@ First public release.
   geometry in the headers' place: the declared 32B configuration sums to 32,223,281,152 parameters,
   the release's own figure to the tensor. FLUX.2 [klein] 9B gets no preset, because its total leaves
   the split between double and single blocks open — a double block costs exactly two single blocks, so
+  seventeen splits reach the same number. The autoencoder, the text front end and the pipeline are the
+  remaining stages.
+- `NFKMLXFlux2Configuration.klein9B` is the FLUX.2 [klein] 9B geometry: 8 double blocks and 24 single
+  blocks, 32 heads, a 12288-wide text sequence, no guidance embedding. The split is read from
+  `FLUX.2-klein-base-9B`'s `transformer/config.json`, which is the reachable 9B release and whose own
+  `_name_or_path` is the klein-9b conversion. That split is the one thing the 9,078,581,248 parameter
+  total cannot pin, because a double block costs exactly two single blocks and seventeen splits reach
+  the same number, which is why the preset was withheld until a 9B release opened. Held to the
+  released headers by shape: 233 tensors consumed, none missing, mismatched or unaccounted. The
+  weights themselves are still unread; klein 9B and `klein-9b-kv` remain gated.
+- `NFKMLXFlux2` runs FLUX.2 [klein] text-to-image end to end, a prompt string in and an image out.
+  Four stages are measured separately against diffusers and chained by `NFKMLXFlux2Pipeline`. The
+  autoencoder is the one the Stable Diffusion family already uses, at 32 latent channels;
+  `NFKMLXFlux2LatentCodec` carries what FLUX.2 puts between it and the transformer, a 2×2 patch folded
+  into the channel axis and a BatchNorm's running statistics in place of the scalar scale and shift
+  every earlier release ships. The conditioning is three intermediate layers of a Qwen3 concatenated
+  per token, encoded over a right-padded sequence whose attention mask is load-bearing: the pad
+  positions' own states reach the transformer, and dropping the mask moves the conditioning by 7e-4.
+  The prompt runs through the release's own chat template rather than a reimplementation of it,
+  because at `enable_thinking=False` a Qwen3 template appends an empty think block that a bare prompt
+  would miss. The sigma schedule uses FLUX.2's empirical shift, which depends on the step count as
+  well as the sequence length and replaces the `base_shift` and `max_shift` the released scheduler
+  config still carries. Measured: velocity 0.9999999999999934, decode 0.9999999999998801,
+  conditioning 1.0000000000000013, prompt text and ids exact, sigmas within 1e-5 across both branches
+  of the empirical fit. FLUX.2 [dev] is gated, so the end-to-end path is [klein]'s.
+- `NFKMLXResidency` is how a model built from stages that run in turn holds them: `.automatic` holds
+  every stage between runs where they fit the machine's working set together and stages them where
+  they do not, `.staged` loads each for its turn and releases it after, and `.resident` holds them and
+  fails where they cannot fit. The budget is 0.85 of Metal's recommended working set with a 4 GiB
+  reserve; a machine that reports no budget is staged rather than risked. Two models take it.
+  - `NFKMLXFlux2` (`flux2WithDirectoryURL:residency:error:` and the download factories' `residency:`
+    forms). A staged release loads the text encoder, encodes, releases it, and loads the transformer,
+    for every image; nothing changes in what either computes. FLUX.2 [klein] 9B (a 15.3 GB encoder
+    and a 17 GB transformer) runs staged on a 32 GB machine, where it was refused before. Klein 4B
+    stays resident with its encoder at the stored bfloat16, diffusers' default, where it used to hold
+    a float32 encoder beside the transformer beyond that budget; `.staged` keeps a float32 encoder.
+    `holdsStagesResident` and `encodesInFloat32` report the placement.
+  - MiniMax Music 3 (`backendWithDirectoryURL:residency:error:`, the download factories' `residency:`
+    forms, and `NFKMLXMusicBackend.residency`). Its automatic decision is unchanged; `.staged` and
+    `.resident` are new. A staged and a resident backend over the quantized release write the same WAV
+    to the byte.
+- FLUX.2 [klein] base 9B is measured on its released weights: velocity 0.99784 at the released bfloat16.
+  Float32 does not fit whole (36 GB), so the release is also cut to its first two double and two single
+  blocks, which keeps everything the 9B geometry adds, and measured at float32: 0.9999999999994. On
+  that cut this port's bfloat16 is closer to the reference's float32 (0.99999931) than the reference's
+  own bfloat16 is (0.99999024), so the whole-depth figure reads as bfloat16 accumulation over 32 blocks.
+- FLUX.2 [klein] 9B KV's reference cache: `NFKMLXFlux2TransformerNet.extractingReferences`, a cached
+  step through `callAsFunction(…referenceCache:)`, `NFKMLXFlux2ReferenceCache`,
+  `NFKMLXFlux2Pipeline.generateCachingReferences`, and `NFKMLXFlux2.cachesReferences` at the facade.
+  On the first step the reference tokens lead the image stream, take the modulation of timestep 0,
+  attend only to one another, and have their post-rotary keys and values cached per layer; every later
+  step runs the generated tokens alone against that cache. The release's transformer is the base 9B's
+  to the tensor and its files do not mark it, so the caller sets `cachesReferences`. Measured against the
+  reference transformer under its own KV processors and its own `Flux2KleinKVPipeline.__call__`:
+  extracting 0.9999999999998865, cached 0.9999999999999287, the 4-step image 0.9999999999999968, with
+  ordinary reference conditioning at 0.9119 on the same tokens, a separation the test asserts. The
+  release's headers are read by `.klein9B`, 233 tensors. On the released `FLUX.2-klein-9b-kv` weights at
+  bfloat16, whole: extracting 0.99946, cached 0.99972, with ordinary conditioning at 0.93298. Cut to
+  two double and two single blocks at float32: extracting and cached both 0.9999999999994, with
+  ordinary conditioning at 0.99984, and the reference's own bfloat16 against its float32 at 0.999989
+  extracting and 0.999991 cached.
+- FLUX.2 [klein] 9B's text encoder (a Qwen3-8B) is measured on its released weights from the prompt
+  string: conditioning 0.99998016 and 0.99997714 on two prompts at the released bfloat16, whole, and
+  0.9999999999965 and 0.9999999999971 at float32 on the encoder cut to the 28 layers the conditioning
+  reads. The reference's own bfloat16 agrees with its float32 to 0.99993.
+- FLUX.2 inpainting: `NFKMLXFlux2Pipeline.inpaint`, `NFKMLXFlux2.inpaint(prompt:image:mask:…)`, and
+  `inpaintImage:mask:prompt:negativePrompt:strength:seed:error:` from Objective-C. The source image is
+  both the first reference, at time coordinate 10, and the starting point: the loop starts
+  `strength` of the way into the schedule from the image noised to that sigma, and after every step
+  the kept region is overwritten with the image noised to the next sigma, using the noise drawn at the
+  start. The mask is binarized at one half and resampled bilinearly to the packed grid. `strength` is
+  a `Double`: at the reference pipeline's defaults of 50 steps and 0.8, a single-precision strength
+  starts at step 9 where the reference starts at 10. Measured against the reference's own
+  `Flux2KleinInpaintPipeline.__call__` at those defaults: 0.9999999999999998 unguided and
+  1.0000000000000007 guided, over 40 steps, with the packed mask exact.
+- FLUX.2 guidance follows the reference pipelines' rule: a release guides where `guidance > 1` and it
+  is not step distilled, against an empty negative prompt when none is given. `NFKMLXFlux2.isDistilled`
+  is read from the release's `model_index.json`. The facade had guided only when given a negative
+  prompt, so a base release generated unguided by default, and a negative prompt switched guidance on
+  for the distilled klein 4B, which the reference never guides.
+- Objective-C reaches FLUX.2 editing through
+  `imageForPrompt:negativePrompt:references:width:height:seed:error:`, whose references are an
+  `NSArray` of `CGImage` or `MTLTexture`.
+- FLUX.2 [klein] 4B is measured on its released weights at every stage, where every earlier FLUX.2
+  figure came from a tiny random configuration. The transformer's velocity is 0.99999999990117 at
+  float32 and 0.99892858 at the released bfloat16; the reference's own bfloat16 output agrees with its
+  own float32 output only to 0.99919, so the bfloat16 figure is the architecture's precision floor and
+  the float32 run is what rules out a defect. The autoencoder and latent codec decode at
+  0.9999999999887 through the loaders the pipeline uses. The prompt path runs from the prompt string
+  through `NFKMLXFlux2.encode(prompt:)` to a conditioning at 0.99999999995, with token ids exact,
+  against the reference pipeline's own `_get_qwen3_prompt_embeds`.
+- `NFKMLXLanguageConfiguration.mistralSmall3` is the Mistral-Small 3.1/3.2 24B decoder, the text front
+  end FLUX.2 [dev] conditions on: 5120 over 40 layers of 32 heads and 8 key/value heads, feed-forward
+  32768, untied, rope base 1e9. Its head width is stated rather than implied — 5120 over 32 heads
+  divides to 160 while the release sets `head_dim` 128 — so the attention projections are narrower
+  than the residual, which a reader that infers the head width gets wrong. The release is
+  multimodal, so `configuration(fromHuggingFace:)` now unwraps `text_config` before the causal-model
+  guard reads `architectures`, which names the wrapper `Mistral3ForConditionalGeneration`; every
+  Gemma and DeepSeek reader here already used that idiom. Held to the released headers by shape: 363
+  decoder tensors consumed, none missing, mismatched or unaccounted, with the 218-tensor vision tower
+  and its connector named as dropped. `NFKMLXFlux2TextEncoder` drives it at [dev]'s own layer
+  spacing, 10, 20 and 30 of 40, derived from `jointAttentionDim / hiddenSize` rather than written
+  down. Conditioning cosine 1.0 against transformers' `MistralForCausalLM`, every hidden state at or
+  above 0.9999999999999976. The 24 billion parameters are 48 GB at the released bfloat16, above what
+  a 32 GB machine holds, so the numeric half runs a small configuration of the same shape.
+- The Stable Diffusion autoencoder's resnets normalized at the UNet's epsilon of 1e-5 where diffusers
+  builds every autoencoder block at 1e-6. Five shipped models decode through that block. The error is
+  relative, so it hid at the released 512-channel widths and showed at a tiny FLUX.2 configuration;
+  the epsilon is now the caller's, the UNet keeps 1e-5, and the FLUX.1, SD 1.5 and upscaler
+  autoencoder rows in `Docs/model-parity.md` moved because they had been recording the bug.
+- `NFKMLXLTX2TransformerNet` runs the LTX-2 audio-video transformer
+  (`LTX2VideoTransformer3DModel`), where one transformer denoises a video latent and an audio latent
+  together so a generated clip carries its own sound. Six attentions a block: video and audio
+  self-attention, each stream over its own text, and the two cross-modal directions, both of which run
+  at the audio head geometry whichever way they point. Every attention normalizes its query and key
+  across the whole projected width before the heads split, and scales each head by twice the sigmoid
+  of a per-head logit. The rotary halves each head into a real and an imaginary block and positions a
+  token by the midpoint of the interval its patch covers, in seconds on the frame axis. Video velocity
+  0.9999999999996182 and audio 0.9999999999999584 against diffusers on the first numeric run, and
+  4186 released tensors matched by shape. Every LTX-2.5 repository is gated, so the shape check runs
+  against LTX-2.3, the same class; LTX-2.5's three declared differences are switches rather than
+  shapes, and both arrangements are measured, so the arithmetic of each switch is verified even where
+  which switch the release sets cannot be read. Reading a release that turns the text
+  cross-attention's modulation off is refused rather than mis-built: that arrangement carries six
+  modulation parameters instead of nine, and a module built for nine would read the wrong slices of a
+  vector that still loaded.
+- `NFKMLXDeepSeek` runs DeepSeek V4.1 Flash (`DeepseekV41ForCausalLM`, MIT, 763B) at reference
+  parity: logit cosine 0.9999999991704168 against the release's own `inference/model.py`, which
+  `run_reference.py deepseek_v41` stands up on the CPU behind a substitute `kernel` module. The
+  release is 510 GB, so the arithmetic is measured at a small configuration and the 763B is held to
+  the checkpoint's own safetensors headers — 48,496 declared parameters and 47,589 block scales,
+  summing to the 96,085 tensors its index holds, with none missing, none mismatched, none
+  unaccounted and none named as out of scope. Nine differences from V4 are implemented and measured:
+  four layers own a compressor and every other compressed layer reads what they publish, a
+  compressor that pools one position per group is a plain projection with no gate, the indexer takes
+  its keys from that compressor's latent, candidate block selection filters the compressed positions
+  before the indexer ranks within them, the copies collapse without a learned head, two layers carry
+  an n-gram memory of 384 million rows, the hyper-connection read weight is pipelined across
+  sub-blocks, the query heads are not normalized again after their projection, and a compressed
+  layer builds its whole rotary at the compressed base. Three of those are invisible in the shapes
+  and only the oracle finds them.
+  The n-gram memory's addressing is derived rather than read, in both halves. Each bucket count is
+  the next unused prime above a floor, which reproduces the released 384,006,168 and 384,016,682 row
+  counts exactly; each hash multiplier comes from NumPy's own generator seeded by the layer id,
+  which `NFKDeepSeekNumPyGenerator` reproduces down to `SeedSequence`'s entropy mixing and Lemire's
+  bounded draw; and the collapsed id space every multiplier is derived from comes from
+  `NFKMLXDeepSeek.compressedTokens(fromTokenizerJSON:in:)`, which runs the reference's normalizer
+  chain over a release's own `tokenizer.json` and reproduces its partition exactly — 129,280 ids to
+  99,092 buckets, with no id grouped differently. The size is checked against what the release
+  states, so a collapse that drifts is a load-time error instead of a forward pass reading the wrong
+  rows.
+- `NFKMLXDeepSeekVisionNet` and `NFKMLXDeepSeekAligner` run DeepSeek V4.1's image tower, at
+  reference parity against the release's own `vision.py` (patch features 0.9999999999999925,
+  aligned tokens 0.9999999999999974). A patch enters as raw pixels, so the patch embedding is a
+  Linear over the flattened patch; each 3x3 block of patches pools into one text token, with the
+  grid padded up to whole blocks; and the three learned span delimiters live in the decoder's width,
+  which is why the release stores them beside the tower rather than inside it.
+- `NFKMLXDeepSeekDraftStack` runs DeepSeek V4.1's DSpark speculative-decoding stack, loop included.
+  One call proposes a block of tokens after a committed one, reading what the decoder already
+  computed rather than running it again. Against the release's own code the drafted block is exact
+  token for token, with the draft attention at 0.9999999999999438 and 0.999999999998557 across its
+  two stages, the draft logits at 0.9999999999967738 and the confidence at 0.9999999999998043. A
+  drafted position attends to the whole drafted block including the positions after it — the block
+  is one parallel proposal, and the order among its tokens is imposed afterwards by a Markov head
+  that biases each position by the token chosen for the one before it.
+- `NFKMLXQwen4Exp` runs the Qwen4-Exp decoder, which Qwen3.8-Flash-Next is the released 180B instance
+  of. Four mechanisms nothing else here uses: hyper-connections carrying the residual stream four
+  times over in place of a block's pre-normalization, a per-layer embedding over hashed n-grams whose
+  every head has its own prime vocabulary, a query-sparse-attention indexer that pools blocks of keys
+  and keeps the best of them for each query, and 512 experts with a shared expert beside them. The
+  release is 360 GB, so the arithmetic is measured at a small configuration and the 180B is held to
+  the module by shape.
 
 ### InferKitFoundationModels (companion)
 

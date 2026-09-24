@@ -203,8 +203,153 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   sets only the width and head count and takes the rest from the defaults, so it is the size that proves
   the defaults rather than the overrides. The oracle's `sam2` package is now in the manifest; it cannot
   be pip-installed here and had been vendored by hand, leaving that oracle unreproducible.
-  **SAM 3 and SAM 3.1 are deliberately skipped**, not merely unported: their license terms are not
-  acceptable for this project at this time. Revisit if that changes.
+  **The tracker is ported, which is what completes the checkpoint.** `NFKMLXSAM2TrackerNet` holds the
+  five networks under their released prefixes and the dozen parameters `SAM2Base` owns — the
+  `no_mem_embed` that stands in for an empty memory, the `maskmem_tpos_enc` that tells one remembered
+  frame from another, `obj_ptr_proj` and the `no_obj_ptr` an absent object falls back to, and the
+  `mask_downsample` of the mask-as-output path — so one released file loads whole and strictly, and
+  `track(image:frameIndex:points:session:)` follows a clicked object across a clip through
+  `NFKMLXSAM2TrackerSession`. Every released size loads with nothing left over: 468 tensors for 2.0
+  tiny, 516 small, 612 base_plus, 900 large, and 471 for 2.1 tiny. The prompt encoder gained the two
+  box-corner embeddings and `mask_downscaling`, which the earlier port dropped, so a box or a mask is
+  now a prompt the model can take.
+  **SAM 2.1 changes no geometry**: `facebook/sam2.1-hiera-{tiny,small,base-plus,large}` is Apache-2.0
+  and ungated, and its two flags each bring one parameter — `no_obj_embed_spatial`, added to a memory
+  whose frame the model reads as empty, and `obj_ptr_tpos_proj`, which projects a sine encoding of how
+  many frames back a pointer came from. `NFKMLXSAM2Release` selects 2.0 or 2.1, because a checkpoint
+  carries exactly the parameters its own release declares and the difference is invisible to shapes.
+  Reference parity against transformers' `Sam2VideoModel` on the released sam2.1-hiera-tiny, over a
+  three-frame clip driven by one click: mask logits 0.99999999999806 / 0.99999999945 / 0.99999999985,
+  the stored memory 0.999999956 / 0.999999992 / 0.999999988, and the object pointer
+  0.99999999999778 / 0.99999998951 / 0.99999999523. The first frame is the encoder, prompt encoder,
+  and decoder alone; the frames after add the memory encoder, memory attention, and the pointers.
+  Three traps, each caught by the per-frame comparison rather than predicted:
+  - `maskmem_tpos_enc` is `[frames, 1, 1, width]` and 4-D, so a loader that transposes every 4-D
+    tensor as a convolution weight turns it into `[frames, 1, width, 1]`. Nothing fails at load; the
+    first frame is exact and the second one cannot broadcast.
+  - `get_1d_sine_pe` is not the 2-D grid encoding with one axis. It holds each frequency for two
+    channels (`temperature ** (2·⌊i/2⌋/half)`) and puts the sines first, where the grid encoding
+    interleaves them.
+  - The object pointers' temporal span is `min(clip length, 16) - 1`, not the configured 16. A short
+    clip normalizes its distances over its own length, so a tracker that uses the bound reads every
+    pointer as nearer than it is. That is what `NFKMLXSAM2TrackerSession.frameCount` carries.
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXSAM2Training.swift`): the prompt encoder
+  and mask decoder train against a consumer's own masks with the Hiera trunk and the whole memory
+  path frozen, which is about 5M parameters of the tiny release's 39M. `network(weightsURL:…)`
+  builds, `fineTune(_:examples:trainable:…)` trains, `NFKMLXWeights.save` writes a file the `@objc`
+  factory loads. Nothing is dropped on load the way a retargeted classifier is, because SAM 2's masks
+  are class-agnostic: a consumer's subject needs a trained head, not a new one.
+  The objective is the reference's `MultiStepMultiMasksAndIous` at the weights its own fine-tuning
+  configuration sets (mask 20, dice 1, IoU 1, class 1, every IoU supervised, IoU by L1), and it
+  matches term by term — mask 0.67431545 against 0.6743155, dice 0.6716747 against 0.6716747, IoU
+  0.36395273 against 0.36395273, class 0.40081817 against 0.40081823. Three of its details are the
+  kind a paper does not state: the focal and dice terms backpropagate ONLY through the multimask slot
+  whose combined loss is lowest, the IoU head is supervised against the IoU its own mask achieves
+  rather than a label, and every mask term is multiplied by whether the target holds an object, so an
+  empty frame trains the object score and nothing else. The slot choice needs `stopGradient` on the
+  indices, which PyTorch gets for free from `argmin` returning integers and MLX does not.
+  What does NOT ship is the video objective, which backpropagates through the memory bank across a
+  clip; a device holds the conditioning frame's path, which is what this trains.
+  The default optimizer is the configuration's too: `torch.optim.AdamW`, bias-corrected, at the base
+  learning rate 5e-6, with weight decay 0.1 on every parameter but those named `*bias*` and those of a
+  `torch.nn.LayerNorm`. The mask embedder's two norms and the decoder's upscaling norm are `LayerNorm2d`
+  there, so their weights decay. Under `.everything` the image encoder trains at 3e-6, and each trunk
+  parameter is scaled by Hiera's `get_layer_id` under a decay of 0.9 (`pos_embed` exempt). The
+  gradient clip is 0.1, and the rate follows fvcore's cosine to a tenth over the run.
+  The round-trip test earned its place immediately: the prompt encoder's remap stripped `.weight`
+  from every name under it, which is right for the four embeddings the reference stores as
+  `nn.Embedding` and wrong for the mask embedder's convolutions, so a fine-tuned checkpoint could not
+  reload. Nothing else would have caught it, because a released file never carries those names.
+  Registered as `sam2` through `NFKMLXMattingBackend`, with the full `@objc` factory set taking both
+  the variant and the release. A single plate with a click goes through the tracker's first frame with
+  a fresh session. `no_mem_pos_enc` is loaded and unused: the releases set
+  `directly_add_no_mem_embed`, under which the reference never reads it either.
+  **SAM 3's two encoders are ported and at released-weight parity; its detector is not.** SAM 3 names
+  its targets in words rather than pointing at them, so a prompt is text and the model segments every
+  instance that text names. `facebook/sam3` and `facebook/sam3.1` stay gated behind Meta's SAM
+  License, which this project accepts, and both answer 200 for its token. The two ship a
+  BYTE-IDENTICAL `config.json`; 3.1's difference is its checkpoint. The release is one 3.44 GB
+  float32 file of 1797 tensors, which this machine holds, so the stages are measured on the released
+  weights rather than at a tiny configuration.
+  `NFKMLXSAM3VisionNet` is the vision encoder (538 tensors): a 32-layer ViT 1024 wide over 14-pixel
+  patches at 1008, and an FPN neck that reads its ONE output map at four scales
+  (4, 2, 1, 0.5 → 288, 144, 72, 36), each projected to 256. Three things separate it from the SAM 1
+  ViT it succeeds. Position is 2-D rotary over adjacent channel pairs, not a learned relative bias.
+  The learned absolute grid is TILED to the input rather than interpolated, so a 24×24 pretraining
+  grid covers a 72×72 input by repeating and cropping. And the layer normalization that usually ends
+  a ViT runs BEFORE the block stack.
+  The windowing is what makes the rotary table per layer rather than per model: a windowed layer
+  attends inside a 24×24 window and rotates over a 24×24 grid at unit scale, while a global layer
+  (7, 15, 23, 31) attends over the whole map and rotates over it at `window / grid`, so a position
+  means the same distance in both. A port that shares one table across the stack is correct for one
+  kind of layer and wrong for the other. The reference builds the global layers' table from the
+  CONFIGURED image size, not the input's, which is why `NFKMLXSAM3Configuration.imageSize` has to
+  match the plate.
+  `NFKMLXSAM3TextNet` is the prompt side (391 tensors): a 24-layer causal CLIP text tower 1024 wide
+  over a 49408-token vocabulary with a 32-position context, the exact gelu rather than CLIP's usual
+  quick approximation, and epsilon 1e-5. Two projections leave it, and only one is read — the tower's
+  own 512-wide `text_projection` is CLIP's contrastive head, which SAM 3 never calls, and the
+  detector's 1024 → 256 projection reaches EVERY token rather than the pooled end-of-text one.
+  Reference parity against transformers' `Sam3VisionModel` and `CLIPTextModelWithProjection` on the
+  released weights, both on the first numeric run: the ViT 0.9999999999787388 and the FPN levels
+  0.999999999991736 / 0.9999999999829633 / 0.9999999999852291 / 0.9999999999862851; the text tower
+  0.9999999999997959 and the projected prompt 0.9999999999990974. The vision parity runs at 504
+  pixels rather than the released 1008, which is what exercises both edges the full size hides: the
+  position grid is tiled and cropped because 36 patches is not 24, and 36 is not a whole number of
+  24-wide windows, so a windowed layer pads and unpads.
+  `NFKMLXSAM3DetectorNet` is the detector (445 tensors), and `NFKMLXSAM3ImageModel` chains all three
+  so a worded prompt goes in and every instance it names comes out. Four stages run in order. The
+  DETR encoder fuses ONE vision level — the coarsest the detector is given, 72×72 at the released
+  size — with the prompt over six layers of self-attention and cross-attention. The decoder runs 200
+  learned queries and a presence token over that, refining one box per query at every layer under a
+  relative-position bias built from the current boxes, so a query attends around where it currently
+  points. The scoring head dots each query against the mean-pooled prompt. The mask decoder lifts the
+  encoder's output back up the pyramid and dots the queries against it, one mask per query.
+  Every attention in SAM 3 is DENSE: there is no deformable sampling anywhere, which is what makes
+  the detector ordinary matrix arithmetic. Two things about it are easy to miss and both change
+  numbers. Its `hidden_act` is RELU where the two encoders use a gelu. And its normalizations are
+  constructed WITHOUT an epsilon, so they take PyTorch's 1e-5 default while the configuration's
+  `layer_norm_eps` of 1e-6 goes unread — reading it would put the port a thousandfold off the weights
+  it loads. A third is structural: `num_upsampling_stages` is 3 and the pixel decoder runs 2, because
+  the stages it climbs are one fewer than the levels it is given, so one convolution and one group
+  normalization in every release go unused.
+  Detector parity against `Sam3Model` on the released weights, driven from the reference's own FPN
+  levels and projected prompt: boxes 0.9999999999942162, per-query logits 0.9999999999956046, the
+  presence logit exact, masks 0.9999999999608558, the semantic map 0.99999999999742. Chained end to
+  end from the plate and the token ids: masks 0.9999999962068635, boxes 0.999999999821788.
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXSAM3Training.swift`): the detector trains
+  against a consumer's own boxes with the ViT and the text tower frozen, about 25M parameters against
+  the release's 850M. Because the encoders are separate modules their output is computed ONCE per
+  image and reused at every step (`encode(image:tokens:valid:using:)`), which is what makes the run
+  cheap rather than merely smaller. `NFKMLXSAM3Trainable` offers the whole detector or the decoder
+  alone with the DETR encoder frozen too. A FULL fine-tune is offline-only: the 3.44 GB model with
+  gradients and optimizer state does not fit 32 GiB.
+  The objective is the reference's own at the settings its `odinw_text_only_train.yaml` sets for
+  exactly this case — a `BinaryHungarianMatcherV2` (class 2, box 5, GIoU 2, focal alpha 0.25, gamma
+  2), then `Boxes` (L1 5, GIoU 2) and `IABCEMdetr` (classification 20, presence 20, positive weight
+  5). That configuration sets `enable_segmentation: False`, so there is no mask term to ship and none
+  is claimed. It matches term by term — box 0.31639794 against 0.3163979, GIoU 0.86075145 against
+  0.86075145, classification 1.7220247 against 1.7220246, presence 0.41047144 against 0.4104715 —
+  and the assignment is identical to `scipy`'s `linear_sum_assignment`, which is what
+  `NFKMLXHungarian` had to reproduce (MLX has no assignment solver, and a greedy pick is not the
+  same answer).
+  The default optimizer follows the same configuration: `torch.optim.AdamW`, bias-corrected, weight
+  decay 0.1 on every parameter but biases and `torch.nn.LayerNorm` weights (the detector's other norms
+  are `GroupNorm`s, which decay there too), at 8e-5, the configuration's transformer rate. The gradient
+  clip is 0.1, and the rate follows the reference's inverse square root (timescale 20) with a 20-step
+  warm-up and a 20-step cool-down. The backbones' own rates do not apply: the recipe trains from
+  precomputed features.
+  Two details of `IABCEMdetr` only its code states. A matched query is NOT regressed toward 1: its
+  target is `p^alpha · IoU^(1-alpha)` clamped at 0.01, so a query is asked to be exactly as confident
+  as its box is good. And an image whose prompt names nothing present contributes no classification
+  loss at all, only the presence term, which is how the model is taught to say no.
+  **What remains is box prompts and video**, 423 of the release's 1797 tensors: the geometry encoder
+  (94), which encodes a box by projection, ROI-pooled features, and the position encoding of its
+  centre, and the video tracker with its own neck (329). A text prompt never reaches the geometry
+  encoder, which is why the image path is complete without it. The oracle is `wananimatevenv`
+  (transformers ≥ 5.16, which carries `Sam3Model`, `Sam3VideoModel`, and `Sam3TrackerModel`); every
+  stage loads on its own out of the release, so one can be measured without instantiating the rest.
+
 - `NFKMLXRVM` (`@objc`) — real video matting (Robust Video Matting): the reference `MattingNetwork` —
   a torchvision **MobileNetV3-Large** encoder (inverted residuals with squeeze-and-excitation,
   hardswish, **BatchNorm epsilon 1e-3**, the last stage dilated), the reference LR-ASPP, and a
@@ -266,6 +411,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `segformer.encoder.block.<stage>.<index>` and its separate `patch_embeddings.N`/`layer_norm.N` lists
   onto per-stage names, and concatenates the reference's separate `key`/`value` into this port's one
   fused `kv` — a two-into-one a 1:1 key map cannot express. Forward, label-map, and round-trip tested.
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXSegFormerTraining.swift`):
+  `NFKMLXSegFormer.network(weightsURL:classCount:)` builds the net at the consumer's class count and
+  drops a checkpoint classifier of another size, `NFKMLXSegFormerTrainable` picks `.decodeHead` or
+  `.everything`, and `fineTune` runs the reference's recipe. `NFKMLXSegFormerObjective` is mmseg's
+  cross entropy with the logits upsampled to the label resolution, measured against the reference
+  (`run_reference.py segformer_loss`, `testSegFormerTrainingLossMatchesTheReference`). The reference
+  optimizer is mmcv's grouped AdamW, and the schedule is `poly` decay after a 1,500-step warm-up.
+  `NFKMLXSegFormerTrainingTests.testAFineTunedCheckpointRoundTrips` reloads the result.
 - `NFKMLXDeepLab` (`@objc`) — real semantic segmentation (DeepLabV3): `NFKMLXResNetBackbone` with its
   last two stages dilated (so features reach the head at stride 8) and an Atrous Spatial Pyramid Pooling
   head (1×1 + three dilated 3×3 branches + global image pooling, fused, then a 3×3 convolution before

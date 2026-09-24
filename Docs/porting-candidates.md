@@ -89,37 +89,52 @@ Notes:
 
 | Model | Vendor | Task | Architecture | License | Reference | Effort |
 |-------|--------|------|--------------|---------|-----------|--------|
-| **Florence-2** | Microsoft | Unified vision: caption, detect, ground, segment, OCR | DaViT dual (spatial + channel) attention encoder → BART-style seq2seq emitting location tokens | MIT | HF `transformers` (`Florence2`) | High |
-| **Voxtral-Mini 3B** | Mistral | ASR and speech translation | Whisper-family audio encoder → Mistral dense decoder | Apache-2.0 | HF `transformers` (`VoxtralForConditionalGeneration`) | Med |
-| **Granite Speech 3.3-2B** | IBM | ASR and translation | Conformer encoder and window Q-former projector → Granite decoder | Apache-2.0 | HF `transformers` (`GraniteSpeechForConditionalGeneration`) | Med |
-| **Canary-1B-v2** | NVIDIA | ASR and speech translation | FastConformer encoder → transformer attention encoder-decoder decoder | CC-BY-4.0 | NeMo (`EncDecMultiTaskModel`) | Med |
-| **V-JEPA 2** | Meta | Video and image encoder | ViT trained by joint-embedding predictive masked-latent prediction; inference is a ViT forward | MIT weights | HF `transformers` + `facebookresearch/vjepa2` | Med |
+| **Florence-2** — SHIPPED (`NFKMLXFlorence2`) | Microsoft | Unified vision: caption, detect, ground, segment, OCR | DaViT dual (spatial + channel) attention encoder → BART-style seq2seq emitting location tokens | MIT | HF `transformers` (`Florence2`) | High |
+| **Voxtral-Mini 3B** — SHIPPED (`NFKMLXVoxtral`) | Mistral | ASR and speech translation | Whisper large-v3 encoder (reused) → 2-linear projector → Llama decoder (reused); tekken tokenizer | Apache-2.0 | HF `transformers` (`VoxtralForConditionalGeneration`) | Med |
+| **Granite Speech 3.3-2B** — SHIPPED (`NFKMLXGraniteSpeech`) | IBM | ASR and translation | Conformer encoder and window Q-former projector → dense Granite decoder, audio LoRA folded | Apache-2.0 | HF `transformers` (`GraniteSpeechForConditionalGeneration`) | Med |
+| **Canary-1B-v2** — SHIPPED (`NFKMLXCanary`) | NVIDIA | ASR and speech translation | biased FastConformer encoder (reused from Parakeet) → Transformer attention encoder-decoder; Metaspace BPE tokenizer | CC-BY-4.0 | NeMo (`EncDecMultiTaskModel`) | Med |
+| **V-JEPA 2** — SHIPPED (`NFKMLXVJEPA2`) | Meta | Video and image encoder | ViT trained by joint-embedding predictive masked-latent prediction; inference is a ViT forward | MIT weights | HF `transformers` + `facebookresearch/vjepa2` | Med |
 | **Wav2Vec2 / Wav2Vec2-BERT / HuBERT** | Meta | Speech SSL and CTC ASR | Conv feature extractor + transformer encoder + CTC head | Apache-2.0 (base checkpoints) | HF `transformers` | Low–Med |
-| **TrOCR** | Microsoft | OCR | ViT/BEiT encoder + RoBERTa decoder, standard seq2seq | MIT | HF `transformers` (`VisionEncoderDecoder`) | Low–Med |
-| **Table Transformer (TATR)** | Microsoft | Table detection and structure | Vanilla DETR, ResNet-18 backbone, no deformable attention | MIT | HF `transformers` + official repo | Low–Med |
+| **TrOCR** — SHIPPED (`NFKMLXTrOCR`) | Microsoft | OCR | ViT/BEiT encoder + RoBERTa decoder, standard seq2seq | MIT | HF `transformers` (`VisionEncoderDecoder`) | Low–Med |
+| **Table Transformer (TATR)** — SHIPPED (`NFKMLXTableTransformer`) | Microsoft | Table detection and structure | Vanilla DETR, ResNet-18 backbone, no deformable attention | MIT | HF `transformers` + official repo | Low–Med |
 | **TimesFM 2.5** | Google | Time-series forecasting | Decoder-only over non-overlapping patches, single-pass horizon, 9-quantile head | Apache-2.0 (2.5 only) | HF + `google-research/timesfm` | Med |
-| **Cosmos Tokenizer** | NVIDIA | Image and video tokenizer | Causal spatiotemporal autoencoder, continuous latents or discrete codes | Code Apache-2.0, weights NVIDIA Open Model License | `NVIDIA/Cosmos-Tokenizer` + HF | Med |
-| **Sa2VA** | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | MIT | `bytedance/Sa2VA` + HF | Med |
+| **Cosmos Tokenizer** — SHIPPED (`NFKMLXCosmosTokenizer`) | NVIDIA | Image and video tokenizer | Haar wavelet patcher → 2D (image) or factorized causal 3D (video) autoencoder; continuous latents or FSQ tokens; all ten 0.1 releases | Code Apache-2.0, weights NVIDIA Open Model License | `nvidia-cosmos/cosmos-predict1` tokenizer modules + HF | Med |
+| **Sa2VA** — SHIPPED (`NFKMLXSa2VA`) | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | Apache-2.0 | `bytedance/Sa2VA` + HF | Med |
 | **SD 3.5 Large/Medium** | Stability AI | Text-to-image | MMDiT-X with QK-norm and dual attention, three text encoders (2×CLIP + T5) | Stability Community (free under $1M revenue) | HF `diffusers` (`SD3Transformer2DModel`) | Med–High |
 | **Stable Audio Open 1.0** | Stability AI | Text-to-audio | Latent audio DiT over an Oobleck autoencoder, T5 conditioning | Stability Community | HF `diffusers` (`StableAudioPipeline`) | Med–High |
 
 Notes:
 
-- **Florence-2** is the most novel Microsoft candidate. It performs detection, segmentation, grounding,
-  and OCR through one seq2seq decoder that emits coordinate and polygon tokens, a paradigm the toolkit
-  lacks.
-- **Voxtral-Mini** and **Granite Speech-2B** decompose into a Whisper-family encoder and a decoder the
-  toolkit already runs, so the work is mostly wiring. The 24B Voxtral and 8B Granite Speech are too
-  large for the target machine; the 3B and 2B variants fit.
+- **Florence-2 is now shipped at reference parity** (`NFKMLXFlorence2`, base and large). It performs
+  captioning, detection, and grounding through one seq2seq decoder that emits `<loc_0..999>` location
+  tokens. The DaViT vision tower pairs windowed spatial attention with grouped channel attention in
+  every block, a dual-attention form new to the toolkit.
+- **Granite Speech 3.3-2B is now shipped at reference parity** (`NFKMLXGraniteSpeech`): a Conformer
+  acoustic encoder and a BLIP-2 Q-former projector feed a dense Granite decoder, with the released audio
+  LoRA adapter folded in; the released 2b matches by shape across all 937 base tensors, the encoder /
+  projector / logit cosines are ~1.0, and the backend transcribes the validation clip exactly. Its
+  decoder is the dense `granite` (Llama + Granite's four multipliers), not the 4.0-H hybrid.
+  **Voxtral-Mini** decomposes into a Whisper-family encoder (shipped) and a Mistral decoder the toolkit
+  already runs, so the work is mostly wiring. The 24B Voxtral and 8B Granite Speech are too large for the
+  target machine; the 3B and 2B variants fit.
 - **Canary-1B-v2** reuses the FastConformer encoder from the Parakeet port; the attention
   encoder-decoder decoder is the new work. Canary-Qwen uses a Qwen decoder already covered, so it is a
   lower priority.
-- **TrOCR** and **Table Transformer** are cheap, permissive document wins. OCR has no path in the
-  toolkit today, and TATR sits close to the covered DETR family.
+- **TrOCR and Table Transformer are now shipped at reference parity** (`NFKMLXTrOCR`,
+  `NFKMLXTableTransformer`). TrOCR reads a handwritten line through a ViT encoder and a BART-style
+  decoder. Table Transformer is a vanilla DETR over a ResNet-18 backbone.
+- **V-JEPA 2 and Sa2VA are now shipped at reference parity** (`NFKMLXVJEPA2`, `NFKMLXSa2VA`). V-JEPA 2
+  is a video ViT-L with a 3D tubelet embedding and 3D rotary position. Sa2VA-4B joins an InternViT
+  encoder and a Qwen2.5-3B decoder to the shipped SAM 2 network, which draws a mask for each `[SEG]`
+  token the decoder emits.
 - **TimesFM 2.5** is a second time-series family. Stay at 2.5 or earlier; TimesFM 3.0 carries a
   non-commercial license.
-- **Cosmos Tokenizer** builds on the LTX and Wan 3D-causal-VAE machinery. The code is Apache-2.0 and the
-  weights use the commercially usable NVIDIA Open Model License.
+- **Cosmos Tokenizer is now shipped at reference parity** (`NFKMLXCosmosTokenizer`): all ten released
+  image and video tokenizers load from their own TorchScript `autoencoder.jit`, and the post-training
+  objective ships with them. It shares no code with the LTX and Wan VAEs: its causal convolutions are
+  factorized into spatial and temporal kernels and its resampling blocks add a strided convolution to
+  an average pool. The code is Apache-2.0 and the weights use the commercially usable NVIDIA Open
+  Model License.
 - **SD 3.5** and **Stable Audio Open** carry the Stability Community License, which is free below $1M
   annual revenue and not fully permissive above it. Flag the revenue gate before committing.
 
@@ -127,11 +142,11 @@ Notes:
 
 | Model | Vendor | Task | Architecture | License | Reference | Effort |
 |-------|--------|------|--------------|---------|-----------|--------|
-| **Codestral-Mamba 7B** | Mistral | Code LLM | Pure Mamba-2 SSM, linear-time, 256k context | Apache-2.0 | `state-spaces/mamba` (CUDA), `mamba.py` (MLX) | High |
-| **Granite 4.0-H** | IBM | LLM | Hybrid Mamba-2 SSM, sparse attention, MoE in H-Small | Apache-2.0 | HF `transformers` (`GraniteMoeHybrid`) | High |
-| **Nemotron Nano 2 (9B/12B v2)** | NVIDIA | LLM | Nemotron-H hybrid: Mamba-2 layers, MLP, few attention layers | NVIDIA Open Model License | HF `transformers` (`NemotronH`) | High |
+| **Codestral-Mamba 7B** — SHIPPED (`NFKMLXMamba`) | Mistral | Code LLM | Pure Mamba-2 SSM, linear-time, 256k context | Apache-2.0 | transformers `Mamba2ForCausalLM` (CPU) | High |
+| **Granite 4.0-H** — SHIPPED (`NFKMLXGraniteHybrid`) | IBM | LLM | Hybrid Mamba-2 SSM, sparse attention, MoE in H-Small | Apache-2.0 | HF `transformers` (`GraniteMoeHybrid`) | High |
+| **Nemotron Nano 2 (9B/12B v2)** — SHIPPED (`NFKMLXNemotronH`) | NVIDIA | LLM | Nemotron-H hybrid: Mamba-2 layers, ReLU-squared MLP, few NoPE attention layers | NVIDIA Open Model License | HF `transformers` (`NemotronH`) | High |
 | **BAGEL-7B-MoT** | ByteDance | Any-to-any understand and generate | Mixture-of-Transformer-Experts, dual VAE + ViT encoders | Apache-2.0 | `ByteDance-Seed/BAGEL` (official repo) | High |
-| **Phi-4-multimodal** | Microsoft | Text + vision + audio | Phi-4-mini decoder + SigLIP-style vision + Conformer audio + mixture-of-LoRAs | MIT | HF `transformers` | High |
+| **Phi-4-multimodal** — SHIPPED (`NFKMLXPhi4MM`) | Microsoft | Text + vision + audio | Phi-4-mini decoder + SigLIP-style vision + Conformer audio + mixture-of-LoRAs | MIT | the release's remote code (transformers 4.46.1) | High |
 | **HunyuanVideo / Hunyuan3D** | Tencent | Text-to-video / image-to-3D | MMDiT + 3D causal VAE (video); flow-based shape DiT + PBR paint (3D) | Tencent Hunyuan Community | HF `diffusers` (video) / official repo (3D) | High |
 
 Notes:
@@ -139,11 +154,25 @@ Notes:
 - The **Mamba / SSM track** is the highest-leverage strategic bet. It introduces the toolkit's first
   state-space layer, and one selective-scan (SSD) implementation serves Codestral-Mamba, Granite 4.0-H,
   and Nemotron Nano 2. The cost is real: Mamba-2's selective scan has no fused MLX kernel and the
-  official references are CUDA-only. A pure-MLX `mamba.py` reference exists to check parity against, and
-  performance work is expected. Codestral-Mamba is the pure-SSM testbed; Granite and Nemotron add the
-  hybrid attention and MoE on top.
+  official references are CUDA-only. **Codestral-Mamba is now shipped at reference parity** (`NFKMLXMamba`, measured against transformers'
+  `Mamba2ForCausalLM` on the CPU rather than the CUDA references — a float/bf16 path needs no fused
+  kernel), which delivers the selective-scan primitive. **Granite 4.0-H is now shipped at reference
+  parity** (`NFKMLXGraniteHybrid`, reusing that mixer verbatim for its Mamba layers and adding NoPE
+  grouped-query attention, the routed mixture of experts, and Granite's scalar multipliers), the first
+  hybrid Mamba-attention decoder and the first on-device language-decoder fine-tune. **Nemotron Nano 2 is
+  now shipped at reference parity** (`NFKMLXNemotronH`, reusing that mixer verbatim for its Mamba layers
+  and adding NoPE grouped-query attention and a ReLU-squared feed-forward, one mixer per block from
+  `hybrid_override_pattern`, no scalar multipliers, its Mamba gated norm grouped by `n_groups`): tiny
+  logit cosine 1.0, structural parity across all 341 tensors of Nemotron-Nano-9B-v2, and the same
+  on-device LoRA fine-tune. This closes the SSM/hybrid track — one selective-scan mixer now serves all
+  three (Codestral-Mamba, Granite 4.0-H, Nemotron Nano 2).
 - **BAGEL** and **Phi-4-multimodal** are large multi-component integrations whose novelty concentrates
   in one part (the Mixture-of-Transformer routing; the audio Conformer and mixture-of-LoRAs).
+  **Phi-4-multimodal is now shipped at reference parity** (`NFKMLXPhi4MM`) in all four of its modes
+  (text, speech, vision, and vision with speech), measured against the release's own remote code on the
+  released weights with token-exact answers from raw inputs. Its decoder reuses `NFKMLXLanguageNet`,
+  which gained partial rotary and LongRoPE; the new work is the Conformer speech tower, the NaViT SigLIP
+  embedding and Phi-3.5's HD layout, the runtime mixture-of-LoRAs layer, and both preprocessors.
 - **Hunyuan3D** is the one novel 3D-asset frontier with no covered analog. The Tencent Community License
   excludes the EU, UK, and South Korea and bans training competitors, so it is not truly open.
 
@@ -186,7 +215,6 @@ exact license on the specific checkpoint.
 Several candidates extend a family the toolkit already has or fill a gap the roadmap names:
 
 - **Mimi and EnCodec** extend the DAC and SNAC codec family.
-- **Cosmos Tokenizer** extends the LTX and Wan 3D-VAE stack.
 - **BigVGAN v2** joins the HiFi-GAN and iSTFTNet vocoder family.
 - **Canary-1B-v2** reuses the Parakeet FastConformer encoder.
 - **Sortformer diarization** and **Microsoft WavLM** both address the blocked pyannote diarization gap.
