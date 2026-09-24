@@ -634,6 +634,31 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Pixtral's references name its current repository, `mistral-experimental/pixtral-12b`; the former
   `mistral-community/pixtral-12b` redirects there.
 
+#### Text translation
+
+- Three open-weight translators answer the core's translation contract (`NFKInputPrompt` in,
+  `NFKParameterTargetLanguage` required, `NFKParameterSourceLanguage` optional, `NFKOutputText` out):
+  `NFKMLXMarian` (OPUS-MT, one Helsinki-NLP release per language pair or target group, built from a
+  directory, a repo, or two language tags), `NFKMLXM2M100` (M2M-100 418M and 1.2B, SMaLL-100; the
+  source detected when a request omits it), and `NFKMLXMADLAD` (MADLAD-400 3B-MT over T5, 400+
+  languages, float32 or bfloat16), and `NFKMLXTranslateGemma` (TranslateGemma 4B / 12B / 27B: the
+  shipped Gemma 3 driven by the release's translation template, rendered in Swift from its
+  `chat_template.jinja` language table; the 4B at float32, the 12B bfloat16 against bfloat16). Each is at reference parity against transformers: tokenizations
+  id-exact, encoder and teacher-forced logit cosines at 1.0 within float error, greedy and beam
+  outputs token-exact, the training loss within 3e-5.
+- `NFKMLXTranslationParameterKey` tunes the decode per request (`beamCount`, `lengthPenalty`,
+  `splitsSentences`); the defaults follow each release's generation config.
+- `NFKMLXTranslationProvider` registers ahead of the core's chain for `NFKCapabilityTranslation` and
+  serves M2M-100 when its release is cached, declining otherwise so Apple's translator answers.
+- Under them: `NFKMLXSentencePieceModel` / `NFKMLXSentencePieceSegmenter` / `NFKMLXSentencePieceTokenizer`
+  read a SentencePiece `.model` file directly (unigram and BPE, `nmt_nfkc`, byte fallback, a release's
+  own `vocab.json` numbering); `NFKMLXSeq2SeqNet` is the BART-family encoder-decoder (Marian, M2M-100,
+  NLLB, BART, mBART by configuration) with a key-value cache; `NFKMLXT5Seq2SeqNet` adds the T5 decoder
+  to the shipped T5 encoder; `NFKMLXSeq2SeqDecoder` runs greedy and transformers-equivalent beam search
+  over either.
+- Every translator fine-tunes with LoRA on its decoder (`fineTune` on each entry class over
+  `NFKMLXTranslationObjective`), and an adapted network reloads through the same factories.
+
 - **On-device fine-tuning was producing wrong gradients on the GPU.** Every gradient after the first
   in a process can come back wrong by a factor of about a million, silently and with no infinity or
   not-a-number to give it away. MLX's Metal buffer cache is involved, and the mechanism is not
@@ -686,6 +711,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   request against a reasoning model is no longer read across its chain.
 - `NFKMLXLanguage.chatTemplate(inDirectory:)` reads a release's own Jinja template, which is what a
   caller sets to render a message list faithfully and what states a reasoning model's markers.
+- **The FLUX sampling schedule ended on the wrong sigma.** `NFKMLXFlowMatchConfiguration.flux` and
+  `.fluxSchnell` now carry `rampEndsAtStepFraction`, the `linspace(1, 1/steps, steps)` sigma ramp
+  diffusers' `pipeline_flux.py` and `pipeline_flux_controlnet.py` hand the scheduler, in place of the
+  scheduler's own ramp to `1/num_train_timesteps`. Under dynamic shifting the two ramps differ at
+  every step after the first: at 4 steps over 4096 tokens FLUX.1 [dev] now ends on sigma 0.5128 where
+  it ended on 0.0032, [schnell] runs its four steps at 1, 0.75, 0.5, 0.25 where it ran 1, 0.667,
+  0.334, 0.001, and at 28 steps the worst per-step gap was 0.10. `NFKMLXFluxPipeline` and
+  `NFKMLXFluxControlNetPipeline` take the change through their default schedule. The SD3 pipelines
+  pass no ramp of their own and stay on the scheduler's default, which the same measurement
+  corrected at its end: under a static shift diffusers' scheduler shifts its `sigma_min` at
+  construction and shifts the ramp built down to it again in `set_timesteps`, so SD3's last sigma
+  is 0.0089 (timestep 8.9), where `.sd3` ended on 0.0030 (timestep 3.0). `NFKMLXSD3Pipeline` and
+  `NFKMLXSD3ControlNetPipeline` take that through their default schedule; a dynamic-shift schedule
+  (LTX-Video, Z-Image, Qwen-Image) is unchanged. `NFKMLXFlowMatchSchedulerTests` holds diffusers'
+  sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
 
