@@ -160,6 +160,16 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   (`noiseLevel`, the release's own default 20). The upscaler's autoencoder is one level shallower than
   the others, which is where its ×4 comes from — narrowing a test configuration must keep the level
   count or the model silently becomes a ×2. Output size and round-trip tested.
+  Customization: trainable at `LoRA`, with no recipe written yet. prs-eth/Marigold at 2bfbdea
+  (`src/trainer/marigold_depth_trainer.py`) trains the whole UNet with a masked latent MSE on the
+  v-target, the autoencoder and the empty-text embedding frozen and no teacher; Adam at 3e-5 under its
+  `IterExponential` schedule, an effective batch of 32 over 30k iterations. The affine invariance is in
+  the target normalization, which maps the 2nd and 98th percentiles to [−1, 1]. On a device the level is
+  LoRA on the UNet, as for the SD 1.5 UNet. The upscaler's objective is in
+  Stability-AI/stablediffusion's `ddpm.py`: L2 on v, the low-resolution image noised at a level drawn
+  uniformly from [0, 350) and passed as the class label, AdamW at 1e-4. That repository is deleted and
+  was read from a mirror; its launcher and degradation pipeline are not published, so a recipe supplies
+  the degradation.
 - `NFKMLXIPAdapterImageProjection` / `NFKMLXIPAdapterAttention` — IP-Adapter, lightweight image
   conditioning for a diffusion model (steer a Stable Diffusion generation with a reference image, not
   only text). Two pieces: the image projection maps a CLIP image embedding to a short sequence of
@@ -197,3 +207,5 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   combines them into `encoder.*`/`decoder.*` keys and the loader transposes the 4-D convs. Reference
   parity against madebyollin's own `taesd.py` on the first numeric run: latent cosine 0.9999999999996,
   decode cosine 0.9999999999998, mean |difference| 1.9e-7.
+  Customization: untrainable here. madebyollin/taesd at 401ce45 publishes the network and its weights
+  only, with no training script, loss, or discriminator.

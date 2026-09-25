@@ -22,6 +22,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (`IK_DEPTH_VARIANT` picks the encoder config); it drove `transformers` until that package dropped the
   `depth_anything` model type, and the parity test kept passing throughout because it compares against a
   stored record, not a live oracle.
+  Customization: trainable at `full`, with no recipe written yet. The reference publishes the metric
+  fine-tune (`metric_depth/train.py`, DepthAnything/Depth-Anything-V2 at a561b84): `SiLogLoss` (λ 0.5)
+  over the valid pixels, AdamW at 5e-6 on the released relative encoder and 5e-5 on a fresh DPT head
+  that ends in Sigmoid × `max_depth` (20 indoor, 80 outdoor), weight decay 0.01, poly decay at power
+  0.9. The released relative head ends in ReLU, so a recipe builds the metric head beside it. The
+  relative release's distillation recipe is not published.
 - `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL).
   The whole released model is built: the DINOv2 ViT backbone, both branches of the DualDPT head, the
   camera decoder, and the camera encoder. Every released tensor loads, on all three sizes (437 for Small
@@ -90,6 +96,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   0.9999999999999702. Large: hooks ≥ 0.999999999997466, depth 0.9999999999998904 (mean-removed
   0.9999999999835174), ray 0.999999999999276 with confidence 0.9999999999926193, pose encoding
   0.9999999999993067, camera encoder 0.9999999999999863. `DA3-LARGE` is CC-by-NC.
+  Customization: untrainable here. ByteDance-Seed/Depth-Anything-3 at 3d835ec holds inference,
+  benchmark, and streaming code only, with no loss module and no training script.
 - `NFKMLXU2Net` (`@objc`) — a real single-forward background remover: the U²-Net nested-U saliency
   network (Residual U-blocks) in `MLXNN`, run through `NFKMLXMattingBackend` (plate → straight
   foreground + saliency alpha, matte under `NFKOutputMask`). `+register` adds full `u2net` and light

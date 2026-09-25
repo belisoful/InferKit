@@ -99,3 +99,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKAudioAsset` under `NFKOutputAudio`. `+register` under `denoiser`. Reference parity against
   facebookresearch/denoiser dns48 (cosine 0.99999999999992), which also guards the shared network
   against a change made for the music model breaking the speech one. Single-output and round-trip tested.
+  Customization: trainable at `full`, with no recipe written yet. facebookresearch/denoiser at 8afd7c1
+  (`denoiser/solver.py`, `conf/config.yaml`) trains with an L1 waveform loss and Adam at 3e-4 (β 0.9,
+  0.999), with no discriminator. The multi-resolution STFT term in `stft_loss.py` is optional: off in
+  the DNS configuration, 0.1 per term in the Valentini one.

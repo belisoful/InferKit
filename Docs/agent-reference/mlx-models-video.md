@@ -34,6 +34,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   vendored by ComfyUI-Frame-Interpolation (`rife_arch.py`, `arch_ver="4.17"`), whose own `IFNet.py`
   ships inside the model zip rather than in the repository; only one ComfyUI device helper needs
   stubbing.
+  Customization: trainable at `full`, with no recipe written yet. hzwer/Practical-RIFE links the v4
+  training code from its README as Google Drive archives; v4.12 and v4.15 are kept under
+  `~/.inferkit-validation/reference-sources/practical-rife-train`. The loss is a VGG19 perceptual term
+  (torchvision's ImageNet weights) minus 0.1 × SSIM, plus 0.1 × the L1 of every scale's merge (0.05 in
+  v4.15), 0.1 × a teacher term, and a flow-magnitude term. The teacher is the confidence-weighted blend
+  of the student's own per-scale flows, and the released blocks already emit the confidence channel.
+  AdamW with weight decay 1e-2 at a base rate of 1e-4, a 2,000-step linear warm-up then cosine to zero,
+  batch 16. A recipe needs VGG19 features beside the VGG16 port.
 - `NFKMLXRAFT` (`@objc`) — real optical flow: the RAFT pipeline in `MLXNN` (shared feature encoder,
   all-pairs correlation volume + pyramid + bilinear lookup via `take` gather, context encoder, an
   iterative ConvGRU update). Run through `NFKMLXTensorBackend` (two frames `frame0`/`frame1` → a packed

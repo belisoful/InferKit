@@ -124,6 +124,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `~/.inferkit-validation/llmvenv` (needs `rotary_embedding_torch` + `torchinfo`); the parity test feeds
   the recorded feature to isolate the backbone from the fbank. The SR sibling is `NFKMLXMossFormer2SRNet`
   below. Registered under `mossformer2-se`.
+  Customization: trainable at `full`, with no recipe written yet. modelscope/ClearerVoice-Studio at
+  6b3774d (`train/speech_enhancement`) trains the 48 kHz release with `psm_loss`, an MSE on the
+  phase-sensitive mask clamped to [0, 1], and no discriminator; Adam at 5e-4 (5e-5 to fine-tune),
+  clipping at 10, the rate halved after five epochs without improvement.
 - `NFKMLXDeepFilterNet` / `NFKMLXDeepFilterNetBackend` (`@objc(NFKMLXDeepFilterNet_Factory)`) —
   **DeepFilterNet3** (Rikorose/DeepFilterNet, dual **MIT/Apache-2.0**), a ~2.3M-parameter real-time
   48 kHz speech denoiser, the cheap counterpart to `NFKMLXDenoiser`. The `DfNet` is a clean torch
@@ -208,6 +212,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `transformer.*` / `proj_in` / `cond_proj` / `to_pred`, loaded through the native torch reader; the
   `abs_pos_emb` is 2000 rows) and `nvidia/bigvgan_v2_24khz_100band_256x/bigvgan_generator.pt`. No offline
   converter.
+  Customization: untrainable here. skirdey/voicerestore at bfda753 publishes no training code: the class
+  defines its prediction heads and a gradient-free `sample`, and no flow-matching loss.
 - `NFKMLXResembleEnhance` / `NFKMLXResembleEnhanceBackend` (`@objc(NFKMLXResembleEnhance_Factory)`) —
   **Resemble Enhance** (resemble-ai, **MIT**), a five-network general speech restorer (noise +
   reverberation + clipping + band-limiting together), the eighth restoration-vein port and the largest of
@@ -336,6 +342,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXComplexSTFT` gained `centered: false` for it. The FSMN's `[C, 1, order, 1]` depthwise memory
   loads as a 1-D `[C, order, 1]` convolution; the transposed convolutions through `(1, 2, 3, 0)`.
   `+register` under `frcrn`; weights `alibabasglab/FRCRN_SE_16K/last_best_checkpoint.pt` (161 MB).
+  Customization: trainable at `full`, with no recipe written yet. The same ClearerVoice-Studio tree
+  trains FRCRN with `loss_frcrn_se_16k`, a complex-mask MSE plus negative SI-SNR at equal weight, and no
+  discriminator; Adam at 1e-3 (1e-4 to fine-tune), weight decay 1e-5 on the weights only, clipping at
+  10. The loss `frcrn.py` defines itself is commented out.
 - `NFKMLXMossFormer2SRNet` / `NFKMLXMossFormer2SRGenerator` / `NFKMLXMossFormer2SRFactory`
   (`@objc(NFKMLXMossFormer2SR_Factory)`) — **MossFormer2 SR 48K** (modelscope/ClearerVoice-Studio,
   `alibabasglab/MossFormer2_SR_48K`, Apache-2.0), speech super-resolution (bandwidth extension), the

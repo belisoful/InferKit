@@ -189,6 +189,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `attentionWindow` 32: a LayerNorm, bias-free `to_qkv` / `to_out`, `headDim = min(64, dim)`, rotate-half
   rotary over the positions within the window, fused attention per window), which shifts every later
   `Sequential` slot by one in the remap and raises the padding multiple to `hop · lcm(stride₀, window)`.
+  Customization: untrainable here. hubertsiuzdak/snac at 8f79a71 holds the inference package only, and
+  its quantizer returns no commitment or codebook loss.
 - `NFKMLXBigVGAN` (`@objc` backend) — BigVGAN v2 (`nvidia/bigvgan_v2_24khz_100band_256x`, MIT), an
   anti-aliased **SnakeBeta** vocoder, shipped standalone after arriving as VoiceRestore's vocoder. A
   HiFi-GAN-style generator with two BigVGAN additions: the periodic `SnakeBeta` activation

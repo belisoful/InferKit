@@ -33,6 +33,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   decoding and suppression against its `detect_faces` (same face count, **box IoU 1.0**, landmarks
   within a pixel). Weights: `github.com/xinntao/facexlib/releases` `detection_mobilenet0.25_Final.pth`,
   1.7 MB — negligible beside CodeFormer's own checkpoint, which is why it is the recommended detector.
+  Customization: trainable at `full`, with no recipe written yet. biubug6/Pytorch_Retinaface at b984b4b
+  (`train.py`, `layers/modules/multibox_loss.py`) trains the network facexlib ships: smooth-L1 boxes at
+  weight 2.0, cross-entropy over the positives and 7:1 mined hard negatives, and smooth-L1 landmarks,
+  over priors matched at IoU 0.35; SGD at 1e-3, momentum 0.9, weight decay 5e-4, ×0.1 at epochs 190 and
+  220 of 250, batch 32 at 640 pixels.
 - `NFKMLXYOLO` (`@objc`) — real object detection: the reference **YOLOv8** (ultralytics) in `MLXNN` —
   a CSPDarknet backbone of `Conv` (convolution + **BatchNorm epsilon 1e-3** + SiLU) and `C2f` stages
   ending in SPPF (three chained 5×5 stride-1 max pools through `NFKMLXResample.maxPooled`), a PAN-FPN

@@ -54,6 +54,9 @@ arithmetic as before.
   exact (conv_in / first down block / mid ≥ 0.99999999999), latent cosine 0.99999999999, decode cosine
   0.99999999996. A weight-free test also asserts the encoder's temporal causality (two clips sharing their
   first frames but not the last produce the same first latent frame).
+  Customization: untrainable here. Lightricks/LTX-Video at 4b2d053 publishes no autoencoder training
+  code: its only gradient through the autoencoder is a smoke test that backpropagates an MSE on random
+  input in evaluation mode, and Lightricks/LTX-Video-Trainer freezes the autoencoder.
 - `NFKMLXLTXTransformer` (`@objc`) — the LTX-Video DiT (`LTXVideoTransformer3DModel`), the denoising
   transformer of the video-generation pipeline (the stage after the VAE). A 2B sequence transformer over
   the VAE's flattened latent tokens: `proj_in` (128→2048), 28 `NFKLTXBlock`s, `norm_out`+adaLN, `proj_out`
@@ -254,6 +257,9 @@ arithmetic as before.
   entry below), not a stand-in. Validated by a weight-free tiny-config glue test plus the DiT/VAE
   parities. SANA's text encoder is `NFKMLXGemma2Net` (Gemma-2, ported here — see the Gemma-2 entry):
   the caller runs it for the caption features. The SANA text-to-image path is complete.
+  Customization of the DC-AE: untrainable here. mit-han-lab/efficientvit trains the diffusion model over
+  precomputed latents, and dc-ai-projects/DC-Gen's autoencoder trainer calls `forward_train`, which no
+  published model implements.
 - `NFKMLXWanTransformerNet` — the Wan text-to-video DiT (`WanTransformer3DModel`, Alibaba Wan), the fifth
   DiT family. A 3-D sequence transformer over a `Conv3d`-patchified video latent (patch `(1,2,2)`), with
   the same 3-axis interleaved rotary as Z-Image (`NFKZImageRope` reused, θ 10000, axes `t = headDim −
@@ -311,6 +317,8 @@ arithmetic as before.
   Reference parity against transformers' UMT5EncoderModel at a tiny configuration (`run_reference.py
   umt5`, the `llm` env): text embedding cosine 0.9999999999999984, with the plain-T5 shared-bias path
   still at parity. The Wan text-to-video path is complete.
+  Customization of the Wan VAE: untrainable here. Wan-Video/Wan2.1 (`wan/modules/vae.py`) and Wan2.2
+  (`wan/modules/vae2_2.py`) define the network with no objective and no training script.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things
@@ -378,6 +386,9 @@ arithmetic as before.
   Reference parity against diffusers on the released weights, first numeric run (`run_reference.py
   qwenimage21_vae`): encoder mean 0.9999999999995628, the pipeline's normalized latent
   0.9999999999996052, decoded image 0.9999999999995695.
+  Customization: untrainable here. Neither QwenLM/Qwen-Image at 6b5e1f5 nor the Qwen-Image and
+  Qwen-Image 2.1 releases carry autoencoder training code, and diffusers' generic autoencoder trainer
+  loads plain `AutoencoderKL` only.
 - `NFKMLXQwenImagePipeline` — the Qwen-Image 2.1 text-to-image glue, chaining the vision-language text
   encoder, the block-causal DiT over the flow schedule, and the single-frame VAE. Two details of the
   glue belong to the model rather than to the sampler. The prompt is a RAW template string handed
@@ -538,6 +549,12 @@ arithmetic as before.
   0.9999999999999983, patching and whitening 0.9999999999999988, decode 0.9999999999998801, with the
   decoder walked stage by stage (`post_quant_conv`, `conv_in`, `mid_block`, `up_blocks.0`,
   `conv_norm_out`) so a divergence names a stage. Oracle `run_flux2_vae`, `IK_PARITY_FLUX2_VAE`.
+  Customization: `NFKMLXFlux2LatentCodec` is untrainable. It holds only the BatchNorm running statistics
+  (the reference builds `bn` with `affine=False`), so a gradient has nothing to move, and
+  black-forest-labs/flux2 publishes no training code. The autoencoder itself shares
+  `NFKMLXSDAutoencoder`'s row; diffusers' `train_autoencoderkl.py` (L2, 0.5 × LPIPS, KL at 1e-6, a
+  PatchGAN built fresh and switched on at step 50,001, AdamW at 4.5e-6) is a generic route, not BFL's
+  recipe.
 
   That walk found a defect in SHARED code, not in FLUX.2: `NFKSDResnetBlock` normalized at the UNet's
   eps 1e-5 while diffusers builds every autoencoder block with `resnet_eps=1e-6`. See the entry in

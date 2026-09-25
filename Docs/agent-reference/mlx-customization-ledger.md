@@ -10,7 +10,8 @@ This file is the index: one row per model entry, so a session can see what is se
 and know what it has to read before it writes the recipe. The prose that explains a ruling belongs in
 the model's own `mlx-models-<class>.md` entry, not here.
 
-**Triaged 2026-09-24** over the 164 model entries in the seventeen class files.
+**Triaged 2026-09-24** over the 164 model entries in the seventeen class files. The fifteen rows left
+`uncertain` were settled on 2026-09-25 from each reference's own training code (below).
 
 ## How to use it
 
@@ -44,10 +45,10 @@ and a row answers the first. The `Reach` column answers the second.
 | Outcome | Rows |
 | --- | --- |
 | `ships` | 33 |
-| `trainable`, no recipe yet | 54 |
-| `offline` | 38 |
-| `uncertain` | 15 |
-| `untrainable` | 7 |
+| `trainable`, no recipe yet | 62 |
+| `offline` | 39 |
+| `uncertain` | 0 |
+| `untrainable` | 13 |
 | Shared infrastructure, no objective of its own | 1 |
 | Total rows | 148 |
 
@@ -55,7 +56,7 @@ The 164 model entries become 148 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Thirty-three recipes ship and 54 models are trainable with none written. That is the size of
+Thirty-three recipes ship and 62 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -85,8 +86,8 @@ own loss module.
 | `NFKMLXDeepLab` | trainable | head-retarget | internal | Per-pixel cross-entropy. torchvision's criterion is in `references/segmentation`, not the wheel. |
 | `NFKMLXBiSeNet` | trainable | head-retarget | internal | The checkpoint's two auxiliary heads are training-only supervision. `CoinCheung/BiSeNet` pins the weights. |
 | `NFKMLXBiSeNetV2` | trainable | head-retarget | internal | Same repository. Its four auxiliary heads the port neither builds nor loads. |
-| `NFKMLXDepthAnything` | uncertain | — | internal | Read `DepthAnything/Depth-Anything-V2` for a training script. The relative release is a distillation product and its recipe may not be published. |
-| `NFKMLXDepthAnything3` | uncertain | — | internal | Read the `depth_anything_3` GitHub repository. The 0.1.1 wheel was read and carries no loss module. |
+| `NFKMLXDepthAnything` | trainable | full | internal | The metric fine-tune (`metric_depth/train.py`) is published: SiLog over the released relative encoder at 5e-6 and a fresh Sigmoid × `max_depth` head at ten times the rate. The relative release's distillation recipe is not. |
+| `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
 
 ## Detection and pose
@@ -101,7 +102,7 @@ own loss module.
 | `NFKMLXRFDetrSegmentationNet` | trainable | head-retarget | public | transformers `RfDetrForSegmentationLoss`. Its point-sampled mask terms reduce to gathers MLX has. |
 | `NFKMLXPose` | trainable | head-retarget | internal | Heatmap MSE. The objective is in mmpose's own losses. |
 | `NFKMLXVitPose` | trainable | head-retarget | internal | transformers states its loss is unsupported and points at `ViTAE-Transformer/ViTPose`. |
-| `NFKMLXRetinaFace` | uncertain | — | internal | Read `biubug6/Pytorch_Retinaface`'s `multibox_loss.py`. facexlib here ships detection and no loss. |
+| `NFKMLXRetinaFace` | trainable | full | internal | biubug6/Pytorch_Retinaface's `multibox_loss.py`: smooth-L1 boxes at 2.0, 7:1 hard-negative cross-entropy, smooth-L1 landmarks; SGD at 1e-3. facexlib ships the same network. |
 
 ## Image restoration
 
@@ -117,8 +118,8 @@ own loss module.
 | `NFKMLXRealESRGAN` | offline | — | internal | The generator alone is ported. The published recipe adds a discriminator no file here holds. |
 | `NFKMLXLaMa` | offline | — | internal | big-lama pairs the FFC-ResNet generator with an adversarial discriminator and a perceptual network. |
 | `NFKMLXCodeFormer` | offline | — | internal | The staged reference recipe needs a discriminator and a codebook-learning stage. |
-| `NFKMLXColorizer` | uncertain | — | internal | Read richzhang/colorization's training directory for the class-rebalancing prior the 313-bin loss needs. |
-| `NFKMLXDDColor` | uncertain | — | internal | Read piddnad/DDColor's `options/train/*.yml`. A `network_d` makes it offline; no training code makes it untrainable. |
+| `NFKMLXColorizer` | trainable | full | internal | The `caffe` branch's `train/` recipe is a 313-bin cross-entropy rebalanced by the published `prior_probs.npy`. SIGGRAPH-17 trains in colorization-pytorch: cross-entropy plus 10× L1. |
+| `NFKMLXDDColor` | offline | — | internal | `train_ddcolor.yml` trains against a `DynamicUNetDiscriminator` at GAN weight 1.0, and no release holds its weights. |
 
 ## Video
 
@@ -130,7 +131,7 @@ own loss module.
 | `NFKMLXRAFT` | trainable | full | internal | 5.3M parameters. The sequence loss needs ground-truth flow, and the correlation volume bounds the crop size. |
 | `NFKMLXVideoSR` | trainable | full | internal | BasicVSR's mmediting configuration supplies the loss and the reduced SPyNet rate. Memory scales with clip length. |
 | `NFKMLXWanAnimate` | offline | — | public | The smallest released form is 32.8 GB in bfloat16 against 32 GiB of unified memory. |
-| `NFKMLXRIFEv4` | uncertain | — | internal | Read hzwer/Practical-RIFE for a v4 training script. v4's architecture ships inside the model zip. |
+| `NFKMLXRIFEv4` | trainable | full | internal | The v4.12 and v4.15 training archives Practical-RIFE links: VGG19 perceptual minus 0.1 SSIM, L1, and a teacher blended from the student's own flows. A recipe needs VGG19 features. |
 | `NFKMLXVideoBackend` | untrainable | — | n/a | The AVFoundation decode and encode layer holds no parameters. |
 
 ## Text to speech
@@ -157,9 +158,9 @@ own loss module.
 | `NFKMLXCMGAN` | offline | — | internal | The discriminator is a training device the release omits. |
 | `NFKMLXMossFormer2SRNet` | offline | — | internal | The reference's generator ships three discriminators and a feature loss. |
 | `NFKMLXApollo` | offline | — | internal | `apollo.yaml` configures a frequency discriminator and a second optimizer. |
-| `NFKMLXMossFormer2SENet` | uncertain | — | internal | Read the `train/` tree of modelscope/ClearerVoice-Studio. The local clone is inference only. |
-| `NFKMLXFRCRN` | uncertain | — | internal | The same `train/` tree. |
-| `NFKMLXVoiceRestore` | uncertain | — | internal | Read skirdey/voicerestore for a training script. The cloned class stores `sigma` and defines only `sample`. |
+| `NFKMLXMossFormer2SENet` | trainable | full | internal | ClearerVoice-Studio's `train/speech_enhancement`: an MSE on the phase-sensitive mask, Adam at 5e-4, no discriminator. |
+| `NFKMLXFRCRN` | trainable | full | internal | The same tree: a complex-mask MSE plus SI-SNR, Adam at 1e-3, no discriminator. |
+| `NFKMLXVoiceRestore` | untrainable | — | internal | skirdey/voicerestore publishes no training code, and the class defines no loss. |
 
 ## Source separation
 
@@ -168,7 +169,7 @@ own loss module.
 | `NFKMLXDemucs` | trainable | full | internal | demucs 4.0.1 `solver.py` trains with an L1 waveform loss and no adversary. |
 | `NFKMLXHTDemucs` | trainable | full | internal | The same solver. 42M parameters, an 81 MB release. |
 | `NFKMLXConvTasNet` | ships | full | public | asteroid v0.5.2's `PITLossWrapper(pairwise_neg_sisdr)`, matched by `run_reference.py convtasnet_loss`. 5M parameters. |
-| `NFKMLXDenoiser` | uncertain | — | internal | Read `denoiser/solver.py` and `stft_loss.py`. The local clone holds the architecture only. |
+| `NFKMLXDenoiser` | trainable | full | internal | `denoiser/solver.py`: L1 on the waveform with the multi-resolution STFT term optional, Adam at 3e-4, no discriminator. |
 
 ## Audio codecs and music
 
@@ -178,7 +179,7 @@ own loss module.
 | `NFKMLXBigVGAN` | offline | — | public net | Multi-resolution and multi-period discriminators, with no inference weights shipped for them. |
 | `NFKMLXMimi` | offline | — | public net | The codec trains adversarially against discriminators the release does not ship. |
 | `NFKMLXMusic3` | offline | — | internal | The 16 GiB language model and the 9.7 GB transformer exceed a 32 GB working set, so the stack runs staged. |
-| `NFKMLXSNAC` | uncertain | — | internal | Read hubertsiuzdak/snac for a training script. The installed package is inference-only. |
+| `NFKMLXSNAC` | untrainable | — | internal | hubertsiuzdak/snac is inference only, and its quantizer returns no commitment or codebook loss. |
 
 ## Stable Diffusion and the diffusion seam
 
@@ -190,8 +191,8 @@ own loss module.
 | `NFKMLXTextToImage` | trainable | LoRA | partial | SD 1.5 and SD 2.1 hold with the backbone frozen. `.sdxlTurbo` is offline on SDXL's grounds. |
 | `NFKMLXIPAdapter` | trainable | LoRA (adapter) | public | The entry already names the trained set: the projection and `to_k_ip` / `to_v_ip` over a frozen UNet. |
 | `NFKMLXSDTextEncoderNet` | offline | — | public | Its reference objective is CLIP's contrastive loss, which needs the large batch of negatives. |
-| `NFKMLXMarigold` / `NFKMLXSDUpscaler` | uncertain | — | internal | Read prs-eth/Marigold for its affine-invariant depth loss and the upscaler's noise-level schedule. |
-| `NFKMLXTAESD` | uncertain | — | internal | Read madebyollin/taesd. A published distillation script makes it `full`; a discriminator makes it offline. |
+| `NFKMLXMarigold` / `NFKMLXSDUpscaler` | trainable | LoRA | internal | Marigold's trainer runs a latent MSE on v over the whole UNet at Adam 3e-5, no teacher. The upscaler's `ddpm.py` objective (read from a mirror; the original repository is deleted) needs a caller-supplied degradation. LoRA on the UNet fits a device. |
+| `NFKMLXTAESD` | untrainable | — | internal | madebyollin/taesd publishes the network and its weights only. |
 | `NFKMLXSDPromptTokenizer` | untrainable | — | n/a | A tokenizer carries no parameters. |
 | `NFKMLXDiffusionBackend` | untrainable | — | n/a | The seam holds no weights. The model arrives as the consumer's closures. |
 
@@ -215,8 +216,8 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXSD3ControlNetNet` | offline | — | public | Its zero-initialized residuals take their gradient through the frozen 2B to 8B base. |
 | `NFKMLXFluxControlNetNet` | offline | — | public | The same residual gradient through the frozen 12B FLUX.1 transformer. |
 | `NFKMLXLTXPipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
-| `NFKMLXQwenImageVAE` | uncertain | — | public | Read the Qwen-Image release or diffusers for autoencoder training code. The same question covers `NFKMLXWanVideoVAENet`, `NFKMLXDCAutoencoderNet`, and `NFKMLXFlux2LatentCodec`. |
-| `NFKMLXLTXVideoVAE` | uncertain | — | internal | Read Lightricks/LTX-Video for autoencoder training code. Reconstruction makes it `full`; a discriminator makes it offline. |
+| `NFKMLXQwenImageVAE` | untrainable | — | public | No autoencoder training code in QwenLM/Qwen-Image or either release. The same holds for `NFKMLXWanVideoVAENet` (Wan 2.1 and 2.2 define no objective) and `NFKMLXDCAutoencoderNet` (DC-Gen's trainer leaves `forward_train` unimplemented); `NFKMLXFlux2LatentCodec` holds no learnable parameter. |
+| `NFKMLXLTXVideoVAE` | untrainable | — | internal | Lightricks/LTX-Video publishes no autoencoder training code; its only backward pass through the autoencoder is a smoke test on random input, and LTX-Video-Trainer freezes the autoencoder. |
 | `NFKMLXFlowMatchScheduler`, `NFKMLXDPMSolverScheduler`, `NFKMLXUniPCScheduler` | untrainable | — | n/a | Value types with no parameters. |
 
 ## Language
@@ -315,27 +316,31 @@ encoder frozen, over the reference's teacher-forced `labels=` loss.
 | `NFKMLXHFTTransformer` | trainable | full | public | sony/hFT-Transformer releases its training code. The blocker is the MAESTRO preparation pipeline, not the objective or the device. |
 | `NFKMLXMuScriptor` | untrainable | — | public | The package holds no loss, optimizer, or backward pass, the three-stage pipeline is unreleased, and the weights are CC BY-NC 4.0. |
 
-## Uncertain rows, collected
+## Uncertain rows, resolved (2026-09-25)
 
-Fifteen rows turn on a file nobody here has read. Each is cheap to settle and blocks any decision
-about whether there is code to write.
+Each ruling rests on the reference's own files, read at the commit named. The model's entry holds
+the recipe detail.
 
-| Model | Read this |
-| --- | --- |
-| `NFKMLXDepthAnything` | `DepthAnything/Depth-Anything-V2`, for any training script. |
-| `NFKMLXDepthAnything3` | The `depth_anything_3` GitHub repository, not the 0.1.1 wheel. |
-| `NFKMLXRetinaFace` | `biubug6/Pytorch_Retinaface`, `layers/modules/multibox_loss.py`. |
-| `NFKMLXColorizer` | richzhang/colorization's training directory and `prior_probs.npy`. |
-| `NFKMLXDDColor` | piddnad/DDColor, `options/train/*.yml`. |
-| `NFKMLXRIFEv4` | hzwer/Practical-RIFE, for a v4 training script. |
-| `NFKMLXMossFormer2SENet`, `NFKMLXFRCRN` | The `train/` tree of modelscope/ClearerVoice-Studio. |
-| `NFKMLXVoiceRestore` | skirdey/voicerestore, for a training script. |
-| `NFKMLXDenoiser` | facebookresearch/denoiser, `solver.py` and `stft_loss.py`. |
-| `NFKMLXSNAC` | hubertsiuzdak/snac, for a training script. |
-| `NFKMLXMarigold`, `NFKMLXSDUpscaler` | prs-eth/Marigold's training script and the upscaler's noise-level schedule. |
-| `NFKMLXTAESD` | madebyollin/taesd, for a training script and whether it carries a discriminator. |
-| `NFKMLXLTXVideoVAE` | Lightricks/LTX-Video, for autoencoder training code. |
-| `NFKMLXQwenImageVAE` | The Qwen-Image release or diffusers, for autoencoder training code. |
+| Model | Outcome | Read |
+| --- | --- | --- |
+| `NFKMLXDepthAnything` | trainable, full | DepthAnything/Depth-Anything-V2 at a561b84, `metric_depth/train.py`. |
+| `NFKMLXDepthAnything3` | untrainable | ByteDance-Seed/Depth-Anything-3 at 3d835ec, the whole tree. |
+| `NFKMLXRetinaFace` | trainable, full | biubug6/Pytorch_Retinaface at b984b4b, `train.py` and `multibox_loss.py`. |
+| `NFKMLXColorizer` | trainable, full | richzhang/colorization `caffe` at a1642d6, `train/`; colorization-pytorch at 66a1cb2. |
+| `NFKMLXDDColor` | offline | piddnad/DDColor at 2adb63f, `options/train/train_ddcolor.yml`. |
+| `NFKMLXRIFEv4` | trainable, full | Practical-RIFE's v4.12 and v4.15 training archives (Google Drive, linked at bbfd2ea). |
+| `NFKMLXMossFormer2SENet`, `NFKMLXFRCRN` | trainable, full | modelscope/ClearerVoice-Studio at 6b3774d, `train/speech_enhancement`. |
+| `NFKMLXVoiceRestore` | untrainable | skirdey/voicerestore at bfda753, both branches. |
+| `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
+| `NFKMLXSNAC` | untrainable | hubertsiuzdak/snac at 8f79a71, the whole tree. |
+| `NFKMLXMarigold`, `NFKMLXSDUpscaler` | trainable, LoRA | prs-eth/Marigold at 2bfbdea; the upscaler's `ddpm.py` from a mirror of the deleted Stability-AI/stablediffusion, unpinned. |
+| `NFKMLXTAESD` | untrainable | madebyollin/taesd at 401ce45, the whole tree. |
+| `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |
+| `NFKMLXQwenImageVAE` and the Wan, DC-AE, and FLUX.2 latent autoencoders | untrainable | QwenLM/Qwen-Image at 6b5e1f5; Wan2.1 at 9737cba and Wan2.2 at 1ea34ff; efficientvit at de7d773 and DC-Gen at 5e03d60; black-forest-labs/flux2 at 50fe516. |
+
+Two readings are the weakest. The upscaler's source is a mirror whose commit could not be pinned,
+because the original repository is gone. DC-AE's rests on DC-Gen leaving `forward_train`
+unimplemented; a later DC-Gen commit that implements it reopens the row.
 
 ## Rows ruled on architecture, with the reference still unread
 
@@ -368,10 +373,12 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, and MarbleNet ship.
-   Basic Pitch at 35,736 parameters needs TensorFlow in its oracle environment
-   first, because its losses are Keras functions, and its released graph folds the batch
-   normalizations the reference trains. Each has a published objective with no adversary, and
-   each fits a device with room to spare.
+   Basic Pitch's losses are Keras functions and its released graph folds the batch normalizations
+   the reference trains; its TensorFlow oracle environment now exists (`basic_pitch_tf` in the
+   manifest), and `models.model()` at its defaults builds 16,864 parameters against the release's
+   35,736, so the oracle builds the release's own configuration. The 2026-09-25 triage adds
+   Denoiser, FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
+   metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. RF-DETR and its segmentation head,
    Silero VAD (whose reference tuning script freezes exactly what this port freezes), the PANNs

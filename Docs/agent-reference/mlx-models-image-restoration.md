@@ -233,6 +233,12 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   `colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth`, converted with
   `Tools/colorizer-to-safetensors --passthrough` (the eccv16 rename does not apply). With an empty
   hint it colorizes automatically; `predictAB(lightness:hint:mask:)` takes user strokes. Forward, Lab math, bin softmax, and round-trip tested.
+  Customization: trainable at `full`, with no recipe written yet. ECCV-16 trains in the `caffe` branch
+  of richzhang/colorization at a1642d6 (`train/`): a 313-bin cross-entropy on soft-encoded targets (the
+  ten nearest bins, σ 5), each pixel's gradient rebalanced by the published `prior_probs.npy` (γ 0.5)
+  and gray images masked out; Adam at 3.16e-5 (β 0.9, 0.99), weight decay 1e-3, ×0.316 every 215k of
+  500k iterations. SIGGRAPH-17 trains in richzhang/colorization-pytorch at 66a1cb2: a 529-class
+  cross-entropy plus 10× L1 regression, Adam at 1e-4, no adversarial term.
 - `NFKMLXDDColor` (`@objc`) — the modern colorizer beside the 2016 and 2017 ports (`DDColor`, piddnad,
   Apache-2.0): automatic colorization, an image's lightness in and two chroma channels out. Three
   parts. A **ConvNeXt-L encoder** (depths [3, 3, 27, 3], widths [192, 384, 768, 1536]) whose four stage
@@ -282,3 +288,7 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   attention maps, and the chroma. Weights `piddnad/DDColor-models` (Apache-2.0):
   `ddcolor_modelscope.pth`, `ddcolor_paper.pth`, `ddcolor_artistic.pth`, under `IK_VAL_DDCOLOR` and
   `IK_PARITY_DDCOLOR`.
+  Customization: offline. piddnad/DDColor at 2adb63f (`options/train/train_ddcolor.yml`) trains the
+  generator against a `DynamicUNetDiscriminator` at GAN weight 1.0, beside L1 on the chroma (0.1),
+  VGG16-BN perceptual (5.0), and colorfulness (0.5), and no release holds the discriminator's weights.
+  The offline route trains in Python and loads the result through the ordinary factory.
