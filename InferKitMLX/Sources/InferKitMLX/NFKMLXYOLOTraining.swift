@@ -480,7 +480,7 @@ extension NFKMLXYOLO {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        var average = averagesWeights ? NFKYOLOWeightAverage(net) : nil
+        var average = averagesWeights ? NFKMLXModelWeightAverage(net) : nil
         let history = try NFKMLXFineTune.run(
             net,
             freezing: {
@@ -535,9 +535,10 @@ extension NFKMLXYOLO {
     }
 }
 
-/// ultralytics' `ModelEMA`: a moving average of every floating weight and running statistic, decayed by
-/// `0.9999 · (1 − e^(−updates / 2000))` so the early updates count for more.
-struct NFKYOLOWeightAverage {
+/// ultralytics' `ModelEMA`, which RT-DETR's `ema.py` repeats: a moving average of every floating weight
+/// and running statistic, decayed by `0.9999 · (1 − e^(−updates / 2000))` so the early updates count for
+/// more.
+struct NFKMLXModelWeightAverage {
     private var shadow: [String: MLXArray]
     private var updates = 0
 

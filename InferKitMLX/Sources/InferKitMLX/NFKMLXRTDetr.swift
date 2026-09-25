@@ -75,6 +75,12 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
     /// How the deformable decoder reads its sampled locations. RT-DETR bilinearly interpolates;
     /// RT-DETRv2 reads `decoder_method` and offers a nearest-neighbour alternative.
     public var decoderMethod: NFKMLXRTDetrSamplingMethod = .bilinear
+    /// The contrastive-denoising queries a training forward adds, the reference's `num_denoising`. Zero
+    /// builds no `denoising_class_embed`, which inference never reads; a fine-tune network sets the
+    /// reference's 100.
+    ///
+    /// - Since: InferKit 0.5.0
+    public var denoisingQueries: Int = 0
 
     public init(embeddingSize: Int, hiddenSizes: [Int], depths: [Int], encoderInChannels: [Int],
                 featStrides: [Int], encoderHiddenDim: Int, encoderFFNDim: Int, numAttentionHeads: Int,
@@ -485,14 +491,15 @@ final class NFKRTDetrMultiheadAttention: Module {
         return t.reshaped([b, n, heads, headDim]).transposed(0, 2, 1, 3)
     }
 
-    func callAsFunction(_ hidden: MLXArray, position: MLXArray?) -> MLXArray {
+    /// `mask` is additive over `[queries, keys]`: zero where a query may attend, `-inf` where not.
+    func callAsFunction(_ hidden: MLXArray, position: MLXArray?, mask: MLXArray? = nil) -> MLXArray {
         let (b, n) = (hidden.dim(0), hidden.dim(1))
         let withPos = position == nil ? hidden : hidden + position!
         let q = split(qProj(withPos))
         let k = split(kProj(withPos))
         let v = split(vProj(hidden))
         let attn = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(headDim)), mask: .none)
+            queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(headDim)), mask: mask.map { .array($0) } ?? .none)
         let merged = attn.transposed(0, 2, 1, 3).reshaped([b, n, heads * headDim])
         return outProj(merged)
     }
@@ -592,11 +599,11 @@ final class NFKRTDetrHybridEncoder: Module {
         // AIFI on each named projection level.
         for (encoderIndex, level) in config.encodeProjLayers.enumerated() {
             let feature = hidden[level]
-            let (h, w, c) = (feature.dim(1), feature.dim(2), feature.dim(3))
-            let flat = feature.reshaped([1, h * w, c])
+            let (b, h, w, c) = (feature.dim(0), feature.dim(1), feature.dim(2), feature.dim(3))
+            let flat = feature.reshaped([b, h * w, c])
             let pos = positionEmbedding(height: h, width: w, dtype: feature.dtype)
             let encoded = encoder[encoderIndex](flat, position: pos)
-            hidden[level] = encoded.reshaped([1, h, w, c])
+            hidden[level] = encoded.reshaped([b, h, w, c])
         }
         // Top-down FPN.
         let stages = config.encoderInChannels.count - 1
@@ -666,7 +673,8 @@ final class NFKRTDetrDeformableAttention: Module {
         // Truncation toward zero, which is not `floor` for a negative coordinate.
         let xCell = clip(x.asType(.int32), min: Int32(0), max: Int32(width - 1))
         let yCell = clip(y.asType(.int32), min: Int32(0), max: Int32(height - 1))
-        let flatIndex = yCell * Int32(width) + xCell                                 // [heads, n]
+        // An index carries no gradient, and MLX refuses to differentiate a gather through one.
+        let flatIndex = stopGradient(yCell * Int32(width) + xCell)                  // [heads, n]
         let indices = broadcast(flatIndex.reshaped([headCount, n, 1]), to: [headCount, n, hd])
         return takeAlong(flat, indices, axis: 1)
     }
@@ -696,7 +704,7 @@ final class NFKRTDetrDeformableAttention: Module {
             let valid = logicalAnd(insideX, insideY).asType(value.dtype) // [heads, n]
             let xClamped = clip(xc, min: Float(0), max: maxX).asType(.int32)
             let yClamped = clip(yc, min: Float(0), max: maxY).asType(.int32)
-            let flatIndex = yClamped * Int32(width) + xClamped           // [heads, n]
+            let flatIndex = stopGradient(yClamped * Int32(width) + xClamped)   // [heads, n]; see sampleDiscrete
             let indices = broadcast(flatIndex.reshaped([headCount, n, 1]), to: [headCount, n, hd])
             let gathered = takeAlong(flat, indices, axis: 1)             // [heads, n, hd]
             let contribution = weight * valid                           // [heads, n]
@@ -705,48 +713,49 @@ final class NFKRTDetrDeformableAttention: Module {
         return output
     }
 
-    /// `hidden` `[1, Q, dModel]` (query already carrying its position), `value` the flattened encoder
-    /// features `[1, S, dModel]`, `referencePoints` `[1, Q, levels, 4]`, `shapes` per-level `(h, w)`.
+    /// `hidden` `[B, Q, dModel]` (query already carrying its position), `value` the flattened encoder
+    /// features `[B, S, dModel]`, `referencePoints` `[B, Q, levels, 4]`, `shapes` per-level `(h, w)`.
+    /// The sampling folds the batch into the heads.
     func callAsFunction(_ hidden: MLXArray, value valueInput: MLXArray, referencePoints: MLXArray,
                         shapes: [(Int, Int)]) -> MLXArray {
-        let q = hidden.dim(1)
+        let (b, q) = (hidden.dim(0), hidden.dim(1))
         let hd = dModel / heads
-        let value = valueProj(valueInput).reshaped([valueInput.dim(1), heads, hd])   // [S, heads, hd]
+        let value = valueProj(valueInput).reshaped([b, valueInput.dim(1), heads, hd])   // [B, S, heads, hd]
 
-        let offsets = samplingOffsets(hidden).reshaped([q, heads, levels, points, 2])
-        var weights = attentionWeights(hidden).reshaped([q, heads, levels * points])
-        weights = softmax(weights, axis: -1).reshaped([q, heads, levels, points])
+        let offsets = samplingOffsets(hidden).reshaped([b, q, heads, levels, points, 2])
+        var weights = attentionWeights(hidden).reshaped([b, q, heads, levels * points])
+        weights = softmax(weights, axis: -1).reshaped([b, q, heads, levels, points])
 
         // 4-coordinate reference points: location = ref_xy + offset / n_points * ref_wh * offsetScale.
         // RT-DETR fixes the scale at 0.5; RT-DETRv2 reads it from the config, and its `n_points_scale`
         // is the same `1 / n_points` when every level samples the same number of points, which every
         // released configuration does.
-        let ref = referencePoints.reshaped([q, 1, levels, 1, 4])                     // [Q, 1, levels, 1, 4]
-        let refXY = ref[0..., 0..., 0..., 0..., 0 ..< 2]
-        let refWH = ref[0..., 0..., 0..., 0..., 2 ..< 4]
+        let ref = referencePoints.reshaped([b, q, 1, levels, 1, 4])                  // [B, Q, 1, levels, 1, 4]
+        let refXY = ref[.ellipsis, 0 ..< 2]
+        let refWH = ref[.ellipsis, 2 ..< 4]
         let scaledOffsets = offsets / Float(points)
         let offsetLocations = scaledOffsets * refWH * offsetScale
-        let locations = refXY + offsetLocations                                     // [Q, heads, levels, points, 2]
+        let locations = refXY + offsetLocations                                     // [B, Q, heads, levels, points, 2]
 
         var levelStart = 0
-        var perLevel = [MLXArray]()                                                  // each [heads, Q, points, hd]
+        var perLevel = [MLXArray]()                                                  // each [B, heads, Q, points, hd]
         for (levelIndex, (h, w)) in shapes.enumerated() {
             let count = h * w
-            let levelValue = value[levelStart ..< (levelStart + count)]              // [count, heads, hd]
+            let levelValue = value[0..., levelStart ..< (levelStart + count)]        // [B, count, heads, hd]
             levelStart += count
-            let reshaped = levelValue.transposed(1, 0, 2).reshaped([heads, h, w, hd])
-            let levelLoc = locations[0..., 0..., levelIndex, 0..., 0...]             // [Q, heads, points, 2]
-            let coords = levelLoc.transposed(1, 0, 2, 3).reshaped([heads, q * points, 2])
+            let reshaped = levelValue.transposed(0, 2, 1, 3).reshaped([b * heads, h, w, hd])
+            let levelLoc = locations[0..., 0..., 0..., levelIndex]                   // [B, Q, heads, points, 2]
+            let coords = levelLoc.transposed(0, 2, 1, 3, 4).reshaped([b * heads, q * points, 2])
             let sampled = method == .bilinear
-                ? sample(reshaped, coords: coords, height: h, width: w)              // [heads, Q*points, hd]
+                ? sample(reshaped, coords: coords, height: h, width: w)              // [B·heads, Q·points, hd]
                 : sampleDiscrete(reshaped, coords: coords, height: h, width: w)
-            perLevel.append(sampled.reshaped([heads, q, points, hd]))
+            perLevel.append(sampled.reshaped([b, heads, q, points, hd]))
         }
         // Combine levels and points, weighted.
-        let stacked = stacked(perLevel, axis: 2).reshaped([heads, q, levels * points, hd])
-        let weightHead = weights.transposed(1, 0, 2, 3).reshaped([heads, q, levels * points, 1])
-        let combined = (stacked * weightHead).sum(axis: 2)                           // [heads, Q, hd]
-        let output = combined.transposed(1, 0, 2).reshaped([1, q, heads * hd])
+        let stacked = stacked(perLevel, axis: 3).reshaped([b, heads, q, levels * points, hd])
+        let weightHead = weights.transposed(0, 2, 1, 3, 4).reshaped([b, heads, q, levels * points, 1])
+        let combined = (stacked * weightHead).sum(axis: 3)                           // [B, heads, Q, hd]
+        let output = combined.transposed(0, 2, 1, 3).reshaped([b, q, heads * hd])
         return outputProj(output)
     }
 }
@@ -793,8 +802,8 @@ final class NFKRTDetrDecoderLayer: Module {
     }
 
     func callAsFunction(_ hidden: MLXArray, position: MLXArray, value: MLXArray,
-                        referencePoints: MLXArray, shapes: [(Int, Int)]) -> MLXArray {
-        var x = hidden + selfAttn(hidden, position: position)
+                        referencePoints: MLXArray, shapes: [(Int, Int)], mask: MLXArray? = nil) -> MLXArray {
+        var x = hidden + selfAttn(hidden, position: position, mask: mask)
         x = selfAttnNorm(x)
         let secondResidual = x
         let cross = encoderAttn(x + position, value: value, referencePoints: referencePoints, shapes: shapes)
@@ -821,26 +830,48 @@ final class NFKRTDetrDecoder: Module {
         }
     }
 
-    /// Returns the per-layer logits and reference points (each `[layers, Q, *]`).
+    /// Returns the per-layer logits and boxes (each `[B, Q, *]`).
+    ///
+    /// With `training`, each layer reads the previous layer's boxes detached, and a layer after the
+    /// first reports its boxes refined from the previous layer's undetached ones, so its box loss
+    /// reaches the previous layer's box head. That is the original implementation's training path
+    /// (`rtdetr_decoder.py`); transformers reports the detached form, which has the same values and
+    /// different gradients. `mask` is the self-attention mask the denoising queries need.
     func callAsFunction(_ target: MLXArray, value: MLXArray, referencePointsUnact: MLXArray,
-                        shapes: [(Int, Int)]) -> (logits: [MLXArray], references: [MLXArray]) {
+                        shapes: [(Int, Int)], mask: MLXArray? = nil,
+                        training: Bool = false) -> (logits: [MLXArray], references: [MLXArray]) {
         var hidden = target
-        var referencePoints = sigmoid(referencePointsUnact)               // [1, Q, 4]
+        var referencePoints = sigmoid(referencePointsUnact)               // [B, Q, 4]
+        var undetached: MLXArray?
         var logitsPerLayer = [MLXArray]()
         var referencesPerLayer = [MLXArray]()
         for (index, layer) in layers.enumerated() {
-            let referenceInput = referencePoints.expandedDimensions(axis: 2)   // [1, Q, 1, 4]
-            let referenceLevels = broadcast(referenceInput, to: [1, referencePoints.dim(1), shapes.count, 4])
+            let referenceInput = referencePoints.expandedDimensions(axis: 2)   // [B, Q, 1, 4]
+            let referenceLevels = broadcast(referenceInput, to: [referencePoints.dim(0), referencePoints.dim(1),
+                                                                 shapes.count, 4])
             let position = queryPosHead(referencePoints)
             hidden = layer(hidden, position: position, value: value,
-                           referencePoints: referenceLevels, shapes: shapes)
+                           referencePoints: referenceLevels, shapes: shapes, mask: mask)
             let predictedCorners = bboxEmbed[index](hidden)
             let newReference = sigmoid(predictedCorners + NFKRTDetrDecoder.inverseSigmoid(referencePoints))
-            referencePoints = newReference
-            referencesPerLayer.append(newReference)
             logitsPerLayer.append(classEmbed[index](hidden))
+            guard training else {
+                referencePoints = newReference
+                referencesPerLayer.append(newReference)
+                continue
+            }
+            referencesPerLayer.append(undetached.map {
+                sigmoid(predictedCorners + NFKRTDetrDecoder.inverseSigmoid($0))
+            } ?? newReference)
+            undetached = newReference
+            referencePoints = stopGradient(newReference)
         }
         return (logitsPerLayer, referencesPerLayer)
+    }
+
+    static func inverseSigmoidScalar(_ x: Float, eps: Float = 1e-5) -> Float {
+        let clamped = min(max(x, 0), 1)
+        return Foundation.log(max(clamped, eps) / max(1 - clamped, eps))
     }
 
     static func inverseSigmoid(_ x: MLXArray, eps: Float = 1e-5) -> MLXArray {
@@ -862,6 +893,7 @@ public final class NFKMLXRTDetrNet: Module {
     @ModuleInfo(key: "enc_bbox_head") var encBboxHead: NFKRTDetrMLP
     @ModuleInfo(key: "decoder_input_proj") var decoderInputProj: [[Module]]
     @ModuleInfo(key: "decoder") var decoder: NFKRTDetrDecoder
+    @ModuleInfo(key: "denoising_class_embed") var denoisingClassEmbed: Embedding?
     public let config: NFKMLXRTDetrConfiguration
 
     public init(_ config: NFKMLXRTDetrConfiguration) {
@@ -882,14 +914,23 @@ public final class NFKMLXRTDetrNet: Module {
              BatchNorm(featureCount: config.dModel, eps: config.batchNormEps)]
         }
         _decoder.wrappedValue = NFKRTDetrDecoder(config)
+        // The last row is the padding class, which the reference zeroes and never updates.
+        _denoisingClassEmbed.wrappedValue = config.denoisingQueries > 0
+            ? Embedding(weight: MLXRandom.normal([config.numLabels + 1, config.dModel])
+                * concatenated([MLXArray.ones([config.numLabels, 1]), MLXArray.zeros([1, 1])], axis: 0))
+            : nil
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
-    private func project(_ proj: [Module], _ x: MLXArray) -> MLXArray {
+    func project(_ proj: [Module], _ x: MLXArray) -> MLXArray {
         (proj[1] as! BatchNorm)((proj[0] as! Conv2d)(x))
     }
 
     /// Generates the flattened anchors and the validity mask for the feature-level shapes.
-    private func anchors(shapes: [(Int, Int)]) -> (anchors: MLXArray, validMask: MLXArray) {
+    func anchors(shapes: [(Int, Int)]) -> (anchors: MLXArray, validMask: MLXArray) {
         let gridSize: Float = 0.05
         var all = [MLXArray]()
         for (level, (h, w)) in shapes.enumerated() {
@@ -940,8 +981,18 @@ public final class NFKMLXRTDetrNet: Module {
         return (logits[logits.count - 1][0], references[references.count - 1][0])
     }
 
-    /// `pixels` `[1, H, W, 3]` NHWC → the full staged detection.
-    public func callAsFunction(_ pixels: MLXArray) -> Detection {
+    /// The encoder half of a forward, which inference and training share.
+    struct Encoded {
+        let features: [MLXArray]
+        let panMaps: [MLXArray]
+        let sourceFlatten: MLXArray                   // [B, S, dModel]
+        let shapes: [(Int, Int)]
+        let outputMemory: MLXArray                    // [B, S, dModel]
+        let encClass: MLXArray                        // [B, S, num_labels]
+        let encCoord: MLXArray                        // [B, S, 4], unactivated
+    }
+
+    func encode(_ pixels: MLXArray) -> Encoded {
         let features = backbone(pixels)
         let projected = features.enumerated().map { project(encoderInputProj[$0.offset], $0.element) }
         let panMaps = encoder(projected)
@@ -951,19 +1002,28 @@ public final class NFKMLXRTDetrNet: Module {
         var shapes = [(Int, Int)]()
         for level in 0 ..< config.numFeatureLevels {
             let source = project(decoderInputProj[level], panMaps[level])
-            let (h, w, c) = (source.dim(1), source.dim(2), source.dim(3))
+            let (b, h, w, c) = (source.dim(0), source.dim(1), source.dim(2), source.dim(3))
             shapes.append((h, w))
-            sources.append(source.reshaped([1, h * w, c]))
+            sources.append(source.reshaped([b, h * w, c]))
         }
-        let sourceFlatten = concatenated(sources, axis: 1)               // [1, S, dModel]
+        let sourceFlatten = concatenated(sources, axis: 1)
 
         let (anchorTensor, validMask) = anchors(shapes: shapes)
         let memory = validMask.expandedDimensions(axis: 0) * sourceFlatten
         var outputMemory = (encOutput[0] as! Linear)(memory)
         outputMemory = (encOutput[1] as! LayerNorm)(outputMemory)
 
-        let encClass = encScoreHead(outputMemory)                        // [1, S, num_labels]
-        let encCoord = encBboxHead(outputMemory) + anchorTensor.expandedDimensions(axis: 0)  // [1, S, 4]
+        return Encoded(features: features, panMaps: panMaps, sourceFlatten: sourceFlatten, shapes: shapes,
+                       outputMemory: outputMemory, encClass: encScoreHead(outputMemory),
+                       encCoord: encBboxHead(outputMemory) + anchorTensor.expandedDimensions(axis: 0))
+    }
+
+    /// `pixels` `[1, H, W, 3]` NHWC → the full staged detection.
+    public func callAsFunction(_ pixels: MLXArray) -> Detection {
+        let encoded = encode(pixels)
+        let (features, panMaps, sourceFlatten, shapes) = (encoded.features, encoded.panMaps,
+                                                          encoded.sourceFlatten, encoded.shapes)
+        let (outputMemory, encClass, encCoord) = (encoded.outputMemory, encoded.encClass, encoded.encCoord)
 
         // Top-k query selection by the best class score.
         let scores = encClass[0].max(axis: -1)                           // [S]
@@ -1148,7 +1208,11 @@ public final class NFKMLXRTDetr: NSObject {
     @objc(backendWithVariant:weightsURL:labels:error:)
     public static func backend(variant: NFKMLXRTDetrVariant, weightsURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
         let spec = specs(for: variant)
-        let net = NFKMLXRTDetrNet(spec.configuration)
+        var configuration = spec.configuration
+        if let weightsURL, let trained = try classCount(in: weightsURL) {
+            configuration.numLabels = trained
+        }
+        let net = NFKMLXRTDetrNet(configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
@@ -1215,22 +1279,63 @@ public final class NFKMLXRTDetr: NSObject {
     /// one-element array, so it takes a `.0.` index; the stride-2 form is already `shortcut.1.*`.
     /// Returns nil for a key to drop.
     static func remapReferenceKey(_ key: String) -> String? {
-        guard key.hasPrefix("model.") else { return nil }               // drops the tied top-level heads
         if key.hasSuffix("num_batches_tracked") { return nil }
+        guard key.hasPrefix("model.") else {
+            // A file `NFKMLXWeights.save` wrote carries the module's own names; the tied top-level heads
+            // of a release are the only other root keys, and they are dropped.
+            return savedRoots.contains { key.hasPrefix($0) } ? key : nil
+        }
         var name = String(key.dropFirst("model.".count))
         name = name.replacingOccurrences(of: ".shortcut.convolution.", with: ".shortcut.0.convolution.")
         name = name.replacingOccurrences(of: ".shortcut.normalization.", with: ".shortcut.0.normalization.")
         return name
     }
 
+    /// The root modules of `NFKMLXRTDetrNet`, which name a saved network's tensors.
+    static let savedRoots = ["backbone.", "encoder_input_proj.", "encoder.", "enc_output.", "enc_score_head.",
+                             "enc_bbox_head.", "decoder_input_proj.", "decoder.", "denoising_class_embed."]
+
+    /// The parameters whose shapes follow the class count.
+    static func isClassBranch(_ name: String) -> Bool {
+        name.hasPrefix("enc_score_head.") || name.hasPrefix("decoder.class_embed.")
+            || name.hasPrefix("denoising_class_embed.")
+    }
+
+    /// The class count a checkpoint was trained for, read from its query-selection class head.
+    static func classCount(in url: URL) throws -> Int? {
+        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        return checkpoint.arrays.first { remapReferenceKey($0.key) == "enc_score_head.bias" }?.value.dim(0)
+    }
+
     /// Loads a safetensors checkpoint into `net`, remapping the reference's names and transposing 4-D
     /// convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
-    static func loadWeights(into net: NFKMLXRTDetrNet, from url: URL) throws {
+    ///
+    /// With `matchingShapesOnly`, a tensor loads only where its shape matches, as the original's
+    /// `load_tuning_state` does, and only the class branches may stay uncovered.
+    static func loadWeights(into net: NFKMLXRTDetrNet, from url: URL, matchingShapesOnly: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard let name = remapReferenceKey(key) else { return nil }
+            // A release carries the denoising embedding, and a net built for inference has none. MLX
+            // traps on a tensor addressed to an absent module rather than ignoring it.
+            if net.denoisingClassEmbed == nil, name.hasPrefix("denoising_class_embed.") {
+                return nil
+            }
             return (name, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        guard matchingShapesOnly else {
+            try NFKMLXWeights.apply(mapped, to: net)
+            return
+        }
+        let shapes = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1.shape) })
+        let matching = mapped.filter { shapes[$0.0] == $0.1.shape }
+        let provided = Set(matching.map(\.0))
+        let missing = shapes.keys.filter { !provided.contains($0) && !isClassBranch($0) }.sorted()
+        guard missing.isEmpty else {
+            throw NFKMLXError.weightsMismatch(
+                "\(url.lastPathComponent) does not cover \(missing.count) parameters outside the class branches: "
+                + missing.prefix(5).joined(separator: ", "))
+        }
+        try NFKMLXWeights.apply(matching, to: net, strict: false)
     }
 }

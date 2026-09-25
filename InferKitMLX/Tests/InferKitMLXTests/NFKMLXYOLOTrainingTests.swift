@@ -126,7 +126,7 @@ final class NFKMLXYOLOTrainingTests: XCTestCase {
         try requireMLXRuntime()
         let linear = Linear(3, 2)
         linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]), "bias": MLXArray.zeros([2])]))
-        var average = NFKYOLOWeightAverage(linear)
+        var average = NFKMLXModelWeightAverage(linear)
         for step in 0 ..< 3 {
             linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]) * Float(step + 2),
                                                                     "bias": MLXArray.ones([2]) * Float(-(step + 1))]))

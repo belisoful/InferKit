@@ -43,8 +43,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 32 |
-| `trainable`, no recipe yet | 55 |
+| `ships` | 33 |
+| `trainable`, no recipe yet | 54 |
 | `offline` | 38 |
 | `uncertain` | 15 |
 | `untrainable` | 7 |
@@ -55,7 +55,7 @@ The 164 model entries become 148 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Twenty-two recipes ship and 65 models are trainable with none written. That is the size of
+Thirty-three recipes ship and 54 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -96,7 +96,7 @@ own loss module.
 | `NFKMLXTableTransformer` | ships | head-retarget | public | The vendored DETR `SetCriterion` behind a Hungarian matcher, measured term by term. |
 | `NFKMLXYOLO` | ships | full | public | ultralytics' `v8DetectionLoss`, `optimizer=auto`, schedule, and `ModelEMA`, each matched; the class retarget transfers shapes alike. |
 | `NFKMLXYOLOGenerations` | ships | full | public | YOLOv8's recipe, with `E2ELoss` for the v10 and YOLO26 end-to-end heads, matched on both. |
-| `NFKMLXRTDetr` | trainable | head-retarget | partial | transformers `loss_rt_detr.py`. `NFKMLXHungarian` already reproduces `linear_sum_assignment`. Read on disk. |
+| `NFKMLXRTDetr` | ships | full | public | The original repository's criterion, denoising queries, and each release's configuration (freezing, AdamW groups, v2's warm-up), all eight releases matched; the class retarget transfers shapes alike. |
 | `NFKMLXRFDetr` | trainable | head-retarget | partial | transformers `LwDetrForObjectDetectionLoss`. Read on disk. |
 | `NFKMLXRFDetrSegmentationNet` | trainable | head-retarget | public | transformers `RfDetrForSegmentationLoss`. Its point-sampled mask terms reduce to gathers MLX has. |
 | `NFKMLXPose` | trainable | head-retarget | internal | Heatmap MSE. The objective is in mmpose's own losses. |
@@ -373,8 +373,9 @@ Ordered by what a session gets per unit of effort, and grounded in what the tria
    normalizations the reference trains. Each has a published objective with no adversary, and
    each fits a device with room to spare.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
-   generation. The detectors (RT-DETR, RF-DETR and its segmentation head), Silero VAD (whose reference tuning script freezes
-   exactly what this port freezes), the PANNs tagger, and the segmenters.
+   generation, and RT-DETR ships, every release of both versions. RF-DETR and its segmentation head,
+   Silero VAD (whose reference tuning script freezes exactly what this port freezes), the PANNs
+   tagger, and the segmenters remain.
 3. **Reachability for the language decoders.** The dense Qwen, hybrid, and Gemma 3 decoders are
    LoRA-feasible at 4B and under and have no public builder. That is a visibility change plus a
    recipe, and it is the largest single piece of demand.

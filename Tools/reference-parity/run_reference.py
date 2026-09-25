@@ -1412,6 +1412,264 @@ def run_yolo_e2e_loss(image):
     globals()["_extra"] = extra
     return torch.stack(totals).float().contiguous()
 
+def run_rtdetr_loss(image):
+    """RT-DETR's training objective, transformers' own `RTDetrLoss` (4.57), on identical predictions.
+
+    The config is `RTDetrConfig`'s defaults at five classes: matcher costs 2 / 5 / 2 with the focal
+    class cost, varifocal / L1 / GIoU weights 1 / 5 / 2. Three images (three boxes, one box, none) score
+    a final prediction set of 12 queries, two auxiliary sets (an earlier decoder layer and the encoder's
+    top-k proposals), and one contrastive-denoising set of two groups whose positive queries sit where
+    the model's own `get_contrastive_denoising_training_group` puts them. Each term is recorded under
+    `RTDETR_LOSS_KEYS`' order. Runs in llmvenv.
+    """
+    from transformers import RTDetrConfig
+    from transformers.loss.loss_rt_detr import RTDetrLoss
+
+    classes, queries, batch, groups = 5, 12, 3, 2
+    criterion = RTDetrLoss(RTDetrConfig(num_labels=classes))
+    generator = torch.Generator().manual_seed(47)
+
+    def predictions(count):
+        logits = torch.randn(batch, count, classes, generator=generator)
+        centers = 0.2 + 0.6 * torch.rand(batch, count, 2, generator=generator)
+        sizes = 0.1 + 0.3 * torch.rand(batch, count, 2, generator=generator)
+        return {"logits": logits, "pred_boxes": torch.cat([centers, sizes], -1)}
+
+    targets = [
+        {"class_labels": torch.tensor([0, 3, 1]),
+         "boxes": torch.tensor([[0.3, 0.3, 0.2, 0.25], [0.6, 0.5, 0.3, 0.2], [0.5, 0.7, 0.15, 0.3]])},
+        {"class_labels": torch.tensor([2]), "boxes": torch.tensor([[0.45, 0.55, 0.4, 0.35]])},
+        {"class_labels": torch.zeros(0, dtype=torch.int64), "boxes": torch.zeros(0, 4)},
+    ]
+    # Each group holds 2 * max_gt queries, positives first; image i's positives are the first
+    # len(targets[i]) slots of every group.
+    max_gt = max(len(t["class_labels"]) for t in targets)
+    positives = [torch.cat([torch.arange(len(t["class_labels"])) + g * 2 * max_gt for g in range(groups)])
+                 for t in targets]
+    final = predictions(queries)
+    auxiliary = [predictions(queries), predictions(queries)]
+    denoising = [predictions(groups * 2 * max_gt)]
+    outputs = dict(final)
+    outputs["auxiliary_outputs"] = auxiliary
+    outputs["dn_auxiliary_outputs"] = denoising
+    outputs["denoising_meta_values"] = {"dn_positive_idx": positives, "dn_num_group": groups}
+    losses = criterion(outputs, targets)
+    assert sorted(losses) == sorted(RTDETR_LOSS_KEYS), sorted(losses)
+
+    extra = {"denoising_groups": torch.tensor([groups], dtype=torch.int32),
+             "loss_terms": torch.stack([losses[k] for k in RTDETR_LOSS_KEYS]).float()}
+    sets = [("final", final)] + [(f"aux{i}", a) for i, a in enumerate(auxiliary)] + [("dn0", denoising[0])]
+    for name, entry in sets:
+        extra[f"{name}_logits"] = entry["logits"].contiguous()
+        extra[f"{name}_boxes"] = entry["pred_boxes"].contiguous()
+    for i, t in enumerate(targets):
+        if len(t["class_labels"]) == 0:
+            continue
+        extra[f"target{i}_classes"] = t["class_labels"].to(torch.int32)
+        extra[f"target{i}_boxes"] = t["boxes"].contiguous()
+        extra[f"target{i}_positives"] = positives[i].to(torch.int32)
+    globals()["_extra"] = extra
+    return torch.stack([losses[k] for k in RTDETR_LOSS_KEYS]).sum().reshape(1).float().contiguous()
+
+# The order `rtdetr_loss` records its terms in; the Swift parity test names the same list.
+RTDETR_LOSS_KEYS = [f"loss_{term}{suffix}" for suffix in ["", "_aux_0", "_aux_1", "_dn_0"]
+                    for term in ["vfl", "bbox", "giou"]]
+
+def run_rtdetr_training_forward(image):
+    """RT-DETR's training forward and loss at the tiny configuration `rtdetr` uses, with 12
+    contrastive-denoising queries, over two images (three boxes and one).
+
+    transformers' `RTDetrForObjectDetection` runs in training mode: the backbone's batch
+    normalizations are frozen and the others read batch statistics. The denoising group's four random
+    draws (`rand_like`, `randint_like` for the new classes, `randint_like` for the signs, `rand_like`
+    for the magnitudes) are recorded as they happen, so the port replays the same noise. The loss is
+    `RTDetrLoss` on the original implementation's sets, the denoising queries split off every layer
+    first; transformers' own model loss scores its final layer over both kinds of query, which the
+    original does not. Terms are recorded in `RTDETR_TRAINING_LOSS_KEYS`' order. Runs in llmvenv.
+    """
+    from transformers import RTDetrConfig, RTDetrForObjectDetection
+    from transformers.loss.loss_rt_detr import RTDetrLoss
+    from transformers.models.rt_detr.configuration_rt_detr_resnet import RTDetrResNetConfig
+
+    backbone = RTDetrResNetConfig(
+        embedding_size=16, hidden_sizes=[16, 32, 64, 128], depths=[1, 1, 1, 1],
+        layer_type="bottleneck", downsample_in_bottleneck=False, downsample_in_first_stage=False,
+        out_features=["stage2", "stage3", "stage4"], num_channels=3)
+    config = RTDetrConfig(
+        backbone_config=backbone, use_timm_backbone=False, backbone=None,
+        encoder_in_channels=[32, 64, 128], feat_strides=[8, 16, 32], encoder_hidden_dim=32,
+        encoder_ffn_dim=48, num_attention_heads=2, encoder_layers=1, encode_proj_layers=[2],
+        d_model=32, decoder_attention_heads=2, decoder_ffn_dim=48, decoder_layers=2,
+        decoder_n_points=4, num_feature_levels=3, decoder_in_channels=[32, 32, 32],
+        num_queries=10, num_denoising=12, learn_initial_query=False, anchor_image_size=None,
+        with_box_refine=True, num_labels=4, hidden_expansion=1.0)
+    model = RTDetrForObjectDetection(config)
+    torch.manual_seed(31)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn_like(parameter) * 0.05)
+    model = model.train().float()
+
+    generator = torch.Generator().manual_seed(11)
+    pixels = torch.randn(2, 3, 64, 64, generator=generator)
+    labels = [
+        {"class_labels": torch.tensor([0, 3, 1]),
+         "boxes": torch.tensor([[0.3, 0.3, 0.2, 0.25], [0.6, 0.5, 0.3, 0.2], [0.5, 0.7, 0.15, 0.3]])},
+        {"class_labels": torch.tensor([2]), "boxes": torch.tensor([[0.45, 0.55, 0.4, 0.35]])},
+    ]
+
+    draws = []
+    rand_like, randint_like = torch.rand_like, torch.randint_like
+    def recording(function):
+        def call(*args, **kwargs):
+            value = function(*args, **kwargs)
+            draws.append(value.detach().clone())
+            return value
+        return call
+    torch.rand_like, torch.randint_like = recording(rand_like), recording(randint_like)
+    torch.manual_seed(13)
+    try:
+        out = model(pixels, labels=labels, return_dict=True)
+    finally:
+        torch.rand_like, torch.randint_like = rand_like, randint_like
+    assert len(draws) == 4, len(draws)
+
+    meta = out.denoising_meta_values
+    split = meta["dn_num_split"]
+    dn_logits, logits = torch.split(out.intermediate_logits, split, dim=2)
+    dn_boxes, boxes = torch.split(out.intermediate_reference_points, split, dim=2)
+    sets = {"logits": logits[:, -1], "pred_boxes": boxes[:, -1]}
+    sets["auxiliary_outputs"] = [{"logits": logits[:, i], "pred_boxes": boxes[:, i]}
+                                 for i in range(logits.shape[1] - 1)]
+    sets["auxiliary_outputs"].append({"logits": out.enc_topk_logits, "pred_boxes": out.enc_topk_bboxes})
+    sets["dn_auxiliary_outputs"] = [{"logits": dn_logits[:, i], "pred_boxes": dn_boxes[:, i]}
+                                    for i in range(dn_logits.shape[1])]
+    sets["denoising_meta_values"] = meta
+    losses = RTDetrLoss(config)(sets, labels)
+    assert sorted(losses) == sorted(RTDETR_TRAINING_LOSS_KEYS), sorted(losses)
+
+    extra = {
+        "pixels": pixels.permute(0, 2, 3, 1).contiguous(),                        # [B, H, W, 3] NHWC
+        "draw_label_chance": draws[0].float().contiguous(),
+        "draw_new_labels": draws[1].to(torch.int32).contiguous(),
+        "draw_signs": (draws[2] * 2.0 - 1.0).float().contiguous(),
+        "draw_magnitudes": draws[3].float().contiguous(),
+        "denoising_groups": torch.tensor([meta["dn_num_group"]], dtype=torch.int32),
+        "denoising_count": torch.tensor([split[0]], dtype=torch.int32),
+        "inter_logits": out.intermediate_logits.detach().contiguous(),             # [B, L, D+Q, C]
+        "inter_boxes": out.intermediate_reference_points.detach().contiguous(),    # [B, L, D+Q, 4]
+        "enc_topk_logits": out.enc_topk_logits.detach().contiguous(),
+        "enc_topk_boxes": out.enc_topk_bboxes.detach().contiguous(),
+        "loss_terms": torch.stack([losses[k] for k in RTDETR_TRAINING_LOSS_KEYS]).detach().float(),
+    }
+    for i, t in enumerate(labels):
+        extra[f"target{i}_classes"] = t["class_labels"].to(torch.int32)
+        extra[f"target{i}_boxes"] = t["boxes"].contiguous()
+        extra[f"target{i}_positives"] = meta["dn_positive_idx"][i].to(torch.int32).contiguous()
+    for key, value in model.state_dict().items():
+        if key.startswith("model.") and not key.endswith("num_batches_tracked"):
+            extra[f"w::{key}"] = value.detach().float().contiguous()
+    globals()["_extra"] = extra
+    return torch.stack([losses[k] for k in RTDETR_TRAINING_LOSS_KEYS]).sum().reshape(1).detach().float().contiguous()
+
+# The order `rtdetr_training_forward` records its terms in: two decoder layers, so one decoder
+# auxiliary set, the encoder's proposals, and two denoising sets.
+RTDETR_TRAINING_LOSS_KEYS = [f"loss_{term}{suffix}" for suffix in ["", "_aux_0", "_aux_1", "_dn_0", "_dn_1"]
+                             for term in ["vfl", "bbox", "giou"]]
+
+def _rtdetr_original(subproject):
+    """The original RT-DETR repository's `YAMLConfig`, imported from `IK_RTDETR_SRC` (default
+    `~/.inferkit-validation/reference-sources/rtdetr`, lyuwenyu/RT-DETR at 29320b6) for `subproject`
+    (`rtdetr_pytorch` or `rtdetrv2_pytorch`).
+
+    Both subprojects are packages named `src`, so any earlier import is dropped first. `src` itself is
+    registered bare, which skips its `__init__` and the data pipeline it imports (pycocotools,
+    faster_coco_eval); `src.data` is a stand-in, since RT-DETRv2's `misc.dist_utils` imports from it at
+    load. `core`, `nn`, `optim`, and `zoo` register everything a model and its optimizer need.
+    """
+    import importlib
+    import types
+    root = os.path.join(os.path.expanduser(os.environ.get(
+        "IK_RTDETR_SRC", "~/.inferkit-validation/reference-sources/rtdetr")), subproject)
+    for name in [n for n in sys.modules if n == "src" or n.startswith("src.")]:
+        del sys.modules[name]
+    sys.path[:] = [p for p in sys.path if not p.endswith(("rtdetr_pytorch", "rtdetrv2_pytorch"))]
+    sys.path.insert(0, root)
+
+    package = types.ModuleType("src")
+    package.__path__ = [os.path.join(root, "src")]
+    sys.modules["src"] = package
+
+    class StandIn(types.ModuleType):
+        def __getattr__(self, name):
+            if name.startswith("__"):
+                raise AttributeError(name)
+            return type(name, (), {})
+    data = StandIn("src.data")
+    data.__path__ = []
+    sys.modules["src.data"] = data
+    package.data = data
+
+    for name in ["core", "nn", "optim", "zoo"]:
+        setattr(package, name, importlib.import_module(f"src.{name}"))
+    return package.core.YAMLConfig
+
+
+def run_rtdetr_training_setup(image):
+    """Every RT-DETR and RT-DETRv2 release's training setup, from the original repository's own
+    configuration files and `YAMLConfig`: the model it builds (without the pretrained backbone download)
+    and the AdamW parameter groups `get_optim_params` assigns.
+
+    For each release the record holds each distinct (rate, weight decay) with the element count of the
+    parameters it covers, the element count of the parameters that do not train (`freeze_at`; a
+    `FrozenBatchNorm2d` holds buffers, not parameters), and `[warm-up updates, gradient clip, EMA,
+    epochs, AMP]`. transformers splits the attention projections the original fuses, so tensor counts
+    differ and element counts do not. Runs in llmvenv.
+    """
+    releases = [
+        ("v1_r18vd", "rtdetr_pytorch", "configs/rtdetr/rtdetr_r18vd_6x_coco.yml"),
+        ("v1_r34vd", "rtdetr_pytorch", "configs/rtdetr/rtdetr_r34vd_6x_coco.yml"),
+        ("v1_r50vd", "rtdetr_pytorch", "configs/rtdetr/rtdetr_r50vd_6x_coco.yml"),
+        ("v1_r101vd", "rtdetr_pytorch", "configs/rtdetr/rtdetr_r101vd_6x_coco.yml"),
+        ("v2_r18vd", "rtdetrv2_pytorch", "configs/rtdetrv2/rtdetrv2_r18vd_120e_coco.yml"),
+        ("v2_r34vd", "rtdetrv2_pytorch", "configs/rtdetrv2/rtdetrv2_r34vd_120e_coco.yml"),
+        ("v2_r50vd", "rtdetrv2_pytorch", "configs/rtdetrv2/rtdetrv2_r50vd_6x_coco.yml"),
+        ("v2_r101vd", "rtdetrv2_pytorch", "configs/rtdetrv2/rtdetrv2_r101vd_6x_coco.yml"),
+    ]
+    extra = {}
+    totals = []
+    working = os.getcwd()
+    for name, subproject, path in releases:
+        YAMLConfig = _rtdetr_original(subproject)
+        root = sys.path[0]
+        os.chdir(root)
+        try:
+            config = YAMLConfig(os.path.join(root, path), PResNet={"pretrained": False})
+            model = config.model
+            optimizer = config.optimizer
+            settings = config.yaml_cfg
+        finally:
+            os.chdir(working)
+        by_setting = {}
+        for group in optimizer.param_groups:
+            key = (float(group["lr"]), float(group["weight_decay"]))
+            by_setting[key] = by_setting.get(key, 0) + sum(p.numel() for p in group["params"])
+        keys = sorted(by_setting)
+        frozen = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+        warmup = settings.get("lr_warmup_scheduler", {}).get("warmup_duration", 0) if isinstance(
+            settings.get("lr_warmup_scheduler"), dict) else 0
+        extra[f"{name}_settings"] = torch.tensor(keys, dtype=torch.float64).float()
+        extra[f"{name}_elements"] = torch.tensor([by_setting[k] for k in keys], dtype=torch.int64)
+        extra[f"{name}_frozen"] = torch.tensor([frozen], dtype=torch.int64)
+        extra[f"{name}_meta"] = torch.tensor([
+            warmup, settings.get("clip_max_norm", 0), float(bool(settings.get("use_ema", False))),
+            settings.get("epoches", -1), float(bool(settings.get("use_amp", False)))], dtype=torch.float32)
+        print(f"{name}: groups {[(k, by_setting[k]) for k in keys]}, frozen {frozen}, meta {extra[name + '_meta'].tolist()}")
+        totals.append(sum(by_setting.values()))
+        del model, optimizer
+    globals()["_extra"] = extra
+    return torch.tensor(totals, dtype=torch.float32)
+
 def run_yolo_training_setup(image):
     """ultralytics' training setup for a three-class YOLOv8n, from the trainer's own methods.
 
@@ -17155,7 +17413,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "mimi": run_mimi, "chronos": run_chronos,
           "dcn": run_dcn,
-          "segformer_loss": run_segformer_loss, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
+          "segformer_loss": run_segformer_loss, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,

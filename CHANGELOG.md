@@ -736,6 +736,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The backends read a fine-tuned checkpoint's class count. The attention blocks of v10, 11, 12, and
   YOLO26 follow the input's batch; they had assumed one image.
 
+#### RT-DETR and RT-DETRv2 retarget to a consumer's own classes, each under its release's recipe
+
+- `NFKMLXRTDetr.network(variant:classCount:weightsURL:)` builds for the consumer's class count with the
+  contrastive-denoising queries, starts the heads at the original implementation's initialization, and
+  transfers everything shaped alike from a release. `fineTune(_:variant:examples:…)` runs the original
+  repository's recipe for that release (lyuwenyu/RT-DETR at 29320b6): `NFKMLXRTDetrObjective` (Hungarian
+  matching, varifocal, L1, and GIoU over every decoder layer, the encoder's proposals, and the denoising
+  queries), `NFKMLXRTDetrDenoisingGroup`, and the configuration file's freezing, AdamW groups, v2's
+  warm-up, clipping at 0.1, and the weight average. The recipe differs by release: r18vd and r34vd train
+  their whole backbone, and v1 r101vd's own groups exempt nothing from decay.
+- The loss matches transformers' `RTDetrLoss` term for term; the training forward matches transformers'
+  model in training mode with its random draws replayed; each release's optimizer groups match the
+  original's own configuration loader. Where transformers departs from the original (its model loss
+  scores the denoising queries in the final layer, and it detaches each layer's boxes from the previous
+  layer's gradient), the recipe follows the original.
+- `NFKMLXRTDetrNet` runs a batch of images, and the backend reads a fine-tuned checkpoint's class count.
+  A released checkpoint's `denoising_class_embed` is skipped by an inference network, which has none.
+- `NFKMLXModelWeightAverage` is the moving average YOLO and RT-DETR share.
+
 #### The MarbleNet VAD fine-tunes on a consumer's own audio, and follows NeMo 3.0
 
 - `NFKMLXVAD.network(weightsURL:)`, `frameLabels(speech:frameCount:)`, and `fineTune(_:examples:…)` run

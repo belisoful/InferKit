@@ -785,6 +785,28 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(detector.isReady)
     }
 
+    // Docs/examples.md: Retargeting RT-DETR to your own classes
+    func testExampleRetargetingRTDetrToOwnClasses() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rtdetr-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run transfers a release: NFKMLXRTDetr.network(variant: .r18vd, classCount: 3, weightsURL: releasedWeights).
+        let net = try NFKMLXRTDetr.network(variant: .r18vd, classCount: 3, weightsURL: nil)
+        // 160 pixels give 525 anchors, enough for the release's 300 queries; the reference trains at 640.
+        let images = MLXArray((0 ..< 160 * 160 * 3).map { Float($0 % 97) / 97 }).reshaped([1, 160, 160, 3])
+        let targets = [NFKMLXRTDetrTarget(classes: [1], boxes: MLXArray([0.4, 0.5, 0.3, 0.4] as [Float], [1, 4]))]
+        let history = try NFKMLXRTDetr.fineTune(net, variant: .r18vd, examples: { _ in (images, targets) }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let detector = try NFKMLXRTDetr.backend(variant: .r18vd, weightsURL: tuned,  // reads its three classes
+                                                labels: ["cat", "dog", "fox"])
+        XCTAssertTrue(detector.isReady)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint

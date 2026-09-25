@@ -97,7 +97,7 @@ extension NFKMLXYOLOGenerations {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        var average = averagesWeights ? NFKYOLOWeightAverage(net) : nil
+        var average = averagesWeights ? NFKMLXModelWeightAverage(net) : nil
         let perEpoch = max(stepsPerEpoch, 1)
         let epochs = (steps + perEpoch - 1) / perEpoch
         let history = try NFKMLXFineTune.run(

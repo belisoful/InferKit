@@ -196,6 +196,51 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   0.9999999999901055 / 0.999999999885731 / 0.9999999990654127 / 0.9999999997898816. Oracle:
   `run_reference.py rtdetr_v2` for the tiny configuration and `rtdetr_v2_real` for a released checkpoint
   directory, both under the `llm` env, with the one real mode serving all four sizes.
+  **Customization ships: a class retarget and each release's own fine-tune** (`NFKMLXRTDetrTraining.swift`,
+  lyuwenyu/RT-DETR at 29320b6, `rtdetr_pytorch` and `rtdetrv2_pytorch`). The references disagree, and the
+  recipe follows the original repository:
+  - **The final layer's set.** transformers' `RTDetrForObjectDetection` takes `logits` before splitting off
+    the denoising queries, so its model loss matches the final layer over denoising and matching queries
+    together. The original splits them first (`rtdetr_decoder.py`). transformers' `RTDetrLoss` is the
+    original's criterion, so the oracles run it on the original's sets and never compare the model's own
+    `loss`.
+  - **The box gradient.** In training, the original reports each later layer's boxes refined from the
+    previous layer's undetached boxes, so a layer's box loss reaches the previous layer's box head, and
+    each layer reads the previous boxes detached. transformers reports the detached form: the same
+    values, different gradients. `NFKRTDetrDecoder` takes `training:` for the original's path.
+  - **The recipe is per release.** The eight configuration files differ. r18vd and r34vd train their
+    stem and their backbone's batch normalizations (`freeze_at: -1`, `freeze_norm: False`); r50vd and
+    r101vd freeze both (`FrozenBatchNorm2d`). Each file writes its own `optimizer.params`. The config
+    loader replaces a list rather than merging it, so v1 r101vd keeps one group, the backbone at 1e-6,
+    and exempts nothing from decay. v2 r18vd's one group exempts normalizations at the base rate, so its
+    backbone trains at 1e-4. RT-DETRv2 names its projections `conv`/`norm` and `proj`/`norm`, where v1
+    indexes them, so the same pattern exempts a normalization in v2 and decays it in v1.
+    `NFKMLXRTDetr.referenceRecipe(for:)` carries each file's freezing, groups, and warm-up (v2's 2,000-update
+    `LinearWarmup`); `originalParameterName(_:version:)` maps the port's transformers names onto the names
+    those patterns read. v2 trains under AMP; the recipe runs float32.
+  `NFKMLXRTDetrObjective` is the criterion: the Hungarian match on focal class, L1, and GIoU costs (2, 5, 2),
+  then varifocal (the matched query's target is its IoU), L1, and `1 − GIoU` (1, 5, 2). It sums over the
+  final layer, each earlier layer and the encoder's top-k proposals (matched afresh), and every layer's
+  denoising queries (matched to the box they were noised from, over the box count times the groups).
+  `NFKMLXRTDetrDenoisingGroup` builds the contrastive-denoising queries as the reference does, with its
+  random draws injectable. The padding class's embedding row takes no gradient, as `padding_idx` gives.
+  `NFKMLXRTDetrNet.trainingOutputs` runs a batch: the encoder half shared with inference (`encode`), top-k
+  per image, the selected features and starting boxes detached, the denoising queries ahead of the matching
+  ones under the self-attention mask. `denoising_class_embed` exists only when
+  `NFKMLXRTDetrConfiguration.denoisingQueries` is above zero, so inference and the tiny records are
+  unchanged. `NFKMLXRTDetr.network(variant:classCount:weightsURL:)` starts the heads at `_reset_parameters`
+  and transfers every tensor shaped alike (`load_tuning_state`): the class heads and the denoising
+  embedding stay fresh at another class count, and any other uncovered parameter throws.
+  `fineTune(_:variant:examples:trainable:…)` runs the release's recipe through `NFKMLXFineTune.run`, with
+  clipping at 0.1 and `NFKMLXModelWeightAverage` (the original's `ModelEMA`). The backend reads a
+  checkpoint's class count from `enc_score_head`, and the loader reads a saved network's own names.
+  Measured: the loss 12/12 terms against `RTDetrLoss` to float32 rounding (`rtdetr_loss`); the training
+  forward against transformers in training mode with the reference's own draws replayed, every layer's
+  logits and boxes within 1.8e-7 and all 15 loss terms within 3e-7 (`rtdetr_training_forward`); and each
+  release's element count under every (rate, decay) equal to the original's `YAMLConfig` for all eight
+  releases (`rtdetr_training_setup`). Two process-killing traps surfaced here, both in
+  `mlx-runtime-gotchas.md`: a tensor addressed to the nil optional embedding, and a gather differentiated
+  through its indices.
 - `NFKMLXRFDetr` (`@objc`) — real object detection under Apache-2.0 (RF-DETR base, Roboflow), a two-stage
   Group-DETR detector ported from transformers' `RfDetrForObjectDetection`, at reference parity on
   both a tiny random config and the released weights (`testRFDetrMatchesTheReference` /

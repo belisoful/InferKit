@@ -224,6 +224,23 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   training-only layer calls `train(false)` in its own initializer, and `NFKMLXTrainer` switches it on
   for a run and restores the prior flag.
 
+- **A tensor addressed to an absent optional module kills the process.** `Module.update(parameters:)`
+  ignores a key the module does not declare, but a key under an optional `@ModuleInfo` that is nil
+  reaches the item `.none`, whose case falls to `default` and throws `incompatibleItems`; the
+  non-throwing `update(parameters:)` runs it under `try!`. `NFKMLXWeights.apply` does not help,
+  because its coverage check reads only the module's own keys. RT-DETR met it when its fine-tune
+  network gained `denoising_class_embed`, nil at inference: every release carries that tensor, so every
+  released load would have trapped. A loader for a module with an optional child drops that child's
+  tensors while it is nil.
+
+- **A gather cannot be differentiated through its indices.** `takeAlong` or `take` whose index array
+  was computed from parameters ends the process when a gradient is taken: `[gather_axis] Cannot
+  calculate VJP with respect to indices`. The index has no gradient in any case, since `floor`, a
+  comparison, or a sort order is piecewise constant, but MLX does not infer that. An inference port
+  never meets it; the first fine-tune does. RT-DETR's deformable sampling (cells from `floor` of the
+  learned offsets) and its top-k query selection (`argSort` of the class scores) each pass their
+  indices through `stopGradient`.
+
 - **A seed fixes the weights; it does not fix the gradients.** `NFKMLXRandom.seed` makes a net's
   initialization exactly reproducible, and a test that reads a training loss looks deterministic
   because of it. It is not. Measured 2026-09-19 on an M1 Max (macOS 26.6.2, Xcode 27), seeding

@@ -3694,6 +3694,30 @@ let detector = try NFKMLXYOLO.backend(variant: .nano, weightsURL: tuned, labels:
 The later generations take the same shape: `NFKMLXYOLOGenerations.network(release:classCount:weightsURL:)`
 and `fineTune`, and the end-to-end releases (v10, YOLO26) train both branches under `E2ELoss`.
 
+### Retargeting RT-DETR to your own classes
+
+The original repository's recipe for the release you start from. A release transfers everything
+shaped alike into a network built for your class count; the class heads and the denoising embedding
+start fresh. Every step adds the contrastive-denoising queries, matches each prediction set to your
+boxes under the Hungarian assignment, and sums varifocal, L1, and GIoU terms over every decoder layer
+and the encoder's proposals. That release's configuration file sets the freezing, the AdamW groups,
+the RT-DETRv2 warm-up, and clipping at 0.1, and a moving average of the weights is what the run leaves
+behind. Boxes are normalized centers and sizes; augmentation is yours.
+
+```swift
+let net = try NFKMLXRTDetr.network(variant: .r18vd, classCount: 3, weightsURL: releasedWeights)
+try NFKMLXRTDetr.fineTune(net, variant: .r18vd, examples: { step in
+    (images: myBatches[step].images,        // [batch, 640, 640, 3] in 0…1
+     targets: myBatches[step].targets)      // [NFKMLXRTDetrTarget], classes and (cx, cy, w, h) per image
+}, steps: 3000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let detector = try NFKMLXRTDetr.backend(variant: .r18vd, weightsURL: tuned, labels: ["cat", "dog", "fox"])
+```
+
+`variant:` names the release the network came from; RT-DETR and RT-DETRv2 share each size's geometry
+and differ in their recipes. `trainable: .decoder` freezes the backbone and the hybrid encoder.
+
 ### Adapting a language model to your own text
 
 Granite 4.0-H is a decoder with no small head to retrain, so LoRA is the recipe. Only the attention

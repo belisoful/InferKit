@@ -505,6 +505,12 @@ limits.
 - ``NFKMLXYOLOObjective``
 - ``NFKMLXYOLOEndToEndObjective``
 - ``NFKMLXYOLOTrainable``
+- ``NFKMLXRTDetrObjective``
+- ``NFKMLXRTDetrPredictions``
+- ``NFKMLXRTDetrTarget``
+- ``NFKMLXRTDetrDenoisingGroup``
+- ``NFKMLXRTDetrTrainingOutputs``
+- ``NFKMLXRTDetrTrainable``
 - ``NFKMLXWhisperNet``
 - ``NFKMLXWhisperObjective``
 - ``NFKMLXSeq2SeqNet``

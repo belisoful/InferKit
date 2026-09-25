@@ -10957,7 +10957,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         let linear = Linear(3, 2)
         linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]), "bias": MLXArray.zeros([2])]))
-        var average = NFKYOLOWeightAverage(linear)
+        var average = NFKMLXModelWeightAverage(linear)
         for step in 0 ..< 3 {
             linear.update(parameters: ModuleParameters.unflattened(["weight": MLXArray.ones([2, 3]) * Float(step + 2),
                                                                     "bias": MLXArray.ones([2]) * Float(-(step + 1))]))
@@ -11019,6 +11019,156 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 print("PARITY yolo-e2e \(prefix) total at epoch \(epoch): ours \(ours), reference \(expected)")
                 XCTAssertEqual(ours, expected, accuracy: max(abs(expected) * 1e-4, 1e-6))
             }
+        }
+    }
+
+    /// `run_reference.py`'s `RTDETR_LOSS_KEYS`, the order `rtdetr_loss` records its terms in.
+    private static let rtDetrLossKeys = ["", "_aux_0", "_aux_1", "_dn_0"].flatMap { suffix in
+        ["vfl", "bbox", "giou"].map { "loss_\($0)\(suffix)" }
+    }
+
+    func testRTDetrLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR_LOSS"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR_LOSS to a record from run_reference.py rtdetr_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func predictions(_ name: String) throws -> NFKMLXRTDetrPredictions {
+            NFKMLXRTDetrPredictions(logits: try array("\(name)_logits"), boxes: try array("\(name)_boxes"))
+        }
+        // The third image has no boxes; the record omits its empty tensors.
+        var targets = [NFKMLXRTDetrTarget](), positives = [[Int]]()
+        for image in 0 ..< 2 {
+            targets.append(NFKMLXRTDetrTarget(classes: try array("target\(image)_classes").asArray(Int32.self).map(Int.init),
+                                              boxes: try array("target\(image)_boxes")))
+            positives.append(try array("target\(image)_positives").asArray(Int32.self).map(Int.init))
+        }
+        targets.append(NFKMLXRTDetrTarget(classes: [], boxes: MLXArray.zeros([0, 4])))
+        positives.append([])
+
+        let losses = NFKMLXRTDetrObjective().losses(
+            final: try predictions("final"), auxiliary: [try predictions("aux0"), try predictions("aux1")],
+            denoising: [try predictions("dn0")], denoisingPositives: positives,
+            denoisingGroups: Int(try array("denoising_groups").item(Int32.self)), targets: targets)
+        XCTAssertEqual(Set(losses.keys), Set(Self.rtDetrLossKeys))
+        let expected = try array("loss_terms").asArray(Float.self)
+        for (key, reference) in zip(Self.rtDetrLossKeys, expected) {
+            let ours = try XCTUnwrap(losses[key], key).item(Float.self)
+            print("PARITY rtdetr-loss \(key): ours \(ours), reference \(reference)")
+            XCTAssertEqual(ours, reference, accuracy: max(abs(reference) * 1e-4, 1e-6), key)
+        }
+    }
+
+    /// `run_reference.py`'s `RTDETR_TRAINING_LOSS_KEYS`.
+    private static let rtDetrTrainingLossKeys = ["", "_aux_0", "_aux_1", "_dn_0", "_dn_1"].flatMap { suffix in
+        ["vfl", "bbox", "giou"].map { "loss_\($0)\(suffix)" }
+    }
+
+    func testRTDetrTrainingForwardMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR_TRAINING"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR_TRAINING to a record from run_reference.py rtdetr_training_forward")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func integers(_ key: String) throws -> [Int] { try array(key).asArray(Int32.self).map(Int.init) }
+
+        var configuration = NFKMLXRTDetrConfiguration.tiny
+        configuration.denoisingQueries = 12
+        let net = NFKMLXRTDetrNet(configuration)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::model.") else { return nil }
+            return (String(key.dropFirst("w::model.".count)), value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        net.train(true)
+        net.backbone.train(false)                                         // transformers freezes these
+
+        let targets = try (0 ..< 2).map {
+            NFKMLXRTDetrTarget(classes: try integers("target\($0)_classes"), boxes: try array("target\($0)_boxes"))
+        }
+        let draws = NFKMLXRTDetrDenoisingGroup.Draws(
+            labelChance: try array("draw_label_chance").asArray(Float.self), newLabels: try integers("draw_new_labels"),
+            signs: try array("draw_signs").asArray(Float.self), magnitudes: try array("draw_magnitudes").asArray(Float.self))
+        let group = try XCTUnwrap(NFKMLXRTDetrDenoisingGroup.make(
+            targets: targets, classCount: configuration.numLabels, queryCount: configuration.numQueries,
+            denoisingQueries: 12, labelNoiseRatio: 0.5, boxNoiseScale: 1) { _, _ in draws })
+        XCTAssertEqual(group.count, try integers("denoising_count")[0])
+        XCTAssertEqual(group.groups, try integers("denoising_groups")[0])
+        XCTAssertEqual(group.positives, try (0 ..< 2).map { try integers("target\($0)_positives") })
+
+        let outputs = net.trainingOutputs(try array("pixels"), denoising: group)
+        func compare(_ label: String, _ ours: MLXArray, _ reference: MLXArray) {
+            eval(ours)
+            let difference = abs(ours - reference).max().item(Float.self)
+            let similarity = cosine(ours.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    reference.reshaped([-1]).asArray(Float.self).map(Double.init))
+            print("PARITY rtdetr-training \(label): cosine \(similarity), max difference \(difference)")
+            XCTAssertLessThan(difference, 1e-4, label)
+        }
+        let layers = configuration.decoderLayers
+        let matching = Array(outputs.auxiliary.prefix(layers - 1)) + [outputs.final]
+        for layer in 0 ..< layers {
+            let logits = concatenated([outputs.denoising[layer].logits, matching[layer].logits], axis: 1)
+            let boxes = concatenated([outputs.denoising[layer].boxes, matching[layer].boxes], axis: 1)
+            compare("layer \(layer) logits", logits, try array("inter_logits")[0..., layer])
+            compare("layer \(layer) boxes", boxes, try array("inter_boxes")[0..., layer])
+        }
+        compare("encoder proposals' logits", outputs.auxiliary[layers - 1].logits, try array("enc_topk_logits"))
+        compare("encoder proposals' boxes", outputs.auxiliary[layers - 1].boxes, try array("enc_topk_boxes"))
+
+        let losses = NFKMLXRTDetrObjective().losses(
+            final: outputs.final, auxiliary: outputs.auxiliary, denoising: outputs.denoising,
+            denoisingPositives: group.positives, denoisingGroups: group.groups, targets: targets)
+        XCTAssertEqual(Set(losses.keys), Set(Self.rtDetrTrainingLossKeys))
+        for (key, reference) in zip(Self.rtDetrTrainingLossKeys, try array("loss_terms").asArray(Float.self)) {
+            let ours = try XCTUnwrap(losses[key], key).item(Float.self)
+            print("PARITY rtdetr-training \(key): ours \(ours), reference \(reference)")
+            XCTAssertEqual(ours, reference, accuracy: max(abs(reference) * 1e-3, 1e-5), key)
+        }
+    }
+
+    // Each release's recipe against the original repository's own `YAMLConfig`: the element count under
+    // every (rate, weight decay) its optimizer groups assign, which also fixes what is frozen, and the
+    // warm-up, clip, and weight average its configuration sets.
+    func testRTDetrTrainingSetupMatchesEachReleasesConfiguration() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RTDETR_TRAINING_SETUP"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RTDETR_TRAINING_SETUP to a record from run_reference.py rtdetr_training_setup")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func label(_ rate: Double, _ decay: Double) -> String { String(format: "%.0e/%.0e", rate, decay) }
+        let releases: [(String, NFKMLXRTDetrVariant)] = [
+            ("v1_r18vd", .r18vd), ("v1_r34vd", .r34vd), ("v1_r50vd", .r50vd), ("v1_r101vd", .r101vd),
+            ("v2_r18vd", .v2R18VD), ("v2_r34vd", .v2R34VD), ("v2_r50vd", .v2R50VD), ("v2_r101vd", .v2R101VD),
+        ]
+        for (name, variant) in releases {
+            let net = try NFKMLXRTDetr.network(variant: variant, classCount: 80, weightsURL: nil)
+            let recipe = NFKMLXRTDetr.referenceRecipe(for: variant)
+            NFKMLXRTDetr.applyFreezing(.everything, recipe: recipe, to: net)
+            var ours = [String: Int]()
+            for (key, value) in net.trainableParameters().flattened() {
+                let group = NFKMLXRTDetr.referenceGroup(for: key, recipe: recipe)
+                ours[label(1e-4 * Double(group.rateScale), Double(group.weightDecay)), default: 0] += value.size
+            }
+            let settings = try array("\(name)_settings").asArray(Float.self)
+            let elements = try array("\(name)_elements").asArray(Int64.self)
+            var reference = [String: Int]()
+            for index in elements.indices {
+                reference[label(Double(settings[2 * index]), Double(settings[2 * index + 1]))] = Int(elements[index])
+            }
+            print("PARITY rtdetr-setup \(name): ours \(ours.sorted { $0.key < $1.key }), reference \(reference.sorted { $0.key < $1.key })")
+            XCTAssertEqual(ours, reference, name)
+
+            let meta = try array("\(name)_meta").asArray(Float.self)       // warm-up, clip, EMA, epochs, AMP
+            XCTAssertEqual(recipe.warmupSteps, Int(meta[0]), name)
+            XCTAssertEqual(meta[1], 0.1, name)
+            XCTAssertEqual(meta[2], 1, "\(name) averages its weights")
         }
     }
 

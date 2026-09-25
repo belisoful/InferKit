@@ -261,6 +261,7 @@ let backend = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: u
 let backend = try NFKMLXRTDetr.backend(weightsURL: url, labels: nil)
 // RT-DETRv2 · .v2R18VD / .v2R34VD / .v2R50VD / .v2R101VD
 let backend = try NFKMLXRTDetr.backend(variant: .v2R50VD, weightsURL: url, labels: nil)
+// fine-tuned: NFKMLXRTDetr.network(variant:classCount:weightsURL:), then fineTune(_:variant:…)
 // RF-DETR
 let backend = try NFKMLXRFDetr.backend(weightsURL: url, labels: nil)
 // SimpleBaseline pose
