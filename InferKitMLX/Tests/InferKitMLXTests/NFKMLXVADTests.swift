@@ -54,6 +54,33 @@ final class NFKMLXVADTests: XCTestCase {
         XCTAssertGreaterThan(span.endSeconds, span.startSeconds)
     }
 
+    func testDetectionSkipsTheFramesPastTheEncodersValidLength() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXVADConfiguration.tiny
+        configuration.threshold = 0
+        let net = NFKMLXVADNet(configuration)
+        let samples = Self.floats(samples: 8000)
+        let (probabilities, validFrames) = net.speechProbabilitiesAndLength(samples, sampleRate: 16000)
+        XCTAssertEqual(probabilities.count, 101, "the forward emits the even-count padding's frame")
+        XCTAssertEqual(validFrames, 100, "and the encoder's valid length excludes it")
+        let span = try XCTUnwrap(net.detect(samples, sampleRate: 16000).first)
+        XCTAssertEqual(span.endSeconds, 0.5, accuracy: 1e-9, "a span ends at the last valid frame, the clip's end")
+    }
+
+    func testSpansEndAtTheClipAndDropThoseLeftWithNoLength() {
+        let spans = NFKMLXSpeechSpans.merge([0.9, 0.9, 0.1, 0.8, 0.8][...], frameSeconds: 0.02, threshold: 0.5,
+                                            duration: 0.09)
+        XCTAssertEqual(spans.count, 2)
+        XCTAssertEqual(spans[0].startSeconds, 0, accuracy: 1e-9)
+        XCTAssertEqual(spans[0].endSeconds, 0.04, accuracy: 1e-9)
+        XCTAssertEqual(spans[1].startSeconds, 0.06, accuracy: 1e-9)
+        XCTAssertEqual(spans[1].endSeconds, 0.09, accuracy: 1e-9, "the last frame's end is clamped to the clip")
+        XCTAssertEqual(spans[1].confidence, 0.8, accuracy: 1e-6)
+
+        let beyond = NFKMLXSpeechSpans.merge([0.1, 0.1, 0.9][...], frameSeconds: 0.02, threshold: 0.5, duration: 0.04)
+        XCTAssertTrue(beyond.isEmpty, "a run that starts at the clip's end covers none of it")
+    }
+
     func testASafetensorsCheckpointLoadsAndReproducesTheForward() throws {
         try requireMLXRuntime()
         let trained = tinyNet()
@@ -109,7 +136,7 @@ final class NFKMLXVADTests: XCTestCase {
             let segments = net.detect(Self.tone(seconds: 1.0, rate: rate), sampleRate: rate)
             for segment in segments {
                 XCTAssertGreaterThanOrEqual(segment.startSeconds, 0)
-                XCTAssertLessThanOrEqual(segment.endSeconds, 1.05, "a one-second clip cannot span longer")
+                XCTAssertLessThanOrEqual(segment.endSeconds, 1.0, "a one-second clip cannot span longer")
             }
         }
     }

@@ -323,46 +323,79 @@ public final class NFKMLXVADNet: Module {
     ///
     /// Introduced in InferKit 0.5.0.
     public func logits(_ mel: MLXArray, validFrames: Int) -> MLXArray {
+        logitsAndLength(mel, validFrames: validFrames).logits
+    }
+
+    /// The logits and the encoder's valid output length, NeMo's `encoded_len`: the frames at and past
+    /// it are computed from padding alone.
+    func logitsAndLength(_ mel: MLXArray, validFrames: Int) -> (logits: MLXArray, validFrames: Int) {
         var x = mel
         var valid = validFrames
         for block in blocks {
             (x, valid) = block(x, validFrames: valid)
         }
-        return head(x)
+        return (head(x), min(valid, x.dim(1)))
     }
 
-    /// Speech probability per frame for a mono waveform. The reference labels non-speech 0 and speech 1,
-    /// so the second class is the one that matters.
+    /// Speech probability per frame for a mono waveform, padding frames included, as the reference's
+    /// forward emits them. The reference labels non-speech 0 and speech 1, so the second class is the
+    /// one that matters.
     func speechProbabilities(_ samples: [Float], sampleRate: Int) -> [Float] {
-        let matched = NFKMLXAudioRate.matched(samples, from: sampleRate, to: configuration.sampleRate)
-        let (mel, validFrames) = frontEnd.logMelAndLength(matched)
-        let probabilities = softmax(logits(mel, validFrames: validFrames), axis: -1)[0..., 0..., 1]
-        eval(probabilities)
-        return probabilities.reshaped([-1]).asArray(Float.self)
+        speechProbabilitiesAndLength(samples, sampleRate: sampleRate).probabilities
     }
 
-    /// Detects speech spans in a mono waveform, merging consecutive above-threshold frames.
+    /// The speech probabilities and how many of them describe the clip rather than its padding.
+    func speechProbabilitiesAndLength(_ samples: [Float], sampleRate: Int) -> (probabilities: [Float], validFrames: Int) {
+        let matched = NFKMLXAudioRate.matched(samples, from: sampleRate, to: configuration.sampleRate)
+        let (mel, melFrames) = frontEnd.logMelAndLength(matched)
+        let (logits, validFrames) = logitsAndLength(mel, validFrames: melFrames)
+        let probabilities = softmax(logits, axis: -1)[0..., 0..., 1]
+        eval(probabilities)
+        return (probabilities.reshaped([-1]).asArray(Float.self), validFrames)
+    }
+
+    /// Detects speech spans in a mono waveform, merging consecutive above-threshold frames within the
+    /// encoder's valid length.
     func detect(_ samples: [Float], sampleRate: Int) -> [NFKAudioSegment] {
-        let probabilities = speechProbabilities(samples, sampleRate: sampleRate)
+        let (probabilities, validFrames) = speechProbabilitiesAndLength(samples, sampleRate: sampleRate)
         // The frames are produced from the resampled clip, so they are timed by the model's rate.
         // Resampling preserves duration, so the seconds this yields are the caller's own.
         let frameSeconds = Double(configuration.hopSamples * configuration.totalStride) / Double(configuration.sampleRate)
+        return NFKMLXSpeechSpans.merge(probabilities.prefix(validFrames), frameSeconds: frameSeconds,
+                                       threshold: configuration.threshold,
+                                       duration: Double(samples.count) / Double(sampleRate))
+    }
+}
 
+/// Per-frame speech probabilities merged into spans, shared by the voice activity detectors.
+enum NFKMLXSpeechSpans {
+    /// Consecutive frames at or above `threshold` form one span, scored by their mean probability. A
+    /// span's end is clamped to `duration`, the clip's length in seconds, because the last frame can
+    /// reach past the clip; a span left with no length is dropped.
+    static func merge(_ probabilities: ArraySlice<Float>, frameSeconds: Double, threshold: Float,
+                      duration: Double) -> [NFKAudioSegment] {
         var segments: [NFKAudioSegment] = []
         var runStart: Int? = nil
         var runSum: Float = 0
         func close(_ end: Int) {
-            guard let start = runStart else { return }
+            guard let start = runStart else {
+                return
+            }
             let confidence = Double(runSum) / Double(end - start)
-            segments.append(NFKAudioSegment(startSeconds: Double(start) * frameSeconds,
-                                            endSeconds: Double(end) * frameSeconds,
-                                            label: nil, confidence: min(max(confidence, 0), 1)))
+            let startSeconds = Double(start) * frameSeconds
+            let endSeconds = min(Double(end) * frameSeconds, duration)
+            if endSeconds > startSeconds {
+                segments.append(NFKAudioSegment(startSeconds: startSeconds, endSeconds: endSeconds,
+                                                label: nil, confidence: min(max(confidence, 0), 1)))
+            }
             runStart = nil
             runSum = 0
         }
-        for (frame, probability) in probabilities.enumerated() {
-            if probability >= configuration.threshold {
-                if runStart == nil { runStart = frame }
+        for (frame, probability) in zip(0..., probabilities) {
+            if probability >= threshold {
+                if runStart == nil {
+                    runStart = frame
+                }
                 runSum += probability
             } else {
                 close(frame)

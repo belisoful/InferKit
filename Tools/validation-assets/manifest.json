@@ -4137,11 +4137,12 @@
     },
     "nemo": {
       "interpreter": "~/.inferkit-validation/nemovenv/bin/python3",
-      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet and Canary reference and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12. Canary-1B-v2 restores through EncDecMultiTaskModel; transformers has no released CanaryForConditionalGeneration yet, so NeMo is the oracle.",
-      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]' torch safetensors",
+      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet, Canary, and MarbleNet VAD reference and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12. Canary-1B-v2 restores through EncDecMultiTaskModel; transformers has no released CanaryForConditionalGeneration yet, so NeMo is the oracle. The floor is 2.5: its mel front end zero-pads the centered transform and counts floor(samples / hop) valid frames, where 2.4 and earlier reflect and count one more (NVIDIA/NeMo #13827), and the MarbleNet VAD record (IK_PARITY_VAD, reference/vad-reference-nemo3.safetensors) and the Swift front end follow 2.5.",
+      "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]>=2.5' torch safetensors",
       "modes": [
         "parakeet",
         "canary",
+        "vad",
         "vad_training"
       ]
     },

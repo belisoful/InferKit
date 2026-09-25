@@ -101,8 +101,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   joint at −0.52 and dropped the first word. And NeMo's `joint()` log-softmaxes on the CPU when
   `log_softmax` is null — a constant shift over the whole 1030-vector that leaves both argmaxes alone,
   so the port keeps raw logits and the seam is compared in log-softmax space. The STFT pads with
-  **zeros** (`pad_mode="constant"`), where the older MarbleNet VAD front end here reflects — measured
-  both ways, reflect scores 0.974. The LSTM loads through the shared PyTorch→MLX fold (`weight_ih_l<n>`
+  **zeros** (`pad_mode="constant"`, NeMo 2.5 and later, as the MarbleNet VAD front end does). Reflect
+  padding, measured against the same record, scores 0.974. The LSTM loads through the shared PyTorch→MLX fold (`weight_ih_l<n>`
   / `hh` → `Wx` / `Wh`, biases summed) under `dec_rnn.lstm.<n>`; the `nn.Sequential` indices of the
   subsampler (ReLU at 1, 4, 7) and the joint (ReLU 0, Dropout 1, Linear 2) are kept with marker modules
   so every other key matches with no remap; the 4-D and 3-D convolutions transpose to channels-last.
@@ -269,9 +269,18 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   centered with zeros (`pad_mode="constant"`), power spectrum through the mel filterbank, natural log
   with a `2⁻²⁴` guard, the frames past `floor(samples / hop)` zeroed, then padded to a multiple of
   two — and the encoder masks every convolution's input past the valid length as it shrinks through the
-  strides (`conv_mask: true`). The first record (August 2026) came from an older NeMo that reflected
-  at the edges and counted one more valid frame; NeMo 3.0 re-recorded it, and both edges moved. The
-  front end loads its
+  strides (`conv_mask: true`). Both edge rules are NeMo 2.5's (NVIDIA/NeMo #13827, July 2025). NeMo
+  2.4 and earlier center with `torch.stft`'s default reflect padding and count `floor(samples / hop) + 1`
+  valid frames. Neither rule is a preprocessor config key, so NeMo 3.0 applies the new pair to this
+  release even though its `model_config.yaml` records `nemo_version: 2.1.0rc0`, the version it trained
+  under. The parity record is `reference/vad-reference-nemo3.safetensors` (NeMo 3.0.0, torch 2.14.0),
+  the file `IK_PARITY_VAD` names. The August 2026 record, renamed `reference/vad-reference-pre-nemo2.5.safetensors`, is the
+  pre-2.5 pair: numpy reproduces it from its own waveform with reflect padding and 101 valid frames to
+  9.5e-7, and reproduces the NeMo 3.0 record with zero padding and 100 valid frames to 9.5e-7. Between
+  the two records, mel frames 0, 1, 99, and 100 differ by up to 2.0, 1.3, 0.12, and 11.9 (mel cosine
+  0.9979). The only probability that moves is the last frame, index 50 (0.055 → 0.459, cosine 0.919),
+  which falls past NeMo 3.0's valid length and scores zero padding. The test's 0.999 mel bound and
+  0.02 per-frame bound each reject the old record. The front end loads its
   window and filterbank from the checkpoint, which carries both; the defaults reproduce them for a
   randomly initialized net. Held in a plain box, not on the `Module`, so those constants stay out of
   `parameters()`. `remapReferenceKey` maps NeMo's flat positional `mconv` list (five entries per
@@ -280,7 +289,15 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (the parity-proven `julius.resample_frac` port, with the ratio reduced by its greatest common
   divisor first — 44100 → 16000 would otherwise build 16000 polyphase kernels instead of 160). Frame
   times are computed at the model's rate, which is the caller's own seconds because resampling
-  preserves duration.
+  preserves duration. `detect` builds spans from the frames inside the encoder's valid length alone
+  (`logitsAndLength`, NeMo's `encoded_len`) and clamps each span's end to the clip's duration, through
+  `NFKMLXSpeechSpans.merge`, which Silero VAD shares. `speechProbabilities` still returns every frame
+  the forward emits, padding frames included, because the parity record holds all of them. The
+  even-count padding adds one frame past the valid length whenever the valid mel count is even: a
+  16000-sample clip yields 51 frames, 50 of them valid. On the parity clip the extra frame scores
+  0.459 against the 0.5 threshold, so on another clip it can open a span that reaches past the audio.
+  NeMo's own `binarization` postprocessing reads every frame it is given; its loss and metrics mask
+  by the label count.
   **Customization is a FULL fine-tune and it ships** (`NFKMLXVADTraining.swift`), the recipe the
   release's own `model_config.yaml` names. `NFKMLXVAD.network(weightsURL:)` builds the now-public
   `NFKMLXVADNet`, `frameCount(samples:)` and `frameLabels(speech:frameCount:)` label its 20 ms frames,
@@ -317,7 +334,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `Tools/silero-vad-to-safetensors` reads the `.jit` with `torch.jit.load` (torch alone, no `silero-vad`
   package) and keeps the 16 kHz `_model.*` in PyTorch layout; the native `.pth`/JIT reader reads the raw
   `.jit` too. The parity oracle (`run_reference.py silero_vad`, llm env, needs `silero-vad`+`torchaudio`)
-  streams the JIT chunk by chunk. Resampled to 16 kHz through `NFKMLXAudioRate.matched`.
+  streams the JIT chunk by chunk. Resampled to 16 kHz through `NFKMLXAudioRate.matched`. The last
+  chunk is zero-padded to 512 samples, so a span that reaches it ends at the clip's duration, as the
+  reference's `get_speech_timestamps` sets the last end to `audio_length_samples`.
 - `NFKMLXAudioTagger` (`@objc`) — real audio tagging (PANNs Cnn14): a log-mel spectrogram, normalized
   across its mel bands (`bn0`), feeds six VGG-style blocks (two 3×3 convolutions and an average pooling
   each), and the result pools over time — max plus mean — into an independent score per class; the top

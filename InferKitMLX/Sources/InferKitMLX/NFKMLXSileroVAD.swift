@@ -190,32 +190,13 @@ final class NFKMLXSileroVADNet: Module {
 
     /// Detects speech spans, merging consecutive above-threshold chunks. Each chunk spans
     /// `numSamples / sampleRate` seconds; resampling preserves duration, so the seconds are the caller's.
+    /// The last chunk is zero-padded to a whole chunk, so a span ending there ends at the clip's end, as
+    /// the reference's `get_speech_timestamps` ends it.
     func detect(_ samples: [Float], sampleRate: Int) -> [NFKAudioSegment] {
         let probabilities = speechProbabilities(samples, sampleRate: sampleRate)
-        let chunkSeconds = configuration.chunkSeconds
-
-        var segments: [NFKAudioSegment] = []
-        var runStart: Int? = nil
-        var runSum: Float = 0
-        func close(_ end: Int) {
-            guard let start = runStart else { return }
-            let confidence = Double(runSum) / Double(end - start)
-            segments.append(NFKAudioSegment(startSeconds: Double(start) * chunkSeconds,
-                                            endSeconds: Double(end) * chunkSeconds,
-                                            label: nil, confidence: min(max(confidence, 0), 1)))
-            runStart = nil
-            runSum = 0
-        }
-        for (chunk, probability) in probabilities.enumerated() {
-            if probability >= configuration.threshold {
-                if runStart == nil { runStart = chunk }
-                runSum += probability
-            } else {
-                close(chunk)
-            }
-        }
-        close(probabilities.count)
-        return segments
+        return NFKMLXSpeechSpans.merge(probabilities[...], frameSeconds: configuration.chunkSeconds,
+                                       threshold: configuration.threshold,
+                                       duration: Double(samples.count) / Double(sampleRate))
     }
 }
 

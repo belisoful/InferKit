@@ -766,6 +766,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `floor(samples / hop)` is zeroed, and every convolution masks its input past the valid length. The
   first record came from an older NeMo that reflected and counted one more frame; the edges of a clip
   now match the current reference.
+- `NFKMLXVADBackend` builds speech spans only from the frames inside the encoder's valid length, and
+  ends each span no later than the clip. The frame that the even-count padding adds scores padding
+  alone, so it could open a span past the end of the audio. `NFKMLXSileroVADBackend` ends a span that
+  reaches its zero-padded last chunk at the clip's end, as `get_speech_timestamps` does.
 
 #### Conv-TasNet fine-tunes on a consumer's own mixtures
 

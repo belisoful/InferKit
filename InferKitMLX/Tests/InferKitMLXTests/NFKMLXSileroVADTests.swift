@@ -85,6 +85,16 @@ final class NFKMLXSileroVADTests: XCTestCase {
         XCTAssertGreaterThan(span.endSeconds, span.startSeconds)
     }
 
+    func testASpanEndsAtTheClipRatherThanTheLastChunksPadding() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXSileroVADConfiguration.v6
+        configuration.threshold = 0
+        let net = NFKMLXSileroVADNet(configuration)
+        // 8000 samples fill 15 chunks and part of a 16th, which is zero-padded to 8192.
+        let span = try XCTUnwrap(net.detect(Self.floats(samples: 8000), sampleRate: 16000).first)
+        XCTAssertEqual(span.endSeconds, 0.5, accuracy: 1e-9, "the span ends where the clip does")
+    }
+
     func testASafetensorsCheckpointLoadsAndReproducesTheForward() throws {
         try requireMLXRuntime()
         let trained = net()
@@ -134,7 +144,7 @@ final class NFKMLXSileroVADTests: XCTestCase {
             let segments = net.detect(Self.tone(seconds: 1.0, rate: rate), sampleRate: rate)
             for segment in segments {
                 XCTAssertGreaterThanOrEqual(segment.startSeconds, 0)
-                XCTAssertLessThanOrEqual(segment.endSeconds, 1.05, "a one-second clip cannot span longer")
+                XCTAssertLessThanOrEqual(segment.endSeconds, 1.0, "a one-second clip cannot span longer")
             }
         }
     }
