@@ -16,6 +16,27 @@ import MLXNN
 
 final class NFKMLXVoxtralTests: XCTestCase {
 
+    private var previousCacheLimit: Int?
+
+    // The released model holds about 12 GB at float32 arithmetic, close to a 32 GB machine's working set,
+    // so freed buffers go back to the system rather than into MLX's cache, where they would count against
+    // the same budget.
+    override func setUp() {
+        super.setUp()
+        if NFKMLXGPU.metalLibraryURL != nil {
+            previousCacheLimit = NFKMLXGPU.cacheLimit
+            NFKMLXGPU.setCacheLimit(1 << 30)
+        }
+    }
+
+    override func tearDown() {
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+            if let previousCacheLimit { NFKMLXGPU.setCacheLimit(previousCacheLimit) }
+        }
+        super.tearDown()
+    }
+
     private func requireMLXRuntime() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")

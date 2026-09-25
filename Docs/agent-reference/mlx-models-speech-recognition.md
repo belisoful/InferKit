@@ -185,7 +185,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   0.99999994, the fused logits 0.99999994. **Released Voxtral-Mini-3B** at float32 (`run_reference.py
   voxtral_real`): the checkpoint's 761 base tensors all match by name and shape (0 missing, 0 mismatched,
   0 unaccounted; `embed_positions` is the computed sinusoid, not a parameter), the encoder 0.99999934, the
-  audio embeddings 1.0000007, the logits 1.0000002, and the greedy continuation 8/8 tokens. One trap:
+  audio embeddings 1.0000007, the logits 1.0000002, and the greedy continuation 8/8 tokens. A `.float32`
+  load widens the encoder and the projector whole and, in the decoder, only the embedding table and the
+  norms: the projection matrices keep the release's bfloat16 and promote exactly inside float32
+  arithmetic, which holds the test inside a 32 GB machine's working set (the all-float32 load peaked at
+  24.6 GB and swapped). One trap:
   the tiny oracle randomized `embed_positions`, but the port computes Whisper sinusoids, so the oracle
   sets it to the sinusoids the released model already carries (encoder 0.52 → 1.0 once fixed).
   `NFKMLXVoxtral.backend(directoryURL:)` (`@objc voxtralBackendWithDirectoryURL:error:`) reads

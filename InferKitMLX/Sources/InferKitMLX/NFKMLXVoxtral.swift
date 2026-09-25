@@ -212,13 +212,28 @@ public final class NFKMLXVoxtral: NSObject {
     public static func loadWeights(into net: NFKMLXVoxtralNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .checkpoint) throws {
         let tied = net.languageModel.lmHead == nil
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+        let read = try NFKMLXReleaseWeights.arrays(
+            inDirectory: directory, precision: precision == .float32 ? .checkpoint : precision) { key in
             if tied && key.hasPrefix("language_model.lm_head.") { return nil }
             return remap(key)
         }
         let merged = read.map { name, value -> (String, MLXArray) in
-            (name, value.ndim == 3 && name.hasSuffix(".weight") ? value.transposed(0, 2, 1) : value)
+            var array = value.ndim == 3 && name.hasSuffix(".weight") ? value.transposed(0, 2, 1) : value
+            if precision == .float32 && widensAtFloat32(name, array) {
+                array = array.asType(.float32)
+                eval(array)
+            }
+            return (name, array)
         }
         try NFKMLXWeights.apply(merged, to: net)
+    }
+
+    /// Whether a tensor widens to float32 in a `.float32` load. The encoder and the projector widen
+    /// whole. The decoder widens its embedding table and its norms and keeps each projection matrix at
+    /// the release's bfloat16: the float32 embeddings carry every layer in float32, and each product
+    /// promotes its bfloat16 operand exactly, so the arithmetic equals a decoder widened throughout at
+    /// about half its memory.
+    static func widensAtFloat32(_ name: String, _ value: MLXArray) -> Bool {
+        !name.hasPrefix("language_model.") || value.ndim == 1 || name == "language_model.model.embed_tokens.weight"
     }
 }
