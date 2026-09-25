@@ -536,7 +536,7 @@
       "config": [
         "IK_VAL_IPADAPTER"
       ],
-      "note": "IP-Adapter for Stable Diffusion 1.5 (h94/IP-Adapter, ~44 MB, Apache-2.0). Holds image_proj.{proj,norm}.* (the CLIP-image-embedding projection) and ip_adapter.<N>.to_{k,v}_ip.weight (the per-cross-attention key/value). NFKMLXIPAdapter.load reads it directly and attaches the key/value to NFKMLXSDUNet's cross-attentions; the layer order is down->up->mid, because UNet2DConditionModel registers the mid block last, which is the order the adapter's numeric indices follow. Validated wired into the real SD 1.5 UNet against diffusers (run_reference.py ip_adapter_unet under the diffusers env, IK_VAL_IPADAPTER + IK_SD15_DIR -> IK_PARITY_IP_ADAPTER_UNET), cosine ~1e-12. The isolated mechanism is separately covered by the weightless ip_adapter mode."
+      "note": "IP-Adapter for Stable Diffusion 1.5 (h94/IP-Adapter, ~44 MB, Apache-2.0). Holds image_proj.{proj,norm}.* (the CLIP-image-embedding projection) and ip_adapter.<N>.to_{k,v}_ip.weight (the per-cross-attention key/value). NFKMLXIPAdapter.load reads it directly and attaches the key/value to NFKMLXSDUNet's cross-attentions; the layer order is down->up->mid, because UNet2DConditionModel registers the mid block last, which is the order the adapter's numeric indices follow. Validated wired into the real SD 1.5 UNet against diffusers (run_reference.py ip_adapter_unet under the diffusers env, IK_VAL_IPADAPTER + IK_SD15_DIR -> IK_PARITY_IP_ADAPTER_UNET), cosine ~1e-12. The isolated mechanism is separately covered by the weightless ip_adapter mode (no arguments, under the ltx env -> IK_PARITY_IP_ADAPTER). Both are inference records, so neither is in `training_records`."
     },
     {
       "key": "WHISPER_BASE",
@@ -4090,7 +4090,16 @@
         "convtasnet_loss",
         "rtdetr_loss",
         "rtdetr_training_forward",
-        "rtdetr_training_setup"
+        "rtdetr_training_setup",
+        "florence2_loss",
+        "laya_loss",
+        "qwen3vl_retrieval_loss",
+        "sa2va_loss",
+        "table_transformer_loss",
+        "trocr_loss",
+        "vjepa2_probe",
+        "nuwave2",
+        "cosmos_tokenizer_loss"
       ]
     },
     "voicerestore": {
@@ -4161,7 +4170,8 @@
         "music_condition",
         "music_dit",
         "music_ar",
-        "music_tokenizer"
+        "music_tokenizer",
+        "nemotron_h_loss"
       ]
     },
     "gemma": {
@@ -4233,7 +4243,8 @@
         "sd3_controlnet",
         "sd3_controlnet_single",
         "flux_controlnet",
-        "flux_controlnet_hint"
+        "flux_controlnet_hint",
+        "ip_adapter"
       ],
       "why": "AutoencoderKLLTXVideo needs diffusers >= 0.32, newer than the sd/other oracles. diffusers 0.36 also carries ZImageTransformer2DModel, SanaTransformer2DModel, WanTransformer3DModel, SD3Transformer2DModel, and FluxTransformer2DModel (the z_image / sana / wan / sd3 / flux DiT parity oracles), plus SD3ControlNetModel and FluxControlNetModel (the sd3_controlnet / sd3_controlnet_single / flux_controlnet parity oracles). The ControlNet oracles record BOTH the ControlNet (w::) and the base transformer (t::) at tiny random configs and the base-with-residuals output, so the Swift side validates the per-block residuals AND the base injection (SD3 interval_control non-ceil, FLUX ceil). flux_controlnet_hint additionally exercises the input_hint_block (the ControlNetConditioningEmbedding pyramid over a full-resolution control image, 8x downsample to the packed grid). IK_PARITY_SD3_CONTROLNET / _SINGLE / IK_PARITY_FLUX_CONTROLNET / _HINT are records/*.safetensors, tiny-random (no download)."
     },
@@ -4259,7 +4270,7 @@
     },
     "ultralytics": {
       "interpreter": "/usr/bin/python3",
-      "why": "The YOLO oracles read ultralytics' own model, and the released .pt files carry a pickled module rather than a bare state dict, so the package that wrote them has to import them. It sits on the system interpreter here, outside the virtual environments the other oracles use. Version 8.4.120 supports every generation this port covers, including YOLO26.",
+      "why": "The system interpreter (Python 3.9, torch 2.8, transformers 4.33.3), outside the virtual environments the other oracles use. The YOLO oracles read ultralytics' own model, and the released .pt files carry a pickled module rather than a bare state dict, so the package that wrote them has to import them; version 8.4.120 supports every generation this port covers, including YOLO26. The other modes here are the older oracles measured on the same interpreter before the per-reference environments existed.",
       "rebuild": "/usr/bin/python3 -m pip install --user ultralytics",
       "modes": [
         "yolo",
@@ -4267,7 +4278,11 @@
         "yolo_generation",
         "yolo_loss",
         "yolo_training_setup",
-        "yolo_e2e_loss"
+        "yolo_e2e_loss",
+        "segformer_loss",
+        "zero_dce_losses",
+        "gtcrn",
+        "convtasnet"
       ]
     },
     "basic_pitch": {
@@ -4788,7 +4803,7 @@
       "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights gemma4_moe | gemma4_unified --checkpoint unused"
     }
   ],
-  "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record` under ~/.inferkit-validation, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
+  "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under ~/.inferkit-validation or an absolute one for a record kept on another volume, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
   "training_records": [
     {
       "key": "IK_PARITY_GTCRN_LOSS",
@@ -4855,6 +4870,102 @@
       "record": "reference/rtdetr-training-setup.safetensors",
       "environment": "llm",
       "command": "IK_RTDETR_SRC=~/.inferkit-validation/reference-sources/rtdetr rtdetr_training_setup"
+    },
+    {
+      "key": "IK_PARITY_FLORENCE2_BASE_FT_LOSS",
+      "record": "florence2-base-ft/loss_record.safetensors",
+      "environment": "llm",
+      "command": "FLORENCE2_REPO=~/.inferkit-validation/florence2-base-ft HF_HUB_OFFLINE=1 florence2_loss --checkpoint ~/.inferkit-validation/florence2-base-ft --image ~/.inferkit-validation/inputs/face960.jpg"
+    },
+    {
+      "key": "IK_PARITY_GRANITE_LOSS",
+      "record": "reference/granite-hybrid-loss-reference.safetensors",
+      "environment": "llm",
+      "command": "granite_hybrid_loss --checkpoint /tmp"
+    },
+    {
+      "key": "IK_PARITY_LAYA_LOSS",
+      "record": "reference/laya-loss-reference.safetensors",
+      "environment": "llm",
+      "command": "laya_loss --checkpoint ~/.inferkit-validation/laya"
+    },
+    {
+      "key": "IK_PARITY_NEMOTRON_H_LOSS",
+      "record": "reference/nemotron-h-loss-reference.safetensors",
+      "environment": "music",
+      "command": "nemotron_h_loss --checkpoint /tmp"
+    },
+    {
+      "key": "IK_PARITY_QWEN3_VL_RETRIEVAL_LOSS",
+      "record": "reference/qwen3vl-retrieval-loss-reference.safetensors",
+      "environment": "llm",
+      "command": "qwen3vl_retrieval_loss"
+    },
+    {
+      "key": "IK_PARITY_SA2VA_1B_LOSS",
+      "record": "sa2va-1b/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_SA2VA_SRC=~/.inferkit-validation/sources/sa2va HF_HUB_OFFLINE=1 sa2va_loss --checkpoint ~/.inferkit-validation/sa2va-1b"
+    },
+    {
+      "key": "IK_PARITY_SAM2_LOSS",
+      "record": "reference/sam2-loss-reference.safetensors",
+      "environment": "wananimate",
+      "command": "IK_SAM2_SRC=~/.inferkit-validation/reference-sources/sam2 sam2_loss"
+    },
+    {
+      "key": "IK_PARITY_SAM3_LOSS",
+      "record": "reference/sam3-loss-reference.safetensors",
+      "environment": "wananimate",
+      "command": "IK_SAM3_SRC=~/.inferkit-validation/reference-sources/sam3 sam3_loss"
+    },
+    {
+      "key": "IK_PARITY_SEGFORMER_LOSS",
+      "record": "reference/segformer-loss.safetensors",
+      "environment": "ultralytics",
+      "command": "segformer_loss --size 512"
+    },
+    {
+      "key": "IK_PARITY_TABLE_TRANSFORMER_DETECTION_LOSS",
+      "record": "table-transformer-detection/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_TABLE_TRANSFORMER_SRC=~/.inferkit-validation/sources/table-transformer HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint ~/.inferkit-validation/table-transformer-detection --image ~/.inferkit-validation/table_structure.png"
+    },
+    {
+      "key": "IK_PARITY_TABLE_TRANSFORMER_V11_ALL_LOSS",
+      "record": "table-transformer-v11-all/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_TABLE_TRANSFORMER_SRC=~/.inferkit-validation/sources/table-transformer HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint ~/.inferkit-validation/table-transformer-v11-all --image ~/.inferkit-validation/table_structure.png"
+    },
+    {
+      "key": "IK_PARITY_TROCR_BASE_PRINTED_LOSS",
+      "record": "trocr-base-printed/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_FAIRSEQ_SRC=~/.inferkit-validation/sources/fairseq PYTHONPATH=~/.inferkit-validation/protobuf-4 HF_HUB_OFFLINE=1 trocr_loss --checkpoint ~/.inferkit-validation/trocr-base-printed --size 500 --image ~/.inferkit-validation/trocr_line.png"
+    },
+    {
+      "key": "IK_PARITY_TROCR_SMALL_HANDWRITTEN_LOSS",
+      "record": "trocr-small-handwritten/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_FAIRSEQ_SRC=~/.inferkit-validation/sources/fairseq PYTHONPATH=~/.inferkit-validation/protobuf-4 HF_HUB_OFFLINE=1 trocr_loss --checkpoint ~/.inferkit-validation/trocr-small-handwritten --size 500 --image ~/.inferkit-validation/trocr_line.png"
+    },
+    {
+      "key": "IK_PARITY_VJEPA2_PROBE",
+      "record": "vjepa2-probe/record.safetensors",
+      "environment": "llm",
+      "command": "IK_VJEPA2_SRC=~/.inferkit-validation/sources/vjepa2 vjepa2_probe"
+    },
+    {
+      "key": "IK_PARITY_ZERO_DCE_LOSSES",
+      "record": "reference/zero-dce-losses.safetensors",
+      "environment": "ultralytics",
+      "command": "zero_dce_losses --size 64"
+    },
+    {
+      "key": "IK_PARITY_COSMOS_TOKENIZER_LOSS",
+      "record": "/Volumes/WindowsBoot/InferKit/validation/cosmos-tokenizer/loss_record.safetensors",
+      "environment": "llm",
+      "command": "IK_COSMOS_TOKENIZER_SRC=~/.inferkit-validation/cosmos-tokenizer-src cosmos_tokenizer_loss --checkpoint /Volumes/WindowsBoot/InferKit/validation/vgg16/model.safetensors"
     }
   ]
 }
