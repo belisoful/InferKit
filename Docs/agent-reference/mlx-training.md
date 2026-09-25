@@ -185,6 +185,16 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
     one.
   - What stays in the recipe is what a caller reads: the example tuple, the objective's call shape,
     the knobs the reference exposes, and the preconditions. The recipe keeps its own public signature.
+  - **No trainable-model protocol (decided 2026-09-25).** The shared contract is the minimum shipped set
+    above, and `run` is the one generic fine-tune. A Swift protocol would have to state a builder, an
+    example type, and an objective, and the recipes agree on none of the three. The builders take
+    `variant:`, `classCount:`, `release:`, `directoryURL:`, or a `configuration`. Twenty-five recipes
+    are static over a net and seven live on a built model that holds its tokenizer or embedder. Each
+    example is the model's own shape. A protocol over them needs associated types, which erase to
+    nothing a caller could use and which Objective-C cannot see, so it would add conformances without
+    removing code. What the protocol was meant to guarantee is enforced where it can be checked: `run`
+    owns the sequence, and each recipe's tests cover its builder, freezing, objective oracle, and round
+    trip.
   - It serves both recipe shapes. A static recipe takes a net (`NFKMLXSegFormer.fineTune`); an
     instance recipe lives on a built model that holds the tokenizer and release directory and takes
     `[Example]` (`NFKMLXLaya.fineTune`). `run` takes the net and closures, so either composes with it.
