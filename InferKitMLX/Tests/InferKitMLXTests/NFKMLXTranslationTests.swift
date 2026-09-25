@@ -503,9 +503,45 @@ final class NFKMLXTranslationTests: XCTestCase {
 
     /// The 12B is 24 GB of bfloat16: the reference runs at that precision (`TRANSLATEGEMMA_DTYPE=bfloat16`)
     /// and the port loads at `.checkpoint`, so the comparison is bfloat16 against bfloat16.
+    // The released 12B is 24 GB at bfloat16, past the working set of a 32 GB machine, so the test loads
+    // its first 24 of 48 decoder layers and holds each against the reference's hidden state at the same
+    // layer, which depends on no layer after it. The 4B runs the whole translator path (logits, greedy
+    // continuation, fine-tuning loss) through the same code.
     func testTranslateGemma12BMatchesTheReference() throws {
-        try checkTranslateGemma(weightsKey: "IK_VAL_TRANSLATEGEMMA_12B", recordKey: "IK_PARITY_TRANSLATEGEMMA_12B",
-                                precision: .checkpoint, name: "translategemma-12b")
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_TRANSLATEGEMMA_12B", "IK_PARITY_TRANSLATEGEMMA_12B")
+        let kept = 24
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(contentsOf: directory.appendingPathComponent("config.json"))) as? [String: Any])
+        var configuration = try NFKMLXGemma3Language.configuration(fromJSON: json)
+        XCTAssertEqual(configuration.layerCount, 48)
+        configuration.layerTypes = Array(configuration.layerTypes.prefix(kept))
+        configuration.layerCount = kept
+        let decoder = NFKMLXGemma3Net(configuration)
+        let weights = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint) { key in
+            guard let name = NFKMLXGemma3Language.decoderName(of: key) else { return nil }
+            let parts = name.split(separator: ".")
+            if parts.count > 1, parts[0] == "layers", let layer = Int(parts[1]), layer >= kept { return nil }
+            return name
+        }
+        try NFKMLXWeights.apply(weights, to: decoder)
+
+        let translator = try NFKMLXTranslateGemma.translator(decoder: decoder, directoryURL: directory, precision: .checkpoint)
+        XCTAssertGreaterThan(translator.languages.count, 500)
+        let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
+
+        // The trace holds the embeddings, then each layer's output; its final entry is normed, so the
+        // comparison stops one short of it.
+        let states = decoder.layerStates(MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count]))
+        var worst: (layer: Int, cosine: Float) = (-1, 1)
+        for index in 0 ..< kept {
+            let layerCosine = cosine(states[index][0, ids.count - 1], try XCTUnwrap(record["hidden_last.\(index)"]))
+            if layerCosine < worst.cosine { worst = (index, layerCosine) }
+        }
+        print("translategemma-12b: worst layer state cosine \(worst.cosine) at layer \(worst.layer) of the first \(kept)")
+        // Two bfloat16 stacks differ in accumulation order, which drifts over the layers.
+        XCTAssertGreaterThan(worst.cosine, 0.99, "a layer diverges beyond bfloat16 drift")
     }
 
     private func checkTranslateGemma(weightsKey: String, recordKey: String, precision: NFKMLXWeightPrecision, name: String) throws {

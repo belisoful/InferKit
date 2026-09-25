@@ -9522,13 +9522,15 @@ final class NFKMLXReferenceParityTests: XCTestCase {
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw XCTSkip("could not read the validation image")
         }
-        let gemma = try NFKMLXGemma3.load(directoryURL: URL(fileURLWithPath: directory))
+        // One load at the released bfloat16 serves both paths: two float32 copies of the 4B do not fit the
+        // working set of a 32 GB machine.
+        let gemma = try NFKMLXGemma3.load(directoryURL: URL(fileURLWithPath: directory), precision: .checkpoint)
         let answer = try gemma.answer(image: image, question: "Describe this image in one sentence.")
         print("VALIDATION gemma3 answer: \(answer)")
         XCTAssertGreaterThan(answer.split(separator: " ").count, 3, "the answer is a multi-word description")
 
         // The same picture through the backend's `NFKInputImage` path.
-        let backend = try NFKMLXGemma3.backend(directoryURL: URL(fileURLWithPath: directory))
+        let backend = NFKMLXGemma3Backend(model: gemma.model, identifier: NFKMLXGemma3.modelName)
         let result = try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: image, NFKInputMessages: [["role": "user", "content": "What is the main subject?"]]],
             parameters: [NFKParameterMaxTokens: 24, NFKParameterTemperature: 0]))

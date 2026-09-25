@@ -135,7 +135,9 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
 
     /// Selects the mode the inputs call for and assembles the prompt ids and the placeholder features.
     /// The pictures are embedded one by one; the clips run through the speech tower as one batch, as
-    /// the reference processor submits them. The audio projector's head follows the mode.
+    /// the reference processor submits them. The audio projector's head follows the mode. Each tower's
+    /// features are evaluated before the decoder runs, so a tower's intermediates are released first
+    /// and never share the peak with the prefill.
     func prepare(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], audios: [NFKMLXPhi4MMAudioInput]) throws
         -> (ids: [Int], features: [(placeholder: Int, features: MLXArray)]) {
         let mode = Self.modality(hasImage: !images.isEmpty, hasAudio: !audios.isEmpty)
@@ -146,14 +148,17 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
                 imageNet.projected(pixels: $0.pixels, imageSize: $0.imageSize, validPatches: $0.validPatches)
                     .reshaped([-1, decoder.configuration.hiddenSize])
             }
-            features.append((NFKMLXPhi4MM.imageTokenId, concatenated(embedded, axis: 0)))
+            let imageFeatures = concatenated(embedded, axis: 0)
+            eval(imageFeatures)
+            features.append((NFKMLXPhi4MM.imageTokenId, imageFeatures))
         }
         var audioTokens = [Int]()
         if !audios.isEmpty {
             let mels = try audios.map { try NFKMLXPhi4MMAudioFeatures.logMel($0.samples, sampleRate: $0.sampleRate) }
             audioTokens = mels.map { NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0)) }
-            features.append((NFKMLXPhi4MM.audioTokenId,
-                             concatenated(audioNet.projected(clips: mels, mode: mode), axis: 0)))
+            let audioFeatures = concatenated(audioNet.projected(clips: mels, mode: mode), axis: 0)
+            eval(audioFeatures)
+            features.append((NFKMLXPhi4MM.audioTokenId, audioFeatures))
         }
         let ids = try promptIds(messages: messages, imageTokens: images.map(\.tokenCount), audioTokens: audioTokens)
         return (ids, features)

@@ -18,11 +18,24 @@ import MLXRandom
 
 final class NFKMLXPhi4MMTests: XCTestCase {
 
+    private var previousCacheLimit: Int?
+
+    // The released model holds about 14 GB, close to a 32 GB machine's working set, so freed buffers go
+    // back to the system rather than into MLX's cache, where they would count against the same budget.
+    override func setUp() {
+        super.setUp()
+        if NFKMLXGPU.metalLibraryURL != nil {
+            previousCacheLimit = NFKMLXGPU.cacheLimit
+            NFKMLXGPU.setCacheLimit(1 << 30)
+        }
+    }
+
     override func tearDown() {
         // Each test loads multi-gigabyte networks; clearing the cache reaches MLX's runtime, which needs a
         // Metal library it can find.
         if NFKMLXGPU.metalLibraryURL != nil {
             NFKMLXGPU.clearCache()
+            if let previousCacheLimit { NFKMLXGPU.setCacheLimit(previousCacheLimit) }
         }
         super.tearDown()
     }
@@ -496,6 +509,11 @@ final class NFKMLXPhi4MMTests: XCTestCase {
             throw XCTSkip("set IK_VAL_PHI4MM")
         }
         let model = try NFKMLXPhi4MM.model(directoryURL: URL(fileURLWithPath: directory), precision: .float32)
+        func memory(_ stage: String) {
+            let gigabytes = { (bytes: Int) in String(format: "%.2f", Double(bytes) / 1e9) }
+            print("MEMORY phi4mm \(stage): active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(NFKMLXGPU.peakMemory)) GB")
+        }
+        memory("after load")
         func ints(_ key: String) -> [Int] { arrays[key]!.asType(.int32).asArray(Int32.self).map(Int.init) }
         func picture(_ key: String) -> NFKMLXPhi4MMImageInput {
             let rgb = arrays[key]!
@@ -534,6 +552,7 @@ final class NFKMLXPhi4MMTests: XCTestCase {
             let produced = try model.generate(messages: testCase.messages, images: testCase.images,
                                               audios: testCase.audios, options: options)
             XCTAssertEqual(Array(produced.prefix(expected.count)), expected, "\(testCase.name) greedy answer")
+            memory("after \(testCase.name)")
         }
 
         // The speech tower's seams: two clips batched (the short one's second window wholly padding), and

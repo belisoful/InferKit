@@ -697,7 +697,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (*"The second clip says the same thing as the first one."*). Audio with no text runs the release's
   transcription instruction. The decoder loads at the released bfloat16 by default
   (`backendWithDirectoryURL:precision:error:` chooses float32, which the tests measure), and the towers,
-  under a billion parameters together, run at float32.
+  under a billion parameters together, run at float32. At `.float32` the mixture decoder keeps its
+  projection matrices and adapter factors at the released bfloat16 and widens only the embedding table
+  and the norms: the float32 embeddings carry every layer in float32, each product promotes its bfloat16
+  operand exactly, and the arithmetic equals an all-float32 load: every recorded cosine reproduced to the
+  last digit, with 12.4 GB active after the load against about 22 GB before. `prepare` evaluates each
+  tower's features before the decoder graph, and the tests cap MLX's cache at 1 GiB, because freed
+  buffers held in the cache count against the same working set. Measured 2026-09-24 under the swap
+  guard: the conversation test peaks at 16.5 GB (it was killed at 24.6), the whole class at 18.4.
 - **Reuse and customization**: the decoder is `NFKMLXLanguageNet` and the image encoder layers are the
   shared SigLIP blocks. The new work is LongRoPE, partial rotary, the NaViT embedding and mask, the HD
   layout, the Conformer, the mixture-of-LoRAs layer, and both preprocessors. The factories take a release

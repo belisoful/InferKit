@@ -247,16 +247,26 @@ public final class NFKMLXPhi4MM: NSObject {
     /// adapter, and `.language` runs the base alone. Each fused projection's adapter splits with it — the
     /// query, key, and value share the query/key/value adapter's down-projection and take their rows of
     /// its up-projection.
+    ///
+    /// @discussion At `.float32` the projection matrices and the adapter factors keep the release's own
+    /// bfloat16 values, and the embedding table and the norms widen to float32. The embeddings therefore
+    /// carry float32 activations into every layer, and each matrix product promotes its bfloat16 operand
+    /// to float32 exactly. The arithmetic equals a decoder widened throughout, at about half the resident
+    /// memory, which is what keeps the 5.6-billion-parameter model inside a 32 GB machine's working set.
     public static func mixtureDecoder(directoryURL: URL,
                                       precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXLanguageNet {
         let configuration = try decoderConfiguration(directoryURL: directoryURL)
         let net = NFKMLXLanguageNet(configuration)
-        let byKey = try decoderTensors(directoryURL: directoryURL, precision: precision, adapters: ["vision", "speech"])
-        try NFKMLXWeights.apply(try splitArrays(byKey: byKey, configuration: configuration) { base in
+        let byKey = try decoderTensors(directoryURL: directoryURL, precision: .checkpoint, adapters: ["vision", "speech"])
+        let arrays = try splitArrays(byKey: byKey, configuration: configuration) { base in
             guard let weight = byKey[base + ".base_layer.weight"] else {
                 throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing \(base).base_layer.weight")
             }
             return weight
+        }
+        try NFKMLXWeights.apply(arrays.map { name, value in
+            let widens = precision == .float32 && (value.ndim == 1 || name == "model.embed_tokens.weight")
+            return (name, widens ? value.asType(.float32) : value)
         }, to: net, verifyShapes: true)
 
         let scales = [try loRAScale(directoryURL: directoryURL, adapter: "vision"),
