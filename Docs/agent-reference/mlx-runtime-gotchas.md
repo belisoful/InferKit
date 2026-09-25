@@ -385,6 +385,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     count, so every MobileNetV3 inverted residual takes the faulting path on the CPU, as does any
     dilated convolution. Measured on the CPU, a depthwise convolution costs 6.98 times a dense one of
     the same shape.
+  - **Evaluation mode is exposed inside a suite process.** On the core 0.32 pin, a full
+    `InferKitMLXTests` run died with SIGSEGV in an evaluation-mode CPU forward of the tiny RVM net
+    (`NFKMLXGradientDeterminismTests`, 2026-09-23), after the trainer's tests had emptied the cache;
+    the same test passed three times alone. The 0-in-60 evaluation figure above is for a fresh
+    process. That test now runs the composed forward on the GPU only, and a suite test does not run
+    a composed depthwise or dilated net on the CPU.
   - **Both defects are watched, not asserted.** `NFKMLXUpstreamWatchTests` reports whether a later GPU
     backward still disagrees with the CPU, and times a depthwise convolution against a dense one to
     report whether MLX still routes them differently. Both pass either way, because a red suite for a
