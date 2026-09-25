@@ -1937,7 +1937,7 @@
         "preprocessor_config.json",
         "merges.txt",
         "vocab.json",
-        "chat_template.jinja"
+        "chat_template.json"
       ],
       "config": {
         "IK_VAL_QWEN3_VL": ""
