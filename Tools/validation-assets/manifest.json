@@ -1175,7 +1175,9 @@
       "converter": "basic-pitch-to-safetensors",
       "note": "Basic Pitch (spotify/basic-pitch, Apache-2.0), the ICASSP 2022 note-transcription model. The released artifact is an ONNX graph holding the whole pipeline: the converter lifts the CQT's two quadrature kernels, its anti-aliasing filter, its per-bin scale, the folded normalization, and the six convolutions out of the graph's initializers (20 tensors, 35,736 parameters). The Keras batch normalizations are already folded into the convolutions, so the module has none. The reference (IK_PARITY_BASIC_PITCH) comes from `run_reference.py basic_pitch --checkpoint <this raw file>` under the bpvenv interpreter; it records the CQT magnitude, the normalized log, the harmonic stack, the three per-window posteriorgrams, the stitched posteriorgrams, and the notes the reference's own note_creation reads, with their pitch-bend curves.",
       "config": [
-        "IK_VAL_BASIC_PITCH"
+        "IK_VAL_BASIC_PITCH",
+        "IK_PARITY_BASIC_PITCH_TRAINING",
+        "IK_PARITY_BASIC_PITCH_TARGETS"
       ]
     },
     {
@@ -4296,9 +4298,12 @@
     },
     "basic_pitch_tf": {
       "interpreter": "~/.inferkit-validation/bptfvenv/bin/python3",
-      "why": "Basic Pitch's training objective and optimizer are Keras 2 code (basic_pitch.models.loss, basic_pitch.train), so its training oracle needs TensorFlow. basic-pitch 0.4.0's `tf` extra pins tensorflow-macos below 2.15.1 on Darwin, and TensorFlow 2.16 moved to Keras 3, so 2.15.0 is the newest version that runs the reference's own code. TensorFlow 2.15 needs numpy below 2, which is why this interpreter is separate from basic_pitch's: the inference and GTCRN records there were measured on numpy 2.0.2. With default arguments `models.model()` builds 16,864 parameters (16,782 trainable), fewer than the released network, so a training oracle builds the release's own configuration.",
-      "rebuild": "/usr/bin/python3 -m venv ~/.inferkit-validation/bptfvenv && ~/.inferkit-validation/bptfvenv/bin/pip install 'basic-pitch[tf]==0.4.0' 'tensorflow-macos==2.15.0' 'torch==2.8.0' safetensors mido 'setuptools<81'",
-      "modes": []
+      "why": "Basic Pitch's training objective and optimizer are Keras 2 code (basic_pitch.models.loss, basic_pitch.train), so its training oracle needs TensorFlow. basic-pitch 0.4.0's `tf` extra pins tensorflow-macos below 2.15.1 on Darwin, and TensorFlow 2.16 moved to Keras 3, so 2.15.0 is the newest version that runs the reference's own code. TensorFlow 2.15 needs numpy below 2, which is why this interpreter is separate from basic_pitch's: the inference and GTCRN records there were measured on numpy 2.0.2. In a fresh session `models.model()` builds exactly the released SavedModel's 24 variables by name and shape, 16,864 values of which 16,782 train; the 35,736 the ONNX graph holds adds the constant-Q tensors, which Keras computes at run time and does not store. basic_pitch_training copies the SavedModel's variables into it by position. `basic_pitch_targets` reads mirdata (1.0.0 here), the library `basic_pitch.data` builds its training targets with, installed under a constraint that holds numpy, TensorFlow, and torch.",
+      "rebuild": "/usr/bin/python3 -m venv ~/.inferkit-validation/bptfvenv && ~/.inferkit-validation/bptfvenv/bin/pip install 'basic-pitch[tf]==0.4.0' 'tensorflow-macos==2.15.0' 'torch==2.8.0' safetensors mido mirdata 'setuptools<81'",
+      "modes": [
+        "basic_pitch_training",
+        "basic_pitch_targets"
+      ]
     },
     "allin1": {
       "interpreter": "~/.inferkit-validation/allin1venv/bin/python3",
@@ -4972,6 +4977,18 @@
       "record": "/Volumes/WindowsBoot/InferKit/validation/cosmos-tokenizer/loss_record.safetensors",
       "environment": "llm",
       "command": "IK_COSMOS_TOKENIZER_SRC=~/.inferkit-validation/cosmos-tokenizer-src cosmos_tokenizer_loss --checkpoint /Volumes/WindowsBoot/InferKit/validation/vgg16/model.safetensors"
+    },
+    {
+      "key": "IK_PARITY_BASIC_PITCH_TRAINING",
+      "record": "records/basic-pitch-training.safetensors",
+      "environment": "basic_pitch_tf",
+      "command": "basic_pitch_training --checkpoint ~/.inferkit-validation/bptfvenv/lib/python3.9/site-packages/basic_pitch/saved_models/icassp_2022/nmp"
+    },
+    {
+      "key": "IK_PARITY_BASIC_PITCH_TARGETS",
+      "record": "records/basic-pitch-targets.safetensors",
+      "environment": "basic_pitch_tf",
+      "command": "basic_pitch_targets"
     }
   ]
 }

@@ -392,6 +392,25 @@ final class NFKMLXTrainerTests: XCTestCase {
         XCTAssertNotEqual(model.runningMean, before)
     }
 
+    /// A parent's recursive `unfreeze()` makes a `BatchNorm`'s running statistics trainable again. Their
+    /// gradient is zero, but a decoupled weight decay still shrinks them each step, so the trainer keeps
+    /// them out of the trainable set: one step from zero with a batch mean of 3 reaches MLXNN's
+    /// `0.1 · 3`, where the decay would take a quarter off it.
+    func testARecursiveUnfreezeLeavesTheStatisticsOutOfTheWeightDecay() throws {
+        try requireMLXRuntime()
+        let model = HeadOverFrozenBackbone()
+        model.unfreeze()
+        let input = MLXArray([3.0, 3.0, 3.0, 3.0] as [Float]).reshaped([2, 2])
+        _ = try NFKMLXTrainer.train(model, optimizer: AdamW(learningRate: 0.5, weightDecay: 0.5), steps: 1,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        (model(input) - target).square().mean()
+                                    })
+        for value in model.runningMean {
+            XCTAssertEqual(value, 0.3, accuracy: 1e-6)
+        }
+    }
+
     /// The models this rule protects hold their stages in `[Module]` arrays, not in named
     /// properties, so the walk has to descend through array structure to reach a frozen backbone.
     private final class HeadOverArrayHeldBackbone: Module {

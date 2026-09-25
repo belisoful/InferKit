@@ -86,6 +86,13 @@ rate multiple and weight decay (one optimizer per distinct pair), and `NFKMLXL2A
 `torch.optim.Adam` with its `weight_decay` added to the gradient. `NFKMLXReferenceOptimizersTests`
 holds each to PyTorch's first step.
 
+**A TensorFlow reference trains under Keras's `Adam`.** Keras folds both bias corrections into the
+step size and adds epsilon to the square root of the UNCORRECTED second moment:
+`α = lr·√(1 − β₂ᵗ)/(1 − β₁ᵗ)`, then `θ −= α·m/(√v + ε)`, with ε 1e-7. PyTorch adds its ε (1e-8) to the
+corrected one, and the two differ wherever a gradient is near ε. `NFKMLXKerasAdam` is Keras's form, with
+the moments updated as Keras writes them (`m += (g − m)(1 − β₁)`) and single-precision step scalars.
+Basic Pitch's recipe runs it, held within 9.4e-7 of the reference's first step from its own gradients.
+
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the
 run ends. A `MultiOptimizer`'s groups keep their ratios. The schedules are the references' own formulas,
@@ -149,14 +156,16 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
 
 **Gaps against this rule.** These are package-level rather than per-model:
 
-- No text data adapter (tokenize, template, mask) and no audio example adapter exist; no
-  response-masked SFT objective exists.
+- No text data adapter (tokenize, template, mask) exists, and no response-masked SFT objective. Audio
+  adapters exist per recipe: GTCRN's noisy and clean pairs, NU-Wave 2's `trainingPair`, and Basic
+  Pitch's `trainingExample(s)`, which cuts a recording and its notes into windows and targets.
 - The dense Qwen, hybrid, and Gemma 3 decoders are LoRA-feasible at 4B and under and have no public
   builder, so no fine-tune of them is reachable. Feasibility and reachability are separate questions,
   and a public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
   builders and are offline on size.
 - `NFKMLXTrainer` has no gradient accumulation, validation hook, or bf16 training, and does not
-  checkpoint optimizer state. (2026-09-23) It schedules the learning rate.
+  checkpoint optimizer state. (2026-09-23) It schedules the learning rate. (2026-09-25) It applies a
+  post-update weight constraint and keeps running statistics out of the trainable set.
 - `NFKMLXLoRA` adapts `Linear` only, never `Conv2d` or the expert switch layers, and only through
   `@ModuleInfo` properties.
 
@@ -238,6 +247,23 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
     those statistics into the checkpoint, so the damage outlives the run. `enterTrainingMode` returns
     every subtree that holds parameters and has none trainable to evaluation mode; a subtree with no
     parameters at all follows its parent, so a dropout inside the trainable group still drops.
+  - **Running statistics never train.** MLXNN's `BatchNorm` freezes `running_mean` and `running_var`
+    when it is built, but a parent's recursive `unfreeze()` walks the tree with its own visitor and
+    never calls the child's `unfreeze` override, so the statistics come back into the trainable set.
+    Their gradient is zero, and a plain step leaves them alone, but a decoupled weight decay shrinks
+    them every step and the optimizer carries state for them. YOLO and RT-DETR re-froze them in their
+    own freezing closures; SegFormer's decode head did not, so its fuse normalization's statistics took
+    AdamW's decay. `NFKMLXTrainer.freezeRunningStatistics` now freezes every leaf module's
+    `running_mean` / `running_var` after the recipe's freezing and before the loop, so the rule holds
+    for every recipe (`testARecursiveUnfreezeLeavesTheStatisticsOutOfTheWeightDecay`). A module of the
+    package's own that keeps statistics overrides `noGrad()` instead, which is what the trainable filter
+    reads, so the rule also holds outside the trainer (`NFKBasicPitchBatchNorm`).
+  - **A weight constraint runs after every update.** `train(…constraint:)` and
+    `NFKMLXFineTune.run(…constraint:)` take a closure that projects the model after the optimizer's
+    update and before the step is evaluated, checkpointed, or reported. It is where a Keras
+    `kernel_constraint` belongs, which Keras applies after `apply_gradients` whatever the optimizer, so
+    it applies to a caller's optimizer as well as the reference's. Basic Pitch's `UnitNorm` is the
+    first user.
     `testAFrozenNormalizationKeepsItsReleasedStatistics` and
     `testAFrozenNormalizationNormalizesWithItsReleasedStatistics` fail without it, and
     `testAnUnfrozenNormalizationStillUpdatesItsStatistics` is what stops the rule from over-applying.

@@ -109,6 +109,28 @@ the model is quietly worse.
 evaluation mode. A subtree with no parameters at all follows its parent, or a dropout inside the
 group that trains would stop dropping. `NFKMLXTrainer` does this for every run.
 
+### A parent's `unfreeze()` makes a `BatchNorm`'s statistics trainable
+
+`BatchNorm` keeps `running_mean` and `running_var` frozen, and re-freezes them in its own `unfreeze`
+override. A recursive `unfreeze()` called on a parent visits every module with the parent's own
+visitor and never calls that override, so the statistics come back into the trainable set. Their
+gradient is zero, so a plain optimizer step leaves them alone. An optimizer with a decoupled weight
+decay shrinks them every step, and every optimizer keeps state for them.
+
+**Rule:** after the recipe's own freezing, freeze every module's `running_mean` and `running_var`
+again, or override `noGrad()` in a module that keeps statistics. `NFKMLXTrainer` does the first for
+every run. Probe: `testAParentsUnfreezeMakesABatchNormsStatisticsTrainable`.
+
+### `BatchNorm` folds the biased batch variance into its running variance
+
+MLXNN's `BatchNorm` updates `running_var` with the biased batch variance. PyTorch's `BatchNorm` and
+TensorFlow's fused batch normalization use the unbiased one. The ratio is `n / (n − 1)` for `n` values
+per channel, which is negligible over a feature map and a factor of two over two values.
+
+**Rule:** a port that trains through a normalization over only a few values per channel, and whose
+reference is PyTorch or TensorFlow, writes its own normalization with the unbiased update. Probe:
+`testABatchNormFoldsTheBiasedVarianceIntoItsRunningVariance`.
+
 *Probes: `testAFrozenNormalizationKeepsItsReleasedStatistics` and
 `testAFrozenNormalizationNormalizesWithItsReleasedStatistics` fail without the rule;
 `testAnUnfrozenNormalizationStillUpdatesItsStatistics` fails if it over-applies.*

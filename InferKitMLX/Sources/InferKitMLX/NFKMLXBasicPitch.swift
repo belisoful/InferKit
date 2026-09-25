@@ -25,8 +25,24 @@ import MLXNN
 // at stride 2) and halving the hop with it, so every octave lands on the same 172-frame grid. Nine
 // octaves stack to 324 bins and the lowest 15, which sit below the requested 27.5 Hz, are dropped.
 //
-// The Keras batch normalizations fold into the convolutions they precede, so the module has none; the
-// one that survives is the single-channel normalization after the log, kept as a scale and a bias.
+// The released graph folds the Keras batch normalizations into the convolutions they follow; the one
+// that survives is the single-channel normalization after the log, kept as a scale and a bias. That is
+// the `.folded` layout, and inference needs nothing more. Training needs the normalizations separate,
+// because in training mode each one normalizes by its batch's own statistics, which a folded
+// convolution cannot express. The `.separate` layout keeps them, as the reference's Keras model does.
+
+/// Where Basic Pitch's batch normalizations live.
+///
+/// Introduced in InferKit 0.5.0.
+public enum NFKMLXBasicPitchNormalization: Sendable {
+    /// Folded into the convolutions they follow, with the one after the log kept as a scale and a bias.
+    /// This is the released ONNX graph's layout, and it runs inference only.
+    case folded
+    /// Three batch normalizations separate from the convolutions, as the reference trains them: after
+    /// the log, after the contour convolution, and after the onset convolution. A fine-tune needs this
+    /// layout.
+    case separate
+}
 
 /// Basic Pitch's geometry. The defaults are the released `icassp_2022` model.
 public struct NFKMLXBasicPitchConfiguration: Sendable {
@@ -56,12 +72,15 @@ public struct NFKMLXBasicPitchConfiguration: Sendable {
     public var baseFrequency: Double
     /// The frames two neighboring windows share, half of them dropped from each side on the seam.
     public var overlappingFrames: Int
+    /// Where the batch normalizations live. The released ONNX graph is `.folded`; training needs
+    /// `.separate`.
+    public var normalization: NFKMLXBasicPitchNormalization
 
     public init(sampleRate: Int = 22050, hopLength: Int = 256, windowSamples: Int = 43844,
                 frames: Int = 172, cqtBins: Int = 309, kernelLength: Int = 256, octaves: Int = 9,
                 harmonics: [Double] = [0.5, 1, 2, 3, 4, 5, 6, 7], contourBins: Int = 264,
                 noteBins: Int = 88, lowestPitch: Int = 21, baseFrequency: Double = 27.5,
-                overlappingFrames: Int = 30) {
+                overlappingFrames: Int = 30, normalization: NFKMLXBasicPitchNormalization = .folded) {
         self.sampleRate = sampleRate
         self.hopLength = hopLength
         self.windowSamples = windowSamples
@@ -75,10 +94,14 @@ public struct NFKMLXBasicPitchConfiguration: Sendable {
         self.lowestPitch = lowestPitch
         self.baseFrequency = baseFrequency
         self.overlappingFrames = overlappingFrames
+        self.normalization = normalization
     }
 
     /// The released model.
     public static let icassp2022 = NFKMLXBasicPitchConfiguration()
+
+    /// The released model with its batch normalizations separate, the layout a fine-tune trains.
+    public static let icassp2022Trainable = NFKMLXBasicPitchConfiguration(normalization: .separate)
 
     /// The bins per semitone the contour carries.
     var binsPerSemitone: Int { contourBins / noteBins }
@@ -170,12 +193,62 @@ final class NFKBasicPitchCQT: Module {
     }
 }
 
+/// A Keras `BatchNormalization` over the last axis, the reference's normalization.
+///
+/// Two conventions set it apart from MLXNN's `BatchNorm`. The moving averages keep 0.99 of their value
+/// each step. The moving variance folds in the unbiased batch variance, as TensorFlow's fused kernel
+/// does, where MLXNN's folds in the biased one. Normalization itself divides by the biased variance in
+/// both. The moving statistics never take a gradient.
+final class NFKBasicPitchBatchNorm: Module {
+    @ParameterInfo(key: "weight") var weight: MLXArray
+    @ParameterInfo(key: "bias") var bias: MLXArray
+    @ParameterInfo(key: "running_mean") var runningMean: MLXArray
+    @ParameterInfo(key: "running_var") var runningVar: MLXArray
+
+    static let epsilon: Float = 1e-3
+    static let momentum: Float = 0.99
+
+    init(channels: Int) {
+        _weight.wrappedValue = MLXArray.ones([channels])
+        _bias.wrappedValue = MLXArray.zeros([channels])
+        _runningMean.wrappedValue = MLXArray.zeros([channels])
+        _runningVar.wrappedValue = MLXArray.ones([channels])
+        super.init()
+    }
+
+    /// The moving statistics never take a gradient, however the tree around them was unfrozen. A
+    /// parent's recursive `unfreeze()` clears every child's frozen set without calling the child, so
+    /// overriding `unfreeze` would not hold; `noGrad()` is what the trainable-parameter filter reads.
+    override func noGrad() -> Set<String> {
+        super.noGrad().union(["running_mean", "running_var"])
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard training else {
+            return (x - runningMean) * rsqrt(runningVar + Self.epsilon) * weight + bias
+        }
+        let axes = Array(0 ..< (x.ndim - 1))
+        let mean = x.mean(axes: axes)
+        let variance = x.variance(axes: axes)
+        let count = Float(x.size / x.dim(-1))
+        let unbiased = stopGradient(variance) * (count / max(count - 1, 1))
+        runningMean._updateInternal(Self.momentum * runningMean + (1 - Self.momentum) * stopGradient(mean))
+        runningVar._updateInternal(Self.momentum * runningVar + (1 - Self.momentum) * unbiased)
+        return (x - mean) * rsqrt(variance + Self.epsilon) * weight + bias
+    }
+}
+
 /// Basic Pitch's network: the CQT, the normalized log, harmonic stacking, and the contour, note, and
 /// onset heads.
 public final class NFKMLXBasicPitchNet: Module {
     @ModuleInfo(key: "cqt") var cqt: NFKBasicPitchCQT
-    @ParameterInfo(key: "norm_scale") var normScale: MLXArray
-    @ParameterInfo(key: "norm_bias") var normBias: MLXArray
+    // The folded layout carries the normalization after the log as a scale and a bias; the separate
+    // layout carries three batch normalizations instead. Each layout leaves the other's members nil.
+    @ParameterInfo(key: "norm_scale") var normScale: MLXArray?
+    @ParameterInfo(key: "norm_bias") var normBias: MLXArray?
+    @ModuleInfo(key: "log_norm") var logNorm: NFKBasicPitchBatchNorm?
+    @ModuleInfo(key: "contour_norm") var contourNorm: NFKBasicPitchBatchNorm?
+    @ModuleInfo(key: "onset_norm") var onsetNorm: NFKBasicPitchBatchNorm?
     @ModuleInfo(key: "contour_conv") var contourConv: Conv2d
     @ModuleInfo(key: "contour_out") var contourOut: Conv2d
     @ModuleInfo(key: "note_conv") var noteConv: Conv2d
@@ -189,8 +262,15 @@ public final class NFKMLXBasicPitchNet: Module {
         self.configuration = configuration
         let harmonics = configuration.harmonics.count
         _cqt.wrappedValue = NFKBasicPitchCQT(configuration)
-        _normScale.wrappedValue = MLXArray.ones([1])
-        _normBias.wrappedValue = MLXArray.zeros([1])
+        switch configuration.normalization {
+        case .folded:
+            _normScale.wrappedValue = MLXArray.ones([1])
+            _normBias.wrappedValue = MLXArray.zeros([1])
+        case .separate:
+            _logNorm.wrappedValue = NFKBasicPitchBatchNorm(channels: 1)
+            _contourNorm.wrappedValue = NFKBasicPitchBatchNorm(channels: 8)
+            _onsetNorm.wrappedValue = NFKBasicPitchBatchNorm(channels: 32)
+        }
         // A convolution's first axis is time and its second is frequency; the strided pair reduces the
         // three contour bins per semitone to one note bin.
         _contourConv.wrappedValue = Conv2d(inputChannels: harmonics, outputChannels: 8,
@@ -205,10 +285,15 @@ public final class NFKMLXBasicPitchNet: Module {
                                          kernelSize: [5, 5], stride: [1, 3], padding: [2, 1])
         _onsetOut.wrappedValue = Conv2d(inputChannels: 33, outputChannels: 1,
                                         kernelSize: [3, 3], stride: 1, padding: [1, 1])
+        super.init()
+        // An MLX module starts in training mode, where the separate layout's normalizations would read
+        // each window's own statistics. Inference reads the moving ones; `NFKMLXTrainer` switches a run
+        // into training mode and back.
+        train(false)
     }
 
-    /// The CQT magnitude in decibels, normalized to 0...1 per window, then scaled and shifted by the
-    /// folded normalization. `[B, frames, cqtBins]` → `[B, frames, cqtBins, 1]`.
+    /// The CQT magnitude in decibels, normalized to 0...1 per window, then through the normalization
+    /// after the log, folded or separate. `[B, frames, cqtBins]` → `[B, frames, cqtBins, 1]`.
     func normalizedLog(_ magnitude: MLXArray) -> MLXArray {
         let decibels = log(magnitude.square() + 1e-10) * Float(10.0 / log(10.0))
         let minimum = decibels.min(axes: [1, 2], keepDims: true)
@@ -216,7 +301,11 @@ public final class NFKMLXBasicPitchNet: Module {
         let maximum = shifted.max(axes: [1, 2], keepDims: true)
         // A silent window has no range to normalize by; the reference divides to zero rather than NaN.
         let normalized = MLX.where(maximum .== 0, MLXArray(Float(0)), shifted / maximum)
-        return (normalized * normScale + normBias).expandedDimensions(axis: 3)
+        if let logNorm {
+            return logNorm(normalized.expandedDimensions(axis: 3))
+        }
+        return (normalized * (normScale ?? MLXArray(Float(1))) + (normBias ?? MLXArray(Float(0))))
+            .expandedDimensions(axis: 3)
     }
 
     /// Stacks the spectrogram against itself shifted to each harmonic, so one bin sees a note's whole
@@ -248,12 +337,20 @@ public final class NFKMLXBasicPitchNet: Module {
     public func posteriorgrams(_ audio: MLXArray) -> (contour: MLXArray, note: MLXArray, onset: MLXArray) {
         let stacked = harmonicStack(normalizedLog(cqt(audio)))
 
-        let contourHidden = relu(contourConv(stacked))
+        var contourHidden = contourConv(stacked)
+        if let contourNorm {
+            contourHidden = contourNorm(contourHidden)
+        }
+        contourHidden = relu(contourHidden)
         let contour = sigmoid(contourOut(contourHidden))                       // [B, frames, 264, 1]
 
         let notePre = sigmoid(noteOut(relu(noteConv(contour))))                // [B, frames, 88, 1]
 
-        let onsetHidden = relu(onsetConv(stacked))                             // [B, frames, 88, 32]
+        var onsetHidden = onsetConv(stacked)                                   // [B, frames, 88, 32]
+        if let onsetNorm {
+            onsetHidden = onsetNorm(onsetHidden)
+        }
+        onsetHidden = relu(onsetHidden)
         let onset = sigmoid(onsetOut(concatenated([notePre, onsetHidden], axis: 3)))
 
         return (contour.squeezed(axis: 3), notePre.squeezed(axis: 3), onset.squeezed(axis: 3))
@@ -787,10 +884,7 @@ public final class NFKMLXBasicPitch: NSObject {
     /// - Since: InferKit 0.4.0
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = makeNet()
-        if let weightsURL {
-            try loadWeights(into: net, from: weightsURL)
-        }
+        let net = try weightsURL.map { try network(weightsURL: $0) } ?? makeNet()
         return NFKMLXBasicPitchBackend(net: net, identifier: modelName)
     }
 
@@ -820,17 +914,45 @@ public final class NFKMLXBasicPitch: NSObject {
 
     /// Loads a converted checkpoint, transposing convolution weights into MLX's layout: `[out, in, k]`
     /// → `[out, k, in]` for the CQT's kernels and `[out, in, kH, kW]` → `[out, kH, kW, in]` for the
-    /// network's.
+    /// network's. A file `NFKMLXWeights.save` wrote is already in MLX's layout and loads as it is.
+    ///
+    /// The checkpoint's layout must match the network's: build the network with ``network(weightsURL:reinitializing:)``,
+    /// which reads the layout from the file.
     public static func loadWeights(into net: NFKMLXBasicPitchNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
-        var mapped = [(String, MLXArray)]()
-        for (key, value) in checkpoint.arrays {
+        try apply(try NFKMLXWeights.loadCheckpoint(url: url), to: net)
+    }
+
+    /// The normalization layout a checkpoint holds: separate when it carries the normalization after
+    /// the log as a batch normalization, folded otherwise.
+    ///
+    /// - Since: InferKit 0.5.0
+    public static func normalization(ofCheckpointAt url: URL) throws -> NFKMLXBasicPitchNormalization {
+        normalization(of: try NFKMLXWeights.loadCheckpoint(url: url))
+    }
+
+    static func normalization(of checkpoint: NFKMLXWeights.Checkpoint) -> NFKMLXBasicPitchNormalization {
+        checkpoint.arrays["log_norm.weight"] != nil ? .separate : .folded
+    }
+
+    static func mapped(_ checkpoint: NFKMLXWeights.Checkpoint) -> [(String, MLXArray)] {
+        checkpoint.arrays.map { key, value in
+            guard checkpoint.needsConvTranspose else { return (key, value) }
             switch value.ndim {
-            case 3: mapped.append((key, value.transposed(0, 2, 1)))
-            case 4: mapped.append((key, value.transposed(0, 2, 3, 1)))
-            default: mapped.append((key, value))
+            case 3: return (key, value.transposed(0, 2, 1))
+            case 4: return (key, value.transposed(0, 2, 3, 1))
+            default: return (key, value)
             }
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    static func apply(_ checkpoint: NFKMLXWeights.Checkpoint, to net: NFKMLXBasicPitchNet) throws {
+        let held = normalization(of: checkpoint)
+        guard held == net.configuration.normalization else {
+            throw NFKMLXError.weightsMismatch(
+                "the checkpoint holds Basic Pitch's \(held) normalization layout and the network was built "
+                + "for \(net.configuration.normalization); build it with `network(weightsURL:)`, which "
+                + "reads the layout from the file")
+        }
+        try NFKMLXWeights.apply(mapped(checkpoint), to: net)
     }
 }

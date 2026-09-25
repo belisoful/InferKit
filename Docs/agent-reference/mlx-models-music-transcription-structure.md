@@ -101,11 +101,52 @@ already carries under `NFKOutputSegments`.
   - Two frame-rate details the reference carries and this port reproduces: the trim after stitching
     counts frames at the integer rate `sampleRate / hop` (86, not 86.13), and `frameTimes` subtracts
     one window offset per 172 frames plus the reference's own 0.0018 second alignment constant.
-  - Customization: trainable at `full`, with no recipe written yet. The reference publishes its
-    training code: the installed `basic_pitch` distribution holds `train.py`, `models.py` with `loss()`,
-    `transcription_loss`, and `weighted_transcription_loss`, and a data module. At 35,736 parameters it
-    is the cheapest full fine-tune in the package. The released graph carries no optimizer state or
-    training configuration, so a recipe takes both from `train.py`.
+  - Customization: a full fine-tune, shipped (`NFKMLXBasicPitchTraining.swift`), ported from the
+    `basic-pitch` 0.4.0 distribution's own `models.py`, `train.py`, and data module.
+    `NFKMLXBasicPitch.network(weightsURL:reinitializing:)` builds the network in the layout its
+    checkpoint holds, `trainingExample(s)` cuts a recording and its `NFKMIDISequence` into windows and
+    targets, and `fineTune(_:examples:…)` trains every weight but the constant-Q front end, which is a
+    constant in the reference. 16,782 values train by gradient and 82 are moving statistics; the 35,736
+    in the released graph add the constant-Q tensors.
+    - The network gained a `.separate` normalization layout (`NFKMLXBasicPitchNormalization`). The
+      released ONNX graph folds the three Keras batch normalizations (after the log, after the contour
+      convolution, after the onset convolution) into the convolutions, which is exact for inference and
+      cannot train, because in training mode each one normalizes by its batch's own statistics. The
+      release also ships the Keras SavedModel, which keeps them, and
+      `Tools/basic-pitch-to-safetensors --saved-model` converts it. `NFKBasicPitchBatchNorm` follows
+      TensorFlow's fused kernel: momentum 0.99, epsilon 1e-3, and the unbiased batch variance folded
+      into the moving variance, where MLXNN's `BatchNorm` folds the biased one. The factory reads the
+      layout from the checkpoint, so a fine-tuned file loads through `backendWithWeightsURL:error:`.
+    - `NFKMLXBasicPitchObjective` is `models.loss()`: Keras `binary_crossentropy` on probabilities for
+      each posteriorgram, label smoothing 0.2, the prediction clipped to `[1e-7, 1 − 1e-7]` with 1e-7
+      inside each logarithm, the three terms summed. The class-weighted onset variant is there too;
+      where a batch holds no onset its empty half contributes zero, where the reference's is NaN.
+    - The optimizer is Keras's `Adam` at 1e-3 (`NFKMLXKerasAdam`), which adds epsilon (1e-7) to the
+      square root of the uncorrected second moment; PyTorch's adds it to the corrected one. Every convolution
+      kernel carries `UnitNorm(axis=[0, 1, 2])`, which Keras applies after each update whatever the
+      optimizer, so the recipe passes it as the trainer's `constraint`. The released kernels are unit
+      norm to seven digits, which confirms the constraint was on. `train.py` halves the rate on a
+      validation plateau (`ReduceLROnPlateau`, patience 10 epochs of 100 steps); that needs a
+      validation set, so the reference schedule here is constant.
+    - The targets follow mirdata 1.0's `NoteData.to_sparse_index` as `datasets/maestro.py` calls it:
+      86 frames a second (not the network's 86.13), each note's start and end snapped to the nearest
+      frame and filled inclusive, its pitch snapped in log frequency (the piano's 88 keys; a pitch
+      outside them drops the note), the value `ceil(velocity / 127)`, a later note overwriting an
+      earlier one on the same pitch, and the contour target the notes on the contour grid at bin
+      `3 · (pitch − 21)`. Windows follow `extract_window`: a single-precision start rounded half to
+      even at each rate.
+    - Parity, all against the reference's own code (`run_reference.py basic_pitch_training` and
+      `basic_pitch_targets`, `basic_pitch_tf` environment): the posteriorgrams in inference mode at
+      cosine ≥ 0.99999999182 and in training mode ≥ 0.99999998654; the loss terms contour 0.33079216
+      vs 0.3307922, note 0.33686224 vs 0.33686224, onset 0.33369508 vs 0.33369508, weighted onset
+      0.35308436 vs 0.3530844; the gradient at worst cosine 0.9999997916; Keras Adam plus the
+      constraint from the reference's gradients within 9.4e-7; three `train_on_batch` steps at losses
+      1.0013504 / 0.99168867 / 0.9903972 vs 1.0013494 / 0.9916884 / 0.9903969, every parameter's
+      and moving statistic's movement over them at worst cosine 0.9999969935; and the targets and
+      windows identical in every cell and sample.
+    - Two biases, `contour_conv.bias` and `onset_conv.bias`, feed a batch normalization, so their
+      gradient is exactly zero and they move only by rounding: at most 1.1e-5 over three reference
+      steps against 2.8e-3 for a trained parameter. A cosine on them measures nothing.
 
 - `NFKMLXAllInOne` (`@objc`) — All-In-One music structure analysis (`mir-aidj/all-in-one`, Kim and
   Nam, ISMIR 2023, MIT), the model that divides a track into what a listener hears as its parts. It

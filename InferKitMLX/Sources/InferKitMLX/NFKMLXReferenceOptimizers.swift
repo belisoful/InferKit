@@ -104,6 +104,58 @@ final class NFKMLXL2Adam: Adam {
     }
 }
 
+/// Keras's `Adam` (`keras/src/optimizers/adam.py`, TensorFlow 2.15), which places epsilon differently
+/// from PyTorch's.
+///
+/// Keras folds both bias corrections into the step size and adds epsilon to the square root of the
+/// uncorrected second moment: `α = lr·√(1 − β₂ᵗ)/(1 − β₁ᵗ)`, then `θ −= α·m/(√v + ε)`. PyTorch adds
+/// epsilon to the corrected one, `√(v/(1 − β₂ᵗ)) + ε`, so the two agree only when epsilon is negligible
+/// against the gradient. The moments update in Keras's own form, `m += (g − m)(1 − β₁)`, and every
+/// per-step scalar is a single-precision value, as the reference computes them for a float32 variable.
+/// Epsilon defaults to Keras's 1e-7. A variable's constraint is not the optimizer's business here; the
+/// trainer applies it after the update, as `apply_gradients` does.
+///
+/// It adopts `Optimizer` directly for the reason ``NFKMLXRAdam`` does.
+final class NFKMLXKerasAdam: Optimizer, NFKMLXRateScheduled {
+    var learningRate: Float
+    let beta1: Float
+    let beta2: Float
+    let epsilon: Float
+
+    /// Each parameter's moments and step, keyed by its flattened path.
+    private var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
+
+    init(learningRate: Float, beta1: Float = 0.9, beta2: Float = 0.999, epsilon: Float = 1e-7) {
+        self.learningRate = learningRate
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+    }
+
+    func update(model: Module, gradients: ModuleParameters) {
+        let parameters = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
+        var updated = [(String, MLXArray)]()
+        for (key, gradient) in gradients.flattened() {
+            guard let parameter = parameters[key] else { continue }
+            let previous = moments[key] ?? (MLXArray.zeros(like: parameter), MLXArray.zeros(like: parameter), 0)
+            let step = previous.step + 1
+            let m = previous.m + (gradient - previous.m) * (1 - beta1)
+            let v = previous.v + (square(gradient) - previous.v) * (1 - beta2)
+            moments[key] = (m, v, step)
+
+            let beta1Power = Foundation.powf(beta1, Float(step))
+            let beta2Power = Foundation.powf(beta2, Float(step))
+            let alpha = learningRate * (1 - beta2Power).squareRoot() / (1 - beta1Power)
+            updated.append((key, parameter - (m * alpha) / (sqrt(v) + epsilon)))
+        }
+        model.update(parameters: ModuleParameters.unflattened(updated))
+    }
+
+    func innerState() -> [MLXArray] {
+        moments.values.flatMap { [$0.m, $0.v] }
+    }
+}
+
 /// timm's `RAdam` (`timm/optim/radam.py`, unchanged through timm 0.9): Adam with the variance of the
 /// adaptive rate rectified. While the length of the approximated simple moving average is under 5 the
 /// step is the bias-corrected momentum alone, unnormalized; from there on it is the bias-corrected

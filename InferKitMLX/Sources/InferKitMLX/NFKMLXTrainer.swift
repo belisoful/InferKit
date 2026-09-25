@@ -202,6 +202,12 @@ public enum NFKMLXTrainer {
 
     /// Trains `model` on any number of arrays per step: an image, a prompt, and a target, for instance.
     ///
+    /// `constraint` runs on the model after every optimizer update, before the step is evaluated,
+    /// checkpointed, or reported. It is where a reference's weight constraint belongs: Keras applies a
+    /// variable's `kernel_constraint` after `apply_gradients`, whatever the optimizer, so the
+    /// constraint is a property of the run and applies whichever optimizer is passed. It was
+    /// introduced in InferKit 0.5.0.
+    ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult
     public static func train<Model: Module>(
@@ -214,11 +220,13 @@ public enum NFKMLXTrainer {
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
+        constraint: ((Model) -> Void)? = nil,
         observer: Observer? = nil
     ) throws -> [Float] {
         try run(model, optimizer: optimizer, steps: steps, arrays: arrays, loss: loss,
                 clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
-                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+                checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
+                observer: observer)
     }
 
     /// The loop every entry point shares, over an arbitrary number of per-step arrays.
@@ -232,8 +240,10 @@ public enum NFKMLXTrainer {
         learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?,
         cachePolicy: NFKMLXTrainingCachePolicy,
+        constraint: ((Model) -> Void)? = nil,
         observer: Observer?
     ) throws -> [Float] {
+        freezeRunningStatistics(of: model)
         guard !model.trainableParameters().flattened().isEmpty else {
             throw NFKMLXError.nothingToTrain(
                 "every parameter of this model is frozen, so the run would compute gradients for "
@@ -290,6 +300,7 @@ public enum NFKMLXTrainer {
             let (values, gradients) = lossAndGradient(model, arrays(step))
             let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
             optimizer.update(model: model, gradients: update)
+            constraint?(model)
             // MLX builds the step lazily; this is where it runs.
             eval(model, optimizer)
 
@@ -313,6 +324,28 @@ public enum NFKMLXTrainer {
             }
         }
         return history
+    }
+
+    /// Keeps every normalization's running statistics out of the trainable set.
+    ///
+    /// @discussion A running mean or variance is an average of what the batches looked like, updated in
+    /// place during the forward pass, never a gradient target. MLXNN's `BatchNorm` freezes the two when
+    /// it is built, but a parent's recursive `unfreeze()` clears every child's frozen set without
+    /// calling the child, so a recipe that unfreezes a network makes them trainable. Their gradient is
+    /// zero, so a plain step leaves them alone, but the optimizer still carries state for them and a
+    /// decoupled weight decay shrinks them every step, which no reference does. The loss is unaffected,
+    /// because training mode normalizes by each batch's own statistics. Freezing them here, after the
+    /// recipe's freezing and before the loop, holds for every recipe.
+    static func freezeRunningStatistics(of model: Module) {
+        let statistics: Set<String> = ["running_mean", "running_var"]
+        for (_, module) in model.leafModules().flattened() {
+            let held = statistics.filter { key in
+                module.parameters().flattened().contains { $0.0 == key }
+            }
+            if !held.isEmpty {
+                module.freeze(recursive: false, keys: Array(held))
+            }
+        }
     }
 
     /// Puts the model into training mode, leaving every fully frozen subtree in evaluation mode.

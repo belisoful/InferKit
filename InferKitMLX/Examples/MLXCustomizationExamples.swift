@@ -680,6 +680,30 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(denoiser.isReady)
     }
 
+    // Docs/examples.md: Teaching note transcription your own instrument
+    func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("basic-pitch-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the trainable conversion of the release:
+        // NFKMLXBasicPitch.network(weightsURL: trainableRelease).
+        let net = NFKMLXBasicPitch.makeNet(.icassp2022Trainable)
+        let recording = (0 ..< 22050 * 3).map { 0.3 * sinf(2 * .pi * 261.63 * Float($0) / 22050) }
+        let notes = NFKMIDISequence(notes: [NFKMIDINote(pitch: 60, startSeconds: 0, endSeconds: 3, velocity: 90)])
+        let windows = try NFKMLXBasicPitch.trainingExamples(samples: recording, sampleRate: 22050,
+                                                            notes: notes, count: 2)
+        let history = try NFKMLXBasicPitch.fineTune(net, examples: { _ in NFKMLXBasicPitchExample.batch(windows) },
+                                                    steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let transcriber = try NFKMLXBasicPitch.backend(weightsURL: tuned)     // also backendWithWeightsURL:error:
+        XCTAssertTrue(transcriber.isReady)
+    }
+
     // Docs/examples.md: Teaching bandwidth extension your own audio
     func testExampleFineTuningNUWave2OnOwnAudio() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

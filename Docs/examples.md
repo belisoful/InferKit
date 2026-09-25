@@ -3637,6 +3637,28 @@ try NFKMLXWeights.save(net, to: tuned)
 let analyzer = try NFKMLXAllInOne.backend(weightsURL: tuned)      // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Teaching note transcription your own instrument
+
+Basic Pitch's 16,864 trained weights all fit a device, so its fine-tune is a full one. It trains on a
+recording and the notes played in it, cut into two-second windows the way the reference cuts them. The
+objective, the optimizer, and the unit-norm constraint on every convolution are the reference's own.
+Training needs the batch normalizations the released ONNX graph folds away, so it starts from
+`Tools/basic-pitch-to-safetensors --saved-model`, which converts the release's Keras model instead.
+
+```swift
+let net = try NFKMLXBasicPitch.network(weightsURL: trainableRelease)
+let notes = NFKMIDISequence(notes: myNotes)          // what the recording plays, times in seconds
+let windows = try NFKMLXBasicPitch.trainingExamples(samples: myRecording, sampleRate: 22050,
+                                                    notes: notes, count: 64)
+let sampler = NFKMLXBatchSampler(count: windows.count, batchSize: 16, seed: 7)   // train.py batches 16
+try NFKMLXBasicPitch.fineTune(net, examples: { step in
+    NFKMLXBasicPitchExample.batch(sampler.indices(forStep: step).map { windows[$0] })
+}, steps: 200)
+
+try NFKMLXWeights.save(net, to: tuned)
+let transcriber = try NFKMLXBasicPitch.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
 ### Teaching voice activity detection your own audio
 
 The MarbleNet VAD trains every weight with the release's own recipe: masked per-frame cross-entropy,

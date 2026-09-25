@@ -296,6 +296,37 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
         XCTAssertEqual(runningMean(), beforeInference)
     }
 
+    /// `BatchNorm` re-freezes its running statistics in its own `unfreeze` override, but a parent's
+    /// recursive `unfreeze()` walks the tree with its own visitor and never calls that override, so the
+    /// statistics come back into the trainable set. Their gradient is zero, but an optimizer with a
+    /// decoupled weight decay then shrinks them every step. `NFKMLXTrainer` freezes them again before
+    /// every run.
+    func testAParentsUnfreezeMakesABatchNormsStatisticsTrainable() throws {
+        try requireMLXRuntime()
+        let parent = Sequential(layers: BatchNorm(featureCount: 2))
+        let trainable = { Set(parent.trainableParameters().flattened().map { $0.0 }) }
+        XCTAssertFalse(trainable().contains("layers.0.running_mean"), "the premise: built frozen")
+        parent.unfreeze()
+        XCTAssertTrue(trainable().contains("layers.0.running_mean"),
+                      "mlx-swift changed: a parent's unfreeze no longer reaches the statistics")
+    }
+
+    /// MLXNN's `BatchNorm` folds the BIASED batch variance into its running variance. PyTorch's
+    /// `BatchNorm` and TensorFlow's fused kernel both fold the unbiased one. The two differ by
+    /// `n / (n − 1)` for `n` values per channel, which is negligible over a feature map and a factor
+    /// of two over two values. Basic Pitch's `NFKBasicPitchBatchNorm` follows TensorFlow.
+    func testABatchNormFoldsTheBiasedVarianceIntoItsRunningVariance() throws {
+        try requireMLXRuntime()
+        let normalization = BatchNorm(featureCount: 1)
+        normalization.train(true)
+        _ = normalization(MLXArray([1.0, 3.0] as [Float]).reshaped([2, 1]))
+        eval(normalization)
+        let variance = normalization.parameters().flattened().first { $0.0 == "running_var" }!.1
+        // Momentum 0.1 from 1: the biased variance 1 keeps it at 1; the unbiased 2 would reach 1.1.
+        XCTAssertEqual(variance.item(Float.self), 1.0, accuracy: 1e-6,
+                       "mlx-swift changed: BatchNorm now folds a different variance")
+    }
+
     // MARK: Subnormal flushing
 
     /// Metal flushes subnormal floats to zero, where the CPU keeps them. A quantity computed by

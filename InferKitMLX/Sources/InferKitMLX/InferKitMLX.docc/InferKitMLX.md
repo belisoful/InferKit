@@ -494,6 +494,9 @@ limits.
 - ``NFKMLXNUWave2Objective``
 - ``NFKMLXAllInOneTargets``
 - ``NFKMLXAllInOneObjective``
+- ``NFKMLXBasicPitchObjective``
+- ``NFKMLXBasicPitchExample``
+- ``NFKMLXBasicPitchNormalization``
 - ``NFKMLXConvTasNetNet``
 - ``NFKMLXConvTasNetObjective``
 - ``NFKMLXVADNet``

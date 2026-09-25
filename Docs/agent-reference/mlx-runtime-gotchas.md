@@ -216,6 +216,29 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   follows its parent, so a dropout in the trainable group still drops. Consumer-facing write-up and
   probes: `Docs/mlx-runtime-hazards.md`.
 
+- **A parent's `unfreeze()` reaches a `BatchNorm`'s running statistics.** `BatchNorm` re-freezes
+  `running_mean` / `running_var` in its own `unfreeze` override, but a recursive `unfreeze()` on a
+  parent walks the tree with the parent's visitor and never calls that override, so the statistics
+  come back into the trainable set. Their gradient is zero; a decoupled weight decay still shrinks them
+  every step. `NFKMLXTrainer` freezes them again before every run. A module that must keep a parameter
+  out of training however its tree is unfrozen overrides `noGrad()`, which is what the trainable filter
+  reads. Probe: `testAParentsUnfreezeMakesABatchNormsStatisticsTrainable`.
+
+- **MLXNN's `BatchNorm` folds the biased batch variance into its running variance.** PyTorch's
+  `BatchNorm` and TensorFlow's fused kernel fold the unbiased one. The difference is `n / (n − 1)` for
+  `n` values per channel, which is below one part in ten thousand over any feature map the shipped
+  recipes normalize and a factor of two over two values. A port that trains through a normalization
+  over a handful of values per channel needs its own. Basic Pitch's `NFKBasicPitchBatchNorm` follows
+  TensorFlow. Probe: `testABatchNormFoldsTheBiasedVarianceIntoItsRunningVariance`.
+
+- **`update(parameters:)` writes into the arrays a module already holds.** It calls `_updateInternal`
+  on each existing array, so a dictionary of `parameters()` taken before a training run holds the same
+  objects the run updates, and reads the values after it. A test comparing "before" with "after"
+  through such a dictionary sees no change for any parameter, trained or not, and a check that a frozen
+  parameter stayed put passes whatever happened. Snapshot evaluated copies (`$0 + 0`, then `eval`).
+  A cosine helper that returns 1 for a zero-length difference hides the same mistake, so return 1 only
+  when both sides are zero. Both struck Basic Pitch's recipe tests on 2026-09-25.
+
 - **A module starts in training mode.** mlx-swift's `Module.training` is `true` until something calls
   `train(false)`. A network with no `Dropout`, `BatchNorm`, or stochastic depth never notices, which is
   how an inference port can ship without ever setting the flag. The day a recipe adds those layers,

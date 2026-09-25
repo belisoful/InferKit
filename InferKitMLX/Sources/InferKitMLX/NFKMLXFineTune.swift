@@ -54,6 +54,8 @@ public enum NFKMLXFineTune {
     ///   - learningRateSchedule: the caller's schedule, nil to resolve one.
     ///   - checkpoint: writes the network periodically.
     ///   - cachePolicy: the buffer-cache policy for the run.
+    ///   - constraint: projects the network after every optimizer update, the reference's weight
+    ///     constraint. It applies whichever optimizer runs, as a Keras variable's constraint does.
     ///   - observer: receives each step and can end the run early.
     ///
     /// - Returns: the loss from each completed step.
@@ -84,6 +86,7 @@ public enum NFKMLXFineTune {
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
+        constraint: ((Net) -> Void)? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try freezing()
@@ -95,7 +98,8 @@ public enum NFKMLXFineTune {
             arrays: arrays, loss: loss,
             clipGradientNorm: clipGradientNorm,
             learningRateSchedule: schedule,
-            checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+            checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
+            observer: observer)
     }
 
     /// The unlabeled form, for a recipe whose loss reads one array per step and no target, such as a

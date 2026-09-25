@@ -601,7 +601,7 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | SNAC | ``NFKMLXSNAC`` | `NFKMLXSNACNet` (`NFKSNACEncoderNet`, `NFKSNACDecoderNet`) | ``NFKMLXSNACVariant`` `.speech24kHz` / `.music32kHz` / `.music44kHz` | `snac` · `snac-32khz` · `snac-44khz` | ``NFKMLXSNACBackend``; `decode(_:deterministic:)` |
 | BigVGAN v2 | ``NFKMLXBigVGAN`` | SnakeBeta + anti-aliased `Activation1d` generator | `NFKMLXBigVGANConfiguration()` (24 kHz, 100-band) | `bigvgan-v2-24khz` | ``NFKMLXBigVGANBackend`` |
 | Mimi | ``NFKMLXMimi`` | `NFKMLXMimiNet` (SEANet + RoPE transformers + split RVQ) | `NFKMLXMimiConfiguration()` (24 kHz, 12.5 Hz) | `mimi` | ``NFKMLXMimiBackend``; `encode` / `decode` for the tokens |
-| Basic Pitch | ``NFKMLXBasicPitch`` | `NFKMLXBasicPitchNet` | ``NFKMLXBasicPitchConfiguration`` `.icassp2022` | `basic-pitch` | ``NFKMLXBasicPitchBackend`` (``NFKMLXTranscriptionParameterKey``) |
+| Basic Pitch | ``NFKMLXBasicPitch`` | `NFKMLXBasicPitchNet` | ``NFKMLXBasicPitchConfiguration`` `.icassp2022`, `.icassp2022Trainable` | `basic-pitch` | ``NFKMLXBasicPitchBackend`` (``NFKMLXTranscriptionParameterKey``) |
 | All-In-One | ``NFKMLXAllInOne`` | `NFKMLXAllInOneNet` + ``NFKMLXBarTracker`` | ``NFKMLXAllInOneConfiguration`` `.harmonix` | `allin1` | ``NFKMLXAllInOneBackend`` |
 | MuScriptor | ``NFKMLXMuScriptor`` | `NFKMLXMuScriptorNet` | ``NFKMLXMuScriptorConfiguration`` `.small` / `.medium` / `.large` | `muscriptor` | ``NFKMLXMuScriptorBackend`` |
 | hFT-Transformer | ``NFKMLXHFTTransformer`` | `NFKMLXHFTTransformerNet` | ``NFKMLXHFTTransformerConfiguration`` `.maestro` | `hft-transformer` | ``NFKMLXHFTTransformerBackend`` |
@@ -684,6 +684,7 @@ let backend = try NFKMLXAllInOne.backend(weightsURL: url, demucsWeightsURL: demu
 // Basic Pitch
 let backend = try NFKMLXBasicPitch.backend(weightsURL: url)
 // notes: let net = NFKMLXBasicPitch.makeNet() then net.transcribe(samples, sampleRate: 22050) -> NFKMIDISequence
+// fine-tune: let net = try NFKMLXBasicPitch.network(weightsURL: trainableURL), then NFKMLXBasicPitch.fineTune
 
 // SNAC
 let backend = try NFKMLXSNAC.backend(weightsURL: url)

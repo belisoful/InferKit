@@ -14219,6 +14219,197 @@ def basic_pitch_clip(seconds=4.0, sample_rate=22050, seed=5):
     return np.ascontiguousarray(wave / np.abs(wave).max() * 0.9, dtype=np.float32)
 
 
+def basic_pitch_training_targets(start_seconds, frames=172, fps=86, lowest=21):
+    """Binary targets for one training window of `basic_pitch_clip`, from the notes it plays.
+
+    Frames sit at the reference's integer annotation rate (`ANNOTATIONS_FPS`, 86 per second) from the
+    window's start, as `extract_window` trims them. A note lights its key in `note`, its first frame in
+    `onset`, and the centre of its three contour bins in `contour`.
+    """
+    notes = [(60, 0.2, 3.6), (64, 0.2, 3.6), (67, 0.2, 3.6), (72, 0.5, 1.4), (76, 1.6, 2.6)]
+    contour = np.zeros((frames, 264), np.float32)
+    note = np.zeros((frames, 88), np.float32)
+    onset = np.zeros((frames, 88), np.float32)
+    for pitch, start, end in notes:
+        key = pitch - lowest
+        onset_seen = False
+        for frame in range(frames):
+            time = start_seconds + frame / fps
+            if start <= time < end:
+                note[frame, key] = 1
+                contour[frame, 3 * key + 1] = 1
+                if not onset_seen and time - start < 1.0 / fps:
+                    onset[frame, key] = 1
+                onset_seen = True
+    return contour, note, onset
+
+
+BASIC_PITCH_TARGET_NOTES = [
+    # (start, end, MIDI pitch, velocity), chosen for the edges of the reference's own rules.
+    (0.10, 0.90, 60, 100),                # an ordinary note
+    (0.30, 1.40, 21, 90),                 # the lowest key
+    (0.30, 1.40, 108, 90),                # the highest key
+    (0.50, 0.70, 20, 90),                 # below the piano: dropped
+    (0.50, 0.70, 109, 90),                # above the piano: dropped
+    (1.0 + 0.5 / 86, 1.60, 64, 80),       # a start exactly halfway between two frames
+    (1.20, 1.20, 67, 70),                 # a zero-length note
+    (1.50, 2.30, 60, 100),                # overlaps the next, same pitch
+    (2.00, 2.60, 60, 0),                  # velocity 0 over the note above
+    (3.40, 9.00, 72, 110),                # runs past the end of the recording
+]
+
+
+def run_basic_pitch_targets(image):
+    """Basic Pitch's training targets and windows, from the reference's own construction.
+
+    A MAESTRO-style track: `mirdata.annotations.NoteData` over `BASIC_PITCH_TARGET_NOTES`, the full-track
+    note, onset, and contour indices from `to_sparse_index` on `time_scale = arange(0, duration + hop,
+    hop)` exactly as `datasets/maestro.py` builds them, densified by `tf_example_deserialization.
+    sparse2dense`, then cut by `extract_window` at three start times. The audio is a deterministic
+    ramp at 22,050 Hz, 3.8 seconds long, so a window's samples say where it was cut. Recorded: the
+    full-track targets (`track_*`), and per window the audio and targets (`window{i}_*`) with its start
+    (`window_starts`). `output` is the number of full-track frames. Runs under `basic_pitch_tf`.
+    """
+    import tensorflow as tf
+    from mirdata.annotations import NoteData
+    from basic_pitch.constants import (ANNOTATION_HOP, AUDIO_SAMPLE_RATE, FREQ_BINS_CONTOURS,
+                                       FREQ_BINS_NOTES, N_FREQ_BINS_CONTOURS, N_FREQ_BINS_NOTES)
+    from basic_pitch.data.tf_example_deserialization import extract_window, sparse2dense
+
+    samples = int(3.8 * AUDIO_SAMPLE_RATE)
+    audio = (np.arange(samples, dtype=np.float32) / samples).reshape(-1, 1)
+    duration = samples / AUDIO_SAMPLE_RATE
+
+    notes = NoteData(np.array([[a, b] for a, b, _, _ in BASIC_PITCH_TARGET_NOTES], dtype=float), "s",
+                     np.array([p for _, _, p, _ in BASIC_PITCH_TARGET_NOTES], dtype=float), "midi",
+                     np.array([v for _, _, _, v in BASIC_PITCH_TARGET_NOTES], dtype=float), "velocity")
+    time_scale = np.arange(0, duration + ANNOTATION_HOP, ANNOTATION_HOP)
+    frames = len(time_scale)
+
+    def dense(indices, values, bins):
+        indices = np.asarray(indices, dtype=np.int64).reshape(-1, 2)
+        values = np.asarray(values, dtype=np.float32).reshape(-1)
+        return sparse2dense(tf.constant(values), tf.constant(indices),
+                            tf.constant([frames, bins], dtype=tf.int64)).numpy()
+
+    note = dense(*notes.to_sparse_index(time_scale, "s", FREQ_BINS_NOTES, "hz"), N_FREQ_BINS_NOTES)
+    onset = dense(*notes.to_sparse_index(time_scale, "s", FREQ_BINS_NOTES, "hz", onsets_only=True),
+                  N_FREQ_BINS_NOTES)
+    contour = dense(*notes.to_sparse_index(time_scale, "s", FREQ_BINS_CONTOURS, "hz"), N_FREQ_BINS_CONTOURS)
+
+    extra = {"track_note": torch.from_numpy(note), "track_onset": torch.from_numpy(onset),
+             "track_contour": torch.from_numpy(contour), "audio": torch.from_numpy(audio)}
+    starts = [0.0, 0.7431, 1.5]
+    for i, start in enumerate(starts):
+        a, o, c, n = extract_window(tf.constant(audio), tf.constant(onset), tf.constant(contour),
+                                    tf.constant(note), tf.constant(start, dtype=tf.float32))
+        extra[f"window{i}_audio"] = torch.from_numpy(a.numpy())
+        extra[f"window{i}_onset"] = torch.from_numpy(o.numpy())
+        extra[f"window{i}_contour"] = torch.from_numpy(c.numpy())
+        extra[f"window{i}_note"] = torch.from_numpy(n.numpy())
+    extra["window_starts"] = torch.tensor(starts, dtype=torch.float32)
+    globals()["_extra"] = extra
+    return torch.tensor([float(frames)])
+
+
+def run_basic_pitch_training(image, checkpoint):
+    """Basic Pitch's training step, from the reference's own `models.model()`, `models.loss()`, and
+    `train.py`'s optimizer, over two windows of `basic_pitch_clip`.
+
+    `--checkpoint` is the released Keras SavedModel (`saved_models/icassp_2022/nmp`). In a fresh
+    session `models.model()` builds exactly its 24 variables by name and shape, and they are copied
+    across by position. Runs under the `basic_pitch_tf` oracle environment (`bptfvenv`).
+
+    Recorded: the batch and its targets; the released variables in the trainable layout
+    `Tools/basic-pitch-to-safetensors --saved-model` writes (`w::`); the posteriorgrams in training
+    and in inference mode; each loss term and the class-weighted onset variant; the gradient of the
+    summed loss (`grad::`); and three steps of `model.train_on_batch` under `train.py`'s compile, with
+    the variables after the first and third (`step1::`, `step3::`). `output` is the three step losses.
+    `train_on_batch` applies Keras Adam and then every kernel's `UnitNorm` constraint, and updates the
+    batch normalizations' moving statistics, exactly as `fit` does.
+    """
+    import importlib.util
+    import os
+    import tensorflow as tf
+    from basic_pitch import models
+    from basic_pitch.constants import AUDIO_N_SAMPLES, AUDIO_SAMPLE_RATE
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    spec = importlib.util.spec_from_file_location(
+        "basic_pitch_convert", os.path.join(here, "..", "basic-pitch-to-safetensors", "convert.py"))
+    converter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(converter)
+
+    saved = tf.saved_model.load(checkpoint)
+    released = [(variable.name, variable.numpy()) for variable in saved.variables]
+
+    def build():
+        tf.keras.backend.clear_session()
+        model = models.model()
+        assert [w.name for w in model.weights] == [name for name, _ in released], "variable names differ"
+        for weight, (_, value) in zip(model.weights, released):
+            weight.assign(value)
+        return model
+
+    wave = basic_pitch_clip()
+    starts = [0, AUDIO_N_SAMPLES]
+    audio = np.stack([wave[s:s + AUDIO_N_SAMPLES] for s in starts])[..., None].astype(np.float32)
+    targets = [basic_pitch_training_targets(s / AUDIO_SAMPLE_RATE) for s in starts]
+    y = {"contour": np.stack([t[0] for t in targets]),
+         "note": np.stack([t[1] for t in targets]),
+         "onset": np.stack([t[2] for t in targets])}
+
+    def tensors(model, prefix):
+        variables = {w.name: w.numpy() for w in model.weights}
+        return {f"{prefix}{key}": torch.from_numpy(value)
+                for key, value in converter.trainable_tensors(variables).items()}
+
+    losses = models.loss()
+    weighted = models.loss(weighted=True)["onset"]
+
+    model = build()
+    extra = tensors(model, "w::")
+    predicted_eval = model(audio, training=False)
+    for key in ["contour", "note", "onset"]:
+        extra[f"eval_{key}"] = torch.from_numpy(predicted_eval[key].numpy())
+
+    model = build()
+    predicted = model(audio, training=True)
+    for key in ["contour", "note", "onset"]:
+        extra[f"train_{key}"] = torch.from_numpy(predicted[key].numpy())
+        extra[f"loss_{key}"] = torch.tensor([float(tf.reduce_mean(losses[key](y[key], predicted[key])))])
+    extra["loss_onset_weighted"] = torch.tensor([float(tf.reduce_mean(weighted(y["onset"], predicted["onset"])))])
+
+    model = build()
+    with tf.GradientTape() as tape:
+        predicted = model(audio, training=True)
+        total = tf.add_n([tf.reduce_mean(losses[k](y[k], predicted[k])) for k in ["contour", "note", "onset"]])
+    gradients = tape.gradient(total, model.trainable_weights)
+    grads = {w.name: g.numpy() for w, g in zip(model.trainable_weights, gradients)}
+    # The gradient of a moving statistic is not defined; its slot carries the variable itself so the
+    # converter's mapping, which expects every variable, still applies. Those keys are dropped here.
+    full = {w.name: grads.get(w.name, w.numpy()) for w in model.weights}
+    for key, value in converter.trainable_tensors(full).items():
+        if not key.endswith(("running_mean", "running_var")):
+            extra[f"grad::{key}"] = torch.from_numpy(value)
+
+    model = build()
+    model.compile(loss=models.loss(), optimizer=tf.keras.optimizers.Adam(1e-3),
+                  sample_weight_mode={"contour": None, "note": None, "onset": None})
+    step_losses = []
+    for step in range(3):
+        step_losses.append(float(model.train_on_batch(audio, y, return_dict=True)["loss"]))
+        if step == 0:
+            extra.update(tensors(model, "step1::"))
+    extra.update(tensors(model, "step3::"))
+
+    extra["audio"] = torch.from_numpy(audio)
+    for key, value in y.items():
+        extra[f"target_{key}"] = torch.from_numpy(value)
+    globals()["_extra"] = extra
+    return torch.tensor(step_losses, dtype=torch.float32)
+
+
 def run_basic_pitch(image, checkpoint):
     """Basic Pitch (spotify/basic-pitch) over a deterministic clip, seam by seam.
 
@@ -17413,12 +17604,12 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "mimi": run_mimi, "chronos": run_chronos,
           "dcn": run_dcn,
-          "segformer_loss": run_segformer_loss, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
+          "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

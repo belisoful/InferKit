@@ -776,6 +776,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
   without an error.
 
+#### Basic Pitch fine-tunes on a consumer's own recordings and notes
+
+- `NFKMLXBasicPitch.network(weightsURL:reinitializing:)`, `trainingExample(s)`, and
+  `fineTune(_:examples:…)` port the `basic-pitch` 0.4.0 distribution's own training code: a recording
+  and its `NFKMIDISequence` become two-second windows and note, onset, and contour targets as mirdata
+  and `extract_window` build them, the objective is `models.loss()`, and the optimizer is Keras's
+  `Adam` at `train.py`'s 1e-3 with the `UnitNorm` constraint on every convolution kernel. Every target
+  cell, every loss term, the gradient, and three `train_on_batch` steps match the reference.
+- The network gained a `.separate` normalization layout (`NFKMLXBasicPitchNormalization`,
+  `NFKMLXBasicPitchConfiguration.icassp2022Trainable`) with the three Keras batch normalizations the
+  released ONNX graph folds. `Tools/basic-pitch-to-safetensors --saved-model` converts the release's
+  Keras model into it. The factory reads the layout from the checkpoint, so a fine-tuned file loads
+  through `backendWithWeightsURL:error:`.
+- The loader transposes convolution weights only for a PyTorch-layout checkpoint; it had transposed
+  every file, so a file `NFKMLXWeights.save` wrote would have loaded transposed.
+- `NFKMLXTrainer.train(…constraint:)` and `NFKMLXFineTune.run(…constraint:)` project the model after
+  every update, where a Keras weight constraint belongs.
+- `NFKMLXTrainer` keeps every normalization's running statistics out of the trainable set. A parent's
+  recursive `unfreeze()` had made MLXNN `BatchNorm` statistics trainable, and a weight-decaying
+  optimizer then shrank them; SegFormer's decode-head recipe was affected, by about six parts in ten
+  million a step.
+
 #### All-In-One fine-tunes on a consumer's own annotated tracks
 
 - `NFKMLXAllInOne.network(weightsURL:)`, `NFKMLXAllInOneTargets`, and `fineTune(_:examples:…)` port the

@@ -10,22 +10,28 @@ into the convolutions they precede, which is why the module has none.
 Tensors are written in PyTorch layout (`[out, in, kH, kW]`, `[out, in, k]`); `NFKMLXBasicPitch.loadWeights`
 transposes them to MLX's at load.
 
+`--saved-model` writes the trainable layout instead. The released package also ships the Keras model
+the graph was exported from (`saved_models/icassp_2022/nmp`), and it keeps the three batch
+normalizations separate from the convolutions, which is how the reference trains them. That file is
+the starting point for `NFKMLXBasicPitch.fineTune`: the convolutions and the normalizations come from
+the SavedModel's variables, and the constant-Q tensors, which the SavedModel computes at run time
+and does not store, come from the ONNX graph as before.
+
 The two CQT kernels are the real and the imaginary halves. The graph negates one of them, and the
 magnitude squares both, so which is which does not reach any output; they are written as `a` and `b`.
 
 Usage:
     python convert.py nmp.onnx basic-pitch.safetensors
     python convert.py --list-keys nmp.onnx
+    python convert.py --saved-model saved_models/icassp_2022/nmp nmp.onnx basic-pitch-trainable.safetensors
 
-Requires: onnx, numpy, safetensors.
+Requires: onnx, numpy, safetensors; tensorflow for --saved-model.
 """
 
 import argparse
 import sys
 
 import numpy as np
-import onnx
-from onnx import numpy_helper
 from safetensors.numpy import save_file
 
 # The weight of each convolution, keyed by the name this port gives it, found by the shape that is
@@ -52,6 +58,61 @@ BIASES_BY_NAME = {
     "model_1/re_lu_3/Relu": "onset_conv.bias",
     "model_1/conv2d_5/BiasAdd/ReadVariableOp": "onset_out.bias",
 }
+
+
+# The SavedModel's variable scopes, keyed by the name this port gives each layer. The released model's
+# scopes are fixed: `models.model()` builds exactly these names and shapes in a fresh session.
+SCOPES = {
+    "batch_normalization": "log_norm",
+    "conv2d_1": "contour_conv",
+    "batch_normalization_2": "contour_norm",
+    "contours-reduced": "contour_out",
+    "conv2d_2": "note_conv",
+    "conv2d_3": "note_out",
+    "conv2d_4": "onset_conv",
+    "batch_normalization_3": "onset_norm",
+    "conv2d_5": "onset_out",
+}
+
+# A Keras variable's name within its scope, keyed by the name the port's module gives it.
+VARIABLES = {
+    "kernel": "weight",
+    "bias": "bias",
+    "gamma": "weight",
+    "beta": "bias",
+    "moving_mean": "running_mean",
+    "moving_variance": "running_var",
+}
+
+
+def trainable_tensors(variables):
+    """The trainable layout's convolutions and normalizations from the SavedModel's variables.
+
+    `variables` maps each Keras variable name (`conv2d_1/kernel:0`) to its value. A Keras kernel is
+    `[kH, kW, in, out]` and is written as PyTorch's `[out, in, kH, kW]`, like every other convolution in
+    the file.
+    """
+    tensors = {}
+    for name, value in variables.items():
+        scope, variable = name.split(":")[0].rsplit("/", 1)
+        if scope not in SCOPES or variable not in VARIABLES:
+            raise SystemExit(f"unexpected variable {name}")
+        key = f"{SCOPES[scope]}.{VARIABLES[variable]}"
+        tensors[key] = np.transpose(value, (3, 2, 0, 1)) if value.ndim == 4 else value.reshape(-1)
+    expected = {f"{layer}.{part}" for layer in SCOPES.values()
+                for part in (("weight", "bias", "running_mean", "running_var") if layer.endswith("_norm")
+                             else ("weight", "bias"))}
+    missing = expected - set(tensors)
+    if missing:
+        raise SystemExit(f"the SavedModel is missing {sorted(missing)}")
+    return {key: np.ascontiguousarray(value, dtype=np.float32) for key, value in sorted(tensors.items())}
+
+
+def saved_model_variables(path):
+    """Every variable the released SavedModel holds, by name."""
+    import tensorflow as tf
+
+    return {variable.name: variable.numpy() for variable in tf.saved_model.load(path).variables}
 
 
 def primary(name):
@@ -94,6 +155,9 @@ def cqt_scale(initializers):
 
 
 def convert(path):
+    import onnx
+    from onnx import numpy_helper
+
     graph = onnx.load(path).graph
     initializers = {t.name: numpy_helper.to_array(t) for t in graph.initializer}
 
@@ -137,9 +201,16 @@ def main():
     parser.add_argument("input", help="the released nmp.onnx")
     parser.add_argument("output", nargs="?", help="path to write the safetensors file")
     parser.add_argument("--list-keys", action="store_true", help="print the extracted keys and exit")
+    parser.add_argument("--saved-model", metavar="DIR",
+                        help="the released Keras SavedModel; writes the trainable layout, with the batch "
+                             "normalizations separate from the convolutions")
     args = parser.parse_args()
 
     tensors = convert(args.input)
+    if args.saved_model:
+        tensors = {key: value for key, value in tensors.items() if key.startswith("cqt.")}
+        tensors.update(trainable_tensors(saved_model_variables(args.saved_model)))
+        tensors = dict(sorted(tensors.items()))
     if args.list_keys:
         for key, value in tensors.items():
             print(f"{key:26s} {list(value.shape)}")
