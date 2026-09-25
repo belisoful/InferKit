@@ -4085,7 +4085,12 @@
         "granite_speech",
         "granite_speech_real",
         "voxtral",
-        "voxtral_real"
+        "voxtral_real",
+        "nuwave2_loss",
+        "convtasnet_loss",
+        "rtdetr_loss",
+        "rtdetr_training_forward",
+        "rtdetr_training_setup"
       ]
     },
     "voicerestore": {
@@ -4125,7 +4130,8 @@
       "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]' torch safetensors",
       "modes": [
         "parakeet",
-        "canary"
+        "canary",
+        "vad_training"
       ]
     },
     "phi4mm": {
@@ -4258,7 +4264,10 @@
       "modes": [
         "yolo",
         "yolo_detections",
-        "yolo_generation"
+        "yolo_generation",
+        "yolo_loss",
+        "yolo_training_setup",
+        "yolo_e2e_loss"
       ]
     },
     "basic_pitch": {
@@ -4266,7 +4275,8 @@
       "why": "basic-pitch pins tensorflow-macos on Darwin above Python 3.11, and on 3.9 it needs none: the ONNX graph is the reference artifact and onnxruntime runs it. Its own interpreter also keeps resampy's pinned numpy away from the other oracles. resampy imports pkg_resources, so setuptools stays below 81.",
       "rebuild": "/usr/bin/python3 -m venv ~/.inferkit-validation/bpvenv && ~/.inferkit-validation/bpvenv/bin/pip install 'basic-pitch[onnx]' onnx mido torch safetensors 'setuptools<81'",
       "modes": [
-        "basic_pitch"
+        "basic_pitch",
+        "gtcrn_loss"
       ]
     },
     "allin1": {
@@ -4274,7 +4284,8 @@
       "why": "All-In-One needs madmom (unmaintained, installed from git and compiled with Cython) beside a current torch, which no other oracle wants. NATTEN is installed too, but only as a CHECK: 0.21 dropped the biased 1D/2D kernels the released model imports, so the oracle substitutes a torch neighborhood attention transcribed from NATTEN 0.14.6's own index rules and verifies its neighbor selection against the installed kernel (through the flex backend, at a power-of-two head dimension) before recording anything. The model sources are vendored rather than pip-installed, at IK_ALLIN1_SRC, because the package pulls hydra and demucs at import.",
       "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/allin1venv && ~/.inferkit-validation/allin1venv/bin/pip install 'setuptools<81' torch cython safetensors omegaconf librosa natten 'madmom @ git+https://github.com/CPJKU/madmom'",
       "modes": [
-        "allin1"
+        "allin1",
+        "allin1_training"
       ]
     },
     "muscriptor": {
@@ -4775,6 +4786,75 @@
       "records": "gemma4_moe_bf16 / _bf16in, gemma4_unified_bf16 / _bf16in",
       "environment": "gemma",
       "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights gemma4_moe | gemma4_unified --checkpoint unused"
+    }
+  ],
+  "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record` under ~/.inferkit-validation, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
+  "training_records": [
+    {
+      "key": "IK_PARITY_GTCRN_LOSS",
+      "record": "raw/gtcrn/loss-record.safetensors",
+      "environment": "basic_pitch",
+      "command": "IK_GTCRN_SRC=~/.inferkit-validation/reference-sources/gtcrn gtcrn_loss"
+    },
+    {
+      "key": "IK_PARITY_NUWAVE2_LOSS",
+      "record": "nuwave2/nuwave2-loss.safetensors",
+      "environment": "llm",
+      "command": "IK_NUWAVE2_SRC=~/.inferkit-validation/reference-sources/nuwave2 nuwave2_loss --checkpoint ~/.inferkit-validation/nuwave2/nuwave2_official.ckpt"
+    },
+    {
+      "key": "IK_PARITY_ALLIN1_TRAINING",
+      "record": "records/allin1-training.safetensors",
+      "environment": "allin1",
+      "command": "IK_ALLIN1_SRC=~/.inferkit-validation/reference-sources/allin1 IK_TIMM_OPTIM_SRC=~/.inferkit-validation/reference-sources/timm-optim allin1_training"
+    },
+    {
+      "key": "IK_PARITY_VAD_TRAINING",
+      "record": "reference/vad-training.safetensors",
+      "environment": "nemo",
+      "command": "vad_training --checkpoint ~/.inferkit-validation/raw/marblenet_vad.nemo"
+    },
+    {
+      "key": "IK_PARITY_CONVTASNET_LOSS",
+      "record": "reference/convtasnet-loss.safetensors",
+      "environment": "llm",
+      "command": "IK_ASTEROID_SRC=~/.inferkit-validation/reference-sources/asteroid convtasnet_loss"
+    },
+    {
+      "key": "IK_PARITY_YOLO_LOSS",
+      "record": "reference/yolo-loss.safetensors",
+      "environment": "ultralytics",
+      "command": "yolo_loss"
+    },
+    {
+      "key": "IK_PARITY_YOLO_TRAINING_SETUP",
+      "record": "reference/yolo-training-setup.safetensors",
+      "environment": "ultralytics",
+      "command": "yolo_training_setup"
+    },
+    {
+      "key": "IK_PARITY_YOLO_E2E_LOSS",
+      "record": "reference/yolo-e2e-loss.safetensors",
+      "environment": "ultralytics",
+      "command": "yolo_e2e_loss"
+    },
+    {
+      "key": "IK_PARITY_RTDETR_LOSS",
+      "record": "reference/rtdetr-loss.safetensors",
+      "environment": "llm",
+      "command": "rtdetr_loss"
+    },
+    {
+      "key": "IK_PARITY_RTDETR_TRAINING",
+      "record": "reference/rtdetr-training-forward.safetensors",
+      "environment": "llm",
+      "command": "rtdetr_training_forward"
+    },
+    {
+      "key": "IK_PARITY_RTDETR_TRAINING_SETUP",
+      "record": "reference/rtdetr-training-setup.safetensors",
+      "environment": "llm",
+      "command": "IK_RTDETR_SRC=~/.inferkit-validation/reference-sources/rtdetr rtdetr_training_setup"
     }
   ]
 }

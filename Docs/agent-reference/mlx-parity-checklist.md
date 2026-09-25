@@ -71,8 +71,11 @@ parity"). This checklist adds the listings that half touches:
   recipe symbols in the "Customizing a model" Topics list.
 - `Docs/model-index.md` and the DocC `ModelIndex.md` — the construction cell gains the
   `network(weightsURL:)` line, the way the HT Demucs row carries its fine-tuned form.
-- `Tools/validation-assets/manifest.json` and `~/.inferkit-validation.json` — the objective's parity
-  record and its `IK_PARITY_*` key, provisioned the same way the inference record is.
+- `Tools/validation-assets/manifest.json` — the objective's record in `training_records` (its
+  `IK_PARITY_*` key, the file under `~/.inferkit-validation`, the oracle environment, and the
+  `run_reference.py` command that regenerates it), and its mode in that environment's `modes`. A
+  record is an oracle output, so `fetch.py` does not provision it; the key reaches
+  `~/.inferkit-validation.json` through the IO Coordinator.
 
 ## Every optional behavior needs a measured case that exercises it
 
