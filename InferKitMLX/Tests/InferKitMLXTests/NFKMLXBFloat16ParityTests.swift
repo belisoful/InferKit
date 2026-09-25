@@ -490,15 +490,47 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                   let bf16 = try? record("\(name)_bf16.safetensors"),
                   let f32 = try? record("\(name)_f32.safetensors") else { continue }
             let directory = URL(fileURLWithPath: path)
-            let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
-            let exact = NFKMLXLanguage.makeNet(geometry)
-            try NFKMLXLanguage.loadWeights(into: exact, fromDirectory: directory, precision: .float32)
-            let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
-            try assertFloat32(name, states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
-            try languageDecoder(name, directory: directory, bf16: bf16, f32: f32)
+            // The float32 net is released before the bf16 one loads; the two do not fit together.
+            try autoreleasepool {
+                let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+                let exact = try loadedOnCPU(NFKMLXLanguage.makeNet(geometry)) {
+                    try NFKMLXLanguage.loadWeights(into: $0, fromDirectory: directory, precision: .float32)
+                }
+                let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+                try assertFloat32(name, states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
+            }
+            Memory.clearCache()
+            try autoreleasepool { try languageDecoder(name, directory: directory, bf16: bf16, f32: f32) }
+            Memory.clearCache()
             measured += 1
         }
         if measured == 0 { throw XCTSkip("set IK_VAL_QWEN3_14B_CUT4 or IK_VAL_QWEN3_32B_CUT4") }
+    }
+
+    /// The net `load` builds, with every file read and float32 conversion evaluated on the CPU one array at
+    /// a time. A cut's conversion evaluated on the GPU in the first forward's command buffer ends the
+    /// process at the GPU watchdog when its pages have to come back from swap; the CPU has no watchdog.
+    private func loadedOnCPU<Net: Module>(_ load: () throws -> Net) throws -> Net {
+        let net = try Device.withDefaultDevice(.cpu) { () throws -> Net in
+            let net = try load()
+            for (_, weight) in net.parameters().flattened() { eval(weight) }
+            return net
+        }
+        Memory.clearCache()
+        return net
+    }
+
+    /// `net` after `fill` loads its weights, on the CPU as ``loadedOnCPU(_:)`` does when `condition` holds.
+    private func loadedOnCPU<Net: Module>(_ net: Net, if condition: Bool = true,
+                                          _ fill: (Net) throws -> Void) throws -> Net {
+        guard condition else {
+            try fill(net)
+            return net
+        }
+        return try loadedOnCPU { () throws -> Net in
+            try fill(net)
+            return net
+        }
     }
 
     /// Every state (`hidden.i`, then `output`) of a float32 run against the reference's float32 record.
@@ -1204,7 +1236,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     /// layer by layer against the bf16 record.
     private func gemma2(_ name: String, directory: URL, bf16: [String: MLXArray], f32: [String: MLXArray]) throws {
         let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self))
-        let exact = try NFKMLXGemma2Net.load(directoryURL: directory, precision: .float32)
+        let exact = try loadedOnCPU { try NFKMLXGemma2Net.load(directoryURL: directory, precision: .float32) }
         let exactStates = exact.layerStates(tokens)
         eval(exactStates)
         var worst = 1.0
@@ -1296,8 +1328,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                            nearTies: (Int, MLXArray) -> [Int]) {
                 let mask = NFKMLXLanguageNet.causalMask(tokens.dim(1), offset: 0)
                 if unified {
-                    let net = NFKMLXGemmaLanguage.makeUnifiedNet(try NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace: configURL))
-                    try NFKMLXGemmaLanguage.loadUnifiedWeights(into: net, fromDirectory: directory, precision: precision)
+                    let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeUnifiedNet(try NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace: configURL)),
+                                              if: precision == .float32) {
+                        try NFKMLXGemmaLanguage.loadUnifiedWeights(into: $0, fromDirectory: directory, precision: precision)
+                    }
                     return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
                         let output = net.layers[index](input, mask: mask, shared: nil).output
                         return index == net.layers.count - 1 ? net.norm(output) : output
@@ -1305,9 +1339,11 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                 }
                 // The 26B-A4B's routed experts are 22 GB at float32, so its float32 run pages them from
                 // the release; a paged load computes the resident one's values element for element.
-                let net = NFKMLXGemmaLanguage.makeNet(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL))
-                try NFKMLXGemmaLanguage.loadWeights(into: net, fromDirectory: directory, precision: precision,
-                                                    residency: precision == .float32 ? .paged : .resident)
+                let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeNet(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL)),
+                                          if: precision == .float32) {
+                    try NFKMLXGemmaLanguage.loadWeights(into: $0, fromDirectory: directory, precision: precision,
+                                                        residency: precision == .float32 ? .paged : .resident)
+                }
                 net.expertStore?.cacheByteBudget = 4 << 30
                 return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
                     let output = net.layers[index](input, perLayerInput: nil, mask: mask, shared: nil).output
@@ -1392,8 +1428,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let bf16 = try record("mistral_small_cut4_bf16.safetensors"), f32 = try record("mistral_small_cut4_f32.safetensors")
         try autoreleasepool {
             let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
-            let exact = NFKMLXLanguage.makeNet(geometry)
-            try NFKMLXLanguage.loadWeights(into: exact, fromDirectory: directory, precision: .float32)
+            let exact = try loadedOnCPU(NFKMLXLanguage.makeNet(geometry)) {
+                try NFKMLXLanguage.loadWeights(into: $0, fromDirectory: directory, precision: .float32)
+            }
             let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
             try assertFloat32("mistral-small-cut4", states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
         }
@@ -1413,14 +1450,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                   let f32 = try? record("gemma3_\(name)_f32eager.safetensors"),
                   (try? record("gemma3_\(name)_bf16.safetensors")) != nil else { continue }
             let directory = URL(fileURLWithPath: path)
-            // The float32 net is released before the bf16 one loads; the two do not fit together. Its
-            // weights evaluate one array at a time, so no single command buffer carries the whole cut's
-            // reads and conversions past the GPU watchdog.
+            // The float32 net is released before the bf16 one loads; the two do not fit together.
             try autoreleasepool {
                 let geometry = try NFKMLXGemma3Language.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
-                let exact = NFKMLXGemma3Language.makeNet(geometry)
-                try NFKMLXGemma3Language.loadWeights(into: exact, fromDirectory: directory, precision: .float32)
-                for (_, weight) in exact.parameters().flattened() { eval(weight) }
+                let exact = try loadedOnCPU(NFKMLXGemma3Language.makeNet(geometry)) {
+                    try NFKMLXGemma3Language.loadWeights(into: $0, fromDirectory: directory, precision: .float32)
+                }
                 let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
                 try assertFloat32("gemma3-\(name)", states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
             }

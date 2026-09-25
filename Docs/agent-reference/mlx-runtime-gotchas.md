@@ -489,7 +489,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `testGemma3LargerSizePrefixesMatchTheReferenceAtBothPrecisions` ran this way inside the full check's
   shared xctest process with about 5 GB in swap, and the process ended with
   `kIOGPUCommandBufferCallbackErrorTimeout`. The same test run alone had passed. The model's compute
-  is small, so the command buffer's time went to faulting pages back in. A test that loads a
-  multi-gigabyte cut at float32 evaluates the weights one array at a time before the forward, and it
-  releases each net (an `autoreleasepool`, then `Memory.clearCache()`) before the next one loads. A
-  test whose peak is in the tens of gigabytes runs in its own process, not in the shared suite.
+  is small, so the command buffer's time went to faulting pages back in. Evaluating the weights one
+  array at a time on the GPU is not enough: the Gemma 3 test still timed out that way with 6 GB in
+  swap, and the Qwen3 cut test timed out running alone. The fix is to load and convert on the CPU,
+  which has no watchdog. `loadedOnCPU` in `NFKMLXBFloat16ParityTests` does this, one array at a time
+  inside `Device.withDefaultDevice(.cpu)`. The cast is exact on either device, so every recorded
+  cosine reproduces to the last digit. Five cut tests that used it passed with 4.6–5.8 GB in swap.
+  Each such test also releases one net (an `autoreleasepool`, then `Memory.clearCache()`) before
+  loading the next. A test whose peak is in the tens of gigabytes runs in its own process, not in the
+  shared suite.
