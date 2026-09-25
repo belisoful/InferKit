@@ -477,3 +477,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     reclaiming the cache makes a lone backward accurate, and holding the cache limit at zero is what
     a training loop needs. The clamp reading above stands as a separate fact about that test's
     conditioning, and is not what made the gradients move.
+- **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
+  loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
+  forward, and that one evaluation carries every file read, every conversion, and the forward itself.
+  `testGemma3LargerSizePrefixesMatchTheReferenceAtBothPrecisions` ran this way inside the full check's
+  shared xctest process with about 5 GB in swap, and the process ended with
+  `kIOGPUCommandBufferCallbackErrorTimeout`. The same test run alone had passed. The model's compute
+  is small, so the command buffer's time went to faulting pages back in. A test that loads a
+  multi-gigabyte cut at float32 evaluates the weights one array at a time before the forward, and it
+  releases each net (an `autoreleasepool`, then `Memory.clearCache()`) before the next one loads. A
+  test whose peak is in the tens of gigabytes runs in its own process, not in the shared suite.

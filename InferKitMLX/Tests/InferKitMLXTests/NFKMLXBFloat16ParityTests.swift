@@ -1413,12 +1413,20 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                   let f32 = try? record("gemma3_\(name)_f32eager.safetensors"),
                   (try? record("gemma3_\(name)_bf16.safetensors")) != nil else { continue }
             let directory = URL(fileURLWithPath: path)
-            let geometry = try NFKMLXGemma3Language.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
-            let exact = NFKMLXGemma3Language.makeNet(geometry)
-            try NFKMLXGemma3Language.loadWeights(into: exact, fromDirectory: directory, precision: .float32)
-            let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
-            try assertFloat32("gemma3-\(name)", states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
-            try gemma3(name, directoryKey: key)
+            // The float32 net is released before the bf16 one loads; the two do not fit together. Its
+            // weights evaluate one array at a time, so no single command buffer carries the whole cut's
+            // reads and conversions past the GPU watchdog.
+            try autoreleasepool {
+                let geometry = try NFKMLXGemma3Language.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+                let exact = NFKMLXGemma3Language.makeNet(geometry)
+                try NFKMLXGemma3Language.loadWeights(into: exact, fromDirectory: directory, precision: .float32)
+                for (_, weight) in exact.parameters().flattened() { eval(weight) }
+                let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+                try assertFloat32("gemma3-\(name)", states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
+            }
+            Memory.clearCache()
+            try autoreleasepool { try gemma3(name, directoryKey: key) }
+            Memory.clearCache()
             measured += 1
         }
         if measured == 0 { throw XCTSkip("set IK_VAL_GEMMA3_12B_CUT4 or IK_VAL_GEMMA3_27B_CUT4") }
