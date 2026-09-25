@@ -497,4 +497,8 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   cosine reproduces to the last digit. Five cut tests that used it passed with 4.6–5.8 GB in swap.
   Each such test also releases one net (an `autoreleasepool`, then `Memory.clearCache()`) before
   loading the next. A test whose peak is in the tens of gigabytes runs in its own process, not in the
-  shared suite.
+  shared suite. Sa2VA's InternVL loader hit the same timeout loading Sa2VA-4B at float32 after the
+  backend test in the S–Z chunk. It now reads through `NFKMLXReleaseWeights.arrays(inDirectory:converting:)`,
+  which evaluates in groups of about 256 MB; at float32 the conversion is the identity, so the groups
+  carry file reads and no GPU work, and the chunk passed (473 tests, 20.5 GB peak). A converting
+  bfloat16 load still casts on the GPU, group by group.

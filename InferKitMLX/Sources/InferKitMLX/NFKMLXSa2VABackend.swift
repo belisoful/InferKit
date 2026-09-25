@@ -89,9 +89,9 @@ extension NFKMLXSa2VANet {
             try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value.asType(dtype)) }, to: self)
             return
         }
-        var merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory).map {
-            ($0.0, $0.1.asType(dtype))
-        }
+        // Read, converted, and evaluated in groups of about 256 MB, so no single GPU command buffer carries
+        // a whole release; one did, and timed out under memory pressure late in a long test run.
+        var merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype)
         if merged.contains(where: { $0.0.hasSuffix(".attention.wqkv.weight") }) {
             merged = NFKMLXInternLM2.denseWeights(merged, prefix: "language_model.",
                                                   configuration: configuration.decoder)
