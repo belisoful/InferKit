@@ -4294,6 +4294,12 @@
         "gtcrn_loss"
       ]
     },
+    "basic_pitch_tf": {
+      "interpreter": "~/.inferkit-validation/bptfvenv/bin/python3",
+      "why": "Basic Pitch's training objective and optimizer are Keras 2 code (basic_pitch.models.loss, basic_pitch.train), so its training oracle needs TensorFlow. basic-pitch 0.4.0's `tf` extra pins tensorflow-macos below 2.15.1 on Darwin, and TensorFlow 2.16 moved to Keras 3, so 2.15.0 is the newest version that runs the reference's own code. TensorFlow 2.15 needs numpy below 2, which is why this interpreter is separate from basic_pitch's: the inference and GTCRN records there were measured on numpy 2.0.2. With default arguments `models.model()` builds 16,864 parameters (16,782 trainable), fewer than the released network, so a training oracle builds the release's own configuration.",
+      "rebuild": "/usr/bin/python3 -m venv ~/.inferkit-validation/bptfvenv && ~/.inferkit-validation/bptfvenv/bin/pip install 'basic-pitch[tf]==0.4.0' 'tensorflow-macos==2.15.0' 'torch==2.8.0' safetensors mido 'setuptools<81'",
+      "modes": []
+    },
     "allin1": {
       "interpreter": "~/.inferkit-validation/allin1venv/bin/python3",
       "why": "All-In-One needs madmom (unmaintained, installed from git and compiled with Cython) beside a current torch, which no other oracle wants. NATTEN is installed too, but only as a CHECK: 0.21 dropped the biased 1D/2D kernels the released model imports, so the oracle substitutes a torch neighborhood attention transcribed from NATTEN 0.14.6's own index rules and verifies its neighbor selection against the installed kernel (through the flex backend, at a power-of-two head dimension) before recording anything. The model sources are vendored rather than pip-installed, at IK_ALLIN1_SRC, because the package pulls hydra and demucs at import.",
