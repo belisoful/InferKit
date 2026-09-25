@@ -168,8 +168,9 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   LoRA on the UNet, as for the SD 1.5 UNet. The upscaler's objective is in
   Stability-AI/stablediffusion's `ddpm.py`: L2 on v, the low-resolution image noised at a level drawn
   uniformly from [0, 350) and passed as the class label, AdamW at 1e-4. That repository is deleted and
-  was read from a mirror; its launcher and degradation pipeline are not published, so a recipe supplies
-  the degradation.
+  was read from a mirror whose commit could not be pinned, which makes this the weakest reading behind
+  the ruling; its launcher and degradation pipeline are not published, so a recipe supplies the
+  degradation.
 - `NFKMLXIPAdapterImageProjection` / `NFKMLXIPAdapterAttention` — IP-Adapter, lightweight image
   conditioning for a diffusion model (steer a Stable Diffusion generation with a reference image, not
   only text). Two pieces: the image projection maps a CLIP image embedding to a short sequence of

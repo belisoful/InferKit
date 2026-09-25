@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 33 |
-| `trainable`, no recipe yet | 62 |
+| `ships` | 34 |
+| `trainable`, no recipe yet | 61 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 164 model entries become 148 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Thirty-three recipes ship and 62 models are trainable with none written. That is the size of
+Thirty-four recipes ship and 61 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -191,7 +191,7 @@ own loss module.
 | `NFKMLXTextToImage` | trainable | LoRA | partial | SD 1.5 and SD 2.1 hold with the backbone frozen. `.sdxlTurbo` is offline on SDXL's grounds. |
 | `NFKMLXIPAdapter` | trainable | LoRA (adapter) | public | The entry already names the trained set: the projection and `to_k_ip` / `to_v_ip` over a frozen UNet. |
 | `NFKMLXSDTextEncoderNet` | offline | — | public | Its reference objective is CLIP's contrastive loss, which needs the large batch of negatives. |
-| `NFKMLXMarigold` / `NFKMLXSDUpscaler` | trainable | LoRA | internal | Marigold's trainer runs a latent MSE on v over the whole UNet at Adam 3e-5, no teacher. The upscaler's `ddpm.py` objective (read from a mirror; the original repository is deleted) needs a caller-supplied degradation. LoRA on the UNet fits a device. |
+| `NFKMLXMarigold` / `NFKMLXSDUpscaler` | trainable | LoRA | internal | Marigold's trainer runs a latent MSE on v over the whole UNet at Adam 3e-5, no teacher. The upscaler's `ddpm.py` objective (read from a mirror at an unpinned commit; the original repository is deleted) needs a caller-supplied degradation. LoRA on the UNet fits a device. |
 | `NFKMLXTAESD` | untrainable | — | internal | madebyollin/taesd publishes the network and its weights only. |
 | `NFKMLXSDPromptTokenizer` | untrainable | — | n/a | A tokenizer carries no parameters. |
 | `NFKMLXDiffusionBackend` | untrainable | — | n/a | The seam holds no weights. The model arrives as the consumer's closures. |
@@ -216,7 +216,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXSD3ControlNetNet` | offline | — | public | Its zero-initialized residuals take their gradient through the frozen 2B to 8B base. |
 | `NFKMLXFluxControlNetNet` | offline | — | public | The same residual gradient through the frozen 12B FLUX.1 transformer. |
 | `NFKMLXLTXPipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
-| `NFKMLXQwenImageVAE` | untrainable | — | public | No autoencoder training code in QwenLM/Qwen-Image or either release. The same holds for `NFKMLXWanVideoVAENet` (Wan 2.1 and 2.2 define no objective) and `NFKMLXDCAutoencoderNet` (DC-Gen's trainer leaves `forward_train` unimplemented); `NFKMLXFlux2LatentCodec` holds no learnable parameter. |
+| `NFKMLXQwenImageVAE` | untrainable | — | public | No autoencoder training code in QwenLM/Qwen-Image or either release. The same holds for `NFKMLXWanVideoVAENet` (Wan 2.1 and 2.2 define no objective) and `NFKMLXDCAutoencoderNet` (DC-Gen's trainer leaves `forward_train` unimplemented; a DC-Gen commit that implements it reopens this); `NFKMLXFlux2LatentCodec` holds no learnable parameter. |
 | `NFKMLXLTXVideoVAE` | untrainable | — | internal | Lightricks/LTX-Video publishes no autoencoder training code; its only backward pass through the autoencoder is a smoke test on random input, and LTX-Video-Trainer freezes the autoencoder. |
 | `NFKMLXFlowMatchScheduler`, `NFKMLXDPMSolverScheduler`, `NFKMLXUniPCScheduler` | untrainable | — | n/a | Value types with no parameters. |
 
@@ -311,7 +311,7 @@ encoder frozen, over the reference's teacher-forced `labels=` loss.
 
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
-| `NFKMLXBasicPitch` | trainable | full | public | The installed distribution ships `train.py` and three loss functions over a 35,736-parameter network. |
+| `NFKMLXBasicPitch` | ships | full | public | `models.loss()`, Keras `Adam` at `train.py`'s 1e-3, and the `UnitNorm` kernel constraint over the `.separate` layout's three Keras batch normalizations, matched by `run_reference.py basic_pitch_training`; targets and windows from a recording and its notes, identical to mirdata and `extract_window` by `basic_pitch_targets`. |
 | `NFKMLXAllInOne` | ships | full | public | The authors' `compute_losses`, targets, and timm RAdam, each matched by `run_reference.py allin1_training`. A consumer's own annotated tracks replace the Harmonix audio. |
 | `NFKMLXHFTTransformer` | trainable | full | public | sony/hFT-Transformer releases its training code. The blocker is the MAESTRO preparation pipeline, not the objective or the device. |
 | `NFKMLXMuScriptor` | untrainable | — | public | The package holds no loss, optimizer, or backward pass, the three-stage pipeline is unreleased, and the weights are CC BY-NC 4.0. |
@@ -372,11 +372,11 @@ ruling at all, which is the failure the rule targets.
 
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
-1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, and MarbleNet ship.
-   Basic Pitch's losses are Keras functions and its released graph folds the batch normalizations
-   the reference trains; its TensorFlow oracle environment now exists (`basic_pitch_tf` in the
-   manifest), and `models.model()` at its defaults builds 16,864 parameters against the release's
-   35,736, so the oracle builds the release's own configuration. The 2026-09-25 triage adds
+1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
+   Pitch ship. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   normalizations the released ONNX graph folds; its oracle runs the Keras model under
+   `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
+   variables. The 2026-09-25 triage adds
    Denoiser, FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
    metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every

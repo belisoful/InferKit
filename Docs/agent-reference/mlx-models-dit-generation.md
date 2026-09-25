@@ -259,7 +259,8 @@ arithmetic as before.
   the caller runs it for the caption features. The SANA text-to-image path is complete.
   Customization of the DC-AE: untrainable here. mit-han-lab/efficientvit trains the diffusion model over
   precomputed latents, and dc-ai-projects/DC-Gen's autoencoder trainer calls `forward_train`, which no
-  published model implements.
+  published model implements. The ruling rests on that gap: a later DC-Gen commit that implements
+  `forward_train` reopens it.
 - `NFKMLXWanTransformerNet` — the Wan text-to-video DiT (`WanTransformer3DModel`, Alibaba Wan), the fifth
   DiT family. A 3-D sequence transformer over a `Conv3d`-patchified video latent (patch `(1,2,2)`), with
   the same 3-axis interleaved rotary as Z-Image (`NFKZImageRope` reused, θ 10000, axes `t = headDim −
