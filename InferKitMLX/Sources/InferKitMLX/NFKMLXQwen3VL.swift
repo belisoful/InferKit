@@ -549,11 +549,12 @@ public final class NFKMLXQwen3VL: NSObject {
     /// is stored 5-D (`[out, channels, temporal, patch, patch]`) and flattens to a linear weight
     /// `[out, patchInput]`.
     /// `outerPrefix` is the path a model that wraps Qwen3-VL nests it under (Sa2VA's `model.`).
-    static func loadVisionWeights(into net: NFKMLXQwen3VLVisionNet, directoryURL: URL, outerPrefix: String = "") throws {
+    static func loadVisionWeights(into net: NFKMLXQwen3VLVisionNet, directoryURL: URL, outerPrefix: String = "",
+                                  dtype: DType? = nil) throws {
         let prefix = outerPrefix + "model.visual."
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
-            key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
-        }
+        let remap = { (key: String) in key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil }
+        let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, converting: $0, remap: remap) }
+            ?? NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, remap: remap)
         let mapped = arrays.map { key, value -> (String, MLXArray) in
             key == "patch_embed.proj.weight" && value.ndim == 5 ? (key, value.reshaped([value.dim(0), -1])) : (key, value)
         }
@@ -639,10 +640,11 @@ public final class NFKMLXQwen3VL: NSObject {
         return net
     }
 
-    /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them.
+    /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them. `dtype`
+    /// converts each tensor as it is read, so the release's element type is never held whole beside it.
     static func loadDecoderWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                                   outerPrefix: String = "") throws {
+                                   outerPrefix: String = "", dtype: DType? = nil) throws {
         let prefix = outerPrefix + "model.language_model."
         let head = outerPrefix + "lm_head.weight"
         let untied = !net.configuration.tiesWordEmbeddings
@@ -657,11 +659,15 @@ public final class NFKMLXQwen3VL: NSObject {
                                                        inputMajor: { _ in true })
             },
             load: { skipped in
-                let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+                func remap(_ key: String) -> String? {
                     if skipped(key) { return nil }
                     if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
                     return key == head && untied ? "lm_head.weight" : nil
                 }
+                // A converted load reads in evaluated groups, so the release's tensors never sit whole
+                // beside their conversions.
+                let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0, remap: remap) }
+                    ?? NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision, remap: remap)
                 try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
             })
     }

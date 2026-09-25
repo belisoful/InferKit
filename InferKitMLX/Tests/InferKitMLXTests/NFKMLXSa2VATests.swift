@@ -32,8 +32,8 @@ final class NFKMLXSa2VATests: XCTestCase {
     }
 
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
-        eval(mine)
-        let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
+        let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
+        let b = reference.asType(.float32).reshaped([-1]).asArray(Float.self)
         let n = min(a.count, b.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
         for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
@@ -42,8 +42,8 @@ final class NFKMLXSa2VATests: XCTestCase {
 
     /// Intersection-over-union of two logit maps thresholded at zero, the reference's mask decision.
     static func maskIoU(_ mine: MLXArray, _ reference: MLXArray) -> Float {
-        eval(mine)
-        let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
+        let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
+        let b = reference.asType(.float32).reshaped([-1]).asArray(Float.self)
         let n = min(a.count, b.count)
         var intersection = 0, union = 0
         for i in 0 ..< n {
@@ -570,8 +570,8 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
 
 
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
-        eval(mine)
-        let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
+        let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
+        let b = reference.asType(.float32).reshaped([-1]).asArray(Float.self)
         let n = min(a.count, b.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
         for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
@@ -593,65 +593,7 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
         where only == nil || only == name {
             guard let directory = env["IK_VAL_SA2VA_\(name)"], let recordPath = env["IK_PARITY_SA2VA_\(name)"],
                   FileManager.default.fileExists(atPath: recordPath) else { continue }
-            let url = URL(fileURLWithPath: directory)
-            let rec = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
-            // Two phases, each holding one part: the vision tower and decoder, then the bridge and the
-            // grounding encoder, which read only the `[SEG]` hidden state. A float32 4B decoder beside SAM 3's
-            // 1008-pixel trunk pages on a 32 GB machine.
-            let (languageSeams, generation, segHidden) = try autoreleasepool {
-                () throws -> ([(String, Float)], String, MLXArray) in
-                let net = try NFKMLXSa2VAQwenNet.load(directoryURL: url, parts: .language)
-                let gridValues = rec["image_grid_thw"]!.reshaped([-1]).asArray(Int32.self).map(Int.init)
-                let grid = (t: gridValues[0], h: gridValues[1], w: gridValues[2])
-                let processor = net.imageProcessor
-                let resized = processor.smartResize(height: 448, width: 448)
-                XCTAssertEqual([resized.height, resized.width], [grid.h * processor.patchSize, grid.w * processor.patchSize],
-                               "\(name) processor grid")
-
-                let inputIds = rec["input_ids"]!.asArray(Int32.self).map(Int.init)
-                let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: url))
-                let prompt = net.promptText("Please segment the bright object.", imageTokens: grid.h * grid.w / 4)
-                XCTAssertEqual(tokenizer.encode(prompt).map(\.intValue), inputIds, "\(name) prompt ids")
-
-                let features = net.imageFeatures(pixelValues: rec["pixel_values"]!.asType(.float32), grid: grid)
-                var seams = [("vision", cosine(features.output, rec["vision_merged"]!))]
-                for (index, stack) in features.deepstack.enumerated() {
-                    seams.append(("deepstack\(index)", cosine(stack, rec["deepstack_\(index)"]!)))
-                }
-                // A cut release's record teacher-forces a fixed answer (`SA2VA_TEACHER=1`), so its greedy
-                // output is not compared.
-                let referenceGenerated = rec["generated"]!.asArray(Int32.self).map(Int.init)
-                let endTokens: Set<Int> = [151_645, 151_643]
-                var generation = "teacher-forced"
-                if !name.hasSuffix("_CUT4") {
-                    let generated = net.generate(inputIds: inputIds, features: features, grid: grid,
-                                                 maximumTokens: referenceGenerated.count + 4, endTokens: endTokens)
-                    let expected = endTokens.contains(referenceGenerated.last ?? -1)
-                        ? Array(referenceGenerated.dropLast()) : referenceGenerated
-                    XCTAssertEqual(generated.tokens, expected, "\(name) greedy generation")
-                    generation = generated.tokens == expected ? "token-exact" : "DIVERGES"
-                }
-
-                let full = inputIds + referenceGenerated
-                // The record's `dec_last` is the reference's `hidden_states[-1]`, the states the bridge reads.
-                let hidden = net.segmentationStates(inputIds: full, features: features, grid: grid)
-                seams.append(("decoder", cosine(hidden[0], rec["dec_last"]!)))
-                let seg = try XCTUnwrap(full.firstIndex(of: net.segmentationTokenId), "\(name) answers with [SEG]")
-                // Copied out, so nothing the decoder computed outlives it.
-                return (seams, generation, MLXArray(hidden[0, seg].asArray(Float.self)))
-            }
-            NFKMLXGPU.clearCache()
-
-            let (groundingSeams, iou) = try autoreleasepool { () throws -> ([(String, Float)], Float) in
-                let net = try NFKMLXSa2VAQwenNet.load(directoryURL: url, parts: .grounding)
-                let embedding = net.textHiddenFCS(segHidden.reshaped([1, -1]))
-                let mask = net.segment(segHidden: segHidden,
-                                       groundingImage: rec["g_pixel_values"]!.asType(.float32).transposed(0, 2, 3, 1))
-                return ([("seg", cosine(embedding, rec["seg_embedding"]!)),
-                         ("mask", cosine(mask.lowResolution, rec["low_res_best"]!))],
-                        NFKMLXSa2VATests.maskIoU(mask.lowResolution, rec["low_res_best"]!))
-            }
-            let seams = languageSeams + groundingSeams
+            let (seams, iou, generation) = try measure(name, directory: directory, recordPath: recordPath, dtype: .float32)
             print("VALIDATION PARITY sa2va \(name): " + seams.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
                   + ", IoU \(iou), generation \(generation)")
             for (seam, similarity) in seams { XCTAssertGreaterThan(similarity, 0.9999, "\(name) \(seam) diverges") }
@@ -659,6 +601,93 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
             NFKMLXGPU.clearCache()
             print("VALIDATION MEMORY sa2va \(name) released: active \(NFKMLXGPU.activeMemory >> 20) MB, "
                   + "cache \(NFKMLXGPU.cacheMemory >> 20) MB")
+            measured.append(name)
+        }
+        try XCTSkipIf(measured.isEmpty, "set IK_VAL_SA2VA_QWEN3_VL_<2B|4B> and IK_PARITY_SA2VA_QWEN3_VL_<2B|4B>")
+    }
+
+    /// The seams of one Qwen-VL release against its record, the network's weights at `dtype`. Two phases,
+    /// each holding one part: the vision tower and decoder, then the bridge and the grounding encoder, which
+    /// read only the `[SEG]` hidden state. A float32 4B decoder beside SAM 3's 1008-pixel trunk pages on a
+    /// 32 GB machine.
+    private func measure(_ name: String, directory: String, recordPath: String, dtype: DType) throws
+        -> (seams: [(String, Float)], iou: Float, generation: String) {
+        let url = URL(fileURLWithPath: directory)
+        let rec = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
+        let (languageSeams, generation, segHidden) = try autoreleasepool {
+            () throws -> ([(String, Float)], String, MLXArray) in
+            let net = try NFKMLXSa2VAQwenNet.load(directoryURL: url, parts: .language, dtype: dtype)
+            let gridValues = rec["image_grid_thw"]!.reshaped([-1]).asArray(Int32.self).map(Int.init)
+            let grid = (t: gridValues[0], h: gridValues[1], w: gridValues[2])
+            let processor = net.imageProcessor
+            let resized = processor.smartResize(height: 448, width: 448)
+            XCTAssertEqual([resized.height, resized.width], [grid.h * processor.patchSize, grid.w * processor.patchSize],
+                           "\(name) processor grid")
+
+            let inputIds = rec["input_ids"]!.asArray(Int32.self).map(Int.init)
+            let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: url))
+            let prompt = net.promptText("Please segment the bright object.", imageTokens: grid.h * grid.w / 4)
+            XCTAssertEqual(tokenizer.encode(prompt).map(\.intValue), inputIds, "\(name) prompt ids")
+
+            let features = net.imageFeatures(pixelValues: rec["pixel_values"]!.asType(.float32), grid: grid)
+            var seams = [("vision", cosine(features.output, rec["vision_merged"]!))]
+            for (index, stack) in features.deepstack.enumerated() {
+                seams.append(("deepstack\(index)", cosine(stack, rec["deepstack_\(index)"]!)))
+            }
+            // A cut release's record teacher-forces a fixed answer (`SA2VA_TEACHER=1`), so its greedy
+            // output is not compared.
+            let referenceGenerated = rec["generated"]!.asArray(Int32.self).map(Int.init)
+            let endTokens: Set<Int> = [151_645, 151_643]
+            var generation = "teacher-forced"
+            if !name.hasSuffix("_CUT4") {
+                let generated = net.generate(inputIds: inputIds, features: features, grid: grid,
+                                             maximumTokens: referenceGenerated.count + 4, endTokens: endTokens)
+                let expected = endTokens.contains(referenceGenerated.last ?? -1)
+                    ? Array(referenceGenerated.dropLast()) : referenceGenerated
+                if dtype == .float32 {
+                    XCTAssertEqual(generated.tokens, expected, "\(name) greedy generation")
+                }
+                generation = generated.tokens == expected ? "token-exact" : "DIVERGES"
+            }
+
+            let full = inputIds + referenceGenerated
+            // The record's `dec_last` is the reference's `hidden_states[-1]`, the states the bridge reads.
+            let hidden = net.segmentationStates(inputIds: full, features: features, grid: grid)
+            seams.append(("decoder", cosine(hidden[0], rec["dec_last"]!)))
+            let seg = try XCTUnwrap(full.firstIndex(of: net.segmentationTokenId), "\(name) answers with [SEG]")
+            // Copied out, so nothing the decoder computed outlives it.
+            return (seams, generation, MLXArray(hidden[0, seg].asType(.float32).asArray(Float.self)))
+        }
+        NFKMLXGPU.clearCache()
+
+        let (groundingSeams, iou) = try autoreleasepool { () throws -> ([(String, Float)], Float) in
+            let net = try NFKMLXSa2VAQwenNet.load(directoryURL: url, parts: .grounding, dtype: dtype)
+            let embedding = net.textHiddenFCS(segHidden.reshaped([1, -1]))
+            let mask = net.segment(segHidden: segHidden,
+                                   groundingImage: rec["g_pixel_values"]!.asType(.float32).transposed(0, 2, 3, 1))
+            return ([("seg", cosine(embedding, rec["seg_embedding"]!)),
+                     ("mask", cosine(mask.lowResolution, rec["low_res_best"]!))],
+                    NFKMLXSa2VATests.maskIoU(mask.lowResolution, rec["low_res_best"]!))
+        }
+        return (languageSeams + groundingSeams, iou, generation)
+    }
+
+    /// The bfloat16 load the backend runs, against the same float32 records: the precision floor each
+    /// release's backend answers at. `IK_SA2VA_ONLY=<name>` selects one release.
+    func testTheBFloat16LoadStaysNearTheFloat32Reference() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX; run Tools/mlx-metallib.sh")
+        let env = NFKMLXValidationConfig.environment
+        let only = ProcessInfo.processInfo.environment["IK_SA2VA_ONLY"]
+        var measured = [String]()
+        for name in ["QWEN3_VL_2B", "QWEN3_VL_4B", "QWEN3_VL_4B_SAM3", "QWEN2_5_VL_3B"] where only == nil || only == name {
+            guard let directory = env["IK_VAL_SA2VA_\(name)"], let recordPath = env["IK_PARITY_SA2VA_\(name)"],
+                  FileManager.default.fileExists(atPath: recordPath) else { continue }
+            let (seams, iou, generation) = try measure(name, directory: directory, recordPath: recordPath, dtype: .bfloat16)
+            print("VALIDATION BF16 sa2va \(name): " + seams.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
+                  + ", IoU \(iou), generation \(generation)")
+            for (seam, similarity) in seams { XCTAssertGreaterThan(similarity, 0.99, "\(name) \(seam) at bfloat16") }
+            XCTAssertGreaterThan(iou, 0.98, "\(name) mask decision at bfloat16")
+            NFKMLXGPU.clearCache()
             measured.append(name)
         }
         try XCTSkipIf(measured.isEmpty, "set IK_VAL_SA2VA_QWEN3_VL_<2B|4B> and IK_PARITY_SA2VA_QWEN3_VL_<2B|4B>")

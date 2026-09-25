@@ -108,8 +108,8 @@ final class NFKSa2VASAM3GroundingEncoder: Module, NFKSa2VAGrounding {
     }
 
     /// Loads the grounding subtree of a release's tensors (`grounding_encoder.sam2_model.*`).
-    func load(_ arrays: [(String, MLXArray)]) throws {
-        try NFKMLXWeights.apply(Self.mapped(arrays).map { ($0.0, $0.1.asType(.float32)) }, to: self)
+    func load(_ arrays: [(String, MLXArray)], dtype: DType = .float32) throws {
+        try NFKMLXWeights.apply(Self.mapped(arrays).map { ($0.0, $0.1.asType(dtype)) }, to: self)
     }
 
     /// The grounding subtree's tensors under module names and in MLX layouts: the fused `qkv` split into

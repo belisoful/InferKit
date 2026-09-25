@@ -66,7 +66,14 @@ public final class NFKMLXSa2VAQwenNet: Module {
     /// Builds the network from a released directory at float32: the VLM half from its nested `model.`
     /// subtree (the tower chosen by `vision_config.model_type`), the bridge, and the grounding encoder.
     public static func load(directoryURL: URL) throws -> NFKMLXSa2VAQwenNet {
-        try load(directoryURL: directoryURL, parts: .all)
+        try load(directoryURL: directoryURL, parts: .all, dtype: .float32)
+    }
+
+    /// Builds the network with its weights at `dtype`. The releases store float32 and their `text_config`
+    /// declares bfloat16; ``NFKMLXSa2VA/backend(directoryURL:)`` loads bfloat16, which halves a 4B release's
+    /// resident weights. Parity is measured at float32.
+    public static func load(directoryURL: URL, dtype: DType) throws -> NFKMLXSa2VAQwenNet {
+        try load(directoryURL: directoryURL, parts: .all, dtype: dtype)
     }
 
     /// The parts of a release a load reads.
@@ -82,13 +89,13 @@ public final class NFKMLXSa2VAQwenNet: Module {
     /// Builds the network, reading only `parts` of a release. A part left out keeps its initialization
     /// unevaluated, which holds no memory, so a float32 4B release's decoder and its SAM 3 grounding can be
     /// measured one at a time. A saved fine-tune loads whole.
-    static func load(directoryURL: URL, parts: Parts) throws -> NFKMLXSa2VAQwenNet {
+    static func load(directoryURL: URL, parts: Parts, dtype: DType = .float32) throws -> NFKMLXSa2VAQwenNet {
         let data = try Data(contentsOf: directoryURL.appendingPathComponent("config.json"))
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         let visionJSON = json["vision_config"] as? [String: Any] ?? [:]
         // A directory `NFKMLXSa2VA.save` wrote (a fine-tune) holds this module's own names and layout.
         let savedURL = directoryURL.appendingPathComponent("model.safetensors")
-        let saved = FileManager.default.fileExists(atPath: savedURL.path)
+        var saved = FileManager.default.fileExists(atPath: savedURL.path)
             ? (try? NFKMLXWeights.loadCheckpoint(url: savedURL)).flatMap { $0.needsConvTranspose ? nil : $0 } : nil
         let tower: Tower
         var layout = NFKMLXMRoPELayout.interleaved
@@ -97,14 +104,15 @@ public final class NFKMLXSa2VAQwenNet: Module {
             tower = .qwen25(saved != nil || !parts.contains(.language)
                 ? NFKMLXQwen25VLVisionNet(configuration)
                 : try NFKMLXQwen25VLVisionNet.load(directoryURL: directoryURL, configuration: configuration,
-                                                   outerPrefix: "model."))
+                                                   outerPrefix: "model.", dtype: dtype))
             let scaling = (json["text_config"] as? [String: Any])?["rope_scaling"] as? [String: Any]
             layout = .chunked((scaling?["mrope_section"] as? [NSNumber])?.map(\.intValue) ?? [16, 24, 24])
         } else {
             let vision = NFKMLXQwen3VLVisionNet(try NFKMLXQwen3VLVisionConfiguration.configuration(
                 fromHuggingFace: directoryURL.appendingPathComponent("config.json")))
             if saved == nil && parts.contains(.language) {
-                try NFKMLXQwen3VL.loadVisionWeights(into: vision, directoryURL: directoryURL, outerPrefix: "model.")
+                try NFKMLXQwen3VL.loadVisionWeights(into: vision, directoryURL: directoryURL, outerPrefix: "model.",
+                                                    dtype: dtype)
             }
             tower = .qwen3(vision)
         }
@@ -116,7 +124,7 @@ public final class NFKMLXSa2VAQwenNet: Module {
             // The dense decoder loads whole under any plan; `.resident` would only refuse a float32 4B
             // release, which exceeds a 32 GB machine's recommended working set.
             try NFKMLXQwen3VL.loadDecoderWeights(into: decoder, fromDirectory: directoryURL, precision: .float32,
-                                                 residency: .automatic, outerPrefix: "model.")
+                                                 residency: .automatic, outerPrefix: "model.", dtype: dtype)
         }
         let groundsWithSAM3 = try saved.map { $0.arrays.keys.contains { $0.hasPrefix("grounding_encoder.neck.") } }
             ?? (NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
@@ -126,19 +134,22 @@ public final class NFKMLXSa2VAQwenNet: Module {
             tower: tower, decoder: decoder,
             segmentationTokenId: NFKMLXSa2VAProcessor.tokenId("[SEG]", inDirectory: directoryURL) ?? 151_674,
             layout: layout, groundsWithSAM3: groundsWithSAM3)
-        if let saved {
-            try NFKMLXWeights.apply(saved.arrays.map { ($0.key, $0.value) }, to: net)
+        if saved != nil {
+            // The checkpoint is dropped before the converted tensors evaluate, so it is not held beside them.
+            let typed = saved!.arrays.map { ($0.key, $0.value.asType(dtype)) }
+            saved = nil
+            try NFKMLXWeights.apply(typed, to: net)
         } else if parts.contains(.grounding) {
-            try net.loadBridgeAndGrounding(fromDirectory: directoryURL)
+            try net.loadBridgeAndGrounding(fromDirectory: directoryURL, dtype: dtype)
         }
         return net
     }
 
     /// Loads `text_hidden_fcs.*` and `grounding_encoder.sam2_model.*`: SAM 2 through Sa2VA-4B's remaps,
     /// SAM 3 through its own.
-    func loadBridgeAndGrounding(fromDirectory directory: URL) throws {
+    func loadBridgeAndGrounding(fromDirectory directory: URL, dtype: DType = .float32) throws {
         let prefix = "grounding_encoder.sam2_model."
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory) { key in
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype) { key in
             key.hasPrefix("text_hidden_fcs.") || key.hasPrefix(prefix) ? key : nil
         }
         // Each part loads into its own module with its own coverage check: the network also holds the
@@ -148,7 +159,7 @@ public final class NFKMLXSa2VAQwenNet: Module {
         }
         try NFKMLXWeights.apply(bridge, to: textHiddenFCS)
         if let sam3 = grounding as? NFKSa2VASAM3GroundingEncoder {
-            try sam3.load(arrays)
+            try sam3.load(arrays, dtype: dtype)
             return
         }
         var mapped = [(String, MLXArray)]()

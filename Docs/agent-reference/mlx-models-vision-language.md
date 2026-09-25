@@ -439,8 +439,16 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 - **Precision.** `NFKMLXSa2VANet.loadWeights(fromDirectory:dtype:)` loads at bfloat16 by default, the
   dtype the releases declare (they store float32), or at float32. Parity is measured at float32 on
   both sides. The bf16 gaps the 4B first showed (InternViT 0.99959, mask IoU 0.99981) close to within
-  3e-7 of 1 at float32, which rules out a defect behind them. The Qwen-VL and LLaVA nets load at
-  float32. A test class that loads several float32 releases clears MLX's cache in `tearDown`; without
+  3e-7 of 1 at float32, which rules out a defect behind them. The Qwen-VL releases' backend loads
+  bfloat16 too (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`; their `text_config` declares it), each
+  tensor converted as it is read (`NFKMLXReleaseWeights.arrays(inDirectory:converting:)`), since a
+  converted list bound beside the stored one held both through `apply` and peaked above float32. The
+  backend peaks at 7.8 GB (Qwen3-VL-2B), 10.5 GB (Qwen2.5-VL-3B), 12.6 GB (Qwen3-VL-4B), and 13.0 GB
+  (-4B-SAM3), where float32 reached 24.5 GB, and answers each release's float32 reference text exactly.
+  Its floor against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`): decoder
+  0.99996 / 0.99989 / 0.99994 / 0.99991 (2B, 3B, 4B, SAM3), `[SEG]` 0.99999 or closer, mask 0.99999 or
+  closer, IoU 0.99981 on the 2B and 1.0 on the rest, generation token for token on all four. The LLaVA
+  net loads at float32. A test class that loads several float32 releases clears MLX's cache in `tearDown`; without
   it the fourth 4B load starved the next forward into a Metal command-buffer timeout.
 - **Four architectures behind one factory.** `NFKMLXSa2VA.backend(directoryURL:)` reads `config.json`
   and builds the matching net:
@@ -499,9 +507,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     1.0000023, `[SEG]` 1.0, mask 1.0000005 (IoU 1.0), greedy generation token for token, and the
     backend answers `Sure, [SEG].<|im_end|>`, the reference's text, with a mask. The float32 release
     is 20.2 GB. The Sa2VA-Qwen loader plans the decoder `.automatic`, because a resident plan refuses
-    it against a 32 GB machine's 21.2 GiB working set. The parity seams and the backend run as two
-    tests (`testEveryQwenVLReleaseAnswersThroughTheBackend`) so each holds one network: about 22.5 GB
-    and 24.5 GB footprints, with a few GB of swap. `IK_SA2VA_ONLY=<name>` selects one release.
+    it against a 32 GB machine's 21.2 GiB working set. The float32 parity seams and the backend run as
+    two tests (`testEveryQwenVLReleaseAnswersThroughTheBackend`); the parity test's footprint is about
+    22.5 GB, and the bfloat16 backend's MLX peak 12.6 GB. `IK_SA2VA_ONLY=<name>` selects one release.
   - `Sa2VA-Qwen3-VL-4B-SAM3` (SAM 3 grounding at 1008): vision tower 1.0, deepstack 0.9999999 /
     0.9999996 / 0.99999964, decoder 0.9999959, `[SEG]` 0.9999995, mask 1.0000004 (IoU 1.0), greedy
     generation token for token, and the backend answers `Sure, the segmentation result is [SEG].<|im_end|>`,
@@ -509,7 +517,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     The parity test runs in two phases (`NFKMLXSa2VAQwenNet.load(directoryURL:parts:)`): the tower and
     decoder, then the bridge and grounding encoder from the copied `[SEG]` hidden state, because the
     float32 decoder beside SAM 3's 1008-pixel trunk paged a 32 GB machine; about a 21.5 GB footprint.
-    The backend holds both, an MLX peak of 22.1 GB.
+    The bfloat16 backend holds both at an MLX peak of 13.0 GB.
   - `Sa2VA-Qwen2_5-VL-3B` (36 layers): windowed vision tower 0.9999996, decoder 1.0000008, `[SEG]`
     0.99999964, mask 0.9999999 (IoU 1.0), greedy generation token for token under the default system
     turn, and the backend answers `Sure, it is [SEG].<|im_end|>`, the reference's text, with a mask.

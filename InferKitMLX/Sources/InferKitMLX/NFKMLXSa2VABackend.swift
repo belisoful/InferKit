@@ -305,7 +305,8 @@ public final class NFKMLXSa2VA: NSObject {
             throw NFKMLXError.unsupportedConfiguration("Sa2VA tokenizer files are missing or unreadable")
         }
         if try architecture(inDirectory: directoryURL) == "Sa2VAChatModelQwen" {
-            return NFKMLXSa2VABackend(qwen: try NFKMLXSa2VAQwenNet.load(directoryURL: directoryURL), tokenizer: tokenizer)
+            return NFKMLXSa2VABackend(qwen: try NFKMLXSa2VAQwenNet.load(directoryURL: directoryURL, dtype: .bfloat16),
+                                      tokenizer: tokenizer)
         }
         let configuration = try NFKMLXSa2VANet.configuration(fromDirectory: directoryURL)
         let net = NFKMLXSa2VANet(configuration)

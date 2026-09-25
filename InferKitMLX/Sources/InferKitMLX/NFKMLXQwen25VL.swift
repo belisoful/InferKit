@@ -243,18 +243,17 @@ extension NFKMLXQwen25VLVisionNet {
     /// Loads `<outerPrefix>model.visual.*` (Sa2VA's `model.`), the 5-D patch convolution flattened to its
     /// linear form.
     static func load(directoryURL: URL, configuration: NFKMLXQwen25VLVisionConfiguration,
-                     outerPrefix: String) throws -> NFKMLXQwen25VLVisionNet {
+                     outerPrefix: String, dtype: DType = .float32) throws -> NFKMLXQwen25VLVisionNet {
         let net = NFKMLXQwen25VLVisionNet(configuration)
         let prefix = outerPrefix + "model.visual."
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, converting: dtype) { key in
             key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
-        }
-        let mapped = arrays.map { key, value -> (String, MLXArray) in
+        }.map { key, value -> (String, MLXArray) in
             let named = key.replacingOccurrences(of: "merger.mlp.2.", with: "merger.mlp.1.")
             if named == "patch_embed.proj.weight", value.ndim == 5 {
-                return (named, value.reshaped([value.dim(0), -1]).asType(.float32))
+                return (named, value.reshaped([value.dim(0), -1]).asType(dtype))
             }
-            return (named, value.asType(.float32))
+            return (named, value.asType(dtype))
         }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
         return net

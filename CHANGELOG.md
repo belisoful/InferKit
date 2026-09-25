@@ -940,6 +940,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   output before the final norm, as the reference does under transformers 4.57.
   `NFKMLXSa2VANet.loadWeights(fromDirectory:dtype:)` loads at bfloat16, the dtype the releases declare,
   or at float32; the bfloat16 load measures InternViT 0.99959 and mask IoU 0.99981 against float32.
+  The Qwen-VL releases' backend loads bfloat16 as well (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`),
+  converting each tensor as it is read: a 4B release answers at a 12.6 GB peak instead of 24.5 GB, with
+  the float32 reference's text, every seam within 1.1e-4, and generation token for token.
 - Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
   and its `completionHandler:` peer.
 - Customization is the authors' own recipe: LoRA (rank 128, alpha 256) on the language model's linear
