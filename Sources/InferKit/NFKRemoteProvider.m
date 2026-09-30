@@ -8,6 +8,9 @@
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteModelCatalog.h>
+#import <InferKit/NFKRemoteInferKitBackend.h>
+#import <InferKit/NFKInferenceServer.h>
+#import "NFKInferKitDiscovery.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
@@ -94,6 +97,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 	switch (self.apiStyle) {
 		case NFKRemoteAPIStyleAnthropicMessages: return [self URLForPath:@"messages"];
 		case NFKRemoteAPIStyleSystemOne: return [self URLForPath:@"systemone"];
+		case NFKRemoteAPIStyleInferKit: return [self URLForPath:@"inferkit/run"];
 		case NFKRemoteAPIStyleOpenAIChat: break;
 	}
 	return [self URLForPath:@"chat/completions"];
@@ -207,13 +211,20 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:NO];
 }
 
++ (NFKRemoteProvider *)inferKit
+{
+	return [self providerWithIdentifier:@"inferkit" displayName:@"InferKit server"
+								   base:[NSString stringWithFormat:@"http://localhost:%u/v1", (unsigned)NFKInferenceServerDefaultPort]
+								  style:NFKRemoteAPIStyleInferKit requiresKey:NO];
+}
+
 #pragma mark Lookup
 
 + (NSArray<NFKRemoteProvider *> *)allProviders
 {
 	return @[ self.openAI, self.anthropic, self.xAI, self.googleGemini, self.groq, self.mistral,
 			  self.deepSeek, self.together, self.openRouter, self.typeSafe,
-			  self.ollama, self.lmStudio, self.llamaCpp, self.vLLM ];
+			  self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
 }
 
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier
@@ -230,7 +241,31 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
 + (NSArray<NFKRemoteProvider *> *)localProviders
 {
-	return @[ self.ollama, self.lmStudio, self.llamaCpp, self.vLLM ];
+	return @[ self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
+}
+
++ (NSArray<NFKRemoteProvider *> *)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
+{
+	NSMutableArray<NFKRemoteProvider *> *providers = [NSMutableArray array];
+	for (NFKInferKitService *service in NFKDiscoverInferKitServices(NFKInferenceServerServiceType, timeout)) {
+		NSURL *baseURL = service.baseURL;
+		if (baseURL == nil) {
+			continue;
+		}
+		NFKRemoteProvider *provider = [self.inferKit providerWithBaseURL:baseURL];
+		provider.displayName = service.name;
+		provider.requiresAPIKey = [service.TXTRecord[@"auth"] isEqualToString:@"1"];
+		[providers addObject:provider];
+	}
+	return providers;
+}
+
++ (void)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
+						 completionHandler:(void (^)(NSArray<NFKRemoteProvider *> *))completionHandler
+{
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		completionHandler([self discoverInferKitServersWithTimeout:timeout]);
+	});
 }
 
 - (BOOL)isReachableWithAPIKey:(nullable NSString *)apiKey
@@ -327,6 +362,12 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 {
 	if (provider.apiStyle == NFKRemoteAPIStyleAnthropicMessages) {
 		NFKAnthropicBackend *backend = [NFKAnthropicBackend backendWithEndpointURL:provider.endpointURL];
+		backend.apiKey = apiKey;
+		backend.modelName = modelName;
+		return backend;
+	}
+	if (provider.apiStyle == NFKRemoteAPIStyleInferKit) {
+		NFKRemoteInferKitBackend *backend = [NFKRemoteInferKitBackend backendWithEndpointURL:provider.endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;

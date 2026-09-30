@@ -100,7 +100,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's image endpoints in its style, or nil for a
 				provider that serves none.
-	@discussion openai takes the OpenAI style; gemini the OpenAI style without edits (its layer
+	@discussion openai and inferkit take the OpenAI style; gemini the OpenAI style without edits (its layer
 				serves generations only); xai, together, and openrouter their own. anthropic,
 				deepseek, groq, mistral, typesafe, and the local runners return nil.
 */

@@ -11,6 +11,8 @@ preset was added (a 401 or 405 without credentials is what confirms the path).
 - **OpenAI-compatible** — one wire format, so `NFKRemoteBackend` serves them all: `openai`, `xai`
   (Grok), `gemini` (Google's OpenAI-compatible layer), `groq`, `mistral`, `deepseek`, `together`,
   `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`, `vllm`.
+- **`inferkit`** is an `NFKInferenceServer` (see "Serving" below). It speaks the OpenAI shape and a
+  native route, and `backendForProvider:` builds the native client, `NFKRemoteInferKitBackend`.
 - **`typesafe`** (TypeSafe AI's System One API, which serves Jev) has its own backend,
   `NFKTypeSafeBackend`, because it does not generate text: see "Typed decisions" below.
 - **`anthropic`** is the other exception and has its own backend, `NFKAnthropicBackend`. Four differences a
@@ -26,7 +28,7 @@ The provider's own list is the source instead: `modelsWithAPIKey:error:` (and a 
 form at user-initiated QoS) returns `NFKRemoteModel`s — identifier, display name, and where the
 provider publishes them `ownedBy` / `createdAt` / `contextLength`, with the entry kept under `raw`.
 Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
-fourteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
+fifteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
 `after_id`, page size raised to 1000 from its default 20), which the catalog follows to the end. The
 list is deliberately not filtered to chat models: the envelope carries no capability field, so any
 filter would be a name heuristic that breaks on the next release. `NFKRemoteModelCatalog` is the
@@ -110,9 +112,9 @@ concatenation as a direct element of an `@[ ]`/`@{ }` literal raises `-Wobjc-str
 `tail` on the test log hid them. Grep the log for `warning:` without a tail.
 
 **Discovery of the local runners** removes the question a consumer cannot answer, which app the user
-has running. `localProviders` is the four local presets in probe order (ollama, lmstudio, llamacpp,
-vllm); `availableProvidersAmong:timeout:` probes a list concurrently through a `dispatch_group` and
-answers in the list's order, so the call costs one timeout rather than four and the same machine gives
+has running. `localProviders` is the five local presets in probe order (ollama, lmstudio, llamacpp,
+vllm, inferkit); `availableProvidersAmong:timeout:` probes a list concurrently through a `dispatch_group` and
+answers in the list's order, so the call costs one timeout rather than one per address and the same machine gives
 the same answer twice; `firstAvailableProviderAmong:timeout:` probes in order and stops at the first
 reply, which is one probe when the first address is up; `availableLocalProviders` /
 `firstAvailableLocalProvider` are those two over `localProviders` at
@@ -625,3 +627,74 @@ agent, not a separate endpoint; it is the `openai` preset.
 `NFKRemoteProviderTests` stubs the transport to assert Anthropic's request shape without a network, and
 carries one live test gated on `INFERKIT_LIVE_LOCAL_MODEL` that runs against a local server when one is
 listening.
+
+**Serving (`NFKInferenceServer`, 2026-09-30).** The server side of the remote subsystem: another
+machine's remote clients reach a model this process hosts. Files:
+
+- `NFKHTTPServer.h/.m` (private): HTTP/1.1 over Network.framework (`nw_listener`, available from the
+  core's floor). Keep-alive, `Expect: 100-continue`, Content-Length and chunked request bodies, chunked
+  responses for server-sent events, multipart parsing, one request at a time per connection, a
+  120-second idle timeout, and a 64 KB head limit (431). The client closing its side while a reply is
+  pending is treated as a disconnect, which cancels the run; a client that half-closes and then reads
+  is not served. `dispatch_data_t` is used directly as `NSData`.
+- `NFKServedOpenAI.h/.m` (private): each OpenAI route inverts the core client that speaks it, so the
+  hosted backend sees the keys the caller set. Chat content parts become `NFKInputImage` (first) plus
+  `NFKInputImages` (the rest), `NFKInputAudio`, `NFKInputVideo`, and `NFKInputDocument(s)`, and a lone
+  user turn also arrives as `NFKInputPrompt`. `modalities` containing `image` maps back to
+  `NFKModalityImage`, which is what a default-modality request sends (`NFKInferenceRequest` defaults to
+  image, and `NFKRemoteBackend` then asks for `modalities: [image, text]`). Remote media URLs are
+  refused: the server fetches nothing for a client. Speech converts the hosted clip with `AVAudioFile`
+  to wav, flac, aac (written as m4a), m4a, caf, or raw pcm; MP3 and Ogg Opus have no system encoder
+  and are served only when the model produced them.
+- `NFKInferenceWireCoding.h/.m` (private): the native route's tagged JSON (`"$nfk"`), shared by server
+  and client. Pixel buffers cross as each plane's rows with padding, so any format crosses without a
+  bytes-per-pixel table; the decoder first checks the planes against the format's own description
+  (`CVPixelFormatDescriptionCreateWithPixelFormatType`) so the buffer it allocates is no larger than
+  what was sent. Multi-arrays and PCM buffers are checked the same way before allocation.
+- `NFKInferenceServer.m`: registry, per-model FIFO (`NFKServedModel`), routing, auth, streaming.
+  A synchronous backend holds its slot until its call returns, cancelled or not, because it cannot be
+  interrupted and the next run must not overlap it. A job backend releases its slot when the job ends.
+- `NFKRemoteInferKitBackend.m`: the native client. `respondsToSelector:` answers NO for the two
+  supported-key properties until `prepareWithError:` has read them, which is the protocol's
+  "not declared" answer.
+- `NFKInferKitDiscovery.h/.m` (private): `DNSServiceBrowse` then `DNSServiceResolve` on one serial
+  queue for the timeout. Resolving yields the advertising machine's host name (`Studio.local`), which
+  `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
+  `tls`, `auth`, and `version`.
+
+Measured on this machine (`NFKInferenceServerTests`, 24 tests, every one against a real listener):
+`nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
+together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
+inside `swift test` with no permission prompt, and the resolved host name reaches the server.
+
+Traps met while building it:
+
+- `NSJSONSerialization` does not return every double identical: a NaturalLanguage sentence embedding
+  came back up to 2.78e-17 off per component. The native route packs an all-floating array as
+  little-endian float32 or float64 words, and a scalar that would not survive the round trip travels
+  as its 17 significant digits (`strtod` reads them back exactly). Measured afterwards: the same
+  embedding served natively equals the in-process vector bit for bit. The OpenAI `/embeddings` route
+  keeps JSON numbers (or base64 float32 on request), which is what its clients expect.
+- `NFKSpeechSynthesisBackend` delivers its buffers on the main run loop, so a probe that blocks the
+  main thread on a served speech call waits out the backend's 120-second deadline. A server app's main
+  run loop runs; a test calls from a background queue and waits on an expectation.
+- `[@"text" hasPrefix:@""]` is NO. The streamed-delta helper answered "no extension" for the first
+  delta, so every chat stream fell back to one piece at the end. An empty prefix is special-cased.
+- The server removed the temporary files it wrote for inline media before encoding the reply, so a
+  result that names one of them (an echo, a restoration that writes beside its input) failed to
+  encode. The run now removes them after its completion handler has built the reply.
+- `NFKRemoteWriteMediaFile` joins the extension into the path unchecked, so a client-named extension
+  of `../x` leaves the temporary directory. Every server write goes through `NFKServedFileExtension`
+  (one to eight letters and digits, else `bin`). The client-side callers pass their own extensions.
+- The analyzer flags an `NSError **` out-parameter written inside an `@autoreleasepool`
+  (`osx.cocoa.AutoreleaseWrite`); write to a strong local outside the pool and copy it out after.
+- `NFKRemoteTransport`'s blocking send retries 502, 503, and 504, so a served "not ready" (503) is
+  retried like a gateway error. Tests that expect a failing status set `retryAttempts` to 0.
+
+Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside the OpenAI `message`,
+`type`, and `code`. The transport takes an `NFKInferenceErrorDomain` code from that body over its
+status reading, and the native client rebuilds the whole `NSError`. Status mapping: not ready 503,
+missing input, unsupported, and refused 400, rate limited 429 (with `Retry-After` from
+`NFKRemoteErrorRetryAfterKey`), upstream unreachable 502, other failures 500, unknown model 404,
+missing or wrong key 401 with `WWW-Authenticate: Bearer`.
+

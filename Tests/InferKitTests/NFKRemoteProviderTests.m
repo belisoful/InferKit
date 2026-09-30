@@ -450,7 +450,7 @@ static const uint16_t NFKDeadPort = 9;
 - (void)testTheLocalPresetsAreWhatDiscoveryProbes
 {
 	NSArray<NSString *> *identifiers = [NFKRemoteProvider.localProviders valueForKey:@"identifier"];
-	NSArray<NSString *> *expected = @[ @"ollama", @"lmstudio", @"llamacpp", @"vllm" ];
+	NSArray<NSString *> *expected = @[ @"ollama", @"lmstudio", @"llamacpp", @"vllm", @"inferkit" ];
 	XCTAssertEqualObjects(identifiers, expected);
 	for (NFKRemoteProvider *provider in NFKRemoteProvider.localProviders) {
 		XCTAssertFalse(provider.requiresAPIKey, @"%@ is local", provider.identifier);

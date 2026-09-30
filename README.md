@@ -42,11 +42,16 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   video beside the prompt, remote embeddings / speech / image generation / transcription / video
   generation / reranking / moderation clients, a typed-decision client for TypeSafe's Jev, and a
   submit-poll-fetch base for job-style services.
-- **Remote providers** — `NFKRemoteProvider` names fourteen services (OpenAI, Anthropic, xAI, Gemini,
-  Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, and the local runners Ollama, LM Studio,
-  llama.cpp, and vLLM), lists each one's models from the server rather than a constant, probes the local ports to
+- **Remote providers** — `NFKRemoteProvider` names fifteen services (OpenAI, Anthropic, xAI, Gemini,
+  Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, the local runners Ollama, LM Studio,
+  llama.cpp, and vLLM, and an InferKit server), lists each one's models from the server rather than a constant, probes the local ports to
   find which runner is actually up so calling code names none, and reaches a local runner's native
   API — what is installed and loaded, and Ollama's pull and delete.
+- **Serving** — `NFKInferenceServer` hosts any backend for other machines on the network. It answers
+  the OpenAI-compatible routes (chat with streaming, embeddings, transcription, speech, images, the
+  model list) and a native route that carries a whole request, so a hosted depth, detection, or
+  restoration model is reachable too. Clients find it by address or over Bonjour, and a client on
+  another machine presents a key unless the host turns that off.
 - **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, image and video coding
   (`NFKImageCoding`, `NFKVideoSampling`), a tokenizer (BPE / CLIP / WordPiece / Unigram), a Core ML
   compute-plan reader, a hardware profile, and a Hugging Face download and cache layer.

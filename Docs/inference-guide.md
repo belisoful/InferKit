@@ -587,10 +587,11 @@ providers and every local runner serve): `NFKInputPrompt` in, the vector under `
 out, the same key the on-device embedders in InferKitMLX answer with, so search or clustering code does
 not change with the engine; `embeddingsForTexts:error:` embeds a batch in one call.
 
-**Discovery answers which local runner is up.** `localProviders` is the four local presets;
+**Discovery answers which local runner is up.** `localProviders` is the five local presets;
 `availableLocalProviders` probes them and returns the ones that reply, `firstAvailableLocalProvider`
 returns the first, and `backendForFirstAvailableLocalProviderWithModelName:` hands back a backend on
-it, so an app serves a user running Ollama, LM Studio, llama.cpp, or vLLM without naming one.
+it, so an app serves a user running Ollama, LM Studio, llama.cpp, vLLM, or an InferKit server without
+naming one.
 `availableProvidersAmong:timeout:` takes a list of the caller's own, for another port or another
 machine, and probes it concurrently; `firstAvailableProviderAmong:timeout:` probes in order and stops
 at the first reply. `isReachableWithAPIKey:timeout:error:` is the single-address form and the seam the
@@ -652,6 +653,36 @@ OpenRouter, and OpenAI's videos API, which OpenAI removes on 2026-09-24), `NFKRe
 OpenRouter; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
 `NFKTypeSafeBackend` is the one remote backend that does not generate: Jev answers typed questions
 about a state, with the probabilities behind each answer, at the latency and price of a classifier.
+
+## Serving a model to other machines
+
+`NFKInferenceServer` is the other end of the remote clients. It hosts backends by model name and
+answers HTTP on one port, under `/v1`:
+
+- The OpenAI-compatible routes: the model list, chat completions (streamed as server-sent events when
+  asked), embeddings, transcription and translation, speech, and image generation and edits. Each
+  route reads what the core's matching client sends and hands the hosted backend the keys that client
+  was given, so `NFKRemoteBackend` on another machine reaches a hosted MLX language model with its
+  tools, schema, images, and sampling parameters intact.
+- The native route, `POST /v1/inferkit/run`, which carries a whole `NFKInferenceRequest` and
+  `NFKInferenceResult` as tagged JSON. Pixel buffers cross with their format and rows, so a float depth
+  map arrives exactly; multi-arrays, the core's value types, and audio and video files cross too.
+  `NFKRemoteInferKitBackend` is its client, and `backendForProvider:` builds it for the `inferKit`
+  preset. Its streamed form reports the hosted job's progress and partial results.
+
+A client reaches the server by address (`[NFKRemoteProvider.inferKit providerWithBaseURL:…]`) or by
+discovery: the server advertises `_inferkit._tcp` over Bonjour, and
+`discoverInferKitServersWithTimeout:` resolves each advertisement to a provider at the advertising
+machine's host name. Access follows where the client is. A client on the same machine needs no key.
+A client on another machine presents `apiKey` as a Bearer token unless the host sets
+`requiresAPIKey` to NO, and a server that would admit other machines refuses to start without a key.
+`loopbackOnly` keeps other machines out entirely, and `TLSIdentity` serves HTTPS.
+
+The server keeps each backend's contract. A hosted backend runs one request at a time unless the host
+raises `maximumConcurrentRunsPerModel`, and later requests queue in order. A client that disconnects
+cancels its run. A failure reaches the client with its code: the native client receives the hosted
+backend's error with its domain and code, and the OpenAI-compatible clients read the code the server
+names in its error body.
 
 ## Speech in, text out
 

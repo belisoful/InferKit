@@ -104,7 +104,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's speech-to-text endpoint in its style, or nil for a
 				provider that serves none.
-	@discussion openai, groq, together, openrouter, and vllm take the OpenAI style; mistral its own;
+	@discussion openai, groq, together, openrouter, vllm, and inferkit take the OpenAI style; mistral its own;
 				xai its /v1/stt. anthropic, gemini (its OpenAI layer has no audio path), deepseek,
 				typesafe, ollama, lmstudio, and llamacpp return nil. Introduced in InferKit 0.3.0.
 */

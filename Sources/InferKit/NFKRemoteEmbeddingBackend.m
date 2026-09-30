@@ -30,7 +30,7 @@
 								  modelName:(nullable NSString *)modelName
 {
 	NSArray<NSString *> *serving = @[ @"openai", @"gemini", @"mistral", @"together", @"openrouter",
-									  @"ollama", @"lmstudio", @"llamacpp", @"vllm" ];
+									  @"ollama", @"lmstudio", @"llamacpp", @"vllm", @"inferkit" ];
 	if (![serving containsObject:provider.identifier]) {
 		return nil;
 	}

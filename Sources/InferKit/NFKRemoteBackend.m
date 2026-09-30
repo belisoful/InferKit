@@ -239,6 +239,13 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 			return;
 		}
 		id chunk = [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+		// A server that fails mid-stream sends an error object in place of a chunk, and the reply so
+		// far is not the answer.
+		if ([chunk isKindOfClass:NSDictionary.class] && [chunk[@"error"] isKindOfClass:NSDictionary.class]) {
+			state.finished = YES;
+			[job finishWithError:[self errorForStreamedErrorChunk:chunk]];
+			return;
+		}
 		if ([chunk isKindOfClass:NSDictionary.class] && [self applyStreamChunk:chunk toState:state]) {
 			NSString *text = state.text.length > 0 ? [state.text copy] : [state.transcript copy];
 			NSMutableDictionary<NSString *, id> *partial = [NSMutableDictionary dictionaryWithObject:text forKey:NFKRemoteBackendTextKey];
@@ -971,6 +978,18 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		[job finishWithError:error ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
 																 reason:@"the streamed reply could not be assembled"]];
 	}
+}
+
+- (NSError *)errorForStreamedErrorChunk:(NSDictionary *)chunk
+{
+	NSDictionary *error = chunk[@"error"];
+	NSString *message = [error[@"message"] isKindOfClass:NSString.class] ? error[@"message"] : @"the stream reported an error";
+	NSNumber *served = [error[@"inferkit_code"] isKindOfClass:NSNumber.class] && [error[@"inferkit_domain"] isEqual:NFKInferenceErrorDomain]
+		? error[@"inferkit_code"] : nil;
+	NSString *type = [error[@"type"] isKindOfClass:NSString.class] ? error[@"type"] : @"";
+	NFKInferenceError code = served != nil ? (NFKInferenceError)served.integerValue
+		: ([type isEqualToString:@"rate_limit_error"] ? kNFKError_InferenceRateLimited : kNFKError_InferenceBackendFailure);
+	return [NFKRemoteTransport errorWithCode:code reason:message];
 }
 
 #pragma mark Transport

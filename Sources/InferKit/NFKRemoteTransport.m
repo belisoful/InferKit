@@ -276,7 +276,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 	if (detail != nil) {
 		userInfo[NFKRemoteErrorBodyKey] = detail;
 	}
-	NFKInferenceError code = [self codeForStatus:status];
+	NFKInferenceError code = [self servedCodeInData:data] ?: [self codeForStatus:status];
 	NSDate *retryAfter = code == kNFKError_InferenceRateLimited ? [self retryAfterDateForResponse:response] : nil;
 	if (retryAfter != nil) {
 		userInfo[NFKRemoteErrorRetryAfterKey] = retryAfter;
@@ -295,6 +295,20 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 		default:
 			return kNFKError_InferenceBackendFailure;
 	}
+}
+
+/*! The code an InferKit server names in its error body, which is exact where a status is a range;
+	0 for any other body. */
++ (NFKInferenceError)servedCodeInData:(nullable NSData *)data
+{
+	id body = data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+	NSDictionary *error = [body isKindOfClass:NSDictionary.class] && [body[@"error"] isKindOfClass:NSDictionary.class] ? body[@"error"] : nil;
+	NSNumber *code = [error[@"inferkit_code"] isKindOfClass:NSNumber.class] ? error[@"inferkit_code"] : nil;
+	if (![error[@"inferkit_domain"] isEqual:NFKInferenceErrorDomain] || code.integerValue < kNFKError_InferenceNotReady
+		|| code.integerValue > kNFKError_InferenceRateLimited) {
+		return 0;
+	}
+	return (NFKInferenceError)code.integerValue;
 }
 
 /*! The Retry-After header as a date: a delay in seconds from now, or an HTTP-date as it stands. */

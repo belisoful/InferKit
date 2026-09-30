@@ -29,6 +29,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
 - [Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly) — no Python toolchain
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
+- [Serving a model to other machines](#serving-a-model-to-other-machines) — `NFKInferenceServer`, found by address or Bonjour
 - [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, conversion tool
 - [Testing without weights](#testing-without-weights)
 
@@ -2818,11 +2819,11 @@ NSArray<NSArray<NSNumber *> *> *vectors = [embedder embeddingsForTexts:documents
 
 **Which local runner is up is a question the code should not have to answer.** Discovery probes the
 local presets and hands back the ones that reply, so an app serves a user running Ollama, LM Studio,
-llama.cpp, or vLLM without being told which:
+llama.cpp, vLLM, or an InferKit server without being told which:
 
 ```objc
-// The four local presets, in the order discovery probes them.
-NSArray<NFKRemoteProvider *> *local = NFKRemoteProvider.localProviders;   // ollama, lmstudio, llamacpp, vllm
+// The five local presets, in the order discovery probes them.
+NSArray<NFKRemoteProvider *> *local = NFKRemoteProvider.localProviders;   // ollama, lmstudio, llamacpp, vllm, inferkit
 
 // One call instead of a choice the app cannot make. nil means none of them is running. Blocks, so
 // run it off the render thread.
@@ -3221,6 +3222,72 @@ retried through `NFKRemoteTransport` like every other blocking remote call.
 Midjourney has no official public API, so there is no preset for it; `opencode.ai` is a coding agent
 rather than an inference service; and Codex is OpenAI's agent using the OpenAI API, so it is the
 `openai` preset.
+
+## Serving a model to other machines
+
+`NFKInferenceServer` hosts any backend under a model name and serves it over HTTP, so a Mac with the
+weights answers for a phone, a tvOS box, or another Mac. Two surfaces share one port:
+
+- The OpenAI-compatible routes (`/v1/chat/completions`, `/embeddings`, `/audio/transcriptions`,
+  `/audio/speech`, `/images/generations`, `/images/edits`, `/models`), which the core's remote clients
+  and any OpenAI client library reach unchanged.
+- The native route, `/v1/inferkit/run`, which carries the whole request and result, so a depth map,
+  a mask, a multi-array, detections, or an audio file crosses exactly. `NFKRemoteInferKitBackend` is
+  its client, and it is what `backendForProvider:` builds for the `inferKit` preset.
+
+On the machine that has the model:
+
+<!-- objc-check: given id<NFKInferenceBackend> depthBackend = nil, chatBackend = nil; -->
+```objc
+NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+server.apiKey = key;                     // required for clients on other machines unless requiresAPIKey is NO
+server.serviceName = @"Studio";          // the name it advertises over Bonjour
+[server addBackend:depthBackend forModelName:@"depth"];
+[server addBackend:chatBackend forModelName:@"qwen3"];
+if (![server startWithError:&error]) {
+    // NFKInferenceServerErrorAPIKeyRequired, or NFKInferenceServerErrorListenFailed when the port is taken.
+}
+```
+
+On another machine, find the server over Bonjour or name its address, then use the backend the preset
+builds. A client on the server's own machine needs no key.
+
+```objc
+NFKRemoteProvider *studio = [NFKRemoteProvider discoverInferKitServersWithTimeout:2.0].firstObject;
+NFKRemoteProvider *byAddress = [NFKRemoteProvider.inferKit providerWithBaseURL:
+                                [NSURL URLWithString:@"http://studio.local:11480/v1"]];
+
+id<NFKInferenceBackend> depth = [NFKRemoteProvider backendForProvider:studio ?: byAddress
+                                                              apiKey:key modelName:@"depth"];
+NFKInferenceResult *result = [depth runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: frame }] error:&error];
+id map = [result outputForKey:NFKOutputImage];   // the hosted model's own float map, byte for byte
+
+// The OpenAI-compatible routes serve the same models to the core's other clients.
+NFKRemoteBackend *chat = [NFKRemoteBackend backendWithEndpointURL:[byAddress URLForPath:@"chat/completions"]];
+chat.apiKey = key;
+chat.modelName = @"qwen3";
+NFKRemoteEmbeddingBackend *embedder = [NFKRemoteEmbeddingBackend backendForProvider:byAddress apiKey:key
+                                                                          modelName:@"qwen3"];
+```
+
+```swift
+let server = NFKInferenceServer()
+server.apiKey = key
+server.addBackend(depth, forModelName: "depth")
+try server.start()
+
+// Elsewhere: the awaited discovery is named probeInferKitServers(timeout:).
+let studio = await NFKRemoteProvider.probeInferKitServers(timeout: 2).first
+```
+
+A streamed request (`submitInferenceJobForRequest:` on either client) reports the hosted job's partial
+results as they arrive, and cancelling it cancels the run on the server. Each hosted backend runs one
+request at a time by default (`maximumConcurrentRunsPerModel`) and later ones queue. A failure keeps
+its code: the native client receives the hosted backend's `NSError` with its domain and code, and the
+OpenAI-compatible clients receive the core code through `NFKRemoteTransport`. Setting `TLSIdentity`
+serves HTTPS. On iOS, an app that serves or browses lists `_inferkit._tcp` under `NSBonjourServices`
+and carries `NSLocalNetworkUsageDescription`.
 
 ## Model gallery
 

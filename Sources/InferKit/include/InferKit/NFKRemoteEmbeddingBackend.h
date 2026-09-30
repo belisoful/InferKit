@@ -77,9 +77,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteEmbeddingAPIStyle) {
 /*!
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's embeddings endpoint.
-	@discussion openai, gemini, mistral, together (dedicated endpoints), openrouter, and the local
-				runners serve one; anthropic, xai, groq, deepseek, and typesafe return nil. The local
-				runners answer for any embedding model they have.
+	@discussion openai, gemini, mistral, together (dedicated endpoints), openrouter, the local
+				runners, and an InferKit server serve one; anthropic, xai, groq, deepseek, and typesafe
+				return nil. The local runners answer for any embedding model they have.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey

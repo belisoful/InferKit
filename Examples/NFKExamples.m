@@ -332,10 +332,10 @@
 
 - (void)testExampleFindingWhicheverLocalRunnerIsRunning
 {
-	// The four local presets, in the order discovery probes them. A caller that wants a different
+	// The five local presets, in the order discovery probes them. A caller that wants a different
 	// set (another port, another machine) passes its own list to availableProvidersAmong:timeout:.
 	NSArray<NFKRemoteProvider *> *local = NFKRemoteProvider.localProviders;
-	XCTAssertEqualObjects([local valueForKey:@"identifier"], (@[ @"ollama", @"lmstudio", @"llamacpp", @"vllm" ]));
+	XCTAssertEqualObjects([local valueForKey:@"identifier"], (@[ @"ollama", @"lmstudio", @"llamacpp", @"vllm", @"inferkit" ]));
 
 	// One call instead of a choice the app cannot make: whichever runner is up answers, and nil
 	// means none of them is. Blocks, so run it off the render thread.
@@ -356,6 +356,40 @@
 	NSError *error = nil;
 	XCTAssertFalse([stopped isReachableWithAPIKey:nil timeout:2.0 error:&error]);
 	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+}
+
+#pragma mark Serving (Docs/examples.md: Serving a model to other machines)
+
+- (void)testExampleServingAModelToOtherMachines
+{
+	// The host: any backend under a model name. Beyond loopback a key is required unless the host
+	// turns that off; this server listens on loopback only, on a port the system picks.
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	[server addBackend:[[NFKPassthroughBackend alloc] init] forModelName:@"echo"];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+
+	// The client: the inferkit preset at the server's address builds the native backend, which carries
+	// every key of the request. A passthrough answers with its inputs.
+	NFKRemoteProvider *provider = [NFKRemoteProvider.inferKit providerWithBaseURL:server.localBaseURL];
+	id<NFKInferenceBackend> echo = [NFKRemoteProvider backendForProvider:provider apiKey:nil modelName:@"echo"];
+	XCTAssertTrue([echo isKindOfClass:NFKRemoteInferKitBackend.class]);
+	NFKInferenceResult *result = [echo runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hello" }] error:&error];
+	XCTAssertEqualObjects([result outputForKey:NFKInputPrompt], @"hello", @"%@", error);
+
+	// The OpenAI-compatible routes serve the same models to the core's other clients.
+	NSArray<NFKRemoteModel *> *models = [provider modelsWithAPIKey:nil error:&error];
+	XCTAssertEqualObjects(models.firstObject.identifier, @"echo", @"%@", error);
+	NFKRemoteEmbeddingBackend *embedder = [NFKRemoteEmbeddingBackend backendForProvider:provider apiKey:nil modelName:@"echo"];
+	XCTAssertEqualObjects(embedder.endpointURL, [server.localBaseURL URLByAppendingPathComponent:@"embeddings"]);
+
+	// Discovery browses Bonjour for the timeout; this loopback-only server does not advertise.
+	NSArray<NFKRemoteProvider *> *found = [NFKRemoteProvider discoverInferKitServersWithTimeout:0.2];
+	XCTAssertNotNil(found);
+	[server stop];
 }
 
 - (void)testExampleRemoteEmbeddingsAndLocalRunners

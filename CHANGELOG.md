@@ -35,6 +35,41 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Serving a model to other machines
+
+- `NFKInferenceServer` hosts any `NFKInferenceBackend` under a model name and serves it over HTTP on
+  Network.framework. The OpenAI-compatible routes under `/v1` answer the model list, chat completions
+  (streamed as server-sent events on request), embeddings (float or base64), transcription and
+  translation (json, text, verbose_json, diarized_json, srt, vtt, streamed on request), speech (wav,
+  pcm, flac, aac, m4a, or caf, converted from the hosted clip when its container differs), and image
+  generation and edits. Each route reads what the core's matching client sends, so those clients and
+  any OpenAI client library reach a hosted model unchanged.
+- The native route, `POST /v1/inferkit/run`, carries a whole `NFKInferenceRequest` and
+  `NFKInferenceResult` as tagged JSON: pixel buffers in any format with their rows, CGImages,
+  multi-arrays, PCM buffers, audio and video files, dates, data, non-finite numbers, decision
+  questions, and the core's secure-coding value types, decoded against an allowlist. An array of
+  floating values travels as packed words, so an embedding arrives bit for bit.
+  `NFKRemoteInferKitBackend` is its client. Its streamed form reports the hosted job's progress and
+  partial results, and `prepareWithError:` reads the hosted backend's supported keys.
+- Access: a client on the same machine needs no key unless `requiresAPIKeyOnLoopback` is set. A client
+  on another machine presents `apiKey` as a Bearer token unless `requiresAPIKey` is NO, and a server
+  that admits other machines refuses to start without a key. `loopbackOnly` binds the loopback
+  interface only, and `TLSIdentity` serves HTTPS.
+- Each hosted backend serves `maximumConcurrentRunsPerModel` runs at once (1 by default) and later
+  requests queue in order. A client that disconnects cancels its run. A client-named file extension is
+  reduced to letters and digits, and a shape or size that would allocate past the body is refused.
+- The server advertises `_inferkit._tcp` over Bonjour. `+[NFKRemoteProvider discoverInferKitServersWithTimeout:]`
+  resolves each advertisement to a provider at the advertising machine's host name, and the
+  `inferKit` preset (`NFKRemoteAPIStyleInferKit`, `http://localhost:11480/v1`) joins `localProviders`.
+  `backendForProvider:` builds the native client for it, and the embedding, transcription, speech, and
+  image factories serve it.
+- An error keeps its code across the wire. The error body names the domain and code beside the OpenAI
+  fields, `NFKRemoteTransport` takes that code over the status's reading, and `NFKRemoteBackend` ends a
+  stream that carries an error object with that error rather than the partial text.
+- `NFKRemoteSpeechBackend.requiresVoice` (YES by default) lets a request go out without a voice; its
+  factory clears it for an InferKit server, whose hosted backend chooses its own.
+- The core links Network and Security.
+
 #### Several clips in one request
 
 - `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),

@@ -149,6 +149,22 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | llama.cpp | `/completion`, `/infill`, `/reranking`, `/tokenize`, `input_video` / `input_audio` chat parts | infill, tokenize gaps; rerank reachable by URL |
 | vLLM | `/v1/completions`, `/score`, `/rerank`, `/classify`, `/pooling`, `/v1/audio/*`, `wss /v1/realtime` STT, `video_url` parts | completion, score, classify gaps; video parts gap |
 
+### InferKit server (`inferkit`)
+
+`NFKInferenceServer` in another InferKit process. Every route reaches whatever backend the host
+registered, so what a mode does depends on that backend.
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| any request → any result, streamed progress and partials | `POST /inferkit/run` | covered (`NFKRemoteInferKitBackend`) |
+| text + image + audio + video + PDF → text, tools, schema, spoken reply | `/chat/completions` | covered (`NFKRemoteBackend`) |
+| text → embedding | `/embeddings` | covered |
+| audio → text / English | `/audio/transcriptions`, `/audio/translations` | covered |
+| text → speech | `/audio/speech` | covered; MP3 and Opus only when the model produced them |
+| text → image, image(s) + mask → image | `/images/generations`, `/images/edits` | covered |
+| model list | `/models` | covered |
+| Responses, realtime, files, moderation, rerank | — | not served; the native route carries these backends' requests |
+
 ## Progress
 
 - **Phase 1 done (2026-09-22).** Transcription, speech, and image backends carry per-service styles;

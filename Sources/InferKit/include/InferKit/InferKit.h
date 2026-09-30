@@ -65,6 +65,8 @@
 #import <InferKit/NFKOllamaRunner.h>
 #import <InferKit/NFKLMStudioRunner.h>
 #import <InferKit/NFKRemoteTranscriptionBackend.h>
+#import <InferKit/NFKRemoteInferKitBackend.h>
+#import <InferKit/NFKInferenceServer.h>
 #import <InferKit/NFKAsyncGenerationBackend.h>
 #import <InferKit/NFKVisionTextBackend.h>
 #import <InferKit/NFKVisionSegmentationBackend.h>

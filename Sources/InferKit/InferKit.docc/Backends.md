@@ -77,6 +77,11 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteRetrievalStore`` — hosted retrieval stores: create, fill, search, and delete.
 - ``NFKRemoteUsageReporter`` — usage, spend, and balance, read with an administrative key.
 - ``NFKRemoteTranscriptionBackend`` — an OpenAI-compatible audio-to-text client.
+- ``NFKInferenceServer`` — serves the backends this process hosts to other machines: the
+  OpenAI-compatible routes the clients above speak, and a native route that carries a whole request.
+  Clients find it by address or over Bonjour.
+- ``NFKRemoteInferKitBackend`` — the native route's client: every key of a request crosses, and the
+  hosted backend's result and error come back as they were.
 - ``NFKAsyncGenerationBackend`` — a subclassable submit → poll → fetch base for job-style generation
   services. Map the service's JSON through its template methods; the base owns the loop and the
   ``NFKInferenceJob``.
@@ -147,6 +152,11 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteModelCatalog``
 - ``NFKRemoteModel``
 - ``NFKRemoteTransport``
+
+### Serving
+
+- ``NFKInferenceServer``
+- ``NFKRemoteInferKitBackend``
 
 ### Local runners
 

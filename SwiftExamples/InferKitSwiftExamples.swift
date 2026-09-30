@@ -267,7 +267,7 @@ final class InferKitSwiftExamples: XCTestCase {
     // reachability check imports as a throwing call because it reports its failure through NSError.
     func testFindingWhicheverLocalRunnerIsRunning() {
         XCTAssertEqual(NFKRemoteProvider.localProviders.map(\.identifier),
-                       ["ollama", "lmstudio", "llamacpp", "vllm"])
+                       ["ollama", "lmstudio", "llamacpp", "vllm", "inferkit"])
 
         let running = NFKRemoteProvider.firstAvailableLocalProvider()
         let backend = NFKRemoteProvider.backendForFirstAvailableLocalProvider(withModelName: "llama3.2")
@@ -285,6 +285,27 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertThrowsError(try stopped.isReachable(withAPIKey: nil, timeout: 2)) { error in
             XCTAssertEqual((error as NSError).code, NFKInferenceError.error_RemoteUnreachable.rawValue)
         }
+    }
+
+    // MARK: Serving (Docs/examples.md: Serving a model to other machines)
+
+    // The server from Swift: start() throws, addBackend keeps its label, and the discovery's awaited
+    // form is probeInferKitServers(timeout:) so it does not take the blocking call's name.
+    func testServingAModelToOtherMachines() async throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.addBackend(NFKPassthroughBackend(), forModelName: "echo")
+        try server.start()
+        defer { server.stop() }
+
+        let provider = NFKRemoteProvider.inferKit.withBaseURL(try XCTUnwrap(server.localBaseURL))
+        let echo = NFKRemoteProvider.backend(for: provider, apiKey: nil, modelName: "echo")
+        let result = try echo.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"]))
+        XCTAssertEqual(result.output(forKey: NFKInputPrompt) as? String, "hello")
+
+        let found = await NFKRemoteProvider.probeInferKitServers(timeout: 0.2)
+        XCTAssertTrue(found.allSatisfy { $0.apiStyle == .inferKit })
     }
 
     // The completion-handler forms import as async calls. Their names carry a probe prefix: the

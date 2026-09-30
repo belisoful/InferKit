@@ -71,7 +71,7 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 {
 	NSString *identifier = provider.identifier;
 	NFKRemoteTranscriptionBackend *backend = nil;
-	if ([@[ @"openai", @"groq", @"together", @"openrouter", @"vllm" ] containsObject:identifier]) {
+	if ([@[ @"openai", @"groq", @"together", @"openrouter", @"vllm", @"inferkit" ] containsObject:identifier]) {
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"audio/transcriptions"]];
 		NSDictionary<NSString *, NSString *> *urlFields = @{ @"groq": @"url", @"together": @"file" };
 		backend.audioURLFieldName = urlFields[identifier];

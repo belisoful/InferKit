@@ -100,6 +100,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 /*! The voice sent in the request body. A request parameter named "voice" overrides it. */
 @property (nonatomic, copy, nullable) NSString *voice;
 
+/*! Whether a request without a voice or a reference clip is refused before it is sent. Defaults to
+	YES, since every hosted speech service here requires one. backendForProvider: sets NO for an
+	InferKit server, whose hosted backend chooses its own voice. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) BOOL requiresVoice;
+
 /*! The container asked for and the file extension written: wav (default), mp3, opus, aac, flac, or pcm. */
 @property (nonatomic, copy) NSString *responseFormat;
 
@@ -127,8 +132,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 	@method     backendForProvider:apiKey:modelName:voice:
 	@abstract   A backend pointed at the provider's speech endpoint in its style, or nil for a
 				provider that serves none.
-	@discussion openai, groq, together, and openrouter take the OpenAI style; mistral its own; xai its
-				/v1/tts. anthropic, gemini (its OpenAI layer has no audio path), deepseek, typesafe,
+	@discussion openai, groq, together, openrouter, and inferkit take the OpenAI style; mistral its
+				own; xai its /v1/tts. anthropic, gemini (its OpenAI layer has no audio path), deepseek, typesafe,
 				and the local runners return nil.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider

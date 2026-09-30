@@ -70,7 +70,7 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	NSString *identifier = provider.identifier;
 	NSURL *generations = [provider URLForPath:@"images/generations"];
 	NFKRemoteImageBackend *backend = nil;
-	if ([identifier isEqualToString:@"openai"]) {
+	if ([identifier isEqualToString:@"openai"] || [identifier isEqualToString:@"inferkit"]) {
 		backend = [self backendWithGenerationsURL:generations editsURL:[provider URLForPath:@"images/edits"]];
 	} else if ([identifier isEqualToString:@"gemini"]) {
 		backend = [self backendWithGenerationsURL:generations editsURL:nil];

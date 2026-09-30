@@ -15,7 +15,9 @@ in-process Core ML, an on-device Core ML language-model runner, the Apple-framew
 Vision, VideoToolbox, Speech, SoundAnalysis, AVFoundation's voices, and NaturalLanguage,
 OpenAI-compatible chat and transcription clients, a
 submit-poll-fetch base, and runtime discovery — plus the companion-package MLX and Foundation Models
-backends), a texture-tensor conversion, tokenizers, and a Hugging Face model-download layer. It has no host-framework dependency, so any Metal/Apple app (macOS, iOS, tvOS)
+backends), a server that hosts any backend for other machines (`NFKInferenceServer`, OpenAI-compatible
+routes plus a native route, found by address or Bonjour), a texture-tensor conversion, tokenizers, and
+a Hugging Face model-download layer. It has no host-framework dependency, so any Metal/Apple app (macOS, iOS, tvOS)
 can use it. The class prefix is `NFK`.
 
 The package is source-distributed through both Swift Package Manager and CocoaPods. Three optional
@@ -115,7 +117,8 @@ The full tree with per-directory notes is `Docs/agent-reference/project-structur
 The core's notes are split by subject under `Docs/agent-reference/`: `core-runtime-notes.md`
 (value-type accessors, tokenizers, grammar-constrained sampling, dynamic backend discovery, the
 hub cache's size limit and backup exclusion),
-`remote-providers.md` (every preset, the transport, catalogs, runners, streaming, tools, media),
+`remote-providers.md` (every preset, the transport, catalogs, runners, streaming, tools, media, and
+the server that answers them),
 `coreml-compute-plan.md` (where Core ML places a model, measured), and
 `hardware-and-model-sizing.md` (`NFKHardwareProfile` and model sizing). Two rules from them apply
 everywhere: image, mask, and video keys stay on `outputForKey:` / `inputForKey:` (no typed accessors,

@@ -37,6 +37,8 @@ let package = Package(
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("Metal"),
                 .linkedFramework("IOSurface"),
+                .linkedFramework("Network"),
+                .linkedFramework("Security"),
             ]
         ),
         .testTarget(

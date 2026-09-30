@@ -95,9 +95,10 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 {
 	NSString *identifier = provider.identifier;
 	NFKRemoteSpeechBackend *backend = nil;
-	if ([@[ @"openai", @"groq", @"together", @"openrouter" ] containsObject:identifier]) {
+	if ([@[ @"openai", @"groq", @"together", @"openrouter", @"inferkit" ] containsObject:identifier]) {
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"audio/speech"]];
 		backend.maximumInputLength = [identifier isEqualToString:@"groq"] ? 200 : 0;
+		backend.requiresVoice = ![identifier isEqualToString:@"inferkit"];
 	} else if ([identifier isEqualToString:@"mistral"]) {
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"audio/speech"]];
 		backend.apiStyle = NFKRemoteSpeechAPIStyleMistral;
@@ -117,6 +118,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	if (self != nil) {
 		_responseFormat = @"wav";
 		_timeout = 120.0;
+		_requiresVoice = YES;
 	}
 	return self;
 }
@@ -239,7 +241,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	}
 	BOOL hasVoice = [self voiceForRequest:request].length > 0;
 	BOOL hasReference = [self referenceClipForRequest:request] != nil;
-	if (!hasVoice && !hasReference && self.apiStyle != NFKRemoteSpeechAPIStyleXAI) {
+	if (!hasVoice && !hasReference && self.requiresVoice && self.apiStyle != NFKRemoteSpeechAPIStyleXAI) {
 		return [self failWithCode:kNFKError_InferenceNotReady
 						   reason:@"no voice is set; every speech service here requires one or a reference clip" error:outError] != nil;
 	}

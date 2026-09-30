@@ -115,8 +115,11 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 				which is also where an OpenAI-compatible content-policy rejection arrives. Every other
 				status, a rejected key, an unknown model, a missing path, a server fault, is
 				kNFKError_InferenceBackendFailure. The description carries the status and the body,
-				and both ride under NFKRemoteErrorStatusCodeKey and NFKRemoteErrorBodyKey. Since a
-				blocking send retries 429 and 529 first, the error a caller sees is the last answer.
+				and both ride under NFKRemoteErrorStatusCodeKey and NFKRemoteErrorBodyKey. An
+				NFKInferenceServer names the served run's own code in its error body
+				(error.inferkit_domain and error.inferkit_code), and that code is taken over the
+				status's. Since a blocking send retries 429 and 529 first, the error a caller sees is
+				the last answer.
 */
 + (nullable NSError *)errorForResponse:(nullable NSHTTPURLResponse *)response
 								  data:(nullable NSData *)data;

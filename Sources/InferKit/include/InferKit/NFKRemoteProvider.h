@@ -22,7 +22,8 @@ extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
 				Anthropic's Messages API differs in its authentication header, its required max-tokens
 				field, its separate system prompt, and its response envelope, so it has its own backend.
 				TypeSafe's System One API answers typed decisions rather than text, so it has its own
-				backend too.
+				backend too. An InferKit server speaks the OpenAI shape and a native route that carries
+				a whole request, so its backend is the native one.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /chat/completions with a Bearer token; the reply carries choices[0].message.content. */
@@ -32,6 +33,10 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /systemone with a Bearer token; the reply carries typed answers rather than text.
 		Introduced in InferKit 0.4.0. */
 	NFKRemoteAPIStyleSystemOne = 2,
+	/*! An NFKInferenceServer: the OpenAI-compatible routes plus POST /inferkit/run, which carries a
+		whole NFKInferenceRequest and is what NFKRemoteInferKitBackend posts to. Introduced in
+		InferKit 0.4.0. */
+	NFKRemoteAPIStyleInferKit = 3,
 };
 
 /*!
@@ -60,8 +65,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! The API base every operation's URL is built on, for example https://api.openai.com/v1. Introduced in InferKit 0.3.0. */
 @property (nonatomic, copy, readonly) NSURL *baseURL;
 
-/*! The endpoint the backend posts to: the base plus /chat/completions, /messages for Anthropic, or
-	/systemone for TypeSafe. */
+/*! The endpoint the backend posts to: the base plus /chat/completions, /messages for Anthropic,
+	/systemone for TypeSafe, or /inferkit/run for an InferKit server. */
 @property (nonatomic, copy, readonly) NSURL *endpointURL;
 
 /*! Where the provider lists the models it serves: the base plus /models. */
@@ -106,7 +111,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier;
 
 /*! Every local-server preset, in the order the discovery calls probe them: ollama, lmstudio,
-	llamacpp, vllm. Introduced in InferKit 0.3.1. */
+	llamacpp, vllm, inferkit. Introduced in InferKit 0.3.1. */
 @property (class, nonatomic, copy, readonly) NSArray<NFKRemoteProvider *> *localProviders;
 
 /*!
@@ -193,8 +198,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   Builds the backend a provider needs, already pointed at its endpoint.
 	@discussion Returns an NFKRemoteBackend for an OpenAI-compatible provider, an
-				NFKAnthropicBackend for Anthropic, and an NFKTypeSafeBackend for TypeSafe. The model
-				name is required: see the class discussion.
+				NFKAnthropicBackend for Anthropic, an NFKTypeSafeBackend for TypeSafe, and an
+				NFKRemoteInferKitBackend for an InferKit server. The model name is required except
+				on llama.cpp and on an InferKit server that hosts one model: see the class discussion.
 */
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey
@@ -235,6 +241,32 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 @property (class, nonatomic, readonly) NFKRemoteProvider *lmStudio;
 @property (class, nonatomic, readonly) NFKRemoteProvider *llamaCpp;
 @property (class, nonatomic, readonly) NFKRemoteProvider *vLLM;
+/*! An NFKInferenceServer on this machine at NFKInferenceServerDefaultPort. A server elsewhere is this
+	preset re-pointed with providerWithBaseURL:, or one discoverInferKitServersWithTimeout: found.
+	Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *inferKit;
+
+/*!
+	@method     discoverInferKitServersWithTimeout:
+	@abstract   The InferKit servers advertising on the local network, found over Bonjour.
+	@discussion Browses NFKInferenceServerServiceType for the timeout and resolves each advertisement
+				to a provider: the inferkit preset at the advertising machine's host name and port,
+				with https when the server serves TLS. displayName is the advertised name, and
+				requiresAPIKey is what the server advertised. The answer is sorted by name; a
+				server on this machine is included when it advertises. Blocks for the timeout; run it
+				off the render thread, or use the completion-handler form. On iOS, the app lists
+				NFKInferenceServerServiceType under NSBonjourServices and carries
+				NSLocalNetworkUsageDescription. Introduced in InferKit 0.4.0.
+*/
++ (NSArray<NFKRemoteProvider *> *)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
+	NS_SWIFT_NAME(discoverInferKitServers(timeout:));
+
+/*! The asynchronous form of discoverInferKitServersWithTimeout:, named probeInferKitServers(timeout:)
+	in Swift so the awaited form does not take the blocking call's name. The handler runs on a
+	background queue at user-initiated quality of service. Introduced in InferKit 0.4.0. */
++ (void)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
+						 completionHandler:(void (^)(NSArray<NFKRemoteProvider *> *providers))completionHandler
+	NS_SWIFT_ASYNC_NAME(probeInferKitServers(timeout:));
 
 @end
 
