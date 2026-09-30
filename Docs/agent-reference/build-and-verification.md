@@ -73,6 +73,33 @@ on an older image reports what it skipped instead of failing on toolchain availa
 step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints from
 `~/.inferkit-validation`, which a runner does not have — there they would skip, proving nothing.
 
+The workflow also carries `workflow_dispatch`, so a branch runs the same jobs before it reaches
+`main`.
+
+The hosted runner is a virtual machine (`macos-latest`, Xcode 26.6, macOS 26.5 SDK, measured
+2026-09-27), and `NFKHardwareProfile.isVirtualMachine` reads that from `kern.hv_vmm_present`. A test
+that needs a system model or a frame processor keys its skip on that reading: a failure in a guest
+is the machine's answer and is reported as a skip with the framework's error in the message, and the
+same failure on real hardware stays a failure. What the guest cannot give, measured on run 64:
+
+- Vision's `DetectLensSmudgeRequest` fails with the framework's own `internalError`.
+- `SpeechTranscriber.supportedLocales` is empty; the image carries no speech assets.
+- Every VideoToolbox processor reports `isSupported` and then fails: interpolation with
+  `kVTFrameProcessorProcessingError` (-19740) and optical flow with
+  `kVTFrameProcessorInitializationFailedError` (-19736). The guest logs
+  `IOServiceMatchingfailed for: AppleM2ScalerParavirtDriver` beside it.
+- `SNClassifySoundRequest` reports no window for a clip `NFKSpeechSynthesisBackend` wrote; the skip
+  message carries the clip's frame count so the log says which engine went quiet.
+
+A test that reads a nil result must return after the assertion. `CVPixelBufferGetBaseAddress(NULL)`
+is NULL and the read after it is a segmentation fault that ends the whole run, which is how run 64
+lost every suite after `NFKVideoToolboxBackendTests`.
+
+The runner's SDK annotates `VNDetectBarcodesRequest.supportedSymbologies`,
+`VNRecognizeAnimalsRequest.supportedIdentifiers`, and `SNClassifySoundRequest`'s built-in
+classifier as macOS 12, so every use sits under `@available`; the zero-warning gate rejects an
+unguarded call.
+
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green.
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.

@@ -19,9 +19,12 @@
 
 + (NSArray<NSString *> *)supportedIdentifiers
 {
-	VNRecognizeAnimalsRequest *request = [[VNRecognizeAnimalsRequest alloc] init];
-	NSError *error = nil;
-	return [request supportedIdentifiersAndReturnError:&error] ?: @[];
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		VNRecognizeAnimalsRequest *request = [[VNRecognizeAnimalsRequest alloc] init];
+		NSError *error = nil;
+		return [request supportedIdentifiersAndReturnError:&error] ?: @[];
+	}
+	return @[];
 }
 
 - (BOOL)isReady

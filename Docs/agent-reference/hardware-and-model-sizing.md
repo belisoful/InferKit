@@ -13,6 +13,13 @@ purgeable pages on macOS; `os_proc_available_memory` on iOS and tvOS, where the 
 allowance is the ceiling that actually applies. Every reading degrades to zero or an empty string
 rather than throwing, so an unrecognized machine still reports.
 
+`isVirtualMachine` reads `kern.hv_vmm_present`, which a guest of Apple's Virtualization framework
+sets. A guest has a Metal device, so the memory readings hold, but paravirtualized hardware fails
+inside the frameworks that need the real thing: the VideoToolbox processors report support and then
+fail, and some Vision and speech models answer with an internal error or nothing. The tests that need
+those key their skips on it; the hosted CI runner is a guest
+(`Docs/agent-reference/build-and-verification.md`).
+
 `NFKMLXModelSizing` (companion) turns that into a decision. `parameterCount(of:)` counts a dense
 decoder from its geometry alone — counted rather than built, because the point is to answer before
 allocating anything and a 27B model cannot be instantiated to be measured — and

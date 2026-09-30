@@ -24,13 +24,14 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   core:
     name: Core (build, test, iOS, tvOS, analyzer, podspec)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Toolchain
         run: |
@@ -71,7 +72,7 @@ jobs:
     name: InferKitMLX (compile) and documented Objective-C snippets
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # From Xcode 27 the Metal compiler is an on-demand component, and SwiftPM compiles mlx-swift's
       # kernels during `swift build`, so a missing component fails the build at the first shader.
@@ -115,7 +116,7 @@ jobs:
     name: InferKitAppleSwift (build + test, when the SDK allows)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # SpeechAnalyzer, the document reader, and Translation are macOS 26 APIs, so the package needs
       # that SDK. A runner on an older image reports what it skipped rather than failing.
       - name: Build and test, or state why not
@@ -132,7 +133,7 @@ jobs:
     name: InferKitFoundationModels (build + test, when the SDK allows)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The package's floor is the macOS 26 SDK; a runner still on an older image cannot compile it
       # at all, so the job reports what it skipped rather than failing on toolchain availability.
       - name: Build and test, or state why not

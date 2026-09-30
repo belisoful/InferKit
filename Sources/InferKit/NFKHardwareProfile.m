@@ -26,6 +26,7 @@
 	NSInteger _recommendedWorkingSetSize;
 	NSInteger _maximumBufferLength;
 	BOOL _hasUnifiedMemory;
+	BOOL _isVirtualMachine;
 }
 
 #pragma mark Reading the machine
@@ -82,6 +83,7 @@ static NSInteger NFKSysctlInteger(const char *name)
 		_chipName = [NFKSysctlString("machdep.cpu.brand_string") copy];
 		_modelIdentifier = [NFKSysctlString("hw.model") copy];
 		_physicalMemory = NFKSysctlInteger("hw.memsize");
+		_isVirtualMachine = NFKSysctlInteger("kern.hv_vmm_present") != 0;
 
 		// Apple Silicon reports two performance levels, level 0 being the performance cores. An Intel
 		// Mac reports one, and both counts stay zero rather than guessing a split that is not there.
@@ -173,6 +175,7 @@ static NSInteger NFKSysctlInteger(const char *name)
 - (NSInteger)performanceCoreCount { return _performanceCoreCount; }
 - (NSInteger)efficiencyCoreCount { return _efficiencyCoreCount; }
 - (BOOL)hasUnifiedMemory { return _hasUnifiedMemory; }
+- (BOOL)isVirtualMachine { return _isVirtualMachine; }
 - (NSInteger)physicalMemory { return _physicalMemory; }
 - (NSInteger)recommendedWorkingSetSize { return _recommendedWorkingSetSize; }
 - (NSInteger)maximumBufferLength { return _maximumBufferLength; }
@@ -222,10 +225,11 @@ static NSInteger NFKSysctlInteger(const char *name)
 	NSString *cores = (_performanceCoreCount > 0)
 		? [NSString stringWithFormat:@"%ldP+%ldE", (long)_performanceCoreCount, (long)_efficiencyCoreCount]
 		: @"cores unreported";
-	return [NSString stringWithFormat:@"%@ (%@), %@, %.1f GB physical, %.1f GB recommended working set",
+	return [NSString stringWithFormat:@"%@ (%@), %@, %.1f GB physical, %.1f GB recommended working set%@",
 			_chipName.length > 0 ? _chipName : @"unknown chip",
 			_modelIdentifier.length > 0 ? _modelIdentifier : @"unknown model",
-			cores, gigabytes, budget];
+			cores, gigabytes, budget,
+			_isVirtualMachine ? @", virtual machine" : @""];
 }
 
 - (NSString *)description

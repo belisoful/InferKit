@@ -61,7 +61,10 @@ maps each point through the box before flipping it.
 - Floors, checked in the headers: text recognition, saliency, and feature print are macOS 10.15;
   face landmarks 10.13; body and hand pose 11.0. All clear the core's floor. The two that do not are
   person segmentation (macOS 12, iOS 15, tvOS 15) and the subject mask (macOS 14, iOS 17, tvOS 17);
-  `isReady` is NO below them and a run reports `kNFKError_InferenceUnsupported`.
+  `isReady` is NO below them and a run reports `kNFKError_InferenceUnsupported`. Two listing
+  methods are macOS 12, iOS 15, tvOS 15 as well: `+[NFKVisionRectangleBackend supportedSymbologies]`
+  and `+[NFKVisionAnimalBackend supportedIdentifiers]` answer an empty array below that floor. The
+  detectors themselves clear the core's floor.
 - A subject mask comes from the observation and the handler that produced it
   (`generateScaledMaskForImageForInstances:fromRequestHandler:error:`), so the run keeps the handler
   alive. Person and saliency masks carry their buffer on the observation.
@@ -120,6 +123,10 @@ headers:
   with `flowScale` 32 by default, blue is zero. A consumer decodes with
   `(value - 0.5) * 2 * flowScale` and reads either engine the same way. Changing the default is a
   silent numeric change for every consumer, not a compile error.
+- `isSupported` is not a promise the session keeps. In a virtual machine (the hosted CI runner)
+  interpolation and optical flow both report support and then fail, with -19740 and -19736. The
+  backend reports the framework's error as `kNFKError_InferenceBackendFailure`, and a test keys its
+  skip on `NFKHardwareProfile.isVirtualMachine`.
 - Availability is per processor and per platform: upscaling and flow are unavailable on tvOS
   entirely, interpolation exists there at tvOS 26. `VTFrameProcessor` itself is macOS 15.4 / iOS 26 /
   tvOS 26. The implementation compiles the unavailable paths out with `TARGET_OS_TV` and checks the
@@ -202,6 +209,9 @@ answers otherwise.
   analysis window becomes an `NFKAudioSegment` under `NFKOutputSegments`, and the clip's own best
   guesses arrive under `NFKOutputClassifications`. `minimumConfidence` is 0.3 by default, which a
   short clip of a single sound does not always clear; the examples set it lower and say why.
+  The built-in classifier (`initWithClassifierIdentifier:error:`, `SNClassifierIdentifierVersion1`,
+  `knownClassifications`, `windowDuration`) is macOS 12, iOS 15, tvOS 15, above the core's floor:
+  `isReady` is NO below it, `knownSounds` is empty, and a run reports `kNFKError_InferenceUnsupported`.
 - `NFKTextEmbeddingBackend` reads `NLEmbedding.sentenceEmbeddingForLanguage:`, and only that. The
   language is the one set on the backend, or English when none is set, and the text's own language is
   detected where the caller asks for it. `+availableLanguages` probes a candidate list rather than

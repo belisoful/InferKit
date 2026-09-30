@@ -312,6 +312,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The accelerators speed up matmul-bound work. Decode stays bandwidth-bound, so `NFKMLXModelFit`'s
   sizing keeps its meaning on the new hardware.
 
+#### The machine reports whether it is virtual
+
+- `NFKHardwareProfile` gains `isVirtualMachine`, read from `kern.hv_vmm_present`. A guest of Apple's
+  Virtualization framework has a Metal device and paravirtualized hardware behind it, where the
+  VideoToolbox processors report support and then fail and some system models answer with an
+  internal error. A caller that offers one of them checks the reading first. `describedMachine`
+  names a guest.
+
 #### Two error codes an app can act on
 
 - `kNFKError_InferenceRefused` and `kNFKError_InferenceRateLimited` join `NFKInferenceError`. A

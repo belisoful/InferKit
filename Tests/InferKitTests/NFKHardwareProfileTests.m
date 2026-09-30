@@ -9,6 +9,7 @@
 
 #import <XCTest/XCTest.h>
 #import <InferKit/NFKHardwareProfile.h>
+#import <sys/sysctl.h>
 
 @interface NFKHardwareProfileTests : XCTestCase
 @end
@@ -119,6 +120,17 @@
 				   @"a phone GPU needs 18");
 	XCTAssertTrue([NFKHardwareProfile architectureHasNeuralAccelerators:@"applegpu_g18p"]);
 	XCTAssertFalse([NFKHardwareProfile architectureHasNeuralAccelerators:@""]);
+}
+
+- (void)testAVirtualMachineIsReadFromTheKernel
+{
+	int present = 0;
+	size_t length = sizeof(present);
+	BOOL expected = sysctlbyname("kern.hv_vmm_present", &present, &length, NULL, 0) == 0 && present != 0;
+	XCTAssertEqual(NFKHardwareProfile.currentProfile.isVirtualMachine, expected);
+	if (expected) {
+		XCTAssertTrue([NFKHardwareProfile.currentProfile.describedMachine containsString:@"virtual machine"]);
+	}
 }
 
 - (void)testTheMachineAgreesWithItsOwnArchitecture

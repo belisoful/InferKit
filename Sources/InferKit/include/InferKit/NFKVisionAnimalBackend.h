@@ -25,7 +25,8 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @interface NFKVisionAnimalBackend : NSObject <NFKInferenceBackend>
 
-/*! The animals the installed Vision revision recognizes, or an empty array when it cannot say. */
+/*! The animals the installed Vision revision recognizes, or an empty array when it cannot say.
+	Vision reports the list from macOS 12, iOS 15, and tvOS 15; below that it is empty. */
 @property (class, nonatomic, readonly, copy) NSArray<NSString *> *supportedIdentifiers;
 
 + (instancetype)backend;

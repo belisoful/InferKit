@@ -306,13 +306,17 @@ struct NFKYOLOTaskAlignedAssigner {
             // The class target, scaled by each anchor's alignment relative to its box's best.
             let bestAlign = (0 ..< boxCount).map { n in (0 ..< anchorCount).map { align[n][$0] * positive[n][$0] }.max() ?? 0 }
             let bestOverlap = (0 ..< boxCount).map { n in (0 ..< anchorCount).map { overlaps[n][$0] * positive[n][$0] }.max() ?? 0 }
+            let epsilon: Float = 1e-9
             for a in 0 ..< anchorCount {
                 let column = (0 ..< boxCount).map { positive[$0][a] }
                 guard column.reduce(0, +) > 0 else {
                     continue
                 }
                 let owner = Self.firstArgmax(column)
-                let scale = (0 ..< boxCount).map { n in align[n][a] * positive[n][a] * bestOverlap[n] / (bestAlign[n] + 1e-9) }.max() ?? 0
+                let scale = (0 ..< boxCount).map { (n: Int) -> Float in
+                    let alignment: Float = align[n][a] * positive[n][a]
+                    return alignment * bestOverlap[n] / (bestAlign[n] + epsilon)
+                }.max() ?? 0
                 let flat = image * anchorCount + a
                 result.scores[flat * classes + gts[owner].classIndex] = scale
                 result.foreground.append(flat)

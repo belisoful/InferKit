@@ -67,15 +67,21 @@
 
 + (NSArray<NSString *> *)knownSounds
 {
-	NSError *error = nil;
-	SNClassifySoundRequest *request =
-		[[SNClassifySoundRequest alloc] initWithClassifierIdentifier:SNClassifierIdentifierVersion1 error:&error];
-	return request.knownClassifications ?: @[];
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		NSError *error = nil;
+		SNClassifySoundRequest *request =
+			[[SNClassifySoundRequest alloc] initWithClassifierIdentifier:SNClassifierIdentifierVersion1 error:&error];
+		return request.knownClassifications ?: @[];
+	}
+	return @[];
 }
 
 - (BOOL)isReady
 {
-	return YES;
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		return YES;
+	}
+	return NO;
 }
 
 - (NSString *)backendIdentifier
@@ -107,16 +113,18 @@
 		return nil;
 	}
 
-	SNClassifySoundRequest *classify =
-		[[SNClassifySoundRequest alloc] initWithClassifierIdentifier:SNClassifierIdentifierVersion1
-															   error:&analyzerError];
+	SNClassifySoundRequest *classify = nil;
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		classify = [[SNClassifySoundRequest alloc] initWithClassifierIdentifier:SNClassifierIdentifierVersion1
+																		   error:&analyzerError];
+		if (classify != nil && self.windowSeconds > 0.0) {
+			classify.windowDuration = CMTimeMakeWithSeconds(self.windowSeconds, 600);
+		}
+	}
 	if (classify == nil) {
 		NSString *reason = analyzerError.localizedDescription ?: @"the sound classifier is unavailable";
 		[self failWithError:outError code:kNFKError_InferenceUnsupported reason:reason];
 		return nil;
-	}
-	if (self.windowSeconds > 0.0) {
-		classify.windowDuration = CMTimeMakeWithSeconds(self.windowSeconds, 600);
 	}
 
 	NFKSoundObserver *observer = [[NFKSoundObserver alloc] init];

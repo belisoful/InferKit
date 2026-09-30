@@ -58,7 +58,8 @@ typedef NS_ENUM(NSInteger, NFKVisionRectangleKind) {
 	every symbology the revision supports. */
 @property (nonatomic, copy, nullable) NSArray<NSString *> *symbologies;
 
-/*! The symbologies the installed Vision revision reads. */
+/*! The symbologies the installed Vision revision reads. Vision reports the list from macOS 12,
+	iOS 15, and tvOS 15; below that it is empty. */
 @property (class, nonatomic, readonly, copy) NSArray<NSString *> *supportedSymbologies;
 
 + (instancetype)backend;

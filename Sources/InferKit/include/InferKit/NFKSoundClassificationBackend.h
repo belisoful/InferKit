@@ -28,6 +28,9 @@ NS_ASSUME_NONNULL_BEGIN
 				sounds above `minimumConfidence` are reported, 0.3 by default, because the classifier
 				scores every class in its taxonomy on every window.
 
+				Apple's classifier needs macOS 12, iOS 15, or tvOS 15. Below that `isReady` is NO,
+				`knownSounds` is empty, and a request is refused with kNFKError_InferenceUnsupported.
+
 				A chosen sound model, rather than Apple's list, is `NFKCoreMLBackend` with a Create ML
 				sound classifier. Introduced in InferKit 0.4.0.
 */
@@ -39,7 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The window the classifier reads, in seconds. 0 uses the classifier's own default. */
 @property (nonatomic) double windowSeconds;
 
-/*! The sounds the installed classifier knows. */
+/*! The sounds the installed classifier knows. Empty below macOS 12, iOS 15, and tvOS 15. */
 @property (class, nonatomic, readonly, copy) NSArray<NSString *> *knownSounds;
 
 + (instancetype)backend;

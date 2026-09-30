@@ -94,6 +94,18 @@ NS_ASSUME_NONNULL_BEGIN
 /*! Whether the CPU and GPU share one pool, which is what makes the whole question one number. */
 @property (nonatomic, readonly) BOOL hasUnifiedMemory;
 
+/*!
+	@property   isVirtualMachine
+	@abstract   YES when the process runs inside a virtual machine.
+	@discussion Read from the kernel's `kern.hv_vmm_present`, which a guest of Apple's Virtualization
+				framework sets. A guest sees paravirtualized hardware: Metal answers, but the
+				VideoToolbox frame processors and some system models report support and then fail
+				inside their framework, and speech and vision assets may be absent. A caller that
+				offers one of them checks this before promising it. Hosted continuous-integration
+				runners are guests. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) BOOL isVirtualMachine;
+
 #pragma mark What it has
 
 /*! Physical memory in bytes. */
