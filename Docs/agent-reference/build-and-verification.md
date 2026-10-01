@@ -178,9 +178,9 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2045 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  125 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   50 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 2050 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  127 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   51 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
