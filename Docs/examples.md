@@ -1487,6 +1487,30 @@ The directory is the release's own tree: `unet/`, `vae/`, `text_encoder/`, `toke
 module's own precision, which is what the parity records were measured at; `.checkpoint` runs it as
 published.
 
+### IP-Adapter image prompts (`NFKMLXTextToImage.imageAdapterBackend`)
+
+An IP-Adapter steers Stable Diffusion with a reference image beside the prompt. The adapter adds an
+image projection and a second key/value pair to every cross-attention of the UNet; the base weights stay
+as released. The reference arrives as its CLIP image embedding under `NFKMLXInputImageEmbedding`,
+computed with the adapter's own image encoder (CLIP-ViT-H/14 for the h94 SD 1.5 adapter). A request
+without it runs as ordinary text-to-image.
+
+```swift
+let backend = try NFKMLXTextToImage.imageAdapterBackend(configuration: .stableDiffusion15,
+                                                        directoryURL: releaseDirectory,
+                                                        adapterURL: adapterURL,   // ip-adapter_sd15.safetensors
+                                                        scale: 0.7)
+let request = NFKInferenceRequest(
+    inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn",
+             NFKMLXInputImageEmbedding: referenceEmbedding],          // [NSNumber], 1024 values
+    parameters: [NFKParameterSteps: 30, NFKParameterSeed: 42])
+let image = try backend.runInference(for: request).output(forKey: NFKOutputImage)
+```
+
+`scale` weights the image attention against the text attention, and 0 leaves the text-to-image result
+unchanged. From Objective-C, `imageAdapterBackendWithModel:directoryURL:adapterURL:scale:error:` takes the
+release by name.
+
 ### FLUX.2 [klein] text-to-image, editing and inpainting
 
 A diffusers FLUX.2 [klein] release directory in, an image out. The facade renders the release's own
@@ -1666,6 +1690,33 @@ CGImageRef fox = [sd3 imageForPrompt:@"a red fox walking through fresh snow" neg
 `steps` and `guidance` default to the reference pipeline's 28 and 7. Above a guidance of 1 the image
 guides against the negative prompt, or against an empty one. The sides are multiples of 16.
 
+### SD3 ControlNet (`NFKMLXSD3ControlNetPipeline`)
+
+A ControlNet steers the SD3 transformer with a spatial control image: edges, depth, pose, or blur. It runs
+a partial copy of the transformer over the control image's latent and adds its residuals to the base
+blocks. Two released arrangements build from the same type: `.instantXMedium`, the InstantX SD3 Medium
+ControlNets (Canny, Pose, Tile), and `.stabilitySD35Large`, Stability's SD3.5 Large ControlNets (Blur,
+Canny, Depth). The configuration reader picks the arrangement from the release's `config.json`.
+
+```swift
+let controlnet = NFKMLXSD3ControlNetNet(try NFKMLXSD3ControlNetNet.configuration(
+    fromHuggingFace: controlnetDirectory.appending(path: "config.json")))
+try NFKMLXSD3ControlNetNet.loadWeights(into: controlnet, from: controlnetDirectory)
+
+let pipeline = NFKMLXSD3ControlNetPipeline(transformer: transformer, controlnet: controlnet, vae: vae)
+let image = pipeline.generate(promptEmbeds: promptEmbeds, pooled: pooled,
+                              negativeEmbeds: negativeEmbeds, negativePooled: negativePooled,
+                              controlImage: cannyEdges,               // [1, 1024, 1024, 3] in −1…1
+                              controlnetScale: 0.7, latentHeight: 128, latentWidth: 128)
+```
+
+`transformer` and `vae` are the base release's stages: `NFKMLXSD3TransformerNet.loadWeights(into:from:)`
+reads its `transformer/` directory, and `NFKMLXStableDiffusionModels.loadVAEWeights(into:from:)` its
+autoencoder. `promptEmbeds` `[tokens, 4096]` and `pooled` `[2048]` are the output of SD3's text stage
+(CLIP-L, OpenCLIP bigG, and T5-XXL). The image comes back `[1, H, W, 3]` in −1…1, eight pixels per latent
+cell. `controlnetScale` weights the residuals, and the negatives guide at `guidance` (7 by default, over
+28 steps).
+
 ### FLUX.1 [schnell] (`NFKMLXFlux`)
 
 FLUX.1 [schnell] turns a prompt into an image in four steps. `NFKMLXFlux` assembles the whole model
@@ -1697,6 +1748,32 @@ let image = try staged.image(forPrompt: "a red fox in the snow")
 NFKMLXFlux *staged = [NFKMLXFlux fluxWithDirectoryURL:releaseDirectory
                                             residency:NFKMLXResidencyStaged error:&error];
 ```
+
+### FLUX.1 ControlNet (`NFKMLXFluxControlNetPipeline`)
+
+A FLUX.1 [dev] ControlNet steers the transformer with a spatial control image the same way.
+`.unionPro` is the InstantX / Shakker-Labs ControlNet-Union-Pro, one network for ten control types, which
+a run selects with `controlnetMode`. `.single` is a ControlNet for one control type (Canny, depth).
+
+```swift
+let controlnet = NFKMLXFluxControlNetNet(try NFKMLXFluxControlNetNet.configuration(
+    fromHuggingFace: controlnetDirectory.appending(path: "config.json")))
+try NFKMLXFluxControlNetNet.loadWeights(into: controlnet, from: controlnetDirectory)
+
+let (promptEmbeds, pooled) = try NFKMLXFluxTextEncoder.textEncoder(directoryURL: fluxDevRelease, t5Context: 512)
+    .encode(prompt: "a red fox in the snow")
+let pipeline = NFKMLXFluxControlNetPipeline(transformer: transformer, controlnet: controlnet, vae: vae)
+let image = pipeline.generate(promptEmbeds: promptEmbeds, pooled: pooled,
+                              controlImage: cannyEdges,               // [1, 1024, 1024, 3] in −1…1
+                              controlnetScale: 0.7, controlnetMode: 0, latentHeight: 128, latentWidth: 128)
+```
+
+`transformer` and `vae` are the [dev] release's stages: `NFKMLXFluxTransformerNet.loadWeights(into:from:)`
+reads its `transformer/` directory, and `NFKMLXStableDiffusionModels.loadVAEWeights(into:from:)` reads
+`vae/diffusion_pytorch_model.safetensors` into `NFKMLXSDAutoencoder(configuration: .flux)`. The latent
+sides are even, and the image comes back `[1, H, W, 3]` in −1…1, eight pixels per latent cell.
+`controlnetMode` is nil for a single-type ControlNet. `guidance` (3.5 by default) is the distilled
+guidance [dev] embeds, so a run takes no negative prompt.
 
 ## Image → image
 
@@ -2011,6 +2088,23 @@ try NFKMLXSAM3.loadWeights(into: sam3, from: checkpointURL)
 let found = sam3.detect(image: plate, tokens: ids, valid: valid)
 let keep = (0 ..< found.logits.dim(1)).filter { found.logits[0, $0].item(Float.self) > 0 }
 ```
+
+### RF-DETR detection (`NFKMLXRFDetr`, a shipped MLX model)
+
+`NFKMLXRFDetr` is Roboflow's RF-DETR detector: a windowed DINOv2 backbone under a Group-DETR decoder.
+The image goes under `NFKInputImage`, and the boxes come back as `NFKDetection`s under
+`NFKOutputDetections`, normalized 0…1 with a top-left origin. The decoder predicts one box per query, so
+no non-max suppression runs.
+
+```swift
+let detector = try NFKMLXRFDetr.backend(variant: .nano, weightsURL: checkpointURL, labels: cocoLabels)
+let result = try detector.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: photo]))
+let boxes = result.detections ?? []                      // [NFKDetection]: label, confidence, boundingBox
+```
+
+Every released size is a variant, `.nano` through `.large`, and `.base` is the default. A checkpoint fits
+only its own size. `backend(variant:repo:weightsPath:revision:cacheDirectoryURL:labels:)` downloads the
+checkpoint first.
 
 ### RF-DETR instance segmentation (`NFKMLXRFDetrSegmentation`, a shipped MLX model)
 
@@ -2645,6 +2739,58 @@ A frame count rounds down to one more than a multiple of the autoencoder's tempo
 LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both negative prompts
 default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its
 own, beyond a 32 GB machine in any placement.
+
+### LTX-2 audio and video (`NFKMLXLTX2TransformerNet`)
+
+LTX-2 generates a clip and its soundtrack together. One transformer denoises a video latent and an audio
+latent in the same pass: every block runs self-attention and text cross-attention in each modality, and
+attention from each modality to the other. `NFKMLXLTX2TransformerNet` is that transformer, at reference
+parity against diffusers' `LTX2VideoTransformer3DModel` at a tiny random configuration and held to the
+LTX-2.3 release by shape. The release's two autoencoders, text front end, and vocoder are not ported, so
+the caller supplies the latents and the text states.
+
+```swift
+let transformerDirectory = release.appending(path: "transformer")             // Lightricks/LTX-2.3
+let ltx2 = NFKMLXLTX2TransformerNet(try NFKMLXLTX2TransformerNet.configuration(
+    fromHuggingFace: transformerDirectory.appending(path: "config.json")))
+try NFKMLXLTX2TransformerNet.loadWeights(into: ltx2, from: transformerDirectory, precision: .checkpoint)
+
+let (videoVelocity, audioVelocity) = ltx2(
+    video: videoLatents, audio: audioLatents,         // [1, frames · height · width, 128], [1, audioFrames, 128]
+    text: textStates, audioText: audioTextStates,
+    timestep: timesteps, audioTimestep: audioTimesteps, sigma: sigma,
+    frames: frames, height: height, width: width, audioFrames: audioFrames)
+```
+
+The timesteps are per token, `[1, videoTokens]` and `[1, audioFrames]`, already multiplied by the
+release's 1000; `sigma` is `[1]`. `NFKMLXLTX2Configuration.ltx25` carries LTX-2.5's three switches. The
+22B transformer is about 44 GB at the released bfloat16, beyond a 32 GB machine.
+
+### Wan 2.2 Animate (`NFKMLXWanAnimateNet`)
+
+Wan 2.2 Animate drives a reference character image with the motion of a driving video. Generation runs
+in two passes over one transformer. The reference pass runs the character's latents through the stack
+and stores every block's keys and values in an `NFKMLXWanAnimateKVCache`. Each denoising step over a
+chunk of the video then attends over that cache.
+
+```swift
+let animate = NFKMLXWanAnimate.makeNet(.base)                 // the Wan2.2-Animate-2-14B geometry
+let cache = NFKMLXWanAnimate.makeCache(layerCount: 40)
+_ = try animate.extractReference(latent: referenceLatent, condition: referenceCondition,
+                                 text: textStates, imageEmbeddings: clipFeatures, into: cache)
+let velocity = try animate.generate(latent: chunkLatent, condition: chunkCondition, text: textStates,
+                                    imageEmbeddings: clipFeatures, timestep: timestep, cache: cache,
+                                    referenceGrid: referenceGrid, videoFrames: latentFrames,
+                                    videoArea: patchesPerFrame)
+```
+
+Latents are `[channels, frames, height, width]`, `text` is the text encoder's states, zero-padded to
+the configured length, and `imageEmbeddings` is the CLIP image encoder's features, `[tokens, 1280]`. `referenceGrid` is the patch grid the reference pass read, `videoFrames` the whole
+video's latent frame count, and `videoArea` its patch count per frame. The released model is 32.8 GB in
+bfloat16 and its pipeline about 50 GB, which no 32 GiB machine holds, and the package ships no loader for
+the released checkpoint. The transformer is at reference parity against diffusers'
+`WanAnimate2Transformer3DModel` at a tiny configuration, across both passes and a chunked generation, and
+held to the release by shape.
 
 ## Video (clip → clip)
 
@@ -4591,6 +4737,40 @@ let speech = tts.makeSpeechBackend(sampleRate: 22050)
 let audio = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Hello there."]))
     .output(forKey: NFKOutputAudio) as? NFKAudioAsset                   // a playable WAV
 ```
+
+### Kokoro (`NFKMLXKokoro`)
+
+Kokoro-82M (`hexgrad/Kokoro-82M`, Apache-2.0) speaks a phoneme string in one of the release's voices. A
+PL-BERT encoder predicts each phoneme's duration, pitch, and energy, and an iSTFTNet decoder renders a
+24 kHz waveform. The backend reads phonemes under `NFKInputPrompt`; Kokoro's grapheme-to-phoneme front
+end (misaki) is a separate step.
+
+```swift
+let kokoro = try NFKMLXKokoro.backend(repo: "hexgrad/Kokoro-82M", revision: nil, cacheDirectoryURL: nil,
+                                      voiceName: "af_heart")             // about 330 MB, one voice
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "həlˈoʊ wˈɜːld"])
+let audio = try kokoro.runInference(for: request).output(forKey: NFKOutputAudio) as? NFKAudioAsset
+```
+
+`NFKMLXKokoro.backend(directoryURL:voiceName:)` builds from a release already on disk, and `voiceName`
+names a file under its `voices/`.
+
+### Chatterbox voice cloning (`NFKMLXChatterbox`)
+
+Chatterbox (`ResembleAI/chatterbox`) speaks text in the voice of a short reference recording. A voice
+encoder and the S3 speech tokenizer read the reference, T3 samples speech tokens for the text, and S3Gen
+(flow matching and a HiFT vocoder) renders them at 24 kHz.
+
+```swift
+let chatterbox = try NFKMLXChatterbox.backend(repo: "ResembleAI/chatterbox", revision: nil,
+                                              cacheDirectoryURL: nil, voiceURL: referenceWAV)   // about 3.2 GB
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "The quick brown fox jumps over the lazy dog."])
+let audio = try chatterbox.runInference(for: request).output(forKey: NFKOutputAudio) as? NFKAudioAsset
+```
+
+A nil `voiceURL` speaks in the release's built-in voice. T3 samples from a fixed seed. The flow's starting
+noise and the vocoder's source noise come from MLX's global random state, so a run that must repeat calls
+`NFKMLXRandom.seed` first.
 
 ## Audio → notes and structure (music)
 
