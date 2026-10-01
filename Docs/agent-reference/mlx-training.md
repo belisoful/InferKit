@@ -110,11 +110,14 @@ MLX normalizes it to zero and leaves only the bias. Both recipes take batches of
 `NFKMLXError.trainingDataMismatch` on one, as their references train on 8 to 32.
 
 **MLX folds the biased batch variance into the running variance.** MLXNN's `BatchNorm` updates
-`running_var` with the batch's population variance, where torch uses the unbiased one, so every recipe
-whose normalizations train in training mode writes statistics `(n − 1) / n` of the reference's: about 1%
-over a 100-frame map, half over a pooled map in a batch of two. The normalization during the step
-itself matches, since both use the population variance there. `NFKBasicPitchBatchNorm` folds the
-unbiased variance for Keras; a package-wide fix is open.
+`running_var` with the batch's population variance, where torch uses the unbiased one, so a
+normalization that trains writes statistics `(n − 1) / n` of the reference's (`mlx-runtime-gotchas.md`).
+The step itself matches, since both normalize with the population variance. Over the feature maps the
+recipes normalize the gap is negligible; over a pooled map, where `n` is the batch size, a batch of two
+halves the statistics. DeepLab's head and BiSeNet build `NFKTorchBatchNorm`, a `BatchNorm` that folds the
+unbiased variance as torch does and evaluates exactly as `BatchNorm` does
+(`testAPooledNormalizationFoldsTheUnbiasedVarianceAsPyTorchDoes`). `NFKBasicPitchBatchNorm` does the same
+for Keras.
 
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the

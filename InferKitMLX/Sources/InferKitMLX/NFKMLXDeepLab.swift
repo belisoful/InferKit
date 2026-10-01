@@ -48,7 +48,7 @@ final class NFKDeepLabBranch: Module {
             Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 3,
                    padding: IntOrPair($0), dilation: IntOrPair($0), bias: false)
         } ?? Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 1, bias: false)
-        _norm.wrappedValue = BatchNorm(featureCount: outChannels)
+        _norm.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { relu(norm(conv(x))) }

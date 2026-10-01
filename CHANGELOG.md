@@ -929,6 +929,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   update, and the loss reported for a step is the mean over its batches. The default of 1 runs as
   before.
 
+#### DeepLabV3 and BiSeNet fine-tunes keep the running statistics PyTorch keeps
+
+- MLXNN's `BatchNorm` folds the batch's population variance into its running variance, where PyTorch
+  folds the unbiased one. DeepLab's ASPP pooling branch and BiSeNet's attention and fusion modules
+  normalize one pooled value per image, so a fine-tune at a batch of two left half the variance the
+  reference keeps. Their normalizations now fold the unbiased variance (`NFKTorchBatchNorm`); inference
+  is unchanged.
+
 #### Every network with a BatchNorm is built in evaluation mode
 
 - BiSeNet, BiSeNetV2, MODNet, RF-DETR, RF-DETR segmentation, RVM, BiRefNet, U²-Net, IS-Net, Parakeet,

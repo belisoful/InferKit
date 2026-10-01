@@ -44,7 +44,7 @@ final class NFKBiSeNetConvBlock: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair(padding ?? kernel / 2), bias: false)
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { relu(bn(conv(x))) }
@@ -63,14 +63,14 @@ final class NFKBiSeNetBasicBlock: Module {
     init(inChannels: Int, outChannels: Int, stride: Int) {
         _conv1.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 3,
                                      stride: IntOrPair(stride), padding: 1, bias: false)
-        _bn1.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn1.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         _conv2.wrappedValue = Conv2d(inputChannels: outChannels, outputChannels: outChannels, kernelSize: 3,
                                      padding: 1, bias: false)
-        _bn2.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn2.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         if stride != 1 || inChannels != outChannels {
             _downsampleConv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                                   kernelSize: 1, stride: IntOrPair(stride), bias: false)
-            _downsampleBN.wrappedValue = BatchNorm(featureCount: outChannels)
+            _downsampleBN.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         }
     }
 
@@ -97,7 +97,7 @@ final class NFKBiSeNetResNet18: Module {
     init(width: Int = 64) {
         _conv1.wrappedValue = Conv2d(inputChannels: 3, outputChannels: width, kernelSize: 7, stride: 2,
                                      padding: 3, bias: false)
-        _bn1.wrappedValue = BatchNorm(featureCount: width)
+        _bn1.wrappedValue = NFKTorchBatchNorm(featureCount: width)
         func stage(_ inChannels: Int, _ outChannels: Int, stride: Int) -> [NFKBiSeNetBasicBlock] {
             [NFKBiSeNetBasicBlock(inChannels: inChannels, outChannels: outChannels, stride: stride),
              NFKBiSeNetBasicBlock(inChannels: outChannels, outChannels: outChannels, stride: 1)]
@@ -131,7 +131,7 @@ final class NFKBiSeNetARM: Module {
         _conv.wrappedValue = NFKBiSeNetConvBlock(inChannels: inChannels, outChannels: outChannels, kernel: 3)
         _convAtten.wrappedValue = Conv2d(inputChannels: outChannels, outputChannels: outChannels,
                                          kernelSize: 1, bias: false)
-        _bnAtten.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bnAtten.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -202,7 +202,7 @@ final class NFKBiSeNetFFM: Module {
                                                     kernel: 1, padding: 0)
         _conv.wrappedValue = Conv2d(inputChannels: outChannels, outputChannels: outChannels,
                                     kernelSize: 1, bias: false)
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ spatial: MLXArray, _ context: MLXArray) -> MLXArray {
@@ -455,23 +455,23 @@ final class NFKBiSeNetGELayer: Module {
         _conv1.wrappedValue = NFKBiSeNetConvBlock(inChannels: inChannels, outChannels: inChannels, kernel: 3)
         _dw1Conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: hidden, kernelSize: 3,
                                        stride: IntOrPair(stride), padding: 1, groups: inChannels, bias: false)
-        _dw1BN.wrappedValue = BatchNorm(featureCount: hidden)
+        _dw1BN.wrappedValue = NFKTorchBatchNorm(featureCount: hidden)
         if stride == 2 {
             // The stride-two form expands once to downsample and again at full width.
             _dw2Conv.wrappedValue = Conv2d(inputChannels: hidden, outputChannels: hidden, kernelSize: 3,
                                            padding: 1, groups: hidden, bias: false)
-            _dw2BN.wrappedValue = BatchNorm(featureCount: hidden)
+            _dw2BN.wrappedValue = NFKTorchBatchNorm(featureCount: hidden)
             _shortcutDWConv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: inChannels,
                                                   kernelSize: 3, stride: 2, padding: 1,
                                                   groups: inChannels, bias: false)
-            _shortcutDWBN.wrappedValue = BatchNorm(featureCount: inChannels)
+            _shortcutDWBN.wrappedValue = NFKTorchBatchNorm(featureCount: inChannels)
             _shortcutConv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                                 kernelSize: 1, bias: false)
-            _shortcutBN.wrappedValue = BatchNorm(featureCount: outChannels)
+            _shortcutBN.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         }
         _conv2Conv.wrappedValue = Conv2d(inputChannels: hidden, outputChannels: outChannels,
                                          kernelSize: 1, bias: false)
-        _conv2BN.wrappedValue = BatchNorm(featureCount: outChannels)
+        _conv2BN.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -523,7 +523,7 @@ final class NFKBiSeNetCEBlock: Module {
     @ModuleInfo(key: "conv_last") var convLast: NFKBiSeNetConvBlock
 
     override init() {
-        _bn.wrappedValue = BatchNorm(featureCount: 128)
+        _bn.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
         _convGap.wrappedValue = NFKBiSeNetConvBlock(inChannels: 128, outChannels: 128, kernel: 1, padding: 0)
         _convLast.wrappedValue = NFKBiSeNetConvBlock(inChannels: 128, outChannels: 128, kernel: 3)
     }
@@ -551,21 +551,21 @@ final class NFKBiSeNetBGA: Module {
     override init() {
         _left1DW.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 3,
                                        padding: 1, groups: 128, bias: false)
-        _left1BN.wrappedValue = BatchNorm(featureCount: 128)
+        _left1BN.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
         _left1PW.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 1, bias: false)
         _left2Conv.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 3,
                                          stride: 2, padding: 1, bias: false)
-        _left2BN.wrappedValue = BatchNorm(featureCount: 128)
+        _left2BN.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
         _right1Conv.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 3,
                                           padding: 1, bias: false)
-        _right1BN.wrappedValue = BatchNorm(featureCount: 128)
+        _right1BN.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
         _right2DW.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 3,
                                         padding: 1, groups: 128, bias: false)
-        _right2BN.wrappedValue = BatchNorm(featureCount: 128)
+        _right2BN.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
         _right2PW.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 1, bias: false)
         _convConv.wrappedValue = Conv2d(inputChannels: 128, outputChannels: 128, kernelSize: 3,
                                         padding: 1, bias: false)
-        _convBN.wrappedValue = BatchNorm(featureCount: 128)
+        _convBN.wrappedValue = NFKTorchBatchNorm(featureCount: 128)
     }
 
     func callAsFunction(detail: MLXArray, semantic: MLXArray) -> MLXArray {

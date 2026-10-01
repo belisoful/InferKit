@@ -62,6 +62,22 @@ final class NFKMLXDeepLabTrainingTests: XCTestCase {
         XCTAssertEqual(Double(loss.item(Float.self)), log(2) + 0.5 * auxiliaryTerm, accuracy: 1e-5)
     }
 
+    func testAPooledNormalizationFoldsTheUnbiasedVarianceAsPyTorchDoes() throws {
+        try requireMLXRuntime()
+        // Two pooled values per channel, 1 and 3: the batch normalizes with their population variance,
+        // 1, and folds their unbiased variance, 2, into the running variance at momentum 0.1.
+        let norm = NFKTorchBatchNorm(featureCount: 1)
+        norm.train(true)
+        let output = norm(MLXArray([Float(1), 3], [2, 1, 1, 1]))
+        let statistics = Dictionary(uniqueKeysWithValues: norm.parameters().flattened())
+        XCTAssertEqual(try XCTUnwrap(statistics["running_var"]).item(Float.self), 0.9 + 0.1 * 2, accuracy: 1e-6)
+        XCTAssertEqual(try XCTUnwrap(statistics["running_mean"]).item(Float.self), 0.1 * 2, accuracy: 1e-6)
+        XCTAssertEqual(output.reshaped([-1]).asArray(Float.self)[0], -1 / (1 + 1e-5).squareRoot(), accuracy: 1e-5)
+        norm.train(false)
+        let evaluated = norm(MLXArray([Float(1)], [1, 1, 1, 1])).item(Float.self)
+        XCTAssertEqual(evaluated, (1 - 0.2) / (1.1 + 1e-5).squareRoot(), accuracy: 1e-5, "evaluation reads the running statistics")
+    }
+
     func testAFineTuneNeedsABatchOfTwo() throws {
         try requireMLXRuntime()
         let net = try NFKMLXDeepLab.network(weightsURL: nil, configuration: tiny())
