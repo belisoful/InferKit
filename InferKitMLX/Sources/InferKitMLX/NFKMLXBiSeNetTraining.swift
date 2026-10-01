@@ -19,7 +19,7 @@ import MLXOptimizers
 
 /// Which parameters a BiSeNet fine-tune updates.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXBiSeNetTrainable: Sendable {
 
     /// Every parameter except the context path's ResNet-18, the one part the reference initializes
@@ -32,7 +32,7 @@ public enum NFKMLXBiSeNetTrainable: Sendable {
 
 /// The supervised objective a BiSeNet fine-tune minimizes: the reference's `OhemCELoss` on each head.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public struct NFKMLXBiSeNetObjective: Sendable {
 
     /// The probability below which a pixel counts as hard. The reference's is 0.7.
@@ -91,7 +91,7 @@ extension NFKMLXBiSeNet {
     ///     from the checkpoint's, the three classifiers are left at their random initialization and
     ///     everything else loads, which is what retargeting a segmentation model means.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?,
                                configuration: NFKMLXBiSeNetConfiguration = .base) throws -> NFKMLXBiSeNetNet {
         let net = makeNet(configuration)

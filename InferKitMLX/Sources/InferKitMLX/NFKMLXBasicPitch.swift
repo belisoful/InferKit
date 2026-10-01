@@ -33,7 +33,7 @@ import MLXNN
 
 /// Where Basic Pitch's batch normalizations live.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXBasicPitchNormalization: Sendable {
     /// Folded into the convolutions they follow, with the one after the log kept as a scale and a bias.
     /// This is the released ONNX graph's layout, and it runs inference only.
@@ -925,7 +925,7 @@ public final class NFKMLXBasicPitch: NSObject {
     /// The normalization layout a checkpoint holds: separate when it carries the normalization after
     /// the log as a batch normalization, folded otherwise.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func normalization(ofCheckpointAt url: URL) throws -> NFKMLXBasicPitchNormalization {
         normalization(of: try NFKMLXWeights.loadCheckpoint(url: url))
     }

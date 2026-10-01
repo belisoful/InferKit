@@ -26,7 +26,7 @@ import MLXOptimizers
 
 /*!
  @abstract A ground-truth box for a YOLO fine-tune: a class index and corners in input pixels.
- @discussion Introduced in InferKit 0.5.0.
+ @discussion Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXYOLOBox: Sendable, Equatable {
     public var classIndex: Int
@@ -49,7 +49,7 @@ public struct NFKMLXYOLOBox: Sendable, Equatable {
  @discussion Reads the head's raw outputs over every anchor of every scale, the box distributions
  `[batch, anchors, 4 · regMax]` and the class logits `[batch, anchors, classes]`, with the anchors in
  the head's order (scale by scale, row-major within a scale). Measured against ultralytics by
- `run_reference.py yolo_loss`. Introduced in InferKit 0.5.0.
+ `run_reference.py yolo_loss`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXYOLOObjective: Sendable {
     public var boxGain: Float = 7.5
@@ -193,7 +193,7 @@ public struct NFKMLXYOLOObjective: Sendable {
  one-to-one branch, which serves inference without suppression, with seven candidates cut to the single
  best. The one-to-many weight starts at 0.8 and falls linearly over the run to 0.1 by epoch, and the
  one-to-one branch takes the rest. Measured against ultralytics by `run_reference.py yolo_e2e_loss`.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXYOLOEndToEndObjective: Sendable {
     public var oneToMany: NFKMLXYOLOObjective
@@ -389,7 +389,7 @@ extension NFKMLXLearningRateSchedule {
     /// over the first `round(min(warmupEpochs, epochs − 1) · stepsPerEpoch)` updates a warm-up that
     /// interpolates from 0 to it. The warm-up is the reference's for AdamW, whose bias rate starts at 0.
     ///
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     public static func ultralytics(steps: Int, stepsPerEpoch: Int, warmupEpochs: Double = 3,
                                    finalScale: Double = 0.01) -> NFKMLXLearningRateSchedule {
         let perEpoch = max(stepsPerEpoch, 1)
@@ -428,7 +428,7 @@ extension NFKMLXYOLO {
     /// `intersect_dicts` does: at a class count other than the checkpoint's, the class branches keep
     /// their fresh initialization and everything else loads.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(variant: NFKMLXYOLOVariant = .nano, classCount: Int = 80,
                                weightsURL: URL?) throws -> NFKMLXYOLONet {
         var configuration = geometry(variant)

@@ -23,7 +23,7 @@ import MLXOptimizers
 /*!
  @abstract A track's annotation as the frame targets All-In-One trains against.
  @discussion Built the way the reference's `DatasetBase` builds a training item, over `frameCount`
- frames at the configuration's frame rate. Introduced in InferKit 0.5.0.
+ frames at the configuration's frame rate. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXAllInOneTargets {
 
@@ -108,7 +108,7 @@ public struct NFKMLXAllInOneTargets {
  cross-entropy on the functional label, each masked and averaged over the frames, then weighted.
  `learnsRhythm` adds the beat and downbeat terms, and `learnsStructure` adds the function term (when
  `learnsLabels`) and the section term (when `learnsSegments`), as the reference's switches do.
- Measured against the reference by `run_reference.py allin1_training`. Introduced in InferKit 0.5.0.
+ Measured against the reference by `run_reference.py allin1_training`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXAllInOneObjective: Sendable {
     public var beatWeight: Float = 1
@@ -164,7 +164,7 @@ extension NFKMLXAllInOne {
     /// Builds the network itself, ready to fine-tune, from a released `.pth` or a file
     /// `NFKMLXWeights.save` wrote.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?,
                                configuration: NFKMLXAllInOneConfiguration = .harmonix) throws -> NFKMLXAllInOneNet {
         let net = makeNet(configuration)

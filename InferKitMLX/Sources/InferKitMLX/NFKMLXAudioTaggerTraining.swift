@@ -19,7 +19,7 @@ import MLXRandom
 
 /// Which parameters an audio-tagger fine-tune updates.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXAudioTaggerTrainable: Sendable {
 
     /// The classifier only, over the frozen Cnn14, as `finetune_template.py` with `--freeze_base`.
@@ -34,7 +34,7 @@ public enum NFKMLXAudioTaggerTrainable: Sendable {
 ///
 /// Each stripe's width is drawn from `0 ..< dropWidth` and its start from `0 ..< total − width`, per clip.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public struct NFKMLXAudioTaggerSpecAugment: Sendable {
     public var timeDropWidth: Int
     public var timeStripes: Int
@@ -76,7 +76,7 @@ public struct NFKMLXAudioTaggerSpecAugment: Sendable {
 
 /// The supervised objective an audio-tagger fine-tune minimizes: PANNs' `clip_bce`.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public struct NFKMLXAudioTaggerObjective: Sendable {
 
     public init() {}
@@ -107,7 +107,7 @@ extension NFKMLXAudioTagger {
     ///     from the checkpoint's, the classifier is left at its random initialization and everything
     ///     else loads, which is what retargeting the tagger means.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?,
                                configuration: NFKMLXAudioTaggerConfiguration = .panns) throws -> NFKMLXAudioTaggerNet {
         let net = makeNet(configuration)
@@ -121,7 +121,7 @@ extension NFKMLXAudioTagger {
     /// `backendWithWeightsURL:labels:error:` onto the release's own filterbank rather than a recomputed
     /// one.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func save(_ net: NFKMLXAudioTaggerNet, to url: URL) throws {
         try NFKMLXWeights.save(net, extraArrays: ["logmel_extractor.melW": net.frontEnd.filterbank], to: url)
     }

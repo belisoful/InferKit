@@ -25,7 +25,7 @@ import MLXOptimizers
  @abstract A linear classifier over a frozen embedding.
  @discussion Scores cached embeddings `[N, embedDimensions]` into logits `[N, classCount]`. Train it with
  ``train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``, save it
- with `NFKMLXWeights.save`, and reload it with ``init(weightsURL:)``. Introduced in InferKit 0.5.0.
+ with `NFKMLXWeights.save`, and reload it with ``init(weightsURL:)``. Introduced in InferKit 0.4.0.
  */
 public final class NFKMLXEmbeddingProbe: Module {
 
@@ -138,7 +138,7 @@ private final class NFKEmbeddingProbeHolder: @unchecked Sendable {
  @abstract A consumer's own image classifier over a frozen embedding.
  @discussion Reads `NFKInputImage` and returns every class under `NFKOutputClassifications`, most
  confident first, with softmax confidences. `NFKMLXCLIP` and `NFKMLXSigLIP2` build it around their
- image encoders. Introduced in InferKit 0.5.0.
+ image encoders. Introduced in InferKit 0.4.0.
  */
 @objc(NFKMLXEmbeddingProbeBackend)
 public final class NFKMLXEmbeddingProbeBackend: NSObject, NFKInferenceBackend {

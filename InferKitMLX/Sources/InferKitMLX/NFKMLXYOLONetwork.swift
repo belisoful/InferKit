@@ -98,7 +98,7 @@ final class NFKYOLOGenerationDetect: Module {
 /// `[anchors, 4 + classes]` with the boxes in pixels and the class scores already through a sigmoid,
 /// which is the reference's own pre-suppression tensor.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXYOLOGenerationNet: Module {
     @ModuleInfo(key: "model") var model: [Module]
 

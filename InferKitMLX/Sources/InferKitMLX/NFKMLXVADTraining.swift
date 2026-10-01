@@ -24,7 +24,7 @@ import MLXOptimizers
  @discussion Scores logits `[1, frames, classes]` against one class index per frame, speech 1 and
  non-speech 0, averaged over the frames the mask keeps, with each class's weight applied as
  `torch.nn.CrossEntropyLoss` applies it. The release trains with equal weights. Measured against the
- release by `run_reference.py vad_training`. Introduced in InferKit 0.5.0.
+ release by `run_reference.py vad_training`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXVADObjective: Sendable {
 
@@ -54,7 +54,7 @@ public struct NFKMLXVADObjective: Sendable {
  wide starting at `floor(u′ · (mels − width))`, each of `timeMasks` spans is `floor(u · timeFraction ·
  valid)` frames wide starting at `floor(u′ · (valid − width))` over the clip's valid frames, and every
  masked value becomes 0.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXVADSpecAugment: Sendable {
     public var frequencyMasks = 5
@@ -94,7 +94,7 @@ extension NFKMLXVAD {
     /// Builds the detection network itself, ready to fine-tune, from the converted release or a file
     /// `NFKMLXWeights.save` wrote.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?) throws -> NFKMLXVADNet {
         let net = makeNet()
         if let weightsURL {
@@ -105,7 +105,7 @@ extension NFKMLXVAD {
 
     /// The frames the network scores for a clip of `samples` at 16 kHz, each 20 ms.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func frameCount(samples: Int, configuration c: NFKMLXVADConfiguration = .marbleNet) -> Int {
         let melFrames = samples / c.hopSamples + 1
         let padded = melFrames + melFrames % 2
@@ -115,7 +115,7 @@ extension NFKMLXVAD {
     /// One label per network frame from the spans that hold speech, in seconds: a frame is speech (1)
     /// when its midpoint falls inside a span.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func frameLabels(speech spans: [(start: Double, end: Double)], frameCount: Int,
                                    configuration c: NFKMLXVADConfiguration = .marbleNet) -> [Int32] {
         let frameSeconds = Double(c.hopSamples * c.totalStride) / Double(c.sampleRate)

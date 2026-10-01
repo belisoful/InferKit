@@ -97,7 +97,7 @@ final class NFKDeepLabAuxiliary: Module {
 
 /// The DeepLabV3 network: a dilated residual backbone, an ASPP head, and a per-pixel classifier.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXDeepLabNet: Module {
     @ModuleInfo(key: "backbone") var backbone: NFKMLXResNetBackbone
     @ModuleInfo(key: "aspp") var aspp: NFKDeepLabASPP

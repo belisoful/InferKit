@@ -21,7 +21,7 @@ import MLXOptimizers
 /*!
  @abstract A set of RT-DETR predictions the objective scores: class logits `[batch, queries, classes]` and
  boxes `[batch, queries, 4]` as normalized centers and sizes.
- @discussion Introduced in InferKit 0.5.0.
+ @discussion Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXRTDetrPredictions {
     public var logits: MLXArray
@@ -35,7 +35,7 @@ public struct NFKMLXRTDetrPredictions {
 
 /*!
  @abstract One image's ground truth for an RT-DETR fine-tune: class indices and normalized center boxes.
- @discussion Introduced in InferKit 0.5.0.
+ @discussion Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXRTDetrTarget {
     public var classes: [Int]
@@ -52,7 +52,7 @@ public struct NFKMLXRTDetrTarget {
  @abstract The objective an RT-DETR fine-tune minimizes: transformers' `RTDetrLoss`.
  @discussion `loss(final:auxiliary:denoising:denoisingPositives:denoisingGroups:targets:)` sums the
  weighted varifocal, L1, and GIoU terms over every prediction set. Measured against transformers by
- `run_reference.py rtdetr_loss`. Introduced in InferKit 0.5.0.
+ `run_reference.py rtdetr_loss`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXRTDetrObjective: Sendable {
     public var matcherClassCost: Float = 2
@@ -189,7 +189,7 @@ public struct NFKMLXRTDetrObjective: Sendable {
  copy whose corners move by up to half the box's size, and a negative copy moved by between one and two
  halves. A quarter of the copies (at the reference's ratio 0.5) take a random class. The attention mask
  keeps the matching queries from reading any denoising query and each group from reading another.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXRTDetrDenoisingGroup {
     /// `[batch, count]` class indices, the padding class (`classCount`) where an image has fewer boxes.
@@ -299,7 +299,7 @@ public struct NFKMLXRTDetrDenoisingGroup {
 /*!
  @abstract Every prediction set one training forward scores: the final layer, the auxiliary sets (each
  earlier decoder layer, then the encoder's top-k proposals), and each layer's denoising set.
- @discussion Introduced in InferKit 0.5.0.
+ @discussion Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXRTDetrTrainingOutputs {
     public let final: NFKMLXRTDetrPredictions
@@ -316,7 +316,7 @@ extension NFKMLXRTDetrNet {
     /// them; the encoder's own top-k proposals keep their gradient. A `denoising` group is read only when
     /// the network was built with ``NFKMLXRTDetrConfiguration/denoisingQueries`` above zero.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public func trainingOutputs(_ pixels: MLXArray, denoising: NFKMLXRTDetrDenoisingGroup?) -> NFKMLXRTDetrTrainingOutputs {
         let encoded = encode(pixels)
         let (batch, queries) = (pixels.dim(0), config.numQueries)
@@ -366,7 +366,7 @@ extension NFKMLXRTDetrObjective {
 
 /*!
  @abstract What an RT-DETR fine-tune updates.
- @discussion Introduced in InferKit 0.5.0.
+ @discussion Introduced in InferKit 0.4.0.
  */
 public enum NFKMLXRTDetrTrainable: Sendable {
 
@@ -422,7 +422,7 @@ extension NFKMLXRTDetr {
     /// denoising class embedding keep their fresh initialization and everything else loads. The network
     /// carries the reference's 100 contrastive-denoising queries.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(variant: NFKMLXRTDetrVariant = .r50vd, classCount: Int = 80,
                                weightsURL: URL?) throws -> NFKMLXRTDetrNet {
         var configuration = specs(for: variant).configuration

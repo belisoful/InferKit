@@ -406,7 +406,7 @@ public enum NFKMLXTrainer {
     /// checkpointed, or reported. It is where a reference's weight constraint belongs: Keras applies a
     /// variable's `kernel_constraint` after `apply_gradients`, whatever the optimizer, so the
     /// constraint is a property of the run and applies whichever optimizer is passed. It was
-    /// introduced in InferKit 0.5.0. `accumulationSteps` averages that many batches into each update,
+    /// introduced in InferKit 0.4.0. `accumulationSteps` averages that many batches into each update,
     /// as the supervised form describes; the constraint runs once per update.
     ///
     /// Introduced in InferKit 0.4.0.

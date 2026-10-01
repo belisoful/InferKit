@@ -30,7 +30,7 @@ import MLXOptimizers
  set by the configuration's logSNR range, `α² = sigmoid(logSNR)`, and `σ² = sigmoid(−logSNR)`. The clean
  clip noises to `α·x + σ·z`, the network reads it at the normalized level `(max − logSNR) / (max − min)`,
  and the loss is `mean |ε̂ − z|`. Measured against the reference by `run_reference.py nuwave2_loss`.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXNUWave2Objective: Sendable {
 
@@ -71,7 +71,7 @@ extension NFKMLXNUWave2 {
     /// Builds the bandwidth-extension network itself, ready to fine-tune, from the official checkpoint
     /// or a file `NFKMLXWeights.save` wrote.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?) throws -> NFKMLXNUWave2Net {
         let net = makeNet()
         if let weightsURL {
@@ -85,7 +85,7 @@ extension NFKMLXNUWave2 {
     /// back to 48 kHz, and the band marking the bins below `narrowbandRate / 2`. The random gain is
     /// applied by the recipe per step.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func trainingPair(wideband samples: [Float], narrowbandRate: Int,
                                     configuration c: NFKMLXNUWave2Configuration = NFKMLXNUWave2Configuration())
         -> (audio: MLXArray, narrowband: MLXArray, band: MLXArray) {

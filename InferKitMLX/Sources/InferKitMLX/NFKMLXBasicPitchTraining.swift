@@ -30,7 +30,7 @@ import MLXOptimizers
  @discussion `audio` is `[B, 43844, 1]` at 22,050 Hz, two seconds less one hop, as the network reads a
  window. The targets are binary `[B, 172, bins]` at the reference's annotation rate of 86 frames a
  second: `contour` over 264 bins, three per semitone, and `note` and `onset` over the 88 piano keys.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXBasicPitchExample {
     public var audio: MLXArray
@@ -62,7 +62,7 @@ public struct NFKMLXBasicPitchExample {
  add with equal weights. With `weightedOnset` the onset term is `models.weighted_transcription_loss`: the
  cross-entropy over the target's zeros and over its other entries, each averaged on its own, mixed by
  `positiveOnsetWeight`. Measured against the reference by `run_reference.py basic_pitch_training`.
- Introduced in InferKit 0.5.0.
+ Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXBasicPitchObjective: Sendable {
 
@@ -296,7 +296,7 @@ extension NFKMLXBasicPitch {
     ///
     /// - Throws: `NFKMLXError.trainingDataMismatch` when the window runs past the recording.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func trainingExample(samples: [Float], sampleRate: Int, notes: NFKMIDISequence,
                                        startSeconds: Double) throws -> NFKMLXBasicPitchExample {
         try prepared(samples: samples, sampleRate: sampleRate, notes: notes).window(at: startSeconds)
@@ -309,7 +309,7 @@ extension NFKMLXBasicPitch {
     ///
     /// - Returns: up to `count` windows; fewer when the recording holds too little that sounds.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func trainingExamples(samples: [Float], sampleRate: Int, notes: NFKMIDISequence,
                                         count: Int, seed: UInt64 = 0) throws -> [NFKMLXBasicPitchExample] {
         let configuration = NFKMLXBasicPitchConfiguration.icassp2022
@@ -394,7 +394,7 @@ extension NFKMLXBasicPitch {
     ///     front end is a fixed transform with no initialization of its own, so it still comes from
     ///     the checkpoint, and either layout supplies it.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL, reinitializing: Bool = false) throws -> NFKMLXBasicPitchNet {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
         guard reinitializing else {
@@ -442,7 +442,7 @@ extension NFKMLXBasicPitch {
     /// - Throws: `NFKMLXError.unsupportedConfiguration` for a network in the `.folded` layout, which
     ///   cannot train as the reference does.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXBasicPitchNet,

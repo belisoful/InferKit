@@ -130,7 +130,7 @@ final class NFKSileroDecoder: Module {
 
 /// The Silero VAD network: the STFT encoder and the LSTM decoder, plus the chunking and span extraction.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXSileroVADNet: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKSileroEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKSileroDecoder

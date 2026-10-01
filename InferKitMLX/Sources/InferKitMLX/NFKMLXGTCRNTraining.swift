@@ -28,7 +28,7 @@ import MLXOptimizers
  spectral term is the mean squared error after compressing the magnitude by the power 0.3 (and each
  real or imaginary part by dividing by the magnitude to the 0.7), and the SI-SNR is measured on the
  waveforms the sqrt-Hann inverse STFT resynthesizes. Measured against the reference module by
- `run_reference.py gtcrn_loss`. Introduced in InferKit 0.5.0.
+ `run_reference.py gtcrn_loss`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXGTCRNObjective: Sendable {
 
@@ -150,7 +150,7 @@ extension NFKMLXGTCRNFactory {
     /// Builds the enhancement network itself, ready to fine-tune, from an optional released
     /// checkpoint or a file `NFKMLXWeights.save` wrote.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?) throws -> NFKMLXGTCRN {
         let net = makeNet()
         if let weightsURL {
@@ -162,7 +162,7 @@ extension NFKMLXGTCRNFactory {
     /// The spectrogram the network reads, real and imaginary `[1, bins, frames]`, of 16 kHz samples:
     /// the 512-point sqrt-Hann STFT at hop 256 the reference uses.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func spectrogram(for samples: [Float]) -> (real: MLXArray, imaginary: MLXArray) {
         let stft = NFKMLXComplexSTFT(nFFT: NFKGTCRNSynthesis.fftSize, hop: NFKGTCRNSynthesis.hopSize,
                                      window: NFKGTCRNSynthesis.window)

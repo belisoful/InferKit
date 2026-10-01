@@ -19,7 +19,7 @@ extension NFKMLXSigLIP2 {
 
     /// Builds a SigLIP 2 model object at one of the released sizes from optional local weights.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     @objc(modelWithVariant:weightsURL:error:)
     public static func model(variant: NFKMLXSigLIP2Variant, weightsURL: URL?) throws -> NFKMLXSigLIP2 {
         try model(configuration: specs(for: variant).configuration, weightsURL: weightsURL)
@@ -27,7 +27,7 @@ extension NFKMLXSigLIP2 {
 
     /// The width of the image embedding, which is the width a probe over this model reads.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     @objc public var embeddingDimensions: Int { holder.net.configuration.vision.hiddenSize }
 
     /// Encodes images into cached L2-normalized embeddings `[N, embeddingDimensions]`.
@@ -36,7 +36,7 @@ extension NFKMLXSigLIP2 {
     /// per step would be the whole cost of the run. Encoding is multi-second over many images; call it
     /// off the render thread.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public func imageEmbeddings(for images: [CGImage]) throws -> MLXArray {
         guard !images.isEmpty else {
             throw NFKMLXError.trainingDataMismatch("a probe needs at least one image to encode")
@@ -53,7 +53,7 @@ extension NFKMLXSigLIP2 {
     /// Wraps a trained probe as an InferKit backend: an image under `NFKInputImage` becomes ranked
     /// `NFKClassification`s under `NFKOutputClassifications`.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public func probeBackend(probe: NFKMLXEmbeddingProbe, labels: [String]? = nil) throws -> any NFKInferenceBackend {
         guard probe.embedDimensions == embeddingDimensions else {
             throw NFKMLXError.trainingDataMismatch(
@@ -76,7 +76,7 @@ extension NFKMLXSigLIP2 {
     /// This is the Objective-C reach into a probe: a consumer trains through
     /// `NFKMLXEmbeddingProbe.train` in Swift, saves, and an app loads the result here.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     @objc(probeBackendWithProbeURL:labels:error:)
     public func probeBackend(probeURL: URL, labels: [String]?) throws -> any NFKInferenceBackend {
         try probeBackend(probe: NFKMLXEmbeddingProbe(weightsURL: probeURL), labels: labels)

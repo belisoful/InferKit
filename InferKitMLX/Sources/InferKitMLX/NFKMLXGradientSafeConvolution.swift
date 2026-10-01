@@ -30,7 +30,7 @@ import MLXNN
 /// Wide stride-1 convolutions computed over kernel slices of at most 16 taps, the form whose input
 /// gradient is exact on the GPU.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXGradientSafeConvolution {
 
     /// The widest kernel axis the GPU differentiates exactly.

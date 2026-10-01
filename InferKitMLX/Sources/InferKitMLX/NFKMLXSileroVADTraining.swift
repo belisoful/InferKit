@@ -17,7 +17,7 @@ import MLXOptimizers
 
 /// Which parameters a Silero VAD fine-tune updates.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXSileroVADTrainable: Sendable {
 
     /// The LSTM decoder and its output convolution, with the STFT and the encoder frozen, as the
@@ -31,7 +31,7 @@ public enum NFKMLXSileroVADTrainable: Sendable {
 /// The supervised objective a Silero VAD fine-tune minimizes: the reference's per-chunk binary
 /// cross-entropy, weighted by a mask, averaged over every chunk.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public struct NFKMLXSileroVADObjective: Sendable {
 
     public init() {}
@@ -57,7 +57,7 @@ extension NFKMLXSileroVAD {
     /// Builds the voice-activity network itself, ready to fine-tune, from the converted release or a
     /// file `NFKMLXWeights.save` wrote. Nil weights leave it at its random initialization.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?) throws -> NFKMLXSileroVADNet {
         let net = makeNet()
         if let weightsURL {
@@ -74,7 +74,7 @@ extension NFKMLXSileroVAD {
     /// half of its samples are. The mask weighs a speech chunk 1 and any other `noiseWeight`, the
     /// reference's `noise_loss`.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func chunkTargets(speech spans: [(start: Double, end: Double)], sampleCount: Int,
                                     noiseWeight: Float = 0.5,
                                     configuration c: NFKMLXSileroVADConfiguration = .v6)

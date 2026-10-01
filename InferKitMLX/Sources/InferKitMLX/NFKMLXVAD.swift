@@ -290,7 +290,7 @@ final class NFKVADBlock: Module {
 
 /// The MarbleNet VAD network: a mel front end, the block stack, and a per-frame class head.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXVADNet: Module {
     @ModuleInfo(key: "blocks") var blocks: [NFKVADBlock]
     @ModuleInfo(key: "head") var head: Linear
@@ -321,7 +321,7 @@ public final class NFKMLXVADNet: Module {
     /// The logits with every convolution masked past `validFrames` of the mel, as NeMo's encoder masks
     /// them. The frames past the valid length still get logits; they are the padding's.
     ///
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     public func logits(_ mel: MLXArray, validFrames: Int) -> MLXArray {
         logitsAndLength(mel, validFrames: validFrames).logits
     }

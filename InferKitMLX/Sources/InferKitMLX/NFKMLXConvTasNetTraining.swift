@@ -24,7 +24,7 @@ import MLXOptimizers
  @discussion For estimates and sources `[speakers, samples]`, each zero-meaned, the pairwise loss is
  `−10 log₁₀(‖proj‖² / (‖ŝ − proj‖² + ε) + ε)` with `proj = ⟨ŝ, s⟩ s / (‖s‖² + ε)` and ε = 1e-8, and the loss
  is the mean over speakers under the assignment of estimates to sources that makes it smallest. Measured
- against asteroid's own `PITLossWrapper` by `run_reference.py convtasnet_loss`. Introduced in InferKit 0.5.0.
+ against asteroid's own `PITLossWrapper` by `run_reference.py convtasnet_loss`. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXConvTasNetObjective: Sendable {
 
@@ -74,7 +74,7 @@ extension NFKMLXConvTasNet {
     /// at: the released checkpoint's own, a file `NFKMLXWeights.save` wrote, or `.libri2Mix16k` without
     /// weights.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL?) throws -> NFKMLXConvTasNetNet {
         let configuration = try weightsURL.map(configuration(matching:)) ?? .libri2Mix16k
         let net = NFKMLXConvTasNetNet(configuration)

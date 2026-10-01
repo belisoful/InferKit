@@ -228,7 +228,7 @@ final class NFKBiSeNetOutput: Module {
 /// The BiSeNet network: a detail-preserving spatial path, a deep context path, and the fusion module
 /// that combines them into class logits.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXBiSeNetNet: Module {
     @ModuleInfo(key: "cp") var cp: NFKBiSeNetContextPath
     @ModuleInfo(key: "sp") var sp: NFKBiSeNetSpatialPath

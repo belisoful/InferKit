@@ -221,7 +221,7 @@ final class NFKYOLODetect: Module {
 
 /// The YOLOv8 network: CSPDarknet backbone, PAN-FPN neck, and the decoupled DFL head.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXYOLONet: Module {
     @ModuleInfo(key: "conv0") var conv0: NFKYOLOConv
     @ModuleInfo(key: "conv1") var conv1: NFKYOLOConv

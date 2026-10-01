@@ -121,7 +121,7 @@ final class NFKTasNetBlock: Module {
 
 /// The Conv-TasNet network: encoder, masking TCN, and a shared decoder.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXConvTasNetNet: Module {
     @ModuleInfo(key: "encoder") var encoder: Conv1d
     @ModuleInfo(key: "input_norm") var inputNorm: NFKTasNetGlobalNorm

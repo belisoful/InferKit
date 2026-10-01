@@ -63,7 +63,7 @@ extension NFKMLXYOLOGenerations {
     /// at `bias_init`'s values, and `weightsURL` transfers every tensor whose shape matches
     /// (`intersect_dicts`), so a class count other than the checkpoint's keeps fresh class branches.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public static func network(release: NFKMLXYOLORelease, classCount: Int = 80,
                                weightsURL: URL?) throws -> NFKMLXYOLOGenerationNet {
         let net = makeNet(release, classCount: classCount)

@@ -79,7 +79,7 @@ public struct NFKMLXRTDetrConfiguration: Sendable {
     /// builds no `denoising_class_embed`, which inference never reads; a fine-tune network sets the
     /// reference's 100.
     ///
-    /// - Since: InferKit 0.5.0
+    /// - Since: InferKit 0.4.0
     public var denoisingQueries: Int = 0
 
     public init(embeddingSize: Int, hiddenSizes: [Int], depths: [Int], encoderInChannels: [Int],

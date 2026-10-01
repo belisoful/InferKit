@@ -131,7 +131,7 @@ public struct NFKMLXLearningRateSchedule {
     /// where `p` counts from the end of the hold over the steps that remain. Past the run it stays at
     /// `minimumScale`. The scheduler sets update `k`'s rate at step `k`.
     ///
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     public static func nemoPolynomialHoldDecay(steps: Int, warmupRatio: Double, holdRatio: Double,
                                                power: Double, minimumScale: Double) -> NFKMLXLearningRateSchedule {
         let warmup = Int(warmupRatio * Double(steps))

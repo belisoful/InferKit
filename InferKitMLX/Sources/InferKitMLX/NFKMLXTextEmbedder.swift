@@ -192,7 +192,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     // MARK: - Customization
 
     /// The adapter every embedding passes through, from ``makeAdapter(weightsURL:)`` or
-    /// ``loadAdapter(from:)``. Nil reports the released embedding. Introduced in InferKit 0.5.0.
+    /// ``loadAdapter(from:)``. Nil reports the released embedding. Introduced in InferKit 0.4.0.
     public var adapter: NFKMLXEmbeddingAdapter? {
         get { holder.adapter }
         set { holder.adapter = newValue }
@@ -203,7 +203,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     ///
     /// Encode a corpus once and train over the result; re-encoding per step would be the whole cost of
     /// the run. Encoding is multi-second over many texts; call it off the render thread.
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     public func embeddings(forTokenSequences sequences: [[Int]]) throws -> MLXArray {
         guard !sequences.isEmpty else {
             throw NFKMLXError.trainingDataMismatch("an adapter needs at least one text to encode")
@@ -217,7 +217,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The model's own embeddings of texts, `[N, embeddingDimensions]`, through the tokenizer the
-    /// backend was built with and without the installed adapter. Introduced in InferKit 0.5.0.
+    /// backend was built with and without the installed adapter. Introduced in InferKit 0.4.0.
     public func embeddings(for texts: [String]) throws -> MLXArray {
         guard let tokenize = holder.tokenize else {
             throw NFKMLXError.unsupportedConfiguration("text embedding needs a tokenizer; build the backend with one")
@@ -229,7 +229,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     ///
     /// A nil `weightsURL` is the identity adapter, which is where a fine-tune starts. A file written by
     /// `NFKMLXWeights.save` after a run loads here and reproduces that run's embeddings.
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     public func makeAdapter(weightsURL: URL? = nil) throws -> NFKMLXEmbeddingAdapter {
         guard let weightsURL else {
             return NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions)
@@ -241,14 +241,14 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     ///
     /// This is the Objective-C reach into a fine-tune: a consumer trains through
     /// ``fineTune(adapter:queries:documents:steps:learningRate:objective:observer:)`` in Swift, saves,
-    /// and an app installs the result here. Introduced in InferKit 0.5.0.
+    /// and an app installs the result here. Introduced in InferKit 0.4.0.
     @objc(loadAdapterFromURL:error:)
     public func loadAdapter(from url: URL) throws {
         adapter = try makeAdapter(weightsURL: url)
     }
 
     /// Removes the installed adapter, so later embeddings are the released ones. Introduced in
-    /// InferKit 0.5.0.
+    /// InferKit 0.4.0.
     @objc public func removeAdapter() {
         adapter = nil
     }
@@ -258,7 +258,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     ///
     /// Only the adapter trains; the model is not in the graph. Assign the result to ``adapter``, or
     /// save it with `NFKMLXWeights.save` and install it with ``loadAdapter(from:)``.
-    /// Introduced in InferKit 0.5.0.
+    /// Introduced in InferKit 0.4.0.
     @discardableResult
     public func fineTune(adapter: NFKMLXEmbeddingAdapter, queries: MLXArray, documents: [MLXArray],
                          steps: Int, learningRate: Float = 1e-3,

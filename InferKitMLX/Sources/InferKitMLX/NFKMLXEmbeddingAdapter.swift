@@ -21,7 +21,7 @@ import MLXOptimizers
  @abstract A linear adapter over a frozen embedding.
  @discussion The adapter starts as the identity, so an untrained one reproduces the released embedding
  space exactly and training moves away from it. The result is re-normalized, so a dot product between
- two adapted embeddings stays a cosine similarity. Introduced in InferKit 0.5.0.
+ two adapted embeddings stays a cosine similarity. Introduced in InferKit 0.4.0.
  */
 public final class NFKMLXEmbeddingAdapter: Module {
 
@@ -97,7 +97,7 @@ public final class NFKMLXEmbeddingAdapter: Module {
  similarity between each query and every document in the batch, scaled by 20, read as a classification
  over the batch whose right answer is the query's own positive. Every other document is a negative, so
  a batch of `n` pairs carries `n - 1` negatives per query at no extra cost, and explicit hard negatives
- add to them. Introduced in InferKit 0.5.0.
+ add to them. Introduced in InferKit 0.4.0.
  */
 public struct NFKMLXEmbeddingRankingObjective: Sendable {
 

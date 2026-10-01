@@ -29,7 +29,7 @@ import MLXOptimizers
 /// in place of calling `NFKMLXTrainer.train` directly, so the ordering and the two resolution rules
 /// are written once. The recipe keeps its own public signature.
 ///
-/// Introduced in InferKit 0.5.0.
+/// Introduced in InferKit 0.4.0.
 public enum NFKMLXFineTune {
 
     /// transformers' `Trainer` default update, `per_device_train_batch_size` 8 with no accumulation: the

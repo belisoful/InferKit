@@ -128,7 +128,7 @@ final class NFKPANNsConvBlock: Module {
 /// The PANNs Cnn14 tagging network: a spectrogram normalization, a stack of convolution blocks, and a
 /// classifier over the pooled embedding.
 ///
-/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+/// Introduced as public in InferKit 0.4.0, for fine-tuning.
 public final class NFKMLXAudioTaggerNet: Module {
     @ModuleInfo(key: "bn0") var bn0: BatchNorm
     @ModuleInfo(key: "conv_block") var blocks: [NFKPANNsConvBlock]
