@@ -22,6 +22,12 @@ public struct NFKMLXTableTransformerConfiguration: Sendable {
     public var numQueries: Int = 125
     public var numLabels: Int = 6
     public var labels: [String] = []
+    /// The release's dropout (`dropout`), 0.1 for every release. DETR applies it to each residual
+    /// branch, to the attention probabilities, and inside the feed-forward;
+    /// ``NFKMLXTableTransformerNet/dropout`` applies it.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: Float = 0.1
 
     public init() {}
 
@@ -50,6 +56,7 @@ public struct NFKMLXTableTransformerConfiguration: Sendable {
         encoderFFNDim = int("encoder_ffn_dim", encoderFFNDim)
         decoderFFNDim = int("decoder_ffn_dim", decoderFFNDim)
         numQueries = int("num_queries", numQueries)
+        dropout = (json["dropout"] as? NSNumber)?.floatValue ?? dropout
         if let id2label = json["id2label"] as? [String: String] {
             numLabels = id2label.count
             labels = (0 ..< numLabels).map { id2label[String($0)] ?? "class \($0)" }
@@ -186,9 +193,11 @@ final class NFKTableTransformerAttention: Module {
     @ModuleInfo(key: "out_proj") var outProj: Linear
     let heads: Int
     let headDim: Int
+    let dropout: NFKTableTransformerDropout
 
-    init(_ embedDim: Int, heads: Int) {
+    init(_ embedDim: Int, heads: Int, dropout: NFKTableTransformerDropout) {
         self.heads = heads
+        self.dropout = dropout
         self.headDim = embedDim / heads
         _kProj.wrappedValue = Linear(embedDim, embedDim)
         _vProj.wrappedValue = Linear(embedDim, embedDim)
@@ -207,8 +216,8 @@ final class NFKTableTransformerAttention: Module {
         let q = split(qProj(qIn))
         let k = split(kProj(kIn))
         let v = split(vProj(keyValue))
-        let attn = MLXFast.scaledDotProductAttention(
-            queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(headDim)), mask: .none)
+        let attn = NFKDropout.attention(queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(headDim)), mask: nil,
+                                        rate: dropout.rate, active: training)
         return outProj(attn.transposed(0, 2, 1, 3).reshaped([b, n, heads * headDim]))
     }
 }
@@ -221,9 +230,12 @@ final class NFKTableTransformerEncoderLayer: Module {
     @ModuleInfo(key: "fc1") var fc1: Linear
     @ModuleInfo(key: "fc2") var fc2: Linear
     @ModuleInfo(key: "final_layer_norm") var finalNorm: LayerNorm
+    let dropout: NFKTableTransformerDropout
 
-    init(_ config: NFKMLXTableTransformerConfiguration) {
-        _selfAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.encoderAttentionHeads)
+    init(_ config: NFKMLXTableTransformerConfiguration, dropout: NFKTableTransformerDropout) {
+        self.dropout = dropout
+        _selfAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.encoderAttentionHeads,
+                                                              dropout: dropout)
         _selfAttnNorm.wrappedValue = LayerNorm(dimensions: config.dModel)
         _fc1.wrappedValue = Linear(config.dModel, config.encoderFFNDim)
         _fc2.wrappedValue = Linear(config.encoderFFNDim, config.dModel)
@@ -232,8 +244,9 @@ final class NFKTableTransformerEncoderLayer: Module {
 
     func callAsFunction(_ x: MLXArray, position: MLXArray) -> MLXArray {
         let normed = selfAttnNorm(x)
-        var h = x + selfAttn(query: normed, queryPos: position, keyValue: normed, keyValuePos: position)
-        h = h + fc2(relu(fc1(finalNorm(h))))
+        var h = x + dropout.apply(selfAttn(query: normed, queryPos: position, keyValue: normed, keyValuePos: position),
+                                  active: training)
+        h = h + dropout.apply(fc2(dropout.apply(relu(fc1(finalNorm(h))), active: training)), active: training)
         return h
     }
 }
@@ -243,8 +256,10 @@ final class NFKTableTransformerEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKTableTransformerEncoderLayer]
     @ModuleInfo(key: "layernorm") var layernorm: LayerNorm
 
-    init(_ config: NFKMLXTableTransformerConfiguration) {
-        _layers.wrappedValue = (0 ..< config.encoderLayers).map { _ in NFKTableTransformerEncoderLayer(config) }
+    init(_ config: NFKMLXTableTransformerConfiguration, dropout: NFKTableTransformerDropout) {
+        _layers.wrappedValue = (0 ..< config.encoderLayers).map { _ in
+            NFKTableTransformerEncoderLayer(config, dropout: dropout)
+        }
         _layernorm.wrappedValue = LayerNorm(dimensions: config.dModel)
     }
 
@@ -265,11 +280,15 @@ final class NFKTableTransformerDecoderLayer: Module {
     @ModuleInfo(key: "fc1") var fc1: Linear
     @ModuleInfo(key: "fc2") var fc2: Linear
     @ModuleInfo(key: "final_layer_norm") var finalNorm: LayerNorm
+    let dropout: NFKTableTransformerDropout
 
-    init(_ config: NFKMLXTableTransformerConfiguration) {
-        _selfAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.decoderAttentionHeads)
+    init(_ config: NFKMLXTableTransformerConfiguration, dropout: NFKTableTransformerDropout) {
+        self.dropout = dropout
+        _selfAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.decoderAttentionHeads,
+                                                              dropout: dropout)
         _selfAttnNorm.wrappedValue = LayerNorm(dimensions: config.dModel)
-        _encoderAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.decoderAttentionHeads)
+        _encoderAttn.wrappedValue = NFKTableTransformerAttention(config.dModel, heads: config.decoderAttentionHeads,
+                                                                 dropout: dropout)
         _encoderAttnNorm.wrappedValue = LayerNorm(dimensions: config.dModel)
         _fc1.wrappedValue = Linear(config.dModel, config.decoderFFNDim)
         _fc2.wrappedValue = Linear(config.decoderFFNDim, config.dModel)
@@ -278,12 +297,12 @@ final class NFKTableTransformerDecoderLayer: Module {
 
     func callAsFunction(_ x: MLXArray, memory: MLXArray, spatialPosition: MLXArray, queryPosition: MLXArray) -> MLXArray {
         let selfNormed = selfAttnNorm(x)
-        var h = x + selfAttn(query: selfNormed, queryPos: queryPosition,
-                             keyValue: selfNormed, keyValuePos: queryPosition)
+        var h = x + dropout.apply(selfAttn(query: selfNormed, queryPos: queryPosition,
+                                           keyValue: selfNormed, keyValuePos: queryPosition), active: training)
         let crossNormed = encoderAttnNorm(h)
-        h = h + encoderAttn(query: crossNormed, queryPos: queryPosition,
-                            keyValue: memory, keyValuePos: spatialPosition)
-        h = h + fc2(relu(fc1(finalNorm(h))))
+        h = h + dropout.apply(encoderAttn(query: crossNormed, queryPos: queryPosition,
+                                          keyValue: memory, keyValuePos: spatialPosition), active: training)
+        h = h + dropout.apply(fc2(dropout.apply(relu(fc1(finalNorm(h))), active: training)), active: training)
         return h
     }
 }
@@ -293,8 +312,10 @@ final class NFKTableTransformerDecoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKTableTransformerDecoderLayer]
     @ModuleInfo(key: "layernorm") var layernorm: LayerNorm
 
-    init(_ config: NFKMLXTableTransformerConfiguration) {
-        _layers.wrappedValue = (0 ..< config.decoderLayers).map { _ in NFKTableTransformerDecoderLayer(config) }
+    init(_ config: NFKMLXTableTransformerConfiguration, dropout: NFKTableTransformerDropout) {
+        _layers.wrappedValue = (0 ..< config.decoderLayers).map { _ in
+            NFKTableTransformerDecoderLayer(config, dropout: dropout)
+        }
         _layernorm.wrappedValue = LayerNorm(dimensions: config.dModel)
     }
 
@@ -304,6 +325,15 @@ final class NFKTableTransformerDecoder: Module {
             h = layer(h, memory: memory, spatialPosition: spatialPosition, queryPosition: queryPosition)
         }
         return layernorm(h)
+    }
+}
+
+/// The transformer's dropout rate, shared by its layers so one setting reaches them all.
+final class NFKTableTransformerDropout {
+    var rate: Float = 0
+
+    func apply(_ x: MLXArray, active: Bool) -> MLXArray {
+        NFKDropout.apply(x, rate: rate, active: active)
     }
 }
 
@@ -332,12 +362,13 @@ final class NFKTableTransformerModel: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKTableTransformerEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKTableTransformerDecoder
     @ModuleInfo(key: "query_position_embeddings") var queryPositionEmbeddings: Embedding
+    let dropout = NFKTableTransformerDropout()
 
     init(_ config: NFKMLXTableTransformerConfiguration) {
         _backbone.wrappedValue = NFKTableTransformerBackbone()
         _inputProjection.wrappedValue = Conv2d(inputChannels: 512, outputChannels: config.dModel, kernelSize: 1)
-        _encoder.wrappedValue = NFKTableTransformerEncoder(config)
-        _decoder.wrappedValue = NFKTableTransformerDecoder(config)
+        _encoder.wrappedValue = NFKTableTransformerEncoder(config, dropout: dropout)
+        _decoder.wrappedValue = NFKTableTransformerDecoder(config, dropout: dropout)
         _queryPositionEmbeddings.wrappedValue = Embedding(embeddingCount: config.numQueries, dimensions: config.dModel)
     }
 }
@@ -352,12 +383,23 @@ public final class NFKMLXTableTransformerNet: Module {
     @ModuleInfo(key: "bbox_predictor") var bboxPredictor: NFKTableTransformerMLP
     public let config: NFKMLXTableTransformerConfiguration
 
+    /// The transformer's dropout while the network trains; 0 by default. Set it to the configuration's
+    /// ``NFKMLXTableTransformerConfiguration/dropout`` to train at the reference's rate.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: Float {
+        get { model.dropout.rate }
+        set { model.dropout.rate = newValue }
+    }
+
     public init(_ config: NFKMLXTableTransformerConfiguration) {
         self.config = config
         _model.wrappedValue = NFKTableTransformerModel(config)
         _classifier.wrappedValue = Linear(config.dModel, config.numLabels + 1)
         _bboxPredictor.wrappedValue = NFKTableTransformerMLP(
             inputDim: config.dModel, hiddenDim: config.dModel, outputDim: 4, numLayers: 3)
+        super.init()
+        train(false)
     }
 
     /// Reads a release's `config.json` for the geometry.

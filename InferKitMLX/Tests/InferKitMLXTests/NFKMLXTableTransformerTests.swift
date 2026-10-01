@@ -63,6 +63,43 @@ final class NFKMLXTableTransformerTests: XCTestCase {
         }
     }
 
+    func testTheTransformerDropsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        var configuration = NFKMLXTableTransformerConfiguration()
+        configuration.dModel = 32
+        configuration.encoderLayers = 1
+        configuration.decoderLayers = 1
+        configuration.encoderAttentionHeads = 4
+        configuration.decoderAttentionHeads = 4
+        configuration.encoderFFNDim = 64
+        configuration.decoderFFNDim = 64
+        configuration.numQueries = 5
+        let net = NFKMLXTableTransformerNet(configuration)
+        XCTAssertFalse(net.training, "built in evaluation mode")
+        XCTAssertEqual(net.dropout, 0)
+        let pixels = MLXRandom.normal([1, 64, 64, 3])
+        let plain = net(pixels).logits
+        net.dropout = configuration.dropout
+        XCTAssertEqual(abs(net(pixels).logits - plain).max().item(Float.self), 0, "evaluation never drops")
+        net.train(true)
+        XCTAssertGreaterThan(abs(net(pixels).logits - plain).max().item(Float.self), 0)
+        net.dropout = 0
+        XCTAssertLessThan(abs(net(pixels).logits - plain).max().item(Float.self), 1e-5,
+                          "a zero rate trains without dropping")
+    }
+
+    func testTheConfigurationReadsTheReleasesDropout() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("table-transformer-dropout-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try JSONSerialization.data(withJSONObject: ["dropout": 0.25]).write(to: url)
+        XCTAssertEqual(try NFKMLXTableTransformerConfiguration(configurationURL: url).dropout, 0.25)
+        try JSONSerialization.data(withJSONObject: [String: Any]()).write(to: url)
+        XCTAssertEqual(try NFKMLXTableTransformerConfiguration(configurationURL: url).dropout, 0.1,
+                       "DETR's default")
+    }
+
     /// PARITY: the whole forward against the recorded oracle, seam by seam (the ResNet-18 feature map,
     /// the encoder output, the decoder output, the class logits, and the predicted boxes).
     func testSeamParityOnTheReleasedWeights() throws {

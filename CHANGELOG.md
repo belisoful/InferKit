@@ -901,6 +901,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   optimizer then shrank them; SegFormer's decode-head recipe was affected, by about six parts in ten
   million a step.
 
+#### Table Transformer trains with DETR's dropout on request
+
+- microsoft/table-transformer trains with DETR's dropout of 0.1 on each residual branch, on the
+  attention probabilities, and inside the feed-forward (`detr/models/transformer.py`).
+- `NFKMLXTableTransformerConfiguration.dropout` reads the rate from `config.json`, and
+  `NFKMLXTableTransformerNet.dropout`, 0 by default, applies it at those positions while the network
+  trains.
+- `NFKMLXTableTransformerNet` is built in evaluation mode, so a fine-tune restores evaluation afterward
+  and inference never drops.
+
 #### All-In-One fine-tunes on a consumer's own annotated tracks
 
 - `NFKMLXAllInOne.network(weightsURL:)`, `NFKMLXAllInOneTargets`, and `fineTune(_:examples:…)` port the
