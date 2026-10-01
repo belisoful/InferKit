@@ -4225,6 +4225,63 @@ normalization's statistics. Every target in a batch holds the same number of ste
 is the one transformers computes for this model; the optimizer is AdamW at 1e-4 with weight decay 0.01 on
 a cosine to zero.
 
+### Resuming, validating, and training in half precision
+
+A checkpoint that names an optimizer-state file lets a suspended run continue where it stopped. A
+validation observer scores held-out data in evaluation mode and can end the run. `precision:` runs the
+forward and backward passes in half precision over float32 masters:
+
+```swift
+// The weights and the optimizer's state, written every 50 updates. A later run given the same
+// checkpoint with `resumes` continues from both, at the update where this one stopped.
+let checkpoint = NFKMLXTrainingCheckpoint(url: tuned, everySteps: 50,
+                                          optimizerStateURL: optimizerState, resumes: true)
+
+let net = try NFKMLXCosmosTokenizer.network(variant: .continuousVideo4x8x8, weightsURL: autoencoderJIT)
+// Scores the held-out clip in evaluation mode every 50 updates; returning false ends the run.
+var best = Float.infinity
+let validation = NFKMLXTrainer.validating(net, every: 50, evaluate: { net in
+    abs(net.decode(net.encode(heldOutClip)) - heldOutClip).mean().item(Float.self)
+}, report: { _, score in
+    best = min(best, score)
+    return score <= best * 1.5
+})
+let objective = try NFKMLXCosmosTokenizerObjective(vggWeightsURL: vggWeights)
+try NFKMLXCosmosTokenizer.fineTune(net, examples: { step in myClips[step % myClips.count] }, trainable: .decoder,
+                                   objective: objective, steps: 1_000, precision: .bfloat16,
+                                   checkpoint: checkpoint, observer: validation)
+
+// After a suspension, a fresh network picks the run up at the update after its last checkpoint.
+let resumedNet = try NFKMLXCosmosTokenizer.network(variant: .continuousVideo4x8x8, weightsURL: autoencoderJIT)
+try NFKMLXCosmosTokenizer.fineTune(resumedNet, examples: { step in myClips[step % myClips.count] },
+                                   trainable: .decoder, objective: objective, steps: 1_000,
+                                   precision: .bfloat16, checkpoint: checkpoint)
+```
+
+An optimizer-state file needs an `NFKMLXResumableOptimizer`. Every recipe's reference optimizer is one.
+A direct `NFKMLXTrainer.train` run takes `NFKMLXAdam` or `NFKMLXSGD`, because mlx-swift's `Adam`,
+`AdamW`, and `SGD` keep their state where a checkpoint cannot read it. `.float16` adds PyTorch's dynamic
+loss scaling. A half-precision run computes every operation of the forward in the half type, where a
+PyTorch autocast chooses per operation, so it follows a PyTorch reference closely and not exactly.
+
+### Training with a reference's dropout
+
+Every dropout ships off, so a fine-tune is deterministic unless the caller asks for the release's rates.
+They apply while training, frozen layers included, and never at inference:
+
+```swift
+let net = try NFKMLXMarian.network(directoryURL: releaseDir)
+net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: releaseDir)   // the rates config.json declares
+
+// LoRA's own dropout drops each adapter's input, as peft's `lora_dropout` does.
+try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8, dropout: 0.05)
+```
+
+The Sa2VA and TimesFM recipes take LoRA's dropout as `loraDropout:`. `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`
+also reads a Florence-2 release's `text_config` and a TrOCR release's `decoder`, for their networks'
+`dropout`. SegFormer, DeBERTa-v2, and W2V-BERT carry their own: `NFKMLXSegFormerDropout.reference`, `NFKMLXDeBERTaV2Dropout(configURL:)`, and
+`NFKMLXWav2Vec2BertDropout(configurationURL:)`.
+
 ### Any model
 
 The loop is model-agnostic. Supply the loss for a supervised model, and freeze what should not move:
@@ -4249,8 +4306,9 @@ Notes:
 - A frozen normalization stays in evaluation mode for the run, so a frozen `BatchNorm` backbone
   normalizes with the statistics it was released with and does not fold the training batches into
   them. A frozen dropout still drops, as it does under PyTorch's `model.train()`.
-- Checkpoints record the model's parameters, not the optimizer's state: an `SGD` run resumes exactly,
-  an `Adam` run rebuilds its moment estimates and shows a brief rise in loss.
+- A checkpoint without an optimizer-state file records the model's parameters alone, so a resumed
+  `Adam` run starts its moment estimates at zero and takes its first updates several times too large.
+  "Resuming, validating, and training in half precision" above records the optimizer's state as well.
 
 ## Dynamic backend discovery (optional engines)
 

@@ -999,6 +999,69 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(detector.isReady)
     }
 
+    // Docs/examples.md: Resuming, validating, and training in half precision
+    func testExampleResumingValidatingAndTrainingInHalfPrecision() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("resume-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let myClip = MLX.clip(MLXRandom.normal([1, 5, 32, 32, 3]) * 0.3, min: -1, max: 1)
+        let heldOut = MLX.clip(MLXRandom.normal([1, 5, 32, 32, 3]) * 0.3, min: -1, max: 1)
+
+        // The weights and the optimizer's state, written after every update. A later run given the same
+        // checkpoint with `resumes` continues from both, at the update where this one stopped.
+        let checkpoint = NFKMLXTrainingCheckpoint(
+            url: folder.appendingPathComponent("tuned.safetensors"), everySteps: 1,
+            optimizerStateURL: folder.appendingPathComponent("optimizer.safetensors"), resumes: true)
+
+        let net = try NFKMLXCosmosTokenizer.network(variant: .continuousVideo4x8x8, weightsURL: nil)
+        // Scores the held-out clip in evaluation mode after every update; returning false ends the run.
+        var best = Float.infinity
+        let validation = NFKMLXTrainer.validating(net, every: 1, evaluate: { net in
+            abs(net.decode(net.encode(heldOut)) - heldOut).mean().item(Float.self)
+        }, report: { _, score in
+            best = min(best, score)
+            return score <= best * 1.5
+        })
+        let objective = try NFKMLXCosmosTokenizerObjective(vggWeightsURL: nil)
+        let first = try NFKMLXCosmosTokenizer.fineTune(net, examples: { _ in myClip }, trainable: .decoder,
+                                                       objective: objective, steps: 2, precision: .bfloat16,
+                                                       checkpoint: checkpoint, observer: validation)
+
+        // After a suspension, a fresh network picks the run up at its third update.
+        let resumedNet = try NFKMLXCosmosTokenizer.network(variant: .continuousVideo4x8x8, weightsURL: nil)
+        let rest = try NFKMLXCosmosTokenizer.fineTune(resumedNet, examples: { _ in myClip }, trainable: .decoder,
+                                                      objective: objective, steps: 3, precision: .bfloat16,
+                                                      checkpoint: checkpoint)
+        XCTAssertEqual(first.count, 2)
+        XCTAssertEqual(rest.count, 1, "only the update the first run did not reach")
+        XCTAssertTrue(best.isFinite)
+    }
+
+    // Docs/examples.md: Training with a reference's dropout
+    func testExampleTrainingWithAReferencesDropout() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent("release-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: release) }
+        // A real run points at the downloaded release, whose config.json declares these rates.
+        try Data(#"{"dropout": 0.1, "attention_dropout": 0.1, "activation_dropout": 0.0}"#.utf8)
+            .write(to: release.appendingPathComponent("config.json"))
+
+        // Every dropout ships off, so a fine-tune is deterministic unless the caller asks for the
+        // release's rates. They apply while training, frozen layers included, and never at inference.
+        let net = try NFKMLXMarian.network(directoryURL: nil)
+        net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: release)
+        XCTAssertEqual(net.dropout.dropout, 0.1)
+
+        // LoRA's own dropout drops each adapter's input, as peft's `lora_dropout` does. The Sa2VA and
+        // TimesFM recipes take it as `loraDropout:`.
+        let adapted = try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8, dropout: 0.05)
+        XCTAssertGreaterThan(adapted, 0)
+    }
+
     // MARK: The public surface these recipes rest on
 
     /// The generic trainer entry, an optimizer chosen by the caller, and both ends of the checkpoint
