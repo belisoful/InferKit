@@ -172,7 +172,7 @@ public enum NFKMLXWeights {
     /// nothing that identifies it) routes through `NFKMLXTorchFormat` and reports PyTorch layout,
     /// so every model accepts one wherever it accepts a converted safetensors.
     public static func loadCheckpoint(url: URL) throws -> Checkpoint {
-        if NFKMLXTorchFormat.isTorchCheckpoint(leadingBytes(of: url)) {
+        if NFKMLXTorchFormat.isTorchCheckpoint(try leadingBytes(of: url)) {
             let contents = try NFKMLXTorchFormat.read(url: url)
             return Checkpoint(arrays: try NFKMLXTorchFormat.arrays(from: contents),
                               needsConvTranspose: true, quantization: nil, isNativeTorch: true)
@@ -195,12 +195,23 @@ public enum NFKMLXWeights {
     }
 
     /// The file's first block, for format sniffing. One tar header (512 bytes) is read because a
-    /// `.nemo`'s ustar magic sits at offset 257, past a 4-byte peek. An unreadable file returns
-    /// empty, so the safetensors path raises its own error for a missing file as it always has.
-    private static func leadingBytes(of url: URL) -> Data {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return Data() }
-        defer { try? handle.close() }
-        return (try? handle.read(upToCount: 512)) ?? Data()
+    /// `.nemo`'s ustar magic sits at offset 257, past a 4-byte peek. A missing file returns empty, so
+    /// the safetensors path raises its own error for it as it always has.
+    ///
+    /// - Throws: `NFKMLXError.checkpointNotReadable` for a file that exists but cannot be read. Treating
+    ///   it as empty would send a `.pth` to the safetensors reader, which reports only its extension.
+    private static func leadingBytes(of url: URL) throws -> Data {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return Data()
+        }
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            return try handle.read(upToCount: 512) ?? Data()
+        } catch {
+            throw NFKMLXError.checkpointNotReadable(
+                "\(url.path) exists but cannot be read: \(error.localizedDescription)")
+        }
     }
 
     /// Writes every parameter of `module` to a safetensors file in the module's own layout.

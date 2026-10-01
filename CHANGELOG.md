@@ -823,6 +823,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
   without an error.
 
+#### An unreadable checkpoint says it cannot be read
+
+- `NFKMLXWeights.loadCheckpoint(url:)` read a file's first bytes to recognize a PyTorch checkpoint and
+  treated a file it could not open as empty. A `.pth` on a volume the process may not access then went
+  to the safetensors reader, which failed with `unknownExtension("pth")`.
+- A file that exists but cannot be read now throws `NFKMLXError.checkpointNotReadable`, naming the
+  path and the system's reason. A missing file raises the reader's own error, as before.
+
 #### Every network with a BatchNorm is built in evaluation mode
 
 - BiSeNet, BiSeNetV2, MODNet, RF-DETR, RF-DETR segmentation, RVM, BiRefNet, U²-Net, IS-Net, Parakeet,

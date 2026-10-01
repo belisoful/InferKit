@@ -109,6 +109,32 @@ final class NFKMLXWeightsTests: XCTestCase {
                       "an unmarked checkpoint keeps the existing PyTorch-layout behavior")
     }
 
+    func testAnUnreadableCheckpointSaysItCannotBeRead() throws {
+        let url = temporaryURL("\(UUID().uuidString).pth")
+        try Data([0x50, 0x4B, 0x03, 0x04]).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try? FileManager.default.removeItem(at: url)
+        }
+        XCTAssertThrowsError(try NFKMLXWeights.loadCheckpoint(url: url)) { error in
+            guard case NFKMLXError.checkpointNotReadable(let detail) = error else {
+                return XCTFail("expected checkpointNotReadable, got \(error)")
+            }
+            XCTAssertTrue(detail.contains(url.lastPathComponent), "the error names the file: \(detail)")
+        }
+    }
+
+    func testAMissingCheckpointKeepsTheReadersOwnError() throws {
+        try requireMLXRuntime()
+        let url = temporaryURL("\(UUID().uuidString).safetensors")
+        XCTAssertThrowsError(try NFKMLXWeights.loadCheckpoint(url: url)) { error in
+            if case NFKMLXError.checkpointNotReadable = error {
+                XCTFail("a missing file is not an unreadable one: \(error)")
+            }
+        }
+    }
+
     func testSavingRejectsAURLThatCannotCarryMetadata() throws {
         try requireMLXRuntime()
         let url = temporaryURL("\(UUID().uuidString).npy")

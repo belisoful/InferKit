@@ -23,6 +23,9 @@ public enum NFKMLXError: Error {
     case weightsMismatch(String)
     /// A checkpoint could not be written. See `NFKMLXWeights.save(_:to:)`.
     case checkpointNotWritable(String)
+    /// A checkpoint exists but could not be read, such as a file on a volume the process may not
+    /// access. See `NFKMLXWeights.loadCheckpoint(url:)`. Introduced in InferKit 0.4.0.
+    case checkpointNotReadable(String)
     /// A training run's loss stopped being finite, so its parameters are unrecoverable.
     /// See `NFKMLXTrainer.train(_:optimizer:steps:batch:loss:)`.
     case trainingDiverged(String)
@@ -48,6 +51,7 @@ extension NFKMLXError: LocalizedError {
         case .unsupportedInput: return "the request does not carry an input this MLX backend supports"
         case .weightsMismatch(let detail): return detail
         case .checkpointNotWritable(let detail): return detail
+        case .checkpointNotReadable(let detail): return detail
         case .trainingDiverged(let detail): return detail
         case .trainingDataMismatch(let detail): return detail
         case .loRANotApplicable(let detail): return detail
