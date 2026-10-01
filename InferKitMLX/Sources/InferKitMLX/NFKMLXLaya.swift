@@ -196,9 +196,11 @@ final class NFKLayaHeadAttention: Module {
 
     let heads: Int
     let headDimensions: Int
+    let dropout: NFKLayaHeadDropout
 
-    init(dimensions: Int, heads: Int) {
+    init(dimensions: Int, heads: Int, dropout: NFKLayaHeadDropout) {
         self.heads = heads
+        self.dropout = dropout
         headDimensions = dimensions / heads
         let bound = 1 / sqrt(Float(dimensions))
         _inputProjectionWeight.wrappedValue = MLXRandom.uniform(low: -bound, high: bound, [3 * dimensions, dimensions])
@@ -214,9 +216,9 @@ final class NFKLayaHeadAttention: Module {
         func perHead(_ part: MLXArray) -> MLXArray {
             part.reshaped([batch, length, heads, headDimensions]).transposed(0, 2, 1, 3)
         }
-        let attention = MLXFast.scaledDotProductAttention(
+        let attention = NFKDropout.attention(
             queries: perHead(parts[0]), keys: perHead(parts[1]), values: perHead(parts[2]),
-            scale: 1 / sqrt(Float(headDimensions)), mask: nil)
+            scale: 1 / sqrt(Float(headDimensions)), mask: nil, rate: dropout.rate, active: training)
         return outputProjection(attention.transposed(0, 2, 1, 3).reshaped([batch, length, heads * headDimensions]))
     }
 }
@@ -229,9 +231,11 @@ final class NFKLayaHeadLayer: Module {
     @ModuleInfo(key: "linear2") var linear2: Linear
     @ModuleInfo(key: "norm1") var norm1: LayerNorm
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
+    let dropout: NFKLayaHeadDropout
 
-    init(dimensions: Int, heads: Int) {
-        _attention.wrappedValue = NFKLayaHeadAttention(dimensions: dimensions, heads: heads)
+    init(dimensions: Int, heads: Int, dropout: NFKLayaHeadDropout) {
+        self.dropout = dropout
+        _attention.wrappedValue = NFKLayaHeadAttention(dimensions: dimensions, heads: heads, dropout: dropout)
         _linear1.wrappedValue = Linear(dimensions, 4 * dimensions, bias: true)
         _linear2.wrappedValue = Linear(4 * dimensions, dimensions, bias: true)
         _norm1.wrappedValue = LayerNorm(dimensions: dimensions, eps: 1e-5)
@@ -240,17 +244,32 @@ final class NFKLayaHeadLayer: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let attended = x + attention(norm1(x))
-        return attended + linear2(relu(linear1(norm2(attended))))
+        let attended = x + dropout.apply(attention(norm1(x)), active: training)
+        return attended + dropout.apply(linear2(dropout.apply(relu(linear1(norm2(attended))), active: training)),
+                                        active: training)
+    }
+}
+
+/// The decision head's dropout rate, shared by its layers so one setting reaches them all.
+final class NFKLayaHeadDropout {
+    var rate: Float = 0
+
+    func apply(_ x: MLXArray, active: Bool) -> MLXArray {
+        NFKDropout.apply(x, rate: rate, active: active)
     }
 }
 
 /// The head's layer stack, under the checkpoint's `head.layers.` prefix.
 final class NFKLayaHead: Module {
     @ModuleInfo(key: "layers") var layers: [NFKLayaHeadLayer]
+    let dropout: NFKLayaHeadDropout
 
     init(dimensions: Int, heads: Int, count: Int) {
-        _layers.wrappedValue = (0 ..< count).map { _ in NFKLayaHeadLayer(dimensions: dimensions, heads: heads) }
+        let shared = NFKLayaHeadDropout()
+        dropout = shared
+        _layers.wrappedValue = (0 ..< count).map { _ in
+            NFKLayaHeadLayer(dimensions: dimensions, heads: heads, dropout: shared)
+        }
         super.init()
     }
 
@@ -287,6 +306,17 @@ public final class NFKMLXLayaNet: Module {
 
     public let configuration: NFKMLXLayaConfiguration
 
+    /// The decision head's dropout while the network trains; 0 by default. The release's
+    /// `DecisionModel` builds its head with 0.1 (`rl_common.py`), which PyTorch's
+    /// `TransformerEncoderLayer` applies to the attention probabilities, after the attention, and
+    /// around the feed-forward. The ModernBERT encoder's dropouts are 0 in its configuration.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var headDropout: Float {
+        get { head.dropout.rate }
+        set { head.dropout.rate = newValue }
+    }
+
     public init(_ c: NFKMLXLayaConfiguration) {
         configuration = c
         let d = c.encoder.hiddenSize
@@ -297,6 +327,7 @@ public final class NFKMLXLayaNet: Module {
         _actHead.wrappedValue = [Linear(d + 4, 256, bias: true), NFKLayaGELU(), Linear(256, 2, bias: true)]
         _temperature.wrappedValue = MLXArray.ones([3])
         super.init()
+        train(false)
     }
 
     /// The token states after the encoder, the type embedding, and the decision head: `[1, length, d]`.

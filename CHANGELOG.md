@@ -1024,6 +1024,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   SegFormer, Zero-DCE, Whisper, and CLIP entries name the recipes they ship, and BigVGAN and Mimi are
   offline on their unshipped discriminators.
 
+#### Laya trains with its decision head's dropout on request
+
+- The release's `DecisionModel` builds its two-layer decision head with dropout 0.1 (`rl_common.py`),
+  which PyTorch's `TransformerEncoderLayer` applies to the attention probabilities, after the
+  attention, and around the feed-forward. The ModernBERT encoder's dropouts are 0.
+- `NFKMLXLayaNet.headDropout`, 0 by default, applies it at those positions while the network trains,
+  and the network is built in evaluation mode.
+
 #### Florence-2
 
 - `NFKMLXFlorence2` ports Florence-2 (Microsoft, MIT): a DaViT image tower, a projector, and a BART

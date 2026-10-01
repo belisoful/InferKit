@@ -314,6 +314,23 @@ final class NFKMLXLayaTests: XCTestCase {
         XCTAssertFalse(keys.contains("scorer.2.weight"), "the GELU carries no parameter")
     }
 
+    func testTheHeadDropsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let net = NFKMLXLayaNet(.tiny)
+        XCTAssertFalse(net.training, "built in evaluation mode")
+        XCTAssertEqual(net.headDropout, 0)
+        let tokens = (0 ..< 24).map { ($0 * 7) % 60 + 4 }
+        func logits() -> MLXArray { net.forward(tokens: tokens, markers: [3, 9, 15], type: .choice).logits }
+        let plain = logits()
+        net.headDropout = 0.5
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "evaluation never drops")
+        net.train(true)
+        XCTAssertGreaterThan(abs(logits() - plain).max().item(Float.self), 0)
+        net.headDropout = 0
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "a zero rate trains without dropping")
+    }
+
     // MARK: - Customization
 
     func testTheObjectiveIsLowestAtTheTargetAndPenalizesAnOrdinalMiss() throws {
