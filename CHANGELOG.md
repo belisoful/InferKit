@@ -940,6 +940,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   schedule, measured on the official checkpoint with the time and noise fixed: 0.025521424 against the
   reference's 0.025521573, the noise estimate at cosine 0.9999999999995.
 
+#### W2V-BERT trains with the dropouts its fine-tuning recipe keeps on request
+
+- Hugging Face's W2V-BERT recipe sets every dropout to zero except `conformer_conv_dropout` and
+  `final_dropout`, which stay at the release's 0.1. transformers applies the first at the end of each
+  Conformer convolution module and to each adapter layer's attention output, and the second to the
+  features the CTC head reads.
+- `NFKMLXWav2Vec2BertDropout(configurationURL:)` reads the two rates, and `NFKMLXWav2Vec2BertNet.dropout`,
+  none by default, applies them while the network trains.
+- `NFKMLXWav2Vec2BertNet` is built in evaluation mode, so a fine-tune restores evaluation afterward and
+  inference never drops.
+
 #### GTCRN fine-tunes on a consumer's own recordings
 
 - `NFKMLXGTCRNFactory.network(weightsURL:)`, `spectrogram(for:)`, and `fineTune(_:examples:…)` train

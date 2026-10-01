@@ -41,6 +41,45 @@ final class NFKMLXWav2Vec2BertTests: XCTestCase {
         XCTAssertFalse(names.contains("encoder.layers.0.conv_module.depthwise_conv.bias"))
     }
 
+    func testEachDropoutRunsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        var c = NFKMLXWav2Vec2BertConfiguration()
+        c.hiddenSize = 32
+        c.numHiddenLayers = 1
+        c.numAttentionHeads = 4
+        c.intermediateSize = 64
+        c.depthwiseKernel = 3
+        c.addsAdapter = true
+        c.outputHiddenSize = 32
+        c.vocabularySize = 8
+        let net = NFKMLXWav2Vec2BertNet(c)
+        XCTAssertFalse(net.training, "built in evaluation mode")
+        XCTAssertEqual(net.dropout, .none)
+        let features = MLXRandom.normal([1, 20, 160])
+        func logits() -> MLXArray { net.logits(features, mask: nil)!.logits }
+        let plain = logits()
+        net.dropout = NFKMLXWav2Vec2BertDropout(convolution: 0.5, final: 0.5)
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "evaluation never drops")
+        net.train(true)
+        net.dropout = .none
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "a zero rate trains without dropping")
+        net.dropout = NFKMLXWav2Vec2BertDropout(convolution: 0.5)
+        XCTAssertGreaterThan(abs(logits() - plain).max().item(Float.self), 0)
+        net.dropout = NFKMLXWav2Vec2BertDropout(final: 0.5)
+        XCTAssertGreaterThan(abs(logits() - plain).max().item(Float.self), 0)
+    }
+
+    func testTheDropoutReadsTheReleasesRates() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("w2v-bert-dropout-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try JSONSerialization.data(withJSONObject: ["conformer_conv_dropout": 0.1, "final_dropout": 0.2,
+                                                    "hidden_dropout": 0.3]).write(to: url)
+        XCTAssertEqual(try NFKMLXWav2Vec2BertDropout(configurationURL: url),
+                       NFKMLXWav2Vec2BertDropout(convolution: 0.1, final: 0.2))
+    }
+
     /// PARITY on the release, float32, seam by seam.
     func testTheReleaseIsAtParity() throws {
         try requireMLXRuntime()

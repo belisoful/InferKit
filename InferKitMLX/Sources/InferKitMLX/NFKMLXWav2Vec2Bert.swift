@@ -192,8 +192,10 @@ final class NFKW2VBertAdapterLayer: Module {
     @ModuleInfo(key: "self_attn") var attention: NFKW2VBertPlainAttention
     @ModuleInfo(key: "ffn_layer_norm") var ffnNorm: NFKLayerNorm
     @ModuleInfo(key: "ffn") var ffn: NFKW2VBertFeedForward
+    let rates: NFKW2VBertDropoutRates
 
-    init(_ c: NFKMLXWav2Vec2BertConfiguration) {
+    init(_ c: NFKMLXWav2Vec2BertConfiguration, rates: NFKW2VBertDropoutRates = NFKW2VBertDropoutRates()) {
+        self.rates = rates
         let width = c.outputHiddenSize
         _residualNorm.wrappedValue = NFKLayerNorm(dimensions: width, eps: c.layerNormEps)
         _residualConv.wrappedValue = Conv1d(inputChannels: width, outputChannels: 2 * width, kernelSize: c.adapterKernel,
@@ -216,7 +218,8 @@ final class NFKW2VBertAdapterLayer: Module {
     func callAsFunction(_ x: MLXArray, mask: MLXArray?) -> MLXArray {
         let residual = Self.glu(residualConv(residualNorm(x)))
         let pooled = Self.glu(attentionConv(attentionNorm(x)))
-        let attended = attention(pooled, mask: mask) + residual
+        let attended = NFKDropout.apply(attention(pooled, mask: mask), rate: rates.values.convolution, active: training)
+            + residual
         return ffn(ffnNorm(attended)) + attended
     }
 }
@@ -229,13 +232,13 @@ final class NFKW2VBertAdapter: Module {
     let kernel: Int
     let stride: Int
 
-    init(_ c: NFKMLXWav2Vec2BertConfiguration) {
+    init(_ c: NFKMLXWav2Vec2BertConfiguration, rates: NFKW2VBertDropoutRates = NFKW2VBertDropoutRates()) {
         kernel = c.adapterKernel
         stride = c.adapterStride
         let projects = c.outputHiddenSize != c.hiddenSize
         _projection.wrappedValue = projects ? Linear(c.hiddenSize, c.outputHiddenSize) : nil
         _projectionNorm.wrappedValue = projects ? NFKLayerNorm(dimensions: c.outputHiddenSize, eps: c.layerNormEps) : nil
-        _layers.wrappedValue = (0 ..< c.adapterLayers).map { _ in NFKW2VBertAdapterLayer(c) }
+        _layers.wrappedValue = (0 ..< c.adapterLayers).map { _ in NFKW2VBertAdapterLayer(c, rates: rates) }
         super.init()
     }
 
@@ -317,9 +320,11 @@ final class NFKW2VBertConvolution: Module {
     @ModuleInfo(key: "depthwise_layer_norm") var depthwiseNorm: NFKLayerNorm
     @ModuleInfo(key: "pointwise_conv2") var pointwise2: Conv1d
     let kernel: Int
+    let rates: NFKW2VBertDropoutRates
 
-    init(_ c: NFKMLXWav2Vec2BertConfiguration) {
+    init(_ c: NFKMLXWav2Vec2BertConfiguration, rates: NFKW2VBertDropoutRates = NFKW2VBertDropoutRates()) {
         kernel = c.depthwiseKernel
+        self.rates = rates
         _norm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _pointwise1.wrappedValue = Conv1d(inputChannels: c.hiddenSize, outputChannels: 2 * c.hiddenSize, kernelSize: 1, bias: false)
         _depthwise.wrappedValue = Conv1d(inputChannels: c.hiddenSize, outputChannels: c.hiddenSize, kernelSize: c.depthwiseKernel,
@@ -338,7 +343,8 @@ final class NFKW2VBertConvolution: Module {
         let halves = projected.split(parts: 2, axis: -1)
         let gated = halves[0] * sigmoid(halves[1])
         let padded = MLX.padded(gated, widths: [.init(0), .init((kernel - 1, 0)), .init(0)])
-        return pointwise2(silu(depthwiseNorm(depthwise(padded))))
+        return NFKDropout.apply(pointwise2(silu(depthwiseNorm(depthwise(padded)))), rate: rates.values.convolution,
+                                active: training)
     }
 }
 
@@ -354,12 +360,12 @@ final class NFKW2VBertLayer: Module {
     @ModuleInfo(key: "ffn2") var ffn2: NFKW2VBertFeedForward
     @ModuleInfo(key: "final_layer_norm") var finalNorm: NFKLayerNorm
 
-    init(_ c: NFKMLXWav2Vec2BertConfiguration) {
+    init(_ c: NFKMLXWav2Vec2BertConfiguration, rates: NFKW2VBertDropoutRates = NFKW2VBertDropoutRates()) {
         _ffn1Norm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _ffn1.wrappedValue = NFKW2VBertFeedForward(c)
         _attentionNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _attention.wrappedValue = NFKW2VBertAttention(c)
-        _convolution.wrappedValue = NFKW2VBertConvolution(c)
+        _convolution.wrappedValue = NFKW2VBertConvolution(c, rates: rates)
         _ffn2Norm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _ffn2.wrappedValue = NFKW2VBertFeedForward(c)
         _finalNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
@@ -378,8 +384,8 @@ final class NFKW2VBertLayer: Module {
 final class NFKW2VBertEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKW2VBertLayer]
 
-    init(_ c: NFKMLXWav2Vec2BertConfiguration) {
-        _layers.wrappedValue = (0 ..< c.numHiddenLayers).map { _ in NFKW2VBertLayer(c) }
+    init(_ c: NFKMLXWav2Vec2BertConfiguration, rates: NFKW2VBertDropoutRates = NFKW2VBertDropoutRates()) {
+        _layers.wrappedValue = (0 ..< c.numHiddenLayers).map { _ in NFKW2VBertLayer(c, rates: rates) }
         super.init()
     }
 }
@@ -398,6 +404,42 @@ final class NFKW2VBertFeatureProjection: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray { projection(norm(x)) }
 }
 
+// MARK: - Dropout
+
+/// The dropouts Hugging Face's W2V-BERT fine-tuning recipe leaves at the release's rates; it sets every
+/// other dropout, layer drop, and the time mask to zero.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKMLXWav2Vec2BertDropout: Sendable, Equatable {
+    /// `conformer_conv_dropout`: the end of each Conformer convolution module and each adapter layer's
+    /// attention output.
+    public var convolution: Float
+    /// `final_dropout`: the features the CTC head reads.
+    public var final: Float
+
+    public init(convolution: Float = 0, final: Float = 0) {
+        self.convolution = convolution
+        self.final = final
+    }
+
+    /// No dropout.
+    public static let none = NFKMLXWav2Vec2BertDropout()
+
+    /// The two rates from a release's `config.json`; 0.1 each in `facebook/w2v-bert-2.0`.
+    public init(configurationURL url: URL) throws {
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("config.json is not a JSON object")
+        }
+        self.init(convolution: (json["conformer_conv_dropout"] as? NSNumber)?.floatValue ?? 0,
+                  final: (json["final_dropout"] as? NSNumber)?.floatValue ?? 0)
+    }
+}
+
+/// The rates every module of one network reads when it runs, so setting them once reaches them all.
+final class NFKW2VBertDropoutRates {
+    var values = NFKMLXWav2Vec2BertDropout.none
+}
+
 // MARK: - Network
 
 /// The W2V-BERT network: stacked filterbanks `[B, frames, 160]` in, contextual features
@@ -412,29 +454,42 @@ public final class NFKMLXWav2Vec2BertNet: Module {
     @ModuleInfo(key: "lm_head") var head: Linear?
 
     public let configuration: NFKMLXWav2Vec2BertConfiguration
+    let rates = NFKW2VBertDropoutRates()
+
+    /// The dropout while the network trains; none by default. Set it to
+    /// `NFKMLXWav2Vec2BertDropout(configurationURL:)` to train at a release's rates, which Hugging Face's
+    /// fine-tuning recipe leaves on.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXWav2Vec2BertDropout {
+        get { rates.values }
+        set { rates.values = newValue }
+    }
 
     public init(_ configuration: NFKMLXWav2Vec2BertConfiguration = .v2) {
         self.configuration = configuration
         _featureProjection.wrappedValue = NFKW2VBertFeatureProjection(configuration)
-        _encoder.wrappedValue = NFKW2VBertEncoder(configuration)
+        _encoder.wrappedValue = NFKW2VBertEncoder(configuration, rates: rates)
         _maskedSpecEmbed.wrappedValue = MLXArray.zeros([configuration.hiddenSize])
-        _adapter.wrappedValue = configuration.addsAdapter ? NFKW2VBertAdapter(configuration) : nil
+        _adapter.wrappedValue = configuration.addsAdapter ? NFKW2VBertAdapter(configuration, rates: rates) : nil
         let headWidth = configuration.addsAdapter ? configuration.outputHiddenSize : configuration.hiddenSize
         _head.wrappedValue = configuration.vocabularySize.map { Linear(headWidth, $0) }
         super.init()
+        train(false)
     }
 
     /// The encoder's features, through the adapter when the network carries one, and the mask of their
     /// real frames. `timeMask` (`[B, frames]`, boolean) replaces SpecAugment's masked frames with
-    /// `masked_spec_embed` after the feature projection.
+    /// `masked_spec_embed` after the feature projection. While the network trains, `dropout.final`
+    /// applies to the features, which is where `Wav2Vec2BertForCTC` applies it before its head.
     public func encode(_ features: MLXArray, mask: MLXArray?, timeMask: MLXArray? = nil) -> (hidden: MLXArray, mask: MLXArray?) {
         var projected = featureProjection(features)
         if let timeMask {
             projected = MLX.where(timeMask.expandedDimensions(axis: -1), maskedSpecEmbed.asType(projected.dtype), projected)
         }
         let output = run(projected, mask: mask, collecting: false).output
-        guard let adapter else { return (output, mask) }
-        return adapter(output, mask: mask)
+        let (hidden, hiddenMask) = adapter.map { $0(output, mask: mask) } ?? (output, mask)
+        return (NFKDropout.apply(hidden, rate: rates.values.final, active: training), hiddenMask)
     }
 
     /// The CTC logits and the real frame count of each utterance, or nil without a head.
