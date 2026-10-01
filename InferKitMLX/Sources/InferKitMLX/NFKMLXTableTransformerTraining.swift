@@ -124,6 +124,12 @@ public struct NFKMLXTableTransformerObjective: Sendable {
 
 extension NFKMLXTableTransformer {
 
+    /// The reference's update in single-image steps: a batch of 2 (`structure_config.json`,
+    /// `detection_config.json`).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceAccumulationSteps = 2
+
     /// Builds the network itself, ready to fine-tune, from a release directory or a directory
     /// ``save(_:toDirectoryURL:release:)`` wrote.
     ///
@@ -162,7 +168,8 @@ extension NFKMLXTableTransformer {
     ///   - steps: how many images to train on.
     ///   - clipGradientNorm: bounds the global gradient norm; the reference clips at 0.1.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
-    ///     default, updates after every batch. The reference updates on a batch of 2.
+    ///     default, updates after every batch. The reference updates on a batch of 2
+    ///     (``referenceAccumulationSteps``).
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's `StepLR`,
     ///     0.9 per epoch, with `stepsPerEpoch` updates to an epoch, when the reference optimizer runs.
     ///     With a caller's optimizer, nil holds that optimizer's rate constant.

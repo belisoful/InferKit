@@ -105,6 +105,11 @@ extension NFKMLXTimesFM {
         return net
     }
 
+    /// The windows the reference trains on in each step, `finetune_lora.py`'s batch of 32.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceWindowsPerStep = 32
+
     /// Fine-tunes TimesFM on a consumer's own series, returning the loss from each step.
     ///
     /// The whole customization path is three calls: ``network(directoryURL:)`` to build, this to train, and
@@ -120,6 +125,8 @@ extension NFKMLXTimesFM {
     ///   - trainable: LoRA adapters (the reference's rank 4 and alpha 8 by default) or every parameter.
     ///     Adapters are applied here, to every linear layer as PEFT's `all-linear` selects them, and persist
     ///     on `net`; applying again adds none.
+    ///   - loraDropout: the dropout on each adapter's input while the run trains, PEFT's `lora_dropout`;
+    ///     the reference sets 0.05. 0, the default, drops nothing.
     ///   - objective: the reference's loss.
     ///   - optimizer: the update rule. Nil uses the reference's `torch.optim.AdamW` (bias-corrected, betas
     ///     0.9 and 0.999, epsilon 1e-8) at `learningRate` with `weightDecay`.
@@ -129,7 +136,10 @@ extension NFKMLXTimesFM {
     ///   - clipGradientNorm: bounds the global gradient norm before the update, as the reference's
     ///     `clip_grad_norm_(…, max_norm=1.0)`.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
-    ///     default, updates after every batch. The reference updates on a batch of 32 windows.
+    ///     default, updates after every batch. The reference updates on a batch of 32 windows
+    ///     (``referenceWindowsPerStep``), which `windows` supplies.
+    ///   - precision: the precision the passes compute in; float32 by default. The reference loads the
+    ///     model in bfloat16, which `.bfloat16` approximates.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `CosineAnnealingLR` to zero over the run when the reference optimizer runs. With a caller's
     ///     optimizer, nil holds that optimizer's rate constant.
@@ -144,6 +154,7 @@ extension NFKMLXTimesFM {
         _ net: NFKMLXTimesFMNet,
         windows: (Int) -> [(context: [Float], target: [Float])],
         trainable: NFKMLXTimesFMTrainable = .reference,
+        loraDropout: Float = 0,
         objective: NFKMLXTimesFMObjective = NFKMLXTimesFMObjective(),
         optimizer: Optimizer? = nil,
         learningRate: Float = 1e-4,
@@ -151,6 +162,7 @@ extension NFKMLXTimesFM {
         steps: Int,
         clipGradientNorm: Float? = 1.0,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -158,7 +170,7 @@ extension NFKMLXTimesFM {
         var batch = [(context: [Float], target: [Float])]()
         return try NFKMLXFineTune.run(
             net,
-            freezing: { try apply(trainable, to: net) },
+            freezing: { try apply(trainable, to: net, loraDropout: loraDropout) },
             optimizer: optimizer,
             reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: weightDecay) },
             referenceSchedule: { .cosine(steps: steps, endScale: 0) },
@@ -168,16 +180,16 @@ extension NFKMLXTimesFM {
                 return [MLXArray(Int32(batch.count))]
             },
             loss: { net, _ in objective(net, windows: batch) },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
 
     /// Adapts or unfreezes `net` for `trainable`.
-    static func apply(_ trainable: NFKMLXTimesFMTrainable, to net: NFKMLXTimesFMNet) throws {
+    static func apply(_ trainable: NFKMLXTimesFMTrainable, to net: NFKMLXTimesFMNet, loraDropout: Float = 0) throws {
         switch trainable {
         case .lora(let rank, let alpha):
-            try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha)
+            try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha, dropout: loraDropout)
         case .all:
             net.unfreeze()
         }

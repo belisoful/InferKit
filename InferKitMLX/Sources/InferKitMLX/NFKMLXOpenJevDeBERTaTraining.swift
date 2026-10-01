@@ -94,6 +94,11 @@ public struct NFKMLXOpenJevDeBERTaObjective: Sendable {
 
 extension NFKMLXOpenJevDeBERTa {
 
+    /// The release's batch, `train_encoder.py`'s `--batch 16`.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceBatchSize = 16
+
     /// Freezes what a policy leaves alone.
     public static func freeze(_ net: NFKMLXOpenJevDeBERTaNet, trainable: NFKMLXOpenJevDeBERTaTrainable) {
         net.freeze()
@@ -127,7 +132,7 @@ extension NFKMLXOpenJevDeBERTa {
     ///     from scratch and moves too little at the encoder's rate.
     ///   - trainable: which parameters move.
     ///   - objective: the release's objective.
-    ///   - batchSize: examples per step, padded together.
+    ///   - batchSize: examples per step, padded together; the release trains on ``referenceBatchSize``.
     ///   - learningRateSchedule: multiplies both rates at each step. Nil is the release's: a linear
     ///     warm-up over the first 6% of the run, then a linear decay to zero
     ///     (``NFKMLXLearningRateSchedule/openJevDeBERTa(steps:)``); `.constant` opts out.

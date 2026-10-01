@@ -166,4 +166,25 @@ final class NFKMLXTimesFMTrainingTests: XCTestCase {
         let difference = zip(adapted.joined(), reloaded.joined()).map { abs($0 - $1) }.max() ?? .infinity
         XCTAssertLessThan(difference, 1e-4, "the folded adapters forecast as the adapted network does")
     }
+
+    /// The reference's LoRA dropout reaches every adapter, and a bfloat16 run trains them into float32 masters.
+    func testALoRARunTakesTheReferencesDropoutAndRunsInBFloat16() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(9)
+        var c = NFKMLXTimesFMConfiguration()
+        c.hiddenSize = 64
+        c.intermediateSize = 64
+        c.numLayers = 2
+        c.numHeads = 4
+        let net = NFKMLXTimesFMNet(c)
+        let series = (0 ..< 400).map { Float(sin(Double($0) * 0.3) * 2 + Double($0) * 0.01) }
+        let windows = (0 ..< 4).map { start in (context: Array(series[(start * 40) ..< (start * 40 + 64)]),
+                                                target: Array(series[(start * 40 + 64) ..< (start * 40 + 77)])) }
+        let losses = try NFKMLXTimesFM.fineTune(net, windows: { _ in windows }, loraDropout: 0.05,
+                                                learningRate: 3e-3, steps: 3, precision: .bfloat16)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        let adapters = net.leafModules().flattened().compactMap { $0.1 as? NFKMLXLoRALinear }
+        XCTAssertFalse(adapters.isEmpty)
+        XCTAssertTrue(adapters.allSatisfy { $0.dropout == 0.05 && $0.loraA.dtype == .float32 })
+    }
 }

@@ -394,7 +394,8 @@ extension NFKMLXLearningRateSchedule {
                                    finalScale: Double = 0.01) -> NFKMLXLearningRateSchedule {
         let perEpoch = max(stepsPerEpoch, 1)
         let epochs = (steps + perEpoch - 1) / perEpoch
-        let warmup = Int((min(warmupEpochs, Double(max(epochs - 1, 0))) * Double(perEpoch)).rounded(.toNearestOrEven))
+        let warmup = NFKMLXYOLO.ultralyticsWarmupBatches(steps: steps, stepsPerEpoch: stepsPerEpoch,
+                                                         warmupEpochs: warmupEpochs)
         return NFKMLXLearningRateSchedule { step in
             let epoch = step / perEpoch
             let scale = max(1 - Double(epoch) / Double(max(epochs, 1)), 0) * (1 - finalScale) + finalScale
@@ -407,6 +408,18 @@ extension NFKMLXLearningRateSchedule {
 }
 
 extension NFKMLXYOLO {
+
+    /// ultralytics' nominal batch, `nbs` 64 in `cfg/default.yaml`, which `nominalBatchSize` takes.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceNominalBatchSize = 64
+
+    /// ultralytics' `_get_warmup_iterations`: `round(min(warmupEpochs, epochs − 1) · stepsPerEpoch)`.
+    static func ultralyticsWarmupBatches(steps: Int, stepsPerEpoch: Int, warmupEpochs: Double = 3) -> Int {
+        let perEpoch = max(stepsPerEpoch, 1)
+        let epochs = (steps + perEpoch - 1) / perEpoch
+        return Int((min(warmupEpochs, Double(max(epochs - 1, 0))) * Double(perEpoch)).rounded(.toNearestOrEven))
+    }
 
     /// Builds the YOLOv8 network at a released size for `classCount` classes, ready to fine-tune.
     ///
@@ -461,8 +474,13 @@ extension NFKMLXYOLO {
     ///     schedule counts in.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference clips at 10.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
-    ///     default, updates after every batch. ultralytics sums `round(64 / batch)` batches into each
-    ///     update, ramping the count from 1 over the warm-up; this averages a fixed count.
+    ///     default, updates after every batch.
+    ///   - nominalBatchSize: accumulates as ultralytics does toward this many images an update (its
+    ///     `nbs`, ``referenceNominalBatchSize``): each batch's gradient adds to the sum, and the count of
+    ///     batches an update takes ramps from 1 to `round(nominalBatchSize / batch)` over the warm-up
+    ///     (``NFKMLXGradientAccumulation/ultralytics(batchSize:warmupBatches:nominalBatchSize:)``). `steps`
+    ///     still counts batches, and the weight average follows each update. Nil, the default, updates
+    ///     after `accumulationSteps` batches.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses ``NFKMLXLearningRateSchedule/ultralytics(steps:stepsPerEpoch:warmupEpochs:finalScale:)``
     ///     when the reference optimizer runs.
     ///   - averagesWeights: keeps ultralytics' exponential moving average of every weight and running
@@ -483,12 +501,18 @@ extension NFKMLXYOLO {
         stepsPerEpoch: Int,
         clipGradientNorm: Float? = 10,
         accumulationSteps: Int = 1,
+        nominalBatchSize: Int? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         averagesWeights: Bool = true,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         var average = averagesWeights ? NFKMLXModelWeightAverage(net) : nil
+        let accumulation = nominalBatchSize.map { nominal in
+            NFKMLXGradientAccumulation.ultralytics(batchSize: examples(0).images.dim(0),
+                                                   warmupBatches: ultralyticsWarmupBatches(steps: steps, stepsPerEpoch: stepsPerEpoch),
+                                                   nominalBatchSize: nominal)
+        }
         let history = try NFKMLXFineTune.run(
             net,
             freezing: {
@@ -532,10 +556,13 @@ extension NFKMLXYOLO {
                                       featureSizes: outputs.featureSizes, strides: outputs.strides, targets: targets)
             },
             clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            accumulation: accumulation,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint,
             observer: { step in
-                average?.update(from: net)
+                if step.updated {
+                    average?.update(from: net)
+                }
                 return observer?(step) ?? true
             })
         average?.apply(to: net)

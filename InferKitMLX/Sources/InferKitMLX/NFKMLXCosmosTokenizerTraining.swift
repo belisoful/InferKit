@@ -186,6 +186,8 @@ extension NFKMLXCosmosTokenizer {
     ///     `basic` callbacks clip every step (`GradClipCallback`, `grad_clip_norm=1`).
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch.
+    ///   - precision: the precision the passes compute in; float32 by default. The reference trains in
+    ///     bfloat16, which `.bfloat16` approximates.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `WarmupLambdaLR`, a linear warm-up over 5,000 steps, when the reference optimizer runs. With a
     ///     caller's optimizer, nil holds that optimizer's rate constant.
@@ -208,6 +210,7 @@ extension NFKMLXCosmosTokenizer {
         steps: Int,
         clipGradientNorm: Float? = 1,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         weightAverageDecay: Float? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -227,7 +230,7 @@ extension NFKMLXCosmosTokenizer {
             steps: steps,
             sample: examples,
             loss: { net, batch in objective.loss(reconstruction: net(batch), target: batch) },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint,
             observer: { step in

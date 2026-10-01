@@ -75,6 +75,11 @@ extension NFKMLXWav2Vec2BertNet {
 
 extension NFKMLXWav2Vec2Bert {
 
+    /// The reference's update in single-utterance steps: 16 utterances a batch over 2 accumulated batches.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceAccumulationSteps = 32
+
     /// Builds the network itself, ready to fine-tune.
     ///
     /// - Parameters:
@@ -124,7 +129,9 @@ extension NFKMLXWav2Vec2Bert {
     ///   - clipGradientNorm: the `Trainer`'s `max_grad_norm`.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch. The reference updates on 16 utterances over 2
-    ///     accumulated steps.
+    ///     accumulated steps (``referenceAccumulationSteps``).
+    ///   - precision: the precision the passes compute in; float32 by default. The reference trains with
+    ///     `fp16=True`, which `.float16` approximates.
     ///   - learningRateSchedule: nil uses the `Trainer`'s linear warm-up and decay when the reference
     ///     optimizer runs, and a constant rate with a caller's optimizer.
     ///   - seed: seeds SpecAugment's draws.
@@ -147,6 +154,7 @@ extension NFKMLXWav2Vec2Bert {
         steps: Int,
         clipGradientNorm: Float? = 1.0,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         seed: UInt64 = 0,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -182,7 +190,7 @@ extension NFKMLXWav2Vec2Bert {
                 let frames = outputMask.map { $0.asType(.int32).sum(axis: -1).asArray(Int32.self).map(Int.init) }
                 return objective.loss(logits: net.head!(hidden), labels: [utterance], frames: frames)
             },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

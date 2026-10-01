@@ -181,6 +181,9 @@ extension NFKMLXLaya {
     ///     magnitude less.
     ///   - trainable: which parameters move.
     ///   - objective: the proper-scoring objective.
+    ///   - precision: the precision the passes compute in; float32 by default. The release's
+    ///     `rl_agent_config.json` trains under bfloat16 autocast (`amp_dtype`), which `.bfloat16`
+    ///     approximates.
     ///   - observer: receives each step and can end the run early.
     ///
     /// A run is multi-second; call it off the main thread. The fine-tuned network saves through
@@ -189,6 +192,7 @@ extension NFKMLXLaya {
     public func fineTune(examples: [NFKMLXLayaExample], steps: Int, learningRate: Float = 1e-4,
                          trainable: NFKMLXLayaTrainable = .head,
                          objective: NFKMLXLayaObjective = NFKMLXLayaObjective(),
+                         precision: NFKMLXTrainingPrecision = .float32,
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         guard let tokenizer else { throw NFKMLXError.trainingDataMismatch("the model has no tokenizer to encode the examples with") }
         guard !examples.isEmpty else { throw NFKMLXError.trainingDataMismatch("no examples") }
@@ -206,7 +210,7 @@ extension NFKMLXLaya {
             net,
             freezing: { Self.freeze(net, trainable: trainable) },
             optimizer: nil,
-            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: learningRate) },
             referenceSchedule: { .constant },
             steps: steps,
             sample: { step in current = step % encoded.count; return MLXArray(Int32(current)) },
@@ -215,7 +219,7 @@ extension NFKMLXLaya {
                 let (logits, _) = model.forward(tokens: example.prompt.tokens, markers: example.prompt.markers, type: example.type)
                 return objective.loss(logits: logits, target: example.target, type: example.type)
             },
-            clipGradientNorm: 1, observer: observer)
+            clipGradientNorm: 1, precision: precision, observer: observer)
     }
 
     /// The prompts an episode's prefixes build over this model's tokenizer, oldest first.
@@ -237,11 +241,15 @@ extension NFKMLXLaya {
     ///   - trainable: which parameters move.
     ///   - lambda: the TD(λ) weight; 1 is the release's own setting.
     ///   - objective: the proper-scoring objective.
+    ///   - precision: the precision the passes compute in; float32 by default. The release's
+    ///     `rl_agent_config.json` trains under bfloat16 autocast (`amp_dtype`), which `.bfloat16`
+    ///     approximates.
     ///   - observer: receives each step and can end the run early.
     @discardableResult
     public func fineTune(episodes: [NFKMLXLayaEpisode], steps: Int, learningRate: Float = 1e-4,
                          trainable: NFKMLXLayaTrainable = .head, lambda: Float = 1,
                          objective: NFKMLXLayaObjective = NFKMLXLayaObjective(),
+                         precision: NFKMLXTrainingPrecision = .float32,
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         guard tokenizer != nil else { throw NFKMLXError.trainingDataMismatch("the model has no tokenizer to encode the episodes with") }
         guard !episodes.isEmpty else { throw NFKMLXError.trainingDataMismatch("no episodes") }
@@ -260,7 +268,7 @@ extension NFKMLXLaya {
             net,
             freezing: { Self.freeze(net, trainable: trainable) },
             optimizer: nil,
-            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: learningRate) },
             referenceSchedule: { .constant },
             steps: steps,
             sample: { step in current = step % encoded.count; return MLXArray(Int32(current)) },
@@ -279,6 +287,6 @@ extension NFKMLXLaya {
                                       mask: MLXArray.ones([count, 2]).asType(.bool),
                                       types: MLXArray([Int32](repeating: Int32(NFKDecisionType.noul.rawValue), count: count)))
             },
-            clipGradientNorm: 1, observer: observer)
+            clipGradientNorm: 1, precision: precision, observer: observer)
     }
 }

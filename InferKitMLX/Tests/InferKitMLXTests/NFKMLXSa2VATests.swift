@@ -159,6 +159,16 @@ final class NFKMLXSa2VATests: XCTestCase {
         XCTAssertEqual(NFKSa2VADropPath.apply(branch, rate: 0.5, active: false).asArray(Float.self), branch.asArray(Float.self))
     }
 
+    func testTheRecipesLoRADropoutReachesEveryAdapter() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXSa2VANet(Self.tinyConfiguration(visionLayers: 1))
+        try NFKMLXSa2VA.prepare(net, rank: 4, alpha: 8, dropout: 0.05)
+        let adapters = net.language.leafModules().flattened().compactMap { $0.1 as? NFKMLXLoRALinear }
+        XCTAssertFalse(adapters.isEmpty)
+        XCTAssertTrue(adapters.allSatisfy { $0.dropout == 0.05 })
+        XCTAssertEqual(NFKMLXSa2VA.referenceAccumulationSteps, 32)
+    }
+
     func testTheConfigurationReadsTheReleasesDropPathRate() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("sa2va-drop-path-\(UUID().uuidString)")

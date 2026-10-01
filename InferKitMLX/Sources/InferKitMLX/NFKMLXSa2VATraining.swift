@@ -299,6 +299,12 @@ extension NFKMLXSa2VA {
         return net
     }
 
+    /// The reference's update in single-example steps: 2 examples a batch over 16 accumulated steps.
+    /// Pass it as `accumulationSteps` to update as the reference does.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let referenceAccumulationSteps = 32
+
     /// Fine-tunes a Sa2VA network on a consumer's own examples, returning the loss from each step.
     ///
     /// - Parameters:
@@ -307,6 +313,8 @@ extension NFKMLXSa2VA {
     ///   - rank: the LoRA width on every linear layer of the language model but its head (128 in the
     ///     reference); the embeddings and the head train whole, as the reference's `modules_to_save`.
     ///   - alpha: the adapter's strength, applied as `alpha / rank` (256 in the reference).
+    ///   - loraDropout: the dropout on each adapter's input while the run trains, peft's
+    ///     `lora_dropout`; the reference sets 0.05. 0, the default, drops nothing.
     ///   - objective: the language and mask loss.
     ///   - optimizer: the update rule. Nil uses the reference's `torch.optim.AdamW` at 4e-5, betas 0.9 and
     ///     0.999, weight decay 0.05 on every trained parameter.
@@ -314,7 +322,9 @@ extension NFKMLXSa2VA {
     ///   - clipGradientNorm: bounds the global gradient norm; the reference clips at 1.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch. The reference updates on 2 examples over 16 accumulated
-    ///     steps.
+    ///     steps; ``referenceAccumulationSteps`` reaches its 32 examples an update.
+    ///   - precision: the precision the passes compute in; float32 by default. The reference trains
+    ///     under bfloat16 autocast, which `.bfloat16` approximates.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     ``NFKMLXLearningRateSchedule/mmengineWarmupCosine(steps:warmupRatio:startFactor:)`` when the
     ///     reference optimizer runs; with a caller's optimizer, nil holds that optimizer's rate constant.
@@ -330,18 +340,21 @@ extension NFKMLXSa2VA {
         examples: (Int) -> NFKMLXSa2VAExample,
         rank: Int = 128,
         alpha: Float = 256,
+        loraDropout: Float = 0,
         objective: NFKMLXSa2VAObjective = NFKMLXSa2VAObjective(),
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
-                observer: observer)
+        try run(net, examples: examples, rank: rank, alpha: alpha, loraDropout: loraDropout, objective: objective,
+                optimizer: optimizer, steps: steps, clipGradientNorm: clipGradientNorm,
+                accumulationSteps: accumulationSteps, precision: precision, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, observer: observer)
     }
 
     /// Fine-tunes a Qwen-VL release (Qwen3-VL or Qwen2.5-VL, SAM 2 or SAM 3 grounding) the same way,
@@ -355,18 +368,21 @@ extension NFKMLXSa2VA {
         examples: (Int) -> NFKMLXSa2VAExample,
         rank: Int = 128,
         alpha: Float = 256,
+        loraDropout: Float = 0,
         objective: NFKMLXSa2VAObjective = NFKMLXSa2VAObjective(),
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
-                observer: observer)
+        try run(net, examples: examples, rank: rank, alpha: alpha, loraDropout: loraDropout, objective: objective,
+                optimizer: optimizer, steps: steps, clipGradientNorm: clipGradientNorm,
+                accumulationSteps: accumulationSteps, precision: precision, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, observer: observer)
     }
 
     /// Fine-tunes the LLaVA release the same way, its projector frozen as the reference's `LLaVAModel`
@@ -379,35 +395,39 @@ extension NFKMLXSa2VA {
         examples: (Int) -> NFKMLXSa2VAExample,
         rank: Int = 128,
         alpha: Float = 256,
+        loraDropout: Float = 0,
         objective: NFKMLXSa2VAObjective = NFKMLXSa2VAObjective(),
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
-                observer: observer)
+        try run(net, examples: examples, rank: rank, alpha: alpha, loraDropout: loraDropout, objective: objective,
+                optimizer: optimizer, steps: steps, clipGradientNorm: clipGradientNorm,
+                accumulationSteps: accumulationSteps, precision: precision, learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, observer: observer)
     }
 
     static func run<Net: NFKSa2VAAdaptable>(
-        _ net: Net, examples: (Int) -> NFKMLXSa2VAExample, rank: Int, alpha: Float, objective: NFKMLXSa2VAObjective,
-        optimizer: Optimizer?, steps: Int, clipGradientNorm: Float?, accumulationSteps: Int, learningRateSchedule: NFKMLXLearningRateSchedule?,
+        _ net: Net, examples: (Int) -> NFKMLXSa2VAExample, rank: Int, alpha: Float, loraDropout: Float,
+        objective: NFKMLXSa2VAObjective, optimizer: Optimizer?, steps: Int, clipGradientNorm: Float?, accumulationSteps: Int,
+        precision: NFKMLXTrainingPrecision, learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?, observer: NFKMLXTrainer.Observer?
     ) throws -> [Float] {
         try NFKMLXFineTune.run(
             net,
-            freezing: { try prepare(net, rank: rank, alpha: alpha) },
+            freezing: { try prepare(net, rank: rank, alpha: alpha, dropout: loraDropout) },
             optimizer: optimizer,
             reference: { NFKMLXReferenceOptimizers.adamW(learningRate: 4e-5, weightDecay: 0.05) },
             referenceSchedule: { .mmengineWarmupCosine(steps: steps) },
             steps: steps,
             arrays: { examples($0).arrays },
             loss: { model, arrays in objective.total(model, NFKMLXSa2VAExample(arrays: arrays)) },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
@@ -415,10 +435,10 @@ extension NFKMLXSa2VA {
     /// The reference's trained set: LoRA on every linear layer of the language model but its head, the
     /// embeddings and head whole, the `[SEG]` bridge, the grounding encoder's mask decoder, and, for
     /// InternVL, the projector.
-    static func prepare<Net: NFKSa2VAAdaptable>(_ net: Net, rank: Int, alpha: Float) throws {
+    static func prepare<Net: NFKSa2VAAdaptable>(_ net: Net, rank: Int, alpha: Float, dropout: Float = 0) throws {
         net.freeze()
         let language = net.adaptedLanguage
-        let adapted = try NFKMLXLoRA.apply(to: language, rank: rank, alpha: alpha) { path, _ in
+        let adapted = try NFKMLXLoRA.apply(to: language, rank: rank, alpha: alpha, dropout: dropout) { path, _ in
             !path.hasSuffix("lm_head")
         }
         guard adapted > 0 else {

@@ -122,6 +122,24 @@ final class NFKMLXYOLOTrainingTests: XCTestCase {
         XCTAssertLessThan(history.suffix(3).reduce(0, +), history.prefix(3).reduce(0, +))
     }
 
+    /// A batch of 2 toward ultralytics' nominal 64 ramps over the 8 warm-up batches of a 3-epoch run
+    /// to 24 batches an update, so 12 batches update once, at the first; ultralytics' own loop under
+    /// numpy gives [0].
+    func testANominalBatchAccumulatesAsUltralyticsDoes() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXYOLONet(.tiny)
+        net.initializeHeadBiases()
+        let item = batch()
+        var updated = [Bool]()
+        let history = try NFKMLXYOLO.fineTune(net, examples: { _ in item }, steps: 12, stepsPerEpoch: 4,
+                                              nominalBatchSize: 64) { step in
+            updated.append(step.updated)
+            return true
+        }
+        XCTAssertEqual(history.count, 12, "steps count batches")
+        XCTAssertEqual(updated, [true] + [Bool](repeating: false, count: 11))
+    }
+
     func testTheWeightAverageFollowsModelEMA() throws {
         try requireMLXRuntime()
         let linear = Linear(3, 2)

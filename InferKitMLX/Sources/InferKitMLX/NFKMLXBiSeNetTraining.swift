@@ -126,6 +126,8 @@ extension NFKMLXBiSeNet {
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch. The reference trains on two GPUs with batches of 8,
     ///     each ranking its own pixels for the OHEM loss.
+    ///   - precision: the precision the passes compute in; float32 by default. The reference trains
+    ///     under float16 autocast with a gradient scaler, which `.float16` approximates.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `WarmupPolyLrScheduler` when the reference optimizer runs: an exponential warm-up from a
     ///     tenth of the rate over 1,000 steps, then `(1 − progress)^0.9` to the end of the run. With a
@@ -144,6 +146,7 @@ extension NFKMLXBiSeNet {
         steps: Int,
         clipGradientNorm: Float? = nil,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -170,7 +173,7 @@ extension NFKMLXBiSeNet {
                 let logits = net.trainingLogits(image)
                 return objective.loss(logits: logits.main, auxiliaryLogits: logits.auxiliary, labels: labels)
             },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

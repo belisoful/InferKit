@@ -377,6 +377,19 @@ final class NFKMLXLayaTests: XCTestCase {
         XCTAssertEqual(loss.item(Float.self), try XCTUnwrap(arrays["loss"]).item(Float.self), accuracy: 1e-5)
     }
 
+    func testAHeadFineTuneRunsInBFloat16WithFloat32Masters() throws {
+        try requireMLXRuntime()
+        let laya = try tinyLaya()
+        let examples = [NFKMLXLayaExample(state: "My invoice is wrong.", question: department, label: 0),
+                        NFKMLXLayaExample(state: "The app crashes on launch.", question: department, label: 1)]
+        let losses = try laya.fineTune(examples: examples, steps: 6, learningRate: 5e-3, trainable: .head,
+                                       precision: .bfloat16)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        let parameters = Dictionary(uniqueKeysWithValues: laya.net.parameters().flattened())
+        XCTAssertEqual(parameters["scorer.1.weight"]?.dtype, .float32)
+        XCTAssertEqual(parameters["encoder.layers.1.attn.Wqkv.weight"]?.dtype, .float32, "the frozen encoder returns to float32")
+    }
+
     func testAHeadFineTuneLowersTheLossAndLeavesTheEncoderAsReleased() throws {
         try requireMLXRuntime()
         let laya = try tinyLaya()

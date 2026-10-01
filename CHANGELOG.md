@@ -828,6 +828,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   classifier's own width.
 - `NFKMLXWeights.save(_:extraArrays:to:)` writes arrays a model keeps off its parameters beside them.
 
+#### The recipes take their references' precision, LoRA dropout, and update sizes on request
+
+- The recipes whose references train in half precision take `precision:`, float32 by default: Cosmos
+  Tokenizer, Sa2VA, V-JEPA 2, W2V-BERT, TimesFM, TrOCR, BiSeNet, and Laya.
+- Sa2VA's and TimesFM's recipes take `loraDropout:`, the references' 0.05 off by default.
+- TrOCR trains under fairseq's own `adam` by default, which places epsilon before the second-moment
+  bias correction.
+- YOLO's `nominalBatchSize:` accumulates toward 64 images an update as ultralytics does, summing its
+  batches and ramping the count through the warm-up; its weight average updates only on an update.
+- Each recipe names its reference's update as a constant to pass to `accumulationSteps:`, among them
+  `NFKMLXSa2VA.referenceAccumulationSteps`, `NFKMLXTrOCR.iamAccumulationSteps`, and
+  `NFKMLXFineTune.transformersTrainerBatchSize`.
+
 #### The MarbleNet VAD fine-tunes on a consumer's own audio, and follows NeMo 3.0
 
 - `NFKMLXVAD.network(weightsURL:)`, `frameLabels(speech:frameCount:)`, and `fineTune(_:examples:…)` run

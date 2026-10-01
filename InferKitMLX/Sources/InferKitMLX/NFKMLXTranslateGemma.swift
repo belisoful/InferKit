@@ -254,7 +254,7 @@ public final class NFKMLXTranslateGemma: NSObject {
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch. transformers' `Trainer` updates on 8 examples by
-    ///     default.
+    ///     default (``NFKMLXFineTune/transformersTrainerBatchSize``).
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///

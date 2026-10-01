@@ -66,6 +66,17 @@ extension NFKMLXTrOCRProcessor {
 
 extension NFKMLXTrOCR {
 
+    /// The IAM recipe's update in single-line steps: 8 lines a batch (`--batch-size 8`).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let iamAccumulationSteps = 8
+
+    /// The SROIE recipe's update in single-line steps: 16 lines a batch over 16 accumulated batches
+    /// (`--batch-size 16 --update-freq 16`).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let sroieAccumulationSteps = 256
+
     /// Builds the network itself, ready to fine-tune, from a release directory or a directory
     /// ``save(_:toDirectoryURL:release:)`` wrote.
     ///
@@ -86,16 +97,18 @@ extension NFKMLXTrOCR {
     ///   - examples: supplies one line per step: its pixels and its target ids.
     ///   - trainable: which parameters update. Freezing is applied here and persists on `net`.
     ///   - objective: the token loss.
-    ///   - optimizer: the update rule. Nil uses the reference's Adam with decoupled weight decay 1e-4
-    ///     (fairseq's `adam`, bias-corrected, betas 0.9 and 0.999) at `learningRate`.
+    ///   - optimizer: the update rule. Nil uses the reference's fairseq `adam` at `learningRate`: betas 0.9
+    ///     and 0.999, epsilon on the uncorrected second moment's root, and decoupled weight decay 1e-4.
     ///   - learningRate: the reference optimizer's peak rate: 2e-5 in the IAM and receipt recipes, 5e-5
     ///     in the SROIE one.
     ///   - warmupSteps: the reference schedule's warm-up: 500 updates for IAM, 800 for SROIE.
     ///   - steps: how many lines to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does not clip.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
-    ///     default, updates after every batch. The reference's IAM run updates on 8 lines; its SROIE
-    ///     run accumulates 16 batches of 16.
+    ///     default, updates after every batch. The reference's IAM run updates on 8 lines
+    ///     (``iamAccumulationSteps``); its SROIE run accumulates 16 batches of 16 (``sroieAccumulationSteps``).
+    ///   - precision: the precision the passes compute in; float32 by default. The reference trains with
+    ///     fairseq's fp16 flag and dynamic loss scaling, which `.float16` approximates.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's fairseq
     ///     `inverse_sqrt`, a linear warm-up from 1e-8 then `√(warmup / k)`, when the reference optimizer
     ///     runs. With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -119,6 +132,7 @@ extension NFKMLXTrOCR {
         steps: Int,
         clipGradientNorm: Float? = nil,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -132,13 +146,13 @@ extension NFKMLXTrOCR {
                 }
             },
             optimizer: optimizer,
-            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: 1e-4) },
+            reference: { NFKMLXReferenceOptimizers.fairseqAdam(learningRate: learningRate, weightDecay: 1e-4) },
             referenceSchedule: { .fairseqInverseSquareRoot(warmupSteps: warmupSteps,
                                                            initialScale: 1e-8 / learningRate) },
             steps: steps,
             batch: { let example = examples($0); return (example.pixels, example.target) },
             loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
