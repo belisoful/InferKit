@@ -136,12 +136,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   plus a task token in, text out — a caption, detected objects, or grounded regions, with boxes carried
   as `<loc_0..999>` location tokens. Three parts, ported at reference parity (all measured on the
   released weights, first numeric run): the **DaViT vision tower** (`NFKMLXFlorence2VisionNet`), whose
-  every block pairs a windowed **spatial** attention (`NFKMLXFlorence2WindowAttention`, scale
-  head_dim^-0.5) with a grouped **channel** attention (`NFKMLXFlorence2ChannelAttention`, attention
+  every block pairs a windowed **spatial** attention (`NFKFlorence2WindowAttention`, scale
+  head_dim^-0.5) with a grouped **channel** attention (`NFKFlorence2ChannelAttention`, attention
   across the channel axis within groups, scale num_tokens^-0.5) — a dual-attention form new to the
   toolkit; the **projector** (`NFKMLXFlorence2Projector`, a learned 2-D position embedding + a cosine
   temporal row + a mean-pooled token prepended + a bare `[C, projectionDim]` `image_projection`
-  parameter and LayerNorm); and the **BART** encoder-decoder (the shared `NFKMLXSeq2SeqTransformer`,
+  parameter and LayerNorm); and the **BART** encoder-decoder (the shared `NFKMLXSeq2SeqNet`,
   `NFKMLXFlorence2Net.bartLarge`). The fusion CONCATENATES `[image tokens, prompt embeddings]` image
   first (the reference `_merge_input_ids_with_image_features`; it is NOT the transformers-native
   `image_token_id` scatter), the encoder runs over the join, the decoder cross-attends, and the head

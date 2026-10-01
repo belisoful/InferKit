@@ -100,6 +100,7 @@ alpha matte under `NFKOutputMask`; `NFKMLXSAM` segments from a point prompt; `NF
 | ``NFKMLXYOLOGenerations`` | `yolov9t` … `yolo26x` | YOLOv9, YOLOv10, YOLO11, YOLOv12 and YOLO26 — every released size; v10 and 26 need no suppression |
 | ``NFKMLXRTDetr`` | `rtdetr` | object detection, Apache-2.0 (RT-DETR and RT-DETRv2, r18vd / r34vd / r50vd / r101vd; no NMS) |
 | ``NFKMLXRFDetr`` | `rf-detr` | object detection, Apache-2.0 (RF-DETR nano / small / medium / base / large, Roboflow; no NMS) |
+| ``NFKMLXRFDetrSegmentation`` | `rf-detr-seg` | instance segmentation, Apache-2.0 (RF-DETR segmentation nano / small / preview / medium / large / xlarge / xxlarge, Roboflow; boxes plus a mask per instance; no NMS) |
 | ``NFKMLXTableTransformer`` | `backend(directoryURL:)` | table detection and table-structure recognition, MIT (Table Transformer, Microsoft; vanilla DETR + ResNet-18; no NMS; all five releases) |
 | ``NFKMLXPose`` | `pose-simplebaseline` | top-down pose |
 | ``NFKMLXVitPose`` | `vitpose-base-simple` | top-down pose, Apache-2.0 (ViTPose base with the simple decoder, or the classic decoder as `vitpose-base`; DARK-refined keypoints) |

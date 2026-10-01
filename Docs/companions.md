@@ -287,7 +287,7 @@ weights:
   grounded regions, with boxes carried as location tokens. The vision encoder is DaViT
   (`NFKMLXFlorence2VisionNet`), whose every block pairs a windowed spatial attention with a grouped
   channel attention; a projector (`NFKMLXFlorence2Projector`) turns the vision grid into tokens that
-  concatenate before the prompt for a BART encoder-decoder (the shared `NFKMLXSeq2SeqTransformer`). At
+  concatenate before the prompt for a BART encoder-decoder (the shared `NFKMLXSeq2SeqNet`). At
   reference parity against the repo's own implementation seam by seam (the DaViT tower, the projector,
   the encoder, the first-step logits), and token for token in the release's own generation (three
   beams, no repeated 3-gram) on captioning, detailed captioning, OCR, and detection, on all four releases.
@@ -299,7 +299,7 @@ weights:
 - **`NFKMLXTrOCR`** — TrOCR (`microsoft/trocr-base-handwritten`, Microsoft, MIT), a handwriting-line
   reader that turns one image into its transcription. A `VisionEncoderDecoder`: a plain `google/vit`
   image encoder (`NFKMLXTrOCRVisionNet`) whose patch tokens are the memory for a BART-style decoder (the
-  shared `NFKMLXSeq2SeqTransformer` in its decoder-only shape, cross-attending the 768-wide features
+  shared `NFKMLXSeq2SeqNet` in its decoder-only shape, cross-attending the 768-wide features
   under a 1024-wide decoder). At reference parity against transformers' own `VisionEncoderDecoderModel`
   seam by seam (the embeddings, the first block, the encoder output, the first-step logits) and token
   for token in greedy generation; the backend reads a rendered line end to end. The decoder is entirely
@@ -585,6 +585,12 @@ models.
   deformable decoder; no non-max suppression. `rf-detr`; at parity on the released weights end to end.
   `loadWeights` converts the original Roboflow naming on device (and splits the fused self-attention
   projection), so the released file loads directly.
+- **`NFKMLXRFDetrSegmentation`** — real instance segmentation under Apache-2.0 (RF-DETR segmentation,
+  the seven released `Roboflow/rf-detr-seg-*` sizes; `NFKMLXRFDetrSegmentationVariant`): the RF-DETR
+  detector with a mask head over its decoder; no non-max suppression. `rf-detr-seg`; at parity on the
+  released seg-nano (masks 0.9999999998673923, logits 0.9999999999925121, boxes 0.9999999998186787).
+  The backend returns the instances under `NFKOutputDetections` and their combined mask under
+  `NFKOutputMask`.
 - **`NFKMLXTableTransformer`** — table detection and table-structure recognition under MIT (Table
   Transformer, Microsoft), a vanilla DETR with a ResNet-18 backbone; no non-max suppression.
   `backend(directoryURL:)` reads the release's `config.json` for the geometry and the class names and

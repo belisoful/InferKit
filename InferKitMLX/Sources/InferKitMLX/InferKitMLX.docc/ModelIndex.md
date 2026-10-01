@@ -247,6 +247,7 @@ let crop = try NFKMLXFaceAlignment.alignedCrop(from: image, face: face)
 | RT-DETR | ``NFKMLXRTDetr`` | ``NFKMLXRTDetrNet`` | ``NFKMLXRTDetrVariant`` `.r18vd` / `.r34vd` / `.r50vd` / `.r101vd` | `rtdetr` · `rtdetr-r18vd` · `-r34vd` · `-r101vd` | ``NFKMLXRTDetrBackend`` (`labels:`) |
 | RT-DETRv2 | ``NFKMLXRTDetr`` | ``NFKMLXRTDetrNet`` | ``NFKMLXRTDetrVariant`` `.v2R18VD` / `.v2R34VD` / `.v2R50VD` / `.v2R101VD` | `rtdetr-v2-r18vd` · `-r34vd` · `-r50vd` · `-r101vd` | ``NFKMLXRTDetrBackend`` (`labels:`); `decoderMethod` (``NFKMLXRTDetrSamplingMethod``) and `decoderOffsetScale` carry v2's sampling |
 | RF-DETR | ``NFKMLXRFDetr`` | ``NFKMLXRFDetrNet`` | ``NFKMLXRFDetrVariant`` `.nano` / `.small` / `.medium` / `.base` / `.large` | `rf-detr` · `rf-detr-nano` · `-small` · `-medium` · `-large` | ``NFKMLXRFDetrBackend`` (`labels:`); Roboflow naming converted on device |
+| RF-DETR segmentation | ``NFKMLXRFDetrSegmentation`` | ``NFKMLXRFDetrSegmentationNet`` | ``NFKMLXRFDetrSegmentationVariant`` `.nano` / `.small` / `.preview` / `.medium` / `.large` / `.extraLarge` / `.extraExtraLarge` | `rf-detr-seg` · `rf-detr-seg-small` · `-preview` · `-medium` · `-large` · `-xlarge` · `-xxlarge` | ``NFKMLXRFDetrSegmentationBackend`` (`labels:`); instances under `NFKOutputDetections`, their combined mask under `NFKOutputMask` |
 | SimpleBaseline pose | ``NFKMLXPose`` | `NFKMLXPoseNet` over `NFKMLXResNetBackbone` | `NFKMLXPoseConfiguration.simpleBaseline` (ResNet-50, 256×192) | `pose-simplebaseline` | ``NFKMLXPoseBackend`` (`jointNames:`) |
 | ViTPose | ``NFKMLXVitPose`` | `NFKMLXVitPoseNet` | ``NFKMLXVitPoseVariant`` `.baseSimple` / `.base` (ViT-B 256×192; ``NFKMLXVitPoseDecoder`` `.simple` / `.classic`) | `vitpose-base-simple` · `vitpose-base` | ``NFKMLXVitPoseBackend`` (`jointNames:`); `backend(directoryURL:jointNames:)` reads a release's own `config.json` |
 | Table Transformer | ``NFKMLXTableTransformer`` | `NFKMLXTableTransformerNet` | read from the release's `config.json` (geometry + `id2label`) | `backend(directoryURL:)`; retargeted: `network(directoryURL:labels:)`, `fineTune`, `save(_:toDirectoryURL:release:)` | ``NFKMLXTableTransformerBackend``; table-structure recognition (Table Transformer, Microsoft), no NMS |
@@ -266,6 +267,8 @@ let backend = try NFKMLXRTDetr.backend(variant: .v2R50VD, weightsURL: url, label
 // fine-tuned: NFKMLXRTDetr.network(variant:classCount:weightsURL:), then fineTune(_:variant:…)
 // RF-DETR
 let backend = try NFKMLXRFDetr.backend(weightsURL: url, labels: nil)
+// RF-DETR segmentation · .small / .preview / .medium / .large / .extraLarge / .extraExtraLarge
+let backend = try NFKMLXRFDetrSegmentation.backend(variant: .nano, weightsURL: url, labels: nil)
 // SimpleBaseline pose
 let backend = try NFKMLXPose.backend(weightsURL: url, jointNames: nil)
 // ViTPose · .baseSimple / .base
@@ -285,6 +288,8 @@ let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 [NFKMLXRTDetr backendWithVariant:NFKMLXRTDetrVariantV2R50VD weightsURL:url labels:nil error:&error]
 // RF-DETR
 [NFKMLXRFDetr backendWithWeightsURL:url labels:nil error:&error]
+// RF-DETR segmentation
+[NFKMLXRFDetrSegmentation backendWithVariant:NFKMLXRFDetrSegmentationVariantNano weightsURL:url labels:nil error:&error]
 // SimpleBaseline pose
 [NFKMLXPose backendWithWeightsURL:url jointNames:nil error:&error]
 // ViTPose · …VariantBaseSimple / …VariantBase
@@ -429,6 +434,20 @@ let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vis
 [NFKMLXGemma3 gemma3WithDirectoryURL:dir error:&error]
 // Gemma 3n E2B / E4B (image + audio + text)
 [NFKMLXGemma3n gemma3nWithDirectoryURL:dir error:&error]
+// chronos-bolt-base (time-series forecasting)
+[NFKMLXChronos chronosWithWeightsURL:url error:&error]
+// timesfm-2.5-200m (time-series forecasting)
+[NFKMLXTimesFM timesFMWithDirectoryURL:dir error:&error]
+// Pixtral 12B (vision + text)
+[NFKMLXPixtral modelWithDirectoryURL:dir error:&error]
+// Florence-2 (unified vision)
+[NFKMLXFlorence2 backendWithDirectoryURL:dir error:&error]
+// TrOCR (handwriting reader)
+[NFKMLXTrOCR backendWithDirectoryURL:dir error:&error]
+// Sa2VA (segmentation VLM)
+[NFKMLXSa2VA backendWithDirectoryURL:dir error:&error]
+// Phi-4-multimodal (image + speech + text)
+[NFKMLXPhi4MM backendWithDirectoryURL:dir error:&error]
 ```
 
 
@@ -578,10 +597,10 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | Whisper | ``NFKMLXWhisper`` | ``NFKMLXWhisperNet`` | ``NFKMLXWhisperVariant`` `.tiny` / `.base` / `.small` / `.medium` / `.large` (v1 / v2) / `.largeV3` / `.largeV3Turbo` (`NFKMLXWhisperConfiguration.tiny` …); `emitsTimestamps` | `whisper-tiny` | ``NFKMLXWhisperBackend`` (`backend(variant:weightsURL:tokenizer:timestamps:)`) |
-| Parakeet-TDT | ``NFKMLXParakeet`` | ``NFKMLXParakeetNet`` | `NFKMLXParakeetConfiguration.tdt06B` (0.6B v2: 24 rel-pos conformer layers, TDT durations 0…4) | `parakeet-tdt`; `backend(directoryURL:)` | ``NFKMLXParakeetBackend`` (text + per-token `NFKOutputSegments`) |
+| Parakeet-TDT | ``NFKMLXParakeet`` | ``NFKMLXParakeetNet`` | `NFKMLXParakeetConfiguration.tdt06B` (0.6B v2: 24 rel-pos conformer layers, TDT durations 0…4) | `backend(directoryURL:)`; `parakeet-tdt` is the backend's identifier and no registered name | ``NFKMLXParakeetBackend`` (text + per-token `NFKOutputSegments`) |
 | Granite Speech 3.3-2b | ``NFKMLXGraniteSpeech`` | ``NFKMLXGraniteSpeechNet`` | `net(fromDirectory:)` (Conformer encoder + BLIP-2 Q-former + dense Granite decoder) | `backend(directoryURL:)` | ``NFKMLXGraniteSpeechBackend`` (audio → text) |
 | Voxtral-Mini 3B | ``NFKMLXVoxtral`` | ``NFKMLXVoxtralNet`` | `net(fromDirectory:)` (Whisper encoder + 2-linear projector + Llama decoder) | `backend(directoryURL:)` | ``NFKMLXVoxtralBackend`` (audio → text) |
-| Canary-1B-v2 | ``NFKMLXCanary`` | ``NFKMLXCanaryNet`` | `NFKMLXCanaryConfiguration.v2` (biased FastConformer encoder + Transformer attention encoder-decoder) | `canary-1b-v2`; `backend(directoryURL:)` | ``NFKMLXCanaryBackend`` (audio → text; `src>tgt` translates) |
+| Canary-1B-v2 | ``NFKMLXCanary`` | ``NFKMLXCanaryNet`` | `NFKMLXCanaryConfiguration.v2` (biased FastConformer encoder + Transformer attention encoder-decoder) | `backend(directoryURL:)`; `NFKMLXCanary.register()` registers `canary-1b-v2`, and `registerAll` does not call it | ``NFKMLXCanaryBackend`` (audio → text; `src>tgt` translates) |
 | Wav2Vec2 / HuBERT | ``NFKMLXWav2Vec2`` | ``NFKMLXWav2Vec2Net`` | ``NFKMLXWav2Vec2Configuration`` read from the release's `config.json` (base post-norm, large pre-norm) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2Backend`` (audio → text from a CTC release, and an embedding) |
 | W2V-BERT 2.0 | ``NFKMLXWav2Vec2Bert`` | ``NFKMLXWav2Vec2BertNet`` | `NFKMLXWav2Vec2BertConfiguration.v2` (SeamlessM4T filterbanks + relative-key Conformer) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2BertBackend`` (audio → embedding; text from a CTC fine-tune) |
 | Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on the VoiceEncoder (3×256), the S3 tokenizer (6×1280), and T3 (Llama 520M with llama3 rope); S3Gen flow + HiFT takes no configuration | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
@@ -742,6 +761,14 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 [NFKMLXDAC backendWithWeightsURL:url error:&error]
 // SNAC
 [NFKMLXSNAC backendWithWeightsURL:url error:&error]
+// Granite Speech 3.3-2b
+[NFKMLXGraniteSpeech graniteSpeechBackendWithDirectoryURL:dir error:&error]
+// Voxtral-Mini 3B
+[NFKMLXVoxtral voxtralBackendWithDirectoryURL:dir error:&error]
+// BigVGAN v2
+[NFKMLXBigVGAN_Factory backendWithWeightsURL:url error:&error]
+// Mimi
+[NFKMLXMimi backendWithWeightsURL:url error:&error]
 ```
 
 
