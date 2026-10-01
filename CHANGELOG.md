@@ -860,6 +860,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Both networks now switch to evaluation mode when built. A fine-tune switches training on for its run
   and restores evaluation afterward.
 
+#### All-In-One fine-tunes with its reference's gradient clip
+
+- `NFKMLXAllInOne.fineTune` defaulted to no gradient clip and documented that the reference does not
+  clip. The reference passes `gradient_clip` 0.5 to Lightning's `Trainer`, which clips the global norm,
+  and the released checkpoint's stored configuration records 0.5. The recipe now defaults to 0.5.
+
 #### Basic Pitch fine-tunes on a consumer's own recordings and notes
 
 - `NFKMLXBasicPitch.network(weightsURL:reinitializing:)`, `trainingExample(s)`, and

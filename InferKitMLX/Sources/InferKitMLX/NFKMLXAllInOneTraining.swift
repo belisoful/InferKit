@@ -188,7 +188,8 @@ extension NFKMLXAllInOne {
     ///   - optimizer: the update rule. Nil uses timm's `RAdam` at the configuration's rate 0.005 and
     ///     weight decay 0.00025, with no decay on biases or one-dimensional parameters.
     ///   - steps: how many tracks to train on.
-    ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does not clip.
+    ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference's 0.5:
+    ///     `train.py` passes `gradient_clip` to Lightning's `Trainer`, which clips by norm.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil holds it constant; the reference
     ///     lowers it on a validation plateau, which a run without a validation set cannot measure.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
@@ -203,7 +204,7 @@ extension NFKMLXAllInOne {
         objective: NFKMLXAllInOneObjective = NFKMLXAllInOneObjective(),
         optimizer: Optimizer? = nil,
         steps: Int,
-        clipGradientNorm: Float? = nil,
+        clipGradientNorm: Float? = 0.5,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil

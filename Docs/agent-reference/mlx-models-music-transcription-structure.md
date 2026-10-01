@@ -217,7 +217,12 @@ already carries under `NFKOutputSegments`.
     `NFKMLXAllInOneObjective` is `compute_losses`: masked BCE with logits on beat, downbeat, and
     section and masked cross-entropy on function, weighted 1, 3, 15, and 0.1. The optimizer is timm
     0.9's `RAdam` (`NFKMLXRAdam`, rate 0.005, weight decay 0.00025 outside biases and one-dimensional
-    parameters); the reference's plateau schedule needs a validation set, so the recipe holds the rate.
+    parameters), with the global gradient norm clipped at 0.5 (`gradient_clip`, passed to Lightning's
+    `Trainer` at `train.py:65` and stored in the release's config); the reference's plateau schedule
+    needs a validation set, so the recipe holds the rate. The reference also attaches Lightning's `StochasticWeightAveraging` at `swa_lr` 0.15 (`train.py:57`,
+    and the release checkpoint's stored config), but the release trains with `max_epochs` −1, which
+    makes the callback's window `0 ≤ epoch ≤ −2` empty (Lightning 2.4 `stochastic_weight_avg.py:181`),
+    so averaging never runs and the recipe has nothing to reproduce.
     Measured against the authors' sources (`run_reference.py allin1_training`, the oracle running
     `compute_losses` from `trainer.py`'s own text; `testAllInOneTrainingMatchesTheReference`): every
     target frame equal, the loss 20.67702 vs 20.67702 with each term equal, RAdam within 3e-8 over
