@@ -643,6 +643,156 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(logits.shape, [3])
     }
 
+    func testHybridLanguageModels() throws {
+        try requireMLXRuntime()
+        // The Qwen3.5-family hybrid interleaves gated linear-attention layers with a full-attention
+        // layer every fourth; its configuration reads from a release through
+        // NFKMLXHybridLanguage.configuration(fromHuggingFace:). Qwen4-Exp (Qwen3.8-Flash-Next) adds
+        // hyper-connections, an indexer, routed experts, and hashed n-gram embeddings, and loads through
+        // NFKMLXQwen4Exp.backend(directoryURL:). Here shrunk random geometries run a short prompt.
+        NFKMLXRandom.seed(6)
+        let prompt = MLXArray([Int32(1), 5, 9, 12, 7]).reshaped([1, 5])
+        let hybrid = NFKMLXHybridLanguage.makeNet(NFKMLXHybridConfiguration(
+            hiddenSize: 64, layerCount: 4, intermediateSize: 128, vocabularySize: 256, headCount: 4,
+            keyValueHeadCount: 2, headDimensions: 16, ropeTheta: 10_000, partialRotaryFactor: 0.25,
+            gatesAttentionOutput: true, linearKeyHeadCount: 2, linearKeyHeadDimensions: 8,
+            linearValueHeadCount: 4, linearValueHeadDimensions: 8, linearConvolutionKernel: 4,
+            fullAttentionInterval: 4))
+        XCTAssertEqual(hybrid(prompt).shape, [1, 5, 256])
+
+        let qwen4Exp = NFKMLXQwen4Exp.makeNet(.tiny)
+        XCTAssertEqual(qwen4Exp(prompt).shape, [1, 5, NFKMLXQwen4ExpConfiguration.tiny.vocabularySize])
+    }
+
+    func testGemma4ConditionalGeneration() throws {
+        try requireMLXRuntime()
+        // NFKMLXGemma4ConditionalGeneration joins a Gemma 4 decoder with its vision and audio towers:
+        // each tower's soft tokens replace the placeholder tokens in the prompt, and the prefill-only loop
+        // generates from the fused sequence. A release's decoder, towers, and embedders load from its
+        // directory; here a tiny random vision tower and decoder read an 8-pixel picture.
+        NFKMLXRandom.seed(8)
+        let vision = NFKMLXGemmaLanguage.makeVisionNet(NFKMLXGemma4VisionConfiguration(
+            hiddenSize: 32, layerCount: 1, headCount: 4, keyValueHeadCount: 4, headDimensions: 8,
+            intermediateSize: 48, patchSize: 4, positionEmbeddingSize: 16, poolingKernelSize: 1))
+        let decoder = NFKMLXGemmaLanguage.makeNet(NFKMLXGemmaConfiguration(
+            hiddenSize: 16, layerCount: 2, intermediateSize: 32, vocabularySize: 200, headCount: 2,
+            keyValueHeadCount: 1, headDimensions: 8, globalHeadDimensions: 8, slidingWindow: 16,
+            perLayerInputSize: 8, sharedKeyValueLayers: 0, finalLogitSoftcap: 0,
+            layerTypes: [.sliding, .sliding], perLayerVocabularySize: 200))
+        let imageToken = 100
+        let model = NFKMLXGemma4ConditionalGeneration(
+            decoder: decoder, visionTower: vision,
+            visionEmbedder: NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 32, textHidden: 16),
+            imageProcessor: NFKMLXGemma4ImageProcessor(patchSize: 4, poolingKernelSize: 1, maxSoftTokens: 4),
+            imageTokenId: imageToken, audioTokenId: 101, padTokenId: 0)
+        let picture = Self.solid(8, value: 120)
+        let soft = try XCTUnwrap(model.visionSoftTokens(for: picture))
+        XCTAssertEqual(soft.shape, [4, 16], "four soft tokens at the decoder width")
+        let prompt = [1, imageToken, imageToken, imageToken, imageToken, 5, 6]
+        XCTAssertEqual(model.generate(promptTokens: prompt, image: picture, maxTokens: 2).count, 2)
+    }
+
+    // MARK: Documents and unified vision (image → text, boxes)
+
+    func testDocumentAndUnifiedVisionModels() throws {
+        try requireMLXRuntime()
+        // The released models load from their directories: NFKMLXFlorence2.backend(directoryURL:) (a task
+        // token in, a caption, text, or boxes out), NFKMLXTrOCR.backend(directoryURL:) (a handwritten line
+        // to text), and NFKMLXTableTransformer.backend(directoryURL:) (a table crop to labeled structure
+        // boxes). Here tiny random networks in the released layouts run one forward each.
+        NFKMLXRandom.seed(9)
+        let florence = NFKMLXFlorence2Net(
+            vision: NFKMLXFlorence2VisionConfiguration(depths: [1, 1, 2, 1], embedDim: [8, 16, 32, 64],
+                                                       numHeads: [1, 2, 4, 8], numGroups: [1, 2, 4, 8],
+                                                       windowSize: 2, projectionDim: 32),
+            text: NFKMLXSeq2SeqConfiguration(
+                vocabularySize: 64, dModel: 32, encoderLayers: 1, decoderLayers: 1, heads: 2, encoderFFDim: 64,
+                decoderFFDim: 64, maxPositions: 64, activation: .gelu, positions: .learned,
+                normalizeBefore: false, finalLayerNorm: false, layerNormEmbedding: true, scaleEmbedding: false,
+                finalLogitsBias: true, padTokenId: 1, eosTokenId: 2, decoderStartTokenId: 2))
+        let page = MLXRandom.normal([1, 64, 64, 3])
+        let taskTokens = MLXArray([Int32(0), 5, 6, 2]).reshaped([1, 4])
+        let imageTokens = florence.imageFeatures(page).dim(1)
+        XCTAssertEqual(florence.encode(pixels: page, inputIds: taskTokens).shape, [1, imageTokens + 4, 32],
+                       "the image tokens precede the task prompt in one encoder sequence")
+
+        let trocr = NFKMLXTrOCRNet(
+            vision: NFKMLXTrOCRVisionConfiguration(imageSize: 32, hiddenSize: 32, layers: 1, heads: 2,
+                                                   intermediateSize: 64, qkvBias: true),
+            language: NFKMLXSeq2SeqConfiguration(
+                vocabularySize: 40, dModel: 32, encoderLayers: 0, decoderLayers: 1, heads: 2, encoderFFDim: 64,
+                decoderFFDim: 64, maxPositions: 64, activation: .relu, positions: .learned,
+                normalizeBefore: false, finalLayerNorm: false, layerNormEmbedding: true, scaleEmbedding: true,
+                finalLogitsBias: false, padTokenId: 1, eosTokenId: 2, decoderStartTokenId: 2,
+                crossAttentionWidth: 32))
+        let line = try NFKMLXTrOCRProcessor.pixelValues(Self.solid(64, value: 30), side: 32)
+        let firstStep = trocr.decode(MLXArray([Int32(2)]).reshaped([1, 1]), memory: trocr.imageFeatures(line),
+                                     cache: trocr.makeCache())
+        XCTAssertEqual(firstStep.shape, [1, 1, 40], "next-token logits over the vocabulary")
+
+        var tableGeometry = NFKMLXTableTransformerConfiguration()
+        tableGeometry.dModel = 32
+        tableGeometry.encoderLayers = 1
+        tableGeometry.decoderLayers = 1
+        tableGeometry.encoderAttentionHeads = 2
+        tableGeometry.decoderAttentionHeads = 2
+        tableGeometry.encoderFFNDim = 64
+        tableGeometry.decoderFFNDim = 64
+        tableGeometry.numQueries = 6
+        tableGeometry.numLabels = 3
+        tableGeometry.labels = ["table", "table row", "table column"]
+        let table = NFKMLXTableTransformerNet(tableGeometry)
+        let crop = try NFKMLXTableTransformerProcessor.pixelValues(Self.solid(96, value: 230), sizing: .longestEdge(64))
+        XCTAssertLessThanOrEqual(table.detect(crop, threshold: 0.5).count, 6, "at most one box per query")
+    }
+
+    // MARK: Referring segmentation (image + prompt → text + mask)
+
+    func testReferringSegmentation() throws {
+        try requireMLXRuntime()
+        // The released Sa2VA loads from its directory: NFKMLXSa2VA.backend(directoryURL:) answers a
+        // referring prompt under NFKInputPrompt with text and, for each [SEG] it emits, a mask under
+        // NFKOutputMask. Here a tiny random InternViT tower, projector, and decoder fuse one tile into the
+        // prompt and decode a few tokens; the SAM 2 grounding encoder is built and never run.
+        NFKMLXRandom.seed(10)
+        let sa2va = NFKMLXSa2VANet(NFKMLXSa2VAConfiguration(
+            visionHiddenSize: 64, visionLayers: 1, visionHeads: 4, visionIntermediateSize: 96,
+            patchSize: 14, imageSize: 28, decoderHiddenSize: 32,
+            decoder: .init(hiddenSize: 32, layerCount: 1, headCount: 2, keyValueHeadCount: 1, intermediateSize: 32,
+                           vocabularySize: 16, ropeTheta: 10_000, rmsEpsilon: 1e-6, tiesWordEmbeddings: false,
+                           attentionBias: true),
+            imageContextTokenId: 1, segmentationTokenId: 2))
+        let tile = sa2va.imageFeatures(pixelValues: MLXRandom.normal([1, 3, 28, 28]))
+        XCTAssertEqual(tile.shape, [1, sa2va.configuration.tokensPerTile, 32])
+        let answer = sa2va.generate(inputIds: [3, 1, 4], imageFeatures: tile, maximumTokens: 3, endToken: 15)
+        XCTAssertLessThanOrEqual(answer.tokens.count, 3)
+    }
+
+    // MARK: Time-series forecasting (a numeric series → quantile forecasts)
+
+    func testTimeSeriesForecasting() throws {
+        try requireMLXRuntime()
+        // The released forecasters load from their files: NFKMLXTimesFM.timesFM(directoryURL:) (TimesFM
+        // 2.5) and NFKMLXChronos.chronos(weightsURL:) (Chronos-Bolt). Here tiny random networks forecast a
+        // short series.
+        NFKMLXRandom.seed(11)
+        let series = (0 ..< 96).map { Float(sin(Double($0) * 0.3)) * 5 + 20 }
+        var timesFMGeometry = NFKMLXTimesFMConfiguration()
+        timesFMGeometry.hiddenSize = 64
+        timesFMGeometry.intermediateSize = 64
+        timesFMGeometry.numLayers = 1
+        timesFMGeometry.numHeads = 4
+        let timesFM = NFKMLXTimesFM(net: NFKMLXTimesFMNet(timesFMGeometry))
+        let forecast = try timesFM.forecast(context: series, horizon: 10)
+        XCTAssertEqual(forecast.pointForecast.count, 10)
+        XCTAssertEqual(forecast.quantileForecasts.count, 9, "the 0.1 … 0.9 quantile rows")
+
+        let chronos = NFKMLXChronos(net: NFKMLXChronosNet(.tiny))
+        let rows = chronos.forecast(context: Array(series.suffix(64)), horizon: 8)
+        XCTAssertEqual(rows.count, 9, "one row per quantile level")
+        XCTAssertEqual(rows[4].count, 8, "the median row is the point forecast")
+    }
+
     // MARK: Video (frame pair / recurrent, tensor & module backends)
 
     func testVideoModels() throws {
@@ -671,6 +821,21 @@ final class MLXModelGalleryExamples: XCTestCase {
         let cosmos = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)
         let cosmosResult = try cosmos.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(16)]))
         XCTAssertNotNil(cosmosResult.output(forKey: NFKOutputImage), "a Cosmos Tokenizer reconstruction")
+
+        // V-JEPA 2: a clip becomes one mean-pooled feature vector. The released encoders and classifiers
+        // load from their directories through NFKMLXVJEPA2.backend(directoryURL:); here a tiny random
+        // encoder reads a two-frame clip.
+        var vjepa2Geometry = NFKMLXVJEPA2Configuration()
+        vjepa2Geometry.hiddenSize = 64
+        vjepa2Geometry.numHiddenLayers = 2
+        vjepa2Geometry.numAttentionHeads = 4
+        vjepa2Geometry.framesPerClip = 2
+        vjepa2Geometry.cropSize = 32
+        vjepa2Geometry.shortestEdge = 36
+        let vjepa2 = NFKMLXVJEPA2Net(vjepa2Geometry)
+        let clip = try NFKMLXVJEPA2Processor.clip(frames: [Self.solid(48, value: 40), Self.solid(48, value: 200)],
+                                                  configuration: vjepa2Geometry)
+        XCTAssertEqual(vjepa2.embedding(clip).count, 64, "one feature per hidden channel")
     }
 
     // MARK: Text → image (built by factory)
@@ -761,6 +926,110 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(image.shape, [8, 8, 4])
     }
 
+    func testDiTTextToImagePipelines() throws {
+        try requireMLXRuntime()
+        // The released generators assemble from their diffusers release directories:
+        // NFKMLXZImageGenerator.generator(directoryURL:residency:) and
+        // NFKMLXSD3Generator.generator(directoryURL:residency:), then image(forPrompt:width:height:seed:).
+        // SANA's pipeline chains its linear-attention DiT and the Deep-Compression Autoencoder. Each holds
+        // gigabytes, so here the same pipelines run at tiny geometries from supplied caption embeddings.
+        NFKMLXRandom.seed(12)
+        var zImageAutoencoder = NFKMLXSDVAEConfiguration()
+        zImageAutoencoder.latentChannels = 4
+        zImageAutoencoder.blockChannels = [8, 16]
+        zImageAutoencoder.layersPerBlock = 1
+        zImageAutoencoder.normalizationGroups = 4
+        zImageAutoencoder.useQuantConv = false
+        zImageAutoencoder.scaleFactor = 0.3611
+        zImageAutoencoder.shiftFactor = 0.1159
+        let zImage = NFKMLXZImagePipeline(transformer: NFKMLXZImageTransformerNet(.tiny),
+                                          vae: NFKMLXSDAutoencoder(configuration: zImageAutoencoder))
+        let zImageResult = zImage.generate(promptEmbeds: MLXRandom.normal([6, 24]), negativeEmbeds: nil,
+                                           latentHeight: 4, latentWidth: 4, steps: 2, guidance: 1)
+        eval(zImageResult)
+        XCTAssertEqual(zImageResult.shape[3], 3, "Z-Image decodes to RGB")
+
+        var sd3Autoencoder = NFKMLXSDVAEConfiguration()
+        sd3Autoencoder.latentChannels = 4
+        sd3Autoencoder.blockChannels = [8, 16]
+        sd3Autoencoder.layersPerBlock = 1
+        sd3Autoencoder.normalizationGroups = 4
+        sd3Autoencoder.scaleFactor = 1.5305
+        sd3Autoencoder.shiftFactor = 0.0609
+        let sd3 = NFKMLXSD3Pipeline(transformer: NFKMLXSD3TransformerNet(.tiny),
+                                    vae: NFKMLXSDAutoencoder(configuration: sd3Autoencoder))
+        let sd3Result = sd3.generate(promptEmbeds: MLXRandom.normal([7, 24]), pooled: MLXRandom.normal([20]),
+                                     negativeEmbeds: nil, negativePooled: nil, latentHeight: 4, latentWidth: 4,
+                                     steps: 2, guidance: 1)
+        eval(sd3Result)
+        XCTAssertEqual(sd3Result.shape[3], 3, "SD3 decodes to RGB")
+
+        let sana = NFKMLXSANAPipeline(transformer: NFKMLXSANATransformerNet(.tiny),
+                                      vae: NFKMLXDCAutoencoderNet(.tiny))
+        let sanaResult = sana.generate(promptEmbeds: MLXRandom.normal([6, 12]), negativeEmbeds: nil,
+                                       latentHeight: 4, latentWidth: 4, steps: 2, guidance: 1)
+        eval(sanaResult)
+        XCTAssertEqual(sanaResult.shape[3], 3, "SANA decodes to RGB")
+    }
+
+    // MARK: Text → video and audio-video (DiT pipelines)
+
+    func testTextToVideoPipelines() throws {
+        try requireMLXRuntime()
+        // The released generators assemble from their diffusers release directories:
+        // NFKMLXLTXVideoGenerator.generator(directoryURL:residency:) and
+        // NFKMLXWanVideoGenerator.generator(directoryURL:residency:), then video(forPrompt:frames:…).
+        // Here the same pipelines run at tiny geometries from supplied caption embeddings.
+        NFKMLXRandom.seed(13)
+        let ltx = NFKMLXLTXPipeline(
+            transformer: NFKMLXLTXTransformer.makeNet(NFKMLXLTXTransformerConfiguration(
+                inChannels: 16, heads: 2, headDim: 8, layers: 2, crossAttentionDim: 16, captionChannels: 32)),
+            vae: NFKMLXLTXVideoVAE.makeNet(NFKMLXLTXVAEConfiguration(
+                latentChannels: 16, blockOutChannels: [8, 16, 16, 16], layersPerBlock: [1, 1, 1, 1, 1])))
+        let ltxLatents = ltx.denoise(text: MLXRandom.normal([1, 6, 32]), textMask: nil, negativeText: nil,
+                                     negativeMask: nil, frames: 2, height: 2, width: 2, steps: 2)
+        XCTAssertEqual(ltx.decode(ltxLatents, frames: 2, height: 2, width: 2).shape, [1, 9, 64, 64, 3],
+                       "eight frames per latent frame after the first, 32 pixels per latent cell")
+
+        let wan = NFKMLXWanPipeline(transformer: NFKMLXWanTransformerNet(.tiny), vae: NFKMLXWanVideoVAENet(.tiny))
+        let wanClip = wan.generate(textEmbeds: MLXRandom.normal([6, 10]), negativeEmbeds: nil,
+                                   frames: 2, height: 4, width: 4, steps: 2, guidance: 1)
+        eval(wanClip)
+        XCTAssertEqual(wanClip.shape[4], 3, "a [B, T, H, W, 3] clip")
+
+        // LTX-2 denoises a video latent and an audio latent together in one transformer. The released
+        // transformer loads through NFKMLXLTX2TransformerNet.loadWeights(into:from:); here a tiny one
+        // predicts both velocities for a 2×2×3 video grid and four audio frames.
+        let ltx2 = NFKMLXLTX2TransformerNet(.tiny)
+        let (videoVelocity, audioVelocity) = ltx2(
+            video: MLXRandom.normal([1, 12, 8]), audio: MLXRandom.normal([1, 4, 6]),
+            text: MLXRandom.normal([1, 5, 32]), audioText: MLXRandom.normal([1, 5, 16]),
+            timestep: MLXArray.full([1, 12], values: MLXArray(Float(500))),
+            audioTimestep: MLXArray.full([1, 4], values: MLXArray(Float(500))),
+            sigma: MLXArray([Float(0.5)]), frames: 2, height: 2, width: 3, audioFrames: 4)
+        eval(videoVelocity, audioVelocity)
+        XCTAssertEqual(videoVelocity.shape, [1, 12, 8])
+        XCTAssertEqual(audioVelocity.shape, [1, 4, 6])
+
+        // Wan 2.2 Animate drives a reference character with a motion video in two passes: the reference
+        // pass fills a key/value cache, and each generation pass attends over it. Here a tiny random
+        // transformer runs both passes over 8×8 latents.
+        let animate = NFKMLXWanAnimate.makeNet(.tiny)
+        let cache = NFKMLXWanAnimate.makeCache(layerCount: 2)
+        let textStates = MLXRandom.normal([7, 10])
+        let imageEmbeddings = MLXRandom.normal([5, 1280])
+        _ = try animate.extractReference(latent: MLXRandom.normal([4, 2, 8, 8]),
+                                         condition: MLXRandom.normal([4, 2, 8, 8]), text: textStates,
+                                         imageEmbeddings: imageEmbeddings, into: cache)
+        XCTAssertTrue(cache.isPopulated, "the reference pass fills every layer of the cache")
+        let animated = try animate.generate(latent: MLXRandom.normal([4, 3, 8, 8]),
+                                            condition: MLXRandom.normal([4, 3, 8, 8]), text: textStates,
+                                            imageEmbeddings: imageEmbeddings, timestep: MLXArray([Float(0.35)]),
+                                            cache: cache, referenceGrid: (2, 4, 4), videoFrames: 2, videoArea: 16)
+        eval(animated)
+        XCTAssertEqual(animated.dim(0), 4, "the predicted sample keeps the latent channels")
+    }
+
     // MARK: Inpainting & latent diffusion (built by factory)
 
     func testInpaintingAndDiffusionModels() throws {
@@ -794,6 +1063,52 @@ final class MLXModelGalleryExamples: XCTestCase {
         let controlNet = try NFKMLXModelRegistry.backend(named: "diffusion-controlnet", weightsURL: nil)
         let result = try controlNet.runInference(for: NFKInferenceRequest(inputs: [NFKInputControl: Self.solid(32)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "generation guided by the control map")
+
+        // The released SD3 and FLUX.1 ControlNets steer their base transformers through residuals. Each
+        // loads from its release with loadWeights(into:from:) beside the base model's stages; here tiny
+        // random stages generate from an 8-pixel control image.
+        var sd3Autoencoder = NFKMLXSDVAEConfiguration()
+        sd3Autoencoder.latentChannels = 4
+        sd3Autoencoder.blockChannels = [8, 16]
+        sd3Autoencoder.layersPerBlock = 1
+        sd3Autoencoder.normalizationGroups = 4
+        sd3Autoencoder.scaleFactor = 1.5305
+        sd3Autoencoder.shiftFactor = 0.0609
+        let sd3ControlNet = NFKMLXSD3ControlNetPipeline(
+            transformer: NFKMLXSD3TransformerNet(.tiny), controlnet: NFKMLXSD3ControlNetNet(.tiny),
+            vae: NFKMLXSDAutoencoder(configuration: sd3Autoencoder))
+        let sd3Steered = sd3ControlNet.generate(
+            promptEmbeds: MLXRandom.normal([7, 24]), pooled: MLXRandom.normal([20]), negativeEmbeds: nil,
+            negativePooled: nil, controlImage: MLXRandom.normal([1, 8, 8, 3]), controlnetScale: 0.8,
+            latentHeight: 4, latentWidth: 4, steps: 2, guidance: 1)
+        eval(sd3Steered)
+        XCTAssertEqual(sd3Steered.shape[3], 3, "the SD3 ControlNet pipeline decodes to RGB")
+
+        var fluxAutoencoder = NFKMLXSDVAEConfiguration()
+        fluxAutoencoder.latentChannels = 2
+        fluxAutoencoder.blockChannels = [8, 16]
+        fluxAutoencoder.layersPerBlock = 1
+        fluxAutoencoder.normalizationGroups = 4
+        fluxAutoencoder.useQuantConv = false
+        fluxAutoencoder.scaleFactor = 0.3611
+        fluxAutoencoder.shiftFactor = 0.1159
+        let fluxControlNet = NFKMLXFluxControlNetPipeline(
+            transformer: NFKMLXFluxTransformerNet(.tiny), controlnet: NFKMLXFluxControlNetNet(.tiny),
+            vae: NFKMLXSDAutoencoder(configuration: fluxAutoencoder))
+        let fluxSteered = fluxControlNet.generate(
+            promptEmbeds: MLXRandom.normal([5, 24]), pooled: MLXRandom.normal([10]),
+            controlImage: MLXRandom.normal([1, 8, 8, 3]), controlnetScale: 0.7, latentHeight: 4,
+            latentWidth: 4, steps: 2, guidance: 3.5)
+        eval(fluxSteered)
+        XCTAssertEqual(fluxSteered.shape[3], 3, "the FLUX ControlNet pipeline decodes to RGB")
+
+        // IP-Adapter conditions on a reference image's CLIP embedding. A released adapter attaches to an
+        // SD 1.5 UNet through NFKMLXTextToImage.imageAdapterBackend(configuration:directoryURL:adapterURL:);
+        // here the image projection turns an embedding into the tokens every cross-attention reads.
+        let adapter = NFKMLXIPAdapter(imageProjection: NFKMLXIPAdapterImageProjection(
+            imageEmbedDim: 16, crossAttentionDim: 12, numTokens: 4))
+        let imagePrompt = adapter.conditioning(imageEmbedding: MLXRandom.normal([1, 16]), scale: 0.7)
+        XCTAssertEqual(imagePrompt.tokens.shape, [1, 4, 12], "four image tokens at the cross-attention width")
     }
 
     // MARK: Promptable segmentation (SAM)
@@ -804,6 +1119,23 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(sam.backendIdentifier, "sam")                      // plate + point under NFKSAMPointKey → mask
         // The released encoders are `.vitB`, `.vitL`, and `.vitH` (`NFKMLXSAMVariant`); a checkpoint
         // fits only its own size, and each is built the same way with its weights URL.
+
+        // SAM 3 segments every instance a text prompt names. The released image path is
+        // NFKMLXSAM3.makeImageModel(fromHuggingFace:) then NFKMLXSAM3.loadWeights(into:from:). Here tiny
+        // random encoders and detector run one 56-pixel plate and a four-token prompt.
+        var visionGeometry = NFKMLXSAM3Configuration.tiny
+        visionGeometry.fpnHiddenSize = 32
+        var textGeometry = NFKMLXSAM3TextConfiguration.tiny
+        textGeometry.promptSize = 32
+        let sam3 = NFKMLXSAM3ImageModel(
+            vision: NFKMLXSAM3VisionNet(visionGeometry), text: NFKMLXSAM3TextNet(textGeometry),
+            detector: NFKMLXSAM3DetectorNet(NFKMLXSAM3DetectorConfiguration(
+                hiddenSize: 32, intermediateSize: 48, heads: 2, encoderLayers: 1, decoderLayers: 2, queryCount: 8)))
+        let found = sam3.detect(image: MLXRandom.normal([1, 56, 56, 3]),
+                                tokens: MLXArray([Int32(1), 7, 9, 2]).reshaped([1, 4]))
+        eval(found.boxes, found.logits)
+        XCTAssertEqual(found.boxes.shape, [1, 8, 4], "one (x1, y1, x2, y2) box per query")
+        XCTAssertEqual(found.logits.shape, [1, 8], "one score per query")
     }
 
     // MARK: Video (clip → clip)
@@ -847,6 +1179,13 @@ final class MLXModelGalleryExamples: XCTestCase {
         let transform = try XCTUnwrap(NFKMLXFaceAlignment.similarityTransform(from: template, to: template))
         XCTAssertEqual(transform.a, 1, accuracy: 1e-9)
         XCTAssertEqual(transform.b, 0, accuracy: 1e-9)
+
+        // RetinaFace on its own: faces as NFKDetection boxes under NFKOutputDetections, normalized with
+        // a top-left origin. NFKMLXRetinaFace.detector(weightsURL:) also returns the five landmarks.
+        let retinaFace = try NFKMLXRetinaFace.backend(weightsURL: nil)
+        XCTAssertEqual(retinaFace.backendIdentifier, "retinaface-mobile025")
+        let faces = try retinaFace.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(faces.detections, "detections (possibly empty)")
     }
 
     // MARK: Audio (audio → text / stems / speakers / clean / segments / tags)
@@ -1027,6 +1366,16 @@ final class MLXModelGalleryExamples: XCTestCase {
         let speech = tts.makeSpeechBackend()                     // reads NFKInputPrompt, writes a WAV NFKAudioAsset
         XCTAssertEqual(speech.backendIdentifier, "tts")
 
+        // NFKMLXVoice is the trained FastSpeech2 conformer and its paired HiFi-GAN, which
+        // NFKMLXVoice.voice(acousticURL:vocoderURL:vocabularyURL:) loads from the two releases. Here the
+        // released geometry at random weights speaks four phonemes through the same speech backend.
+        let fastSpeech2Voice = NFKMLXVoice(acoustic: NFKMLXFastSpeech2.makeNet(),
+                                vocoder: NFKMLXHiFiGANNet(NFKMLXHiFiGANConfiguration()),
+                                vocabulary: ["<unk>": 1, "HH": 10, "AH0": 11, "L": 12, "OW1": 13])
+        let voiced = try fastSpeech2Voice.makeSpeechBackend { _ in ["HH", "AH0", "L", "OW1"] }
+            .runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Hello."]))
+        XCTAssertNotNil(voiced.output(forKey: NFKOutputAudio) as? NFKAudioAsset, "a 22.05 kHz WAV")
+
         // Parakeet-TDT (NeMo FastConformer + token-and-duration transducer): a second ASR beside Whisper.
         // Random weights at a shrunk geometry run the whole path — mel front end, dw-striding subsampler,
         // rel-pos conformer, LSTM prediction net, joint, greedy TDT decode — on the same clip.
@@ -1042,6 +1391,37 @@ final class MLXModelGalleryExamples: XCTestCase {
         let canaryTokens = canary.recognize(Self.tone(16000), prompt: [4, 5])
         XCTAssertLessThanOrEqual(canaryTokens.count, canary.configuration.maxDecodeTokens,
                                  "greedy decode over the encoder frames")
+
+        // The released speech encoders load from their directories: NFKMLXWav2Vec2.backend(directoryURL:)
+        // (Wav2Vec2 and HuBERT, a CTC transcript when the release carries a character head) and
+        // NFKMLXWav2Vec2Bert.backend(directoryURL:) (W2V-BERT 2.0, a Conformer over stacked filterbanks).
+        // Here tiny random encoders read the clip to one feature per frame.
+        var wav2vec2Geometry = NFKMLXWav2Vec2Configuration()
+        wav2vec2Geometry.hiddenSize = 32
+        wav2vec2Geometry.numHiddenLayers = 1
+        wav2vec2Geometry.numAttentionHeads = 4
+        wav2vec2Geometry.intermediateSize = 64
+        wav2vec2Geometry.convDimensions = [16, 16]
+        wav2vec2Geometry.convKernels = [10, 3]
+        wav2vec2Geometry.convStrides = [5, 2]
+        wav2vec2Geometry.positionalConvKernel = 8
+        wav2vec2Geometry.positionalConvGroups = 4
+        let wav2vec2 = NFKMLXWav2Vec2Net(wav2vec2Geometry)
+        let wav2vec2Hidden = wav2vec2(NFKMLXWav2Vec2Processor.inputValues(Array(Self.tone(16000).prefix(4000)),
+                                                                          normalize: true))
+        XCTAssertEqual(wav2vec2Hidden.shape, [1, wav2vec2Geometry.frameCount(samples: 4000), 32],
+                       "one feature per convolution frame")
+
+        var w2vBertGeometry = NFKMLXWav2Vec2BertConfiguration()
+        w2vBertGeometry.hiddenSize = 32
+        w2vBertGeometry.outputHiddenSize = 32
+        w2vBertGeometry.numHiddenLayers = 1
+        w2vBertGeometry.numAttentionHeads = 2
+        w2vBertGeometry.intermediateSize = 64
+        let w2vBert = NFKMLXWav2Vec2BertNet(w2vBertGeometry)
+        let (filterbanks, frameMask) = NFKMLXWav2Vec2BertProcessor.inputFeatures(Array(Self.tone(16000).prefix(8000)))
+        let w2vBertHidden = w2vBert(filterbanks, mask: frameMask)
+        XCTAssertEqual(w2vBertHidden.shape, [1, filterbanks.dim(1), 32], "one feature per stacked filterbank pair")
 
         // The released speech language models load from their directories:
         // NFKMLXGraniteSpeech.graniteSpeechBackend(directoryURL:) (a Conformer, a BLIP-2 Q-former, and a

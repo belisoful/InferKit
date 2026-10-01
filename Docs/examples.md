@@ -3379,6 +3379,13 @@ let rfdetr = try NFKMLXRFDetr.backend(weightsURL: nil, labels: cocoLabels)     /
 let segmenter = try NFKMLXRFDetrSegmentation.backend(variant: .nano, weightsURL: nil, labels: cocoLabels)  // "rf-detr-seg"; result.detections and their combined mask under NFKOutputMask
 let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: cocoJoints)     // result.pose : [NFKKeypoint]
 let vitPose = try NFKMLXVitPose.backend(variant: .base, weightsURL: nil, jointNames: cocoJoints)  // "vitpose-base"; .baseSimple is the simple decoder; DARK-refined [NFKKeypoint]
+let faces = try NFKMLXRetinaFace.backend(weightsURL: nil)                      // "retinaface-mobile025"; result.detections, and NFKMLXRetinaFace.detector(weightsURL:) adds five landmarks per face
+
+// Documents and unified vision (every model loads a release directory)
+let florence = try NFKMLXFlorence2.backend(directoryURL: florenceDir)          // "florence-2-large"; a task token (<OD>, <CAPTION>, <OCR>, …) under NFKInputPrompt → NFKOutputText or result.detections
+let trocr    = try NFKMLXTrOCR.backend(directoryURL: trocrDir)                 // "trocr-base-handwritten"; a line of handwriting → NFKOutputText
+let tables   = try NFKMLXTableTransformer.backend(directoryURL: tatrDir)       // "table-transformer-structure-recognition"; a table crop → labeled row, column, and header boxes
+let sa2va    = try NFKMLXSa2VA.backend(directoryURL: sa2vaDir)                 // "sa2va-4b"; image + referring prompt → NFKOutputText and a mask under NFKOutputMask
 
 // Embeddings, video, promptable segmentation
 let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]; .vitB16 / .vitL14 / .vitL14At336 too
@@ -3388,6 +3395,35 @@ let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       /
 let rifeV4  = try NFKMLXRIFEv4.backend(weightsURL: nil)                        // "rife-v4"; frame0 + frame1 → the frame at .timestepKey (0...1, default 0.5)
 let cosmos  = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)  // image/clip → latent or tokens → reconstruction; "cosmos-tokenizer-di8x8" (one name per variant)
 let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey; .vitB / .vitL / .vitH
+let sam3    = NFKMLXSAM3.makeImageModel()                                      // SAM 3: detect(image:tokens:valid:) → boxes, masks, and scores for every instance a text prompt names
+let vjepa2  = try NFKMLXVJEPA2.backend(directoryURL: vjepa2Dir)                // "vjepa2-vitl-fpc64-256"; a clip or image → NFKOutputEmbedding, plus NFKOutputClassifications from a classifier release
+
+// Time-series forecasting (forecaster objects: a numeric series has no core input key)
+let timesFM = try NFKMLXTimesFM.timesFM(directoryURL: timesFMDir)              // TimesFM 2.5; forecast(context:horizon:) → pointForecast and quantileForecasts
+let chronos = try NFKMLXChronos.chronos(weightsURL: nil)                       // Chronos-Bolt; forecast(context:horizon:) → nine quantile rows
+
+// Language models outside the backend factories (Swift)
+let qwen4Exp = try NFKMLXQwen4Exp.backend(directoryURL: qwen4ExpDir)           // Qwen3.8-Flash-Next: an NFKMLXQwen4ExpNet, routed experts held as NFKMLXResidency plans them
+let hybrid   = try NFKMLXHybridLanguage.configuration(fromHuggingFace: qwen35Config)   // Qwen3.5 family: gated linear attention, full attention every fourth layer
+let gemma4mm = NFKMLXGemma4ConditionalGeneration(decoder: gemmaDecoder, visionTower: visionTower,
+                                                 visionEmbedder: visionEmbedder, imageTokenId: 258_880,
+                                                 audioTokenId: 258_881, padTokenId: 0)  // generate(promptTokens:image:waveform:) splices soft tokens at the placeholders
+
+// Text → image, text → video, and audio-video DiTs (release directories, Swift and Objective-C)
+let zImage   = try NFKMLXZImageGenerator.generator(directoryURL: zImageDir, residency: .automatic)    // "z-image"; image(forPrompt:width:height:seed:)
+let sd3      = try NFKMLXSD3Generator.generator(directoryURL: sd3Dir, residency: .automatic)          // "sd3"; SD3 Medium, SD3.5 Medium and Large
+let ltxVideo = try NFKMLXLTXVideoGenerator.generator(directoryURL: ltxDir, residency: .automatic)    // "ltx-video-0.9.0"; video(forPrompt:frames:width:height:seed:)
+let wan      = try NFKMLXWanVideoGenerator.generator(directoryURL: wanDir, residency: .automatic)    // "wan"; Wan 2.1 T2V and Wan 2.2 TI2V-5B
+let sanaDiT  = NFKMLXSANATransformerNet(.base)                                 // SANA: the linear-attention DiT NFKMLXSANAPipeline chains with NFKMLXDCAutoencoderNet(.sana)
+let ltx2     = NFKMLXLTX2TransformerNet(.ltx23)                                // LTX-2: one transformer predicts the video and audio velocities; .ltx25 is the later release
+let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
+
+// ControlNet and image prompts
+let sdControl   = try NFKMLXModelRegistry.backend(named: "diffusion-controlnet", weightsURL: nil)  // the SD ControlNet wiring, a control map under NFKInputControl; NFKMLXReferenceModels.registerControlNet() first
+let sd3Control  = NFKMLXSD3ControlNetPipeline(transformer: sd3DiT, controlnet: sd3ControlNet, vae: sd3VAE)      // .instantXMedium / .stabilitySD35Large ControlNets steer the SD3 MMDiT
+let fluxControl = NFKMLXFluxControlNetPipeline(transformer: fluxDiT, controlnet: fluxControlNet, vae: fluxVAE)  // .unionPro (with controlnetMode:) / .single steer FLUX.1 [dev]
+let ipAdapter   = try NFKMLXTextToImage.imageAdapterBackend(configuration: .stableDiffusion15, directoryURL: sd15Dir,
+                                                            adapterURL: adapterURL)  // a CLIP image embedding under NFKMLXInputImageEmbedding steers SD 1.5
 
 // Audio
 // Translation (text → text; every translator loads a release directory)
@@ -3396,6 +3432,9 @@ let m2m100     = try NFKMLXM2M100.backend(variant: .m418M, directoryURL: m2mDir)
 let madlad     = try NFKMLXMADLAD.backend(directoryURL: madladDir, half: true)     // "madlad400-3b-mt"; 400+ languages, bfloat16
 let tgemma     = try NFKMLXTranslateGemma.backend(directoryURL: tgDir, precision: .checkpoint) // "translategemma"; Gemma 3 + the translation template
 let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText; .tiny … .largeV3Turbo
+let wav2vec2    = try NFKMLXWav2Vec2.backend(directoryURL: wav2vec2Dir)        // "wav2vec2"; Wav2Vec2 and HuBERT: NFKOutputText with a CTC head, else NFKOutputEmbedding
+let w2vBert     = try NFKMLXWav2Vec2Bert.backend(directoryURL: w2vBertDir)     // "w2v-bert-2.0"; a Conformer over stacked filterbanks
+let voice       = try NFKMLXVoice.voice(acousticURL: acousticURL, vocoderURL: vocoderURL, vocabularyURL: vocabURL)  // FastSpeech2 + paired HiFi-GAN; makeSpeechBackend(phonemize:) → "fastspeech2-voice"
 let stems       = try NFKMLXDemucs.backend(weightsURL: nil)                    // audio → "drums"/"bass"/"other"/"vocals"
 let speakers    = try NFKMLXConvTasNet.backend(weightsURL: nil)               // audio → "speaker-1"/"speaker-2"
 let clean       = try NFKMLXDenoiser.backend(weightsURL: nil)                  // audio → NFKOutputAudio
