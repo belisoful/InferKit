@@ -182,7 +182,8 @@ extension NFKMLXCosmosTokenizer {
     ///   - optimizer: nil uses the reference's AdamW (learning rate 1e-4, betas 0.5 and 0.999, epsilon
     ///     1e-8, weight decay 0.01, bias-corrected as PyTorch's is).
     ///   - steps: how many batches to train on.
-    ///   - clipGradientNorm: bounds the global gradient norm. The reference does not clip.
+    ///   - clipGradientNorm: bounds the global gradient norm. The reference's 1: cosmos-predict1's
+    ///     `basic` callbacks clip every step (`GradClipCallback`, `grad_clip_norm=1`).
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `WarmupLambdaLR`, a linear warm-up over 5,000 steps, when the reference optimizer runs. With a
     ///     caller's optimizer, nil holds that optimizer's rate constant.
@@ -198,7 +199,7 @@ extension NFKMLXCosmosTokenizer {
         objective: NFKMLXCosmosTokenizerObjective,
         optimizer: Optimizer? = nil,
         steps: Int,
-        clipGradientNorm: Float? = nil,
+        clipGradientNorm: Float? = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil

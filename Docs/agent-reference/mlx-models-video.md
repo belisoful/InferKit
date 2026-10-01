@@ -288,8 +288,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   1.052784 vs 1.0527844, Gram 1.3198887 vs 1.3198897; a clip within 1e-5); `NFKMLXCosmosTokenizerTrainable`
   `.everything` (the reference's) or `.decoder` (the encoder frozen, so every latent and token stays the
   release's, which a world model trained on the released latents needs); `fineTune` over `NFKMLXTrainer`
-  with the reference's AdamW (1e-4, betas 0.5 / 0.999, weight decay 0.01, bias-corrected) and its
-  5,000-step linear warm-up (`WarmupLambdaLR`). The flow and consistency terms, which the reference disables for
+  with the reference's AdamW (1e-4, betas 0.5 / 0.999, weight decay 0.01, bias-corrected), its
+  5,000-step linear warm-up (`WarmupLambdaLR`), and its global gradient-norm clip at 1
+  (`GradClipCallback` in the `basic` callbacks). The reference's EMA of the weights (beta 0.9999) is
+  not reproduced. The flow and consistency terms, which the reference disables for
   post-training, are not ported. Oracles: `run_reference.py cosmos_tokenizer` (a release directory named
   for its variant, or its `autoencoder.jit`) and `cosmos_tokenizer_loss` (the VGG-16 file), under the
   `llm` env with the `cosmos_predict1` sources pinned in the manifest.

@@ -860,6 +860,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Both networks now switch to evaluation mode when built. A fine-tune switches training on for its run
   and restores evaluation afterward.
 
+#### The Cosmos Tokenizer fine-tunes with its reference's gradient clip
+
+- `NFKMLXCosmosTokenizer.fineTune` defaulted to no gradient clip and documented that the reference does
+  not clip. cosmos-predict1's tokenizer training registers `GradClipCallback` with `grad_clip_norm=1` in
+  the `basic` callbacks every experiment uses, so the recipe now defaults to 1.
+
 #### All-In-One fine-tunes with its reference's gradient clip
 
 - `NFKMLXAllInOne.fineTune` defaulted to no gradient clip and documented that the reference does not
