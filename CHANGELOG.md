@@ -1178,6 +1178,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   equal to the reference's at every step). `save(_:toDirectoryURL:)` writes a directory, labels included,
   that the factory loads.
 
+#### LoRA adapters train with peft's dropout on request
+
+- `NFKMLXLoRA.apply(to:rank:alpha:dropout:where:)` and `NFKMLXLoRALinear.dropout` apply peft's
+  `lora_dropout` to each detour's input while the model trains (`lora_B(lora_A(dropout(x)))`); the
+  base path never drops. 0, the default, drops nothing.
+- A new adapter takes the training mode of the layer it wraps, so adapting a model in evaluation mode
+  leaves its inference deterministic.
+
 #### Sa2VA
 
 - `NFKMLXSa2VA` ports Sa2VA (ByteDance, Apache-2.0), a segmentation VLM: one image and a referring

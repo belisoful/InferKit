@@ -33,8 +33,15 @@ public final class NFKMLXLoRALinear: Linear {
     /// `alpha / rank`, the conventional LoRA scaling.
     public let scale: Float
 
+    /// The dropout on the detour's input while the layer trains, as peft's `lora_dropout` applies it
+    /// (`lora_B(lora_A(dropout(x)))`); the base path never drops. 0 by default.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: Float
+
     /// Wraps `base`, keeping its weights and adding the detour.
-    public init(base: Linear, rank: Int, alpha: Float) {
+    public init(base: Linear, rank: Int, alpha: Float, dropout: Float = 0) {
+        self.dropout = dropout
         let (outputs, inputs) = base.shape
         let deviation = sqrt(1.0 / Float(inputs))
         self._loraA.wrappedValue = MLXRandom.uniform(-deviation ..< deviation, [inputs, rank])
@@ -44,7 +51,8 @@ public final class NFKMLXLoRALinear: Linear {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        super.callAsFunction(x) + matmul(matmul(x, loraA), loraB) * scale
+        super.callAsFunction(x)
+            + matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training), loraA), loraB) * scale
     }
 
     /// The equivalent plain `Linear`, with the detour folded into the weights.
@@ -65,6 +73,8 @@ public enum NFKMLXLoRA {
     ///   - model: the model to adapt, in place.
     ///   - rank: the detour's width. 4–16 covers most fine-tunes; cost grows linearly with it.
     ///   - alpha: the adapter's strength, applied as `alpha / rank`.
+    ///   - dropout: the dropout on each detour's input while the model trains, peft's `lora_dropout`.
+    ///     0, the default, drops nothing.
     ///   - predicate: receives each candidate's key path and layer. The default adapts every `Linear`,
     ///     which is rarely what a consumer wants: targeting the attention projections is the usual
     ///     choice and is far cheaper.
@@ -83,7 +93,7 @@ public enum NFKMLXLoRA {
     /// integers rather than the values the layer computes with. Wrapping one would build a detour
     /// around a weight that is not a weight. Load the model at float precision to fine-tune it.
     @discardableResult
-    public static func apply(to model: Module, rank: Int = 8, alpha: Float = 16,
+    public static func apply(to model: Module, rank: Int = 8, alpha: Float = 16, dropout: Float = 0,
                              where predicate: (String, Linear) -> Bool = { _, _ in true }) throws -> Int {
         var quantized: [String] = []
         let replacements = model.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
@@ -95,7 +105,10 @@ public enum NFKMLXLoRA {
                 quantized.append(path)
                 return nil
             }
-            return (path, NFKMLXLoRALinear(base: linear, rank: rank, alpha: alpha))
+            // A new module starts in training mode; the adapter takes the mode of the layer it wraps.
+            let adapted = NFKMLXLoRALinear(base: linear, rank: rank, alpha: alpha, dropout: dropout)
+            adapted.train(linear.training)
+            return (path, adapted)
         }
         guard quantized.isEmpty else {
             throw NFKMLXError.loRANotApplicable(

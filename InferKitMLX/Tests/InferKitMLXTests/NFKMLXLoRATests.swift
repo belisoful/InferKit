@@ -86,6 +86,32 @@ final class NFKMLXLoRATests: XCTestCase {
         XCTAssertEqual(try NFKMLXLoRA.apply(to: block, rank: 4), 0, "already-adapted layers are skipped")
     }
 
+    func testTheAdapterDropoutDropsOnlyTheDetourInTraining() throws {
+        try requireMLXRuntime()
+        let base = Linear(8, 8)
+        let adapter = NFKMLXLoRALinear(base: base, rank: 4, alpha: 8, dropout: 0.5)
+        adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXRandom.normal([4, 8])]))
+        adapter.train(false)
+        let x = input()
+        let plain = adapter(x)
+        XCTAssertEqual(abs(plain - (base(x) + matmul(matmul(x, adapter.loraA), adapter.loraB) * 2)).max().item(Float.self),
+                       0, accuracy: 1e-6, "evaluation never drops")
+        adapter.train(true)
+        let dropped = adapter(x)
+        XCTAssertGreaterThan(abs(dropped - plain).max().item(Float.self), 0)
+        adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXArray.zeros([4, 8])]))
+        XCTAssertEqual(abs(adapter(x) - base(x)).max().item(Float.self), 0, "the base path never drops")
+    }
+
+    func testAnAdapterTakesTheModeOfTheLayerItWraps() throws {
+        try requireMLXRuntime()
+        let block = Block()
+        block.train(false)
+        try NFKMLXLoRA.apply(to: block, rank: 4, dropout: 0.1)
+        XCTAssertFalse(block.q.training, "an evaluating model's adapters do not drop")
+        XCTAssertEqual((block.q as? NFKMLXLoRALinear)?.dropout, 0.1)
+    }
+
     // MARK: - What trains
 
     func testOnlyTheAdaptersAreTrainable() throws {
