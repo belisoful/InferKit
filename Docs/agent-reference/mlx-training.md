@@ -119,7 +119,10 @@ An explicit schedule applies to either. `.constant` holds the rate. A warm-up co
 length: SegFormer's 1,500 steps and the Cosmos Tokenizer's 5,000 keep a shorter run below the base rate
 throughout.
 
-Each recipe's reference, and what it still sets that the recipe's defaults do not. Dropout is in that
+Each recipe's reference, and what it still sets that the recipe's defaults do not. The decay
+exemptions, schedules, and gradient clips were each read from the reference's own optimizer code or
+configuration on 2026-09-30 (sources under `inferkit-validation/sources/decay-audit/` and
+`reference-sources/`); a row records a difference only where one remains. Dropout is in that
 column: only All-In-One and VAD build it, at their references' rates, and every other recipe trains
 without it. A reference whose training runs none (Wav2Vec2 / HuBERT, V-JEPA 2, RT-DETR, YOLO,
 Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev) lists nothing for it.
@@ -142,9 +145,9 @@ Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev) lists no
 | open-jev-deberta | `train_encoder.py`: AdamW 3e-5 for the encoder and 1e-3 for the head, decay 0.01, clip 1; a linear warm-up over the first 6% of the run, then a linear decay to zero (`NFKMLXLearningRateSchedule.openJevDeBERTa(steps:)`) | the encoder's dropout (0.1): a step here is deterministic |
 | Open-Jev | `jev/train.py`: AdamW for the adapter and the head (5e-5 and 1e-4 for 2B and 9B, 2e-5 and 5e-5 for 27B, from each release's `provenance.json`), decay 0.01, clip 1, a constant rate, gradient accumulation 4 (`batchSize`) | — |
 | Whisper, the translators, TranslateGemma, Granite 4.0-H, Nemotron-H | no script beyond the model's `labels=` loss: transformers' `Trainer` default, AdamW with no decay, clip 1.0 | the rate (1e-4 here, 5e-5 there) is this package's, and so is the constant schedule (the `Trainer` default decays linearly to zero). The release dropouts a `labels=` fine-tune runs (OPUS-MT 0.1, M2M-100 0.1 with attention dropout 0.1 and layer drop 0.05, MADLAD-400 0.1) are off by default: the network's `dropout`, set from `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`, applies them where the run trains, so under LoRA the frozen encoder runs without its share. TranslateGemma, Granite, and Nemotron-H set none; Whisper's release configs are not in the store |
-| Qwen3-VL retrieval | sentence-transformers' trainer default: AdamW with no decay, a bias-corrected Adam | the rate (1e-3 here, 5e-5 there) |
+| Qwen3-VL retrieval | sentence-transformers' trainer default: AdamW with no decay, a bias-corrected Adam | the rate (1e-3 here, 5e-5 there), and the schedule: the trainer's default (`lr_scheduler_type` `linear`) decays to zero, where the recipe holds the rate |
 | CLIP probe | CLIP's own probe is an L-BFGS logistic regression; AdamW 1e-3 with decay 0.01 is this package's | — |
-| Laya | the release publishes no optimizer; a bias-corrected Adam | the decision head's dropout 0.1 (its two `TransformerEncoderLayer`s, `rl_common.py`) |
+| Laya | the release publishes no optimizer; a bias-corrected Adam with the global gradient norm clipped at 1, both this package's choice | the decision head's dropout 0.1 (its two `TransformerEncoderLayer`s, `rl_common.py`) |
 
 **Per-model status lives in the ledger.** [mlx-customization-ledger.md](mlx-customization-ledger.md)
 carries one row per model entry with its outcome, its level, whether the path is reachable, and the
