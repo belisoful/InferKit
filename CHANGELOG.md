@@ -860,6 +860,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Both networks now switch to evaluation mode when built. A fine-tune switches training on for its run
   and restores evaluation afterward.
 
+#### The Cosmos Tokenizer fine-tune can keep its reference's weight average
+
+- `NFKMLXCosmosTokenizer.fineTune` gains `weightAverageDecay`. Set to the reference's 0.9999, it keeps
+  cosmos-predict1's `EMAModelTracker` average of the trainable weights, updated after every step, and
+  leaves the average on the network when the run ends. It is off by default: at 0.9999 the average
+  takes on the order of 10,000 steps to follow the training.
+
 #### The Cosmos Tokenizer fine-tunes with its reference's gradient clip
 
 - `NFKMLXCosmosTokenizer.fineTune` defaulted to no gradient clip and documented that the reference does

@@ -290,8 +290,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   release's, which a world model trained on the released latents needs); `fineTune` over `NFKMLXTrainer`
   with the reference's AdamW (1e-4, betas 0.5 / 0.999, weight decay 0.01, bias-corrected), its
   5,000-step linear warm-up (`WarmupLambdaLR`), and its global gradient-norm clip at 1
-  (`GradClipCallback` in the `basic` callbacks). The reference's EMA of the weights (beta 0.9999) is
-  not reproduced. The flow and consistency terms, which the reference disables for
+  (`GradClipCallback` in the `basic` callbacks). The reference's EMA of the trainable weights
+  (`EMAModelTracker`, beta 0.9999, constant) is `weightAverageDecay`, off by default, since a run far
+  shorter than the reference's ends near the weights it started from. The flow and consistency terms, which the reference disables for
   post-training, are not ported. Oracles: `run_reference.py cosmos_tokenizer` (a release directory named
   for its variant, or its `autoencoder.jit`) and `cosmos_tokenizer_loss` (the VGG-16 file), under the
   `llm` env with the `cosmos_predict1` sources pinned in the manifest.

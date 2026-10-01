@@ -187,6 +187,11 @@ extension NFKMLXCosmosTokenizer {
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `WarmupLambdaLR`, a linear warm-up over 5,000 steps, when the reference optimizer runs. With a
     ///     caller's optimizer, nil holds that optimizer's rate constant.
+    ///   - weightAverageDecay: keeps an exponential moving average of the trainable weights at this
+    ///     decay and leaves it on `net` when the run ends. The reference's is 0.9999
+    ///     (`EMAModelTracker`, `ema.enabled`). Nil, the default, keeps none: at 0.9999 the average
+    ///     takes on the order of 10,000 steps to follow the training, so a shorter run with it ends near
+    ///     the weights it started from.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -201,10 +206,14 @@ extension NFKMLXCosmosTokenizer {
         steps: Int,
         clipGradientNorm: Float? = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
+        weightAverageDecay: Float? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXFineTune.run(
+        // The average tracks what trains, so the freezing is in place before it is built.
+        apply(trainable, to: net)
+        var average = weightAverageDecay.map { NFKMLXModelWeightAverage(trainableParametersOf: net, decay: $0) }
+        let history = try NFKMLXFineTune.run(
             net,
             freezing: { apply(trainable, to: net) },
             optimizer: optimizer,
@@ -217,7 +226,13 @@ extension NFKMLXCosmosTokenizer {
             loss: { net, batch in objective.loss(reconstruction: net(batch), target: batch) },
             clipGradientNorm: clipGradientNorm,
             learningRateSchedule: learningRateSchedule,
-            checkpoint: checkpoint, observer: observer)
+            checkpoint: checkpoint,
+            observer: { step in
+                average?.update(from: net)
+                return observer?(step) ?? true
+            })
+        average?.apply(to: net)
+        return history
     }
 
     static func apply(_ trainable: NFKMLXCosmosTokenizerTrainable, to net: NFKMLXCosmosTokenizerNet) {

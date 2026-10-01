@@ -539,20 +539,33 @@ extension NFKMLXYOLO {
     }
 }
 
-/// ultralytics' `ModelEMA`, which RT-DETR's `ema.py` repeats: a moving average of every floating weight
-/// and running statistic, decayed by `0.9999 · (1 − e^(−updates / 2000))` so the early updates count for
-/// more.
+/// An exponential moving average of a network's parameters, updated after each step and applied when
+/// the run ends.
 struct NFKMLXModelWeightAverage {
     private var shadow: [String: MLXArray]
     private var updates = 0
+    private let decay: (Int) -> Float
 
+    /// ultralytics' `ModelEMA`, which RT-DETR's `ema.py` repeats: every floating weight and running
+    /// statistic, decayed by `0.9999 · (1 − e^(−updates / 2000))` so the early updates count for more.
     init(_ net: Module) {
-        shadow = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1 * 1) })
+        self.init(net.parameters().flattened()) { Float(0.9999 * (1 - exp(-Double($0) / 2000))) }
+    }
+
+    /// cosmos-predict1's `EMAModelTracker`: the parameters trainable when it is built, at a constant
+    /// decay.
+    init(trainableParametersOf net: Module, decay: Float) {
+        self.init(net.trainableParameters().flattened()) { _ in decay }
+    }
+
+    private init(_ tracked: [(String, MLXArray)], decay: @escaping (Int) -> Float) {
+        shadow = Dictionary(uniqueKeysWithValues: tracked.map { ($0.0, $0.1 * 1) })
+        self.decay = decay
     }
 
     mutating func update(from net: Module) {
         updates += 1
-        let decay = Float(0.9999 * (1 - exp(-Double(updates) / 2000)))
+        let decay = decay(updates)
         for (key, value) in net.parameters().flattened() {
             if let previous = shadow[key] {
                 shadow[key] = previous * decay + value * (1 - decay)

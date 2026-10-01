@@ -292,6 +292,25 @@ final class NFKMLXCosmosTokenizerTests: XCTestCase {
         }
     }
 
+    /// At decay 1 the average never moves, so the run trains and then leaves the starting weights: the
+    /// average, not the last step, is what the network keeps.
+    func testAWeightAverageIsWhatTheRunLeavesOnTheNetwork() throws {
+        try requireMLXRuntime()
+        let net = tinyNetwork(video: false)
+        let objective = try NFKMLXCosmosTokenizerObjective(vggWeightsURL: nil)
+        let batch = MLX.clip(MLXRandom.normal([2, 32, 32, 3], key: MLXRandom.key(5)) * 0.5, min: -1, max: 1)
+        let before = net.parameters().flattened().map { ($0.0, $0.1 * 1) }
+        eval(before.map(\.1))
+        let losses = try NFKMLXCosmosTokenizer.fineTune(
+            net, examples: { _ in batch }, objective: objective,
+            optimizer: AdamW(learningRate: 1e-3, biasCorrection: true), steps: 3, weightAverageDecay: 1)
+        XCTAssertNotEqual(losses[2], losses[0], "the run trains")
+        let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        for (key, value) in before {
+            XCTAssertEqual(abs(value - after[key]!).max().item(Float.self), 0, key)
+        }
+    }
+
     func testADecoderFineTuneLeavesTheEncoderAndItsTokensUnchanged() throws {
         try requireMLXRuntime()
         let objective = try objective()

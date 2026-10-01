@@ -158,4 +158,25 @@ final class NFKMLXYOLOTrainingTests: XCTestCase {
         XCTAssertEqual(try NFKMLXYOLO.classCount(in: url), 3)
         XCTAssertTrue(try NFKMLXYOLO.backend(variant: .nano, weightsURL: url, labels: ["a", "b", "c"]).isReady)
     }
+
+    /// cosmos-predict1's average, which shares this one's update: the trainable weights alone, at a
+    /// constant decay.
+    func testAConstantDecayAverageTracksOnlyTheTrainableWeights() throws {
+        try requireMLXRuntime()
+        let model = Sequential(layers: Linear(2, 2), Linear(2, 2))
+        (model.layers[1] as Module).freeze()
+        func weight(_ index: Int) -> MLXArray {
+            model.parameters().flattened().first { $0.0 == "layers.\(index).weight" }!.1
+        }
+        let start = weight(0) + 0, frozenStart = weight(1) + 0
+        eval(start, frozenStart)
+        var average = NFKMLXModelWeightAverage(trainableParametersOf: model, decay: 0.9)
+        let moved = start + 1
+        model.update(parameters: ModuleParameters.unflattened([("layers.0.weight", moved),
+                                                               ("layers.1.weight", frozenStart + 5)]))
+        average.update(from: model)
+        average.apply(to: model)
+        XCTAssertLessThan(abs(weight(0) - (start * 0.9 + moved * 0.1)).max().item(Float.self), 1e-6)
+        XCTAssertEqual(abs(weight(1) - (frozenStart + 5)).max().item(Float.self), 0, "a frozen weight is not averaged")
+    }
 }
