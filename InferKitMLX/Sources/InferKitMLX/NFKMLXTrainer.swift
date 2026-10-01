@@ -118,6 +118,12 @@ public enum NFKMLXTrainer {
     ///     destroy the pretrained weights. Non-finite entries are zeroed and the norm is computed
     ///     against the largest magnitude present, so a batch whose gradients are large but finite
     ///     cannot overflow the norm and silently scale the whole update to zero.
+    ///   - accumulationSteps: how many batches each update averages, for an update larger than one
+    ///     batch fits in memory. Step `s` reads batches `s · accumulationSteps + k` for `k` in
+    ///     `0 ..< accumulationSteps` and averages their gradients, as transformers'
+    ///     `gradient_accumulation_steps` and mmengine's `accumulative_counts` do. `steps` counts
+    ///     updates; the schedule, the clip, the checkpoint, and the observer act once per update, and
+    ///     the loss reported for a step is the mean over its batches.
     ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step. Every
     ///     group of a `MultiOptimizer` is scaled from its own base rate, and the rates are restored
     ///     when the run ends. ``NFKMLXLearningRateSchedule`` builds the recipes' reference schedules.
@@ -149,6 +155,7 @@ public enum NFKMLXTrainer {
         batch: BatchSource,
         loss: @escaping (Model, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -157,7 +164,8 @@ public enum NFKMLXTrainer {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { let (input, target) = batch($0); return [input, target] },
                 loss: { model, arrays in loss(model, arrays[0], arrays[1]) },
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
+                learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
@@ -176,6 +184,7 @@ public enum NFKMLXTrainer {
     ///   - sample: supplies the unlabeled batch for each step.
     ///   - loss: scores the model on that batch alone.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; see the supervised form.
     ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress.
     ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
@@ -189,6 +198,7 @@ public enum NFKMLXTrainer {
         sample: (Int) -> MLXArray,
         loss: @escaping (Model, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -197,7 +207,8 @@ public enum NFKMLXTrainer {
         try run(model, optimizer: optimizer, steps: steps,
                 arrays: { [sample($0)] },
                 loss: { model, arrays in loss(model, arrays[0]) },
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
+                learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
@@ -207,7 +218,8 @@ public enum NFKMLXTrainer {
     /// checkpointed, or reported. It is where a reference's weight constraint belongs: Keras applies a
     /// variable's `kernel_constraint` after `apply_gradients`, whatever the optimizer, so the
     /// constraint is a property of the run and applies whichever optimizer is passed. It was
-    /// introduced in InferKit 0.5.0.
+    /// introduced in InferKit 0.5.0. `accumulationSteps` averages that many batches into each update,
+    /// as the supervised form describes; the constraint runs once per update.
     ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult
@@ -218,6 +230,7 @@ public enum NFKMLXTrainer {
         arrays: (Int) -> [MLXArray],
         loss: @escaping (Model, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -225,7 +238,8 @@ public enum NFKMLXTrainer {
         observer: Observer? = nil
     ) throws -> [Float] {
         try run(model, optimizer: optimizer, steps: steps, arrays: arrays, loss: loss,
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
+                learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
                 observer: observer)
     }
@@ -237,6 +251,7 @@ public enum NFKMLXTrainer {
         steps: Int,
         arrays: (Int) -> [MLXArray],
         loss: @escaping (Model, [MLXArray]) -> MLXArray,
+        accumulationSteps: Int,
         clipGradientNorm: Float?,
         learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?,
@@ -291,6 +306,10 @@ public enum NFKMLXTrainer {
             }
         }
 
+        guard accumulationSteps >= 1 else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "an update averages at least one batch; accumulationSteps was \(accumulationSteps)")
+        }
         let lossAndGradient = valueAndGrad(model: model) { model, arrays in [loss(model, arrays)] }
         var history: [Float] = []
         history.reserveCapacity(steps)
@@ -303,14 +322,23 @@ public enum NFKMLXTrainer {
                 let scale = learningRateSchedule.multiplier(step)
                 for (group, rate) in scheduled { group.learningRate = rate * scale }
             }
-            let (values, gradients) = lossAndGradient(model, arrays(step))
+            let lossValue: MLXArray
+            let gradients: ModuleParameters
+            if accumulationSteps == 1 {
+                let (values, batchGradients) = lossAndGradient(model, arrays(step))
+                (lossValue, gradients) = (values[0], batchGradients)
+            } else {
+                (lossValue, gradients) = averaged(over: accumulationSteps) {
+                    lossAndGradient(model, arrays(step * accumulationSteps + $0))
+                }
+            }
             let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
             optimizer.update(model: model, gradients: update)
             constraint?(model)
             // MLX builds the step lazily; this is where it runs.
             eval(model, optimizer)
 
-            let stepLoss = values[0].item(Float.self)
+            let stepLoss = lossValue.item(Float.self)
             history.append(stepLoss)
 
             // Diverged parameters are unrecoverable, and writing them would replace a good checkpoint
@@ -429,5 +457,24 @@ public enum NFKMLXTrainer {
         let factor = minimum(MLXArray(maxNorm) / maximum(norm, MLXArray(Float.leastNormalMagnitude)),
                              MLXArray(Float(1)))
         return ModuleParameters.unflattened(sanitized.map { ($0.0, $0.1 * factor) })
+    }
+
+    /// The mean loss and the mean gradients of `count` batches, each batch evaluated before the next
+    /// runs, so the graph and the memory it holds stay one batch deep.
+    private static func averaged(over count: Int,
+                                 _ batch: (Int) -> ([MLXArray], ModuleParameters)) -> (MLXArray, ModuleParameters) {
+        var lossSum = MLXArray(Float(0))
+        var gradientSums = [String: MLXArray]()
+        for index in 0 ..< count {
+            let (values, gradients) = batch(index)
+            lossSum = lossSum + values[0]
+            for (key, gradient) in gradients.flattened() {
+                gradientSums[key] = gradientSums[key].map { $0 + gradient } ?? gradient
+            }
+            eval([lossSum] + Array(gradientSums.values))
+        }
+        let scale = 1 / Float(count)
+        return (lossSum * scale,
+                ModuleParameters.unflattened(gradientSums.map { ($0.key, $0.value * scale) }))
     }
 }

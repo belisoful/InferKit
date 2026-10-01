@@ -283,4 +283,57 @@ final class NFKMLXFineTuneTests: XCTestCase {
                 }
             }
     }
+
+    // MARK: - Gradient accumulation
+
+    private static let batches = [
+        MLXArray([0.1, 0.2, 0.3, 0.4] as [Float]).reshaped([2, 2]),
+        MLXArray([0.5, -0.6, 0.7, -0.8] as [Float]).reshaped([2, 2]),
+    ]
+
+    private static func meanSquared(_ model: Linear, _ input: MLXArray) -> MLXArray {
+        (model(input) - 1).square().mean()
+    }
+
+    /// Two batches of the same size averaged into one update move the weights as one batch of both
+    /// does, since a mean loss's gradient over the whole is the mean of the halves' gradients.
+    func testTwoAccumulatedBatchesUpdateAsOneBatchOfBoth() throws {
+        try requireMLXRuntime()
+        let accumulated = Linear(2, 1)
+        let whole = Linear(2, 1)
+        whole.update(parameters: accumulated.parameters())
+        let accumulatedLosses = try NFKMLXTrainer.train(
+            accumulated, optimizer: SGD(learningRate: 0.1), steps: 1, sample: { Self.batches[$0] },
+            loss: Self.meanSquared, accumulationSteps: 2)
+        let wholeLosses = try NFKMLXTrainer.train(
+            whole, optimizer: SGD(learningRate: 0.1), steps: 1,
+            sample: { _ in concatenated(Self.batches, axis: 0) }, loss: Self.meanSquared)
+        XCTAssertEqual(accumulatedLosses[0], wholeLosses[0], accuracy: 1e-6, "the step reports the mean loss")
+        XCTAssertLessThan(abs(accumulated.weight - whole.weight).max().item(Float.self), 1e-6)
+        XCTAssertLessThan(abs(accumulated.bias! - whole.bias!).max().item(Float.self), 1e-6)
+    }
+
+    func testAnAccumulatedRunReadsConsecutiveBatchesAndCountsUpdates() throws {
+        try requireMLXRuntime()
+        var read = [Int]()
+        var observed = [Int]()
+        let losses = try NFKMLXTrainer.train(
+            Linear(2, 1), optimizer: SGD(learningRate: 0.1), steps: 3,
+            sample: { read.append($0); return Self.batches[$0 % 2] }, loss: Self.meanSquared,
+            accumulationSteps: 2, observer: { observed.append($0.index); return true })
+        XCTAssertEqual(read, [0, 1, 2, 3, 4, 5])
+        XCTAssertEqual(observed, [0, 1, 2])
+        XCTAssertEqual(losses.count, 3)
+    }
+
+    func testAnUpdateOfNoBatchesIsRefused() throws {
+        try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXTrainer.train(
+            Linear(2, 1), optimizer: SGD(learningRate: 0.1), steps: 1, sample: { Self.batches[$0 % 2] },
+            loss: Self.meanSquared, accumulationSteps: 0)) { error in
+            guard case NFKMLXError.unsupportedConfiguration = error else {
+                return XCTFail("expected unsupportedConfiguration, got \(error)")
+            }
+        }
+    }
 }

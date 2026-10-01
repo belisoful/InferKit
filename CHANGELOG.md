@@ -852,6 +852,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The four networks are built in evaluation mode, so a fine-tune restores evaluation afterward and
   inference never drops.
 
+#### Training accumulates gradients over several batches
+
+- `NFKMLXTrainer.train` and `NFKMLXFineTune.run` gain `accumulationSteps`. Each update averages the
+  gradients of that many consecutive batches, so an update can be larger than one batch fits in
+  memory. `steps` counts updates: the schedule, the clip, the checkpoint, and the observer act once per
+  update, and the loss reported for a step is the mean over its batches. The default of 1 runs as
+  before.
+
 #### Every network with a BatchNorm is built in evaluation mode
 
 - BiSeNet, BiSeNetV2, MODNet, RF-DETR, RF-DETR segmentation, RVM, BiRefNet, U²-Net, IS-Net, Parakeet,

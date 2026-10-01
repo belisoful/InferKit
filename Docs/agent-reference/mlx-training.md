@@ -172,9 +172,12 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
   builder, so no fine-tune of them is reachable. Feasibility and reachability are separate questions,
   and a public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
   builders and are offline on size.
-- `NFKMLXTrainer` has no gradient accumulation, validation hook, or bf16 training, and does not
-  checkpoint optimizer state. (2026-09-23) It schedules the learning rate. (2026-09-25) It applies a
-  post-update weight constraint and keeps running statistics out of the trainable set.
+- `NFKMLXTrainer` has no validation hook or bf16 training, and does not checkpoint optimizer state.
+  (2026-09-23) It schedules the learning rate. (2026-09-25) It applies a post-update weight constraint
+  and keeps running statistics out of the trainable set. (2026-09-30) `accumulationSteps` averages that
+  many batches into each update, as transformers' `gradient_accumulation_steps` does; a reference that
+  sums its batches instead (ultralytics) differs by that factor, which Adam's update mostly absorbs and
+  a gradient clip does not. No recipe passes it yet.
 - `NFKMLXLoRA` adapts `Linear` only, never `Conv2d` or the expert switch layers, and only through
   `@ModuleInfo` properties.
 

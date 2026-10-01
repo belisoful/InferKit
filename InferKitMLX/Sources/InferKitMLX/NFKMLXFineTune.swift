@@ -25,7 +25,7 @@ import MLXOptimizers
 
 /// Runs the fine-tuning sequence a recipe wraps.
 ///
-/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:learningRateSchedule:checkpoint:cachePolicy:observer:)``
+/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:learningRateSchedule:checkpoint:cachePolicy:observer:)``
 /// in place of calling `NFKMLXTrainer.train` directly, so the ordering and the two resolution rules
 /// are written once. The recipe keeps its own public signature.
 ///
@@ -51,6 +51,8 @@ public enum NFKMLXFineTune {
     ///   - loss: scores the network on one step's tensors.
     ///   - clipGradientNorm: bounds the global gradient norm. Pass the reference's value; nil is the
     ///     reference setting no clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. See
+    ///     `NFKMLXTrainer.train`.
     ///   - learningRateSchedule: the caller's schedule, nil to resolve one.
     ///   - checkpoint: writes the network periodically.
     ///   - cachePolicy: the buffer-cache policy for the run.
@@ -83,6 +85,7 @@ public enum NFKMLXFineTune {
         arrays: (Int) -> [MLXArray],
         loss: @escaping (Net, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float?,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -96,7 +99,7 @@ public enum NFKMLXFineTune {
         return try NFKMLXTrainer.train(
             net, optimizer: optimizer ?? reference(), steps: steps,
             arrays: arrays, loss: loss,
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: schedule,
             checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
             observer: observer)
@@ -115,6 +118,7 @@ public enum NFKMLXFineTune {
         sample: (Int) -> MLXArray,
         loss: @escaping (Net, MLXArray) -> MLXArray,
         clipGradientNorm: Float?,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -124,7 +128,8 @@ public enum NFKMLXFineTune {
                 referenceSchedule: referenceSchedule, steps: steps,
                 arrays: { [sample($0)] },
                 loss: { net, arrays in loss(net, arrays[0]) },
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 
@@ -140,6 +145,7 @@ public enum NFKMLXFineTune {
         batch: (Int) -> (input: MLXArray, target: MLXArray),
         loss: @escaping (Net, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float?,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -149,7 +155,8 @@ public enum NFKMLXFineTune {
                 referenceSchedule: referenceSchedule, steps: steps,
                 arrays: { let example = batch($0); return [example.input, example.target] },
                 loss: { net, arrays in loss(net, arrays[0], arrays[1]) },
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
 }
