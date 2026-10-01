@@ -25,13 +25,23 @@ public final class NFKMLXFlorence2Net: Module {
     public let imageTokenId: Int
 
     /// The language model's dropout while it trains; none by default. Set it to
-    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's `text_config` rates. The
-    /// vision tower's drop path is not reproduced.
+    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's `text_config` rates.
     ///
     /// Introduced in InferKit 0.4.0.
     public var dropout: NFKMLXSeq2SeqDropout {
         get { language.dropout }
         set { language.dropout = newValue }
+    }
+
+    /// The vision tower's stochastic-depth rate at its last block while the network trains, rising
+    /// linearly from 0 across every spatial and channel block; 0 by default. Every release's
+    /// `vision_config` sets `drop_path_rate` to 0.1, and its remote code runs the drop path in a frozen
+    /// tower while the model trains.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var visionDropPath: Float {
+        get { vision.dropPath.rate }
+        set { vision.dropPath.rate = newValue }
     }
 
     /// Florence-2's BART-large text model.

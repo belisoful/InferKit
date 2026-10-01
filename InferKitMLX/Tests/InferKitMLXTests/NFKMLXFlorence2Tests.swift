@@ -60,6 +60,35 @@ final class NFKMLXFlorence2Tests: XCTestCase {
 
     /// PARITY: the released DaViT tower and projector against the recorded oracle, seam by seam
     /// (stage-0 patch embed, stage-0 block, the unpooled vision output, and the projected tokens).
+    func testTheVisionDropPathRisesAcrossEveryBlockAndRunsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let configuration = NFKMLXFlorence2VisionConfiguration(depths: [1, 1, 2, 1], embedDim: [8, 16, 32, 64],
+                                                               numHeads: [1, 2, 4, 8], numGroups: [1, 2, 4, 8],
+                                                               windowSize: 2, projectionDim: 32)
+        let vision = NFKMLXFlorence2VisionNet(configuration)
+        XCTAssertFalse(vision.training, "built in evaluation mode")
+        let shares = vision.blocks.flatMap { $0 }.flatMap { [$0.spatial.share, $0.channel.share] }
+        XCTAssertEqual(shares, (0 ..< 10).map { Float($0) / 9 }, "torch.linspace(0, rate, 2 · sum(depths))")
+
+        let pixels = MLXRandom.normal([2, 64, 64, 3])
+        let plain = vision(pixels)
+        vision.dropPath.rate = 0.5
+        XCTAssertEqual(abs(vision(pixels) - plain).max().item(Float.self), 0, "evaluation never drops")
+        vision.train(true)
+        XCTAssertGreaterThan(abs(vision(pixels) - plain).max().item(Float.self), 0)
+        vision.dropPath.rate = 0
+        XCTAssertEqual(abs(vision(pixels) - plain).max().item(Float.self), 0, "a zero rate trains without dropping")
+    }
+
+    func testTheNetworksVisionDropPathReachesTheTower() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXFlorence2Net(vision: .base, text: NFKMLXFlorence2Net.bartBase)
+        XCTAssertEqual(net.visionDropPath, 0)
+        net.visionDropPath = 0.1
+        XCTAssertEqual(net.vision.blocks[2][4].channel.dropPath.rate, 0.1)
+    }
+
     func testSeamParityOnTheReleasedWeights() throws {
         try requireMLXRuntime()
         let env = NFKMLXValidationConfig.environment

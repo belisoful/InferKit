@@ -1074,6 +1074,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   image identically because its pooling attention is built as zeros for a checkpoint to fill, so a
   weight-free probe test first asserts that its categories embed apart.
 
+#### Florence-2 trains with its vision tower's drop path on request
+
+- Every Florence-2 release sets the DaViT tower's `drop_path_rate` to 0.1, and its remote code
+  (`modeling_florence2.py`) spreads it from 0 across every spatial and channel block, over all four
+  stages, on each block's attention and feed-forward branch. A fine-tune that freezes the tower still
+  runs it, because the model trains in training mode.
+- `NFKMLXFlorence2Net.visionDropPath`, 0 by default, applies it while the network trains.
+  `NFKMLXFlorence2VisionNet` is built in evaluation mode.
+
 #### One fine-tuning sequence, and a per-model customization ledger
 
 - `NFKMLXFineTune.run` holds the sequence every recipe repeats: freeze, take the caller's optimizer or

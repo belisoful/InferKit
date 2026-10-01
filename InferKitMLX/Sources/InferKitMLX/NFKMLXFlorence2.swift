@@ -226,6 +226,23 @@ final class NFKFlorence2DepthwiseConv: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray { conv(x) + x }
 }
 
+/// The vision tower's stochastic-depth rate, shared by its blocks so one setting reaches them all.
+final class NFKFlorence2DropPath {
+    var rate: Float = 0
+
+    /// timm's `DropPath`: each image's whole branch zeroed at `rate · share` and the kept ones scaled by
+    /// `1 / (1 − rate · share)`, while `active`; `x` itself otherwise.
+    func apply(_ x: MLXArray, share: Float, active: Bool) -> MLXArray {
+        let rate = self.rate * share
+        guard active, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        let shape = [x.dim(0)] + [Int](repeating: 1, count: x.ndim - 1)
+        return x * MLXRandom.bernoulli(MLXArray(keep), shape).asType(x.dtype) / keep
+    }
+}
+
 /// Spatial mixing block: depthwise conv + windowed attention, then depthwise conv + MLP, each pre-normed.
 final class NFKFlorence2SpatialBlock: Module {
     @ModuleInfo(key: "conv1") var conv1: NFKFlorence2DepthwiseConv
@@ -235,7 +252,14 @@ final class NFKFlorence2SpatialBlock: Module {
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
     @ModuleInfo(key: "ffn") var ffn: NFKFlorence2MLP
 
-    init(dim: Int, heads: Int, windowSize: Int, mlpRatio: Double, qkvBias: Bool) {
+    let dropPath: NFKFlorence2DropPath
+    /// This block's share of the drop-path rate: the reference's `linspace(0, rate, 2 · sum(depths))` entry.
+    let share: Float
+
+    init(dim: Int, heads: Int, windowSize: Int, mlpRatio: Double, qkvBias: Bool,
+         dropPath: NFKFlorence2DropPath = NFKFlorence2DropPath(), share: Float = 0) {
+        self.dropPath = dropPath
+        self.share = share
         _conv1.wrappedValue = NFKFlorence2DepthwiseConv(dim: dim)
         _norm1.wrappedValue = LayerNorm(dimensions: dim)
         _attn.wrappedValue = NFKFlorence2WindowAttention(dim: dim, heads: heads, windowSize: windowSize, qkvBias: qkvBias)
@@ -250,11 +274,11 @@ final class NFKFlorence2SpatialBlock: Module {
         let (b, h, w, c) = (x.shape[0], x.shape[1], x.shape[2], x.shape[3])
         var out = conv1(x)                                  // [B,H,W,C]
         var tokens = out.reshaped([b, h * w, c])
-        tokens = tokens + attn(norm1(tokens).reshaped([b, h, w, c]))
+        tokens = tokens + dropPath.apply(attn(norm1(tokens).reshaped([b, h, w, c])), share: share, active: training)
         out = tokens.reshaped([b, h, w, c])
         out = conv2(out)
         tokens = out.reshaped([b, h * w, c])
-        tokens = tokens + ffn(norm2(tokens))
+        tokens = tokens + dropPath.apply(ffn(norm2(tokens)), share: share, active: training)
         return tokens.reshaped([b, h, w, c])
     }
 }
@@ -268,7 +292,14 @@ final class NFKFlorence2ChannelBlock: Module {
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
     @ModuleInfo(key: "ffn") var ffn: NFKFlorence2MLP
 
-    init(dim: Int, groups: Int, mlpRatio: Double, qkvBias: Bool) {
+    let dropPath: NFKFlorence2DropPath
+    /// This block's share of the drop-path rate: the reference's `linspace(0, rate, 2 · sum(depths))` entry.
+    let share: Float
+
+    init(dim: Int, groups: Int, mlpRatio: Double, qkvBias: Bool,
+         dropPath: NFKFlorence2DropPath = NFKFlorence2DropPath(), share: Float = 0) {
+        self.dropPath = dropPath
+        self.share = share
         _conv1.wrappedValue = NFKFlorence2DepthwiseConv(dim: dim)
         _norm1.wrappedValue = LayerNorm(dimensions: dim)
         _attn.wrappedValue = NFKFlorence2ChannelAttention(dim: dim, groups: groups, qkvBias: qkvBias)
@@ -282,11 +313,11 @@ final class NFKFlorence2ChannelBlock: Module {
         let (b, h, w, c) = (x.shape[0], x.shape[1], x.shape[2], x.shape[3])
         var out = conv1(x)
         var tokens = out.reshaped([b, h * w, c])
-        tokens = tokens + attn(norm1(tokens))
+        tokens = tokens + dropPath.apply(attn(norm1(tokens)), share: share, active: training)
         out = tokens.reshaped([b, h, w, c])
         out = conv2(out)
         tokens = out.reshaped([b, h * w, c])
-        tokens = tokens + ffn(norm2(tokens))
+        tokens = tokens + dropPath.apply(ffn(norm2(tokens)), share: share, active: training)
         return tokens.reshaped([b, h, w, c])
     }
 }
@@ -296,10 +327,13 @@ final class NFKFlorence2VisionBlock: Module {
     @ModuleInfo(key: "spatial") var spatial: NFKFlorence2SpatialBlock
     @ModuleInfo(key: "channel") var channel: NFKFlorence2ChannelBlock
 
-    init(dim: Int, heads: Int, groups: Int, windowSize: Int, mlpRatio: Double, qkvBias: Bool) {
+    init(dim: Int, heads: Int, groups: Int, windowSize: Int, mlpRatio: Double, qkvBias: Bool,
+         dropPath: NFKFlorence2DropPath = NFKFlorence2DropPath(), shares: (spatial: Float, channel: Float) = (0, 0)) {
         _spatial.wrappedValue = NFKFlorence2SpatialBlock(dim: dim, heads: heads, windowSize: windowSize,
-                                                         mlpRatio: mlpRatio, qkvBias: qkvBias)
-        _channel.wrappedValue = NFKFlorence2ChannelBlock(dim: dim, groups: groups, mlpRatio: mlpRatio, qkvBias: qkvBias)
+                                                         mlpRatio: mlpRatio, qkvBias: qkvBias,
+                                                         dropPath: dropPath, share: shares.spatial)
+        _channel.wrappedValue = NFKFlorence2ChannelBlock(dim: dim, groups: groups, mlpRatio: mlpRatio, qkvBias: qkvBias,
+                                                         dropPath: dropPath, share: shares.channel)
         super.init()
     }
 
@@ -315,9 +349,12 @@ public final class NFKMLXFlorence2VisionNet: Module {
     @ModuleInfo(key: "convs") var convs: [NFKFlorence2ConvEmbed]
     @ModuleInfo(key: "blocks") var blocks: [[NFKFlorence2VisionBlock]]
     let config: NFKMLXFlorence2VisionConfiguration
+    let dropPath = NFKFlorence2DropPath()
 
     public init(_ config: NFKMLXFlorence2VisionConfiguration) {
         self.config = config
+        let last = Float(max(2 * config.depths.reduce(0, +) - 1, 1))
+        var offset = 0
         var convList: [NFKFlorence2ConvEmbed] = []
         var blockStages: [[NFKFlorence2VisionBlock]] = []
         for stage in 0 ..< config.embedDim.count {
@@ -328,19 +365,24 @@ public final class NFKMLXFlorence2VisionNet: Module {
                                                   padding: config.patchPadding[stage],
                                                   preNorm: config.patchPreNorm[stage]))
             var stageBlocks: [NFKFlorence2VisionBlock] = []
-            for _ in 0 ..< config.depths[stage] {
+            for block in 0 ..< config.depths[stage] {
+                let index = offset + 2 * block
                 stageBlocks.append(NFKFlorence2VisionBlock(dim: config.embedDim[stage],
                                                            heads: config.numHeads[stage],
                                                            groups: config.numGroups[stage],
                                                            windowSize: config.windowSize,
                                                            mlpRatio: config.mlpRatio,
-                                                           qkvBias: config.qkvBias))
+                                                           qkvBias: config.qkvBias,
+                                                           dropPath: dropPath,
+                                                           shares: (Float(index) / last, Float(index + 1) / last)))
             }
+            offset += 2 * config.depths[stage]
             blockStages.append(stageBlocks)
         }
         _convs.wrappedValue = convList
         _blocks.wrappedValue = blockStages
         super.init()
+        train(false)
     }
 
     /// `pixelValues`: `[B, H, W, 3]` (NHWC, ImageNet-normalized). Returns `[B, H', W', C]`.
