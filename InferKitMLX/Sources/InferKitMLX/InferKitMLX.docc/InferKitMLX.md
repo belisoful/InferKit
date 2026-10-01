@@ -459,6 +459,11 @@ limits.
 - ``NFKMLXTrainer``
 - ``NFKMLXTrainingCheckpoint``
 - ``NFKMLXTrainingStep``
+- ``NFKMLXTrainingPrecision``
+- ``NFKMLXGradientAccumulation``
+- ``NFKMLXResumableOptimizer``
+- ``NFKMLXAdam``
+- ``NFKMLXSGD``
 - ``NFKMLXTrainingCachePolicy``
 - ``NFKMLXLearningRateSchedule``
 - ``NFKMLXTrainingData``
@@ -469,6 +474,7 @@ limits.
 - ``NFKMLXZeroDCEObjective``
 - ``NFKMLXZeroDCELoss``
 - ``NFKMLXSegFormerNet``
+- ``NFKMLXSegFormerDropout``
 - ``NFKMLXSegFormerObjective``
 - ``NFKMLXSegFormerTrainable``
 - ``NFKMLXDeepLabNet``
@@ -502,6 +508,7 @@ limits.
 - ``NFKMLXWav2Vec2Processor``
 - ``NFKMLXSpecAugment``
 - ``NFKMLXWav2Vec2BertNet``
+- ``NFKMLXWav2Vec2BertDropout``
 - ``NFKMLXWav2Vec2BertTrainable``
 - ``NFKMLXWav2Vec2BertProcessor``
 - ``NFKMLXTimesFMNet``
@@ -549,6 +556,7 @@ limits.
 - ``NFKMLXWhisperNet``
 - ``NFKMLXWhisperObjective``
 - ``NFKMLXSeq2SeqNet``
+- ``NFKMLXSeq2SeqDropout``
 - ``NFKMLXT5Seq2SeqNet``
 - ``NFKMLXTranslationObjective``
 - ``NFKMLXTranslateGemmaObjective``
@@ -558,6 +566,7 @@ limits.
 - ``NFKMLXLayaExample``
 - ``NFKMLXLayaEpisode``
 - ``NFKMLXDeBERTaV2Net``
+- ``NFKMLXDeBERTaV2Dropout``
 - ``NFKMLXOpenJevDeBERTaNet``
 - ``NFKMLXOpenJevDeBERTaObjective``
 - ``NFKMLXOpenJevDeBERTaTrainable``
