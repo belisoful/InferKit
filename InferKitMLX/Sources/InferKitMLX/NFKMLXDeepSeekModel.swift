@@ -2,27 +2,24 @@
 //  NFKMLXDeepSeekModel.swift
 //  InferKitMLX
 //
-//  The DeepSeek V4 decoder (`DeepseekV4ForCausalLM`): Multi-head Latent Attention over a
-//  mixture-of-experts feed-forward. A third architecture family beside the dense stack
-//  (`NFKMLXLanguageNet`) and the gated-recurrence hybrid (`NFKMLXHybridLanguageNet`).
+//  The DeepSeek V4 decoder family (`DeepseekV4ForCausalLM`): V4 Flash, V4 Pro, and V4.1 Flash.
+//  Multi-head Latent Attention over a mixture-of-experts feed-forward, carried through
+//  hyper-connections. A third architecture family beside the dense stack (`NFKMLXLanguageNet`) and
+//  the gated-recurrence hybrid (`NFKMLXHybridLanguageNet`).
 //
-//  BUILT, NOT MEASURED — and verified more weakly than the hybrid, for a reason worth stating.
-//  The released checkpoint is QUANTIZED: attention weights are fp8 with 128×128 block scales, and the
-//  experts are 4-bit packed two per int8 byte with their own scales. A float module's parameters
-//  therefore do NOT correspond one-to-one with the checkpoint's tensors, so the structural check has to
-//  derive what each float parameter would look like quantized. That derivation is itself an assumption,
-//  which is why the test asserts it reproduces the observed shapes rather than trusting it.
+//  Each release is measured against its own `inference/model.py`, in float32 and in bf16, which is
+//  the default compute type. The released checkpoints are quantized (fp8 attention with 128×128
+//  block scales, 4-bit experts packed two per byte), so `NFKMLXDeepSeekRelease` dequantizes on load
+//  and the structural check derives each float parameter's stored shape.
 //
-//  Implemented: the attention (low-rank queries, a shared latent key-value, grouped low-rank output,
-//  the learned attention sink, rotary applied to the trailing channels only) and the mixture of experts
-//  (square-root-softplus scoring, hash routing on the first layers, bias-shifted top-k after them, the
-//  clamped SwiGLU, the shared expert).
-//
-//  NOT implemented, and named so they are known rather than overlooked: the DSpark speculative blocks
-//  and the multi-token prediction layers. YaRN rope scaling IS implemented now — V4 Pro extends its
-//  window with it, and because it carries no parameters the structural check cannot see whether it is
-//  there, so a Pro run without it would have been silently wrong past the trained length. Attention here is dense over the sliding window, which is what the uncompressed
-//  layers do; a compressed layer needs the indexer to be correct.
+//  The attention holds low-rank queries, a shared latent key-value, grouped low-rank output, the
+//  learned attention sink, and rotary on the trailing channels. Uncompressed layers attend over the
+//  sliding window. Compressed layers add `NFKDeepSeekCompressor` and, where the release has one,
+//  `NFKDeepSeekIndexer`; YaRN applies to those layers only. The mixture of experts scores with a
+//  square-root softplus, hash-routes the first layers, takes a bias-shifted top-k after them, and
+//  adds a clamped SwiGLU shared expert. V4.1's n-gram memory is in `NFKMLXDeepSeekEngram.swift`, its
+//  image tower in `NFKMLXDeepSeekVision.swift`, the DSpark draft stack in `NFKMLXDeepSeekDSpark.swift`,
+//  and expert and table paging in `NFKMLXDeepSeekPaging.swift`.
 //
 
 import Foundation
