@@ -63,6 +63,11 @@ public struct NFKMLXSAM3DetectorConfiguration: Sendable {
     var headDim: Int { hiddenSize / heads }
 }
 
+/// The detector's dropout rate, shared by the modules that train with it so one setting reaches them all.
+final class NFKSAM3DropoutRate {
+    var rate: Float = 0
+}
+
 /// Dense attention over separate query, key, and value streams, with an optional additive mask.
 final class NFKSAM3DenseAttention: Module {
     @ModuleInfo(key: "q_proj") var qProj: Linear
@@ -72,10 +77,13 @@ final class NFKSAM3DenseAttention: Module {
 
     let heads: Int
     let headDim: Int
+    /// The attention-probability dropout; nil where the reference attends without one.
+    let dropout: NFKSAM3DropoutRate?
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate? = nil) {
         self.heads = configuration.heads
         self.headDim = configuration.headDim
+        self.dropout = dropout
         let width = configuration.hiddenSize
         _qProj.wrappedValue = Linear(width, width)
         _kProj.wrappedValue = Linear(width, width)
@@ -90,10 +98,10 @@ final class NFKSAM3DenseAttention: Module {
         func split(_ x: MLXArray, _ projection: Linear, _ count: Int) -> MLXArray {
             projection(x).reshaped([batch, count, heads, headDim]).transposed(0, 2, 1, 3)
         }
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKDropout.attention(
             queries: split(query, qProj, queries), keys: split(key, kProj, keys),
-            values: split(value, vProj, keys), scale: 1 / sqrt(Float(headDim)),
-            mask: mask.map { .array($0) } ?? .none)
+            values: split(value, vProj, keys), scale: 1 / sqrt(Float(headDim)), mask: mask,
+            rate: dropout?.rate ?? 0, active: training)
         return oProj(attended.transposed(0, 2, 1, 3).reshaped([batch, queries, heads * headDim]))
     }
 }
@@ -103,13 +111,18 @@ final class NFKSAM3DenseAttention: Module {
 final class NFKSAM3DetrMLP: Module {
     @ModuleInfo(key: "fc1") var fc1: Linear
     @ModuleInfo(key: "fc2") var fc2: Linear
+    let dropout: NFKSAM3DropoutRate
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
+        self.dropout = dropout
         _fc1.wrappedValue = Linear(configuration.hiddenSize, configuration.intermediateSize)
         _fc2.wrappedValue = Linear(configuration.intermediateSize, configuration.hiddenSize)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(relu(fc1(x))) }
+    /// The reference drops after the activation; the residual's own dropout is its layer's.
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        fc2(NFKDropout.apply(relu(fc1(x)), rate: dropout.rate, active: training))
+    }
 }
 
 /// The two- or three-layer MLP the decoder's heads are built from, under the reference's own
@@ -118,8 +131,11 @@ final class NFKSAM3DecoderMLP: Module {
     @ModuleInfo(key: "layer1") var layer1: Linear
     @ModuleInfo(key: "layer2") var layer2: Linear
     @ModuleInfo(key: "layer3") var layer3: Linear?
+    /// The dropout after each hidden activation; nil where the reference's `MLP` builds none.
+    let dropout: NFKSAM3DropoutRate?
 
-    init(input: Int, hidden: Int, output: Int, layers: Int) {
+    init(input: Int, hidden: Int, output: Int, layers: Int, dropout: NFKSAM3DropoutRate? = nil) {
+        self.dropout = dropout
         if layers == 3 {
             _layer1.wrappedValue = Linear(input, hidden)
             _layer2.wrappedValue = Linear(hidden, hidden)
@@ -132,9 +148,13 @@ final class NFKSAM3DecoderMLP: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let first = relu(layer1(x))
+        let first = drop(relu(layer1(x)))
         guard let layer3 else { return layer2(first) }
-        return layer3(relu(layer2(first)))
+        return layer3(drop(relu(layer2(first))))
+    }
+
+    private func drop(_ x: MLXArray) -> MLXArray {
+        NFKDropout.apply(x, rate: dropout?.rate ?? 0, active: training)
     }
 }
 
@@ -147,14 +167,16 @@ final class NFKSAM3DetrEncoderLayer: Module {
     @ModuleInfo(key: "layer_norm2") var norm2: LayerNorm
     @ModuleInfo(key: "mlp") var mlp: NFKSAM3DetrMLP
     @ModuleInfo(key: "layer_norm3") var norm3: LayerNorm
+    let dropout: NFKSAM3DropoutRate
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
+        self.dropout = dropout
         let width = configuration.hiddenSize, epsilon = configuration.layerNormEpsilon
         _norm1.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
-        _selfAttention.wrappedValue = NFKSAM3DenseAttention(configuration)
-        _crossAttention.wrappedValue = NFKSAM3DenseAttention(configuration)
+        _selfAttention.wrappedValue = NFKSAM3DenseAttention(configuration, dropout: dropout)
+        _crossAttention.wrappedValue = NFKSAM3DenseAttention(configuration, dropout: dropout)
         _norm2.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
-        _mlp.wrappedValue = NFKSAM3DetrMLP(configuration)
+        _mlp.wrappedValue = NFKSAM3DetrMLP(configuration, dropout: dropout)
         _norm3.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
     }
 
@@ -163,10 +185,14 @@ final class NFKSAM3DetrEncoderLayer: Module {
         var hidden = norm1(vision)
         let withPosition = hidden + position
         // The position encoding reaches the query and the key but not the value.
-        var out = vision + selfAttention(query: withPosition, key: withPosition, value: hidden)
+        var out = vision + drop(selfAttention(query: withPosition, key: withPosition, value: hidden))
         hidden = norm2(out)
-        out = out + crossAttention(query: hidden, key: prompt, value: prompt, mask: promptMask)
-        return out + mlp(norm3(out))
+        out = out + drop(crossAttention(query: hidden, key: prompt, value: prompt, mask: promptMask))
+        return out + drop(mlp(norm3(out)))
+    }
+
+    private func drop(_ x: MLXArray) -> MLXArray {
+        NFKDropout.apply(x, rate: dropout.rate, active: training)
     }
 }
 
@@ -181,16 +207,18 @@ final class NFKSAM3DetrDecoderLayer: Module {
     @ModuleInfo(key: "vision_cross_attn_layer_norm") var visionNorm: LayerNorm
     @ModuleInfo(key: "mlp") var mlp: NFKSAM3DetrMLP
     @ModuleInfo(key: "mlp_layer_norm") var mlpNorm: LayerNorm
+    let dropout: NFKSAM3DropoutRate
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
+        self.dropout = dropout
         let width = configuration.hiddenSize, epsilon = configuration.layerNormEpsilon
-        _selfAttention.wrappedValue = NFKSAM3DenseAttention(configuration)
+        _selfAttention.wrappedValue = NFKSAM3DenseAttention(configuration, dropout: dropout)
         _selfNorm.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
-        _textAttention.wrappedValue = NFKSAM3DenseAttention(configuration)
+        _textAttention.wrappedValue = NFKSAM3DenseAttention(configuration, dropout: dropout)
         _textNorm.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
-        _visionAttention.wrappedValue = NFKSAM3DenseAttention(configuration)
+        _visionAttention.wrappedValue = NFKSAM3DenseAttention(configuration, dropout: dropout)
         _visionNorm.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
-        _mlp.wrappedValue = NFKSAM3DetrMLP(configuration)
+        _mlp.wrappedValue = NFKSAM3DetrMLP(configuration, dropout: dropout)
         _mlpNorm.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
     }
 
@@ -200,14 +228,18 @@ final class NFKSAM3DetrDecoderLayer: Module {
                         visionBias: MLXArray?) -> MLXArray {
         var hidden = queries
         var withPosition = hidden + queryPosition
-        hidden = selfNorm(hidden + selfAttention(query: withPosition, key: withPosition, value: hidden))
+        hidden = selfNorm(hidden + drop(selfAttention(query: withPosition, key: withPosition, value: hidden)))
         withPosition = hidden + queryPosition
-        hidden = textNorm(hidden + textAttention(query: withPosition, key: prompt, value: prompt,
-                                                 mask: promptMask))
+        hidden = textNorm(hidden + drop(textAttention(query: withPosition, key: prompt, value: prompt,
+                                                      mask: promptMask)))
         withPosition = hidden + queryPosition
-        hidden = visionNorm(hidden + visionAttention(query: withPosition, key: vision + visionPosition,
-                                                     value: vision, mask: visionBias))
-        return mlpNorm(hidden + mlp(hidden))
+        hidden = visionNorm(hidden + drop(visionAttention(query: withPosition, key: vision + visionPosition,
+                                                          value: vision, mask: visionBias)))
+        return mlpNorm(hidden + drop(mlp(hidden)))
+    }
+
+    private func drop(_ x: MLXArray) -> MLXArray {
+        NFKDropout.apply(x, rate: dropout.rate, active: training)
     }
 }
 
@@ -215,9 +247,9 @@ final class NFKSAM3DetrDecoderLayer: Module {
 final class NFKSAM3DetrEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKSAM3DetrEncoderLayer]
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
         _layers.wrappedValue = (0 ..< configuration.encoderLayers).map { _ in
-            NFKSAM3DetrEncoderLayer(configuration)
+            NFKSAM3DetrEncoderLayer(configuration, dropout: dropout)
         }
     }
 
@@ -258,11 +290,11 @@ final class NFKSAM3DetrDecoder: Module {
 
     let configuration: NFKMLXSAM3DetectorConfiguration
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
         self.configuration = configuration
         let width = configuration.hiddenSize, epsilon = configuration.layerNormEpsilon
         _layers.wrappedValue = (0 ..< configuration.decoderLayers).map { _ in
-            NFKSAM3DetrDecoderLayer(configuration)
+            NFKSAM3DetrDecoderLayer(configuration, dropout: dropout)
         }
         _outputNorm.wrappedValue = LayerNorm(dimensions: width, eps: epsilon)
         _boxHead.wrappedValue = NFKSAM3DecoderMLP(input: width, hidden: width, output: 4, layers: 3)
@@ -388,10 +420,10 @@ final class NFKSAM3Scoring: Module {
     let clamp: Float
     let scale: Float
 
-    init(_ configuration: NFKMLXSAM3DetectorConfiguration) {
+    init(_ configuration: NFKMLXSAM3DetectorConfiguration, dropout: NFKSAM3DropoutRate) {
         let width = configuration.hiddenSize
         _textMLP.wrappedValue = NFKSAM3DecoderMLP(input: width, hidden: configuration.intermediateSize,
-                                                  output: width, layers: 2)
+                                                  output: width, layers: 2, dropout: dropout)
         _textNorm.wrappedValue = LayerNorm(dimensions: width, eps: configuration.layerNormEpsilon)
         _textProjection.wrappedValue = Linear(width, width)
         _queryProjection.wrappedValue = Linear(width, width)
@@ -522,13 +554,30 @@ public final class NFKMLXSAM3DetectorNet: Module {
     @ModuleInfo(key: "mask_decoder") var maskDecoder: NFKSAM3MaskDecoder
 
     public let configuration: NFKMLXSAM3DetectorConfiguration
+    let dropoutRate: NFKSAM3DropoutRate
+
+    /// The detector's dropout while it trains; 0 by default. The reference builds its DETR encoder,
+    /// decoder, and scoring head's prompt MLP with 0.1 (`model_builder.py`), applied to the attention
+    /// probabilities, after each attention, and inside and after each feed-forward. The mask decoder's
+    /// prompt attention has none. The geometry encoder, which carries the same rate in the reference,
+    /// is not part of this detector.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: Float {
+        get { dropoutRate.rate }
+        set { dropoutRate.rate = newValue }
+    }
 
     public init(_ configuration: NFKMLXSAM3DetectorConfiguration = .base) {
         self.configuration = configuration
-        _encoder.wrappedValue = NFKSAM3DetrEncoder(configuration)
-        _decoder.wrappedValue = NFKSAM3DetrDecoder(configuration)
-        _scoring.wrappedValue = NFKSAM3Scoring(configuration)
+        let rate = NFKSAM3DropoutRate()
+        dropoutRate = rate
+        _encoder.wrappedValue = NFKSAM3DetrEncoder(configuration, dropout: rate)
+        _decoder.wrappedValue = NFKSAM3DetrDecoder(configuration, dropout: rate)
+        _scoring.wrappedValue = NFKSAM3Scoring(configuration, dropout: rate)
         _maskDecoder.wrappedValue = NFKSAM3MaskDecoder(configuration)
+        super.init()
+        train(false)
     }
 
     /// Detects every instance the prompt names.

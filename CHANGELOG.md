@@ -1051,6 +1051,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   AdamW at 1e-4, is this package's choice. `save(_:toDirectoryURL:release:)` writes a directory the
   factory loads.
 
+#### SAM 3's detector trains with its reference's dropout on request
+
+- facebookresearch/sam3 builds the DETR encoder, the decoder, and the scoring head's prompt MLP with
+  dropout 0.1 (`model_builder.py`): on the attention probabilities, after each attention, and inside
+  and after each feed-forward (`model/encoder.py`, `model/decoder.py`, `model/model_misc.py`). Its
+  ODinW training configuration sets the same 0.1.
+- `NFKMLXSAM3DetectorNet.dropout`, 0 by default, applies it at those positions while the detector
+  trains, and the detector is built in evaluation mode. The mask decoder's prompt attention and the
+  box, presence, and position MLPs have none, as in the reference.
+
 #### TrOCR
 
 - `NFKMLXTrOCR` ports TrOCR (Microsoft, MIT): a ViT encoder and a transformer decoder that

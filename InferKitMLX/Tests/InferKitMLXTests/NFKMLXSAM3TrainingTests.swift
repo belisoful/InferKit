@@ -56,6 +56,38 @@ final class NFKMLXSAM3TrainingTests: XCTestCase {
         MLXArray([Float(0.3), 0.3, 0.2, 0.2, 0.7, 0.6, 0.25, 0.3]).reshaped([2, 4])
     }
 
+    // MARK: - Dropout
+
+    func testTheDetectorDropsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        let detector = smallDetector()
+        XCTAssertFalse(detector.training, "built in evaluation mode")
+        XCTAssertEqual(detector.dropout, 0)
+        let inputs = encoded()
+        func logits() -> MLXArray {
+            detector(levels: inputs.levels, positions: inputs.positions, prompt: inputs.prompt,
+                     promptValid: inputs.valid).logits
+        }
+        let plain = logits()
+        detector.dropout = 0.5
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "evaluation never drops")
+        detector.train(true)
+        XCTAssertGreaterThan(abs(logits() - plain).max().item(Float.self), 0)
+        detector.dropout = 0
+        XCTAssertEqual(abs(logits() - plain).max().item(Float.self), 0, "a zero rate trains without dropping")
+    }
+
+    func testOnlyTheReferencesDropoutSitesCarryTheRate() throws {
+        try requireMLXRuntime()
+        let detector = smallDetector()
+        detector.dropout = 0.1
+        XCTAssertEqual(detector.encoder.layers[0].selfAttention.dropout?.rate, 0.1)
+        XCTAssertEqual(detector.decoder.layers[1].visionAttention.dropout?.rate, 0.1)
+        XCTAssertEqual(detector.scoring.textMLP.dropout?.rate, 0.1)
+        XCTAssertNil(detector.decoder.boxHead.dropout, "the box head's MLP has none")
+        XCTAssertNil(detector.maskDecoder.promptAttention.dropout, "the mask decoder's prompt attention has none")
+    }
+
     // MARK: - The matcher
 
     func testTheAssignmentIsOneToOneAndWithinRange() throws {
