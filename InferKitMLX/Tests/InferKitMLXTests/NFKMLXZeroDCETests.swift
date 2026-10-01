@@ -102,4 +102,15 @@ final class NFKMLXZeroDCETests: XCTestCase {
         }
         return (value as! CGImage)
     }
+
+    /// A recipe passes the accumulation through: each update reads that many consecutive batches.
+    func testAFineTuneAccumulatesConsecutiveBatchesIntoEachUpdate() throws {
+        try requireMLXRuntime()
+        var read = [Int]()
+        let photos = MLXRandom.uniform(low: 0, high: 1, [1, 16, 16, 3], key: MLXRandom.key(7))
+        let losses = try NFKMLXZeroDCE.fineTune(smallNet(), photos: { read.append($0); return photos }, steps: 2,
+                                                accumulationSteps: 3)
+        XCTAssertEqual(read, [0, 1, 2, 3, 4, 5])
+        XCTAssertEqual(losses.count, 2)
+    }
 }

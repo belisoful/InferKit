@@ -190,6 +190,8 @@ extension NFKMLXAllInOne {
     ///   - steps: how many tracks to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference's 0.5:
     ///     `train.py` passes `gradient_clip` to Lightning's `Trainer`, which clips by norm.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil holds it constant; the reference
     ///     lowers it on a validation plateau, which a run without a validation set cannot measure.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
@@ -205,6 +207,7 @@ extension NFKMLXAllInOne {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 0.5,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -230,7 +233,7 @@ extension NFKMLXAllInOne {
                                                     function: arrays[4])
                 return objective.loss(net(arrays[0]), targets: targets)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

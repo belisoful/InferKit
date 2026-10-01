@@ -92,6 +92,9 @@ public extension NFKMLXGraniteHybrid {
     ///     script beyond its model's `labels=` loss, and the learning rate is this package's choice.
     ///   - steps: how many sequences to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. transformers' `Trainer` updates on 8 examples by
+    ///     default.
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -108,6 +111,7 @@ public extension NFKMLXGraniteHybrid {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
@@ -129,6 +133,6 @@ public extension NFKMLXGraniteHybrid {
             referenceSchedule: { .constant },
             steps: steps,
             sample: examples, loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }

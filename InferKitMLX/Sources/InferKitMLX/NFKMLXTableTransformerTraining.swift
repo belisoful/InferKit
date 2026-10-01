@@ -161,6 +161,8 @@ extension NFKMLXTableTransformer {
     ///     1e-4 on every parameter, at 5e-5, and 1e-5 for the backbone.
     ///   - steps: how many images to train on.
     ///   - clipGradientNorm: bounds the global gradient norm; the reference clips at 0.1.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. The reference updates on a batch of 2.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's `StepLR`,
     ///     0.9 per epoch, with `stepsPerEpoch` updates to an epoch, when the reference optimizer runs.
     ///     With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -178,6 +180,7 @@ extension NFKMLXTableTransformer {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 0.1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         stepsPerEpoch: Int = 1_000,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -198,7 +201,7 @@ extension NFKMLXTableTransformer {
             steps: steps,
             batch: { let example = examples($0); return (example.pixels, example.targets) },
             loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

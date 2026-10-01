@@ -840,6 +840,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A file that exists but cannot be read now throws `NFKMLXError.checkpointNotReadable`, naming the
   path and the system's reason. A missing file raises the reader's own error, as before.
 
+#### The recipes take an accumulation count
+
+- Every fine-tune recipe built on `NFKMLXFineTune.run` gains `accumulationSteps`, 1 by default, and
+  passes it to the trainer: each update averages that many consecutive batches, and `steps` counts
+  updates. A recipe's documentation names its reference's update where it is known (Sa2VA, TrOCR,
+  W2V-BERT, YOLO, Table Transformer, TimesFM, and the `Trainer`'s default of 8 for the language
+  recipes). Open-Jev and open-jev-deberta keep their own batching.
+
 #### The translators, Florence-2, and TrOCR train with their releases' dropout on request
 
 - `NFKMLXSeq2SeqDropout` holds the five rates transformers applies to a BART-family network (dropout,

@@ -141,6 +141,8 @@ extension NFKMLXVAD {
     ///     decay 0.001 added to the gradient.
     ///   - steps: how many clips to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The release does not clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the release's
     ///     `PolynomialHoldDecayAnnealing` over `steps` when the reference optimizer runs.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
@@ -157,6 +159,7 @@ extension NFKMLXVAD {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -186,7 +189,7 @@ extension NFKMLXVAD {
                 let frames = min(logits.dim(1), arrays[1].dim(1))
                 return objective.loss(logits: logits[0..., 0 ..< frames, 0...], labels: arrays[1][0..., 0 ..< frames])
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

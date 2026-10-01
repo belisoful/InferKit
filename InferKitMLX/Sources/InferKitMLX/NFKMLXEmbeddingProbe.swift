@@ -24,7 +24,7 @@ import MLXOptimizers
 /*!
  @abstract A linear classifier over a frozen embedding.
  @discussion Scores cached embeddings `[N, embedDimensions]` into logits `[N, classCount]`. Train it with
- ``train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:checkpoint:observer:)``, save it
+ ``train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``, save it
  with `NFKMLXWeights.save`, and reload it with ``init(weightsURL:)``. Introduced in InferKit 0.5.0.
  */
 public final class NFKMLXEmbeddingProbe: Module {
@@ -74,6 +74,8 @@ public final class NFKMLXEmbeddingProbe: Module {
     ///     regressions, so the optimizer is this package's choice.
     ///   - steps: how many updates to run.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - checkpoint: writes the probe periodically.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -86,6 +88,7 @@ public final class NFKMLXEmbeddingProbe: Module {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
@@ -115,7 +118,7 @@ public final class NFKMLXEmbeddingProbe: Module {
             loss: { probe, batch, targets in
                 crossEntropy(logits: probe(batch), targets: targets, reduction: .mean)
             },
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }
 

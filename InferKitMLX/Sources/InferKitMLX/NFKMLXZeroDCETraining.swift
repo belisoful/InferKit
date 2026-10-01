@@ -200,6 +200,8 @@ extension NFKMLXZeroDCE {
     ///     its learning rate 1e-4 and weight decay 1e-4, which torch's Adam adds to the gradient.
     ///   - steps: how many batches to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -212,6 +214,7 @@ extension NFKMLXZeroDCE {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 0.1,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
@@ -222,7 +225,7 @@ extension NFKMLXZeroDCE {
                                referenceSchedule: { .constant },
                                steps: steps,
                                sample: photos, loss: objective.callAsFunction,
-                               clipGradientNorm: clipGradientNorm, checkpoint: checkpoint,
+                               clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint,
                                observer: observer)
     }
 }

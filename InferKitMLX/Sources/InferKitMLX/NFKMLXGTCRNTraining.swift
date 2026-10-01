@@ -184,6 +184,8 @@ extension NFKMLXGTCRNFactory {
     ///     training script, so the rate is this package's choice.
     ///   - steps: how many pairs to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil holds it constant.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
@@ -198,6 +200,7 @@ extension NFKMLXGTCRNFactory {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -219,7 +222,7 @@ extension NFKMLXGTCRNFactory {
             loss: { net, arrays in
                 objective(net, noisy: (arrays[0], arrays[1]), clean: (arrays[2], arrays[3]))
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

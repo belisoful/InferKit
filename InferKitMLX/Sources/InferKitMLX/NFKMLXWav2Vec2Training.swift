@@ -215,6 +215,8 @@ extension NFKMLXWav2Vec2 {
     ///   - steps: how many utterances to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update, 1.0 as the reference's
     ///     `max_grad_norm`.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's linear decay
     ///     to zero over the run with no warm-up (`get_linear_schedule_with_warmup`), when the reference
     ///     optimizer runs. With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -237,6 +239,7 @@ extension NFKMLXWav2Vec2 {
         weightDecay: Float = 0,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         seed: UInt64 = 0,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -252,7 +255,7 @@ extension NFKMLXWav2Vec2 {
                                                          using: &generator) : nil
             },
             optimizer: optimizer, learningRate: learningRate, weightDecay: weightDecay, steps: steps,
-            clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
 
@@ -269,6 +272,7 @@ extension NFKMLXWav2Vec2 {
         weightDecay: Float,
         steps: Int,
         clipGradientNorm: Float?,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?,
         observer: NFKMLXTrainer.Observer?
@@ -296,7 +300,7 @@ extension NFKMLXWav2Vec2 {
             loss: { net, arrays in
                 objective(net, arrays[0], labels: utterances[0], timeMask: arrays.count > 1 ? arrays[1] : nil)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

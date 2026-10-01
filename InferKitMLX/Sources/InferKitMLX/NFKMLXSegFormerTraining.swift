@@ -125,6 +125,8 @@ extension NFKMLXSegFormer {
     ///   - steps: how many examples to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does
     ///     not clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's: mmcv's
     ///     `poly` decay to zero over the run, after a linear warm-up over 1,500 steps from a millionth
     ///     of the rate, when the reference optimizer runs. With a caller's optimizer, nil holds that
@@ -142,6 +144,7 @@ extension NFKMLXSegFormer {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -155,7 +158,7 @@ extension NFKMLXSegFormer {
                                steps: steps,
                                batch: { let example = examples($0); return (example.image, example.labels) },
                                loss: objective.callAsFunction,
-                               clipGradientNorm: clipGradientNorm,
+                               clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
                                learningRateSchedule: learningRateSchedule,
                                checkpoint: checkpoint, observer: observer)
     }

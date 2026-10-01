@@ -128,6 +128,8 @@ extension NFKMLXTimesFM {
     ///   - steps: how many batches to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update, as the reference's
     ///     `clip_grad_norm_(…, max_norm=1.0)`.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. The reference updates on a batch of 32 windows.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `CosineAnnealingLR` to zero over the run when the reference optimizer runs. With a caller's
     ///     optimizer, nil holds that optimizer's rate constant.
@@ -148,6 +150,7 @@ extension NFKMLXTimesFM {
         weightDecay: Float = 0.01,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -165,7 +168,7 @@ extension NFKMLXTimesFM {
                 return [MLXArray(Int32(batch.count))]
             },
             loss: { net, _ in objective(net, windows: batch) },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

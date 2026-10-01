@@ -460,6 +460,9 @@ extension NFKMLXYOLO {
     ///   - stepsPerEpoch: the batches in one pass over the consumer's data, which the reference's
     ///     schedule counts in.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference clips at 10.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. ultralytics sums `round(64 / batch)` batches into each
+    ///     update, ramping the count from 1 over the warm-up; this averages a fixed count.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses ``NFKMLXLearningRateSchedule/ultralytics(steps:stepsPerEpoch:warmupEpochs:finalScale:)``
     ///     when the reference optimizer runs.
     ///   - averagesWeights: keeps ultralytics' exponential moving average of every weight and running
@@ -479,6 +482,7 @@ extension NFKMLXYOLO {
         steps: Int,
         stepsPerEpoch: Int,
         clipGradientNorm: Float? = 10,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         averagesWeights: Bool = true,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -527,7 +531,7 @@ extension NFKMLXYOLO {
                 return objective.loss(boxDistribution: outputs.distribution, classLogits: outputs.logits,
                                       featureSizes: outputs.featureSizes, strides: outputs.strides, targets: targets)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint,
             observer: { step in

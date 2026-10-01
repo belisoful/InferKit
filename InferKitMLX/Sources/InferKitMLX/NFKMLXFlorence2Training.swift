@@ -67,6 +67,9 @@ extension NFKMLXFlorence2 {
     ///     is this package's choice.
     ///   - steps: how many examples to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. transformers' `Trainer` updates on 8 examples by
+    ///     default.
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -85,6 +88,7 @@ extension NFKMLXFlorence2 {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
@@ -111,7 +115,7 @@ extension NFKMLXFlorence2 {
             steps: steps,
             arrays: { let example = examples($0); return [example.pixels, example.prompt, example.answer] },
             loss: { model, arrays in objective(model, pixels: arrays[0], prompt: arrays[1], answer: arrays[2]) },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             checkpoint: checkpoint, observer: observer)
     }
 

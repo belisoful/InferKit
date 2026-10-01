@@ -76,7 +76,7 @@ extension NFKMLXYOLOGenerations {
 
     /// Fine-tunes a release on a consumer's own labeled images, returning the loss from each step.
     ///
-    /// The parameters and defaults are ``NFKMLXYOLO/fineTune(_:examples:trainable:objective:optimizer:steps:stepsPerEpoch:clipGradientNorm:learningRateSchedule:averagesWeights:checkpoint:observer:)``'s.
+    /// The parameters and defaults are ``NFKMLXYOLO/fineTune(_:examples:trainable:objective:optimizer:steps:stepsPerEpoch:clipGradientNorm:accumulationSteps:learningRateSchedule:averagesWeights:checkpoint:observer:)``'s.
     /// An end-to-end release (v10, YOLO26) trains both branches under `endToEndObjective`, its
     /// one-to-many weight stepping by epoch; the others train under `objective`. The result saves with
     /// `NFKMLXWeights.save` and loads through `backendWithRelease:weightsURL:labels:error:` at its own
@@ -92,6 +92,7 @@ extension NFKMLXYOLOGenerations {
         steps: Int,
         stepsPerEpoch: Int,
         clipGradientNorm: Float? = 10,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         averagesWeights: Bool = true,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -147,7 +148,7 @@ extension NFKMLXYOLOGenerations {
                                               featureSizes: outputs.featureSizes, strides: outputs.strides,
                                               targets: targets, epoch: arrays[2].item(Int.self), epochs: epochs)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint,
             observer: { step in

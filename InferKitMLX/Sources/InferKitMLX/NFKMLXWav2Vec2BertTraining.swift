@@ -122,6 +122,9 @@ extension NFKMLXWav2Vec2Bert {
     ///   - warmupSteps: the recipe's linear warm-up. A run shorter than it trains below the peak throughout.
     ///   - steps: how many utterances to train on.
     ///   - clipGradientNorm: the `Trainer`'s `max_grad_norm`.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. The reference updates on 16 utterances over 2
+    ///     accumulated steps.
     ///   - learningRateSchedule: nil uses the `Trainer`'s linear warm-up and decay when the reference
     ///     optimizer runs, and a constant rate with a caller's optimizer.
     ///   - seed: seeds SpecAugment's draws.
@@ -143,6 +146,7 @@ extension NFKMLXWav2Vec2Bert {
         warmupSteps: Int = 500,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         seed: UInt64 = 0,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -178,7 +182,7 @@ extension NFKMLXWav2Vec2Bert {
                 let frames = outputMask.map { $0.asType(.int32).sum(axis: -1).asArray(Int32.self).map(Int.init) }
                 return objective.loss(logits: net.head!(hidden), labels: [utterance], frames: frames)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

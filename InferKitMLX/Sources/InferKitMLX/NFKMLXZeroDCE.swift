@@ -20,7 +20,7 @@ import MLXNN
 /// curve-parameter channels.
 ///
 /// Fine-tuning works on this type directly: build one with ``NFKMLXZeroDCE/network(weightsURL:)``,
-/// train it with ``NFKMLXZeroDCE/fineTune(_:photos:objective:optimizer:steps:clipGradientNorm:checkpoint:observer:)``,
+/// train it with ``NFKMLXZeroDCE/fineTune(_:photos:objective:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``,
 /// then save it for ``NFKMLXZeroDCE/backend(weightsURL:)``.
 public final class NFKMLXZeroDCENet: Module {
     @ModuleInfo(key: "e_conv1") var conv1: Conv2d

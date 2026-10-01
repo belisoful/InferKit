@@ -61,7 +61,7 @@ extension NFKMLXCLIP {
 
     /// Trains a probe on cached embeddings, returning the loss from each step.
     ///
-    /// This is ``NFKMLXEmbeddingProbe/train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:checkpoint:observer:)``.
+    /// This is ``NFKMLXEmbeddingProbe/train(_:embeddings:labels:sampler:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``.
     /// CLIP's own linear probe is an L-BFGS logistic regression, so the optimizer is this package's choice.
     @discardableResult
     public static func trainProbe(

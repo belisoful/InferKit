@@ -161,6 +161,8 @@ extension NFKMLXVJEPA2 {
     ///     when its start and end values match.
     ///   - steps: how many examples to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does not clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     `WarmupCosineLRSchedule` with no warm-up, a cosine to zero over the run, when the reference
     ///     optimizer runs. With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -181,6 +183,7 @@ extension NFKMLXVJEPA2 {
         weightDecay: Float = 0.01,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -202,7 +205,7 @@ extension NFKMLXVJEPA2 {
                 return (example.clip, MLXArray([Int32(example.label)]))
             },
             loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

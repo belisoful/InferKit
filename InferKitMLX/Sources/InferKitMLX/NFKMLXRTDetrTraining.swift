@@ -596,6 +596,8 @@ extension NFKMLXRTDetr {
     ///   - optimizer: the update rule. Nil uses the release's AdamW groups.
     ///   - steps: how many batches to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference clips at 0.1.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the release's schedule when the
     ///     reference optimizer runs: RT-DETRv2's linear warm-up over 2,000 updates, and otherwise a constant
     ///     rate (each release's step decay falls at epoch 1000, after its training ends).
@@ -616,6 +618,7 @@ extension NFKMLXRTDetr {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 0.1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         averagesWeights: Bool = true,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -659,7 +662,7 @@ extension NFKMLXRTDetr {
                 return objective.loss(net.trainingOutputs(arrays[0], denoising: denoising),
                                       denoising: denoising, targets: targets)
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint,
             observer: { step in

@@ -312,6 +312,9 @@ extension NFKMLXSa2VA {
     ///     0.999, weight decay 0.05 on every trained parameter.
     ///   - steps: how many examples to train on.
     ///   - clipGradientNorm: bounds the global gradient norm; the reference clips at 1.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. The reference updates on 2 examples over 16 accumulated
+    ///     steps.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's
     ///     ``NFKMLXLearningRateSchedule/mmengineWarmupCosine(steps:warmupRatio:startFactor:)`` when the
     ///     reference optimizer runs; with a caller's optimizer, nil holds that optimizer's rate constant.
@@ -331,12 +334,13 @@ extension NFKMLXSa2VA {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
                 observer: observer)
     }
 
@@ -355,12 +359,13 @@ extension NFKMLXSa2VA {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
                 observer: observer)
     }
 
@@ -378,18 +383,19 @@ extension NFKMLXSa2VA {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try run(net, examples: examples, rank: rank, alpha: alpha, objective: objective, optimizer: optimizer, steps: steps,
-                clipGradientNorm: clipGradientNorm, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, learningRateSchedule: learningRateSchedule, checkpoint: checkpoint,
                 observer: observer)
     }
 
     static func run<Net: NFKSa2VAAdaptable>(
         _ net: Net, examples: (Int) -> NFKMLXSa2VAExample, rank: Int, alpha: Float, objective: NFKMLXSa2VAObjective,
-        optimizer: Optimizer?, steps: Int, clipGradientNorm: Float?, learningRateSchedule: NFKMLXLearningRateSchedule?,
+        optimizer: Optimizer?, steps: Int, clipGradientNorm: Float?, accumulationSteps: Int, learningRateSchedule: NFKMLXLearningRateSchedule?,
         checkpoint: NFKMLXTrainingCheckpoint?, observer: NFKMLXTrainer.Observer?
     ) throws -> [Float] {
         try NFKMLXFineTune.run(
@@ -401,7 +407,7 @@ extension NFKMLXSa2VA {
             steps: steps,
             arrays: { examples($0).arrays },
             loss: { model, arrays in objective.total(model, NFKMLXSa2VAExample(arrays: arrays)) },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

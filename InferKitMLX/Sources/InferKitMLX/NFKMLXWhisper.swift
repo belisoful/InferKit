@@ -416,7 +416,7 @@ final class NFKWhisperDecoder: Module {
 ///
 /// Adapting it to a consumer's own domain works on this type directly: build one with
 /// ``NFKMLXWhisper/network(weightsURL:configuration:)`` and train it with
-/// ``NFKMLXWhisper/fineTune(_:examples:rank:alpha:objective:optimizer:steps:clipGradientNorm:checkpoint:observer:)``.
+/// ``NFKMLXWhisper/fineTune(_:examples:rank:alpha:objective:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``.
 public final class NFKMLXWhisperNet: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKWhisperEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKWhisperDecoder

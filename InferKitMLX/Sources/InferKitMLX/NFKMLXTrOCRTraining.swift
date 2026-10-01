@@ -93,6 +93,9 @@ extension NFKMLXTrOCR {
     ///   - warmupSteps: the reference schedule's warm-up: 500 updates for IAM, 800 for SROIE.
     ///   - steps: how many lines to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does not clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. The reference's IAM run updates on 8 lines; its SROIE
+    ///     run accumulates 16 batches of 16.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's fairseq
     ///     `inverse_sqrt`, a linear warm-up from 1e-8 then `√(warmup / k)`, when the reference optimizer
     ///     runs. With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -115,6 +118,7 @@ extension NFKMLXTrOCR {
         warmupSteps: Int = 500,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -134,7 +138,7 @@ extension NFKMLXTrOCR {
             steps: steps,
             batch: { let example = examples($0); return (example.pixels, example.target) },
             loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

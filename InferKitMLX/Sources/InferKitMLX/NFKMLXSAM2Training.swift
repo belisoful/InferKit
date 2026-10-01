@@ -247,6 +247,8 @@ extension NFKMLXSAM2 {
     ///     top, and weight decay 0.1 on every parameter but biases and `nn.LayerNorm` weights.
     ///   - steps: how many frames to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update: 0.1, the reference's.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil uses the reference's fvcore
     ///     cosine from the full rate to a tenth of it over the run, when the reference optimizer runs.
     ///     With a caller's optimizer, nil holds that optimizer's rate constant.
@@ -263,6 +265,7 @@ extension NFKMLXSAM2 {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 0.1,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -281,7 +284,7 @@ extension NFKMLXSAM2 {
                 return (example.image, example.target)
             },
             loss: { net, image, target in objective(net, image, points: prompt.points, target) },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

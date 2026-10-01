@@ -98,6 +98,8 @@ extension NFKMLXConvTasNet {
     ///   - optimizer: the update rule. Nil uses the reference's `torch.optim.Adam` (bias-corrected) at 1e-3.
     ///   - steps: how many mixtures to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference clips at 5.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil holds it constant.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
@@ -111,6 +113,7 @@ extension NFKMLXConvTasNet {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 5,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -132,7 +135,7 @@ extension NFKMLXConvTasNet {
             loss: { net, arrays in
                 objective.loss(estimates: net.separate(arrays[0]), sources: arrays[1])
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }

@@ -252,6 +252,9 @@ public final class NFKMLXTranslateGemma: NSObject {
     ///     script beyond its model's `labels=` loss, and the learning rate is this package's choice.
     ///   - steps: how many examples to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch. transformers' `Trainer` updates on 8 examples by
+    ///     default.
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -268,6 +271,7 @@ public final class NFKMLXTranslateGemma: NSObject {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
@@ -290,6 +294,6 @@ public final class NFKMLXTranslateGemma: NSObject {
             steps: steps,
             batch: { let example = examples($0); return (example.prompt, example.target) },
             loss: objective.callAsFunction,
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }

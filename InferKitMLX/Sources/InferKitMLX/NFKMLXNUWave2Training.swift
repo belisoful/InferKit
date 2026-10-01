@@ -118,6 +118,8 @@ extension NFKMLXNUWave2 {
     ///     `hparameter.yaml`'s learning rate 2e-4, betas 0.9 and 0.99, and epsilon 1e-9.
     ///   - steps: how many pairs to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update. The reference does not clip.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: multiplies the rate at each step. Nil holds it constant, as the reference does.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
@@ -131,6 +133,7 @@ extension NFKMLXNUWave2 {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
@@ -154,7 +157,7 @@ extension NFKMLXNUWave2 {
                 objective.loss(net, audio: arrays[0], narrowband: arrays[1], band: arrays[2],
                                time: arrays[3], noise: arrays[4])
             },
-            clipGradientNorm: clipGradientNorm,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
     }
