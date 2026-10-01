@@ -500,6 +500,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   (`NFKMLXQwen3VL.decoder(directoryURL:precision:residency:)`, its fused experts split per expert), Qwen4-Exp (`NFKMLXQwen4Exp.backend(directoryURL:precision:residency:)`)
   and Granite 4.0-H's mixture sizes (`NFKMLXGraniteHybrid.loadWeights(into:fromDirectory:precision:residency:)`)
   page the same way.
+- DeepSeek loads under an `NFKMLXResidency`: `NFKMLXDeepSeek.backend(directoryURL:residency:)`,
+  `deepSeekBackendWithDirectoryURL:residency:error:`, and `NFKMLXDeepSeekLoadOptions.residency`. The
+  default `.automatic` loads resident where the decoded weights fit, holds the experts stored and maps
+  the n-gram tables where that fits, and maps every paged group otherwise, with the plan's expert cache;
+  `backend(directoryURL:)` and `deepSeekBackendWithDirectoryURL:error:` had refused a release larger than
+  the machine. The explicit `paging:` presets remain.
 
 #### Qwen3-VL retrieval embeds text and images in one space
 
@@ -774,12 +780,6 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   planner is now the shared one with its encoder declared that way, and Wan's umT5 and SD3's T5-XXL
   choose float32 by the same rule. Wan's umT5 had taken float32 wherever it fit alone, even beside a
   resident transformer that it then pushed into staging.
-- DeepSeek loads under an `NFKMLXResidency`: `NFKMLXDeepSeek.backend(directoryURL:residency:)`,
-  `deepSeekBackendWithDirectoryURL:residency:error:`, and `NFKMLXDeepSeekLoadOptions.residency`. The
-  default `.automatic` loads resident where the decoded weights fit, holds the experts stored and maps
-  the n-gram tables where that fits, and maps every paged group otherwise, with the plan's expert cache;
-  `backend(directoryURL:)` and `deepSeekBackendWithDirectoryURL:error:` had refused a release larger than
-  the machine. The explicit `paging:` presets remain.
 - `NFKMLXFlowMatchConfiguration.zImage` is now the base release's schedule (a static shift of 6 over a
   ramp to sigma 0, `rampEndsAtZero`, new) and `.zImageTurbo` (new) Turbo's (a static shift of 3); the
   resolution-dependent shift it carried before is not what either release's scheduler config states. A
@@ -939,15 +939,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `x * sigmoid(x)`; diffusers' float32 rotary. FLUX, FLUX.2 and the Gemma 4 mixture and unified
   stacks are bit-exact against their tiny references at bf16; every other piece reads at most 0.24 of
   the reference's own bf16-versus-float32 distance.
+
+#### Gemma 2 loads a released directory
+
 - `NFKMLXGemma2Net.load(directoryURL:precision:)` loads a released Gemma 2 directory, and
   `NFKMLXGemma2Configuration.configuration(fromHuggingFace:)` reads its geometry. The 2B release
   matches transformers at float32 in every hidden state, the worst at 0.99999999999838.
+
+#### Sizes too large for float32 are measured on their first layers
+
 - `Tools/validation-assets/truncate.py` cuts a release to its first N layers by fetching only those
   tensors, so a size too large for float32 here is measured at float32 on its first layers. Qwen3 14B
   and 32B, Gemma 3 12B and 27B, Gemma 2 27B, Nemotron-Nano 9B, and Codestral-Mamba 7B, previously held
-  only by shape or at bf16,
-  match transformers at float32 on their first four layers (every state 0.99999999999 or closer) and
-  at bf16 within the same bounds as the sizes that run whole.
+  only by shape or at bf16, match transformers at float32 on their first four layers (every state
+  0.99999999999 or closer) and at bf16 within the same bounds as the sizes that run whole.
 
 #### Fixed
 
@@ -1043,6 +1048,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A saved Sa2VA-Qwen fine-tune reloaded with a tied head and failed to apply its trained one. The Qwen2.5-VL
   releases were refused by the decoder reader, whose `text_config.architectures` names the wrapper, and
   their prompt lacked the default system turn their chat template opens with.
+- `NFKMLXSileroVADBackend` ends a span that reaches its zero-padded last chunk at the clip's end, as
+  `get_speech_timestamps` does.
+- A retargeted segmenter's label map encodes its own classes. `NFKMLXSegFormer`, `NFKMLXDeepLab`, and
+  `NFKMLXBiSeNet` scaled the class index by the configuration's class count, which each factory builds
+  at the release's, so a SegFormer retargeted to three classes and loaded through
+  `backendWithWeightsURL:error:` encoded class 2 as 2/149 of white. The map now scales by the
+  classifier's own width.
 
 #### Learning-rate schedules
 
@@ -1106,11 +1118,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Each objective, schedule, and optimizer step is measured against its reference, the steps on the
   released weights (`run_reference.py deeplab_loss`, `deeplab_training`, `bisenet_loss`,
   `bisenet_training`, `silero_vad_training`, `audio_tagger_training`).
-- A retargeted segmenter's label map encodes its own classes. `NFKMLXSegFormer`, `NFKMLXDeepLab`, and
-  `NFKMLXBiSeNet` scaled the class index by the configuration's class count, which each factory builds
-  at the release's, so a SegFormer retargeted to three classes and loaded through
-  `backendWithWeightsURL:error:` encoded class 2 as 2/149 of white. The map now scales by the
-  classifier's own width.
+
+#### A saved checkpoint carries the arrays a model keeps off its parameters
+
 - `NFKMLXWeights.save(_:extraArrays:to:)` writes arrays a model keeps off its parameters beside them.
 
 #### The recipes take their references' precision, LoRA dropout, and update sizes on request
@@ -1140,8 +1150,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   now match the current reference.
 - `NFKMLXVADBackend` builds speech spans only from the frames inside the encoder's valid length, and
   ends each span no later than the clip. The frame that the even-count padding adds scores padding
-  alone, so it could open a span past the end of the audio. `NFKMLXSileroVADBackend` ends a span that
-  reaches its zero-padded last chunk at the clip's end, as `get_speech_timestamps` does.
+  alone, so it could open a span past the end of the audio.
 
 #### Training resumes from optimizer state, validates in evaluation mode, computes in half precision, and accumulates by a reference's rule
 
