@@ -26,6 +26,7 @@
 //
 
 import Foundation
+import InferKit
 import MLX
 import MLXFast
 import MLXNN
@@ -975,7 +976,8 @@ public final class NFKMLXQwen4ExpNet: Module {
     public internal(set) var expertStore: NFKMLXExpertStore?
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-    let configuration: NFKMLXQwen4ExpConfiguration
+    /// The geometry the decoder was built at. Introduced in InferKit 0.4.0.
+    public let configuration: NFKMLXQwen4ExpConfiguration
 
     init(_ c: NFKMLXQwen4ExpConfiguration) {
         configuration = c
@@ -1014,7 +1016,10 @@ public final class NFKMLXQwen4ExpNet: Module {
         return (cos(full), sin(full))
     }
 
-    func callAsFunction(_ tokens: MLXArray) -> MLXArray {
+    /// The logits `[batch, length, vocabularySize]` for token ids `[batch, length]`, every position
+    /// attending causally over the whole sequence. The decoder carries no key-value cache, so a
+    /// generation step runs the full sequence again. Introduced in InferKit 0.4.0.
+    public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
         var trace = [MLXArray]()
         return forward(tokens, trace: &trace)
     }
@@ -1236,8 +1241,8 @@ extension NFKMLXQwen4Exp {
     }
 
     /// A decoder built from a release directory, reading its own `config.json`, with its routed
-    /// experts held as `residency` plans them.
-    public static func backend(directoryURL: URL,
+    /// experts held as `residency` plans them. Introduced in InferKit 0.4.0.
+    public static func network(directoryURL: URL,
                                precision: NFKMLXWeightPrecision = .float32,
                                residency: NFKMLXResidency = .automatic) throws
         -> NFKMLXQwen4ExpNet {
@@ -1246,5 +1251,63 @@ extension NFKMLXQwen4Exp {
         let net = makeNet(geometry)
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
         return net
+    }
+
+    /// The registry name the text backend builds under. Introduced in InferKit 0.4.0.
+    @objc public static let modelName = "qwen4-exp"
+
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
+    static let optionalFiles = ["vocab.json", "merges.txt", "generation_config.json", "chat_template.jinja"]
+    static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
+
+    /// A text-generation backend from a release directory, reading its `config.json`, weights,
+    /// tokenizer, and chat template, with its routed experts held as `residency` plans them.
+    ///
+    /// @discussion The backend is an ``NFKMLXDecoderBackend``: the decoder carries no key-value cache,
+    /// so each generated token re-runs the sequence. Run inference off the render thread. Introduced
+    /// in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        let net = try network(directoryURL: directoryURL, precision: precision, residency: residency)
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName) { net($0) }
+    }
+
+    /// The Objective-C entry for ``backend(directoryURL:precision:residency:)`` at the released
+    /// precision and an automatic residency. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:error:)
+    public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: .checkpoint, residency: .automatic)
+    }
+
+    /// Downloads a release into the hub cache under `cacheDirectoryURL` (the default cache when nil)
+    /// and builds its text backend. A cached file is not fetched again. The call blocks on the
+    /// network; run it off the render thread. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws
+        -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// Registers `qwen4-exp` with `NFKMLXModelRegistry`; the registry's URL is the release directory.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static func register() {
+        NFKMLXModelRegistry.register(name: modelName) { url in
+            guard let url else {
+                throw NFKMLXError.unsupportedConfiguration("qwen4-exp builds from a release directory, not without weights")
+            }
+            return try backend(directoryURL: url)
+        }
     }
 }

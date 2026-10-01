@@ -20,6 +20,7 @@
 //
 
 import Foundation
+import InferKit
 import MLX
 import MLXFast
 import MLXNN
@@ -413,7 +414,8 @@ public final class NFKMLXHybridLanguageNet: Module {
     @ModuleInfo(key: "model") var model: NFKHybridCore
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-    let configuration: NFKMLXHybridConfiguration
+    /// The geometry the decoder was built at. Introduced in InferKit 0.4.0.
+    public let configuration: NFKMLXHybridConfiguration
 
     init(_ c: NFKMLXHybridConfiguration) {
         configuration = c
@@ -424,7 +426,11 @@ public final class NFKMLXHybridLanguageNet: Module {
         super.init()
     }
 
-    func callAsFunction(_ tokens: MLXArray) -> MLXArray {
+    /// The logits `[batch, length, vocabularySize]` for token ids `[batch, length]`, every position
+    /// attending causally over the whole sequence. The linear-attention layers carry a recurrent state
+    /// rather than a key-value cache, so a generation step runs the full sequence again. Introduced in
+    /// InferKit 0.4.0.
+    public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
         var trace = [MLXArray]()
         return forward(tokens, trace: &trace)
     }
@@ -456,7 +462,9 @@ public final class NFKMLXHybridLanguageNet: Module {
 @objc(NFKMLXHybridLanguage)
 public final class NFKMLXHybridLanguage: NSObject {
 
-    static func makeNet(_ configuration: NFKMLXHybridConfiguration = .qwen3_8_27B)
+    /// A decoder at `configuration`, with random weights until ``loadWeights(into:fromDirectory:precision:)``
+    /// fills it. Introduced in InferKit 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXHybridConfiguration = .qwen3_8_27B)
         -> NFKMLXHybridLanguageNet {
         NFKMLXHybridLanguageNet(configuration)
     }
@@ -514,9 +522,9 @@ public final class NFKMLXHybridLanguage: NSObject {
     /// Loads a released hybrid decoder from its directory, following the shard index.
     ///
     /// The releases nest the decoder under `model.language_model.` beside a vision tower and a
-    /// multi-token-prediction head; only the decoder's tensors are taken.
-    static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision = .float32) throws {
+    /// multi-token-prediction head; only the decoder's tensors are taken. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
+                                   precision: NFKMLXWeightPrecision = .float32) throws {
         let tied = net.lmHead == nil
         let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
             guard let name = moduleKey(forReference: $0) else { return nil }
@@ -554,5 +562,72 @@ public final class NFKMLXHybridLanguage: NSObject {
         parameter.hasPrefix("model.")
             ? "model.language_model." + parameter.dropFirst("model.".count)
             : parameter
+    }
+
+    /// A decoder built from a release directory at the geometry its `config.json` declares.
+    /// Introduced in InferKit 0.4.0.
+    public static func network(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32) throws
+        -> NFKMLXHybridLanguageNet {
+        let net = makeNet(try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json")))
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
+        return net
+    }
+
+    /// The registry name the text backend builds under. Introduced in InferKit 0.4.0.
+    @objc public static let modelName = "qwen3.5"
+
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
+    static let optionalFiles = ["vocab.json", "merges.txt", "generation_config.json", "chat_template.jinja"]
+    static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
+
+    /// A text-generation backend from a Qwen3.5, 3.6, or 3.8 release directory, reading its
+    /// `config.json`, the decoder's weights, the tokenizer, and the chat template.
+    ///
+    /// @discussion The backend is an ``NFKMLXDecoderBackend``: the decoder carries no key-value cache,
+    /// so each generated token re-runs the sequence. Run inference off the render thread. Introduced
+    /// in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws
+        -> any NFKInferenceBackend {
+        let net = try network(directoryURL: directoryURL, precision: precision)
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName) { net($0) }
+    }
+
+    /// The Objective-C entry for ``backend(directoryURL:precision:)`` at the released precision.
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:error:)
+    public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: .checkpoint)
+    }
+
+    /// Downloads a release into the hub cache under `cacheDirectoryURL` (the default cache when nil)
+    /// and builds its text backend. A cached file is not fetched again. The call blocks on the
+    /// network; run it off the render thread. Introduced in InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws
+        -> any NFKInferenceBackend {
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+    }
+
+    /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
+    public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// Registers `qwen3.5` with `NFKMLXModelRegistry`; the registry's URL is the release directory.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static func register() {
+        NFKMLXModelRegistry.register(name: modelName) { url in
+            guard let url else {
+                throw NFKMLXError.unsupportedConfiguration("qwen3.5 builds from a release directory, not without weights")
+            }
+            return try backend(directoryURL: url)
+        }
     }
 }

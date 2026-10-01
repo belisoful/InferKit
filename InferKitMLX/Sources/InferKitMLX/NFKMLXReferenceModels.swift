@@ -30,6 +30,8 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXMamba.register()
         NFKMLXGraniteHybrid.register()
         NFKMLXNemotronH.register()
+        NFKMLXQwen4Exp.register()
+        NFKMLXHybridLanguage.register()
         NFKMLXMarian.register()
         NFKMLXM2M100.register()
         NFKMLXMADLAD.register()

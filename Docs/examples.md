@@ -187,6 +187,21 @@ The Nemotron Nano 2 hybrid decoder loads through `NFKMLXNemotronH.backend(direct
 feed-forward, and grouped-query attention with no positional embedding, one mixer per block from the
 release's `hybrid_override_pattern`, so it too runs prefill-only.
 
+The Qwen3.5 hybrid decoder (the Qwen3.5, 3.6, and 3.8 releases) loads through
+`NFKMLXHybridLanguage.backend(directoryURL:)`, and Qwen3.8-Flash-Next, the Qwen4-Exp architecture,
+through `NFKMLXQwen4Exp.backend(directoryURL:)`; from Objective-C both are `backendWithDirectoryURL:error:`.
+Each returns an `NFKMLXDecoderBackend`. The decoder runs prefill-only, and a message list renders through
+the release's own chat template before it is encoded:
+
+```swift
+let qwen = try NFKMLXHybridLanguage.backend(directoryURL: releaseDirectory)
+let reply = try qwen.runInference(for: NFKInferenceRequest(
+    inputs: [NFKInputMessages: [["role": "user", "content": "Explain diffraction in one sentence."]]])).text
+```
+
+`network(directoryURL:)` on either type returns the decoder alone, whose call maps token ids `[1, length]`
+to logits `[1, length, vocabularySize]`.
+
 Granite Speech 3.3-2b transcribes audio through `NFKMLXGraniteSpeech.backend(directoryURL:)`
 (`graniteSpeechBackendWithDirectoryURL:error:`): a Conformer encoder and a BLIP-2 Q-former projector
 turn the audio into embeddings that scatter into a dense Granite decoder's prompt. Pass the clip under
@@ -1665,6 +1680,24 @@ The defaults are Turbo's published settings: 9 steps, the last of which lands on
 `guidance` of 0. The base release samples at the reference pipeline's 50 steps and a guidance of 5; above
 1 the image guides against the negative prompt, or against an empty one. The sides are multiples of 16.
 
+### SANA (`NFKMLXSANAPipeline`)
+
+SANA is NVIDIA's linear-attention DiT over a Deep-Compression Autoencoder that compresses 32× on each
+side, so a 1024-pixel image is a 32×32 latent. `pipeline(directoryURL:)` reads a diffusers release's
+`transformer/` at the geometry its `config.json` declares and its `vae/`:
+
+```swift
+let sana = try NFKMLXSANAPipeline.pipeline(directoryURL: sanaRelease)
+let caption = gemma2(promptTokenIDs)              // NFKMLXGemma2Net.load(directoryURL: sanaRelease/text_encoder)
+let image = sana.generate(promptEmbeds: caption, negativeEmbeds: emptyCaption,
+                          latentHeight: 32, latentWidth: 32, steps: 20, guidance: 4.5)   // [1, 1024, 1024, 3]
+```
+
+The caption is the release's Gemma 2 text encoder's last hidden state over the prompt's token ids,
+`[tokens, 2304]`, which the caller runs. A negative caption turns on classifier-free guidance. The image
+comes back in −1…1. `init(transformer:vae:)` chains stages the caller built, such as a transformer loaded
+through `NFKMLXSANATransformerNet.loadWeights(into:fromDirectory:)`.
+
 ### Stable Diffusion 3 and 3.5 (`NFKMLXSD3Generator`)
 
 `NFKMLXSD3Generator` assembles SD3 Medium or SD3.5 Medium or Large from a diffusers release directory
@@ -1699,6 +1732,10 @@ ControlNets (Canny, Pose, Tile), and `.stabilitySD35Large`, Stability's SD3.5 La
 Canny, Depth). The configuration reader picks the arrangement from the release's `config.json`.
 
 ```swift
+let base = try NFKMLXSD3Generator.generator(directoryURL: sd35MediumRelease)
+let (promptEmbeds, pooled) = try base.promptEmbeddings(for: "a red fox in fresh snow")
+let (negativeEmbeds, negativePooled) = try base.promptEmbeddings(for: "")
+
 let controlnet = NFKMLXSD3ControlNetNet(try NFKMLXSD3ControlNetNet.configuration(
     fromHuggingFace: controlnetDirectory.appending(path: "config.json")))
 try NFKMLXSD3ControlNetNet.loadWeights(into: controlnet, from: controlnetDirectory)
@@ -1712,8 +1749,8 @@ let image = pipeline.generate(promptEmbeds: promptEmbeds, pooled: pooled,
 
 `transformer` and `vae` are the base release's stages: `NFKMLXSD3TransformerNet.loadWeights(into:from:)`
 reads its `transformer/` directory, and `NFKMLXStableDiffusionModels.loadVAEWeights(into:from:)` its
-autoencoder. `promptEmbeds` `[tokens, 4096]` and `pooled` `[2048]` are the output of SD3's text stage
-(CLIP-L, OpenCLIP bigG, and T5-XXL). The image comes back `[1, H, W, 3]` in −1…1, eight pixels per latent
+autoencoder. `promptEmbeddings(for:)` runs the base release's text stage (CLIP-L, OpenCLIP bigG, and
+T5-XXL) and returns the joint sequence `[333, 4096]` and the pooled projection `[2048]`. The image comes back `[1, H, W, 3]` in −1…1, eight pixels per latent
 cell. `controlnetScale` weights the residuals, and the negatives guide at `guidance` (7 by default, over
 28 steps).
 
@@ -2775,6 +2812,7 @@ chunk of the video then attends over that cache.
 
 ```swift
 let animate = NFKMLXWanAnimate.makeNet(.base)                 // the Wan2.2-Animate-2-14B geometry
+try NFKMLXWanAnimate.loadWeights(into: animate, fromDirectory: animateRelease, precision: .checkpoint)
 let cache = NFKMLXWanAnimate.makeCache(layerCount: 40)
 _ = try animate.extractReference(latent: referenceLatent, condition: referenceCondition,
                                  text: textStates, imageEmbeddings: clipFeatures, into: cache)
@@ -2787,8 +2825,8 @@ let velocity = try animate.generate(latent: chunkLatent, condition: chunkConditi
 Latents are `[channels, frames, height, width]`, `text` is the text encoder's states, zero-padded to
 the configured length, and `imageEmbeddings` is the CLIP image encoder's features, `[tokens, 1280]`. `referenceGrid` is the patch grid the reference pass read, `videoFrames` the whole
 video's latent frame count, and `videoArea` its patch count per frame. The released model is 32.8 GB in
-bfloat16 and its pipeline about 50 GB, which no 32 GiB machine holds, and the package ships no loader for
-the released checkpoint. The transformer is at reference parity against diffusers'
+bfloat16 and its pipeline about 50 GB, which no 32 GiB machine holds; `loadWeights(into:fromDirectory:precision:)`
+maps the release's names onto the module, and the tensor inventory is held to the release. The transformer is at reference parity against diffusers'
 `WanAnimate2Transformer3DModel` at a tiny configuration, across both passes and a chunked generation, and
 held to the release by shape.
 
@@ -3549,8 +3587,8 @@ let timesFM = try NFKMLXTimesFM.timesFM(directoryURL: timesFMDir)              /
 let chronos = try NFKMLXChronos.chronos(weightsURL: nil)                       // Chronos-Bolt; forecast(context:horizon:) → nine quantile rows
 
 // Language models outside the backend factories (Swift)
-let qwen4Exp = try NFKMLXQwen4Exp.backend(directoryURL: qwen4ExpDir)           // Qwen3.8-Flash-Next: an NFKMLXQwen4ExpNet, routed experts held as NFKMLXResidency plans them
-let hybrid   = try NFKMLXHybridLanguage.configuration(fromHuggingFace: qwen35Config)   // Qwen3.5 family: gated linear attention, full attention every fourth layer
+let qwen4Exp = try NFKMLXQwen4Exp.backend(directoryURL: qwen4ExpDir)           // "qwen4-exp", Qwen3.8-Flash-Next: an NFKMLXDecoderBackend, routed experts held as NFKMLXResidency plans them
+let hybrid   = try NFKMLXHybridLanguage.backend(directoryURL: qwen35Dir)        // "qwen3.5", the Qwen3.5 family: gated linear attention, full attention every fourth layer
 let gemma4mm = NFKMLXGemma4ConditionalGeneration(decoder: gemmaDecoder, visionTower: visionTower,
                                                  visionEmbedder: visionEmbedder, imageTokenId: 258_880,
                                                  audioTokenId: 258_881, padTokenId: 0)  // generate(promptTokens:image:waveform:) splices soft tokens at the placeholders
@@ -3560,9 +3598,9 @@ let zImage   = try NFKMLXZImageGenerator.generator(directoryURL: zImageDir, resi
 let sd3      = try NFKMLXSD3Generator.generator(directoryURL: sd3Dir, residency: .automatic)          // "sd3"; SD3 Medium, SD3.5 Medium and Large
 let ltxVideo = try NFKMLXLTXVideoGenerator.generator(directoryURL: ltxDir, residency: .automatic)    // "ltx-video-0.9.0"; video(forPrompt:frames:width:height:seed:)
 let wan      = try NFKMLXWanVideoGenerator.generator(directoryURL: wanDir, residency: .automatic)    // "wan"; Wan 2.1 T2V and Wan 2.2 TI2V-5B
-let sanaDiT  = NFKMLXSANATransformerNet(.base)                                 // SANA: the linear-attention DiT NFKMLXSANAPipeline chains with NFKMLXDCAutoencoderNet(.sana)
+let sana     = try NFKMLXSANAPipeline.pipeline(directoryURL: sanaDir)          // SANA: the linear-attention DiT chained with NFKMLXDCAutoencoderNet(.sana)
 let ltx2     = NFKMLXLTX2TransformerNet(.ltx23)                                // LTX-2: one transformer predicts the video and audio velocities; .ltx25 is the later release
-let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
+let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: loadWeights(into:fromDirectory:), extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
 
 // ControlNet and image prompts
 let sdControl   = try NFKMLXModelRegistry.backend(named: "diffusion-controlnet", weightsURL: nil)  // the SD ControlNet wiring, a control map under NFKInputControl; NFKMLXReferenceModels.registerControlNet() first
@@ -4683,6 +4721,10 @@ let backend = voice.makeSpeechBackend { text in myPhonemizer(text) } // text →
 The vocoder must be the paired release (`espnet/fastspeech2_conformer_with_hifigan`): the acoustic
 model emits mels normalized by its training statistics, and a raw-log-mel vocoder — the universal
 jik876 generator has the identical geometry — turns them into loud noise.
+
+A fine-tuned acoustic model or another paired vocoder composes the same voice through
+`NFKMLXVoice(acoustic:vocoder:vocabulary:)`, over nets from `NFKMLXFastSpeech2.makeNet()` and
+`NFKMLXHiFiGAN.makeNet()` that each type's `loadWeights(into:from:)` fills.
 
 `NFKMLXSpeechBackend` runs a bring-your-own MLX text-to-speech model: supply a
 `@Sendable (String, Int) -> MLXArray` closure returning a mono waveform in `-1...1`, generated at the

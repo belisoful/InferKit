@@ -33,10 +33,27 @@ public final class NFKMLXSANAPipeline {
     private let inChannels: Int
     private let scaleFactor: Float
 
-    init(transformer: NFKMLXSANATransformerNet, vae: NFKMLXDCAutoencoderNet) {
+    /// Chains a transformer and an autoencoder the caller built and loaded. Introduced in InferKit 0.4.0.
+    public init(transformer: NFKMLXSANATransformerNet, vae: NFKMLXDCAutoencoderNet) {
         holder = NFKSANAPipelineHolder(transformer, vae)
         self.inChannels = transformer.config.inChannels
         self.scaleFactor = vae.configuration.scaleFactor
+    }
+
+    /// Builds the pipeline from a diffusers SANA release directory: the transformer from
+    /// `transformer/` at the geometry its `config.json` declares, and the Deep-Compression Autoencoder
+    /// from `vae/` at the released ``NFKMLXDCAEConfiguration/sana`` geometry. The caller supplies the
+    /// caption embedding from the release's Gemma 2 text encoder (``NFKMLXGemma2Net``). Blocking on
+    /// the load; run it off the render thread. Introduced in InferKit 0.4.0.
+    public static func pipeline(directoryURL: URL) throws -> NFKMLXSANAPipeline {
+        let transformerDirectory = directoryURL.appendingPathComponent("transformer")
+        let transformer = NFKMLXSANATransformerNet(try NFKMLXSANATransformerNet.configuration(
+            fromHuggingFace: transformerDirectory.appendingPathComponent("config.json")))
+        try NFKMLXSANATransformerNet.loadWeights(into: transformer, fromDirectory: transformerDirectory)
+        let vae = NFKMLXDCAutoencoderNet(.sana)
+        try NFKMLXDCAutoencoderNet.loadWeights(into: vae, from: try NFKMLXReleaseWeights.files(
+            inDirectory: directoryURL.appendingPathComponent("vae"))[0])
+        return NFKMLXSANAPipeline(transformer: transformer, vae: vae)
     }
 
     /// Generates an image from a caption embedding. `latentHeight`/`latentWidth` are the LATENT grid

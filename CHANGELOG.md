@@ -453,6 +453,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `init(identifier:isReady:configuration:forwardParameterKeys:requestForward:)`, and reports those keys
   as its `supportedParameterKeys`.
 
+#### Qwen4-Exp, the Qwen3.5 hybrid, SANA, SD3 conditioning, the FastSpeech2 voice, and Wan Animate are public
+
+- `NFKMLXQwen4Exp.backend(directoryURL:)` and `NFKMLXHybridLanguage.backend(directoryURL:)` (both
+  `backendWithDirectoryURL:error:`, with download and asynchronous forms, registered as `qwen4-exp`
+  and `qwen3.5`) build text backends from a release directory. Each returns an `NFKMLXDecoderBackend`, a
+  prefill-only backend that renders a message list through the release's chat template and stops at
+  the ids `generation_config.json` names. `network(directoryURL:)` on either type returns the decoder
+  alone, and its forward is public. `NFKMLXQwen4Exp.backend(directoryURL:precision:residency:)`, which
+  returned the decoder, is now `network(directoryURL:precision:residency:)`.
+- `NFKMLXSANAPipeline.pipeline(directoryURL:)` reads a diffusers SANA release, and
+  `init(transformer:vae:)` chains stages a caller built. `NFKMLXSANATransformerNet` gains
+  `configuration(fromHuggingFace:)`, which refuses the parts the port does not carry, and
+  `loadWeights(into:fromDirectory:)`.
+- `NFKMLXSD3Generator.promptEmbeddings(for:)` returns the joint text sequence and pooled projection a
+  release's text stage produces, which `NFKMLXSD3ControlNetPipeline` takes.
+  `NFKMLXStableDiffusionModels.vaeConfiguration(fromHuggingFace:)` is public.
+- `NFKMLXVoice(acoustic:vocoder:vocabulary:)` composes a voice from `NFKMLXFastSpeech2.makeNet()` and
+  `NFKMLXHiFiGAN.makeNet()`, each filled by its type's public `loadWeights`; `NFKMLXHiFiGANNet` is public.
+- `NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:)` loads the released transformer.
+
 #### `registerAll` registers the speech-LLM and state-space models
 
 - `NFKMLXReferenceModels.registerAll` calls the `register()` of Canary (`canary-1b-v2`), Voxtral

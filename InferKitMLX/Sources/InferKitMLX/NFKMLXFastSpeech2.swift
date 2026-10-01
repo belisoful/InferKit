@@ -359,8 +359,9 @@ public final class NFKMLXFastSpeech2Net: Module {
     /// Phoneme ids → mel `[1, frames, melBins]`, with the intermediates a seam comparison reads.
     ///
     /// The variance order is the reference's: pitch and energy are predicted per PHONEME on the
-    /// encoder output and embedded back into it BEFORE the durations stretch it to frames.
-    func generate(_ tokens: MLXArray)
+    /// encoder output and embedded back into it BEFORE the durations stretch it to frames. Introduced in
+    /// InferKit 0.4.0.
+    public func generate(_ tokens: MLXArray)
         -> (mel: MLXArray, encoded: MLXArray, durations: [Int], pitch: MLXArray, energy: MLXArray) {
         let encoded = encoder(tokens)
         let pitch = pitchPredictor(encoded)
@@ -394,7 +395,9 @@ public final class NFKMLXFastSpeech2Net: Module {
 /// Building the acoustic model and loading the released checkpoint.
 public final class NFKMLXFastSpeech2: NSObject {
 
-    static func makeNet(
+    /// An acoustic model at `configuration`, in evaluation mode, with random weights until
+    /// ``loadWeights(into:from:)`` fills it. Introduced in InferKit 0.4.0.
+    public static func makeNet(
         _ configuration: NFKMLXFastSpeech2Configuration = NFKMLXFastSpeech2Configuration()
     ) -> NFKMLXFastSpeech2Net {
         let net = NFKMLXFastSpeech2Net(configuration)
@@ -403,8 +406,9 @@ public final class NFKMLXFastSpeech2: NSObject {
     }
 
     /// Loads the released checkpoint. Module keys are the checkpoint's names, so only the
-    /// convolution layouts translate; the batch-norm step counters have no counterpart.
-    static func loadWeights(into net: NFKMLXFastSpeech2Net, from url: URL) throws {
+    /// convolution layouts translate; the batch-norm step counters have no counterpart. Introduced in
+    /// InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXFastSpeech2Net, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             if key.hasSuffix("num_batches_tracked") { return nil }
@@ -431,8 +435,11 @@ public final class NFKMLXVoice {
     /// The LJSpeech release speaks at this rate.
     public static let sampleRate = 22_050
 
-    init(acoustic: NFKMLXFastSpeech2Net, vocoder: NFKMLXHiFiGANNet,
-         vocabulary: [String: Int]) {
+    /// Chains an acoustic model and a vocoder the caller built and loaded, over the acoustic model's
+    /// phoneme vocabulary (symbol → id). The two share the mel geometry (80 bins, hop 256). Introduced
+    /// in InferKit 0.4.0.
+    public init(acoustic: NFKMLXFastSpeech2Net, vocoder: NFKMLXHiFiGANNet,
+                vocabulary: [String: Int]) {
         self.acoustic = acoustic
         self.vocoder = vocoder
         self.vocabulary = vocabulary

@@ -296,6 +296,22 @@ public final class NFKMLXSD3Generator: NSObject {
 
     // MARK: Generation
 
+    /// The text conditioning the transformer reads for `prompt`: the joint sequence
+    /// `[77 + 256, jointAttentionDim]` (the two CLIP penultimate states, zero-padded to T5's width,
+    /// then the T5-XXL states, or zeros where the release ships no T5) and the pooled projection
+    /// `[2048]`. ``NFKMLXSD3ControlNetPipeline`` takes them as its `promptEmbeds` and `pooled`.
+    /// Introduced in InferKit 0.4.0.
+    public func promptEmbeddings(for prompt: String) throws -> (sequence: MLXArray, pooled: MLXArray) {
+        let tokens = self.prompt(prompt)
+        let pair = try staging.exclusively {
+            try staging.with(textStage) { stage -> [MLXArray] in
+                let embedding = stage.embeddings(tokens)
+                return [embedding.sequence, embedding.pooled]
+            }
+        }
+        return (pair[0], pair[1])
+    }
+
     /// Generates an image for `prompt`, `[height, width, 3]` RGB in `[0, 1]`.
     ///
     /// @discussion `width` and `height` are multiples of 16, which the reference requires. Above a

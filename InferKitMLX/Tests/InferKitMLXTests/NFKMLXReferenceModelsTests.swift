@@ -21,7 +21,7 @@ final class NFKMLXReferenceModelsTests: XCTestCase {
                          "u2net", "u2netp", "nafnet", "sam", "rife", "raft", "lama-inpaint", "sd-inpaint",
                          "marigold-depth", "sd-x4-upscaler", "basic-pitch", "allin1", "muscriptor", "muscriptor-small", "muscriptor-large", "hft-transformer",
                          "parakeet-tdt", "canary-1b-v2", "voxtral-mini-3b", "granite-speech-3.3-2b", "phi-4-multimodal",
-                         "codestral-mamba", "granite-4.0-h", "nemotron-nano-2"] {
+                         "codestral-mamba", "granite-4.0-h", "nemotron-nano-2", "qwen4-exp", "qwen3.5"] {
             XCTAssertTrue(names.contains(expected), "registerAll did not register \(expected)")
         }
         for variant in NFKMLXCosmosTokenizerVariant.allCases {
@@ -32,7 +32,7 @@ final class NFKMLXReferenceModelsTests: XCTestCase {
     func testADirectoryModelRefusesToBuildWithoutWeights() {
         NFKMLXReferenceModels.registerAll()
         for name in ["parakeet-tdt", "canary-1b-v2", "voxtral-mini-3b", "granite-speech-3.3-2b", "phi-4-multimodal",
-                     "codestral-mamba", "granite-4.0-h", "nemotron-nano-2"] {
+                     "codestral-mamba", "granite-4.0-h", "nemotron-nano-2", "qwen4-exp", "qwen3.5"] {
             XCTAssertThrowsError(try NFKMLXModelRegistry.backend(named: name, weightsURL: nil), name)
         }
     }

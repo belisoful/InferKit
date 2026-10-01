@@ -50,8 +50,8 @@ final class NFKHiFiResBlock: Module {
     }
 }
 
-/// The HiFi-GAN generator: `[1, T, melBins]` → `[1, T·hop, 1]` in `-1...1`.
-final class NFKMLXHiFiGANNet: Module {
+/// The HiFi-GAN generator: `[1, T, melBins]` → `[1, T·hop, 1]` in `-1...1`. Introduced in InferKit 0.4.0.
+public final class NFKMLXHiFiGANNet: Module {
     @ModuleInfo(key: "conv_pre") var convPre: Conv1d
     @ModuleInfo(key: "ups") var ups: [NFKDemucsConvT1d]
     @ModuleInfo(key: "resblocks") var resblocks: [NFKHiFiResBlock]
@@ -60,7 +60,9 @@ final class NFKMLXHiFiGANNet: Module {
     let configuration: NFKMLXHiFiGANConfiguration
     private let kernelsPerStage: Int
 
-    init(_ configuration: NFKMLXHiFiGANConfiguration) {
+    /// A generator at `configuration`, with random weights until ``NFKMLXHiFiGAN/loadWeights(into:from:remap:)``
+    /// fills it. Introduced in InferKit 0.4.0.
+    public init(_ configuration: NFKMLXHiFiGANConfiguration) {
         self.configuration = configuration
         kernelsPerStage = configuration.resblockKernels.count
         _convPre.wrappedValue = Conv1d(inputChannels: configuration.melBins, outputChannels: configuration.initialChannels, kernelSize: 7, padding: 3)
@@ -81,8 +83,8 @@ final class NFKMLXHiFiGANNet: Module {
         _convPost.wrappedValue = Conv1d(inputChannels: channels, outputChannels: 1, kernelSize: 7, padding: 3)
     }
 
-    /// `[1, T, melBins]` → `[1, T·hop, 1]`.
-    func waveform(_ mel: MLXArray) -> MLXArray {
+    /// `[1, T, melBins]` → `[1, T·hop, 1]`. Introduced in InferKit 0.4.0.
+    public func waveform(_ mel: MLXArray) -> MLXArray {
         var x = convPre(mel)
         for (index, up) in ups.enumerated() {
             x = up(leakyRelu(x, negativeSlope: 0.1))
@@ -103,11 +105,15 @@ final class NFKMLXHiFiGANNet: Module {
 @objc(NFKMLXHiFiGAN)
 public final class NFKMLXHiFiGAN: NSObject {
 
-    static func makeNet(_ configuration: NFKMLXHiFiGANConfiguration = NFKMLXHiFiGANConfiguration()) -> NFKMLXHiFiGANNet {
+    /// A generator at `configuration`, the universal release's geometry by default. Introduced in
+    /// InferKit 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXHiFiGANConfiguration = NFKMLXHiFiGANConfiguration()) -> NFKMLXHiFiGANNet {
         NFKMLXHiFiGANNet(configuration)
     }
 
-    static func loadWeights(into net: NFKMLXHiFiGANNet, from url: URL, remap: (String) -> String = { $0 }) throws {
+    /// Loads a released or converted generator checkpoint, fusing weight norm and translating the
+    /// reference's names and layouts; `remap` renames each key after that. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXHiFiGANNet, from url: URL, remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = referenceRenamed(NFKMLXMusic3.fusedWeightNorm(checkpoint.arrays))
         let mapped = raw.map { key, value -> (String, MLXArray) in

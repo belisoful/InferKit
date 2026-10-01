@@ -648,8 +648,10 @@ final class MLXModelGalleryExamples: XCTestCase {
         // The Qwen3.5-family hybrid interleaves gated linear-attention layers with a full-attention
         // layer every fourth; its configuration reads from a release through
         // NFKMLXHybridLanguage.configuration(fromHuggingFace:). Qwen4-Exp (Qwen3.8-Flash-Next) adds
-        // hyper-connections, an indexer, routed experts, and hashed n-gram embeddings, and loads through
-        // NFKMLXQwen4Exp.backend(directoryURL:). Here shrunk random geometries run a short prompt.
+        // hyper-connections, an indexer, routed experts, and hashed n-gram embeddings. A release loads
+        // through NFKMLXHybridLanguage.network(directoryURL:) or NFKMLXQwen4Exp.network(directoryURL:),
+        // and each serves text through its backend(directoryURL:). Here shrunk random geometries run a
+        // short prompt.
         NFKMLXRandom.seed(6)
         let prompt = MLXArray([Int32(1), 5, 9, 12, 7]).reshaped([1, 5])
         let hybrid = NFKMLXHybridLanguage.makeNet(NFKMLXHybridConfiguration(

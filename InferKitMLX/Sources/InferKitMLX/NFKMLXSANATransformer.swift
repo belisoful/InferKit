@@ -315,3 +315,56 @@ final class NFKSANAPatchEmbed: Module {
     /// `[1, H, W, C]` → `[1, H/p, W/p, inner]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray { proj(x) }
 }
+
+// MARK: - Release
+
+extension NFKMLXSANATransformerNet {
+
+    /// The geometry a diffusers `transformer/config.json` declares (`SanaTransformer2DModel`).
+    ///
+    /// @discussion A release that turns on a part this port does not carry is refused rather than
+    /// built without it: `guidance_embeds` (SANA-Sprint), a `qk_norm`, or an `interpolation_scale`,
+    /// which adds a sine-cosine position embedding. Introduced in InferKit 0.4.0.
+    public static func configuration(fromHuggingFace url: URL) throws -> NFKMLXSANAConfiguration {
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
+        }
+        func int(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
+        func float(_ key: String, _ fallback: Float) -> Float { (json[key] as? NSNumber)?.floatValue ?? fallback }
+        if (json["guidance_embeds"] as? Bool) == true {
+            throw NFKMLXError.unsupportedConfiguration("a SANA release with guidance_embeds is not ported")
+        }
+        if let norm = json["qk_norm"] as? String {
+            throw NFKMLXError.unsupportedConfiguration("a SANA release with qk_norm \(norm) is not ported")
+        }
+        if json["interpolation_scale"] is NSNumber {
+            throw NFKMLXError.unsupportedConfiguration("a SANA release with a sine-cosine position embedding is not ported")
+        }
+        let inChannels = int("in_channels", 32)
+        if int("out_channels", inChannels) != inChannels {
+            throw NFKMLXError.unsupportedConfiguration("a SANA release whose output channels differ from its input is not ported")
+        }
+        let configuration = NFKMLXSANAConfiguration(
+            inChannels: inChannels, heads: int("num_attention_heads", 70), headDim: int("attention_head_dim", 32),
+            layers: int("num_layers", 20), crossHeads: int("num_cross_attention_heads", 20),
+            crossHeadDim: int("cross_attention_head_dim", 112), captionChannels: int("caption_channels", 2304),
+            mlpRatio: float("mlp_ratio", 2.5), patchSize: int("patch_size", 1), normEps: float("norm_eps", 1e-6),
+            timestepScale: float("timestep_scale", 1), attentionBias: (json["attention_bias"] as? Bool) ?? false)
+        if let crossDim = (json["cross_attention_dim"] as? NSNumber)?.intValue,
+           crossDim != configuration.crossHeads * configuration.crossHeadDim {
+            throw NFKMLXError.unsupportedConfiguration(
+                "cross_attention_dim \(crossDim) is not num_cross_attention_heads × cross_attention_head_dim")
+        }
+        return configuration
+    }
+
+    /// Loads a diffusers `transformer/` directory (one file or a shard index). The module keys are
+    /// diffusers' own names; the patch convolution moves from `[out, in, kH, kW]` to MLX's
+    /// `[out, kH, kW, in]`. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXSANATransformerNet, fromDirectory directory: URL) throws {
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory).map { key, value in
+            (key, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(arrays, to: net)
+    }
+}

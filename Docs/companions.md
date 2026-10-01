@@ -530,11 +530,13 @@ models.
 - **`NFKMLXQwen4Exp`** — the Qwen4-Exp decoder, which Qwen3.8-Flash-Next is the released 180B
   instance of: the hybrid family's recurrence and gated attention, carried over a residual stream
   held four times over by hyper-connections, with a per-layer embedding over hashed n-grams, a
-  query-sparse-attention indexer choosing what each query may see, and 512 experts.
+  query-sparse-attention indexer choosing what each query may see, and 512 experts. A release serves
+  text through `backend(directoryURL:)` (`qwen4-exp`).
 - **`NFKMLXHybridLanguage`** — the Qwen3.5 / 3.6 / 3.8 decoder: a gated delta-rule recurrence in three
   of every four layers (a fixed-size state instead of a growing cache) with gated full attention in the
   fourth. At reference parity on the released Qwen3.5-4B, layer by layer; the 27B is accounted for by
-  shape against its checkpoint headers.
+  shape against its checkpoint headers. A release serves text through `backend(directoryURL:)`
+  (`qwen3.5`), an `NFKMLXDecoderBackend` that renders the release's chat template.
 - **`NFKMLXDeepSeek`** — the DeepSeek V4 and V4.1 decoders: multi-head latent attention over a mixture of
   experts, hyper-connections, the compressor and sparse indexer, and the release's fp8 / fp4 block-scaled
   storage decoded exactly. V4.1 adds a shared compressed cache read by layers that own no compressor,
@@ -618,6 +620,7 @@ models.
 - **`NFKMLXSANAPipeline`** — SANA text-to-image: the ReLU linear-attention DiT (`NFKMLXSANATransformerNet`),
   the 32× Deep-Compression Autoencoder (`NFKMLXDCAutoencoderNet`, at parity on the released `Sana_600M`
   VAE), a Gemma 2 caption, and the released DPM-Solver++ sampler (`NFKMLXDPMSolverScheduler`).
+  `pipeline(directoryURL:)` reads a diffusers release.
 - **`NFKMLXLTXPipeline`** — LTX-Video text-to-video: a causal 3-D VAE (`NFKMLXLTXVideoVAE`), the 2B
   DiT (`NFKMLXLTXTransformer`, 3-D rotary + adaLN + cross-attention), a T5-XXL prompt, and the
   rectified-flow sampler (`NFKMLXFlowMatchScheduler`, exact against diffusers). Every stage at parity;

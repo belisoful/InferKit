@@ -356,7 +356,12 @@ attention and feed-forward.
   float32: all 25 hidden states at worst cosine 0.9999999999956228. Those releases tokenize with the
   core's `qwen35` pre-tokenization, which the text backend now selects from their regex. The recurrence
   runs token by token, so a 90-token prompt is 90 sequential steps per linear layer; that, not the
-  parameter count, dominates a short prompt's cost and a fine-tune's graph.
+  parameter count, dominates a short prompt's cost and a fine-tune's graph. `backend(directoryURL:)`
+  (registered `qwen3.5`) serves text through `NFKMLXDecoderBackend`, which Qwen4-Exp (`qwen4-exp`) shares:
+  prefill-only, a message list rendered through the release's chat template, and generation stopping
+  at every id `generation_config.json` names, because an instruct release ends a turn on a marker only
+  that file lists. `NFKMLXQwen4Exp.network(directoryURL:precision:residency:)` returns the bare decoder,
+  which `backend(directoryURL:precision:residency:)` returned before it built the text backend.
 - `NFKMLXQwen4Exp` — the Qwen4-Exp decoder (`Qwen4ExpForConditionalGeneration`), which
   **Qwen3.8-Flash-Next** is the released 180B instance of. It keeps the hybrid family's skeleton and
   adds four mechanisms nothing else in the package uses, so it is a port rather than a configuration

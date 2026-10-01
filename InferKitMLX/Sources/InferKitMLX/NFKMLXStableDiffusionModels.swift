@@ -1029,8 +1029,8 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     /// latent width, latent scale and shift, and whether the `1×1` quantization convolutions are present.
     ///
     /// @discussion A config keeping one quantization convolution and dropping the other is refused; the
-    /// module holds both or neither.
-    static func vaeConfiguration(fromHuggingFace url: URL) throws -> NFKMLXSDVAEConfiguration {
+    /// module holds both or neither. Introduced in InferKit 0.4.0.
+    public static func vaeConfiguration(fromHuggingFace url: URL) throws -> NFKMLXSDVAEConfiguration {
         let json = try NFKMLXWanRelease.json(url)
         let quant = json["use_quant_conv"] as? Bool ?? true
         guard quant == (json["use_post_quant_conv"] as? Bool ?? true) else {

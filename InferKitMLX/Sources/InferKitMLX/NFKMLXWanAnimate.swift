@@ -559,6 +559,8 @@ public final class NFKMLXWanAnimateNet: Module {
 @objc(NFKMLXWanAnimate)
 public final class NFKMLXWanAnimate: NSObject {
 
+    /// A transformer at `configuration`, the released 14B geometry by default, with random weights
+    /// until ``loadWeights(into:fromDirectory:precision:)`` fills it.
     public static func makeNet(_ configuration: NFKMLXWanAnimateConfiguration = .base) -> NFKMLXWanAnimateNet {
         NFKMLXWanAnimateNet(configuration)
     }
@@ -587,6 +589,24 @@ public final class NFKMLXWanAnimate: NSObject {
         key = key.replacingOccurrences(of: "cross_attn.k_img.", with: "cross_attn.add_k_proj.")
         key = key.replacingOccurrences(of: "cross_attn.v_img.", with: "cross_attn.add_v_proj.")
         return key.replacingOccurrences(of: "cross_attn.norm_k_img.", with: "cross_attn.norm_added_k.")
+    }
+
+    /// Loads the released transformer from its directory (one file or a shard index) into `net`.
+    ///
+    /// @discussion Each released name maps to the module through `moduleKey(forRelease:)`, and the
+    /// patch-embedding convolution, the one 5-D tensor, moves from `[out, in, kT, kH, kW]` to MLX's
+    /// `[out, kT, kH, kW, in]`. `precision` `.checkpoint` keeps the release's bfloat16; the default
+    /// reads float32. The released transformer is 32.8 GB in bfloat16 and a 32 GiB machine does not hold
+    /// it, so its numerics are held to the reference at a tiny configuration and the release by its
+    /// tensor inventory. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXWanAnimateNet, fromDirectory directory: URL,
+                                   precision: NFKMLXWeightPrecision = .float32) throws {
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+            moduleKey(forRelease: $0)
+        }.map { name, value in
+            (name, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
+        }
+        try NFKMLXWeights.apply(arrays, to: net)
     }
 
     /// The released tensor name a module key came from, which is `moduleKey(forRelease:)` inverted.

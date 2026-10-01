@@ -141,8 +141,8 @@ and JSON, JSON-Schema, or fixed-choice constrained decoding — each also settab
 | --- | --- | --- |
 | ``NFKMLXLanguage`` | `backend(directoryURL:)` | dense decoders (Qwen3, Qwen2, Llama) and the Qwen3-MoE / Mixtral mixtures |
 | ``NFKMLXLanguage`` | `backend(ggufURL:)` | any dense `llama` / `qwen2` / `qwen3` GGUF (Q4_0 / Q5_0 / Q8_0 / Q4_K / Q6_K) |
-| ``NFKMLXQwen4Exp`` | — | Qwen3.8-Flash-Next: hyper-connections, hashed n-gram per-layer embeddings, a sparse-attention indexer, 512 experts |
-| ``NFKMLXHybridLanguage`` | — | Qwen3.5 / 3.6 / 3.8: gated delta-rule recurrence with full attention every fourth layer |
+| ``NFKMLXQwen4Exp`` | `qwen4-exp`; `backend(directoryURL:)` | Qwen3.8-Flash-Next: hyper-connections, hashed n-gram per-layer embeddings, a sparse-attention indexer, 512 experts |
+| ``NFKMLXHybridLanguage`` | `qwen3.5`; `backend(directoryURL:)` | Qwen3.5 / 3.6 / 3.8: gated delta-rule recurrence with full attention every fourth layer |
 | ``NFKMLXMamba`` | `codestral-mamba`; `backend(directoryURL:)` | Codestral-Mamba: a Mamba-2 selective-scan state-space decoder, the first SSM (released 7B at bf16 logit cosine 0.9999146, greedy 12/12) |
 | ``NFKMLXGraniteHybrid`` | `granite-4.0-h`; `backend(directoryURL:)` | Granite 4.0-H: a hybrid Mamba/attention decoder reusing the Mamba-2 mixer, dense and MoE, with on-device LoRA fine-tuning (released h-1b at float32 logit cosine 1.0, greedy 12/12) |
 | ``NFKMLXNemotronH`` | `nemotron-nano-2`; `backend(directoryURL:)` | Nemotron Nano 2: a hybrid Mamba/MLP/attention decoder reusing the Mamba-2 mixer, with on-device LoRA fine-tuning (tiny logit cosine 1.0, Nemotron-Nano-9B-v2 structural 341/341) |

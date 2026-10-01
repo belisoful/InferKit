@@ -196,6 +196,8 @@ limits.
 - ``NFKMLXQwen4Exp``
 - ``NFKMLXQwen4ExpNet``
 - ``NFKMLXHybridLanguage``
+- ``NFKMLXHybridLanguageNet``
+- ``NFKMLXDecoderBackend``
 - ``NFKMLXGemma3``
 - ``NFKMLXGemma3n``
 - ``NFKMLXGemma3Backend``
@@ -406,7 +408,9 @@ limits.
 - ``NFKMLXTTS``
 - ``NFKMLXVoice``
 - ``NFKMLXFastSpeech2``
+- ``NFKMLXFastSpeech2Net``
 - ``NFKMLXHiFiGAN``
+- ``NFKMLXHiFiGANNet``
 - ``NFKMLXKokoro``
 - ``NFKMLXChatterbox``
 - ``NFKMLXChatterboxTTS``

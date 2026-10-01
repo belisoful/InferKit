@@ -149,6 +149,19 @@
 	//     NFKMLXRIFE.frame1Key: second } parameters:@{ NFKMLXRIFEv4.timestepKey: @0.25 }];
 }
 
+- (void)testObjectiveCReachesTheQwenDecoderBackends
+{
+	// Qwen3.8-Flash-Next (Qwen4-Exp) and the Qwen3.5 hybrid build text backends from a release directory,
+	// by factory or by registered name.
+	[NFKMLXQwen4Exp register];
+	[NFKMLXHybridLanguage register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXQwen4Exp.modelName]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXHybridLanguage.modelName]);
+	XCTAssertTrue([NFKMLXQwen4Exp respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXHybridLanguage respondsToSelector:@selector(backendWithRepo:revision:cacheDirectoryURL:error:)]);
+	// id<NFKInferenceBackend> qwen = [NFKMLXHybridLanguage backendWithDirectoryURL:releaseDirectory error:&error];
+}
+
 - (void)testObjectiveCBuildsRAFTOpticalFlowByName
 {
 	[NFKMLXRAFT register];

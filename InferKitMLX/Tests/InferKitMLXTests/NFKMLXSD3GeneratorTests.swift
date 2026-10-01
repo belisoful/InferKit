@@ -117,6 +117,10 @@ final class NFKMLXSD3GeneratorTests: XCTestCase {
         XCTAssertEqual(prompt.clipG, try ids("ids_g"), "bigG's ids, padded with `!`")
         XCTAssertEqual(prompt.t5?.ids, try ids("ids_t5"), "T5's ids, ended and padded")
         let (sequence, pooled) = stage.embeddings(prompt)
+        let published = try generator.promptEmbeddings(for: "A red fox walking through fresh snow, cinematic")
+        XCTAssertEqual(abs(published.sequence - sequence).max().item(Float.self), 0,
+                       "the public embeddings are the text stage's")
+        XCTAssertEqual(abs(published.pooled - pooled).max().item(Float.self), 0)
         let (negativeSequence, negativePooled) = stage.embeddings(generator.prompt("blurry, low quality"))
         let sequenceCosine = cosine(sequence, try XCTUnwrap(arrays["prompt_embeds"]))
         let pooledCosine = cosine(pooled, try XCTUnwrap(arrays["pooled"]))

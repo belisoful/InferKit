@@ -37,8 +37,8 @@ Levels are `probe`, `head-retarget`, `zero-reference`, `LoRA`, and `full`, as `m
 defines them.
 
 **A public builder is not evidence of a training path.** Qwen4-Exp and Mamba-2 have fully public
-builders and are offline on size. The dense Qwen, hybrid, and Gemma 3 decoders are LoRA-feasible at
-4B and under and have no public builder at all. Feasibility and reachability are separate questions,
+builders and are offline on size. The dense Qwen and Gemma 3 decoders are LoRA-feasible at 4B and
+under and have no public builder at all; the hybrid decoder's builder is public and it has no recipe. Feasibility and reachability are separate questions,
 and a row answers the first. The `Reach` column answers the second.
 
 ## Summary
@@ -231,7 +231,7 @@ largest size this machine holds at float32.
 | `NFKMLXGraniteHybrid` | ships | LoRA | public | The reference's `labels=` loss within 1e-3. The 1B release fits float32. |
 | `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The only release is 9B at ~17.8 GB bfloat16, and the recipe takes no `precision:` argument. |
 | `NFKMLXLanguage` (dense) | trainable to 4B, offline above | LoRA | **internal** | `q_proj` and `v_proj` are `Linear` under `@ModuleInfo`, which LoRA requires. The builder, the loader, and the initializer are all internal. |
-| `NFKMLXHybridLanguage` | trainable at 2B and 4B, offline at 27B | LoRA | **internal** | Open-Jev already LoRA-trains this decoder at Qwen3.5-2B. Qwen3.8-27B is ~54 GB. |
+| `NFKMLXHybridLanguage` | trainable at 2B and 4B, offline at 27B | LoRA | public | Open-Jev already LoRA-trains this decoder at Qwen3.5-2B. Qwen3.8-27B is ~54 GB. |
 | `NFKMLXGemma2Net` | trainable at 2B, offline at 9B and 27B | LoRA | public | The 2B release runs at float32 in the entry's own layer probe. |
 | `NFKMLXLanguage` (mixture of experts) | offline | — | internal | LoRA adapts `Linear` only and never the expert switch layers. gpt-oss's experts stay MXFP4-packed at load. |
 | `NFKMLXQwen4Exp` | offline | — | public | The smallest release is 180B. Its n-gram table alone is 51 billion parameters. |
@@ -387,9 +387,10 @@ Ordered by what a session gets per unit of effort, and grounded in what the tria
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
    DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other
    segmenters remain.
-3. **Reachability for the language decoders.** The dense Qwen, hybrid, and Gemma 3 decoders are
-   LoRA-feasible at 4B and under and have no public builder. That is a visibility change plus a
-   recipe, and it is the largest single piece of demand.
+3. **Reachability for the language decoders.** The dense Qwen and Gemma 3 decoders are LoRA-feasible
+   at 4B and under and have no public builder. That is a visibility change plus a recipe, and it is the
+   largest single piece of demand. The hybrid decoder's builder (`makeNet`, `loadWeights`,
+   `network(directoryURL:)`) is public; its recipe remains.
 4. **Parakeet's transducer loss.** The only genuinely new numerical work in the whole ledger.
    `TDTLossPytorch` is pure PyTorch and portable, so it is a forward-probability recursion to write
    rather than a blocked path.

@@ -257,6 +257,11 @@ arithmetic as before.
   entry below), not a stand-in. Validated by a weight-free tiny-config glue test plus the DiT/VAE
   parities. SANA's text encoder is `NFKMLXGemma2Net` (Gemma-2, ported here — see the Gemma-2 entry):
   the caller runs it for the caption features. The SANA text-to-image path is complete.
+  `NFKMLXSANAPipeline.pipeline(directoryURL:)` reads a diffusers release: the DiT from `transformer/`
+  through `NFKMLXSANATransformerNet.configuration(fromHuggingFace:)` and `loadWeights(into:fromDirectory:)`
+  (diffusers' own names, the patch convolution transposed), the DC-AE from `vae/` at `.sana`. The reader
+  refuses `guidance_embeds`, a `qk_norm`, and an `interpolation_scale`, which this DiT does not carry. No
+  SANA DiT release is in the store, so the loader is held by a round trip, not a released checkpoint.
   Customization of the DC-AE: untrainable here. mit-han-lab/efficientvit trains the diffusion model over
   precomputed latents, and dc-ai-projects/DC-Gen's autoencoder trainer calls `forward_train`, which no
   published model implements. The ruling rests on that gap: a later DC-Gen commit that implements

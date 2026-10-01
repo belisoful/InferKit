@@ -66,7 +66,8 @@ final class MLXModelSnippetExamples: XCTestCase {
     }
 
     // Docs/examples.md: SD3 ControlNet. A tiny random MMDiT, ControlNet, and autoencoder stand in for
-    // the released stages, and random embeddings for the text stage's.
+    // the released stages, and random embeddings for what NFKMLXSD3Generator.promptEmbeddings(for:)
+    // returns from a release's text stage (NFKMLXSD3GeneratorTests holds those to the reference).
     func testExampleSD3ControlNet() throws {
         try requireMLXRuntime()
         NFKMLXRandom.seed(15)
@@ -127,7 +128,8 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(audioVelocity.shape, [1, 4, 6], "one velocity per audio frame")
     }
 
-    // Docs/examples.md: Wan 2.2 Animate. The tiny configuration stands in for the 14B geometry.
+    // Docs/examples.md: Wan 2.2 Animate. The tiny configuration stands in for the 14B geometry, whose
+    // release NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).
     func testExampleWanAnimate() throws {
         try requireMLXRuntime()
         NFKMLXRandom.seed(18)
@@ -195,5 +197,82 @@ final class MLXModelSnippetExamples: XCTestCase {
                        bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
                        bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    }
+
+    // Docs/examples.md: Text → text, the Qwen3.5 hybrid and Qwen4-Exp. A tiny release directory (its
+    // config.json, weights under the release's names, tokenizer, and chat template) stands in for a
+    // downloaded one, so the public factory runs end to end.
+    func testExampleQwenHybridTextBackend() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(21)
+        let releaseDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: releaseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: releaseDirectory) }
+        let decoder: [String: Any] = [
+            "model_type": "qwen3_5_text", "hidden_size": 64, "num_hidden_layers": 4, "intermediate_size": 128,
+            "vocab_size": 12, "num_attention_heads": 4, "num_key_value_heads": 2, "head_dim": 16,
+            "rope_parameters": ["rope_theta": 10_000, "partial_rotary_factor": 0.25],
+            "linear_num_key_heads": 2, "linear_key_head_dim": 8, "linear_num_value_heads": 4,
+            "linear_value_head_dim": 8, "linear_conv_kernel_dim": 4, "full_attention_interval": 4,
+            "tie_word_embeddings": false,
+        ]
+        try JSONSerialization.data(withJSONObject: ["model_type": "qwen3_5", "text_config": decoder])
+            .write(to: releaseDirectory.appendingPathComponent("config.json"))
+        let trained = NFKMLXHybridLanguage.makeNet(try NFKMLXHybridLanguage.configuration(
+            fromHuggingFace: releaseDirectory.appendingPathComponent("config.json")))
+        let released = Dictionary(uniqueKeysWithValues: trained.parameters().flattened().map { key, value in
+            (NFKMLXHybridLanguage.referenceKey(for: key),
+             key.hasSuffix("conv1d.weight") && value.ndim == 3 ? value.transposed(0, 2, 1) : value)
+        })
+        try save(arrays: released, url: releaseDirectory.appendingPathComponent("model.safetensors"))
+        let vocabulary: [String: Int] = ["h": 0, "e": 1, "l": 2, "o": 3, "he": 4, "ll": 5, "hello": 6,
+                                         "Ġ": 7, "Ċ": 8, "<eos>": 9]
+        try JSONSerialization.data(withJSONObject: vocabulary)
+            .write(to: releaseDirectory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\nh e\nl l\nhe ll\nhell o\n".write(
+            to: releaseDirectory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: [
+            "eos_token": "<|im_end|>",
+            "added_tokens_decoder": ["10": ["content": "<|im_start|>"], "11": ["content": "<|im_end|>"]],
+        ]).write(to: releaseDirectory.appendingPathComponent("tokenizer_config.json"))
+        try ("{% for m in messages %}<|im_start|>{{ m.content }}<|im_end|>{% endfor %}"
+             + "{% if add_generation_prompt %}<|im_start|>{% endif %}")
+            .write(to: releaseDirectory.appendingPathComponent("chat_template.jinja"), atomically: true, encoding: .utf8)
+
+        let qwen = try NFKMLXHybridLanguage.backend(directoryURL: releaseDirectory)
+        let result = try qwen.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputMessages: [["role": "user", "content": "hello"]]],
+            parameters: [NFKParameterMaxTokens: 3]))
+        XCTAssertNotNil(result.text, "a reply, however short, from random weights")
+        XCTAssertEqual(qwen.backendIdentifier, "qwen3.5")
+    }
+
+    // Docs/examples.md: SANA. A tiny transformer directory, read through the same configuration reader
+    // and loader pipeline(directoryURL:) uses, and a tiny autoencoder stand in for the release; random
+    // captions stand in for Gemma 2's.
+    func testExampleSANAPipeline() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(22)
+        let transformerDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: transformerDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: transformerDirectory) }
+        try JSONSerialization.data(withJSONObject: [
+            "in_channels": 8, "num_attention_heads": 2, "attention_head_dim": 8, "num_layers": 2,
+            "num_cross_attention_heads": 2, "cross_attention_head_dim": 8, "caption_channels": 12,
+            "mlp_ratio": 2.0,
+        ]).write(to: transformerDirectory.appendingPathComponent("config.json"))
+        let geometry = try NFKMLXSANATransformerNet.configuration(
+            fromHuggingFace: transformerDirectory.appendingPathComponent("config.json"))
+        let released = Dictionary(uniqueKeysWithValues: NFKMLXSANATransformerNet(geometry).parameters().flattened()
+            .map { key, value in (key, value.ndim == 4 ? value.transposed(0, 3, 1, 2) : value) })
+        try save(arrays: released, url: transformerDirectory.appendingPathComponent("diffusion_pytorch_model.safetensors"))
+        let transformer = NFKMLXSANATransformerNet(geometry)
+        try NFKMLXSANATransformerNet.loadWeights(into: transformer, fromDirectory: transformerDirectory)
+
+        let sana = NFKMLXSANAPipeline(transformer: transformer, vae: NFKMLXDCAutoencoderNet(.tiny))
+        let image = sana.generate(promptEmbeds: MLXRandom.normal([6, 12]), negativeEmbeds: MLXRandom.normal([6, 12]),
+                                  latentHeight: 4, latentWidth: 4, steps: 2, guidance: 4.5)
+        eval(image)
+        XCTAssertEqual(image.shape[3], 3, "an RGB image")
     }
 }
