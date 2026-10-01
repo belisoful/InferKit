@@ -205,12 +205,11 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
   builder, so no fine-tune of them is reachable. Feasibility and reachability are separate questions,
   and a public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
   builders and are offline on size.
-- `NFKMLXTrainer` has no validation hook or bf16 training, and does not checkpoint optimizer state.
-  (2026-09-23) It schedules the learning rate. (2026-09-25) It applies a post-update weight constraint
-  and keeps running statistics out of the trainable set. (2026-09-30) `accumulationSteps` averages that
-  many batches into each update, as transformers' `gradient_accumulation_steps` does; a reference that
-  sums its batches instead (ultralytics) differs by that factor, which Adam's update mostly absorbs and
-  a gradient clip does not. No recipe passes it yet.
+- `NFKMLXTrainer` checkpoints optimizer state only for an `NFKMLXResumableOptimizer`: mlx-swift's own
+  `Adam`, `AdamW`, and `SGD` keep theirs where a checkpoint cannot read it, so a checkpoint that names
+  an optimizer-state file refuses them. Every recipe's reference optimizer is resumable. Half precision
+  runs every operation of the forward in the half type, where a PyTorch autocast chooses per operation,
+  so a bf16 or fp16 run follows its reference closely and not exactly.
 - `NFKMLXLoRA` adapts `Linear` only, never `Conv2d` or the expert switch layers, and only through
   `@ModuleInfo` properties.
 
@@ -344,8 +343,34 @@ counts below are the ledger's, triaged 2026-09-24 over all 164 entries.
     divergence guard never fires. Non-finite entries are zeroed first, then the norm is taken relative
     to the largest magnitude present. Reported by RVC-MLX from a real run, pinned here by
     `testAGradientWhoseSquaresOverflowIsStillScaledToTheNorm`.
-  - Optimizer state is **not** checkpointed: mlx-swift keeps `stateStorage` internal and `innerState()`
-    unkeyed. `SGD` resumes exactly; `Adam` rebuilds its moment estimates.
+  - **A run resumes with its optimizer's state.** `NFKMLXTrainingCheckpoint(url:everySteps:optimizerStateURL:resumes:)`
+    writes the optimizer's state and the completed-update count beside the weights, and a run given
+    the same checkpoint with `resumes` continues at the next update, with the schedule, the batches,
+    and the observer's indices where they would have been (`testARunResumedWithItsOptimizerStateMatchesTheUninterruptedRun`).
+    A weights-only checkpoint restarts Adam's moments at zero, which makes the first resumed updates
+    several times too large. mlx-swift's `OptimizerBase` keeps its state internal and unkeyed, so the
+    reference optimizers are the package's own: `NFKMLXAdam` and `NFKMLXSGD` compute what mlx-swift's
+    `Adam`, `AdamW`, and `SGD` compute, bit for bit (`testTheResumableOptimizersComputeWhatMLXSwiftsDo`),
+    and the Keras, RAdam, fairseq, and AMSGrad forms keep their state by parameter path. A
+    `MultiOptimizer` saves each group under its index.
+  - **Validation runs in evaluation mode.** `NFKMLXTrainer.validating(_:every:evaluate:report:observer:)`
+    is an observer that scores the model every `every` updates with dropout off and BatchNorm on its
+    running statistics, returns training mode as the trainer set it, and ends the run when `report`
+    returns false (`testValidationScoresInEvaluationModeAndCanStopTheRun`).
+  - **Half precision keeps float32 masters.** `NFKMLXTrainingPrecision.bfloat16` and `.float16` run the
+    forward and backward on a half-precision copy of the trainable parameters, of the frozen ones, and
+    of the batch, and return the gradient to the float32 masters the optimizer updates. `.float16` adds
+    `GradScaler`'s dynamic loss scaling: 65,536 to start, an overflowing update skipped and the scale
+    halved, the scale doubled after 2,000 clean updates. `valueAndGrad` over an array closure
+    differentiates its first argument alone unless `argumentNumbers` names the rest, which is how a
+    first version trained the bias only (`testABFloat16RunComputesInHalfAndKeepsFloat32Masters`).
+  - **Accumulation follows a reference's rule when the rule is not a fixed count.**
+    `NFKMLXGradientAccumulation` decides per batch whether it completes an update and whether the
+    gradients sum or average. `.ultralytics(batchSize:warmupBatches:nominalBatchSize:)` is YOLO's
+    trainer: summed gradients, an update when `ni − last ≥ accumulate`, with `accumulate` ramped over
+    the warm-up and held at its last warm-up value after, rounded half to even
+    (`testTheUltralyticsAccumulationUpdatesOnTheReferencesBatches`). Under one, `steps` counts batches
+    and each `NFKMLXTrainingStep` reports whether it updated.
 - `NFKMLXTrainingData` / `NFKMLXBatchSampler` — the app-data side of training. `tensor` / `batch` /
   `matte` / `labels` convert a consumer's `CGImage`s into what the trainer takes, reusing
   `NFKMLXImageBridge` so a training batch and an inference input are built identically. `labels`

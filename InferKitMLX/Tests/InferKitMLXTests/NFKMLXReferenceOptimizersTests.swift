@@ -46,9 +46,124 @@ final class NFKMLXReferenceOptimizersTests: XCTestCase {
                        accuracy: 1e-3, "mlx-swift's default AdamW takes a √10-times step here")
     }
 
+    /// fairseq's `adam.py` step, transcribed in double precision: torch-form moments, the step size
+    /// `lr·√(1 − β₂ᵗ)/(1 − β₁ᵗ)`, epsilon on the uncorrected root, and `θ −= wd·lr·θ` before the step.
+    func testTheFairseqAdamFollowsFairseqsStepOverThreeUpdates() throws {
+        try requireMLXRuntime()
+        let model = Linear(weight: MLXArray([Float(0.5)], [1, 1]))
+        // A decay this large moves the weight by about 2.5e-3 a step, so its placement before the step
+        // is visible at float32 resolution; gradients near epsilon separate the two epsilon placements.
+        let optimizer = NFKMLXReferenceOptimizers.fairseqAdam(learningRate: 1e-2, weightDecay: 0.5)
+        let gradients: [Double] = [3e-7, -1e-6, 2e-7]
+        let rates: [Float] = [1e-2, 5e-3, 2e-2]
+        var theta = 0.5, m = 0.0, v = 0.0
+        for (index, gradient) in gradients.enumerated() {
+            optimizer.learningRate = rates[index]
+            optimizer.update(model: model, gradients: ModuleParameters.unflattened(
+                [("weight", MLXArray([Float(gradient)], [1, 1]))]))
+            let step = Double(index + 1), rate = Double(rates[index])
+            m = 0.9 * m + 0.1 * gradient
+            v = 0.999 * v + 0.001 * gradient * gradient
+            let stepSize = rate * (1 - pow(0.999, step)).squareRoot() / (1 - pow(0.9, step))
+            theta -= 0.5 * rate * theta
+            theta -= stepSize * m / (v.squareRoot() + 1e-8)
+        }
+        eval(model)
+        XCTAssertEqual(Double(model.weight.item(Float.self)), theta, accuracy: 6e-8, "within a float32 step at 0.5")
+
+        let torchPlacement = Linear(weight: MLXArray([Float(0.5)], [1, 1]))
+        let adamW = NFKMLXReferenceOptimizers.adamW(learningRate: 1e-2, weightDecay: 0.5)
+        for (index, gradient) in gradients.enumerated() {
+            adamW.learningRate = rates[index]
+            adamW.update(model: torchPlacement, gradients: ModuleParameters.unflattened(
+                [("weight", MLXArray([Float(gradient)], [1, 1]))]))
+        }
+        eval(torchPlacement)
+        XCTAssertGreaterThan(abs(Double(torchPlacement.weight.item(Float.self)) - theta), 1e-6,
+                             "the gradients are near epsilon, so the two placements must separate")
+    }
+
+    /// mlx-swift's bias-corrected `Adam` with the L2 term joined to the gradient, the form the package
+    /// built before its optimizers kept their state by parameter path.
+    private final class MLXSwiftL2Adam: Adam {
+        let weightDecay: Float
+
+        init(learningRate: Float, weightDecay: Float) {
+            self.weightDecay = weightDecay
+            super.init(learningRate: learningRate, biasCorrection: true)
+        }
+
+        override func applySingle(gradient: MLXArray, parameter: MLXArray, state: AdamState) -> (MLXArray, AdamState) {
+            super.applySingle(gradient: gradient + weightDecay * parameter, parameter: parameter, state: state)
+        }
+    }
+
+    /// Three updates of a three-parameter model through each resumable optimizer and the mlx-swift one
+    /// it stands in for, compared bit for bit.
+    private func agreeBitForBit(_ ours: Optimizer, _ theirs: Optimizer, _ name: String) {
+        let gradients = [MLXArray([Float(0.3), -0.2, 1e-5]), MLXArray([Float(-0.1), 0.4, 2e-6]),
+                         MLXArray([Float(0.05), 0.05, -3e-6])]
+        let a = Linear(weight: MLXArray([Float(0.5), -0.25, 1], [3, 1]))
+        let b = Linear(weight: MLXArray([Float(0.5), -0.25, 1], [3, 1]))
+        for gradient in gradients {
+            let tree = ModuleParameters.unflattened([("weight", gradient.reshaped([3, 1]))])
+            ours.update(model: a, gradients: tree)
+            theirs.update(model: b, gradients: tree)
+        }
+        eval(a, b)
+        XCTAssertEqual(a.weight.asArray(Float.self), b.weight.asArray(Float.self), name)
+    }
+
+    func testTheResumableOptimizersComputeWhatMLXSwiftsDo() throws {
+        try requireMLXRuntime()
+        agreeBitForBit(NFKMLXReferenceOptimizers.adamW(learningRate: 0.01, weightDecay: 0.1),
+                       AdamW(learningRate: 0.01, weightDecay: 0.1, biasCorrection: true), "AdamW")
+        agreeBitForBit(NFKMLXAdam(learningRate: 0.01, biasCorrection: false),
+                       Adam(learningRate: 0.01), "Adam, uncorrected")
+        agreeBitForBit(NFKMLXReferenceOptimizers.l2Adam(learningRate: 0.01, weightDecay: 0.1),
+                       MLXSwiftL2Adam(learningRate: 0.01, weightDecay: 0.1), "Adam with L2")
+        agreeBitForBit(NFKMLXSGD(learningRate: 0.1, momentum: 0.9, weightDecay: 0.01, nesterov: true),
+                       SGD(learningRate: 0.1, momentum: 0.9, weightDecay: 0.01, nesterov: true), "SGD")
+    }
+
+    func testAnOptimizersRestoredStateContinuesItsUpdates() throws {
+        try requireMLXRuntime()
+        for make in [{ NFKMLXReferenceOptimizers.adamW(learningRate: 0.01, weightDecay: 0.1) as Optimizer },
+                     { NFKMLXSGD(learningRate: 0.1, momentum: 0.9) },
+                     { NFKMLXReferenceOptimizers.fairseqAdam(learningRate: 0.01, weightDecay: 0.1) },
+                     { NFKMLXReferenceOptimizers.rAdam(learningRate: 0.01, weightDecay: 0.1) }] {
+            let uninterrupted = Linear(weight: MLXArray([Float(0.5), -0.25], [2, 1]))
+            let interrupted = Linear(weight: MLXArray([Float(0.5), -0.25], [2, 1]))
+            let whole = make(), first = make(), second = make()
+            let gradients = (0 ..< 4).map { MLXArray([Float($0) * 0.1 + 0.05, -0.2], [2, 1]) }
+            for gradient in gradients {
+                whole.update(model: uninterrupted, gradients: ModuleParameters.unflattened([("weight", gradient)]))
+            }
+            for gradient in gradients[..<2] {
+                first.update(model: interrupted, gradients: ModuleParameters.unflattened([("weight", gradient)]))
+            }
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("state-\(UUID().uuidString).safetensors")
+            defer { try? FileManager.default.removeItem(at: url) }
+            try NFKMLXOptimizerState.save(first, completedSteps: 2, to: url)
+            let loaded = try NFKMLXOptimizerState.load(from: url)
+            XCTAssertEqual(loaded.completedSteps, 2)
+            try NFKMLXOptimizerState.restore(loaded.arrays, into: second)
+            for gradient in gradients[2...] {
+                second.update(model: interrupted, gradients: ModuleParameters.unflattened([("weight", gradient)]))
+            }
+            eval(uninterrupted, interrupted)
+            XCTAssertEqual(interrupted.weight.asArray(Float.self), uninterrupted.weight.asArray(Float.self),
+                           "\(type(of: whole))")
+        }
+    }
+
+    func testAnOptimizerWithUnreadableStateIsRefused() throws {
+        XCTAssertThrowsError(try NFKMLXOptimizerState.arrays(of: AdamW(learningRate: 0.01)))
+    }
+
     func testTheL2AdamAddsItsDecayToTheGradient() throws {
         try requireMLXRuntime()
-        let updated = step(NFKMLXL2Adam(learningRate: 0.01, weightDecay: 0.5), on: Linear(1, 1))
+        let updated = step(NFKMLXReferenceOptimizers.l2Adam(learningRate: 0.01, weightDecay: 0.5), on: Linear(1, 1))
         // torch.optim.Adam(weight_decay=0.5): g ← 0.5 + 0.5·1 = 1, and the first step is lr·sign(g).
         XCTAssertEqual(updated["weight"]!, 1 - 0.01, accuracy: 1e-6)
     }

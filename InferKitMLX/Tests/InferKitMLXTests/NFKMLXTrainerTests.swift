@@ -143,6 +143,224 @@ final class NFKMLXTrainerTests: XCTestCase {
                        "the last write holds the state training reached")
     }
 
+    /// An interrupted run resumed from a checkpoint that carries the optimizer's state ends exactly
+    /// where the uninterrupted run ends: the same weights, Adam's moments, the schedule, and the batches.
+    func testARunResumedWithItsOptimizerStateMatchesTheUninterruptedRun() throws {
+        try requireMLXRuntime()
+        let weights = temporaryURL(), state = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: weights)
+            try? FileManager.default.removeItem(at: state)
+        }
+        let schedule = NFKMLXLearningRateSchedule { 1 / Float($0 + 1) }
+        func batch(_ step: Int) -> (input: MLXArray, target: MLXArray) {
+            let (input, target) = fixedBatch()
+            return (input * Float(step + 1), target * Float(step + 1))
+        }
+        func freshModel() -> Linear { Linear(weight: MLXArray([Float(0.1), 0.2, -0.3, 0.4], [2, 2]), bias: MLXArray.zeros([2])) }
+        func adam() -> Optimizer { NFKMLXReferenceOptimizers.adamW(learningRate: 0.05, weightDecay: 0.01) }
+
+        let uninterrupted = freshModel()
+        let all = try NFKMLXTrainer.train(uninterrupted, optimizer: adam(), steps: 6, batch: batch,
+                                          loss: meanSquaredError, learningRateSchedule: schedule)
+
+        let checkpoint = NFKMLXTrainingCheckpoint(url: weights, everySteps: 1, optimizerStateURL: state, resumes: true)
+        _ = try NFKMLXTrainer.train(freshModel(), optimizer: adam(), steps: 6, batch: batch, loss: meanSquaredError,
+                                    learningRateSchedule: schedule, checkpoint: checkpoint) { $0.index < 2 }
+        var seen = [Int]()
+        let resumed = freshModel()
+        let rest = try NFKMLXTrainer.train(resumed, optimizer: adam(), steps: 6, batch: batch, loss: meanSquaredError,
+                                           learningRateSchedule: schedule, checkpoint: checkpoint) {
+            seen.append($0.index)
+            return true
+        }
+        XCTAssertEqual(seen, [3, 4, 5], "the run continues at the update after the last write")
+        XCTAssertEqual(rest, Array(all[3...]))
+        XCTAssertEqual(resumed.weight.asArray(Float.self), uninterrupted.weight.asArray(Float.self))
+    }
+
+    func testAWeightsOnlyCheckpointDoesNotResume() throws {
+        try requireMLXRuntime()
+        let weights = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: weights) }
+        let checkpoint = NFKMLXTrainingCheckpoint(url: weights, everySteps: 1, resumes: true)
+        _ = try NFKMLXTrainer.train(Linear(2, 2), optimizer: SGD(learningRate: 0.1), steps: 2,
+                                    batch: { _ in self.fixedBatch() }, loss: meanSquaredError, checkpoint: checkpoint)
+        let history = try NFKMLXTrainer.train(Linear(2, 2), optimizer: SGD(learningRate: 0.1), steps: 2,
+                                              batch: { _ in self.fixedBatch() }, loss: meanSquaredError,
+                                              checkpoint: checkpoint)
+        XCTAssertEqual(history.count, 2, "without the optimizer's state there is nothing to continue")
+    }
+
+    func testAnOptimizerStateCheckpointRefusesAnUnreadableOptimizer() throws {
+        try requireMLXRuntime()
+        let weights = temporaryURL(), state = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: weights)
+            try? FileManager.default.removeItem(at: state)
+        }
+        XCTAssertThrowsError(try NFKMLXTrainer.train(
+            Linear(2, 2), optimizer: Adam(learningRate: 0.1), steps: 2, batch: { _ in self.fixedBatch() },
+            loss: meanSquaredError, checkpoint: NFKMLXTrainingCheckpoint(url: weights, everySteps: 1, optimizerStateURL: state)))
+    }
+
+    func testValidationScoresInEvaluationModeAndCanStopTheRun() throws {
+        try requireMLXRuntime()
+        let model = DropoutOverFrozenEncoder()
+        model.encoder.freeze()
+        var validated = [(step: Int, training: Bool, normTraining: Bool)]()
+        var scores = [Float]()
+        let observer = NFKMLXTrainer.validating(model, every: 2, evaluate: { model in
+            validated.append((-1, model.training, model.normalization.training))
+            return Float(scores.count)
+        }, report: { step, score in
+            validated[validated.count - 1].step = step
+            scores.append(score)
+            return scores.count < 2
+        })
+        var modes = [(model: Bool, normalization: Bool)]()
+        let history = try NFKMLXTrainer.train(
+            model, optimizer: SGD(learningRate: 0.01), steps: 10,
+            batch: { _ in (MLXArray.ones([4, 4]), MLXArray.zeros([4, 2])) },
+            loss: { model, input, target in
+                modes.append((model.training, model.normalization.training))
+                return (model.head(model.encoder(input)) - target).square().mean()
+            }, observer: observer)
+        XCTAssertEqual(validated.map(\.step), [1, 3], "every second update")
+        XCTAssertTrue(validated.allSatisfy { !$0.training && !$0.normTraining }, "validation runs in evaluation mode")
+        XCTAssertEqual(history.count, 4, "the second report ended the run")
+        XCTAssertTrue(modes.allSatisfy { $0.model && !$0.normalization },
+                      "the trainer's modes return after each validation, the frozen normalization evaluating")
+    }
+
+    // MARK: - Mixed precision
+
+    private final class HeadOverFrozenLinear: Module {
+        @ModuleInfo(key: "body") var body = Linear(2, 2)
+        @ModuleInfo(key: "head") var head = Linear(2, 2)
+        func callAsFunction(_ x: MLXArray) -> MLXArray { head(body(x)) }
+    }
+
+    func testABFloat16RunComputesInHalfAndKeepsFloat32Masters() throws {
+        try requireMLXRuntime()
+        let model = HeadOverFrozenLinear()
+        model.body.freeze()
+        let frozenBefore = model.body.weight.asArray(Float.self)
+        let headBefore = model.head.weight.asArray(Float.self)
+        let weights = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: weights) }
+        var seen = [(head: DType, body: DType, input: DType)]()
+        let history = try NFKMLXTrainer.train(
+            model, optimizer: SGD(learningRate: 0.1), steps: 6, batch: { _ in self.fixedBatch() },
+            loss: { model, input, target in
+                seen.append((model.head.weight.dtype, model.body.weight.dtype, input.dtype))
+                return (model(input) - target).square().mean()
+            }, precision: .bfloat16, checkpoint: NFKMLXTrainingCheckpoint(url: weights, everySteps: 3))
+        XCTAssertTrue(seen.allSatisfy { $0 == (.bfloat16, .bfloat16, .bfloat16) }, "the forward runs in bfloat16")
+        XCTAssertEqual(model.head.weight.dtype, .float32, "the masters stay float32")
+        XCTAssertNotEqual(model.head.weight.asArray(Float.self), headBefore, "the gradient reaches the masters")
+        XCTAssertEqual(model.body.weight.dtype, .float32)
+        XCTAssertEqual(model.body.weight.asArray(Float.self), frozenBefore, "the frozen values return exactly")
+        XCTAssertLessThan(history.last!, history.first!)
+        let written = try NFKMLXWeights.loadCheckpoint(url: weights).arrays
+        XCTAssertEqual(written["body.weight"]?.dtype, .float32, "a checkpoint holds the frozen parameters at float32")
+        XCTAssertEqual(written["body.weight"]?.asArray(Float.self), frozenBefore)
+    }
+
+    func testAFloat16RunSkipsAnOverflowingUpdateAndHalvesTheScale() throws {
+        try requireMLXRuntime()
+        let model = Linear(weight: MLXArray([Float(0.5), 0.25, -0.5, 1], [2, 2]), bias: MLXArray.zeros([2]))
+        var weights = [[Float]]()
+        // At a scale of 65,536 this gradient is about 2.6e5 a weight, past float16's 65,504; at half
+        // the scale it still overflows, and the update applies once the scale has fallen far enough.
+        _ = try NFKMLXTrainer.train(
+            model, optimizer: SGD(learningRate: 1e-4), steps: 6, batch: { _ in self.fixedBatch() },
+            loss: { model, input, _ in model(input).sum() * 2 }, precision: .float16) { _ in
+                weights.append(model.weight.asArray(Float.self))
+                return true
+            }
+        XCTAssertEqual(weights[0], [0.5, 0.25, -0.5, 1], "the first update overflowed and was skipped")
+        XCTAssertNotEqual(weights.last!, [0.5, 0.25, -0.5, 1], "a later update applies")
+        XCTAssertEqual(model.weight.dtype, .float32)
+    }
+
+    func testTheLossScaleHalvesOnOverflowAndDoublesAfterTwoThousandCleanUpdates() {
+        var scale = NFKMLXLossScale()
+        XCTAssertFalse(scale.record(finite: false))
+        XCTAssertEqual(scale.scale, 32_768)
+        for _ in 0 ..< 1_999 {
+            XCTAssertTrue(scale.record(finite: true))
+        }
+        XCTAssertEqual(scale.scale, 32_768)
+        XCTAssertTrue(scale.record(finite: true))
+        XCTAssertEqual(scale.scale, 65_536)
+    }
+
+    // MARK: - Batch-driven accumulation
+
+    /// The batches that complete an update, from ultralytics 8.4.120's own loop run with numpy
+    /// (`engine/trainer.py:297`, `:469`, `:542`). The last case keeps the warm-up's final count of 2
+    /// after the warm-up, where the setup's `round(64 / 24)` is 3.
+    func testTheUltralyticsAccumulationUpdatesOnTheReferencesBatches() {
+        func updates(_ batchSize: Int, _ warmup: Int, _ count: Int) -> [Int] {
+            let accumulation = NFKMLXGradientAccumulation.ultralytics(batchSize: batchSize, warmupBatches: warmup)
+            var previous = -1
+            return (0 ..< count).filter { batch in
+                guard accumulation.completesUpdate(batch, previous) else { return false }
+                previous = batch
+                return true
+            }
+        }
+        XCTAssertEqual(updates(16, 20, 40), [0, 1, 2, 3, 5, 7, 9, 12, 15, 19, 23, 27, 31, 35, 39])
+        XCTAssertEqual(updates(8, 0, 30), [7, 15, 23])
+        XCTAssertEqual(updates(48, 7, 20), Array(0 ..< 20))
+        XCTAssertEqual(updates(24, 10, 30), [0, 1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28])
+    }
+
+    func testABatchDrivenRunSumsItsBatchesAndSchedulesAtTheCompletingBatch() throws {
+        try requireMLXRuntime()
+        func freshModel() -> Linear { Linear(weight: MLXArray([Float(0.1), 0.2, -0.3, 0.4], [2, 2]), bias: MLXArray.zeros([2])) }
+        func batch(_ index: Int) -> (input: MLXArray, target: MLXArray) {
+            let (input, target) = fixedBatch()
+            return (input * Float(index + 1), target)
+        }
+        var scheduled = [Int]()
+        let schedule = NFKMLXLearningRateSchedule { step in
+            scheduled.append(step)
+            return 1
+        }
+        let everyThird = NFKMLXGradientAccumulation(reduction: .sum) { batch, previous in batch - previous >= 3 }
+        let model = freshModel()
+        var flags = [Bool]()
+        let history = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.01), steps: 7, batch: batch,
+                                              loss: meanSquaredError, accumulation: everyThird,
+                                              learningRateSchedule: schedule) { step in
+            flags.append(step.updated)
+            return true
+        }
+        XCTAssertEqual(history.count, 7, "one loss a batch")
+        XCTAssertEqual(flags, [false, false, true, false, false, true, false])
+        XCTAssertEqual(scheduled, [2, 5], "the rate is set at the batch that completes each update")
+
+        // The same two updates by hand: each the sum of three batches' gradients.
+        let reference = freshModel()
+        let gradient = valueAndGrad(model: reference) { model, arrays in
+            [self.meanSquaredError(model, arrays[0], arrays[1])]
+        }
+        for group in [0 ..< 3, 3 ..< 6] {
+            var sum: [String: MLXArray] = [:]
+            for index in group {
+                let (input, target) = batch(index)
+                for (key, value) in gradient(reference, [input, target]).1.flattened() {
+                    sum[key] = sum[key].map { $0 + value } ?? value
+                }
+            }
+            SGD(learningRate: 0.01).update(model: reference, gradients: ModuleParameters.unflattened(sum.map { ($0.key, $0.value) }))
+        }
+        eval(model, reference)
+        XCTAssertEqual(model.weight.asArray(Float.self), reference.weight.asArray(Float.self))
+    }
+
     // MARK: - Divergence
 
     /// A loss that turns non-finite after `finiteSteps`, standing in for the exploding update a real

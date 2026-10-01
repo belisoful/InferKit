@@ -209,7 +209,7 @@ extension NFKMLXGTCRNFactory {
             net,
             freezing: {},
             optimizer: optimizer,
-            reference: { Adam(learningRate: 1e-3, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: 1e-3) },
             referenceSchedule: { .constant },
             steps: steps,
             arrays: { step in

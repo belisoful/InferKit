@@ -83,7 +83,7 @@ public final class NFKMLXEmbeddingAdapter: Module {
         let stacked = stacked(documents, axis: 0)
         return try NFKMLXFineTune.run(
             adapter, freezing: {}, optimizer: nil,
-            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: learningRate) },
             referenceSchedule: { .constant }, steps: steps,
             batch: { _ in (queries, stacked) },
             loss: { model, queries, documents in objective(model, queries: queries, documents: documents) },

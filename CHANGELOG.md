@@ -844,6 +844,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   alone, so it could open a span past the end of the audio. `NFKMLXSileroVADBackend` ends a span that
   reaches its zero-padded last chunk at the clip's end, as `get_speech_timestamps` does.
 
+#### Training resumes from optimizer state, validates in evaluation mode, computes in half precision, and accumulates by a reference's rule
+
+- `NFKMLXTrainingCheckpoint(url:everySteps:optimizerStateURL:resumes:)` writes the optimizer's state and
+  the completed-update count beside the weights, and a run given the same checkpoint with `resumes`
+  continues at the next update with the schedule and the batches where they would have been. A
+  weights-only resume restarted Adam's moments at zero and took several-times-too-large first steps.
+- The reference optimizers are the package's own so their state can be read: `NFKMLXAdam` and
+  `NFKMLXSGD` compute exactly what mlx-swift's `Adam`, `AdamW`, and `SGD` compute, and the Keras,
+  RAdam, fairseq, and AMSGrad forms keep their state by parameter path (`NFKMLXResumableOptimizer`).
+  A checkpoint that names a state file refuses an optimizer whose state it cannot read.
+- `NFKMLXTrainer.validating(_:every:evaluate:report:observer:)` scores the model in evaluation mode
+  every few updates and ends the run when `report` returns false.
+- `NFKMLXTrainingPrecision` runs the passes in bfloat16, or in float16 under PyTorch `GradScaler`'s
+  dynamic loss scaling, over float32 master weights. Float32 stays the default.
+- `NFKMLXGradientAccumulation` groups batches into updates by a reference's own rule;
+  `.ultralytics(batchSize:warmupBatches:nominalBatchSize:)` sums them and ramps the count through the
+  warm-up, as YOLO's trainer does. Each `NFKMLXTrainingStep` reports whether it updated.
+
 #### Conv-TasNet fine-tunes on a consumer's own mixtures
 
 - `NFKMLXConvTasNet.network(weightsURL:)` and `fineTune(_:examples:…)` train every weight with asteroid

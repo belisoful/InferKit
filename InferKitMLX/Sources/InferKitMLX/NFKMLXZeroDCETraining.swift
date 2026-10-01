@@ -221,7 +221,7 @@ extension NFKMLXZeroDCE {
         try NFKMLXFineTune.run(net,
                                freezing: {},
                                optimizer: optimizer,
-                               reference: { NFKMLXL2Adam(learningRate: 1e-4, weightDecay: 1e-4) },
+                               reference: { NFKMLXReferenceOptimizers.l2Adam(learningRate: 1e-4, weightDecay: 1e-4) },
                                referenceSchedule: { .constant },
                                steps: steps,
                                sample: photos, loss: objective.callAsFunction,

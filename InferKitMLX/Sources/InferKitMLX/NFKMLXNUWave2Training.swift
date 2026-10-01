@@ -142,7 +142,7 @@ extension NFKMLXNUWave2 {
             net,
             freezing: {},
             optimizer: optimizer,
-            reference: { Adam(learningRate: 2e-4, betas: (0.9, 0.99), eps: 1e-9, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: 2e-4, betas: (0.9, 0.99), eps: 1e-9) },
             referenceSchedule: { .constant },
             steps: steps,
             arrays: { step in

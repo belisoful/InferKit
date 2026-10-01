@@ -22,10 +22,16 @@ import MLXOptimizers
 enum NFKMLXReferenceOptimizers {
 
     /// `torch.optim.AdamW`: bias-corrected, with the weight decay applied to the parameter rather than
-    /// the gradient.
+    /// the gradient. Its state can be checkpointed and resumed.
     static func adamW(learningRate: Float, betas: (Float, Float) = (0.9, 0.999), eps: Float = 1e-8,
-                      weightDecay: Float) -> AdamW {
-        AdamW(learningRate: learningRate, betas: betas, eps: eps, weightDecay: weightDecay, biasCorrection: true)
+                      weightDecay: Float) -> NFKMLXAdam {
+        NFKMLXAdam(learningRate: learningRate, betas: betas, eps: eps, weightDecay: weightDecay, biasCorrection: true)
+    }
+
+    /// `torch.optim.Adam` with its `weight_decay` as L2 regularization: the decay joins the gradient
+    /// before the moment estimates. Bias-corrected, as torch's is.
+    static func l2Adam(learningRate: Float, weightDecay: Float) -> NFKMLXAdam {
+        NFKMLXAdam(learningRate: learningRate, l2: weightDecay, biasCorrection: true)
     }
 
     /// `torch.optim.AdamW` over two parameter groups: `weightDecay` on every parameter the predicate
@@ -61,6 +67,13 @@ enum NFKMLXReferenceOptimizers {
         }
         let filters = members.dropLast().map { keys in { (key: String, _: MLXArray) in keys.contains(key) } }
         return MultiOptimizer(optimizers: optimizers, filters: Array(filters))
+    }
+
+    /// fairseq's `adam` (`fairseq/optim/adam.py`, v0.12.2), with its decoupled weight decay on every
+    /// parameter, as the TrOCR recipes train.
+    static func fairseqAdam(learningRate: Float, betas: (Double, Double) = (0.9, 0.999), eps: Float = 1e-8,
+                            weightDecay: Float) -> NFKMLXFairseqAdam {
+        NFKMLXFairseqAdam(learningRate: learningRate, betas: betas, eps: eps, weightDecay: weightDecay)
     }
 
     /// timm's `RAdam` as `create_optimizer_v2` builds it: two groups, with no weight decay on a
@@ -106,28 +119,13 @@ enum NFKMLXReferenceOptimizers {
             }
         }
         let optimizers = settings.map {
-            SGD(learningRate: learningRate * $0.rateScale, momentum: momentum, weightDecay: $0.weightDecay)
+            NFKMLXSGD(learningRate: learningRate * $0.rateScale, momentum: momentum, weightDecay: $0.weightDecay)
         }
         guard optimizers.count > 1 else {
-            return optimizers.first ?? SGD(learningRate: learningRate, momentum: momentum)
+            return optimizers.first ?? NFKMLXSGD(learningRate: learningRate, momentum: momentum)
         }
         let filters = members.dropLast().map { keys in { (key: String, _: MLXArray) in keys.contains(key) } }
         return MultiOptimizer(optimizers: optimizers, filters: Array(filters))
-    }
-}
-
-/// `torch.optim.Adam` with its `weight_decay`: the decay joins the gradient before the moment estimates
-/// (L2 regularization), where AdamW shrinks the parameter directly. Bias-corrected, as torch's is.
-final class NFKMLXL2Adam: Adam {
-    let weightDecay: Float
-
-    init(learningRate: Float, weightDecay: Float) {
-        self.weightDecay = weightDecay
-        super.init(learningRate: learningRate, biasCorrection: true)
-    }
-
-    override func applySingle(gradient: MLXArray, parameter: MLXArray, state: AdamState) -> (MLXArray, AdamState) {
-        super.applySingle(gradient: gradient + weightDecay * parameter, parameter: parameter, state: state)
     }
 }
 
@@ -150,7 +148,7 @@ final class NFKMLXKerasAdam: Optimizer, NFKMLXRateScheduled {
     let epsilon: Float
 
     /// Each parameter's moments and step, keyed by its flattened path.
-    private var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
+    var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
 
     init(learningRate: Float, beta1: Float = 0.9, beta2: Float = 0.999, epsilon: Float = 1e-7) {
         self.learningRate = learningRate
@@ -183,6 +181,61 @@ final class NFKMLXKerasAdam: Optimizer, NFKMLXRateScheduled {
     }
 }
 
+/// fairseq's `adam` (`fairseq/optim/adam.py`, v0.12.2), the optimizer microsoft/unilm's TrOCR recipes
+/// train with.
+///
+/// Its update is the Keras form with PyTorch's moments: `m = β₁m + (1 − β₁)g`, `v = β₂v + (1 − β₂)g²`,
+/// then `θ −= lr·√(1 − β₂ᵗ)/(1 − β₁ᵗ) · m/(√v + ε)`, so epsilon joins the square root of the
+/// uncorrected second moment where `torch.optim.AdamW` adds it after the correction. The weight decay
+/// shrinks the parameter by `weightDecay · lr` before that step, decoupled from the gradient, on every
+/// parameter. The step size is computed in double precision, as the reference computes it in Python.
+///
+/// It adopts `Optimizer` directly for the reason ``NFKMLXRAdam`` does.
+final class NFKMLXFairseqAdam: Optimizer, NFKMLXRateScheduled {
+    var learningRate: Float
+    let betas: (Double, Double)
+    let eps: Float
+    let weightDecay: Float
+
+    /// Each parameter's moments and step, keyed by its flattened path.
+    var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
+
+    init(learningRate: Float, betas: (Double, Double) = (0.9, 0.999), eps: Float = 1e-8, weightDecay: Float = 0) {
+        self.learningRate = learningRate
+        self.betas = betas
+        self.eps = eps
+        self.weightDecay = weightDecay
+    }
+
+    func update(model: Module, gradients: ModuleParameters) {
+        let parameters = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
+        let (b1, b2) = betas
+        var updated = [(String, MLXArray)]()
+        for (key, gradient) in gradients.flattened() {
+            guard let parameter = parameters[key] else { continue }
+            let previous = moments[key] ?? (MLXArray.zeros(like: parameter), MLXArray.zeros(like: parameter), 0)
+            let step = previous.step + 1
+            let m = Float(b1) * previous.m + Float(1 - b1) * gradient
+            let v = Float(b2) * previous.v + Float(1 - b2) * square(gradient)
+            moments[key] = (m, v, step)
+
+            let rate = Double(learningRate)
+            let stepSize: Double = rate * (1 - Foundation.pow(b2, Double(step))).squareRoot()
+                / (1 - Foundation.pow(b1, Double(step)))
+            var next = parameter
+            if weightDecay != 0 {
+                next = next - Float(Double(weightDecay) * rate) * next
+            }
+            updated.append((key, next - Float(stepSize) * (m / (sqrt(v) + eps))))
+        }
+        model.update(parameters: ModuleParameters.unflattened(updated))
+    }
+
+    func innerState() -> [MLXArray] {
+        moments.values.flatMap { [$0.m, $0.v] }
+    }
+}
+
 /// timm's `RAdam` (`timm/optim/radam.py`, unchanged through timm 0.9): Adam with the variance of the
 /// adaptive rate rectified. While the length of the approximated simple moving average is under 5 the
 /// step is the bias-corrected momentum alone, unnormalized; from there on it is the bias-corrected
@@ -199,7 +252,7 @@ final class NFKMLXRAdam: Optimizer, NFKMLXRateScheduled {
     let weightDecay: Float
 
     /// Each parameter's moments and step, keyed by its flattened path.
-    private var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
+    var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
 
     init(learningRate: Float, betas: (Double, Double) = (0.9, 0.999), eps: Float = 1e-8, weightDecay: Float = 0) {
         self.learningRate = learningRate
@@ -248,6 +301,39 @@ final class NFKMLXRAdam: Optimizer, NFKMLXRateScheduled {
     }
 }
 
+/// The Keras, timm, and fairseq forms keep the same state, each parameter's two moments and its step.
+protocol NFKMLXMomentOptimizer: NFKMLXResumableOptimizer, AnyObject {
+    var moments: [String: (m: MLXArray, v: MLXArray, step: Int)] { get set }
+}
+
+extension NFKMLXMomentOptimizer {
+    func stateArrays() -> [String: MLXArray] {
+        var arrays = [String: MLXArray]()
+        for (key, state) in moments {
+            arrays["\(key).m"] = state.m
+            arrays["\(key).v"] = state.v
+            arrays["\(key).step"] = MLXArray(Int32(state.step))
+        }
+        return arrays
+    }
+
+    func restore(stateArrays: [String: MLXArray]) throws {
+        var restored = [String: (m: MLXArray, v: MLXArray, step: Int)]()
+        for (key, value) in stateArrays where key.hasSuffix(".step") {
+            let path = String(key.dropLast(".step".count))
+            guard let m = stateArrays["\(path).m"], let v = stateArrays["\(path).v"] else {
+                throw NFKMLXError.checkpointNotReadable("optimizer state for \(path) is missing a moment")
+            }
+            restored[path] = (m, v, Int(value.item(Int32.self)))
+        }
+        moments = restored
+    }
+}
+
+extension NFKMLXKerasAdam: NFKMLXMomentOptimizer {}
+extension NFKMLXRAdam: NFKMLXMomentOptimizer {}
+extension NFKMLXFairseqAdam: NFKMLXMomentOptimizer {}
+
 /// `torch.optim.Adam` with `amsgrad=True`, as PANNs trains: the second-moment estimate in the denominator
 /// is the running maximum of every estimate so far, which keeps a parameter's step from growing when its
 /// gradients shrink. Bias-corrected, with the moments updated as torch's `lerp_` and `addcmul_` write
@@ -291,5 +377,31 @@ final class NFKMLXAMSGrad: Optimizer, NFKMLXRateScheduled {
 
     func innerState() -> [MLXArray] {
         moments.values.flatMap { [$0.m, $0.v, $0.maximumV] }
+    }
+}
+
+extension NFKMLXAMSGrad: NFKMLXResumableOptimizer {
+    func stateArrays() -> [String: MLXArray] {
+        var arrays = [String: MLXArray]()
+        for (key, state) in moments {
+            arrays["\(key).m"] = state.m
+            arrays["\(key).v"] = state.v
+            arrays["\(key).maximumV"] = state.maximumV
+            arrays["\(key).step"] = MLXArray(Int32(state.step))
+        }
+        return arrays
+    }
+
+    func restore(stateArrays: [String: MLXArray]) throws {
+        var restored = [String: (m: MLXArray, v: MLXArray, maximumV: MLXArray, step: Int)]()
+        for (key, value) in stateArrays where key.hasSuffix(".step") {
+            let path = String(key.dropLast(".step".count))
+            guard let m = stateArrays["\(path).m"], let v = stateArrays["\(path).v"],
+                  let maximumV = stateArrays["\(path).maximumV"] else {
+                throw NFKMLXError.checkpointNotReadable("optimizer state for \(path) is missing a moment")
+            }
+            restored[path] = (m, v, maximumV, Int(value.item(Int32.self)))
+        }
+        moments = restored
     }
 }

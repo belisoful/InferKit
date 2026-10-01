@@ -11226,7 +11226,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         let optimizer = NFKMLXYOLO.referenceOptimizer(classCount: 3, batchSize: 2)
         let rates = try XCTUnwrap(NFKMLXLearningRateSchedule.scheduledGroups(of: optimizer))
-        let ourDecays = try XCTUnwrap(optimizer as? MultiOptimizer).optimizers.compactMap { ($0 as? AdamW)?.weightDecay }
+        let ourDecays = try XCTUnwrap(optimizer as? MultiOptimizer).optimizers.compactMap { ($0 as? NFKMLXAdam)?.weightDecay }
         let expectedRate = try array("rate").item(Float.self)
         let decays = try array("group_decays").asArray(Float.self)
         let schedule = NFKMLXLearningRateSchedule.ultralytics(steps: 20, stepsPerEpoch: 5)

@@ -27,12 +27,81 @@ public struct NFKMLXTrainingStep: Sendable {
 
     /// The loss the step reported.
     public let loss: Float
+
+    /// Whether the step ended with an optimizer update. Under an ``NFKMLXGradientAccumulation`` a step
+    /// is one batch, and only the batch that completes an update updates; otherwise every step does.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public let updated: Bool
+
+    init(index: Int, count: Int, loss: Float, updated: Bool = true) {
+        self.index = index
+        self.count = count
+        self.loss = loss
+        self.updated = updated
+    }
 }
 
-/// Writes the model to `url` every `everySteps` steps.
+/// How a run groups its batches into optimizer updates, for a reference whose grouping is not a fixed
+/// count. Under one, a run's `steps` counts batches, the observer sees each batch, and the schedule
+/// sets the rate from the index of the batch that completes each update.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKMLXGradientAccumulation: Sendable {
+
+    /// How the gradients of an update's batches combine.
+    public enum Reduction: Sendable {
+        /// Their mean, as transformers' `gradient_accumulation_steps` takes it.
+        case mean
+        /// Their sum, as a reference that calls `backward()` per batch and steps later takes it.
+        case sum
+    }
+
+    public let reduction: Reduction
+
+    /// Whether `batch` completes an update, given the batch that completed the previous one (−1
+    /// before the first).
+    public let completesUpdate: @Sendable (_ batch: Int, _ previousUpdate: Int) -> Bool
+
+    public init(reduction: Reduction, completesUpdate: @escaping @Sendable (_ batch: Int, _ previousUpdate: Int) -> Bool) {
+        self.reduction = reduction
+        self.completesUpdate = completesUpdate
+    }
+
+    /// ultralytics' `BaseTrainer` (v8.4.120, `engine/trainer.py`): each batch's gradient adds to the
+    /// sum, and batch `ni` updates when `ni − last ≥ accumulate`. `accumulate` is
+    /// `max(round(nominalBatchSize / batchSize), 1)`, and during the first `warmupBatches` batches it is
+    /// `max(1, round(interp(ni, [0, warmupBatches], [1, nominalBatchSize / batchSize])))`, keeping its
+    /// last warm-up value after; both round half to even, as Python and numpy do.
+    public static func ultralytics(batchSize: Int, warmupBatches: Int,
+                                   nominalBatchSize: Int = 64) -> NFKMLXGradientAccumulation {
+        let ratio = Double(nominalBatchSize) / Double(max(batchSize, 1))
+        let setUp = max(Int(ratio.rounded(.toNearestOrEven)), 1)
+        @Sendable func ramp(_ batch: Int) -> Int {
+            max(1, Int((1 + (ratio - 1) * Double(batch) / Double(warmupBatches)).rounded(.toNearestOrEven)))
+        }
+        let afterWarmup = warmupBatches > 0 ? ramp(warmupBatches - 1) : setUp
+        return NFKMLXGradientAccumulation(reduction: .sum) { batch, previous in
+            batch - previous >= (batch < warmupBatches ? ramp(batch) : afterWarmup)
+        }
+    }
+}
+
+/// Writes the model to `url` every `everySteps` steps, and optionally the optimizer's state beside it so
+/// a later run can resume where this one stopped.
 ///
 /// A run lasts minutes, and an app can be suspended part way through one. Periodic checkpoints make
 /// the work already done survive that.
+///
+/// - A weights-only checkpoint (`optimizerStateURL` nil) restarts Adam's moments at zero when a run
+///   starts again from it, so its first updates are several times larger than the interrupted run's.
+/// - With `optimizerStateURL`, each write also records the optimizer's state and the number of
+///   completed updates. A run given the same checkpoint with `resumes` set loads both files when they
+///   exist and continues at the next update, with the schedule, the batches, and the observer's step
+///   indices where they would have been. The returned losses cover the resumed updates. The optimizer
+///   must be a recipe's reference optimizer or an ``NFKMLXResumableOptimizer``.
+///
+/// Introduced in InferKit 0.4.0 (`optimizerStateURL`, `resumes`).
 public struct NFKMLXTrainingCheckpoint: Sendable {
 
     /// The destination, which must be a `.safetensors` file.
@@ -41,11 +110,42 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
     /// How many steps pass between writes. At least one.
     public let everySteps: Int
 
-    public init(url: URL, everySteps: Int) {
+    /// Where each write also records the optimizer's state, a `.safetensors` file; nil writes weights only.
+    public let optimizerStateURL: URL?
+
+    /// Whether a run continues from the files this checkpoint names when both exist.
+    public let resumes: Bool
+
+    public init(url: URL, everySteps: Int, optimizerStateURL: URL? = nil, resumes: Bool = false) {
         self.url = url
         // The loop writes on `(step + 1) % everySteps`, which traps on zero. A caller asking for a
         // non-positive interval means every step.
         self.everySteps = max(everySteps, 1)
+        self.optimizerStateURL = optimizerStateURL
+        self.resumes = resumes
+    }
+
+    /// The completed-update count of the run to continue, after loading its weights into `model` and
+    /// its state into `optimizer`; 0 when there is nothing to resume.
+    func resume(_ model: Module, optimizer: Optimizer) throws -> Int {
+        guard resumes, let optimizerStateURL,
+              FileManager.default.fileExists(atPath: url.path),
+              FileManager.default.fileExists(atPath: optimizerStateURL.path) else {
+            return 0
+        }
+        let weights = try NFKMLXWeights.loadCheckpoint(url: url)
+        try NFKMLXWeights.apply(weights.arrays.map { ($0.key, $0.value) }, to: model, verifyShapes: true)
+        let state = try NFKMLXOptimizerState.load(from: optimizerStateURL)
+        try NFKMLXOptimizerState.restore(state.arrays, into: optimizer)
+        return state.completedSteps
+    }
+
+    /// Writes the model and, when one is named, the optimizer's state after `completedSteps` updates.
+    func write(_ model: Module, optimizer: Optimizer, completedSteps: Int) throws {
+        try NFKMLXWeights.save(model, to: url)
+        if let optimizerStateURL {
+            try NFKMLXOptimizerState.save(optimizer, completedSteps: completedSteps, to: optimizerStateURL)
+        }
     }
 }
 
@@ -92,6 +192,88 @@ public enum NFKMLXTrainingCachePolicy: Sendable {
     /// resampling, skip concatenation, and stacks of `relu`, `hardswish`, and `hardsigmoid`. Verify
     /// a given graph against the CPU before relying on this.
     case unchanged
+}
+
+/// The precision a training run computes in.
+///
+/// The half-precision cases keep each trainable parameter in float32 as its master copy. Each forward
+/// pass runs on a half-precision copy of those parameters, of every floating parameter the run
+/// freezes, and of the batch's floating arrays, and the gradient returns to the float32 masters, which
+/// the optimizer updates. The frozen parameters return to their float32 values when the run ends. A
+/// PyTorch reference's autocast chooses a precision per operation; this runs every operation of the
+/// forward in the half type, so its numbers follow the reference's closely and not exactly.
+///
+/// Introduced in InferKit 0.4.0.
+public enum NFKMLXTrainingPrecision: Sendable, Equatable {
+
+    /// Every computation in float32. The default.
+    case float32
+
+    /// The forward and backward passes in bfloat16, which covers float32's range.
+    case bfloat16
+
+    /// The forward and backward passes in float16, with PyTorch `GradScaler`'s dynamic loss scaling: the
+    /// loss is multiplied by a scale that starts at 65,536, an update whose gradient overflows is skipped
+    /// and halves the scale, and 2,000 updates in a row without one double it.
+    case float16
+
+    var dtype: DType? {
+        switch self {
+        case .float32: return nil
+        case .bfloat16: return .bfloat16
+        case .float16: return .float16
+        }
+    }
+}
+
+/// The float32 parameters a half-precision run leaves frozen, cast to the half type for the run and
+/// restored to their own values for each checkpoint and at the end.
+final class NFKMLXHalfFrozenParameters {
+    private let model: Module
+    private let originals: [(String, MLXArray)]
+    private let halves: [(String, MLXArray)]
+
+    init(of model: Module, dtype: DType) {
+        self.model = model
+        let trainable = Set(model.trainableParameters().flattened().map(\.0))
+        // `update(parameters:)` repoints the model's own array objects in place, so the originals are
+        // held as copies that no later update can reach.
+        originals = model.parameters().flattened()
+            .filter { !trainable.contains($0.0) && $0.1.dtype == .float32 }
+            .map { ($0.0, $0.1 * 1) }
+        halves = originals.map { ($0.0, $0.1.asType(dtype)) }
+        eval(originals.map(\.1) + halves.map(\.1))
+        apply()
+    }
+
+    func apply() {
+        model.update(parameters: ModuleParameters.unflattened(halves))
+    }
+
+    func restore() {
+        model.update(parameters: ModuleParameters.unflattened(originals))
+    }
+}
+
+/// PyTorch `GradScaler`'s dynamic loss scale, with its defaults.
+struct NFKMLXLossScale {
+    private(set) var scale: Float = 65_536
+    private var cleanUpdates = 0
+
+    /// Records whether an update's gradients were finite; returns whether the update applies.
+    mutating func record(finite: Bool) -> Bool {
+        guard finite else {
+            scale *= 0.5
+            cleanUpdates = 0
+            return false
+        }
+        cleanUpdates += 1
+        if cleanUpdates == 2_000 {
+            scale *= 2
+            cleanUpdates = 0
+        }
+        return true
+    }
 }
 
 /// Runs a supervised training loop over an MLX module.
@@ -156,6 +338,8 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -166,7 +350,8 @@ public enum NFKMLXTrainer {
                 loss: { model, arrays in loss(model, arrays[0], arrays[1]) },
                 accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
                 learningRateSchedule: learningRateSchedule,
-                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+                precision: precision, accumulation: accumulation, checkpoint: checkpoint, cachePolicy: cachePolicy,
+                observer: observer)
     }
 
     /// Trains `model` for `steps` steps against a loss that needs no ground truth, and returns the
@@ -199,6 +384,8 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, MLXArray) -> MLXArray,
         clipGradientNorm: Float? = nil,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -209,7 +396,8 @@ public enum NFKMLXTrainer {
                 loss: { model, arrays in loss(model, arrays[0]) },
                 accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
                 learningRateSchedule: learningRateSchedule,
-                checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
+                precision: precision, accumulation: accumulation, checkpoint: checkpoint, cachePolicy: cachePolicy,
+                observer: observer)
     }
 
     /// Trains `model` on any number of arrays per step: an image, a prompt, and a target, for instance.
@@ -231,6 +419,8 @@ public enum NFKMLXTrainer {
         loss: @escaping (Model, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float? = nil,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -240,8 +430,43 @@ public enum NFKMLXTrainer {
         try run(model, optimizer: optimizer, steps: steps, arrays: arrays, loss: loss,
                 accumulationSteps: accumulationSteps, clipGradientNorm: clipGradientNorm,
                 learningRateSchedule: learningRateSchedule,
-                checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
+                precision: precision, accumulation: accumulation, checkpoint: checkpoint, cachePolicy: cachePolicy,
+                constraint: constraint,
                 observer: observer)
+    }
+
+    /// An observer that validates `model` every `every` updates, for any run or recipe that takes an
+    /// observer.
+    ///
+    /// At each validation the model switches to evaluation mode, so dropout is off and a `BatchNorm`
+    /// normalizes with its running statistics, and `evaluate` scores it on the caller's held-out data.
+    /// Training mode then returns as the trainer set it. `report` receives the update's index and the
+    /// score, and returning false ends the run there, which is how a run stops early when the score
+    /// stops improving. `observer`, when given, still sees every update.
+    ///
+    /// - Parameters:
+    ///   - model: the model the run trains.
+    ///   - every: how many updates pass between validations. At least one.
+    ///   - evaluate: scores the model; it runs without gradients and should not update the model.
+    ///   - report: receives each validation's update index and score; false ends the run.
+    ///   - observer: receives every update, as a run's observer does.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func validating<Model: Module>(
+        _ model: Model, every: Int, evaluate: @escaping (Model) -> Float,
+        report: @escaping (_ step: Int, _ score: Float) -> Bool, observer: Observer? = nil
+    ) -> Observer {
+        let interval = max(every, 1)
+        return { step in
+            let continues = observer?(step) ?? true
+            guard (step.index + 1) % interval == 0 else {
+                return continues
+            }
+            model.train(false)
+            let score = evaluate(model)
+            enterTrainingMode(model)
+            return report(step.index, score) && continues
+        }
     }
 
     /// The loop every entry point shares, over an arbitrary number of per-step arrays.
@@ -254,6 +479,8 @@ public enum NFKMLXTrainer {
         accumulationSteps: Int,
         clipGradientNorm: Float?,
         learningRateSchedule: NFKMLXLearningRateSchedule?,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         checkpoint: NFKMLXTrainingCheckpoint?,
         cachePolicy: NFKMLXTrainingCachePolicy,
         constraint: ((Model) -> Void)? = nil,
@@ -310,17 +537,98 @@ public enum NFKMLXTrainer {
             throw NFKMLXError.unsupportedConfiguration(
                 "an update averages at least one batch; accumulationSteps was \(accumulationSteps)")
         }
-        let lossAndGradient = valueAndGrad(model: model) { model, arrays in [loss(model, arrays)] }
+        let fullPrecision = valueAndGrad(model: model) { model, arrays in [loss(model, arrays)] }
+        var lossScale = NFKMLXLossScale()
+        // A resumed run loads its float32 checkpoint before the frozen parameters are cast.
+        let firstStep = try checkpoint?.resume(model, optimizer: optimizer) ?? 0
+        let frozen = precision.dtype.map { NFKMLXHalfFrozenParameters(of: model, dtype: $0) }
+        defer { frozen?.restore() }
+        let lossAndGradient: (Model, [MLXArray]) -> ([MLXArray], ModuleParameters) = { model, arrays in
+            guard let dtype = precision.dtype else {
+                return fullPrecision(model, arrays)
+            }
+            return halfPrecisionLossAndGradient(model, arrays, dtype: dtype,
+                                                lossScale: precision == .float16 ? lossScale.scale : 1, loss: loss)
+        }
         var history: [Float] = []
         history.reserveCapacity(steps)
 
-        for step in 0 ..< steps {
-            if cachePolicy == .reclaimedEachStep {
-                NFKMLXGPU.clearCache()
-            }
+        // One optimizer update from an update's combined gradient; false when float16 skips it.
+        func apply(_ gradients: ModuleParameters, at step: Int) -> Bool {
             if let learningRateSchedule {
                 let scale = learningRateSchedule.multiplier(step)
                 for (group, rate) in scheduled { group.learningRate = rate * scale }
+            }
+            guard precision != .float16 || lossScale.record(finite: allFinite(gradients)) else {
+                return false
+            }
+            let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
+            optimizer.update(model: model, gradients: update)
+            constraint?(model)
+            return true
+        }
+        func checked(_ loss: MLXArray, at step: Int) throws -> Float {
+            let value = loss.item(Float.self)
+            // Diverged parameters are unrecoverable, and writing them would replace a good checkpoint
+            // with a ruined one. Stop before the write rather than spending the device's battery on a
+            // run that cannot recover.
+            guard value.isFinite else {
+                throw NFKMLXError.trainingDiverged(
+                    "the loss became \(value) at step \(step) of \(steps); "
+                    + "the checkpoint was left at its last finite state. Lower the learning rate, "
+                    + "or set `clipGradientNorm` to bound the update.")
+            }
+            return value
+        }
+        func write(after completedSteps: Int) throws {
+            guard let checkpoint else { return }
+            // A checkpoint holds the frozen parameters at the precision the model was built in.
+            frozen?.restore()
+            try checkpoint.write(model, optimizer: optimizer, completedSteps: completedSteps)
+            frozen?.apply()
+        }
+
+        if let accumulation {
+            var previousUpdate = firstStep - 1
+            var updates = 0
+            var gradientSums = [String: MLXArray]()
+            var batches = 0
+            for batch in firstStep ..< steps {
+                if cachePolicy == .reclaimedEachStep {
+                    NFKMLXGPU.clearCache()
+                }
+                let (values, gradients) = lossAndGradient(model, arrays(batch))
+                for (key, gradient) in gradients.flattened() {
+                    gradientSums[key] = gradientSums[key].map { $0 + gradient } ?? gradient
+                }
+                batches += 1
+                eval([values[0]] + Array(gradientSums.values))
+                let batchLoss = try checked(values[0], at: batch)
+                history.append(batchLoss)
+                let completes = accumulation.completesUpdate(batch, previousUpdate)
+                if completes {
+                    let scale: Float = accumulation.reduction == .mean ? 1 / Float(batches) : 1
+                    _ = apply(ModuleParameters.unflattened(gradientSums.map { ($0.key, scale == 1 ? $0.value : $0.value * scale) }),
+                              at: batch)
+                    eval(model, optimizer)
+                    previousUpdate = batch
+                    gradientSums.removeAll()
+                    batches = 0
+                    updates += 1
+                    if let checkpoint, updates % checkpoint.everySteps == 0 {
+                        try write(after: batch + 1)
+                    }
+                }
+                if observer?(NFKMLXTrainingStep(index: batch, count: steps, loss: batchLoss, updated: completes)) == false {
+                    break
+                }
+            }
+            return history
+        }
+
+        for step in firstStep ..< steps {
+            if cachePolicy == .reclaimedEachStep {
+                NFKMLXGPU.clearCache()
             }
             let lossValue: MLXArray
             let gradients: ModuleParameters
@@ -332,26 +640,14 @@ public enum NFKMLXTrainer {
                     lossAndGradient(model, arrays(step * accumulationSteps + $0))
                 }
             }
-            let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
-            optimizer.update(model: model, gradients: update)
-            constraint?(model)
+            _ = apply(gradients, at: step)
             // MLX builds the step lazily; this is where it runs.
             eval(model, optimizer)
 
-            let stepLoss = lossValue.item(Float.self)
+            let stepLoss = try checked(lossValue, at: step)
             history.append(stepLoss)
-
-            // Diverged parameters are unrecoverable, and writing them would replace a good checkpoint
-            // with a ruined one. Stop before the write rather than spending the device's battery on a
-            // run that cannot recover.
-            guard stepLoss.isFinite else {
-                throw NFKMLXError.trainingDiverged(
-                    "the loss became \(stepLoss) at step \(step) of \(steps); "
-                    + "the checkpoint was left at its last finite state. Lower the learning rate, "
-                    + "or set `clipGradientNorm` to bound the update.")
-            }
             if let checkpoint, (step + 1) % checkpoint.everySteps == 0 {
-                try NFKMLXWeights.save(model, to: checkpoint.url)
+                try write(after: step + 1)
             }
             if observer?(NFKMLXTrainingStep(index: step, count: steps, loss: stepLoss)) == false {
                 break
@@ -407,7 +703,7 @@ public enum NFKMLXTrainer {
     /// to evaluation mode. Every other module trains, so a dropout or drop path in a frozen encoder
     /// still drops, as it does in a PyTorch reference that calls `model.train()` and freezes by
     /// `requires_grad_(False)`.
-    private static func enterTrainingMode(_ model: Module) {
+    static func enterTrainingMode(_ model: Module) {
         model.train(true)
         for (_, module) in [("", model)] + model.namedModules()
         where keepsRunningStatistics(module) && module.trainableParameters().flattened().isEmpty {
@@ -461,6 +757,33 @@ public enum NFKMLXTrainer {
 
     /// The mean loss and the mean gradients of `count` batches, each batch evaluated before the next
     /// runs, so the graph and the memory it holds stay one batch deep.
+    /// The loss and the gradient with respect to the float32 masters, through a forward in `dtype`.
+    /// The loss is multiplied by `lossScale` before the backward pass and both are divided by it after.
+    private static func halfPrecisionLossAndGradient<Model: Module>(
+        _ model: Model, _ arrays: [MLXArray], dtype: DType, lossScale: Float,
+        loss: @escaping (Model, [MLXArray]) -> MLXArray
+    ) -> ([MLXArray], ModuleParameters) {
+        // Copies, because the forward's `update(parameters:)` repoints the model's own array objects.
+        let masters = model.trainableParameters().flattened().map { ($0.0, $0.1 * 1) }
+        let keys = masters.map(\.0)
+        let batch = arrays.map { $0.dtype == .float32 ? $0.asType(dtype) : $0 }
+        // Every master is an argument to differentiate; the default differentiates the first alone.
+        let scaled = valueAndGrad({ (parameters: [MLXArray]) -> [MLXArray] in
+            model.update(parameters: ModuleParameters.unflattened(zip(keys, parameters.map { $0.asType(dtype) }).map { ($0, $1) }))
+            return [loss(model, batch).asType(.float32) * lossScale]
+        }, argumentNumbers: Array(masters.indices))
+        let (values, gradients) = scaled(masters.map(\.1))
+        model.update(parameters: ModuleParameters.unflattened(masters))
+        let unscale = 1 / lossScale
+        return ([values[0] * unscale],
+                ModuleParameters.unflattened(zip(keys, gradients.map { $0 * unscale }).map { ($0, $1) }))
+    }
+
+    /// Whether every gradient entry is finite.
+    private static func allFinite(_ gradients: ModuleParameters) -> Bool {
+        gradients.flattened().allSatisfy { MLX.isFinite($0.1).all().item(Bool.self) }
+    }
+
     private static func averaged(over count: Int,
                                  _ batch: (Int) -> ([MLXArray], ModuleParameters)) -> (MLXArray, ModuleParameters) {
         var lossSum = MLXArray(Float(0))

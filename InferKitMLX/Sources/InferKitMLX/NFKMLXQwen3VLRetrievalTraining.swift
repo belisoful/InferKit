@@ -165,7 +165,7 @@ extension NFKMLXQwen3VLReranker {
                          observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         try NFKMLXFineTune.run(
             head, freezing: {}, optimizer: nil,
-            reference: { Adam(learningRate: learningRate, biasCorrection: true) },
+            reference: { NFKMLXAdam(learningRate: learningRate) },
             referenceSchedule: { .constant }, steps: steps,
             batch: { _ in (hidden, labels) },
             loss: { model, hidden, labels in objective(model, hidden: hidden, labels: labels) },

@@ -168,7 +168,7 @@ extension NFKMLXVAD {
             net,
             freezing: {},
             optimizer: optimizer,
-            reference: { SGD(learningRate: 0.01, momentum: 0.9, weightDecay: 0.001) },
+            reference: { NFKMLXSGD(learningRate: 0.01, momentum: 0.9, weightDecay: 0.001) },
             referenceSchedule: {
                 .nemoPolynomialHoldDecay(steps: steps, warmupRatio: 0.05, holdRatio: 0.15, power: 2,
                                          minimumScale: 1e-8 / 0.01)

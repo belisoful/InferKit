@@ -25,12 +25,19 @@ import MLXOptimizers
 
 /// Runs the fine-tuning sequence a recipe wraps.
 ///
-/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:learningRateSchedule:checkpoint:cachePolicy:observer:)``
+/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:precision:accumulation:learningRateSchedule:checkpoint:cachePolicy:observer:)``
 /// in place of calling `NFKMLXTrainer.train` directly, so the ordering and the two resolution rules
 /// are written once. The recipe keeps its own public signature.
 ///
 /// Introduced in InferKit 0.5.0.
 public enum NFKMLXFineTune {
+
+    /// transformers' `Trainer` default update, `per_device_train_batch_size` 8 with no accumulation: the
+    /// reference for a recipe that ports a model's `labels=` loss with no training script of its own.
+    /// Pass it as `accumulationSteps` to a recipe that steps on one example.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static let transformersTrainerBatchSize = 8
 
     /// Freezes, resolves the optimizer and the schedule, and runs the training loop.
     ///
@@ -53,6 +60,9 @@ public enum NFKMLXFineTune {
     ///     reference setting no clip.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. See
     ///     `NFKMLXTrainer.train`.
+    ///   - precision: the precision the passes compute in, ``NFKMLXTrainingPrecision``; float32 by default.
+    ///   - accumulation: groups batches into updates by a rule, for a reference whose grouping is not a
+    ///     fixed count; `steps` then counts batches. See ``NFKMLXGradientAccumulation``.
     ///   - learningRateSchedule: the caller's schedule, nil to resolve one.
     ///   - checkpoint: writes the network periodically.
     ///   - cachePolicy: the buffer-cache policy for the run.
@@ -86,6 +96,8 @@ public enum NFKMLXFineTune {
         loss: @escaping (Net, [MLXArray]) -> MLXArray,
         clipGradientNorm: Float?,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -99,7 +111,8 @@ public enum NFKMLXFineTune {
         return try NFKMLXTrainer.train(
             net, optimizer: optimizer ?? reference(), steps: steps,
             arrays: arrays, loss: loss,
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
+            accumulation: accumulation,
             learningRateSchedule: schedule,
             checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
             observer: observer)
@@ -119,6 +132,8 @@ public enum NFKMLXFineTune {
         loss: @escaping (Net, MLXArray) -> MLXArray,
         clipGradientNorm: Float?,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -128,7 +143,8 @@ public enum NFKMLXFineTune {
                 referenceSchedule: referenceSchedule, steps: steps,
                 arrays: { [sample($0)] },
                 loss: { net, arrays in loss(net, arrays[0]) },
-                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
+            accumulation: accumulation,
                 learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
@@ -146,6 +162,8 @@ public enum NFKMLXFineTune {
         loss: @escaping (Net, MLXArray, MLXArray) -> MLXArray,
         clipGradientNorm: Float?,
         accumulationSteps: Int = 1,
+        precision: NFKMLXTrainingPrecision = .float32,
+        accumulation: NFKMLXGradientAccumulation? = nil,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
@@ -155,7 +173,8 @@ public enum NFKMLXFineTune {
                 referenceSchedule: referenceSchedule, steps: steps,
                 arrays: { let example = batch($0); return [example.input, example.target] },
                 loss: { net, arrays in loss(net, arrays[0], arrays[1]) },
-                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
+            accumulation: accumulation,
                 learningRateSchedule: learningRateSchedule,
                 checkpoint: checkpoint, cachePolicy: cachePolicy, observer: observer)
     }
