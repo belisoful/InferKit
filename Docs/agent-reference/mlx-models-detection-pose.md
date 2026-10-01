@@ -85,7 +85,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   on convolution weights only), `NFKMLXLearningRateSchedule.ultralytics` (the warm-up over
   `round(min(3, epochs − 1) · batches)` updates, then the per-epoch linear fall to 0.01), clipping at
   10, BatchNorm momentum 0.03, and `ModelEMA`'s average left in the network at the end, which is what
-  the reference saves. Measured against ultralytics' own code: the loss (`run_reference.py yolo_loss`)
+  the reference saves. Not reproduced: ultralytics accumulates `round(64 / batch)` batches into each
+  update, ramping from 1 over the warm-up (`engine/trainer.py:297`, `:469`, `:542`), and
+  `NFKMLXTrainer` updates after every batch, so a batch of 16 steps four times as often. Measured against ultralytics' own code: the loss (`run_reference.py yolo_loss`)
   97.40741 vs 97.407425 with the same 29 anchors assigned; the setup (`yolo_training_setup`, the
   trainer's `build_optimizer`, `_setup_scheduler`, `_get_warmup_iterations`, and `ModelEMA`) with
   groups 63 / 57 / 63, rate 0.001429, the schedule exact over 20 updates, and the average exact.
