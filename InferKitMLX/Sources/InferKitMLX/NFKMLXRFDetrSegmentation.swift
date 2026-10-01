@@ -137,6 +137,9 @@ public final class NFKMLXRFDetrSegmentationNet: Module {
             intermediateSize: config.segmentationIntermediateSize,
             downsampleRatio: config.maskDownsampleRatio)
         super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The staged segmentation, for parity localization and post-processing.

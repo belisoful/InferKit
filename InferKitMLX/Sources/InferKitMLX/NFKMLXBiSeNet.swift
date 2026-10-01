@@ -252,6 +252,10 @@ final class NFKMLXBiSeNetNet: Module {
                                                    classCount: configuration.classCount)
         _convOut32.wrappedValue = NFKBiSeNetOutput(inChannels: context, midChannels: width,
                                                    classCount: configuration.classCount)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Class logits `[1, H, W, classCount]` at the input resolution, for a batched image
@@ -596,6 +600,10 @@ final class NFKMLXBiSeNetV2Net: Module {
         // The released head emits one channel per class per output pixel of the shuffle.
         _headOut.wrappedValue = Conv2d(inputChannels: 1024, outputChannels: classCount * upFactor * upFactor,
                                        kernelSize: 1)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The label map as a grayscale image `[H, W, 1]`, the convention the other segmenters share.

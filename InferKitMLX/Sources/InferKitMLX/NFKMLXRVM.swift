@@ -524,6 +524,10 @@ final class NFKMLXRVMNet: Module {
         _projectMat.wrappedValue = NFKRVMProjection(inChannels: configuration.decoderChannels[3], outChannels: 4)
         _projectSeg.wrappedValue = NFKRVMProjection(inChannels: configuration.decoderChannels[3], outChannels: 1)
         _refiner.wrappedValue = NFKRVMRefiner(hiddenChannels: configuration.refinerHiddenChannels)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The recurrent state carried between frames: one hidden tensor per decoder GRU, ordered

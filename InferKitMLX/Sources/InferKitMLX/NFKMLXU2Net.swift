@@ -119,6 +119,10 @@ final class NFKMLXU2NetNet: Module {
         side5 = Conv2d(inputChannels: douts[0], outputChannels: 1, kernelSize: 3, padding: 1)
         side6 = Conv2d(inputChannels: outs[5], outputChannels: 1, kernelSize: 3, padding: 1)
         outconv = Conv2d(inputChannels: 6, outputChannels: 1, kernelSize: 1)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     func saliency(_ input: MLXArray) -> MLXArray {

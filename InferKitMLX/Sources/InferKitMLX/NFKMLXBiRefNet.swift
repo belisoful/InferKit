@@ -455,6 +455,10 @@ final class NFKMLXBiRefNetEncoder: Module {
         _backbone.wrappedValue = NFKMLXSwinBackbone()
         // channels[0] + sum(cxt) = 3072 + (384+768+1536) = 5760 -> channels[0] = 3072.
         _squeezeModule.wrappedValue = [NFKBasicDecBlk(inChannels: 5760, outChannels: 3072)]
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// `mul_scl_ipt == 'cat'`: run the backbone at full and half resolution and concatenate each stage's
@@ -555,6 +559,10 @@ final class NFKMLXBiRefNetDecoder: Module {
         _gdtConvsAttn3.wrappedValue = [Conv2d(inputChannels: 16, outputChannels: 1, kernelSize: 1)]
         _gdtConvsAttn2.wrappedValue = [Conv2d(inputChannels: 16, outputChannels: 1, kernelSize: 1)]
         _convOut1.wrappedValue = [Conv2d(inputChannels: channels[3] / 2 + channels[3] / 8, outputChannels: 1, kernelSize: 1)]
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// image2patches with `b c (hg h) (wg w) -> b (c hg wg) h w` in NHWC: split H,W by the stride-ratio

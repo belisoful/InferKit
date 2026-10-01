@@ -1082,6 +1082,10 @@ public final class NFKMLXRFDetrNet: Module {
         _model.wrappedValue = NFKRFDetrModel(config)
         _classEmbed.wrappedValue = Linear(config.dModel, config.numLabels)
         _bboxEmbed.wrappedValue = NFKRFDetrMLP(inputDim: config.dModel, hiddenDim: config.dModel, outputDim: 4, numLayers: 3)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The staged detection, for parity localization and post-processing.

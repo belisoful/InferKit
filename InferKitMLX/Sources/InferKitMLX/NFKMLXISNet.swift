@@ -50,6 +50,10 @@ final class NFKMLXISNetNet: Module {
         side4 = Conv2d(inputChannels: 256, outputChannels: 1, kernelSize: 3, padding: 1)
         side5 = Conv2d(inputChannels: 512, outputChannels: 1, kernelSize: 3, padding: 1)
         side6 = Conv2d(inputChannels: 512, outputChannels: 1, kernelSize: 3, padding: 1)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The six side maps, coarse-to-fine ordered `d1…d6` as the reference returns them.

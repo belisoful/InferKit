@@ -720,6 +720,9 @@ public final class NFKMLXGraniteSpeechNet: Module {
         _projector.wrappedValue = NFKMLXGraniteSpeechProjector(projector, textHiddenSize: text.hiddenSize)
         _languageModel.wrappedValue = NFKMLXGraniteTextNet(text)
         super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The projected audio embeddings for a batch of log-mel features `[B, frames, inputDim]`.

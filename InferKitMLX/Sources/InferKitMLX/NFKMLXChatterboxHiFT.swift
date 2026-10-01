@@ -266,6 +266,9 @@ public final class NFKMLXS3GenNet: Module {
         _flow.wrappedValue = NFKS3FlowNet()
         _vocoder.wrappedValue = NFKHiFTGeneratorNet()
         super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Builds the voice prompt from the reference audio at 24 kHz and 16 kHz (`embed_ref`): the mel of

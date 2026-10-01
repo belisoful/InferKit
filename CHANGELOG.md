@@ -823,6 +823,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
   without an error.
 
+#### Every network with a BatchNorm is built in evaluation mode
+
+- BiSeNet, BiSeNetV2, MODNet, RF-DETR, RF-DETR segmentation, RVM, BiRefNet, U²-Net, IS-Net, Parakeet,
+  Canary, Granite Speech, and Chatterbox's S3Gen switched to evaluation mode in their backends or
+  weight loaders, so a network built with `makeNet` and run without one of them normalized each input
+  by its own statistics. Each now switches when built, as the rest of the package does.
+
 #### SegFormer and LaMa backends normalize with their released statistics
 
 - `NFKMLXSegFormer` and `NFKMLXLaMa` built their networks in training mode, so the decode head's

@@ -286,6 +286,10 @@ public final class NFKMLXCanaryNet: Module {
         _encoder.wrappedValue = NFKParakeetEncoder(configuration.encoderConfiguration)
         _decoder.wrappedValue = NFKCanaryDecoder(configuration)
         _projOut.wrappedValue = Linear(configuration.dModel, configuration.vocabulary, bias: true)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// `[1, frames, mels]` normalized features → encoder frames `[1, T, D]`.

@@ -98,19 +98,22 @@ final class NFKMLXRVMTests: XCTestCase {
 
     func testTheRecurrentStateChangesTheNextFramesResult() throws {
         try requireMLXRuntime()
-        // Seed so the random weights do not depend on suite order: an unseeded net can land on
-        // weights whose clamped alpha is uniformly zero for both frames, which is a degenerate matte
-        // rather than a recurrence failure and reads as one only mid-suite.
+        // Random weights can clamp alpha to zero everywhere, which is a degenerate matte rather than
+        // a recurrence failure, so the foreground is compared with it. The foreground adds a residual
+        // to the frame itself, which keeps it off the clamp. Seeded so the weights do not depend on
+        // suite order.
         NFKMLXRandom.seed(20_260_814)
         let net = tinyNet()
         let frame1 = Self.frame(height: 32, width: 32, seed: 1).reshaped([1, 32, 32, 3])
         let frame2 = Self.frame(height: 32, width: 32, seed: 2).reshaped([1, 32, 32, 3])
 
         let (_, _, state1) = net.forward(frame1, state: NFKMLXRVMNet.initialState)
-        let (_, alphaFresh, _) = net.forward(frame2, state: NFKMLXRVMNet.initialState)
-        let (_, alphaCarried, _) = net.forward(frame2, state: state1)
-        eval(alphaFresh, alphaCarried)
-        XCTAssertNotEqual(alphaFresh.asArray(Float.self), alphaCarried.asArray(Float.self),
+        let fresh = net.forward(frame2, state: NFKMLXRVMNet.initialState)
+        let carried = net.forward(frame2, state: state1)
+        let freshMatte = concatenated([fresh.foreground, fresh.alpha], axis: -1)
+        let carriedMatte = concatenated([carried.foreground, carried.alpha], axis: -1)
+        eval(freshMatte, carriedMatte)
+        XCTAssertNotEqual(freshMatte.asArray(Float.self), carriedMatte.asArray(Float.self),
                           "carrying the previous frame's state changes the matte — recurrence is active")
     }
 

@@ -416,6 +416,10 @@ public final class NFKMLXParakeetNet: Module {
         _encoder.wrappedValue = NFKParakeetEncoder(configuration)
         _decoder.wrappedValue = NFKParakeetDecoder(configuration)
         _joint.wrappedValue = NFKParakeetJoint(configuration)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// One recognized token and the encoder frame it was emitted at.

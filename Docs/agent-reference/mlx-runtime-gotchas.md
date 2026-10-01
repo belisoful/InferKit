@@ -252,11 +252,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     now switch in their initializers (`testANetworkIsBuiltInEvaluationModeAndKeepsItsStatistics`).
   - **Audit, 2026-09-30.** The mode-dependent layers are `BatchNorm` (and the package's subclasses),
     `Dropout` with a nonzero rate (All-In-One, VAD), and the branches in All-In-One and RT-DETR. LoRA
-    adapters hold none, and the convolution swap carries each original's mode. These networks switch
-    only in their backend or loader: BiSeNet and BiSeNetV2, MODNet,
-    RF-DETR and its segmentation head, RVM, BiRefNet, U²-Net, IS-Net, Parakeet, Canary, Granite Speech,
-    and the Chatterbox networks. Their factories run in evaluation mode; a network built and run
-    outside a factory does not.
+    adapters hold none, and the convolution swap carries each original's mode. Every network holding a
+    mode-dependent layer switches in its initializer; BiSeNet and BiSeNetV2, MODNet, RF-DETR and its
+    segmentation network, RVM, BiRefNet's encoder and decoder, U²-Net, IS-Net, Parakeet, Canary,
+    Granite Speech, and S3Gen moved there from their backends and loaders, which keep their switches
+    for modules a load adds. A test that needs a non-degenerate output from random weights compares an
+    unclamped quantity: RVM's recurrence test reads the foreground with the alpha.
 
 - **A tensor addressed to an absent optional module kills the process.** `Module.update(parameters:)`
   ignores a key the module does not declare, but a key under an optional `@ModuleInfo` that is nil

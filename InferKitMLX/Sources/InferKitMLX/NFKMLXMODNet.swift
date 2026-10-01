@@ -278,6 +278,10 @@ final class NFKMLXMODNetNet: Module {
             NFKMODNetConvIBNormRelu(inChannels: hr + 3, outChannels: hr / 2, kernel: 3, padding: 1),
             NFKMODNetConvIBNormRelu(inChannels: hr / 2, outChannels: 1, kernel: 1, withIBNorm: false, withReLU: false),
         ]
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     private static func scaled(_ x: MLXArray, by factor: Double) -> MLXArray {
