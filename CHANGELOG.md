@@ -441,6 +441,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The siggraph17 colorizer follows color hints, and RIFE v4 interpolates at any timestep
+
+- `NFKMLXSiggraphColorizer`'s backend reads a hint image under `hintKey` and a grayscale mask under
+  `hintMaskKey`. The hint's colors guide the result where the mask is white, and a hint with no mask
+  applies everywhere. Without either, the backend colorizes automatically, as before.
+- `NFKMLXRIFEv4`'s backend reads an `NSNumber` under `timestepKey` (`NFKMLXParameterTimestep`) that
+  places the frame between the two inputs, from 0 to 1. Without it, the backend interpolates the
+  midpoint, as before.
+- `NFKMLXTensorBackend` takes a request-aware forward,
+  `init(identifier:isReady:configuration:forwardParameterKeys:requestForward:)`, and reports those keys
+  as its `supportedParameterKeys`.
+
 #### Every mixture of experts pages its routed experts
 
 - `NFKMLXResidency.paged` leaves a mixture's routed experts in the release and reads each as the

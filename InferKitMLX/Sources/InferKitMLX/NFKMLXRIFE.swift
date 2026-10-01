@@ -519,18 +519,22 @@ private final class NFKMLXRIFEv4Holder: @unchecked Sendable {
 /// RIFE v4 frame interpolation as an InferKit backend.
 ///
 /// Two frames under `frame0` / `frame1` produce the interpolated frame under `NFKOutputImage`, as
-/// for `NFKMLXRIFE`. v4 conditions on a timestep. The backend interpolates the midpoint, and
-/// `NFKMLXRIFEv4Net.interpolate(_:_:timestep:)`, which takes another point, is internal.
+/// for `NFKMLXRIFE`. v4 conditions on a timestep: an `NSNumber` under `timestepKey` places the frame
+/// between the two, from 0 (`frame0`) to 1 (`frame1`), and the midpoint 0.5 is the default.
 @objc(NFKMLXRIFEv4)
 public final class NFKMLXRIFEv4: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "rife-v4"
+    /// The request parameter (NSNumber, `0...1`) that places the interpolated frame between the two
+    /// inputs. A value outside the range clamps to it; leaving it out interpolates the midpoint.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let timestepKey = "NFKMLXParameterTimestep"
 
     static func makeNet() -> NFKMLXRIFEv4Net { NFKMLXRIFEv4Net() }
 
     /// Builds an interpolation backend directly from optional local weights — no registry required.
-    /// Run inference off the render thread.
+    /// The backend reads `timestepKey`. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
         let net = NFKMLXRIFEv4Net()
@@ -542,8 +546,11 @@ public final class NFKMLXRIFEv4: NSObject {
             inputs: [NFKMLXTensorPort(key: NFKMLXRIFE.frame0Key, tensorName: "frame0", channels: 3),
                      NFKMLXTensorPort(key: NFKMLXRIFE.frame1Key, tensorName: "frame1", channels: 3)],
             outputs: [NFKMLXTensorPort(key: NFKOutputImage, tensorName: "middle")])
-        return NFKMLXTensorBackend(identifier: modelName, configuration: configuration) { inputs in
-            ["middle": holder.net.interpolate(inputs["frame0"]!, inputs["frame1"]!)]
+        return NFKMLXTensorBackend(identifier: modelName, configuration: configuration,
+                                   forwardParameterKeys: [timestepKey]) { inputs, request in
+            let timestep = (request.parameter(forKey: timestepKey) as? NSNumber)?.floatValue ?? 0.5
+            return ["middle": holder.net.interpolate(inputs["frame0"]!, inputs["frame1"]!,
+                                                     timestep: max(0, min(1, timestep)))]
         }
     }
 

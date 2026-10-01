@@ -125,6 +125,30 @@
 	XCTAssertEqualObjects(rife.backendIdentifier, @"rife");
 }
 
+- (void)testObjectiveCSteersRIFEv4AndTheSiggraphColorizer
+{
+	// RIFE v4 interpolates at any point between its frames: an NSNumber under timestepKey, 0...1.
+	// The siggraph17 colorizer follows a hint image under hintKey where the mask under hintMaskKey is white.
+	[NFKMLXRIFEv4 register];
+	[NFKMLXSiggraphColorizer register];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"rife-v4"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"colorizer-siggraph17"]);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> rife = [NFKMLXModelRegistry backendNamed:@"rife-v4" weightsURL:nil error:&error];
+	XCTAssertNotNil(rife, @"%@", error);
+	XCTAssertTrue([rife.supportedParameterKeys containsObject:NFKMLXRIFEv4.timestepKey]);
+	id<NFKInferenceBackend> colorizer = [NFKMLXModelRegistry backendNamed:@"colorizer-siggraph17" weightsURL:nil error:&error];
+	XCTAssertNotNil(colorizer, @"%@", error);
+	XCTAssertTrue([colorizer.supportedInputKeys containsObject:NFKMLXSiggraphColorizer.hintKey]);
+	XCTAssertTrue([colorizer.supportedInputKeys containsObject:NFKMLXSiggraphColorizer.hintMaskKey]);
+
+	// NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKMLXRIFE.frame0Key: first,
+	//     NFKMLXRIFE.frame1Key: second } parameters:@{ NFKMLXRIFEv4.timestepKey: @0.25 }];
+}
+
 - (void)testObjectiveCBuildsRAFTOpticalFlowByName
 {
 	[NFKMLXRAFT register];

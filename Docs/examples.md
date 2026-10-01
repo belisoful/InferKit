@@ -3350,7 +3350,7 @@ let lowLight2  = try NFKMLXZeroDCEPlus.backend(weightsURL: nil)                 
 let stylizer   = try NFKMLXStyleTransfer.backend(weightsURL: nil)              // "fast-style-transfer"
 let adain      = try NFKMLXAdaIN.backend(encoderURL: nil, decoderURL: nil)      // "adain"; style image under NFKInputControl
 let colorizer  = try NFKMLXColorizer.backend(weightsURL: nil)                  // "colorizer-eccv16"
-let siggraph   = try NFKMLXSiggraphColorizer.backend(weightsURL: nil)          // "colorizer-siggraph17"; regresses ab where eccv16 classifies it
+let siggraph   = try NFKMLXSiggraphColorizer.backend(weightsURL: nil)          // "colorizer-siggraph17"; a hint image under .hintKey applies where the mask under .hintMaskKey is white
 let ddcolor    = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: nil)  // "ddcolor"; .paper / .artistic
 let faceRestore = try NFKMLXCodeFormer.backend(weightsURL: nil)                // "codeformer"
 
@@ -3385,7 +3385,7 @@ let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          /
 let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text); every release under NFKMLXSigLIP2Variant
 let taesd   = try NFKMLXTAESD.backend(weightsURL: nil)                         // tiny AE: image → latent → image (NFKMLXTAESD.encode/decode for previews)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"
-let rifeV4  = try NFKMLXRIFEv4.backend(weightsURL: nil)                        // "rife-v4"; frame0 + frame1 → the midpoint frame
+let rifeV4  = try NFKMLXRIFEv4.backend(weightsURL: nil)                        // "rife-v4"; frame0 + frame1 → the frame at .timestepKey (0...1, default 0.5)
 let cosmos  = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)  // image/clip → latent or tokens → reconstruction; "cosmos-tokenizer-di8x8" (one name per variant)
 let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey; .vitB / .vitL / .vitH
 

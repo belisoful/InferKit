@@ -178,7 +178,75 @@ final class NFKMLXColorizerTests: XCTestCase {
         XCTAssertEqual(colorized.shape, [64, 64, 3], "colorized at the size it came in at")
     }
 
+    func testTheSiggraphMaskGatesTheHint() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXSiggraphColorizer.makeNet()
+        net.train(false)
+        let image = Self.grayImage(height: 32, width: 32)
+        let red = Self.rgbImage(height: 32, width: 32, red: 0.9, green: 0.1, blue: 0.1)
+        let automatic = net.colorize(image)
+        let masked = net.colorize(image, hint: red, mask: MLXArray.zeros([32, 32, 1]))
+        let everywhere = net.colorize(image, hint: red, mask: MLXArray.ones([32, 32, 1]))
+        let unmasked = net.colorize(image, hint: red)
+        eval(automatic, masked, everywhere, unmasked)
+        XCTAssertEqual(masked.asArray(Float.self), automatic.asArray(Float.self),
+                       "a hint the mask leaves out changes nothing")
+        XCTAssertNotEqual(everywhere.asArray(Float.self), automatic.asArray(Float.self),
+                          "a hint the mask admits steers the colors")
+        XCTAssertEqual(unmasked.asArray(Float.self), everywhere.asArray(Float.self),
+                       "a hint with no mask applies everywhere")
+    }
+
+    func testASmallerSiggraphHintResamplesToTheImage() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXSiggraphColorizer.makeNet()
+        net.train(false)
+        let image = Self.grayImage(height: 32, width: 32)
+        let small = net.colorize(image, hint: Self.rgbImage(height: 8, width: 8, red: 0.1, green: 0.2, blue: 0.9),
+                                 mask: MLXArray.ones([8, 8, 1]))
+        let full = net.colorize(image, hint: Self.rgbImage(height: 32, width: 32, red: 0.1, green: 0.2, blue: 0.9),
+                                mask: MLXArray.ones([32, 32, 1]))
+        eval(small, full)
+        XCTAssertEqual(small.shape, [32, 32, 3])
+        XCTAssertEqual(small.asArray(Float.self), full.asArray(Float.self),
+                       "a uniform hint reads the same at any size")
+    }
+
+    func testTheSiggraphBackendReadsTheHintInputs() throws {
+        try requireMLXRuntime()
+        let backend = try NFKMLXSiggraphColorizer.backend(weightsURL: nil)
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputImage, NFKMLXSiggraphColorizer.hintKey,
+                                                    NFKMLXSiggraphColorizer.hintMaskKey])
+        let gray = Self.solid(32, 32)
+        let automatic = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: gray]))
+        let hinted = try backend.runInference(for: NFKInferenceRequest(inputs: [
+            NFKInputImage: gray,
+            NFKMLXSiggraphColorizer.hintKey: Self.filled(32, 32, red: 230, green: 30, blue: 30),
+            NFKMLXSiggraphColorizer.hintMaskKey: Self.filled(32, 32, red: 255, green: 255, blue: 255),
+        ]))
+        func pixels(_ result: NFKInferenceResult) throws -> [Float] {
+            let image = try Self.cgImage(result.output(forKey: NFKOutputImage))
+            return try NFKMLXImageBridge.tensor(from: image, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())
+                .asArray(Float.self)
+        }
+        XCTAssertNotEqual(try pixels(hinted), try pixels(automatic), "the hint inputs reach the network")
+    }
+
     // MARK: Helpers
+
+    static func rgbImage(height: Int, width: Int, red: Float, green: Float, blue: Float) -> MLXArray {
+        let values = (0 ..< height * width).flatMap { _ in [red, green, blue] }
+        return values.withUnsafeBufferPointer { MLXArray($0, [height, width, 3]) }
+    }
+
+    static func filled(_ width: Int, _ height: Int, red: UInt8, green: UInt8, blue: UInt8) -> CGImage {
+        let pixels = (0 ..< width * height).flatMap { _ in [red, green, blue, UInt8(255)] }
+        let provider = CGDataProvider(data: Data(pixels) as CFData)!
+        return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                       provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+    }
 
     static func grayImage(height: Int, width: Int) -> MLXArray {
         var values = [Float](repeating: 0, count: height * width * 3)

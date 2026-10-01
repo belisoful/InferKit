@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import CoreGraphics
 import InferKit
 import MLX
 import MLXNN
@@ -451,12 +452,29 @@ final class NFKMLXSiggraphNet: Module {
 
     /// Colorizes a bridged image `[H, W, 3]` (`0...1`), preserving its lightness exactly and taking
     /// only the ab channels from the network — the same contract as the eccv16 colorizer.
-    func colorize(_ image: MLXArray) -> MLXArray {
+    ///
+    /// `hint` is an `[h, w, 3]` image (`0...1`) whose colors the result follows; only its ab is read.
+    /// `mask` is `[h, w, 1]`, 1 where the hint applies and 0 elsewhere. Either one resamples to the
+    /// image's size by nearest neighbor, which keeps a single hinted pixel's color exact. A hint with
+    /// no mask applies everywhere; a mask with no hint asks for neutral gray where it is set; neither
+    /// colorizes automatically.
+    func colorize(_ image: MLXArray, hint: MLXArray? = nil, mask: MLXArray? = nil) -> MLXArray {
         let (height, width) = (image.shape[0], image.shape[1])
         // The Lab conversion works on an unbatched `[H, W, 3]`; the network takes a batch.
         let lab = NFKLabColor.toLab(image)
         let lightness = lab[0..., 0..., 0 ..< 1]
-        let ab = predictAB(lightness: lightness.reshaped([1, height, width, 1]))
+        func resized(_ x: MLXArray) -> MLXArray {
+            let batched = x.reshaped([1, x.shape[0], x.shape[1], x.shape[2]])
+            guard x.shape[0] != height || x.shape[1] != width else { return batched }
+            return NFKMLXResample.resizeNearest(batched, height: height, width: width)
+        }
+        let hintMask = mask.map(resized)
+        var hintAB = hint.map { resized(NFKLabColor.toLab($0)[0..., 0..., 1 ..< 3]) }
+        if let unmasked = hintAB, let hintMask {
+            hintAB = unmasked * hintMask
+        }
+        let maskValue = hintMask ?? hintAB.map { _ in MLXArray.ones([1, height, width, 1]) }
+        let ab = predictAB(lightness: lightness.reshaped([1, height, width, 1]), hint: hintAB, mask: maskValue)
         let combined = concatenated([lightness, ab.reshaped([height, width, 2])], axis: 2)
         return NFKLabColor.toRGB(combined)
     }
@@ -498,16 +516,32 @@ private final class NFKSiggraphHolder: @unchecked Sendable {
 ///
 /// A grayscale or colour image under `NFKInputImage` is colorized; the lightness is preserved exactly
 /// and only the ab channels are predicted, as in `NFKMLXColorizer`.
+///
+/// User color hints steer the result:
+/// - an image under `hintKey` → its colors, read as CIELAB ab, guide the colorization;
+/// - a grayscale mask under `hintMaskKey` → white marks where the hint applies, black where it does not;
+/// - a hint with no mask → the hint applies everywhere;
+/// - a mask with no hint → neutral gray where the mask is set;
+/// - neither → automatic colorization.
+///
+/// A hint or mask of another size resamples to the input image's size by nearest neighbor.
 @objc(NFKMLXSiggraphColorizer)
 public final class NFKMLXSiggraphColorizer: NSObject {
 
     /// The registry name the model builds under.
     @objc public static let modelName = "colorizer-siggraph17"
+    /// The request input (a `CGImage` or `MTLTexture`) whose colors guide the colorization. Introduced
+    /// in InferKit 0.4.0.
+    @objc public static let hintKey = "hint"
+    /// The request input (a grayscale `CGImage` or `MTLTexture`) marking where the hint applies.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let hintMaskKey = "hintMask"
 
     static func makeNet() -> NFKMLXSiggraphNet { NFKMLXSiggraphNet() }
 
     /// Builds a colorization backend directly from optional local weights — no registry required.
-    /// A nil `weightsURL` builds random weights (`isReady` is true).
+    /// A nil `weightsURL` builds random weights (`isReady` is true). The backend reads `hintKey` and
+    /// `hintMaskKey` beside `NFKInputImage`.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
         let net = NFKMLXSiggraphNet()
@@ -516,8 +550,14 @@ public final class NFKMLXSiggraphColorizer: NSObject {
         }
         net.train(false)
         let holder = NFKSiggraphHolder(net)
-        return NFKMLXModuleBackend(identifier: modelName, isReady: true) { image in
-            holder.net.colorize(image)
+        return NFKMLXModuleBackend(identifier: modelName, isReady: true,
+                                   forwardInputKeys: [hintKey, hintMaskKey]) { image, request in
+            func tensor(_ key: String, channels: Int) -> MLXArray? {
+                request.input(forKey: key).flatMap {
+                    try? NFKMLXImageBridge.tensor(from: $0, channels: channels, colorSpace: CGColorSpaceCreateDeviceRGB())
+                }
+            }
+            return holder.net.colorize(image, hint: tensor(hintKey, channels: 3), mask: tensor(hintMaskKey, channels: 1))
         }
     }
 

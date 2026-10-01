@@ -59,10 +59,15 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
 
     public typealias Forward = @Sendable ([String: MLXArray]) -> [String: MLXArray]
 
-    private let forward: Forward
+    /// A forward that also reads the request, for a model conditioned on a per-request value (an
+    /// interpolation timestep). Introduced in InferKit 0.4.0.
+    public typealias RequestForward = @Sendable (_ tensors: [String: MLXArray], _ request: NFKInferenceRequest) -> [String: MLXArray]
+
+    private let forward: RequestForward
     private let identifier: String
     private let ready: Bool
     private let configuration: NFKMLXTensorConfiguration
+    private let forwardParameterKeys: Set<String>
 
     public init(identifier: String = "mlx-tensor",
                 isReady: Bool = true,
@@ -71,7 +76,31 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
-        self.forward = forward
+        self.forwardParameterKeys = []
+        self.forward = { tensors, _ in forward(tensors) }
+        super.init()
+    }
+
+    /// The request-aware form: `requestForward` receives the bridged input tensors and the request
+    /// they came from. Introduced in InferKit 0.4.0.
+    ///
+    /// - Parameters:
+    ///   - identifier: The value reported by `backendIdentifier`.
+    ///   - isReady: Whether the model's weights are already loaded.
+    ///   - configuration: The input and output ports.
+    ///   - forwardParameterKeys: The request parameters `requestForward` reads. They form
+    ///     `supportedParameterKeys`.
+    ///   - requestForward: Maps the named input tensors and their request to named output tensors.
+    public init(identifier: String = "mlx-tensor",
+                isReady: Bool = true,
+                configuration: NFKMLXTensorConfiguration,
+                forwardParameterKeys: Set<String>,
+                requestForward: @escaping RequestForward) {
+        self.identifier = identifier
+        self.ready = isReady
+        self.configuration = configuration
+        self.forwardParameterKeys = forwardParameterKeys
+        self.forward = requestForward
         super.init()
     }
 
@@ -81,8 +110,9 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
 
     @objc public var backendIdentifier: String { identifier }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    /// The request parameters the backend reads: those the request-aware forward was built to read.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { forwardParameterKeys }
 
     /// The request inputs the backend reads: one per configured input port. Introduced in
     /// InferKit 0.4.0.
@@ -121,7 +151,7 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
 
     private static func run(_ request: NFKInferenceRequest,
                             configuration: NFKMLXTensorConfiguration,
-                            forward: Forward) throws -> [String: Any] {
+                            forward: RequestForward) throws -> [String: Any] {
         let colorSpace = configuration.imageOptions.colorSpace
         var named: [String: MLXArray] = [:]
         for port in configuration.inputs {
@@ -134,7 +164,7 @@ public final class NFKMLXTensorBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
 
-        let produced = forward(named)
+        let produced = forward(named, request)
 
         var outputs: [String: Any] = [:]
         for port in configuration.outputs {

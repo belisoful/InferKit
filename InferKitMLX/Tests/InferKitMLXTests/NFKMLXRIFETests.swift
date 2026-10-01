@@ -125,6 +125,24 @@ final class NFKMLXRIFETests: XCTestCase {
                           "a different timestep produces a different frame")
     }
 
+    func testTheV4BackendReadsTheTimestepParameter() throws {
+        try requireMLXRuntime()
+        let backend = try NFKMLXRIFEv4.backend(weightsURL: nil)
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKMLXRIFEv4.timestepKey])
+        let frames: [String: Any] = [NFKMLXRIFE.frame0Key: Self.solid(64, 64, 40, 80, 120),
+                                     NFKMLXRIFE.frame1Key: Self.solid(64, 64, 200, 160, 120)]
+        func frame(_ timestep: Double?) throws -> [Float] {
+            let parameters = timestep.map { [NFKMLXRIFEv4.timestepKey: NSNumber(value: $0)] }
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: frames, parameters: parameters))
+            let image = try Self.cgImage(result.output(forKey: NFKOutputImage))
+            return try NFKMLXImageBridge.tensor(from: image, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())
+                .asArray(Float.self)
+        }
+        XCTAssertEqual(try frame(nil), try frame(0.5), "the default is the midpoint")
+        XCTAssertNotEqual(try frame(0.1), try frame(0.5), "the parameter reaches the network")
+        XCTAssertEqual(try frame(3), try frame(1), "a timestep past the second frame clamps to it")
+    }
+
     static func gradient(height: Int, width: Int) -> MLXArray {
         var values = [Float](repeating: 0, count: height * width * 3)
         for y in 0 ..< height {

@@ -27,7 +27,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   warped alongside the frames, `ResConv` trunk entries that scale their convolution by a learned
   per-channel `beta` before the residual add, an upsampling convolution emitting `4 × 6` channels that
   pixel-shuffles ×2, and a timestep channel that is what v4 adds: `interpolate(_:_:timestep:)` lands
-  anywhere between the frames, not only the midpoint. Its convolutions activate with a parameter-free
+  anywhere between the frames, not only the midpoint. The backend reads it as an `NSNumber` under
+  `timestepKey` (`NFKMLXParameterTimestep`), clamped to `0...1`, defaulting to 0.5; it is the first
+  model on `NFKMLXTensorBackend`'s request-aware init. Its convolutions activate with a parameter-free
   leaky ReLU where HDv3 used a PReLU; that difference surfaced as exactly eight uncovered parameters,
   the coverage guard naming a structural mistake rather than a number going quietly wrong. `+register`
   under `rife-v4`; pads to a multiple of 64 and runs scales `[8, 4, 2, 1]`. Oracle: the architecture

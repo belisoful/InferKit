@@ -391,8 +391,9 @@ models.
   releases are presets (`NFKMLXNAFNetVariant`): SIDD and GoPro at width 32, REDS, and SIDD and GoPro at
   width 64.
 - **`NFKMLXRIFE`** / **`NFKMLXRIFEv4`** — real frame interpolation: the RIFE HDv3 and v4 IFNets in
-  MLXNN with a flow-based warp (v4 adds an arbitrary-timestep midpoint), run
-  through the tensor backend (two frames → the interpolated middle frame) for slow-motion / retiming.
+  MLXNN with a flow-based warp, run through the tensor backend (two frames → the interpolated middle
+  frame) for slow-motion / retiming. v4 interpolates at any point between the frames: an `NSNumber`
+  under `NFKMLXRIFEv4.timestepKey`, from 0 to 1.
 - **`NFKMLXRAFT`** — real optical flow: the RAFT correlation-and-ConvGRU pipeline in MLXNN, run through
   the tensor backend (two frames → a dense flow field) for motion vectors, warping, retiming.
 - **`NFKMLXLaMa`** — a real single-forward inpainter: the LaMa FFC-ResNet generator in MLXNN, with an
@@ -455,8 +456,9 @@ models.
   presets (`NFKMLXHATVariant`), both at reference parity against XPixelGroup's own `hat_arch.py`.
 - **`NFKMLXColorizer`** / **`NFKMLXSiggraphColorizer`** — real colorization (ECCV-16 and
   SIGGRAPH-17): predict ab chroma from the L channel in CIELAB space and recombine with the original
-  luminance, run through the module backend (grayscale photo → color photo); the SIGGRAPH model also
-  takes user color hints. The converter loads the reference releases directly.
+  luminance, run through the module backend (grayscale photo → color photo). The SIGGRAPH model also
+  takes user color hints: an image under `NFKMLXSiggraphColorizer.hintKey`, applied where a grayscale
+  mask under `hintMaskKey` is white. The converter loads the reference releases directly.
 - **`NFKMLXDDColor`** — modern automatic colorization (DDColor): a ConvNeXt-L encoder, a
   spectral-normalized U-Net decoder, and 100 learned color queries whose attention maps become the two
   chroma channels, run through the module backend (grayscale photo → color photo). The three released

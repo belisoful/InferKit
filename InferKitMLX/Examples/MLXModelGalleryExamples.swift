@@ -74,6 +74,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         // Representative run: Zero-DCE brightens a dark frame to a same-size image.
         let result = try zeroDCE.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32, value: 40)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage))
+
+        // The siggraph17 colorizer follows user color hints: the hint image's colors apply where the
+        // grayscale mask is white.
+        let hinted = try siggraphColorizer.runInference(for: NFKInferenceRequest(inputs: [
+            NFKInputImage: Self.solid(32),
+            NFKMLXSiggraphColorizer.hintKey: Self.solid(32, value: 200),
+            NFKMLXSiggraphColorizer.hintMaskKey: Self.solid(32, value: 255),
+        ]))
+        XCTAssertNotNil(hinted.output(forKey: NFKOutputImage), "a hinted colorization")
     }
 
     // MARK: Depth (image → grayscale depth)
@@ -640,7 +649,8 @@ final class MLXModelGalleryExamples: XCTestCase {
         try requireMLXRuntime()
         // RIFE / RAFT take two frames under frame0 / frame1; VideoSR upscales single frames or a clip.
         let rife = try NFKMLXRIFE.backend(weightsURL: nil)
-        // RIFE v4 is the later release, conditioned on a timestep; the backend asks for the midpoint.
+        // RIFE v4 is the later release, conditioned on a timestep; the midpoint unless a request asks
+        // for another point under timestepKey.
         let rifeV4 = try NFKMLXRIFEv4.backend(weightsURL: nil)
         let raft = try NFKMLXRAFT.backend(weightsURL: nil)
         let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)
@@ -650,6 +660,12 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(rifeV4.backendIdentifier, "rife-v4")
         let result = try videoSR.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(16)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "×4 upscaled frame")
+
+        // A quarter of the way from frame0 to frame1.
+        let quarter = try rifeV4.runInference(for: NFKInferenceRequest(
+            inputs: [NFKMLXRIFE.frame0Key: Self.solid(64, value: 40), NFKMLXRIFE.frame1Key: Self.solid(64, value: 200)],
+            parameters: [NFKMLXRIFEv4.timestepKey: 0.25]))
+        XCTAssertNotNil(quarter.output(forKey: NFKOutputImage), "the frame at timestep 0.25")
 
         // Cosmos Tokenizer: an image or a clip → a continuous latent or discrete tokens → a reconstruction.
         let cosmos = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)

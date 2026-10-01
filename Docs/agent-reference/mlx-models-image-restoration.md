@@ -232,7 +232,10 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   layers. `+register` under `colorizer-siggraph17`; weights at
   `colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth`, converted with
   `Tools/colorizer-to-safetensors --passthrough` (the eccv16 rename does not apply). With an empty
-  hint it colorizes automatically; `predictAB(lightness:hint:mask:)` takes user strokes. Forward, Lab math, bin softmax, and round-trip tested.
+  hint it colorizes automatically. The backend reads a hint image under `hintKey` (its CIELAB ab is
+  the hint) and a grayscale mask under `hintMaskKey`; the hint is multiplied by the mask, a hint with
+  no mask applies everywhere, and both resample to the photo by nearest neighbor so a single hinted
+  pixel keeps its color. Forward, Lab math, bin softmax, hint gating, and round-trip tested.
   Customization: trainable at `full`, with no recipe written yet. ECCV-16 trains in the `caffe` branch
   of richzhang/colorization at a1642d6 (`train/`): a 313-bin cross-entropy on soft-encoded targets (the
   ten nearest bins, σ 5), each pixel's gradient rebalanced by the published `prior_probs.npy` (γ 0.5)
