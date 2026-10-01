@@ -81,9 +81,16 @@ final class MLXCustomizationExamples: XCTestCase {
         if let directory = ProcessInfo.processInfo.environment["IK_VAL_QWEN3_VL_EMBEDDING"] {
             let embedder = try NFKMLXQwen3VLEmbedder.embedder(
                 directoryURL: URL(fileURLWithPath: directory))
+            // The release embeds at its own width, so the pairs go through it once.
+            let myPairs = [("a red bicycle", "a bike painted red"), ("a sleeping cat", "a cat asleep on a sofa"),
+                           ("stormy sea", "waves under dark clouds"), ("fresh bread", "a loaf just out of the oven")]
+            let embedded = { (texts: [String]) in
+                MLXArray(texts.flatMap { embedder.embedding(forText: $0).map(\.floatValue) })
+                    .reshaped([texts.count, embedder.embeddingDimensions])
+            }
             let releaseAdapter = try embedder.makeAdapter()
-            try embedder.fineTune(adapter: releaseAdapter, queries: queries, documents: [documents],
-                                  steps: 2)
+            try embedder.fineTune(adapter: releaseAdapter, queries: embedded(myPairs.map(\.0)),
+                                  documents: [embedded(myPairs.map(\.1))], steps: 2)
             try NFKMLXWeights.save(releaseAdapter, to: tuned)
             try embedder.loadAdapter(from: tuned)
             XCTAssertEqual(embedder.embedding(forText: "a query").count, embedder.embeddingDimensions)
