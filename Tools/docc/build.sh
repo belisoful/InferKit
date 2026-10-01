@@ -7,15 +7,15 @@
 # `clang -extract-api` on the public headers (which emits symbols only for the input files, excluding
 # the SDK) and feeds the result to `docc convert` together with the `InferKit.docc` catalog.
 #
-# The two Swift companions (InferKitFoundationModels, InferKitMLX) are Swift targets, so the
-# swift-docc-plugin extracts their symbol graphs. Each carries its own `.docc` catalog and builds with
+# The three Swift companions (InferKitFoundationModels, InferKitMLX, InferKitAppleSwift) are Swift
+# targets, so the swift-docc-plugin extracts their symbol graphs. Each carries its own `.docc` catalog and builds with
 # `swift package generate-documentation`.
 #
 # Usage:
 #   Tools/docc/build.sh [output-dir]        # core only (default: ./.docc-build/InferKit.doccarchive)
 #   Tools/docc/build.sh --preview           # build the core then serve locally with `docc preview`
-#   Tools/docc/build.sh --companion <name>  # build one companion (InferKitFoundationModels | InferKitMLX)
-#   Tools/docc/build.sh --all               # core + both companions
+#   Tools/docc/build.sh --companion <name>  # build one companion (InferKitFoundationModels | InferKitMLX | InferKitAppleSwift)
+#   Tools/docc/build.sh --all               # core + all three companions
 #
 set -euo pipefail
 
@@ -39,7 +39,7 @@ build_companion() {
 
 case "${1:-}" in
     --companion)
-        build_companion "${2:?usage: --companion <InferKitFoundationModels|InferKitMLX>}"
+        build_companion "${2:?usage: --companion <InferKitFoundationModels|InferKitMLX|InferKitAppleSwift>}"
         exit 0
         ;;
     --all)
@@ -88,4 +88,5 @@ echo "==> Built $OUTPUT ($PAGES documentation pages)"
 if [ "${BUILD_ALL:-0}" = "1" ]; then
     build_companion InferKitFoundationModels
     build_companion InferKitMLX
+    build_companion InferKitAppleSwift
 fi

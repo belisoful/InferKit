@@ -32,7 +32,7 @@ extract a symbol graph for a Swift target) rather than the clang recipe:
 Each companion adds swift-docc-plugin as a dev-only dependency.
 
 Build a companion with `Tools/docc/build.sh --companion <name>`. `Tools/docc/build.sh --all` builds the
-core, InferKitFoundationModels, and InferKitMLX; InferKitAppleSwift builds through `--companion` alone. Only symbol links to the companion's
+core and all three companions. Only symbol links to the companion's
 own types resolve when it builds alone, so the catalogs reference core types (`NFKInferenceBackend`, the
 `NFKInput*`/`NFKOutput*` keys) in code font, not as ``doc``/symbol links, to stay warning-free. `plan(for:)`
 and other internal helpers reachable only via `@testable import` are not documented — the pages show the

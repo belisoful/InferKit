@@ -1,8 +1,9 @@
 #!/bin/bash
 #
-# Builds the core, InferKitMLX, and InferKitFoundationModels in one command. They are separate SwiftPM packages by design — the core
-# carries no dependencies and a macOS 11 / iOS 14 / tvOS 14 floor, while MLX needs Apple Silicon and
-# macOS 14 / iOS 17 — so "building the repo" means building each in turn, not one combined target.
+# Builds the core and its three companions (InferKitMLX, InferKitFoundationModels, InferKitAppleSwift) in
+# one command. They are separate SwiftPM packages by design: the core carries no dependencies and a
+# macOS 11 / iOS 14 / tvOS 14 floor, MLX needs Apple Silicon and macOS 14 / iOS 17, and the other two
+# need macOS 26 / iOS 26. Building the repo means building each in turn, not one combined target.
 #
 #   Tools/build-all.sh          # build
 #   Tools/build-all.sh --test   # build and test (MLX gets its Metal library from mlx-metallib.sh first)
@@ -12,7 +13,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST=false
 [ "${1:-}" = "--test" ] && TEST=true
 
-for package in "." "InferKitMLX" "InferKitFoundationModels"; do
+for package in "." "InferKitMLX" "InferKitFoundationModels" "InferKitAppleSwift"; do
     name="$([ "$package" = "." ] && echo InferKit || echo "$package")"
     echo "==> $name"
     ( cd "$ROOT/$package" && swift build )
@@ -26,4 +27,4 @@ for package in "." "InferKitMLX" "InferKitFoundationModels"; do
         fi
     fi
 done
-echo "==> all three packages built"
+echo "==> all four packages built"

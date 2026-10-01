@@ -120,7 +120,7 @@ Swift companions have no such problem and build either way.
 ## Build & test
 
 ```bash
-Tools/build-all.sh --test                       # the core, InferKitMLX, InferKitFoundationModels
+Tools/build-all.sh --test                       # the core and all three companions
 swift build && swift test                       # just the core
 pod lib lint InferKit.podspec --quick           # the CocoaPods spec
 ```
