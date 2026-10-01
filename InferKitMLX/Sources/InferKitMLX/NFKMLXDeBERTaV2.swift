@@ -117,6 +117,39 @@ public struct NFKMLXDeBERTaV2Configuration: Sendable {
     }
 }
 
+/// The two dropout rates a DeBERTa-v2 / v3 encoder trains with.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKMLXDeBERTaV2Dropout: Sendable, Equatable {
+    /// `hidden_dropout_prob`: the embeddings after their norm, the relative-position embeddings each
+    /// layer reads, and each attention-output and feed-forward projection before its residual.
+    public var hidden: Float
+    /// `attention_probs_dropout_prob`: the attention probabilities.
+    public var attention: Float
+
+    public init(hidden: Float = 0, attention: Float = 0) {
+        self.hidden = hidden
+        self.attention = attention
+    }
+
+    /// No dropout.
+    public static let none = NFKMLXDeBERTaV2Dropout()
+
+    /// The two rates from a transformers `config.json`; 0.1 each in `microsoft/deberta-v3-large`.
+    public init(configURL: URL) throws {
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(configURL.lastPathComponent) is not a JSON object")
+        }
+        self.init(hidden: (json["hidden_dropout_prob"] as? NSNumber)?.floatValue ?? 0,
+                  attention: (json["attention_probs_dropout_prob"] as? NSNumber)?.floatValue ?? 0)
+    }
+}
+
+/// The rates every module of one encoder reads when it runs, so setting them once reaches them all.
+final class NFKDeBERTaDropoutRates {
+    var values = NFKMLXDeBERTaV2Dropout.none
+}
+
 /// Where each pair of positions reads the relative-position scores, computed once per length.
 struct NFKDeBERTaPositions {
     /// `[length, length]`: the column of a query's content-to-position scores each key reads.
@@ -139,9 +172,11 @@ final class NFKDeBERTaSelfAttention: Module {
     @ModuleInfo(key: "value_proj") var value: Linear
 
     let configuration: NFKMLXDeBERTaV2Configuration
+    let rates: NFKDeBERTaDropoutRates
 
-    init(_ c: NFKMLXDeBERTaV2Configuration) {
+    init(_ c: NFKMLXDeBERTaV2Configuration, rates: NFKDeBERTaDropoutRates) {
         configuration = c
+        self.rates = rates
         _query.wrappedValue = Linear(c.hiddenSize, c.hiddenSize)
         _key.wrappedValue = Linear(c.hiddenSize, c.hiddenSize)
         _value.wrappedValue = Linear(c.hiddenSize, c.hiddenSize)
@@ -167,8 +202,9 @@ final class NFKDeBERTaSelfAttention: Module {
         let scale = MLXArray(sqrt(Float(width) * 3))
         var scores = matmul(queries, (keys / scale).transposed(0, 1, 3, 2))
 
-        let positionKeys = splitPositions(key(relativeEmbeddings))
-        let positionQueries = splitPositions(query(relativeEmbeddings))
+        let positionEmbeddings = NFKDropout.apply(relativeEmbeddings, rate: rates.values.hidden, active: training)
+        let positionKeys = splitPositions(key(positionEmbeddings))
+        let positionQueries = splitPositions(query(positionEmbeddings))
         let span = [batch, heads, length, length]
 
         let contentToPosition = takeAlong(matmul(queries, positionKeys.transposed(0, 2, 1)),
@@ -182,7 +218,8 @@ final class NFKDeBERTaSelfAttention: Module {
         if let mask {
             scores = which(mask, scores, MLXArray(-Float.greatestFiniteMagnitude))
         }
-        let weights = softmax(scores, axis: -1, precise: true)
+        let weights = NFKDropout.apply(softmax(scores, axis: -1, precise: true), rate: rates.values.attention,
+                                       active: training)
         return matmul(weights, values).transposed(0, 2, 1, 3).reshaped([batch, length, c.hiddenSize])
     }
 }
@@ -191,23 +228,27 @@ final class NFKDeBERTaSelfAttention: Module {
 final class NFKDeBERTaResidualOutput: Module {
     @ModuleInfo(key: "dense") var dense: Linear
     @ModuleInfo(key: "LayerNorm") var norm: LayerNorm
+    let rates: NFKDeBERTaDropoutRates
 
-    init(inputs: Int, _ c: NFKMLXDeBERTaV2Configuration) {
+    init(inputs: Int, _ c: NFKMLXDeBERTaV2Configuration, rates: NFKDeBERTaDropoutRates) {
+        self.rates = rates
         _dense.wrappedValue = Linear(inputs, c.hiddenSize)
         _norm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray, residual: MLXArray) -> MLXArray { norm(dense(x) + residual) }
+    func callAsFunction(_ x: MLXArray, residual: MLXArray) -> MLXArray {
+        norm(NFKDropout.apply(dense(x), rate: rates.values.hidden, active: training) + residual)
+    }
 }
 
 final class NFKDeBERTaAttention: Module {
     @ModuleInfo(key: "self") var attention: NFKDeBERTaSelfAttention
     @ModuleInfo(key: "output") var output: NFKDeBERTaResidualOutput
 
-    init(_ c: NFKMLXDeBERTaV2Configuration) {
-        _attention.wrappedValue = NFKDeBERTaSelfAttention(c)
-        _output.wrappedValue = NFKDeBERTaResidualOutput(inputs: c.hiddenSize, c)
+    init(_ c: NFKMLXDeBERTaV2Configuration, rates: NFKDeBERTaDropoutRates) {
+        _attention.wrappedValue = NFKDeBERTaSelfAttention(c, rates: rates)
+        _output.wrappedValue = NFKDeBERTaResidualOutput(inputs: c.hiddenSize, c, rates: rates)
         super.init()
     }
 }
@@ -226,10 +267,10 @@ final class NFKDeBERTaLayer: Module {
     @ModuleInfo(key: "intermediate") var intermediate: NFKDeBERTaIntermediate
     @ModuleInfo(key: "output") var output: NFKDeBERTaResidualOutput
 
-    init(_ c: NFKMLXDeBERTaV2Configuration) {
-        _attention.wrappedValue = NFKDeBERTaAttention(c)
+    init(_ c: NFKMLXDeBERTaV2Configuration, rates: NFKDeBERTaDropoutRates) {
+        _attention.wrappedValue = NFKDeBERTaAttention(c, rates: rates)
         _intermediate.wrappedValue = NFKDeBERTaIntermediate(c)
-        _output.wrappedValue = NFKDeBERTaResidualOutput(inputs: c.intermediateSize, c)
+        _output.wrappedValue = NFKDeBERTaResidualOutput(inputs: c.intermediateSize, c, rates: rates)
         super.init()
     }
 
@@ -258,8 +299,8 @@ final class NFKDeBERTaEncoder: Module {
     @ModuleInfo(key: "rel_embeddings") var relativeEmbeddings: Embedding
     @ModuleInfo(key: "LayerNorm") var norm: LayerNorm
 
-    init(_ c: NFKMLXDeBERTaV2Configuration) {
-        _layers.wrappedValue = (0 ..< c.layerCount).map { _ in NFKDeBERTaLayer(c) }
+    init(_ c: NFKMLXDeBERTaV2Configuration, rates: NFKDeBERTaDropoutRates) {
+        _layers.wrappedValue = (0 ..< c.layerCount).map { _ in NFKDeBERTaLayer(c, rates: rates) }
         _relativeEmbeddings.wrappedValue = Embedding(embeddingCount: 2 * c.attentionSpan, dimensions: c.hiddenSize)
         _norm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         super.init()
@@ -272,12 +313,24 @@ public final class NFKMLXDeBERTaV2Net: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKDeBERTaEncoder
 
     public let configuration: NFKMLXDeBERTaV2Configuration
+    let rates = NFKDeBERTaDropoutRates()
+
+    /// The dropout while the encoder trains; none by default. Set it to
+    /// `NFKMLXDeBERTaV2Dropout(configURL:)` to train at a release's rates, as transformers'
+    /// `DebertaV2Model` does in training mode.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXDeBERTaV2Dropout {
+        get { rates.values }
+        set { rates.values = newValue }
+    }
 
     public init(_ c: NFKMLXDeBERTaV2Configuration) {
         configuration = c
         _embeddings.wrappedValue = NFKDeBERTaEmbeddings(c)
-        _encoder.wrappedValue = NFKDeBERTaEncoder(c)
+        _encoder.wrappedValue = NFKDeBERTaEncoder(c, rates: rates)
         super.init()
+        train(false)
     }
 
     /// The last layer's states, `[batch, length, hidden]`. `attentionMask` is `[batch, length]`, 1 for
@@ -298,6 +351,7 @@ public final class NFKMLXDeBERTaV2Net: Module {
             let pairs = valid.expandedDimensions(axes: [1, 2]) * valid.expandedDimensions(axes: [1, 3])
             pairMask = pairs .> 0
         }
+        hidden = NFKDropout.apply(hidden, rate: rates.values.hidden, active: training)
         let positions = NFKDeBERTaPositions(configuration: configuration, length: length)
         let relative = encoder.norm(encoder.relativeEmbeddings.weight)
         var states = [hidden]

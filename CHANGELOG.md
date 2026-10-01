@@ -932,6 +932,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   built from array operations, so the gradient reaches the network; it matches `torch.istft` at
   waveform cosine 0.99999999999994.
 
+#### open-jev-deberta trains with its encoder's dropout on request
+
+- The release's `train_encoder.py` trains in `model.train()`, so the DeBERTa-v3 encoder runs
+  `hidden_dropout_prob` (after the embedding norm, on each layer's relative-position embeddings, and
+  before each residual) and `attention_probs_dropout_prob` on the attention probabilities, 0.1 each.
+- `NFKMLXDeBERTaV2Dropout(configURL:)` reads the two rates, and `NFKMLXDeBERTaV2Net.dropout`, none by
+  default, applies them while the encoder trains.
+- `NFKMLXDeBERTaV2Net` and `NFKMLXOpenJevDeBERTaNet` are built in evaluation mode, so a fine-tune
+  restores evaluation afterward and inference never drops.
+
 #### Probes for SigLIP 2, Qwen3-Embedding, and EmbeddingGemma
 
 - `NFKMLXEmbeddingProbe` and `NFKMLXEmbeddingProbeBackend` are the linear probe over any frozen image

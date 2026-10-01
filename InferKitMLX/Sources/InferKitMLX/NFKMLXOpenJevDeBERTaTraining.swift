@@ -135,7 +135,9 @@ extension NFKMLXOpenJevDeBERTa {
     ///
     /// Both parameter groups are PyTorch's AdamW (bias-corrected) with weight decay 0.01, as the
     /// release's `train_encoder.py` builds them, and the global gradient norm is clipped to 1. The
-    /// encoder's dropout is not applied, so a step is deterministic. The tuned network saves through
+    /// release trains with the encoder's dropout on (`model.train()`, 0.1 for both rates); it applies
+    /// here once `net.backbone.dropout` is set from `NFKMLXDeBERTaV2Dropout(configURL:)`, and a step is
+    /// deterministic while it is `.none`, the default. The tuned network saves through
     /// `NFKMLXWeights.save` and reloads through `openJev(directoryURL:weightsURL:)`. A run is
     /// multi-second; call it off the main thread.
     @discardableResult

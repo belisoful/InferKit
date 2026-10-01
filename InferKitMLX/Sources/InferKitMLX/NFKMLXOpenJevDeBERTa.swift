@@ -160,6 +160,7 @@ public final class NFKMLXOpenJevDeBERTaNet: Module {
         _backbone.wrappedValue = NFKMLXDeBERTaV2Net(c.encoder)
         _head.wrappedValue = [Linear(3 * hidden, hidden), GELU(), Linear(hidden, 1)]
         super.init()
+        train(false)
     }
 
     /// The raw logits `[batch, questions, options]`, `-inf` where a question has fewer options.

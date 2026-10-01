@@ -218,6 +218,48 @@ final class NFKMLXOpenJevDeBERTaTests: XCTestCase {
         XCTAssertThrowsError(try model.fineTune(examples: [wrong], steps: 1), "a label must index an option")
     }
 
+    func testTheEncoderDropsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let encoder = NFKMLXDeBERTaV2Net(.tiny)
+        XCTAssertFalse(encoder.training, "built in evaluation mode")
+        XCTAssertEqual(encoder.dropout, .none)
+        let tokens = MLXArray((0 ..< 12).map { Int32(($0 * 37) % 500 + 5) }, [1, 12])
+        let mask = MLXArray([Int32](repeating: 1, count: 10) + [0, 0], [1, 12])
+        let plain = encoder(tokens, attentionMask: mask)
+        encoder.dropout = NFKMLXDeBERTaV2Dropout(hidden: 0.5, attention: 0.5)
+        XCTAssertEqual(abs(encoder(tokens, attentionMask: mask) - plain).max().item(Float.self), 0,
+                       "evaluation never drops")
+        encoder.train(true)
+        encoder.dropout = .none
+        XCTAssertEqual(abs(encoder(tokens, attentionMask: mask) - plain).max().item(Float.self), 0,
+                       "a zero rate trains without dropping")
+        encoder.dropout = NFKMLXDeBERTaV2Dropout(hidden: 0.5)
+        XCTAssertGreaterThan(abs(encoder(tokens, attentionMask: mask) - plain).max().item(Float.self), 0)
+        encoder.dropout = NFKMLXDeBERTaV2Dropout(attention: 0.5)
+        XCTAssertGreaterThan(abs(encoder(tokens, attentionMask: mask) - plain).max().item(Float.self), 0)
+    }
+
+    func testTheDropoutReadsTheReleasesRates() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("deberta-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try JSONSerialization.data(withJSONObject: ["hidden_dropout_prob": 0.1, "attention_probs_dropout_prob": 0.2,
+                                                    "pooler_dropout": 0]).write(to: url)
+        XCTAssertEqual(try NFKMLXDeBERTaV2Dropout(configURL: url), NFKMLXDeBERTaV2Dropout(hidden: 0.1, attention: 0.2))
+    }
+
+    func testAFineTuneWithDropoutLeavesTheModelInEvaluation() throws {
+        try requireMLXRuntime()
+        let model = tinyModel()
+        XCTAssertFalse(model.net.training)
+        model.net.backbone.dropout = NFKMLXDeBERTaV2Dropout(hidden: 0.1, attention: 0.1)
+        try model.fineTune(examples: [NFKMLXOpenJevDeBERTaExample(state: "s", question: team, label: 2)], steps: 2,
+                           headLearningRate: 1e-2)
+        XCTAssertFalse(model.net.backbone.training, "the run restores evaluation")
+        XCTAssertEqual(try model.distributions(state: "a state", questions: [team, level]),
+                       try model.distributions(state: "a state", questions: [team, level]), "inference never drops")
+    }
+
     func testAFineTunedFileReloadsAndReproducesTheAnswers() throws {
         try requireMLXRuntime()
         let model = tinyModel()
