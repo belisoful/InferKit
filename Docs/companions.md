@@ -915,11 +915,12 @@ models.
   through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
   `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.
 - Customizing a model on device — `NFKMLXTrainer` runs supervised and zero-reference fine-tuning
-  with clipping, checkpoints, and early stop; `NFKMLXLoRA` adapts attention blocks and merges the
-  result back into plain weights; `NFKMLXCLIPProbe` trains a classifier over frozen CLIP embeddings;
-  recipes ship for Zero-DCE, SegFormer's decode head, and Whisper. The Zero-DCE and SegFormer losses
-  are at reference parity; the Whisper objective is not yet measured against a reference. A
-  fine-tuned file loads through the model's ordinary `weightsURL:` factory.
+  with clipping, gradient accumulation, half precision, validation, early stop, and checkpoints that
+  resume with the optimizer's state. `NFKMLXLoRA` adapts attention blocks and merges the result back
+  into plain weights. `NFKMLXEmbeddingProbe` trains a classifier over frozen CLIP or SigLIP 2
+  embeddings. Forty-one models ship a recipe, and [model parity](model-parity.md) ("Training objectives
+  and the checkpoint path") lists each recipe's measured objective. The Whisper objective is not
+  measured against a reference. A fine-tuned file loads through the model's ordinary factory.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
   the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
   the backend runs the denoise loop with per-step progress and cancellation. No source latent runs

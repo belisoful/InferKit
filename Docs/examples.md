@@ -3480,7 +3480,7 @@ let backend = try NFKMLXZeroDCE.backend(weightsURL: tuned)
 
 ### Retargeting a segmentation model to your own classes
 
-The other shipped recipe. A consumer rarely wants ADE20K's 150 classes and usually wants their own few,
+A consumer rarely wants ADE20K's 150 classes and usually wants their own few,
 which is a decode-head problem — freezing the encoder is what makes the run fit on a device:
 
 ```swift
@@ -4039,7 +4039,10 @@ The three translators share one recipe: LoRA on the decoder's query and value pr
 frozen, teacher forcing as the objective. The release's tokenizers produce each pair's ids:
 
 ```swift
-let net = try NFKMLXMarian.network(directoryURL: releaseDir)
+// The release's own geometry. The factory's default configuration is the test geometry.
+let configuration = try NFKMLXSeq2SeqConfiguration(
+    huggingFaceConfigURL: releaseDir.appendingPathComponent("config.json"))
+let net = try NFKMLXMarian.network(directoryURL: releaseDir, configuration: configuration)
 let release = try NFKMLXMarian.translator(net: net, directoryURL: releaseDir)
 try NFKMLXMarian.fineTune(net, examples: { step in
     let pair = myPairs[step % myPairs.count]
@@ -4049,7 +4052,8 @@ try NFKMLXMarian.fineTune(net, examples: { step in
 
 try NFKMLXLoRA.merge(into: net)
 try NFKMLXWeights.save(net, to: tunedDir.appendingPathComponent("model.safetensors"))
-let tuned = try NFKMLXMarian.translator(net: try NFKMLXMarian.network(directoryURL: tunedDir), directoryURL: releaseDir)
+let tuned = try NFKMLXMarian.translator(
+    net: try NFKMLXMarian.network(directoryURL: tunedDir, configuration: configuration), directoryURL: releaseDir)
 ```
 
 `NFKMLXM2M100.fineTune` and `NFKMLXMADLAD.fineTune` take the same shape (M2M-100's target ids lead with
@@ -4294,11 +4298,15 @@ PyTorch autocast chooses per operation, so it follows a PyTorch reference closel
 
 ### Training with a reference's dropout
 
-Every dropout ships off, so a fine-tune is deterministic unless the caller asks for the release's rates.
-They apply while training, frozen layers included, and never at inference:
+The networks that carry a dropout switch ship with it off, so their fine-tunes are deterministic unless
+the caller asks for the release's rates. The rates apply while training, frozen layers included, and never
+at inference. All-In-One, the MarbleNet VAD, DeepLabV3, Silero VAD, and the PANNs tagger build their
+references' dropout in and drop while they train.
 
 ```swift
-let net = try NFKMLXMarian.network(directoryURL: releaseDir)
+let configuration = try NFKMLXSeq2SeqConfiguration(
+    huggingFaceConfigURL: releaseDir.appendingPathComponent("config.json"))
+let net = try NFKMLXMarian.network(directoryURL: releaseDir, configuration: configuration)
 net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: releaseDir)   // the rates config.json declares
 
 // LoRA's own dropout drops each adapter's input, as peft's `lora_dropout` does.
@@ -4308,7 +4316,9 @@ try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8, dropout: 0.05)
 The Sa2VA and TimesFM recipes take LoRA's dropout as `loraDropout:`. `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`
 also reads a Florence-2 release's `text_config` and a TrOCR release's `decoder`, for their networks'
 `dropout`. SegFormer, DeBERTa-v2, and W2V-BERT carry their own: `NFKMLXSegFormerDropout.reference`, `NFKMLXDeBERTaV2Dropout(configURL:)`, and
-`NFKMLXWav2Vec2BertDropout(configurationURL:)`.
+`NFKMLXWav2Vec2BertDropout(configurationURL:)`. Laya's decision head (`headDropout`), SAM 3's detector and
+Table Transformer (`dropout`), and the Sa2VA and Florence-2 vision towers (`visionDropPath`) carry a rate
+of their own.
 
 ### Any model
 

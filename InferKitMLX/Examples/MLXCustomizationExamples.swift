@@ -1050,8 +1050,9 @@ final class MLXCustomizationExamples: XCTestCase {
         try Data(#"{"dropout": 0.1, "attention_dropout": 0.1, "activation_dropout": 0.0}"#.utf8)
             .write(to: release.appendingPathComponent("config.json"))
 
-        // Every dropout ships off, so a fine-tune is deterministic unless the caller asks for the
-        // release's rates. They apply while training, frozen layers included, and never at inference.
+        // The networks that carry a dropout switch ship with it off, so a fine-tune is deterministic
+        // unless the caller asks for the release's rates. They apply while training, frozen layers
+        // included, and never at inference.
         let net = try NFKMLXMarian.network(directoryURL: nil)
         net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: release)
         XCTAssertEqual(net.dropout.dropout, 0.1)

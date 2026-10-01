@@ -144,7 +144,7 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   weights (exposure 10, color 5, smoothness 200, spatial 1), with `wellExposedLevel` as the consumer's
   brightness preference. All four match the reference to float precision
   (`run_reference.py zero_dce_losses`, `testZeroDCETrainingLossesMatchTheReference`). The reference
-  optimizer is torch's Adam at 1e-4 with its L2 weight decay 1e-4 (`NFKMLXL2Adam`).
+  optimizer is torch's Adam at 1e-4 with its L2 weight decay 1e-4 (`NFKMLXReferenceOptimizers.l2Adam`).
   `testAFineTunedCheckpointLoadsThroughThePublicFactory` reloads the result through `backend(weightsURL:)`.
 - `NFKMLXZeroDCEPlus` (`@objc`) — Zero-DCE++, the authors' own successor, registered as `zero-dce-plus`.
   The seven convolutions become depthwise-separable pairs (`CSDN_Tem`: a grouped 3×3 followed by a 1×1),

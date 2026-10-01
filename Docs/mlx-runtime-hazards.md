@@ -185,16 +185,15 @@ the cache untouched, measured on this machine:
 | 0.32.0 | 25 of 25 |
 | 0.32.2 | 60 of 60 |
 
-mlx-swift 0.31.6 vendors mlx core 0.31.1, which is why this package still carries the workaround.
-0.31.6 is also the newest mlx-swift tag. mlx-swift `main` vendors core 0.32.2.
-`InferKitMLX/Package.swift` requires mlx-swift `from: "0.31.6"`, so a 0.32.x tag is taken up when one
-is published. Which of the 146 commits between 0.31.2 and 0.32.0 carries the fix is not identified. A
+mlx-swift 0.31.6, the newest tag, vendors mlx core 0.31.1. mlx-swift `main` vendors core 0.32.2.
+`InferKitMLX/Package.swift` has pinned a `main` revision that vendors core 0.32.2 since 2026-09-24. The
+trainer keeps the workaround until a training loop with the cache left on is measured on that core. Which of the 146 commits between 0.31.2 and 0.32.0 carries the fix is not identified. A
 lone grouped strided convolution returns the correct gradient on 0.31.1, so the composed graph is
 still what the fault needs.
 
 **The fix is confirmed in Swift, not only in Python.** Pointing `InferKitMLX/Package.swift` at
 mlx-swift `main`, which vendors core 0.32.2, and running the watch alone in a fresh process reports
-the fault not observed at 20 of 20. The same command against the shipped 0.31.6 pin reports it still
+the fault not observed at 20 of 20. The same command against the 0.31.6 tag, the pin at the time, reports it still
 present at 0 of 20. Same machine, same test, same graph, with the vendored core as the only
 difference. `NFKMLXBufferCacheGradientTests` passes on both, because it asserts the CPU's accuracy
 and the mitigations rather than the fault.

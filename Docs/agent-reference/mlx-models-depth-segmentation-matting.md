@@ -436,7 +436,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the classifier) in `MLXNN`, run through `NFKMLXModuleBackend`. Emits a grayscale class-label map under
   `NFKOutputImage` (same convention as `NFKMLXSegFormer`); the logits upsample before the argmax, and
   the input takes ImageNet normalization. `+register` under `deeplabv3`; factory sets `train(false)`.
-  Reference parity against torchvision (logit cosine 0.9999999999999, label agreement 1.0).
+  Reference parity against torchvision (logit cosine 0.99999999999976, label agreement 1.0).
   `remapReferenceKey` maps the reference's positional `classifier.N` Sequential onto the module's names.
   Complements `NFKMLXSegFormer` (CNN vs transformer segmentation).
   **Customization is a HEAD RETARGET and it ships** (`NFKMLXDeepLabTraining.swift`):

@@ -381,15 +381,16 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     no report to make. The drafted report is withdrawn.
   - **Confirmed in Swift against mlx-swift `main` (2026-09-20).** Pinning the package to mlx-swift
     `main`, which vendors core 0.32.2, and running the watch alone in a fresh process reports the
-    fault not observed at 20 of 20, against 0 of 20 on the shipped 0.31.6 pin under the same
+    fault not observed at 20 of 20, against 0 of 20 on the 0.31.6 tag, the pin at the time, under the same
     command. The build takes no source change, and `NFKMLXBufferCacheGradientTests` passes on both
     runtimes. What is still unmeasured on 0.32.x is a training loop with the cache left on, which is
     the condition the trainer default answers to. Measure that before flipping it.
   - **The exit condition.** mlx-swift's newest tag is 0.31.6, vendoring core 0.31.1. mlx-swift `main`
-    vendors core 0.32.2. `InferKitMLX/Package.swift` requires `from: "0.31.6"`, so a 0.32.x tag is
-    taken up when one is published. On that bump, run `swift test --filter NFKMLXUpstreamWatchTests`
-    alone in a fresh process, and make ``NFKMLXTrainingCachePolicy/unchanged`` the trainer default
-    once the watch reports the fault is not observed. The bullets below record the defect as it
+    vendors core 0.32.2. `InferKitMLX/Package.swift` has pinned a `main` revision that vendors
+    core 0.32.2 since 2026-09-24. On that pin, run `swift test --filter NFKMLXUpstreamWatchTests`
+    alone in a fresh process, measure a training loop with the cache left on, and make
+    ``NFKMLXTrainingCachePolicy/unchanged`` the trainer default once both report the fault is not
+    observed. The bullets below record the defect as it
     behaves on core 0.31.1.
   - **The CPU is the accurate device, arbitrated rather than assumed.** On the smallest graph that
     shows the fault, central finite differences along the CPU gradient's own direction give ratios of

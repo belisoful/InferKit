@@ -196,8 +196,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   weight decay on every probe parameter and its `WarmupCosineLRSchedule` (no warm-up, a cosine to zero;
   `NFKMLXLearningRateSchedule.warmupCosine`, which steps before each update as the reference does). The
   reference sweeps twenty heads over five rates (5e-3 to 1e-4) and four weight decays (0.01 to 0.8) and
-  keeps the best on validation; the defaults are the first, 5e-3 and 0.01. Its bfloat16 autocast and
-  gradient scaler are a mixed-precision device the float32 recipe does not need.
+  keeps the best on validation; the defaults are the first, 5e-3 and 0.01. Its bfloat16 autocast is
+  `precision: .bfloat16`, off by default. Its gradient scaler is not reproduced under bfloat16.
   `NFKMLXVJEPA2Processor.clip(frames:configuration:)` is the data adapter, and
   `NFKMLXVJEPA2.save(_:toDirectoryURL:)` writes a directory (`model.safetensors`, `config.json` with
   `id2label`, `video_preprocessor_config.json`) that the `@objc` `backendWithDirectoryURL:` loads.

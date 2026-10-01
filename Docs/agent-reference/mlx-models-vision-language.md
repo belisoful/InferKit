@@ -278,9 +278,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   with no clipping: the IAM recipe; SROIE's is 5e-5 with 800 warm-up updates. `NFKMLXTrOCR.network(directoryURL:)`
   builds the network, and `save(_:toDirectoryURL:release:)` writes `model.safetensors` in the module's
   layout beside the release's configuration and tokenizer files, which `backendWithDirectoryURL:` loads.
-  Not reproduced: fairseq's Adam adds its epsilon before the second-moment bias correction (the Adam
-  paper's form) where torch and MLX add it after, which differs only where `√v` is near 1e-8; and the
-  fp16 flag. Measured (`run_reference.py trocr_loss`, `IK_PARITY_TROCR_<RELEASE>_LOSS`, on each
+  The optimizer is fairseq's own `adam` (`NFKMLXFairseqAdam`), which adds its epsilon before the
+  second-moment bias correction (the Adam paper's form) where torch and MLX add it after. The fp16 flag
+  with dynamic loss scaling is `precision: .float16`, off by default. Measured (`run_reference.py trocr_loss`, `IK_PARITY_TROCR_<RELEASE>_LOSS`, on each
   release's own greedy transcription): the target ids equal the release tokenizer's; the loss on
   identical logits is within 3e-7 of the criterion computed in float64 (small-handwritten 0.27900872
   against 0.27900857, base-printed 0.17066547 against 0.17066573; torch's float32 value is 2e-5 off,
@@ -402,8 +402,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXSa2VAExample` carries the tiles (and a Qwen-VL grid), ids, labels, grounding image, and masks.
   `NFKMLXLoRA.merge(into:)` then `NFKMLXSa2VA.save(_:toDirectoryURL:release:)` writes the weights in
   the module's layout beside the release's other files; `backendWithDirectoryURL:` and each family's
-  loader read it. Not reproduced: LoRA dropout (0.05), the bfloat16 autocast, and the point draws, which
-  come from this process's generator. Measured on Sa2VA-1B (`run_reference.py sa2va_loss`,
+  loader read it. LoRA dropout 0.05 is `loraDropout:` and the bfloat16 autocast is `precision: .bfloat16`,
+  each off by default. Not reproduced: the point draws, which come from this process's generator. Measured on Sa2VA-1B (`run_reference.py sa2va_loss`,
   `IK_PARITY_SA2VA_1B_LOSS`: the authors' own `_compute_loss`, `check_obj_number`, `sample_points`,
   `SAM2TrainRunner`, extension `_forward_sam_heads`, and vendored mmdet losses, run on the release,
   the sampler's `torch.rand` draws recorded): on the reference's masks and points, the mask term

@@ -66,10 +66,10 @@ onto Hungarian matchers this package already reproduces in `NFKMLXHungarian`. Th
 read on disk rather than assumed. Detection was previously set aside as too expensive to port, and
 that call was wrong.
 
-The second: **eight audio models are trainable at `full` and all are small.** GTCRN is under one
-megabyte, DeepFilterNet3 is eight, NU-Wave 2 and Conv-TasNet nineteen each. Their references publish
-a plain reconstruction or score-matching objective with no adversary, verified in each repository's
-own loss module.
+The second: **eight audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3,
+MossFormer2 SE, FRCRN, Demucs, HT Demucs, and Denoiser each publish a plain reconstruction or
+score-matching objective with no adversary, verified in each repository's own loss module. GTCRN,
+NU-Wave 2, and Conv-TasNet ship.
 
 ## Depth, segmentation, matting
 
@@ -95,7 +95,7 @@ own loss module.
 
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
-| `NFKMLXTableTransformer` | ships | head-retarget | public | The vendored DETR `SetCriterion` behind a Hungarian matcher, measured term by term. |
+| `NFKMLXTableTransformer` | ships | full | public | The vendored DETR `SetCriterion` behind a Hungarian matcher, measured term by term. The default trains what the reference trains; `.heads` retargets the class and box heads alone. |
 | `NFKMLXYOLO` | ships | full | public | ultralytics' `v8DetectionLoss`, `optimizer=auto`, schedule, and `ModelEMA`, each matched; the class retarget transfers shapes alike. |
 | `NFKMLXYOLOGenerations` | ships | full | public | YOLOv8's recipe, with `E2ELoss` for the v10 and YOLO26 end-to-end heads, matched on both. |
 | `NFKMLXRTDetr` | ships | full | public | The original repository's criterion, denoising queries, and each release's configuration (freezing, AdamW groups, v2's warm-up), all eight releases matched; the class retarget transfers shapes alike. |
@@ -229,7 +229,7 @@ largest size this machine holds at float32.
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXGraniteHybrid` | ships | LoRA | public | The reference's `labels=` loss within 1e-3. The 1B release fits float32. |
-| `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The only release is 9B at ~17.8 GB bfloat16, and the trainer has no bfloat16 path. |
+| `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The only release is 9B at ~17.8 GB bfloat16, and the recipe takes no `precision:` argument. |
 | `NFKMLXLanguage` (dense) | trainable to 4B, offline above | LoRA | **internal** | `q_proj` and `v_proj` are `Linear` under `@ModuleInfo`, which LoRA requires. The builder, the loader, and the initializer are all internal. |
 | `NFKMLXHybridLanguage` | trainable at 2B and 4B, offline at 27B | LoRA | **internal** | Open-Jev already LoRA-trains this decoder at Qwen3.5-2B. Qwen3.8-27B is ~54 GB. |
 | `NFKMLXGemma2Net` | trainable at 2B, offline at 9B and 27B | LoRA | public | The 2B release runs at float32 in the entry's own layer probe. |

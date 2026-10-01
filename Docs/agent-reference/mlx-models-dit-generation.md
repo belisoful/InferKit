@@ -953,8 +953,9 @@ glue exact to double-precision noise. Notes:
 The umT5 vocabulary is measured on its own: the release's 256k `spiece.model` through the port's
 SentencePiece reader against the fast tokenizer the pipeline names (`run_reference.py umt5_tokenizer`,
 `IK_VAL_UMT5_TOKENIZER` / `IK_PARITY_UMT5_TOKENIZER`), 9 of 9 prompts token-exact across Latin, CJK,
-Cyrillic, accents, emoji, digits and runs of whitespace, padded and masked to 512. Unmeasured:
-LTX-Video / Wan end to end on released weights (not on disk). The
+Cyrillic, accents, emoji, digits and runs of whitespace, padded and masked to 512. Unmeasured against a
+reference: LTX-Video and Wan end to end on released weights. The Wan 2.1 T2V 1.3B release runs end to end
+(`testWanReleaseRunsEndToEnd`). The
 0.9.1+ LTX autoencoder's decode timestep is refused, not ported. `framesForPrompt:` returns `[Any]`: an
 `@objc` `[CGImage]` exports as `NSArray<CGImageRef>`, which clang rejects in the generated header.
 

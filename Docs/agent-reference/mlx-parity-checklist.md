@@ -67,7 +67,8 @@ parity"). This checklist adds the listings that half touches:
 - `Docs/model-parity.md` — a row in "Training objectives and the checkpoint path" for the objective:
   its `run_reference.py` mode and the measured agreement on identical tensors.
 - `Docs/examples.md` — the recipe snippet under "Customizing a model on a consumer's own data",
-  mirrored by a compiled example in `InferKitMLX/Examples/MLXExamples.swift`.
+  mirrored by a compiled example in `InferKitMLX/Examples/MLXCustomizationExamples.swift`, which
+  imports the package without `@testable`.
 - `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/InferKitMLX.md` — the network, objective, and
   recipe symbols in the "Customizing a model" Topics list.
 - `Docs/model-index.md` and the DocC `ModelIndex.md` — the construction cell gains the

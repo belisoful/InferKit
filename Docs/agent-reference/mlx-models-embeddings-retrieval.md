@@ -488,7 +488,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   normalized space, the median channel's mean squared error plus a pinball loss over the other nine
   channels, which the reference pairs with the nine levels in order, so the mean channel takes level 0.1
   and each quantile channel the level after its own; the port keeps the pairing. The script loads the
-  model in bfloat16 and uses LoRA dropout 0.05; the recipe trains at float32 without dropout.
+  model in bfloat16 and uses LoRA dropout 0.05. `precision: .bfloat16` and `loraDropout: 0.05` reproduce
+  them, each off by default.
   `NFKMLXTimesFM.network(directoryURL:)`, `fineTune(_:windows:…)`, and `save(_:toDirectoryURL:)` (which
   folds the adapters in) complete the path. Measured against transformers with the adapters written out as
   PEFT computes them (`run_reference.py timesfm_loss`): the objective on identical tensors to 7e-8

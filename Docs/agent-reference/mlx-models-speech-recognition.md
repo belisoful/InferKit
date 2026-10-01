@@ -324,7 +324,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   linear warm-up then a linear decay (`NFKMLXLearningRateSchedule.linearWithWarmup`), and clipping at 1.0;
   `save(_:tokenizer:toDirectoryURL:)` writes a directory the factory loads. The recipe's own settings leave
   `conformer_conv_dropout` and `final_dropout` at the release's 0.1, and it trains in fp16 over batches of
-  16 with two accumulation steps; the port runs without dropout at float32, one utterance a step. Measured
+  16 with two accumulation steps. Each is off by default: `NFKMLXWav2Vec2BertNet.dropout`,
+  `precision: .float16`, and `accumulationSteps: NFKMLXWav2Vec2Bert.referenceAccumulationSteps`. Measured
   against transformers' own `Wav2Vec2BertForCTC` from the reference's adapter and head initialization
   (`run_reference.py w2v_bert_loss`, the dropouts zeroed so the replay is deterministic): the loss over 86
   pooled frames 5.2926073 vs 5.2926073 with its gradient at 0.99999999978, the adapted logits
