@@ -4,12 +4,16 @@ Pod::Spec.new do |s|
   s.summary          = 'A small, cross-platform inference toolkit for Objective-C.'
   s.description      = <<-DESC
     InferKit is an Objective-C inference toolkit: a swappable backend protocol, request/result
-    value types, a thread-safe async job handle, and shipped backends (passthrough mock,
-    in-process Core ML, an OpenAI-compatible remote client, and a submit-poll-fetch generation
-    base). It adds an RGBA-interleaved to planar CHW/HWC tensor conversion, an MLMultiArray
-    bridge, and a Hugging Face model-download layer. It has no host-framework
-    dependency, so any Metal/Apple app can use it. A consumer brings a heavier runtime (MLX, a
-    C or Rust engine) by adopting the backend protocol.
+    value types, a thread-safe async job handle, and the shipped backends: a passthrough mock,
+    in-process Core ML and an on-device Core ML language-model runner, the Apple-framework engines
+    (Vision, VideoToolbox, Speech, SoundAnalysis, AVFoundation's voices, NaturalLanguage),
+    OpenAI-compatible chat and transcription clients, a submit-poll-fetch generation base, and
+    runtime discovery. A server hosts any backend for other machines over OpenAI-compatible
+    routes and a native route, found by address or Bonjour. It adds tokenizers, an
+    RGBA-interleaved to planar CHW/HWC tensor conversion, an MLMultiArray bridge, and a Hugging
+    Face model-download layer. It has no host-framework dependency, so any Metal/Apple app can
+    use it. A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting the
+    backend protocol.
   DESC
   s.homepage         = 'https://github.com/belisoful/InferKit'
   s.license          = { :type => 'MIT', :file => 'LICENSE' }
