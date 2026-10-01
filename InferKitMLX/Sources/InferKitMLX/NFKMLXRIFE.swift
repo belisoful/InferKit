@@ -519,8 +519,8 @@ private final class NFKMLXRIFEv4Holder: @unchecked Sendable {
 /// RIFE v4 frame interpolation as an InferKit backend.
 ///
 /// Two frames under `frame0` / `frame1` produce the interpolated frame under `NFKOutputImage`, as
-/// for `NFKMLXRIFE`. v4 conditions on a timestep, so a caller wanting a point other than the midpoint
-/// uses `NFKMLXRIFEv4Net.interpolate(_:_:timestep:)` directly.
+/// for `NFKMLXRIFE`. v4 conditions on a timestep. The backend interpolates the midpoint, and
+/// `NFKMLXRIFEv4Net.interpolate(_:_:timestep:)`, which takes another point, is internal.
 @objc(NFKMLXRIFEv4)
 public final class NFKMLXRIFEv4: NSObject {
 

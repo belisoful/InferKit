@@ -43,7 +43,7 @@ configuration preset behind each registered name, and a construction line to cop
 | ``NFKMLXStyleTransfer`` | `fast-style-transfer` | one baked style per checkpoint |
 | ``NFKMLXAdaIN`` | `adain` | arbitrary style transfer: any style image, no per-style checkpoint |
 | ``NFKMLXColorizer`` | `colorizer-eccv16` | grayscale → color |
-| ``NFKMLXSiggraphColorizer`` | `colorizer-siggraph17` | colorization with optional user hints |
+| ``NFKMLXSiggraphColorizer`` | `colorizer-siggraph17` | colorization (siggraph17; the backend colorizes without hints, and the network's hint path is internal) |
 | ``NFKMLXDDColor`` | `ddcolor` · `-paper` · `-artistic` | modern automatic colorization (learned color queries) |
 | ``NFKMLXLaMa`` | `lama-inpaint` | mask-guided inpainting |
 | ``NFKMLXStableDiffusionInpaint`` | `sd-inpaint` | latent-diffusion inpainting |
@@ -188,7 +188,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXRIFE`` | `rife` | frame interpolation (HDv3, midpoint) |
-| ``NFKMLXRIFEv4`` | `rife-v4` | frame interpolation (v4, any timestep) |
+| ``NFKMLXRIFEv4`` | `rife-v4` | frame interpolation (v4; the backend interpolates the midpoint, and the network's timestep path is internal) |
 | ``NFKMLXRAFT`` | `raft` | optical flow |
 | ``NFKMLXVideoSR`` | `video-super-resolution` | recurrent video super-resolution (BasicVSR ×4) |
 | ``NFKMLXVJEPA2`` | `backend(directoryURL:)` | self-supervised video features, and ranked classes from the Something-Something v2 and Diving48 releases, MIT (V-JEPA 2, Meta; 3D-RoPE ViT-L, ViT-H, or ViT-g) |
