@@ -18,6 +18,8 @@ per modality that is already scoped; the entries here are the wider field the ro
 - [Tier 1 — clean near-term wins](#tier-1--clean-near-term-wins)
 - [Tier 2 — strong, mostly permissive](#tier-2--strong-mostly-permissive)
 - [Tier 3 — strategic frontier, high cost](#tier-3--strategic-frontier-high-cost)
+- [Updates to shipped families (Tiers A–C)](#updates-to-shipped-families-tiers-ac)
+- [Text-to-speech candidates](#text-to-speech-candidates)
 - [Novel but license-blocked](#novel-but-license-blocked)
 - [Vendor verdicts](#vendor-verdicts)
 - [Connections to existing work](#connections-to-existing-work)
@@ -65,11 +67,11 @@ in size.
 
 | Model | Vendor | Task | Architecture | License | Reference | Effort |
 |-------|--------|------|--------------|---------|-----------|--------|
-| **BigVGAN v2** | NVIDIA | Vocoder | GAN generator with Snake anti-aliased periodic activations and low-pass filtered resampling | MIT | `NVIDIA/BigVGAN` + HF `transformers` | Low–Med |
-| **Mimi** | Kyutai | Neural codec | SEANet conv encoder/decoder with interleaved transformer layers and split RVQ (one semantic codebook plus acoustic) | Code MIT, weights CC-BY-4.0 | `kyutai-labs/moshi` (PyTorch and MLX) + HF `MimiModel` | Low–Med |
-| **Chronos-Bolt** | Amazon | Time-series forecasting | T5 encoder-decoder over patched observations, direct multi-step quantile forecast | Apache-2.0 | `amazon-science/chronos-forecasting` + HF | Low–Med |
-| **Pixtral vision tower** | Mistral | Vision-language | From-scratch variable-resolution ViT with 2D RoPE, feeding a Mistral decoder | Apache-2.0 | HF `transformers` (`PixtralVisionModel`) | Med |
-| **Flux.1 [schnell]** | Black Forest Labs | Text-to-image | Hybrid MMDiT, roughly 19 double-stream plus 38 single-stream blocks, rectified flow | Apache-2.0 | HF `diffusers` (`FluxPipeline`) | High |
+| **BigVGAN v2** — SHIPPED (`NFKMLXBigVGAN`) | NVIDIA | Vocoder | GAN generator with Snake anti-aliased periodic activations and low-pass filtered resampling | MIT | `NVIDIA/BigVGAN` + HF `transformers` | Low–Med |
+| **Mimi** — SHIPPED (`NFKMLXMimi`) | Kyutai | Neural codec | SEANet conv encoder/decoder with interleaved transformer layers and split RVQ (one semantic codebook plus acoustic) | Code MIT, weights CC-BY-4.0 | `kyutai-labs/moshi` (PyTorch and MLX) + HF `MimiModel` | Low–Med |
+| **Chronos-Bolt** — SHIPPED (`NFKMLXChronos`, Swift API) | Amazon | Time-series forecasting | T5 encoder-decoder over patched observations, direct multi-step quantile forecast | Apache-2.0 | `amazon-science/chronos-forecasting` + HF | Low–Med |
+| **Pixtral vision tower** — SHIPPED (`NFKMLXPixtral`) | Mistral | Vision-language | From-scratch variable-resolution ViT with 2D RoPE, feeding a Mistral decoder | Apache-2.0 | HF `transformers` (`PixtralVisionModel`) | Med |
+| **Flux.1 [schnell]** — SHIPPED (`NFKMLXFluxPipeline`) | Black Forest Labs | Text-to-image | Hybrid MMDiT, roughly 19 double-stream plus 38 single-stream blocks, rectified flow | Apache-2.0 | HF `diffusers` (`FluxPipeline`) | High |
 
 Notes:
 
@@ -145,7 +147,7 @@ Notes:
 | **Codestral-Mamba 7B** — SHIPPED (`NFKMLXMamba`) | Mistral | Code LLM | Pure Mamba-2 SSM, linear-time, 256k context | Apache-2.0 | transformers `Mamba2ForCausalLM` (CPU) | High |
 | **Granite 4.0-H** — SHIPPED (`NFKMLXGraniteHybrid`) | IBM | LLM | Hybrid Mamba-2 SSM, sparse attention, MoE in H-Small | Apache-2.0 | HF `transformers` (`GraniteMoeHybrid`) | High |
 | **Nemotron Nano 2 (9B/12B v2)** — SHIPPED (`NFKMLXNemotronH`) | NVIDIA | LLM | Nemotron-H hybrid: Mamba-2 layers, ReLU-squared MLP, few NoPE attention layers | NVIDIA Open Model License | HF `transformers` (`NemotronH`) | High |
-| **BAGEL-7B-MoT** | ByteDance | Any-to-any understand and generate | Mixture-of-Transformer-Experts, dual VAE + ViT encoders | Apache-2.0 | `ByteDance-Seed/BAGEL` (official repo) | High |
+| **BAGEL-7B-MoT** — PRIORITY 1 (scheduled) | ByteDance | Any-to-any understand and generate | Mixture-of-Transformer-Experts, dual VAE + ViT encoders | Apache-2.0 | `ByteDance-Seed/BAGEL` (official repo) | High |
 | **Phi-4-multimodal** — SHIPPED (`NFKMLXPhi4MM`) | Microsoft | Text + vision + audio | Phi-4-mini decoder + SigLIP-style vision + Conformer audio + mixture-of-LoRAs | MIT | the release's remote code (transformers 4.46.1) | High |
 | **HunyuanVideo / Hunyuan3D** | Tencent | Text-to-video / image-to-3D | MMDiT + 3D causal VAE (video); flow-based shape DiT + PBR paint (3D) | Tencent Hunyuan Community | HF `diffusers` (video) / official repo (3D) | High |
 
@@ -166,6 +168,9 @@ Notes:
   logit cosine 1.0, structural parity across all 341 tensors of Nemotron-Nano-9B-v2, and the same
   on-device LoRA fine-tune. This closes the SSM/hybrid track — one selective-scan mixer now serves all
   three (Codestral-Mamba, Granite 4.0-H, Nemotron Nano 2).
+- **BAGEL** is the scheduled priority-1 port (permissive Apache-2.0, runnable official reference). Its
+  weights download to Meta (`/Volumes/Code/InferKit`) through the IO Manager, as for every scheduled
+  port.
 - **BAGEL** and **Phi-4-multimodal** are large multi-component integrations whose novelty concentrates
   in one part (the Mixture-of-Transformer routing; the audio Conformer and mixture-of-LoRAs).
   **Phi-4-multimodal is now shipped at reference parity** (`NFKMLXPhi4MM`) in all four of its modes
@@ -175,6 +180,133 @@ Notes:
   embedding and Phi-3.5's HD layout, the runtime mixture-of-LoRAs layer, and both preprocessors.
 - **Hunyuan3D** is the one novel 3D-asset frontier with no covered analog. The Tencent Community License
   excludes the EU, UK, and South Korea and bans training competitors, so it is not truly open.
+
+## Updates to shipped families (Tiers A–C)
+
+Tiers 1–3 survey families new to the toolkit. Tiers A–C come from a second survey, taken on
+2026-09-21 against [the model index](model-index.md), of upstream releases that update a family InferKit
+already ships. Each release is sorted by the work it needs. Every item was re-verified against the
+Hugging Face detail endpoint before work started, and that check corrected several of the survey's
+claims; the tables below carry the verified facts.
+
+### Tier A — successor weights on a shipped architecture
+
+| Update | Vendor | License | Status |
+|--------|--------|---------|--------|
+| **Parakeet-TDT 0.6B v3** — SHIPPED (`NFKMLXParakeet`) | NVIDIA | CC-BY-4.0 | Measured on the released model; its 8192-piece vocabulary sizes the net, and it transcribes 25 European languages |
+| **Chatterbox Multilingual v3** — SHIPPED (`NFKMLXChatterbox`) | Resemble AI | MIT | The multilingual text layer and T3 are measured on the released weights; the backend prefers the multilingual release when a directory holds one |
+| **Gemma 4 31B** — SHIPPED (`NFKMLXGemmaLanguage`) | Google | Apache-2.0 | Structural across all 832 tensors, plus a numeric probe of the first 6 released layers and bf16 records on cuts. The whole 31B exceeds a 32 GB machine |
+| **RF-DETR segmentation** — SHIPPED (`NFKMLXRFDetrSegmentationNet`) | Roboflow | Apache-2.0 | Every released `rf-detr-seg-*` size, nano through xxlarge |
+| **Wan 2.7** | Alibaba | — | Not released as open weights. The newest open Wan is 2.2 (checked 2026-09-26) |
+
+Notes:
+
+- The survey expected RF-DETR detection sizes above large and a keypoint head. Neither is published on
+  Hugging Face; the xlarge and xxlarge releases are segmentation checkpoints, and those ship.
+- Wan 2.7 was announced as API-only. Its audio output would be a new stage, so it moves to Tier B if
+  its weights are released.
+
+### Tier B — same vendor, new architecture
+
+| Model | Vendor | License | Status |
+|-------|--------|---------|--------|
+| **DeepSeek V4.1 Flash** — SHIPPED (`NFKMLXDeepSeek`) | DeepSeek | MIT | The decoder, image tower, aligner, and DSpark draft stack match the release's own `inference/model.py`, bit-exact in bf16. Experts and n-gram tables page. The released weights (510.3 GB) are parked on the Meta share and are held structurally, not run |
+| **Qwen3.8-Flash-Next** — SHIPPED (`NFKMLXQwen4Exp`) | Alibaba Qwen | other | The `qwen4_exp` architecture at reference parity on a tiny oracle; the 180B release is held structurally |
+| **FLUX.2 [dev]** — PARTIAL (`NFKMLXFlux2`) | Black Forest Labs | FLUX Non-Commercial, gated | [klein] 4B runs end to end at released-weight parity. [dev] needs Mistral-Small 3 as its text encoder and a 60 GB bf16 transformer, which exceeds a 32 GB machine |
+| **LTX-2.5** — PARTIAL (`NFKMLXLTX2TransformerNet`) | Lightricks | other, gated | The audio-video transformer is at reference parity, with a structural check on the ungated LTX-2.3. The video and audio autoencoders, the Gemma 4 text front end, the vocoder, and the pipeline are not built |
+
+Notes:
+
+- The survey described DeepSeek V4.1 Flash as a 552B causal encoder-decoder. The release is a 763B
+  decoder that extends V4 with n-gram memory, a vision tower, and DSpark speculation. V4 Flash and V4
+  Pro, including the Pro 0813 draft stack, were brought to the same release-code parity alongside it.
+- FLUX.2 [dev] and LTX-2.5 are gated with automatic approval. Accepting each license is a user action,
+  and it releases the headers the structural checks still lack.
+
+### Adjacent new families
+
+The survey also named two families new to the toolkit that sit next to shipped surfaces:
+
+| Model | Vendor | License | Status |
+|-------|--------|---------|--------|
+| **Qwen3-VL-Embedding / Reranker 2B** — SHIPPED (`NFKMLXQwen3VLEmbedder`, `NFKMLXQwen3VLReranker`) | Alibaba Qwen | Apache-2.0 | Text and image retrieval at reference parity, on the embeddings and rerank surfaces |
+| **Qwen-Image 2.1** — SHIPPED (`NFKMLXQwenImagePipeline`) | Alibaba Qwen | Qwen Research License (non-commercial) | End to end: the transformer, the Wan 2.2-derived autoencoder, and the Qwen3-VL 8B text encoder |
+
+### Tier C — no action
+
+Checked on 2026-09-21 and left alone:
+
+- **Whisper.** No new open checkpoint. The 2026 OpenAI transcription models are API-only.
+- **gpt-oss.** No weights since 120b and 20b.
+- **Kokoro.** No new architecture release.
+- **BiRefNet.** The "2026.2" listing is a third-party host's packaging, not an upstream release.
+- **Wan 2.6.** Closed.
+- **SAM 3 / 3.1.** Public weights under Meta's custom SAM License. The recorded decision to skip on
+  license terms stands.
+
+## Text-to-speech candidates
+
+Surveyed on 2026-09-26 against the Hugging Face detail endpoint (`/api/models/<repo>?blobs=true`).
+The goal is long-form narration above the shipped Chatterbox and Kokoro. Download is the size of the
+weights a port needs: duplicate formats, optimizer states, and training shards are excluded. Several
+releases postdate the survey author's knowledge, so audition samples before committing to a port.
+
+Priority rules:
+
+- Priority 1 is scheduled. Its weights are downloaded to Meta (`/Volumes/Code/InferKit`) through the
+  IO Manager, at the pinned revisions below.
+- Priority 2 is permissive and unscheduled.
+- Priority 3 holds every model whose weight license is non-commercial, research-only, or undeclared. A
+  restrictive license keeps a model at priority 3 unless the user asks for that model by name. A model
+  the user asks for is ported in full, with the fixes it surfaces along the way.
+
+### Priority 1 — scheduled (permissive)
+
+| Model | Vendor | Download | License | Reuses or needs | Revision |
+|-------|--------|----------|---------|-----------------|----------|
+| **Chatterbox-Turbo** | Resemble AI | 4.0 GB repo (1.9 GB T3 + 1.06 GB S3Gen or its meanflow variant) | MIT | The shipped Chatterbox voice encoder, tokenizer, and S3Gen; the new work is the turbo T3 and the meanflow S3Gen | `749d1c1a` |
+| **Chatterbox-Nano** | Resemble AI | 3.0 GB repo (0.87 GB T3 + the same S3Gen pair) | MIT | As Turbo | `71ccd1d0` |
+| **VibeVoice-1.5B** | Microsoft | 5.4 GB | MIT | The Qwen2.5 decoder and tokenizer; the acoustic and semantic tokenizers and the diffusion head are new. Built for long-form, multi-speaker audio. Microsoft withdrew the reference code in 2025; confirm a runnable reference before starting | `c00898d2` |
+| **VibeVoice-Realtime-0.5B** | Microsoft | 2.0 GB | MIT | The streaming member of the same family | `6bce5f06` |
+| **Qwen3-TTS 12Hz 1.7B** (Base, CustomVoice, VoiceDesign) | Alibaba Qwen | 4.5 GB each | Apache-2.0 | The Qwen3 decoder; each repo carries its own 0.68 GB 12 Hz speech tokenizer | `fd4b2543`, `0c0e3051`, `5ecdb673` |
+| **Qwen3-TTS 12Hz 0.6B** (Base, CustomVoice) | Alibaba Qwen | 2.5 GB each | Apache-2.0 | As 1.7B | `5d839924`, `85e237c1` |
+
+### Priority 2 — potential (permissive)
+
+| Model | Vendor | Download | License | Reuses or needs |
+|-------|--------|----------|---------|-----------------|
+| **Orpheus 3B** | Canopy Labs | 15.1 GB float32 (~7.5 GB bf16); gated=auto | Apache-2.0 | Llama decoder and the shipped SNAC codec |
+| **Dia-1.6B** | Nari Labs | 6.4 GB | Apache-2.0 | The shipped DAC codec |
+| **CSM-1B** | Sesame | 6.2 GB; gated=auto | Apache-2.0 | Llama decoder; needs Mimi (Tier 1) |
+| **Kyutai TTS 1.6B (en/fr)** | Kyutai | 4.1 GB | CC-BY-4.0 | Needs Mimi (Tier 1) |
+| **Fun-CosyVoice3 0.5B** | Alibaba FunAudioLLM | ~5.4 GB | Apache-2.0 | Qwen decoder; the speech tokenizer ships as ONNX only |
+| **CosyVoice2 0.5B** | Alibaba FunAudioLLM | 4.9 GB | Apache-2.0 | As CosyVoice3 |
+| **VoxCPM2** | OpenBMB | 5.0 GB | Apache-2.0 | — |
+| **Zonos v0.1 (transformer)** | Zyphra | 3.3 GB | Apache-2.0 | — |
+| **Maya1** | Maya Research | 6.6 GB | Apache-2.0 | Llama decoder |
+| **NeuTTS Air** | Neuphonic | 3.0 GB; gated=auto | Apache-2.0 | — |
+| **Confucius4-TTS** | NetEase Youdao | 3.1 GB | Apache-2.0 | — |
+| **AuK, AuK-Flash** | Tencent | 6.8 GB each | MIT | — |
+| **KugelAudio-0** | KugelAudio | 18.7 GB | MIT | — |
+| **Supertonic-3** | Supertone | 0.4 GB | OpenRAIL | Published as ONNX only; needs a conversion step |
+
+### Priority 3 — restrictive license (lowest)
+
+| Model | Vendor | Download | License |
+|-------|--------|----------|---------|
+| **Fish Audio S2 Pro** | Fish Audio | 11.0 GB | Fish Audio research license |
+| **Fish Audio S1-mini** | Fish Audio | 3.6 GB; gated=auto | CC-BY-NC-SA-4.0 |
+| **Higgs TTS 3 4B** | Boson AI | 9.3 GB | Boson research and non-commercial |
+| **IndexTTS-2** | Bilibili | 5.9 GB, plus helper models fetched at run time | undeclared on the card |
+| **IndexTTS-2.5** | Bilibili | 5.5 GB | Bilibili model license |
+| **Breeze-TTS-2** | BreezeBlue | 7.7 GB | research and non-commercial |
+| **F5-TTS v1** | SWivid | 1.35 GB | CC-BY-NC-4.0 |
+| **Spark-TTS 0.5B** | SparkAudio | 3.9 GB | CC-BY-NC-SA-4.0 |
+| **MaskGCT** | Amphion | 6.6 GB | CC-BY-NC-4.0 |
+| **OmniVoice** | k2-fsa | 3.3 GB | undeclared on the card |
+
+The Higgs Audio v2 generation repo (`bosonai/higgs-audio-v2-generation-3B-base`) returned an empty
+response on 2026-09-26, and `microsoft/VibeVoice-Large` returned 401.
 
 ## Novel but license-blocked
 
