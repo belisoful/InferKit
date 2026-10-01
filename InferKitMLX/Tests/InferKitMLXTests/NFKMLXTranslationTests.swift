@@ -630,6 +630,33 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertLessThan(abs(a - b).max().item(Float.self), 1e-5, "the merged checkpoint reloads through the factory")
     }
 
+    func testTheNetworkFactoryTakesTheReleasesOwnGeometry() throws {
+        try requireMLXRuntime()
+        // A geometry unlike every test preset, so adopting a preset instead of the release shows.
+        let config: [String: Any] = [
+            "model_type": "marian", "vocab_size": 40, "d_model": 24, "encoder_layers": 1, "decoder_layers": 3,
+            "encoder_attention_heads": 2, "encoder_ffn_dim": 48, "decoder_ffn_dim": 48,
+            "max_position_embeddings": 32, "activation_function": "swish", "scale_embedding": true,
+            "pad_token_id": 39, "eos_token_id": 0, "decoder_start_token_id": 39,
+        ]
+        let release = NFKMLXSeq2SeqNet(try NFKMLXSeq2SeqConfiguration(huggingFaceConfig: config))
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try NFKMLXWeights.save(release, to: directory.appendingPathComponent("model.safetensors"))
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+
+        let loaded = try NFKMLXMarian.network(directoryURL: directory)
+        XCTAssertEqual(loaded.configuration.dModel, 24)
+        XCTAssertEqual(loaded.configuration.encoderLayers, 1)
+        XCTAssertEqual(loaded.configuration.decoderLayers, 3)
+        XCTAssertEqual(loaded.configuration.vocabularySize, 40)
+        let source = MLXArray([Int32(5), 6, 7, 0]).reshaped([1, 4])
+        let target = MLXArray([Int32(39), 10, 11, 0]).reshaped([1, 4])
+        let difference = abs(release(source: source, target: target) - loaded(source: source, target: target)).max()
+        XCTAssertLessThan(difference.item(Float.self), 1e-6, "the release's weights load into the release's geometry")
+    }
+
     // MARK: Dropout
 
     func testDropoutRatesReadFromEachFamilysConfig() throws {

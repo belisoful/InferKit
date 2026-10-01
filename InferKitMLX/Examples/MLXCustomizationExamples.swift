@@ -614,7 +614,8 @@ final class MLXCustomizationExamples: XCTestCase {
         // Merge the adapters, save one ordinary checkpoint, and rebuild through the factory.
         try NFKMLXLoRA.merge(into: net)
         try NFKMLXWeights.save(net, to: tuned.appendingPathComponent("model.safetensors"))
-        let reloaded = try NFKMLXMarian.network(directoryURL: tuned, configuration: .tinyMarian)
+        // A tuned directory holds the weights alone, so the release's geometry comes along with it.
+        let reloaded = try NFKMLXMarian.network(directoryURL: tuned, configuration: net.configuration)
         XCTAssertEqual(reloaded.configuration.vocabularySize, net.configuration.vocabularySize)
     }
 

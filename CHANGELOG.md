@@ -462,6 +462,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXParakeet.register()` registers `parakeet-tdt` over an unpacked release directory or the
   release's `.nemo` archive, and `registerAll` calls it.
 
+#### A translator's network factory reads the release's geometry
+
+- `NFKMLXMarian`, `NFKMLXM2M100`, and `NFKMLXMADLAD` `network(directoryURL:configuration:)` build a
+  release directory at the geometry its `config.json` declares. The configuration defaults to nil, and
+  the tiny test geometry applies only to a network built without a directory. Before, a release
+  directory loaded into the test geometry unless the caller passed the release's configuration.
+
 #### Every mixture of experts pages its routed experts
 
 - `NFKMLXResidency.paged` leaves a mixture's routed experts in the release and reads each as the

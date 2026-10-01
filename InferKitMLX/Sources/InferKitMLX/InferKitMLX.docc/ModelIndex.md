@@ -532,8 +532,8 @@ NFKMLXMADLAD.backend(directoryURL:, half: true)
 // TranslateGemma, at the checkpoint's bfloat16
 NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
 // Fine-tuning
-// Pass the release's configuration. The default is the test geometry.
-NFKMLXMarian.network(directoryURL:configuration:) / NFKMLXM2M100.network(directoryURL:configuration:) / NFKMLXMADLAD.network(directoryURL:configuration:)
+// The release directory supplies its geometry from its config.json
+NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
 ```
 
 ### Video

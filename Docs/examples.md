@@ -4039,10 +4039,7 @@ The three translators share one recipe: LoRA on the decoder's query and value pr
 frozen, teacher forcing as the objective. The release's tokenizers produce each pair's ids:
 
 ```swift
-// The release's own geometry. The factory's default configuration is the test geometry.
-let configuration = try NFKMLXSeq2SeqConfiguration(
-    huggingFaceConfigURL: releaseDir.appendingPathComponent("config.json"))
-let net = try NFKMLXMarian.network(directoryURL: releaseDir, configuration: configuration)
+let net = try NFKMLXMarian.network(directoryURL: releaseDir)   // the release's config.json and weights
 let release = try NFKMLXMarian.translator(net: net, directoryURL: releaseDir)
 try NFKMLXMarian.fineTune(net, examples: { step in
     let pair = myPairs[step % myPairs.count]
@@ -4053,8 +4050,11 @@ try NFKMLXMarian.fineTune(net, examples: { step in
 try NFKMLXLoRA.merge(into: net)
 try NFKMLXWeights.save(net, to: tunedDir.appendingPathComponent("model.safetensors"))
 let tuned = try NFKMLXMarian.translator(
-    net: try NFKMLXMarian.network(directoryURL: tunedDir, configuration: configuration), directoryURL: releaseDir)
+    net: try NFKMLXMarian.network(directoryURL: tunedDir, configuration: net.configuration), directoryURL: releaseDir)
 ```
+
+A tuned directory holds the weights alone, so the release's geometry comes along with it as
+`net.configuration`.
 
 `NFKMLXM2M100.fineTune` and `NFKMLXMADLAD.fineTune` take the same shape (M2M-100's target ids lead with
 the `__xx__` marker; MADLAD adapts a float32 load). `NFKMLXTranslateGemma.fineTune` adapts the Gemma 3
@@ -4304,9 +4304,7 @@ at inference. All-In-One, the MarbleNet VAD, DeepLabV3, Silero VAD, and the PANN
 references' dropout in and drop while they train.
 
 ```swift
-let configuration = try NFKMLXSeq2SeqConfiguration(
-    huggingFaceConfigURL: releaseDir.appendingPathComponent("config.json"))
-let net = try NFKMLXMarian.network(directoryURL: releaseDir, configuration: configuration)
+let net = try NFKMLXMarian.network(directoryURL: releaseDir)
 net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: releaseDir)   // the rates config.json declares
 
 // LoRA's own dropout drops each adapter's input, as peft's `lora_dropout` does.

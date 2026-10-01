@@ -417,9 +417,7 @@ public final class NFKMLXMADLAD: NSObject {
 
     /// Loads a release directory as a translator.
     public static func translator(directoryURL directory: URL, half: Bool = false) throws -> NFKMLXMADLADTranslator {
-        let configuration = try NFKMLXMADLADConfiguration(huggingFaceConfigURL: directory.appendingPathComponent("config.json"))
-        let net = try network(directoryURL: directory, configuration: configuration, half: half)
-        return try translator(net: net, directoryURL: directory)
+        try translator(net: try network(directoryURL: directory, half: half), directoryURL: directory)
     }
 
     /// Wraps a network with the release's tokenizer.
@@ -429,13 +427,18 @@ public final class NFKMLXMADLAD: NSObject {
         return NFKMLXMADLADTranslator(net: net, segmenter: NFKMLXSentencePieceSegmenter(model: model), identifier: modelName)
     }
 
-    /// Builds the network alone, ready to adapt.
-    public static func network(directoryURL directory: URL?, configuration: NFKMLXMADLADConfiguration = .tiny,
+    /// Builds the network alone, ready to adapt. A release directory supplies its own geometry from its
+    /// `config.json` and its weights. Without a directory the network takes `configuration` (the tiny
+    /// test geometry when nil) and random weights. A `configuration` passed with a directory overrides
+    /// the release's `config.json`.
+    public static func network(directoryURL directory: URL?, configuration: NFKMLXMADLADConfiguration? = nil,
                                half: Bool = false) throws -> NFKMLXT5Seq2SeqNet {
-        let net = NFKMLXT5Seq2SeqNet(configuration)
-        if let directory {
-            try net.loadWeights(fromDirectory: directory, half: half)
+        guard let directory else {
+            return NFKMLXT5Seq2SeqNet(configuration ?? .tiny)
         }
+        let net = NFKMLXT5Seq2SeqNet(try configuration ?? NFKMLXMADLADConfiguration(
+            huggingFaceConfigURL: directory.appendingPathComponent("config.json")))
+        try net.loadWeights(fromDirectory: directory, half: half)
         return net
     }
 

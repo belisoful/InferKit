@@ -111,9 +111,7 @@ public final class NFKMLXMarian: NSObject {
 
     /// Loads a release directory as a translator.
     public static func translator(directoryURL directory: URL) throws -> NFKMLXMarianTranslator {
-        let configuration = try NFKMLXSeq2SeqConfiguration(huggingFaceConfigURL: directory.appendingPathComponent("config.json"))
-        let net = try network(directoryURL: directory, configuration: configuration)
-        return try translator(net: net, directoryURL: directory)
+        try translator(net: try network(directoryURL: directory), directoryURL: directory)
     }
 
     /// Wraps a network (adapted or freshly loaded) with the release's tokenizers.
@@ -140,14 +138,18 @@ public final class NFKMLXMarian: NSObject {
                                       targetCodes: codes, beams: beams)
     }
 
-    /// Builds the network alone, ready to adapt, from a release directory (weights loaded) or a
-    /// configuration (random weights).
+    /// Builds the network alone, ready to adapt. A release directory supplies its own geometry from its
+    /// `config.json` and its weights. Without a directory the network takes `configuration` (the tiny
+    /// test geometry when nil) and random weights. A `configuration` passed with a directory overrides
+    /// the release's `config.json`.
     public static func network(directoryURL directory: URL?,
-                               configuration: NFKMLXSeq2SeqConfiguration = .tinyMarian) throws -> NFKMLXSeq2SeqNet {
-        let net = NFKMLXSeq2SeqNet(configuration)
-        if let directory {
-            try net.loadWeights(fromDirectory: directory)
+                               configuration: NFKMLXSeq2SeqConfiguration? = nil) throws -> NFKMLXSeq2SeqNet {
+        guard let directory else {
+            return NFKMLXSeq2SeqNet(configuration ?? .tinyMarian)
         }
+        let net = NFKMLXSeq2SeqNet(try configuration ?? NFKMLXSeq2SeqConfiguration(
+            huggingFaceConfigURL: directory.appendingPathComponent("config.json")))
+        try net.loadWeights(fromDirectory: directory)
         return net
     }
 
