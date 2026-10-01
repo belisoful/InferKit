@@ -352,7 +352,8 @@ The model store lives on the external volume `/Volumes/InferKit Models` (APFS, T
   copy until development ends; the store keeps the original.
 
 `~/.inferkit-validation.json` resolves every key, so a test reads keys. A test or tool that falls back
-to a conventional file builds the path from the validation root: `IK_VALIDATION_ROOT` when set, else
+to a conventional file builds the path from the validation root: `IK_VALIDATION_ROOT` from the
+environment overlaid with the key file (the key file wins) when set, else
 `/Volumes/InferKit Models/inferkit-validation` while that volume is mounted, else
 `~/.inferkit-validation` (`NFKMLXValidationConfig.root` in the tests, `validation_root()` in `fetch.py`,
 `run_reference.py`, and `generate_chat_templates.py`).
@@ -411,3 +412,22 @@ header when set) and routes every file through the same `download` helper the as
 A release prints `ready` only when every file landed; a failed file names its own reason.
 `Tools/validation-assets/test_fetch.py` covers the helper and the loop against a fake curl and a fake
 listing, so it runs without a network.
+
+### What the key file already resolves stays where it is
+
+The store spans two trees on the InferKit Models volume (`inferkit-validation/`, the root `fetch.py`
+writes into, and `InferKit/`, the Meta layout) plus local copies under `~/.inferkit-validation` for
+models in active development, and the key file points into all three. Until 2026-10-01 a default
+`fetch.py` run downloaded again every asset and release that was not under its own root (77 of 109
+assets and 69 of 148 releases) and repointed their keys there. Now:
+
+- every config key of an asset or release names an existing path in the key file → present; neither
+  the files nor the keys change
+- a release with no keys of its own (the Cosmos Tokenizer variants) → present when a sibling sharing
+  its `directory` locates that directory through the key file and every file is there
+- a release config value → the release directory when it is empty, names one of the release's files,
+  or is a bare file name; otherwise (`records/…`, `raw/…`, another release's folder) the store root.
+  Joining every value onto the release directory pointed the `records/` keys at paths that do not exist
+- `--check` reports assets and releases and creates nothing; `--config FILE` reads and writes a key
+  file other than `~/.inferkit-validation.json`, which is how the loop is exercised without touching
+  the shared one

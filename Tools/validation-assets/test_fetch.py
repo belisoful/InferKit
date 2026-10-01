@@ -174,5 +174,95 @@ class FetchReleaseTests(unittest.TestCase):
         self.assertEqual(curl.calls, [])
 
 
+class ValidationRootTests(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.config = os.path.join(self.scratch.name, "keys.json")
+
+    def tearDown(self):
+        self.scratch.cleanup()
+
+    def test_the_key_file_wins_over_the_environment(self):
+        with open(self.config, "w") as handle:
+            json.dump({"IK_VALIDATION_ROOT": "/from/the/key/file"}, handle)
+        with mock.patch.dict(os.environ, {"IK_VALIDATION_ROOT": "/from/the/environment"}):
+            self.assertEqual(fetch.validation_root(self.config), "/from/the/key/file")
+
+    def test_the_environment_applies_when_the_key_file_names_no_root(self):
+        with open(self.config, "w") as handle:
+            json.dump({"IK_VAL_OTHER": "/elsewhere"}, handle)
+        with mock.patch.dict(os.environ, {"IK_VALIDATION_ROOT": "/from/the/environment"}):
+            self.assertEqual(fetch.validation_root(self.config), "/from/the/environment")
+
+
+class ReleasePathTests(unittest.TestCase):
+    RELEASE = {"key": "SD15", "directory": "sd15", "files": ["text_encoder/model.safetensors", "tokenizer/vocab.json"],
+               "config": {}}
+
+    def test_each_value_resolves_against_the_release_or_the_root(self):
+        directory, root = "/store/sd15", "/store"
+        self.assertEqual(fetch.release_path(self.RELEASE, directory, root, ""), directory)
+        self.assertEqual(fetch.release_path(self.RELEASE, directory, root, "text_encoder/model.safetensors"),
+                         "/store/sd15/text_encoder/model.safetensors")
+        self.assertEqual(fetch.release_path(self.RELEASE, directory, root, "tokenizer"), "/store/sd15/tokenizer")
+        self.assertEqual(fetch.release_path(self.RELEASE, directory, root, "record.safetensors"),
+                         "/store/sd15/record.safetensors")
+        self.assertEqual(fetch.release_path(self.RELEASE, directory, root, "records/sd15.safetensors"),
+                         "/store/records/sd15.safetensors")
+
+
+class KeyFileResolutionTests(unittest.TestCase):
+    """A default run leaves alone what the key file already resolves, in another tree or locally."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.root = os.path.join(self.scratch.name, "root")
+        self.elsewhere = os.path.join(self.scratch.name, "other-tree")
+        self.config = os.path.join(self.scratch.name, "keys.json")
+        write(os.path.join(self.elsewhere, "clip.safetensors"), b"x")
+        write(os.path.join(self.elsewhere, "cosmos", "ci8x8", "encoder.jit"), b"x")
+        write(os.path.join(self.elsewhere, "cosmos", "ci16x16", "encoder.jit"), b"x")
+        self.keys = {"IK_VAL_CLIP": os.path.join(self.elsewhere, "clip.safetensors"),
+                     "IK_VAL_COSMOS": os.path.join(self.elsewhere, "cosmos")}
+        with open(self.config, "w") as handle:
+            json.dump(self.keys, handle)
+        self.manifest = {
+            "assets": [{"key": "CLIP", "file": "clip.safetensors", "raw": "clip.pt", "url": "https://example.invalid/clip.pt",
+                        "converter": "clip-to-safetensors", "config": ["IK_VAL_CLIP"]}],
+            "releases": [
+                {"key": "COSMOS_CI8X8", "repo": "nvidia/ci8x8", "directory": "cosmos",
+                 "files": ["ci8x8/encoder.jit"], "config": {"IK_VAL_COSMOS": ""}},
+                {"key": "COSMOS_CI16X16", "repo": "nvidia/ci16x16", "directory": "cosmos",
+                 "files": ["ci16x16/encoder.jit"], "config": {}},
+            ],
+        }
+
+    def tearDown(self):
+        self.scratch.cleanup()
+
+    def run_fetch(self, *arguments):
+        curl = FakeCurl()
+        argv = ["fetch.py", "--root", self.root, "--config", self.config, "--keep-in-backup", *arguments]
+        with mock.patch.object(fetch, "load_manifest", return_value=self.manifest), \
+                mock.patch.object(fetch.subprocess, "run", curl), mock.patch.object(sys, "argv", argv):
+            status = fetch.main()
+        return status, curl
+
+    def test_a_resolved_asset_and_releases_download_nothing_and_keep_their_keys(self):
+        status, curl = self.run_fetch()
+        self.assertEqual(status, 0)
+        self.assertEqual(curl.calls, [])
+        with open(self.config) as handle:
+            self.assertEqual(json.load(handle), self.keys)
+
+    def test_check_reports_the_resolved_entries_present_and_writes_nothing(self):
+        before = os.path.getmtime(self.config)
+        status, curl = self.run_fetch("--check")
+        self.assertEqual(status, 0)
+        self.assertEqual(curl.calls, [])
+        self.assertEqual(os.path.getmtime(self.config), before)
+        self.assertFalse(os.path.exists(self.root), "a check creates nothing under the root")
+
+
 if __name__ == "__main__":
     unittest.main()

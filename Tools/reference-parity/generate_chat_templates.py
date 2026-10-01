@@ -143,10 +143,16 @@ CASES = {
 
 
 def validation_root():
-    """The validation store: IK_VALIDATION_ROOT, else the InferKit Models volume while it is mounted,
-    else ~/.inferkit-validation."""
-    if os.environ.get("IK_VALIDATION_ROOT"):
-        return os.environ["IK_VALIDATION_ROOT"]
+    """The validation store, in NFKMLXValidationConfig.root's order: IK_VALIDATION_ROOT from the
+    environment overlaid with ~/.inferkit-validation.json (the key file wins), else the InferKit Models
+    volume while it is mounted, else ~/.inferkit-validation."""
+    merged = dict(os.environ)
+    config_path = os.path.expanduser("~/.inferkit-validation.json")
+    if os.path.exists(config_path):
+        with open(config_path) as handle:
+            merged.update(json.load(handle))
+    if merged.get("IK_VALIDATION_ROOT"):
+        return merged["IK_VALIDATION_ROOT"]
     external = "/Volumes/InferKit Models/inferkit-validation"
     if os.path.isdir(external):
         return external

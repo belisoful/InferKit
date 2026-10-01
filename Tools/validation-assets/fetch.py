@@ -10,12 +10,15 @@ not "everything is verified". This puts them somewhere durable and makes rebuild
     python3 fetch.py --only SAM CLIP # a subset, by manifest key (an asset or a release)
     python3 fetch.py --check         # report what is present and what is missing, download nothing
     python3 fetch.py --keep-in-backup # leave Time Machine's settings alone
+    python3 fetch.py --config FILE   # read and write a key file other than ~/.inferkit-validation.json
 
 On macOS the asset root, and the Hugging Face cache the reference oracles fill, are excluded from Time
 Machine: everything in them can be fetched again.
 
-Downloads resume, and an asset whose file is already the expected size is skipped, so re-running after
-an interruption costs only what is left. A release directory's file sizes come from the Hub's tree
+An asset or release whose every key already names an existing path in the key file is present wherever
+that path is, in this root, the other tree on the InferKit Models volume, or a local copy, and neither its
+files nor its keys change. Downloads resume, and an asset whose file is already the expected size is
+skipped, so re-running after an interruption costs only what is left. A release directory's file sizes come from the Hub's tree
 listing, so a file left partial by an interrupted run is resumed rather than accepted.
 
 Requires: curl, torch, safetensors (the converters' own requirements).
@@ -32,18 +35,57 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.dirname(HERE)
 CONFIG = os.path.expanduser("~/.inferkit-validation.json")
-def validation_root():
-    """The validation store: IK_VALIDATION_ROOT, else the InferKit Models volume while it is mounted,
-    else ~/.inferkit-validation."""
-    if os.environ.get("IK_VALIDATION_ROOT"):
-        return os.environ["IK_VALIDATION_ROOT"]
+
+
+def read_config(path):
+    if not os.path.exists(path):
+        return {}
+    with open(path) as handle:
+        return json.load(handle)
+
+
+def validation_root(config_path=CONFIG):
+    """The validation store, in NFKMLXValidationConfig.root's order: IK_VALIDATION_ROOT from the
+    environment overlaid with the key file (the key file wins), else the InferKit Models volume while it
+    is mounted, else ~/.inferkit-validation."""
+    merged = dict(os.environ)
+    merged.update(read_config(config_path))
+    if merged.get("IK_VALIDATION_ROOT"):
+        return merged["IK_VALIDATION_ROOT"]
     external = "/Volumes/InferKit Models/inferkit-validation"
     if os.path.isdir(external):
         return external
     return os.path.expanduser("~/.inferkit-validation")
 
 
-DEFAULT_ROOT = validation_root()
+def resolved_by_config(keys, config):
+    """Whether every key already names an existing path, wherever it is."""
+    return bool(keys) and all(config.get(key) and os.path.exists(config[key]) for key in keys)
+
+
+def resolved_directories(releases, config):
+    """Each release directory the key file already locates: the existing path of a key whose value is
+    the directory itself. Releases that share a directory (one per Cosmos Tokenizer variant) and carry
+    no keys of their own are found through it."""
+    located = {}
+    for release in releases:
+        for key, relative in release["config"].items():
+            if not relative and config.get(key) and os.path.isdir(config[key]):
+                located.setdefault(release.get("directory"), config[key])
+    return located
+
+
+def release_path(release, directory, root, relative):
+    """Where a release's config value points. An empty value is the release directory; a value naming
+    one of the release's files, or a bare file name, sits in the release directory; any other path
+    (`records/…`, `raw/…`, another release's folder) is relative to the store root."""
+    if not relative:
+        return directory
+    inside = any(name == relative or name.startswith(relative.rstrip("/") + "/")
+                 for name in release.get("files", []))
+    if inside or "/" not in relative:
+        return os.path.join(directory, relative)
+    return os.path.join(root, relative)
 
 
 def huggingface_cache():
@@ -208,12 +250,14 @@ def convert(asset, raw, converted):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root", default=DEFAULT_ROOT, help="where the assets live")
+    parser.add_argument("--root", help="where the assets live (default: the validation root)")
+    parser.add_argument("--config", default=CONFIG, help="the key file to read and update")
     parser.add_argument("--only", nargs="*", help="manifest keys to act on")
     parser.add_argument("--check", action="store_true", help="report state, download nothing")
     parser.add_argument("--keep-in-backup", action="store_true",
                         help="do not exclude the asset root and the Hugging Face cache from Time Machine")
     args = parser.parse_args()
+    root = args.root or validation_root(args.config)
 
     manifest = load_manifest()
     assets = manifest["assets"]
@@ -226,19 +270,17 @@ def main():
         if missing:
             raise SystemExit(f"no such manifest key: {', '.join(sorted(missing))}")
 
-    raw_directory = os.path.join(args.root, "raw")
-    inputs_directory = os.path.join(args.root, "inputs")
-    converted_directory = os.path.join(args.root, "converted")
-    for directory in (raw_directory, converted_directory, inputs_directory):
-        os.makedirs(directory, exist_ok=True)
-    if not args.keep_in_backup:
-        exclude_from_backup(args.root)
-        exclude_from_backup(huggingface_cache())
+    raw_directory = os.path.join(root, "raw")
+    inputs_directory = os.path.join(root, "inputs")
+    converted_directory = os.path.join(root, "converted")
+    if not args.check:
+        for directory in (raw_directory, converted_directory, inputs_directory):
+            os.makedirs(directory, exist_ok=True)
+        if not args.keep_in_backup:
+            exclude_from_backup(root)
+            exclude_from_backup(huggingface_cache())
 
-    config = {}
-    if os.path.exists(CONFIG):
-        with open(CONFIG) as handle:
-            config = json.load(handle)
+    config = read_config(args.config)
     loaded = dict(config)
 
     succeeded, failed = [], []
@@ -246,6 +288,10 @@ def main():
         # An input asset lands in inputs/ as-is; everything else lands in converted/.
         home = inputs_directory if asset.get("kind") == "input" else converted_directory
         converted = os.path.join(home, asset["file"])
+        if resolved_by_config(asset["config"], config):
+            print(f"{asset['key']:<12} present  {config[asset['config'][0]]}")
+            succeeded.append(asset["key"])
+            continue
         if args.check:
             state = "present" if os.path.exists(converted) else "MISSING"
             print(f"{asset['key']:<12} {state:<8} {converted}")
@@ -289,25 +335,40 @@ def main():
         record_raw_path(asset, raw_directory, config)
         succeeded.append(asset["key"])
 
-    if args.check:
-        return 0
-
+    located = resolved_directories(manifest.get("releases", []), config)
     for release in manifest.get("releases", []):
         if args.only and release["key"] not in wanted:
             continue
-        directory = os.path.join(args.root, release["directory"])
+        if resolved_by_config(list(release["config"]), config):
+            print(f"{release['key']:<12} present  {config[next(iter(release['config']))]}")
+            continue
+        elsewhere = located.get(release.get("directory"))
+        if (not release["config"] and elsewhere
+                and all(os.path.exists(os.path.join(elsewhere, name)) for name in release["files"])):
+            print(f"{release['key']:<12} present  {elsewhere}")
+            continue
+        # A release without a directory of its own (an `hf` entry) names its paths from the root.
+        directory = os.path.join(root, release.get("directory", ""))
+        paths = {key: release_path(release, directory, root, relative)
+                 for key, relative in release["config"].items()}
+        if args.check:
+            state = "present" if all(os.path.exists(path) for path in paths.values()) else "MISSING"
+            print(f"{release['key']:<12} {state:<8} {directory}")
+            continue
         release_failed = fetch_release(release, directory)
         for relative, detail in release_failed:
             print(f"{release['key']:<12} FETCH FAILED  {relative}  {detail}")
             failed.append((release["key"], f"{relative}: {detail}"))
-        for key, relative in release["config"].items():
-            config[key] = os.path.join(directory, relative) if relative else directory
+        config.update(paths)
         if not release_failed:
             print(f"{release['key']:<12} ready ({len(release['files'])} files)")
 
+    if args.check:
+        return 0
+
     sources = manifest.get("sources")
     if sources and not args.only:
-        source_root = os.path.join(args.root, "sources")
+        source_root = os.path.join(root, "sources")
         for relative, url in sources["files"]:
             destination = os.path.join(source_root, relative)
             os.makedirs(os.path.dirname(destination), exist_ok=True)
@@ -329,16 +390,13 @@ def main():
     # A download runs for minutes to hours while other tools add their own keys, so only the keys this
     # run set are merged into the file as it stands now; writing the snapshot back would drop theirs.
     changed = {key: value for key, value in config.items() if loaded.get(key) != value}
-    current = {}
-    if os.path.exists(CONFIG):
-        with open(CONFIG) as handle:
-            current = json.load(handle)
+    current = read_config(args.config)
     current.update(changed)
-    partial = CONFIG + ".partial"
+    partial = args.config + ".partial"
     with open(partial, "w") as handle:
         json.dump(current, handle, indent=2)
-    os.replace(partial, CONFIG)
-    print(f"\n{len(succeeded)} ready, {len(failed)} failed; {CONFIG} updated")
+    os.replace(partial, args.config)
+    print(f"\n{len(succeeded)} ready, {len(failed)} failed; {args.config} updated")
     for key, detail in failed:
         print(f"  {key}: {detail}")
     for entry in manifest.get("unresolved", []):
