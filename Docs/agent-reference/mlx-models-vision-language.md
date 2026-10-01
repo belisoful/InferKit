@@ -710,8 +710,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   layout, the Conformer, the mixture-of-LoRAs layer, and both preprocessors. The factories take a release
   directory (the geometry lives in its `config.json`) or download one
   (`backendWithRepo:revision:cacheDirectoryURL:precision:` and its `completionHandler:` form, from
-  `NFKMLXPhi4MM.releaseRepo`), and `register()` names it to `NFKMLXModelRegistry` over a directory URL, so
-  Phi-4-multimodal is not in `registerAll`; `MLXModelGalleryExamples.testPhi4Multimodal` runs both
+  `NFKMLXPhi4MM.releaseRepo`), and `register()`, which `registerAll` calls, names it to `NFKMLXModelRegistry`
+  over a directory URL; `MLXModelGalleryExamples.testPhi4Multimodal` runs both
   preprocessors, tiny towers (two clips as one batch), and a tiny LongRoPE decoder fusing an image and the
   clips, the way Pixtral's entry runs a tiny tower.
   Customization is offline-only: 5.6 billion parameters (the 3.8B decoder, 0.8B across the two adapters,

@@ -498,6 +498,7 @@ public struct NFKMLXParakeetVocabulary: Sendable {
     }
 }
 
+@objc(NFKMLXParakeet)
 public final class NFKMLXParakeet: NSObject {
     /// The registry name.
     @objc public static let modelName = "parakeet-tdt"
@@ -696,6 +697,17 @@ extension NFKMLXParakeet {
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXReleaseDownload.async(completionHandler) { try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL) }
+    }
+
+    /// Registers `parakeet-tdt` with `NFKMLXModelRegistry`. The registry's URL is an unpacked release
+    /// directory or the release's `.nemo` archive. Introduced in InferKit 0.4.0.
+    @objc public static func register() {
+        NFKMLXModelRegistry.register(name: modelName) { url in
+            guard let url else {
+                throw NFKMLXError.unsupportedConfiguration("parakeet-tdt builds from a release directory or .nemo archive, not without weights")
+            }
+            return url.hasDirectoryPath ? try backend(directoryURL: url) : try backend(archiveURL: url)
+        }
     }
 
     /// Builds the recognizer from a `.nemo` archive read in place.

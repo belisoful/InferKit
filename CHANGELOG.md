@@ -453,6 +453,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `init(identifier:isReady:configuration:forwardParameterKeys:requestForward:)`, and reports those keys
   as its `supportedParameterKeys`.
 
+#### `registerAll` registers the speech-LLM and state-space models
+
+- `NFKMLXReferenceModels.registerAll` calls the `register()` of Canary (`canary-1b-v2`), Voxtral
+  (`voxtral-mini-3b`), Granite Speech (`granite-speech-3.3-2b`), Phi-4-multimodal (`phi-4-multimodal`),
+  Codestral-Mamba (`codestral-mamba`), Granite 4.0-H (`granite-4.0-h`), and Nemotron Nano 2
+  (`nemotron-nano-2`), so an Objective-C caller builds each by name from a release directory.
+- `NFKMLXParakeet.register()` registers `parakeet-tdt` over an unpacked release directory or the
+  release's `.nemo` archive, and `registerAll` calls it.
+
 #### Every mixture of experts pages its routed experts
 
 - `NFKMLXResidency.paged` leaves a mixture's routed experts in the release and reads each as the

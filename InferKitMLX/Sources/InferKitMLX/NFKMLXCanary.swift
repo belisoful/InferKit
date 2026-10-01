@@ -329,6 +329,7 @@ public final class NFKMLXCanaryNet: Module {
 
 // MARK: - Loading
 
+@objc(NFKMLXCanary)
 public final class NFKMLXCanary: NSObject {
     /// The registry name.
     @objc public static let modelName = "canary-1b-v2"

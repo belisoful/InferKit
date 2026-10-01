@@ -143,9 +143,9 @@ and JSON, JSON-Schema, or fixed-choice constrained decoding — each also settab
 | ``NFKMLXLanguage`` | `backend(ggufURL:)` | any dense `llama` / `qwen2` / `qwen3` GGUF (Q4_0 / Q5_0 / Q8_0 / Q4_K / Q6_K) |
 | ``NFKMLXQwen4Exp`` | — | Qwen3.8-Flash-Next: hyper-connections, hashed n-gram per-layer embeddings, a sparse-attention indexer, 512 experts |
 | ``NFKMLXHybridLanguage`` | — | Qwen3.5 / 3.6 / 3.8: gated delta-rule recurrence with full attention every fourth layer |
-| ``NFKMLXMamba`` | `backend(directoryURL:)` | Codestral-Mamba: a Mamba-2 selective-scan state-space decoder, the first SSM (released 7B at bf16 logit cosine 0.9999146, greedy 12/12) |
-| ``NFKMLXGraniteHybrid`` | `backend(directoryURL:)` | Granite 4.0-H: a hybrid Mamba/attention decoder reusing the Mamba-2 mixer, dense and MoE, with on-device LoRA fine-tuning (released h-1b at float32 logit cosine 1.0, greedy 12/12) |
-| ``NFKMLXNemotronH`` | `backend(directoryURL:)` | Nemotron Nano 2: a hybrid Mamba/MLP/attention decoder reusing the Mamba-2 mixer, with on-device LoRA fine-tuning (tiny logit cosine 1.0, Nemotron-Nano-9B-v2 structural 341/341) |
+| ``NFKMLXMamba`` | `codestral-mamba`; `backend(directoryURL:)` | Codestral-Mamba: a Mamba-2 selective-scan state-space decoder, the first SSM (released 7B at bf16 logit cosine 0.9999146, greedy 12/12) |
+| ``NFKMLXGraniteHybrid`` | `granite-4.0-h`; `backend(directoryURL:)` | Granite 4.0-H: a hybrid Mamba/attention decoder reusing the Mamba-2 mixer, dense and MoE, with on-device LoRA fine-tuning (released h-1b at float32 logit cosine 1.0, greedy 12/12) |
+| ``NFKMLXNemotronH`` | `nemotron-nano-2`; `backend(directoryURL:)` | Nemotron Nano 2: a hybrid Mamba/MLP/attention decoder reusing the Mamba-2 mixer, with on-device LoRA fine-tuning (tiny logit cosine 1.0, Nemotron-Nano-9B-v2 structural 341/341) |
 | ``NFKMLXGemma3`` | `backend(directoryURL:)` | Gemma 3 (270M, 1B, 4B): sliding/full attention, a hybrid key-value cache, the release's chat template, through ``NFKMLXGemma3Backend`` |
 | ``NFKMLXGemma3n`` | `backend(directoryURL:)` | Gemma 3n (E2B, E4B): AltUp's four residual copies, LAuReL, per-layer embeddings, activation sparsity, key-value sharing, through ``NFKMLXGemma3nBackend`` |
 | ``NFKMLXGemmaLanguage`` | `backend(directoryURL:)` | Gemma 4 (E-series, 26B-A4B mixture, 12B unified) through ``NFKMLXGemmaBackend``; a Gemma 3 release is routed to ``NFKMLXGemma3`` |
@@ -180,7 +180,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 | ``NFKMLXFlorence2`` | `backend(directoryURL:)` | Florence-2 (base, large, and their fine-tuned -ft releases): an image + a task token → text, plus boxes for the localization tasks (DaViT + BART) |
 | ``NFKMLXTrOCR`` | `backend(directoryURL:)` | TrOCR: a handwriting-line image → its transcription (ViT encoder + trocr decoder) |
 | ``NFKMLXSa2VA`` | `backend(directoryURL:)` | Sa2VA, every release (InternVL, Qwen3-VL, Qwen2.5-VL, and LLaVA-1.5 families; SAM 2 or SAM 3 grounding): an image + a referring prompt → text, plus a mask when the answer carries `[SEG]` |
-| ``NFKMLXPhi4MM`` | `backend(directoryURL:precision:)` | Phi-4-multimodal: a prompt or conversation with any number of pictures and clips → text (SigLIP + Conformer + Phi-4-mini with a mixture of LoRAs); text logits 0.9999999999965636; speech encoder 0.9999999999982836, logits 0.9999999999994174; vision SigLIP 0.9999999999468102, logits 0.9999999999986776; vision with speech 0.9999999999993611; every answer exact |
+| ``NFKMLXPhi4MM`` | `phi-4-multimodal`; `backend(directoryURL:precision:)` | Phi-4-multimodal: a prompt or conversation with any number of pictures and clips → text (SigLIP + Conformer + Phi-4-mini with a mixture of LoRAs); text logits 0.9999999999965636; speech encoder 0.9999999999982836, logits 0.9999999999994174; vision SigLIP 0.9999999999468102, logits 0.9999999999986776; vision with speech 0.9999999999993611; every answer exact |
 | ``NFKMLXGemma4ConditionalGeneration`` | — | the tri-modal Gemma 4 chain: image and audio towers fused into the decoder |
 
 ### Video
@@ -237,9 +237,9 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXMuScriptor`` | `muscriptor` | multi-instrument transcription: audio to one MIDI track per instrument |
 | ``NFKMLXHFTTransformer`` | `hft-transformer` | piano transcription: onset, offset, multi-pitch, and velocity |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / base / small / medium / large / large-v3 / large-v3-turbo, timestamps) |
-| ``NFKMLXParakeet`` | `parakeet-tdt` | speech → text (Parakeet-TDT 0.6B v2, FastConformer + token-and-duration transducer; per-token timestamps) |
-| ``NFKMLXGraniteSpeech`` | `backend(directoryURL:)` | speech → text (Granite Speech 3.3-2b: Conformer encoder + BLIP-2 Q-former + dense Granite decoder, audio LoRA folded; transcribes the validation clip exactly) |
-| ``NFKMLXVoxtral`` | `backend(directoryURL:)` | speech → text (Voxtral-Mini 3B: Whisper encoder + 2-linear projector + Llama decoder, tekken tokenizer; transcribes the validation clip exactly) |
+| ``NFKMLXParakeet`` | `parakeet-tdt`; `backend(directoryURL:)` | speech → text (Parakeet-TDT 0.6B v2, FastConformer + token-and-duration transducer; per-token timestamps) |
+| ``NFKMLXGraniteSpeech`` | `granite-speech-3.3-2b`; `backend(directoryURL:)` | speech → text (Granite Speech 3.3-2b: Conformer encoder + BLIP-2 Q-former + dense Granite decoder, audio LoRA folded; transcribes the validation clip exactly) |
+| ``NFKMLXVoxtral`` | `voxtral-mini-3b`; `backend(directoryURL:)` | speech → text (Voxtral-Mini 3B: Whisper encoder + 2-linear projector + Llama decoder, tekken tokenizer; transcribes the validation clip exactly) |
 | ``NFKMLXCanary`` | `canary-1b-v2`; `backend(directoryURL:)` | speech → text (Canary-1B-v2: biased FastConformer encoder + Transformer attention encoder-decoder; multitask ASR/translation; transcribes the validation clip exactly) |
 | ``NFKMLXWav2Vec2`` | `backend(directoryURL:)` | speech → text and features (Wav2Vec2 and HuBERT, every size: convolutional feature encoder + transformer; CTC releases transcribe exactly; CTC fine-tune) |
 | ``NFKMLXWav2Vec2Bert`` | `backend(directoryURL:)` | speech → features (W2V-BERT 2.0: Kaldi filterbanks + relative-key Conformer, output 0.99999999999633; CTC fine-tune with the output adapter) |
