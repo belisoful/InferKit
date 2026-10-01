@@ -8,8 +8,8 @@
 //  decoder's pose encoding, and the camera encoder's conditioning tokens. Gated on the reference +
 //  released weights.
 //
-//    IK_VAL_DEPTH3_REF=~/.inferkit-validation/da3-reference.safetensors \
-//    IK_VAL_DEPTH3_WEIGHTS=~/.inferkit-validation/da3-small/model.safetensors \
+//    IK_VAL_DEPTH3_REF="/Volumes/InferKit Models/inferkit-validation/da3-reference.safetensors" \
+//    IK_VAL_DEPTH3_WEIGHTS="/Volumes/InferKit Models/InferKit/validation/da3-small/model.safetensors" \
 //    xcodebuild test -scheme InferKitMLXTests -destination 'platform=macOS' \
 //      -skipPackagePluginValidation -only-testing:InferKitMLXTests/NFKMLXDepthAnything3Tests
 //

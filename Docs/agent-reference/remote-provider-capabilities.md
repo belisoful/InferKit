@@ -6,8 +6,9 @@ file, not to AGENTS.md / CLAUDE.md. Keep the Documentation Style rules. -->
 
 Every inference mode each preset serves, as input → output, set against the backend that reaches it.
 Surveyed 2026-09-22 from each provider's official documentation (five research passes; field-level
-detail per mode lives in the provider's reference, linked at the end of each section). Account,
-files, batch, fine-tuning, vector-store, and agent-hosting APIs are out of scope. The request shapes
+detail per mode lives in the provider's reference, linked at the end of each section). Account
+management, batch, fine-tuning, and agent-hosting APIs are out of scope. Files, retrieval stores, and
+usage reports ship (phase 5). The request shapes
 the backends already speak are in `remote-providers.md`; this file is the coverage map and the build
 order for what is missing.
 
@@ -38,7 +39,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | Mode | Endpoint | Status |
 |---|---|---|
 | text + image + PDF → text, tools, thinking | `/messages` | covered (`NFKAnthropicBackend`) |
-| plain-text documents; custom-content documents and Files API `file_id` sources | `/messages` | plain text covered; `file_id` sources need the Files API, which is out of scope |
+| plain-text documents; custom-content documents and Files API `file_id` sources | `/messages` | covered: plain text, and `file_id` sources through `NFKRemoteFileStore` |
 | citations on the reply | `/messages` | covered (`NFKParameterCitations`, `NFKOutputCitations`) |
 | server tools: web search, web fetch, code execution (file outputs) | `/messages` | covered: the caller passes the tool by wire shape; calls and results come back under `NFKOutputServerToolResults` |
 | token count | `/messages/count_tokens` | covered (`NFKRemoteTokenCounter`) |
@@ -144,10 +145,10 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 
 | Server | Beyond the OpenAI layer | Status |
 |---|---|---|
-| Ollama | `/api/generate` (`suffix` infill, `think`, `images`), `/api/embed`, `/v1/responses` | infill gap; image generation undocumented over HTTP |
-| LM Studio | native `/api/v1/chat` (stateful, `reasoning`), `/v1/responses` | Responses gap |
-| llama.cpp | `/completion`, `/infill`, `/reranking`, `/tokenize`, `input_video` / `input_audio` chat parts | infill, tokenize gaps; rerank reachable by URL |
-| vLLM | `/v1/completions`, `/score`, `/rerank`, `/classify`, `/pooling`, `/v1/audio/*`, `wss /v1/realtime` STT, `video_url` parts | completion, score, classify gaps; video parts gap |
+| Ollama | `/api/generate` (`suffix` infill, `think`, `images`), `/api/embed`, `/v1/responses` | `NFKRemoteCompletionBackend` and `NFKRemoteResponsesBackend` accept `ollama`; `/api/generate` and `/api/embed` are not adapted |
+| LM Studio | native `/api/v1/chat` (stateful, `reasoning`), `/v1/responses` | Responses covered (`NFKRemoteResponsesBackend`) |
+| llama.cpp | `/completion`, `/infill`, `/reranking`, `/tokenize`, `input_video` / `input_audio` chat parts | completion covered (`NFKRemoteCompletionBackend`), tokenize covered (`NFKRemoteTokenCounter`), rerank covered (`NFKRemoteReranker`) |
+| vLLM | `/v1/completions`, `/score`, `/rerank`, `/classify`, `/pooling`, `/v1/audio/*`, `wss /v1/realtime` STT, `video_url` parts | completion, classify, rerank, and `video_url` parts covered; `/score` and `/pooling` are gaps |
 
 ### InferKit server (`inferkit`)
 

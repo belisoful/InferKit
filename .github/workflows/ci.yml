@@ -1,13 +1,14 @@
 # CI mirrors the Full Check in CLAUDE.md, scoped to what a hosted runner can do.
 #
-# What runs here: the core's build + 177 tests with a zero-warning gate, the iOS and tvOS compile
-# legs, the static analyzer at a fresh derived-data path, the podspec lint, compile checks for
-# the companion packages, and a type check of every Objective-C block in the consumer documents.
+# What runs here: the core's build + tests with a zero-warning gate, the iOS and tvOS compile
+# legs, the static analyzer at a fresh derived-data path, the podspec lint, a compile check of
+# InferKitMLX, the build and tests of the two macOS 26 companions behind an SDK guard, and a type
+# check of every Objective-C block in the consumer documents.
 #
-# What deliberately does NOT run here: the MLX test schemes (563/35/22). They evaluate real MLX
+# What deliberately does NOT run here: the three MLX test schemes. They evaluate real MLX
 # arrays, which needs the Metal toolchain's default.metallib and a GPU the runner may not expose,
-# and the parity suites read multi-gigabyte checkpoints from ~/.inferkit-validation that only exist
-# on the validation machine — on a runner they would skip, proving nothing. The three-scheme run
+# and the parity suites read multi-gigabyte checkpoints from the validation store, which exists only
+# on the validation machine. On a runner they would skip, proving nothing. The three-scheme run
 # stays the documented local pre-release step.
 #
 # The runner image decides which Xcode is active, and the two current ones behave differently for

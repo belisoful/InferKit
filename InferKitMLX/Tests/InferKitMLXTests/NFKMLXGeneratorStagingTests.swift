@@ -140,10 +140,10 @@ final class NFKMLXGeneratorStagingTests: XCTestCase {
         guard let release = NFKMLXValidationConfig.environment["IK_VAL_WAN21_T2V_1_3B"] else {
             throw XCTSkip("set IK_VAL_WAN21_T2V_1_3B (Wan-AI/Wan2.1-T2V-1.3B-Diffusers)")
         }
-        // The release may sit on a network share this process is not granted, or be mid-download.
+        // The release may sit on a volume this process is not granted, or be mid-download.
         let last = URL(fileURLWithPath: release)
             .appendingPathComponent("transformer/diffusion_pytorch_model-00002-of-00002.safetensors")
-        // `access` answers yes on a share the privacy layer then refuses to open, so the guard reads.
+        // `access` answers yes on a volume the privacy layer then refuses to open, so the guard reads.
         let handle = try? FileHandle(forReadingFrom: last)
         let readable = (try? handle?.read(upToCount: 8))??.count == 8
         try? handle?.close()

@@ -109,7 +109,7 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   parity run after the plan assumed state dicts are contiguous: `bytes(for:)` gathers a strided
   tensor to row-major, held to torch's own materialization by comparing the raw `whisper_tiny.pt`
   against its converted safetensors tensor for tensor. The byte oracle throughout is the offline
-  converters' own output (raw in `~/.inferkit-validation/raw/`, `IK_RAW_<KEY>` written by fetch.py).
+  converters' own output (the raw file `IK_RAW_<KEY>` names; fetch.py writes it under `<validation root>/raw/`).
   `NFKMLXTorchCheckpoint` is the public `@objc` face: inspect `tensorNames`/`infoForTensor:`, read a
   tensor's bytes, or convert on device with `writeSafetensorsToURL:` (a hand-rolled pure-Swift
   safetensors writer — no Metal needed — whose output carries no `inferkit.layout` metadata, which is

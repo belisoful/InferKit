@@ -22,14 +22,15 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
 
 ## Core
 
-- [apple-framework-backends.md](apple-framework-backends.md) — the core's Vision, VideoToolbox, and
-  Speech engines: the coordinate flip, the pixel formats and scale factors the frame processors
-  actually take, and what was left out of each.
+- [apple-framework-backends.md](apple-framework-backends.md) — the core's Vision, VideoToolbox,
+  Speech, speech-synthesis, SoundAnalysis, and NaturalLanguage engines, and the InferKitAppleSwift
+  backends: the coordinate flip, the pixel formats and scale factors the frame processors take, and
+  what each engine leaves out.
 - [core-runtime-notes.md](core-runtime-notes.md) — value-type accessors, the tokenizer class cluster,
   grammar-constrained sampling, dynamic backend discovery, and the Hugging Face hub cache policy.
 - [remote-providers.md](remote-providers.md) — the provider presets, the shared transport, model
-  catalogs, local runners, streaming, tools, structured output, media in and out, and the probes that
-  verified each endpoint.
+  catalogs, local runners, streaming, tools, structured output, media in and out, typed decisions, the
+  probes that verified each endpoint, and `NFKInferenceServer`.
 - [remote-provider-capabilities.md](remote-provider-capabilities.md) — every inference mode each
   preset serves, set against the backend that reaches it, and the build order for the gaps.
 - [coreml-compute-plan.md](coreml-compute-plan.md) — `NFKComputePlan` and what was measured about

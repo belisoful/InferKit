@@ -26,8 +26,11 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
   - [Multi-turn conversation](#multi-turn-conversation)
   - [Tool calling: app tools for the model](#tool-calling-app-tools-for-the-model)
   - [Structured output](#structured-output)
+  - [What a failure means](#what-a-failure-means)
+  - [What stays Swift](#what-stays-swift)
   - [The provider bridge](#the-provider-bridge)
 - [Remote providers](#remote-providers)
+- [Serving a model to other machines](#serving-a-model-to-other-machines)
 - [Speech in, text out](#speech-in-text-out)
 - [Optional engines discovered at runtime](#optional-engines-discovered-at-runtime)
 - [Choosing and combining engines](#choosing-and-combining-engines)
@@ -98,8 +101,8 @@ job.completionHandler = ^(NFKInferenceJob *j) {
 
 ## Backends at a glance
 
-The core ships only backends built on Apple frameworks, with no third-party dependency. The two
-companion packages add heavier engines without raising the core's platform floor.
+The core ships only backends built on Apple frameworks, with no third-party dependency. The three
+companion packages add engines the core cannot host, without raising the core's platform floor.
 
 | Backend | Where | Runs | Notes |
 | --- | --- | --- | --- |
@@ -148,6 +151,8 @@ companion packages add heavier engines without raising the core's platform floor
 | `NFKRemoteUsageReporter` | core | Anthropic, OpenAI, xAI, OpenRouter, DeepSeek, Mistral reporting | Usage buckets, spend in dollars, and balances. Read only; most calls take an administrative key the app's user supplies. |
 | `NFKRemoteModerationBackend` | core | An OpenAI-compatible moderation endpoint | Text (and an image) → per-category `NFKClassification`s and the verdict under `NFKOutputStructured`. |
 | `NFKRemoteReranker` | core | A hosted rerank endpoint | Query + documents → scores; the same shape as the on-device reranker. A scoring object, not a backend. |
+| `NFKRemoteInferKitBackend` | core | A model another InferKit process serves | The whole request and result cross the server's native route. |
+| `NFKInferenceServer` | core | Hosts any backend for other machines | OpenAI-compatible routes plus a native route. Found by address or Bonjour. A serving object, not a backend. |
 | `NFKAsyncGenerationBackend` | core | A submit → poll → fetch generation service | Subclass and fill in the five request-shape methods. |
 | `NFKCoreMLBackend` | core | A Core ML image/tensor model | Image and MLMultiArray I/O; `NFKComputePlan` reports where each operation lands. |
 | `NFKMLXBackend` | `InferKitMLX/` | A bundled Stable Diffusion release | Text-to-image / image-to-image. SD 1.5, SD 2.1 base, or SDXL-Turbo, at end-to-end parity. |
@@ -214,7 +219,7 @@ any model rather than assume it.
 and safetensors shards. The module's parameter names are the checkpoint's, so nothing is remapped, and
 a raw PyTorch `.pth`/`.bin` loads through the native checkpoint reader with no Python toolchain.
 
-Six decoder families are implemented, each measured against `transformers`' own implementation on
+Nine decoder families are implemented, each measured against `transformers`' own implementation on
 released weights: the dense decoder Qwen3 and Llama share (`NFKMLXLanguage`), which also reads the
 Qwen3-MoE, Qwen2-MoE, Mixtral, and gpt-oss mixtures of experts through a routed feed-forward, Gemma 3
 (`NFKMLXGemma3`, with the 4B's vision tower for an image beside the text), Gemma 4
@@ -582,8 +587,9 @@ switching from a local server to Anthropic changes one argument. The chat backen
 synchronous text protocol and block, so run them off the render thread. `NFKRemoteTranscriptionBackend` is the
 audio→text counterpart for an OpenAI-compatible transcription endpoint, and
 `NFKAsyncGenerationBackend` is the base for a service that answers with a job identifier to poll.
-`NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`, which the hosted
-providers and every local runner serve): `NFKInputPrompt` in, the vector under `NFKOutputEmbedding`
+`NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`, served by OpenAI, Gemini,
+Mistral, Together, OpenRouter, every local runner, and an InferKit server; the factory returns nil for
+the other presets): `NFKInputPrompt` in, the vector under `NFKOutputEmbedding`
 out, the same key the on-device embedders in InferKitMLX answer with, so search or clustering code does
 not change with the engine; `embeddingsForTexts:error:` embeds a batch in one call.
 
@@ -650,7 +656,7 @@ asks an OpenAI-compatible chat model to speak its reply, which arrives as an `NF
 more services complete the surface: `NFKRemoteVideoBackend` (job-style video generation on
 `NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart, speaking Gemini Veo, xAI, Together,
 OpenRouter, and OpenAI's videos API, which OpenAI removes on 2026-09-24), `NFKRemoteReranker` (Together,
-OpenRouter; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
+OpenRouter, llama.cpp, vLLM; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
 `NFKTypeSafeBackend` is the one remote backend that does not generate: Jev answers typed questions
 about a state, with the probabilities behind each answer, at the latency and price of a classifier.
 
@@ -710,7 +716,10 @@ resolution returns nil and the feature is unavailable, with no link error. Each 
 default provider the companions ship:
 
 - `NFKCapabilityStableDiffusion` → InferKitMLX's `NFKStableDiffusionProvider` (SD 1.5, the ungated release).
-- `NFKCapabilityTranscription` → InferKitMLX's `NFKMLXWhisperProvider`.
+- `NFKCapabilityTranscription` → InferKitMLX's `NFKMLXWhisperProvider`, then InferKitAppleSwift's
+  `NFKSpeechAnalyzerProvider`, then the core's `NFKSpeechRecognitionProvider`.
+- `NFKCapabilityTranslation` → InferKitMLX's `NFKMLXTranslationProvider`, then InferKitAppleSwift's
+  `NFKTranslationProvider`.
 - `NFKCapabilityTextGeneration` → InferKitFoundationModels' `NFKFoundationModelsProvider`.
 - `NFKCapabilityControlNet` → no shipped default; a consumer registers their own.
 
@@ -738,8 +747,9 @@ is how upscaling and optical flow decline on hardware without the processor.
 
 Because every engine adopts `NFKInferenceBackend`, a caller can pick at runtime: prefer Apple's model
 when `isReady`, fall back to a local model, fall back to a remote endpoint, without changing
-request-building code. Tool calling and structured output are Foundation Models features today; the
-text, message, streaming, and parameter contract is shared across all of them.
+request-building code. Tool calling runs on the remote chat backends and on Foundation Models.
+Structured output runs on those and on the MLX and Core ML language backends. The text, message,
+streaming, and parameter contract is shared across all of them.
 
 ## Roadmap
 

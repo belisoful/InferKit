@@ -4,7 +4,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # Build, test, and the Full Check
 
-The complete build and verification notes for the core and both companions.
+The complete build and verification notes for the core and the three companions.
 
 ```bash
 # Build and test the core (host platform, macOS)
@@ -23,6 +23,9 @@ cd InferKitMLX && swift build --build-tests && ../Tools/mlx-metallib.sh && swift
 
 # The Foundation Models companion (macOS 26 / iOS 26) is a separate package
 cd InferKitFoundationModels && swift build && swift test
+
+# The Apple Swift-only companion (macOS 26 / iOS 26) is a separate package
+cd InferKitAppleSwift && swift build && swift test
 
 # Validate the CocoaPods spec (fast, no build)
 pod lib lint InferKit.podspec --quick
@@ -65,7 +68,8 @@ the workaround can go. Measured 2026-09-15, Xcode 27.0 (27A266a), swiftlang-6.4.
 
 Code is commit-ready only when every check below passes.
 
-`.github/workflows/ci.yml` runs the hosted-runner subset on every push and pull request: the core's
+`.github/workflows/ci.yml` runs the hosted-runner subset on every push to `main`, every `v*` tag, and every pull
+request to `main`: the core's
 build (zero warnings) + tests, the iOS and tvOS compile legs, the analyzer at a fresh derived-data
 path, the podspec lint, and compile checks for the companions. `InferKitFoundationModels` and
 `InferKitAppleSwift` each build and test behind an SDK guard: both need the macOS 26 SDK, so a runner
@@ -100,7 +104,8 @@ The runner's SDK annotates `VNDetectBarcodesRequest.supportedSymbologies`,
 classifier as macOS 12, so every use sits under `@available`; the zero-warning gate rejects an
 unguarded call.
 
-1. `swift build` + `swift test` on the host — **0 warnings**, all tests green.
+1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
+   `warning:` without a `tail`; a tail has hidden warnings before.
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.
@@ -109,9 +114,9 @@ unguarded call.
    SDK builds the core for tvOS. This check recorded that leg as unverified for as long as it used the
    destination form. A bare package rejects `-sdk` (it demands `-destination`), so the invocation goes
    through the workspace.
-2b. `xcodebuild analyze -scheme InferKit -derivedDataPath <FRESH DIR>` — **0 analyzer issues**. Use a
+3. `xcodebuild analyze -scheme InferKit -derivedDataPath <FRESH DIR>` — **0 analyzer issues**. Use a
    fresh derived-data path: the analyzer is cached, and reusing one silently reports nothing.
-3. `InferKitMLX/` `swift build` + `swift test` when a change touches the MLX companion. SwiftPM
+4. `InferKitMLX/` `swift build` + `swift test` when a change touches the MLX companion. SwiftPM
    cannot compile Metal shaders, so a plain build carries no `default.metallib` and MLX aborts the
    Process at the first array it has to evaluate, with "0 failures" still printed for the classes
    that ran before it, so a crash there is a truncated run rather than a red one. The summary line and
@@ -173,9 +178,9 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  61 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #  48 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 2039 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  110 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   49 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
@@ -200,21 +205,25 @@ unguarded call.
    so the printed lines beside the crash belong to earlier tests.
    `-scheme InferKitMLX` is the library scheme and runs only the first testable, which is the
    collapse the core's workspace note above describes: it executed the `InferKitMLXTests` methods
-   and silently ran neither examples target, so the 78 example tests went unclaimed while the command
+   and silently ran neither examples target, so the example tests went unclaimed while the command
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (204) and `InferKitFoundationModels` (24) are covered by step 1 and
-   step 4 whatever Xcode does with their schemes.
-4. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
-   covers all 24 tests across its three test targets. Through Xcode it collapses the same way MLX does
-   — the generated `InferKitFoundationModels` scheme runs 15 and skips the 9 in the two examples
+   package declares, so the core (694), `InferKitFoundationModels` (86), and `InferKitAppleSwift`
+   (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
+5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
+   covers all 86 tests across its three test targets. Through Xcode it collapses the same way MLX does
+   — the generated `InferKitFoundationModels` scheme runs 68 and skips the 18 in the two examples
    targets — so it carries the same per-target shared schemes
-   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 15 / 5 / 4). Nothing here needs
+   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 68 / 10 / 8). Nothing here needs
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
+6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
+   all 26 tests across its three test targets (16 / 6 / 4), one of which skips without an installed
+   translation model. The package carries no per-target shared schemes, so `swift test` is the run that
+   covers all three targets.
 
-5. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C code block in `README.md`,
+7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C code block in `README.md`,
    `Docs/examples.md`, or `Docs/inference-guide.md`, or any public API a block names: **0 failed**.
    It compiles every ```` ```objc ```` block with `clang -fsyntax-only -Werror` against the core's
    headers and the `-Swift.h` header each companion's build generates, and reports an error at the
@@ -285,8 +294,10 @@ Tools/lmc/lmc.py status                                      # holder, queue, ou
 - A hung test holds the lock for every session. `NFKMLXTranslationTests.testDetectionNamesEnglish`
   (`NLLanguageRecognizer.dominantLanguage`) never returned in one `swift test` process on 2026-09-24
   and held the lock for 30 minutes at about 25% CPU. A run whose log stops advancing for several
-  minutes is killed by its owner (`kill` on the `xctest` and `swift-test` processes it started), which
-  releases the lock as `failed`; a filter that excludes the test lets the rest of the run proceed.
+  minutes is killed by its owner (`kill` on the `xctest` and `swift-test` processes it started). Killing
+  `xctest` alone makes the command exit nonzero and releases the lock as `failed`. Killing the process
+  `run` spawned releases it as `stopped`, and each rider re-requests. A filter that excludes the test
+  lets the rest of the run proceed.
 
 ## The oracle interpreters break when Xcode is renamed
 
@@ -343,8 +354,8 @@ The model store lives on the external volume `/Volumes/InferKit Models` (APFS, T
 `~/.inferkit-validation.json` resolves every key, so a test reads keys. A test or tool that falls back
 to a conventional file builds the path from the validation root: `IK_VALIDATION_ROOT` when set, else
 `/Volumes/InferKit Models/inferkit-validation` while that volume is mounted, else
-`~/.inferkit-validation` (`NFKMLXValidationConfig.root` in the tests, `validation_root()` in `fetch.py`
-and `run_reference.py`).
+`~/.inferkit-validation` (`NFKMLXValidationConfig.root` in the tests, `validation_root()` in `fetch.py`,
+`run_reference.py`, and `generate_chat_templates.py`).
 
 Relocating any part of the store has one invariant: **no key in `~/.inferkit-validation.json` points
 at a path that does not exist.** Check that over every key, not over the set of files moved. A key

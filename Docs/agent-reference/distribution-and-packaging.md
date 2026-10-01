@@ -26,7 +26,7 @@ SwiftPM targets name `Sources/InferKit` / `InferKitMLX/Sources` as their paths, 
 `Sources/InferKit/**/*.{h,m}`, and the XCFramework release assets are built binaries; none of them
 compile or carry anything under `Tools/`. A consumer resolving the SwiftPM package clones the whole
 repository (so `Tools/` lands on disk), but nothing there is built into the products or the release.
-The `~30 Tools/*-to-safetensors/convert.py` scripts are therefore not required to consume the
+The 46 `Tools/*-to-safetensors` converters are therefore not required to consume the
 library: `NFKMLXTorchFormat` reads a raw `.pth`/`.pt`/`.ckpt`/`.th`/HF `.bin` natively (see `NFKMLXTorchCheckpoint` in
 `mlx-weights-and-formats.md`), so a consumer needs no Python. The converters stay for two reasons
 that are not consumer-facing — they are the **byte oracle** `NFKMLXTorchParityTests` holds the native
@@ -102,8 +102,8 @@ verified by building and running it: Xcode static and dynamic, SwiftPM `binaryTa
 (SwiftPM wires the static one's headers and modulemap automatically; the dynamic one still needs
 `CoreHeaders` passed through `-fmodule-map-file`), plug-in bundles, and a consumer's own static library.
 The artifacts are not committed — this repository is source-distributed, so a consumer resolving it
-clones its history. Three compressed release assets, one per variant carrying every slice: core 0.7 MB,
-static 28 MB, dynamic 19 MB. The core's `build.sh` cleans only its own artifact — both scripts share
+clones its history. Three compressed release assets, one per variant carrying every slice: core 1.3 MB,
+static 38 MB, dynamic 25 MB. The core's `build.sh` cleans only its own artifact — both scripts share
 `xcframework-build/`, and an `rm -rf` of the whole directory once discarded a twenty-minute MLX build
 beside a twenty-second core one.
 

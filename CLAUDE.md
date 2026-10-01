@@ -101,7 +101,7 @@ Sources/InferKit/                # Core ObjC: include/InferKit/ (public headers 
 Tests/InferKitTests/             # XCTest for the core
 Examples/, SwiftExamples/        # Compiled examples mirroring Docs/examples.md (ObjC and Swift)
 Docs/                            # Consumer docs; Docs/agent-reference/ holds the maintainer notes
-InferKit.xcworkspace             # Core + both companions in one Xcode window (rules in the full tree)
+InferKit.xcworkspace             # Core + the three companions in one Xcode window (rules in the full tree)
 InferKitMLX/                     # MLX companion package (own Package.swift, tests, examples, DocC)
 InferKitFoundationModels/        # Foundation Models companion package
 InferKitAppleSwift/              # Apple's Swift-only inference APIs, wrapped for Objective-C
@@ -334,13 +334,15 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   `mlx-models-speech-recognition.md`, `mlx-models-text-to-speech.md`,
   `mlx-models-source-separation.md`, `mlx-models-speech-restoration.md`,
   `mlx-models-audio-codecs-music.md`, `mlx-models-music-transcription-structure.md`.
-- InferKitFoundationModels: `foundation-models-companion.md`.
+- InferKitFoundationModels: `foundation-models-companion.md`,
+  `xcode27-foundation-models-and-neural-accelerators.md`.
 - InferKitAppleSwift: covered by `apple-framework-backends.md`, which holds every Apple-framework
   engine, in the core and in that companion.
 
 Consumer-facing documents stay in `Docs/` (`inference-guide.md`, `examples.md`, `installation.md`,
-`coreml-llm.md`, `companions.md`, `model-index.md`, `model-parity.md`, `mlx-runtime-hazards.md`) and
-are updated through the parity checklist, not duplicated into the reference files.
+`coreml-llm.md`, `companions.md`, `model-index.md`, `model-parity.md`, `mlx-runtime-hazards.md`,
+`porting-candidates.md`, `removal-candidates.md`) and are updated through the parity checklist, not
+duplicated into the reference files.
 
 ## Safeguards (Anti-Patterns)
 

@@ -11,14 +11,14 @@ the Swift loaders both read unchanged:
 A fifth argument M also cuts an InternVL vision tower (`vision_model.encoder.layers`) to its first M
 layers, for a release whose tower alone exceeds the machine at float32 (Sa2VA-26B's InternViT-6B):
 
-    python3 truncate.py ByteDance/Sa2VA-26B ~/.inferkit-validation/sa2va-26b-cut4 4 4
+    python3 truncate.py ByteDance/Sa2VA-26B "/Volumes/InferKit Models/inferkit-validation/sa2va-26b-cut4" 4 4
 
 `--diffusers-transformer` cuts a diffusers MMDiT (`transformer/`, blocks `transformer_blocks.N`) instead.
 The cut keeps the first N - 1 blocks and the release's final block, renumbered N - 1, because that block
 is built differently (SD3's `context_pre_only` ends the text stream); `num_layers` becomes N and
 `dual_attention_layers` keeps the indices below N - 1. The cut is written under `<out>/transformer/`:
 
-    python3 truncate.py stabilityai/stable-diffusion-3.5-large ~/.inferkit-validation/sd35-large-cut4 4 --diffusers-transformer
+    python3 truncate.py stabilityai/stable-diffusion-3.5-large "/Volumes/InferKit Models/InferKit/validation/sd35-large-cut4" 4 --diffusers-transformer
 
 The script writes `config.json` with the layer count set to N (every per-layer list cut to N, nested text configs
 included), `model.safetensors.index.json` listing only the kept tensors, and one compact shard per

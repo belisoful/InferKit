@@ -4,8 +4,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # Apple-framework backends in the core
 
-The engines that wrap Apple's own inference frameworks: Vision, VideoToolbox, and Speech. They ship
-in the core because they depend on Apple frameworks only, which is the core's rule. They are
+The engines that wrap Apple's own inference frameworks: Vision, VideoToolbox, Speech, AVFoundation's
+voices, SoundAnalysis, NaturalLanguage, and the Swift-only APIs InferKitAppleSwift hosts. The core's
+engines ship there because they depend on Apple frameworks only, which is the core's rule. They are
 alternatives to the MLX models they overlap, never replacements: `Docs/agent-reference/xcode27-foundation-models-and-neural-accelerators.md`
 records the overlap survey that produced them.
 
@@ -15,9 +16,10 @@ the "customization is part of parity" rule do not apply to them. They carry no e
 
 ## The Swift host (InferKitAppleSwift)
 
-Three Apple APIs cannot live in the core, which is a pure Objective-C target: `SpeechAnalyzer` (an
-actor whose results are an `AsyncSequence`) and Vision's `RecognizeDocumentsRequest` and
-`DetectLensSmudgeRequest` (in `Vision.swiftmodule`, no `VN*` header). `InferKitAppleSwift/` is the
+Four Apple APIs cannot live in the core, which is a pure Objective-C target: `SpeechAnalyzer` (an
+actor whose results are an `AsyncSequence`), Vision's `RecognizeDocumentsRequest` and
+`DetectLensSmudgeRequest` (in `Vision.swiftmodule`, no `VN*` header), and the Translation framework,
+which is Swift-only throughout. `InferKitAppleSwift/` is the
 host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
 
 - **The analyzer's readiness is not a question a property can answer.** `SpeechTranscriber.isAvailable`,
@@ -33,7 +35,8 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
 
 ## Discovery
 
-`NFKAppleProviders.h` declares one provider per engine, and `NFKDynamicBackend` names them last for
+`NFKAppleProviders.h` declares eight providers (text, segmentation, pose, face, feature print,
+upscaling, optical flow, and speech recognition), and `NFKDynamicBackend` names them last for
 their capabilities (2026-09-22). The order is deliberate: a companion's model wins where the consumer
 linked one, and the core answers where nothing is linked. The VideoToolbox providers return nil when
 their processor is absent, which discovery treats as a pass rather than a failure. The segmentation
@@ -56,7 +59,10 @@ maps each point through the box before flipping it.
 
 - One class per capability, which is the core's convention and keeps `supportedInputKeys` meaningful:
   `NFKVisionTextBackend`, `NFKVisionSegmentationBackend`, `NFKVisionPoseBackend`,
-  `NFKVisionFaceBackend`, `NFKVisionFeaturePrintBackend`. Shared plumbing is the private
+  `NFKVisionFaceBackend`, `NFKVisionFeaturePrintBackend`, `NFKVisionClassificationBackend`,
+  `NFKVisionAnimalBackend`, `NFKVisionRectangleBackend`, `NFKVisionMeasurementBackend`,
+  `NFKVisionContourBackend`, `NFKVisionRegistrationBackend`, `NFKVisionCoreMLBackend`, and
+  `NFKVisionTrackingBackend`. Shared plumbing is the private
   `NFKVisionSupport`, beside `NFKRemoteMediaSupport`.
 - Floors, checked in the headers: text recognition, saliency, and feature print are macOS 10.15;
   face landmarks 10.13; body and hand pose 11.0. All clear the core's floor. The two that do not are
@@ -138,8 +144,8 @@ headers:
 ## Speech
 
 - `SFSpeechRecognizer` is Objective-C and fits the core; `SpeechAnalyzer` and its modules
-  (macOS 26) are a Swift actor and cannot live in the pure Objective-C core target. Hosting them
-  needs a Swift package, which is a separate decision.
+  (macOS 26) are a Swift actor and cannot live in the pure Objective-C core target.
+  `InferKitAppleSwift` hosts them as `NFKSpeechAnalyzerBackend`.
 - Recognition needs the user's consent and an `NSSpeechRecognitionUsageDescription` in the app's
   Info.plist. A test bundle has neither, so the tests cover the contract and the refusals:
   `isReady` is NO and a run reports `kNFKError_InferenceNotReady`.

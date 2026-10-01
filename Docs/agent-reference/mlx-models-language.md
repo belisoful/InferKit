@@ -538,7 +538,7 @@ attention and feed-forward.
   rotary tables became correctly rounded (`torch.polar` builds them so; the GPU's float32 `cos`
   and `sin` are not), which did not move this seam but removes a real source of the same kind. The
   stack reloads from 0813's own names and a greedy speculative run is the plain run token for token.
-  **The stored "V4 Flash" files are not the live V4 Flash.** `~/.inferkit-validation/deepseek-v4-flash`
+  **The stored "V4 Flash" files are not the live V4 Flash.** `<validation root>/deepseek-v4-flash`
   holds a DSpark-shaped release (72317 tensors, three draft stages of 256 experts, `dspark_*` fields
   in its config), while `deepseek-ai/DeepSeek-V4-Flash` today serves 69187 tensors with one classic
   MTP stage (`e_proj`, `h_proj`), no `dspark_*` fields, and a `model.py` that builds that MTP block.

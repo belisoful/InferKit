@@ -16,7 +16,7 @@ The reference's module names (`encoder_spec2midi.*`, `decoder_spec2midi.*`) are 
 module's own (`encoder.*`, `decoder.*`).
 
 Usage:
-    IK_HFT_SRC=~/.inferkit-validation/reference-sources/hft \
+    IK_HFT_SRC="/Volumes/InferKit Models/inferkit-validation/reference-sources/hft" \
         python convert.py model_016_003.pkl hft-transformer-maestro.safetensors
 
 Requires: torch, torchaudio, safetensors.

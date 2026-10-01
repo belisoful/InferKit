@@ -39,7 +39,8 @@ OpenAI-compatible backend is ready with an endpoint alone, which **llama.cpp dep
 answers for whatever model it has loaded.
 
 A preset carries one address, `baseURL`, and derives the rest (`endpointURL` = base +
-`/chat/completions`, or `/messages` for Anthropic; `modelsURL` = base + `/models`; `URLForPath:` for
+`/chat/completions`, `/messages` for Anthropic, `/systemone` for TypeSafe, or `/inferkit/run` for an
+InferKit server; `modelsURL` = base + `/models`; `URLForPath:` for
 anything else, joining with exactly one slash). The bases differ per provider in ways a caller should
 not have to know (Gemini's is `/v1beta/openai`, Groq's `/openai/v1`, OpenRouter's `/api/v1`), and the
 derivation reproduces the literals the presets carried before, asserted by
@@ -69,12 +70,12 @@ runner that is not running is a different answer from one that answered with an 
 list, and an app shows "start Ollama" on that code. It is measured against a refused connection on the
 discard port (`testTheTransportReportsARefusedConnectionAsUnreachable`), not stubbed.
 
-`NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`, every preset but
-Anthropic): `NFKInputPrompt` or joined `NFKInputMessages` → `NFKOutputEmbedding`, the key the MLX
+`NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`; openai, gemini,
+mistral, together, openrouter, the four local runners, and an InferKit server): `NFKInputPrompt` or joined `NFKInputMessages` → `NFKOutputEmbedding`, the key the MLX
 embedders answer with, so a consumer's search code is engine-agnostic. `embeddingsForTexts:error:`
 batches, ordered by the provider's `index` rather than by arrival (measured: a stub returning
 index 1 before index 0 comes back in text order). `backendForProvider:apiKey:modelName:` answers nil
-for Anthropic — it imports to Swift as the failable initializer `NFKRemoteEmbeddingBackend(for:apiKey:modelName:)`,
+for every other preset — it imports to Swift as the failable initializer `NFKRemoteEmbeddingBackend(for:apiKey:modelName:)`,
 which the Swift example pins.
 
 The local runners' native APIs are a second surface, and they are built (`NFKLocalModelRunner`,
@@ -104,7 +105,7 @@ staged lines), distinct from `sendRequest:` because a streamed body cannot go th
 `NFKRemoteModel` gained `sizeBytes` / `quantization` / `capabilities` and takes its id from `model` or
 `name` where a list carries no `id` (Ollama's). A colon is legal in a URL path segment and is how
 Ollama spells a tag (`llama3.2:latest`), but Foundation's `URLPathAllowedCharacterSet` encodes it to
-`%3A`; `modelWithIdentifier:` and the LM Studio detail add `:` to the allowed set, pinned by a test.
+`%3A`; `modelWithIdentifier:error:` and the LM Studio detail add `:` to the allowed set, pinned by a test.
 **Two hazards from this round:** an `@[ a, b ]` literal inside an `XCTAssert…` macro argument splits
 the macro on its comma unless the whole expression is parenthesized; and adjacent string-literal
 concatenation as a direct element of an `@[ ]`/`@{ }` literal raises `-Wobjc-string-concatenation`
@@ -158,7 +159,8 @@ probe needs a control: a `401` on a host that walls every path (DeepSeek answers
 `/v1/nonesuch` too) proves nothing, so each host was also sent a nonsense path — served means the real
 path answers 401/422/validation while the nonsense path 404s. Speech: openai, groq, together, xai,
 mistral, openrouter. Generations: openai, together, xai, openrouter. Edits: openai, xai. Gemini's
-OpenAI layer and all four local runners serve none; DeepSeek is undeterminable. Recorded on each
+OpenAI layer serves generations and no speech or edits. The four local runners serve none; DeepSeek is
+undeterminable. Recorded on each
 factory's `@discussion`. Vision is measured live (`testALocalVisionModelSeesTheImage`, gated on
 `INFERKIT_LIVE_VISION_MODEL`): Ollama `qwen3.5:27b` given a flat blue square answers "blue" through the
 content-parts shape, 23 s with the model load. `NFKImageCoding` is the public codec (ImageIO, now linked
@@ -201,7 +203,7 @@ its spelling for the stops) and has no repetition penalty. **Reasoning and usage
 `reasoning_effort`, any other string written as it stands. The Messages API takes a budget rather
 than a level only on models before Claude Opus 4.6, so there `NFKAnthropicThinkingBudgets()` maps the
 three to 2048 / 8192 / 16384 under `thinking: {type: enabled, budget_tokens}`, a numeric string is an
-exact budget, and anything else is refused in `urlRequestForRequest:`. **Model generations
+exact budget, and anything else is refused in `urlRequestForRequest:streaming:error:`. **Model generations
 (2026-09-22):** the Anthropic backend picks the shape from `modelName` by family substring (so
 `anthropic.claude-…` and `claude-…@date` match). `NFKAnthropicBudgetThinkingFamilies()` (claude-3, the
 4.0 / 4.1 / 4.5 models) keeps the budget. Every other name takes `thinking: {type: adaptive}` plus
@@ -264,8 +266,8 @@ shapes:
 Unknown-field rejection (`top_k`, `repetition_penalty`, `repeat_penalty`) is undocumented for Gemini,
 xAI, Mistral, DeepSeek, and Together; those go out only when a caller sets them.
 
-**Media and retrieval backends audit (2026-09-22).** Every `backendForProvider:` factory below accepts
-any OpenAI-style preset, so a preset that does not serve the path answers 404 at request time.
+**Media and retrieval backends audit (2026-09-22).** Every `backendForProvider:` factory below returns
+nil for a preset that does not serve the path.
 - **Video (`NFKRemoteVideoBackend`):** OpenAI removes the Videos API and `sora-2` / `sora-2-pro` on
   **2026-09-24**, with no replacement named (announced 2026-03-24). The backend now speaks every
   hosted video API through `apiStyle` (2026-09-22); the per-style contract is below.
@@ -325,7 +327,7 @@ shape the way the video backend does, and their factories return nil for a prese
   result and `*.completed` into the final one.
 
 **Chat dialects and reply extras (2026-09-22).** `NFKRemoteBackend.chatDialect` is set by
-`NFKRemoteProvider backendForProvider:` (mistral, openrouter, vllm, llamacpp; every other preset is
+`NFKRemoteProvider backendForProvider:` (mistral, openrouter, vllm, llamacpp, deepseek; every other preset is
 standard). `NFKRemoteAttachments attachmentsForRequest:keepsVideo:error:` keeps a clip whole under
 `videoData` for the OpenRouter / vLLM / llama.cpp dialects unless `NFKParameterVideoFrameCount` is set.
 Whole-clip parts: `video_url {url: data:video/<ext>;base64}` (OpenRouter, vLLM), `input_video {data,
@@ -338,7 +340,7 @@ extras read by `extraOutputsInMessage:` from the blocking reply only: `message.i
 Anthropic reads `citations[]` on text blocks (and `citations_delta` when streamed) and pairs
 `server_tool_use` blocks with `*_tool_result` blocks by `tool_use_id`. Gemini embeddings use the native
 `models/{m}:embedContent` with `inline_data` parts and `x-goog-api-key`, `:batchEmbedContents` for
-`embeddingsForTexts:`, `dimensions` → `outputDimensionality`, `task_type` → `taskType`.
+`embeddingsForTexts:error:`, `dimensions` → `outputDimensionality`, `task_type` → `taskType`.
 
 **Responses, Interactions, and the single-purpose backends (2026-09-22).**
 - `NFKRemoteResponsesBackend` (`/responses`; openai, xai, groq, deepseek, openrouter, lmstudio, ollama,
@@ -389,7 +391,7 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
 
 **Realtime sessions (`NFKRealtimeSession`, 2026-09-22).** One class, twelve protocols; the socket is
 `NFKRealtimeSocket` (`NFKRealtimeWebSocket` on `NSURLSessionWebSocketTask`, one receive per message),
-and `socketForRequest:` is the test seam. `sessionForProvider:apiStyle:` builds the ws(s) URL from the
+and `socketForRequest:` is the test seam. `sessionForProvider:apiStyle:apiKey:modelName:` builds the ws(s) URL from the
 provider's base (`http` → `ws`, else `wss`); Gemini's two sockets are fixed `…/ws/google.ai.
 generativelanguage.v1beta.GenerativeService.BidiGenerateContent` and `….v1alpha.…BidiGenerateMusic`
 with the key as `?key=`; every other style sends `Authorization: Bearer`. Handshake queries: `model`
@@ -466,7 +468,7 @@ that returns nil for a preset without the API.
 
 **Video styles (`NFKRemoteVideoAPIStyle`, 2026-09-22).** `backendForProvider:` picks gemini →
 Sora-compatible, openai → OpenAI, xai / together / openrouter → their own, and nil for every other
-preset; `backendForProvider:apiStyle:` reaches Gemini's native Veo. Moving the default between
+preset; `backendForProvider:apiStyle:apiKey:modelName:` reaches Gemini's native Veo. Moving the default between
 services is a change of provider, not of code. Shared behavior: a contract key the service has no
 field for is dropped, every other parameter goes out by name (into Veo's `parameters`), a request the
 style cannot express fails with `kNFKError_InferenceUnsupported` before the submit (`refusalForRequest:`),
@@ -524,7 +526,7 @@ format on most models, so it is a forced tool `structured_output` (`tool_choice:
 `NFKOutputStructured` and is not listed as a tool call. JSON is promoted to `structured` only when JSON
 was asked for (schema, or a folded `response_format` of type `json_object`/`json_schema`) — JSON-looking
 text is not guessed at. `NFKInputImages` attaches further images after `NFKInputImage`. **Retry:** the
-transport's blocking send retries 429/502/503/504 after `Retry-After` (seconds; an HTTP-date falls to
+transport's blocking send retries 429/502/503/504/529 after `Retry-After` (seconds; an HTTP-date falls to
 the schedule) or `0.5·2^attempt`, `retryAttempts` (2) more times, never past `maximumRetryDelay` (8 s)
 — a longer Retry-After ends the retries rather than waiting; a refused connection is not retried
 (unreachable is an answer). Tested through an `NSURLProtocol` registered on a session configuration,
@@ -572,12 +574,13 @@ live: `qwen3.5:27b` names red and blue from four frames of a red–green–blue�
 caller set one; `segments[]` → `NFKAudioSegment` with `exp(avg_logprob)` as confidence, matching the
 on-device Whisper backend's `NFKOutputSegments`) and `translates` (the path's last component swapped
 to `translations`). `NFKRemoteVideoBackend` is the first shipped `NFKAsyncGenerationBackend`
-subclass (OpenAI `/v1/videos`, verified by probe; no other preset serves one): JSON submit, or
+subclass (OpenAI `/v1/videos` first; the styles for Gemini, xAI, Together, and OpenRouter are under
+"Video styles"): JSON submit, or
 multipart with `input_reference` when `NFKInputImage` is present — the base gained the
 `submitRequestForRequest:` hook for that and `failureReasonFromStatusResponse:` so the service's
 `error.message` reaches the job — percentage `progress` → fraction, poll every 5 s, then get
-`/videos/{id}/content` → `.mp4` `NFKVideoAsset`. `NFKRemoteReranker` (`/rerank`, together +
-openrouter verified; results arrive in relevance order and are put back in the documents' order) and
+`/videos/{id}/content` → `.mp4` `NFKVideoAsset`. `NFKRemoteReranker` (`/rerank`; the factory accepts
+together, openrouter, llamacpp, and vllm, with together and openrouter verified; results arrive in relevance order and are put back in the documents' order) and
 `NFKRemoteModerationBackend` (`/moderations`, openai + mistral; `category_scores` →
 `NFKClassification`s most confident first, the verdict under `NFKOutputStructured`). Unverified live:
 audio in/out, PDFs, video generation, rerank, moderation — all need paid keys; their envelopes are
@@ -593,7 +596,7 @@ and `false`); each answer is `{type: choice, choice, probabilities, confidence}`
 `{type: score, score, legend, probabilities, confidence}`, or `{type: noul, noul}`, where `noul` is the
 probability the statement holds. The model is required; `jev-latest` and `jev-preview` alias
 `jev-1.13.0` at release, and `GET /v1/models` lists them, so the catalog serves the preset through the
-Bearer path (the style is `NFKRemoteAPIStyleSystemOne`, and `authorizeRequest:` treats every style but
+Bearer path (the style is `NFKRemoteAPIStyleSystemOne`, and `authorizeRequest:apiKey:style:` treats every style but
 Anthropic's as Bearer). Limits at release: 64k tokens per request, 32k for the state plus the longest
 question; pricing $0.042 per million input tokens, output free. Errors: 401, 422 (invalid body), 429,
 and 529 (overloaded), the last two to be retried with backoff, which is why 529 joined the transport's
@@ -608,8 +611,8 @@ The core's vocabulary for the shape is engine-neutral, because the open reproduc
 at its own mask token) speaks the same request; it ships as `NFKMLXLaya` in InferKitMLX
 (`mlx-models-embeddings-retrieval.md`), so a feature moves between the hosted model and the device by
 swapping the object:
-`NFKInputState` / `NFKInputQuestions` in, `NFKOutputAnswers` out, `NFKDecisionQuestion` (three
-factories; `dictionaryRepresentation` is the wire shape, and a dictionary already in that shape passes
+`NFKInputState` / `NFKInputQuestions` in, `NFKOutputAnswers` out, `NFKDecisionQuestion` (five
+factories over the three question types; `dictionaryRepresentation` is the wire shape, and a dictionary already in that shape passes
 through) and `NFKDecisionAnswer` (`answerWithDictionary:`, secure coding like the rest of the result
 family, `raw` for what the type does not read). The backend accepts `NFKInputPrompt` and then
 `NFKInputMessages` as the state when `NFKInputState` is absent, folds any other parameter into the

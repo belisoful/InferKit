@@ -1,8 +1,8 @@
 #!/bin/bash
 #
-# Builds all three packages in one command. They are separate SwiftPM packages by design — the core
+# Builds the core, InferKitMLX, and InferKitFoundationModels in one command. They are separate SwiftPM packages by design — the core
 # carries no dependencies and a macOS 11 / iOS 14 / tvOS 14 floor, while MLX needs Apple Silicon and
-# macOS 14 / iOS 16 — so "building the repo" means building each in turn, not one combined target.
+# macOS 14 / iOS 17 — so "building the repo" means building each in turn, not one combined target.
 #
 #   Tools/build-all.sh          # build
 #   Tools/build-all.sh --test   # build and test (MLX gets its Metal library from mlx-metallib.sh first)

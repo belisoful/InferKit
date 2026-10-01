@@ -652,7 +652,7 @@ arithmetic as before.
   own bfloat16 against its float32 is 0.99993 on both prompts, a larger gap than this port's
   bfloat16 shows.
 
-  The release lives at `/Volumes/WindowsBoot/InferKit/validation/flux2-klein-4b` (transformer, VAE,
+  The release lives at `/Volumes/InferKit Models/InferKit/validation/flux2-klein-4b` (transformer, VAE,
   text encoder, tokenizer; 15 GB) under `IK_VAL_FLUX2_KLEIN_4B`, `IK_VAL_FLUX2_KLEIN_4B_VAE` and
   `IK_VAL_FLUX2_KLEIN_4B_ROOT`.
 
@@ -776,7 +776,8 @@ arithmetic as before.
   base 9B's to the name and shape (an identical config, 233 tensors). `.klein9B` covers the distilled
   klein 9B through the base 9B, whose config names the klein-9b conversion as its `_name_or_path`.
   The distilled klein 9B (`92196c8e`, 34.7 GB) and FLUX.2 [dev] (`26afe3a7`, 112.9 GB, diffusers
-  folders only) are on the backup share under `validation/flux2-klein-9b` and `validation/flux2-dev`,
+  folders only) are in the model store under `InferKit/validation/flux2-klein-9b` and
+  `InferKit/validation/flux2-dev`,
   and neither has been run: [dev]'s transformer is 60 GB at bfloat16, larger than a 32 GB machine
   loads whole. Customization is offline-only on the same
   grounds as FLUX.1 and SDXL.

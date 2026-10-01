@@ -6,7 +6,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 The core ships a DocC catalog at `Sources/InferKit/InferKit.docc/` (landing page `InferKit.md`, concept
 articles, per-symbol extension `.md` files, and `Resources/*.svg` diagrams). Symbol pages come from the
-`///` HeaderDoc in the public headers; the articles and extensions add concepts, curated topics, and the
+`/*! … */` HeaderDoc in the public headers; the articles and extensions add concepts, curated topics, and the
 diagrams. The catalog sits under `Sources/` without disturbing `swift build`, `swift test`, or the
 podspec (which globs only `.h`/`.m`).
 
@@ -18,7 +18,7 @@ only for the input files, excluding the SDK — passing the umbrella alone yield
 result to `docc convert` with the catalog. Diagrams are self-contained light-card SVGs (legible on both
 light and dark pages); each is audited by rendering.
 
-The two Swift companions carry their own catalogs, documented through the swift-docc-plugin (which does
+The three Swift companions carry their own catalogs, documented through the swift-docc-plugin (which does
 extract a symbol graph for a Swift target) rather than the clang recipe:
 
 - `InferKitFoundationModels/Sources/InferKitFoundationModels/InferKitFoundationModels.docc/` — landing,
@@ -26,10 +26,13 @@ extract a symbol graph for a Swift target) rather than the clang recipe:
 - `InferKitMLX/Sources/InferKitMLX/InferKitMLX.docc/` — landing (gallery Topics grouped by modality),
   the `ModelGallery` / `BringYourOwnBackends` / `DiffusionAndSchedulers` / `WeightsAndConversion`
   articles, four diagrams (`model-gallery`, `backend-families`, `diffusion-loop`, `weights-pipeline`),
-  and headline per-class example pages. Each companion adds swift-docc-plugin as a dev-only dependency.
+  and headline per-class example pages.
+- `InferKitAppleSwift/Sources/InferKitAppleSwift/InferKitAppleSwift.docc/` — the landing page.
 
-Build a companion with `Tools/docc/build.sh --companion <InferKitFoundationModels|InferKitMLX>`, or the
-whole set (core + both companions) with `Tools/docc/build.sh --all`. Only symbol links to the companion's
+Each companion adds swift-docc-plugin as a dev-only dependency.
+
+Build a companion with `Tools/docc/build.sh --companion <name>`. `Tools/docc/build.sh --all` builds the
+core, InferKitFoundationModels, and InferKitMLX; InferKitAppleSwift builds through `--companion` alone. Only symbol links to the companion's
 own types resolve when it builds alone, so the catalogs reference core types (`NFKInferenceBackend`, the
 `NFKInput*`/`NFKOutput*` keys) in code font, not as ``doc``/symbol links, to stay warning-free. `plan(for:)`
 and other internal helpers reachable only via `@testable import` are not documented — the pages show the

@@ -12,7 +12,7 @@ Add the package to your `Package.swift`:
 then add `"InferKit"` to your target's dependencies. In Xcode, use File ▸ Add Package Dependencies
 and enter the repository URL.
 
-#### Adding a companion (InferKitMLX, InferKitFoundationModels)
+#### Adding a companion (InferKitMLX, InferKitFoundationModels, InferKitAppleSwift)
 
 The companions are **separate packages that live in subdirectories of this repository**, each with its
 own `Package.swift`. Nothing in the core references them — the dependency points the other way, so the
@@ -42,7 +42,8 @@ its dependencies appear.
 
 Linking a companion is also what activates the core's optional capabilities: the core resolves a
 provider class by name through `NSClassFromString`, so it never references MLX symbols and the feature
-is simply unavailable when the companion is absent. See "Dynamic backend discovery" below.
+is simply unavailable when the companion is absent. See
+[Dynamic backend discovery](companions.md#dynamic-backend-discovery-optional-engines).
 
 ### CocoaPods
 

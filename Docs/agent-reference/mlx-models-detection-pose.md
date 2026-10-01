@@ -394,7 +394,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   - v1.1-fin: backbone 1.0, encoder 1.0, decoder 0.99999994, logits 1.0000001, boxes 1.0000001.
   - v1.1-pub: backbone 0.9999999, encoder 0.9999998, decoder 1.0000001, logits 0.99999994, boxes
     1.0000001.
-  Records: `run_reference.py table_transformer` per release directory, under `~/.inferkit-validation`
+  Records: `run_reference.py table_transformer` per release directory, under the validation root
   (`IK_{VAL,PARITY}_TABLE_TRANSFORMER_{DETECTION,V11_ALL,V11_FIN,V11_PUB}`). Oracle: `run_reference.py table_transformer`
   under the `llm` oracle env (transformers, needs Pillow), which records the preprocessed pixels, the
   backbone feature map, the encoder and decoder outputs, the boxes, and the post-processed detections.

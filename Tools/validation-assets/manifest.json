@@ -3176,7 +3176,7 @@
       "config": {
         "IK_VAL_PHI4MM": "release"
       },
-      "note": "Phi-4-multimodal (Microsoft, MIT): a Phi-4-mini decoder serving text, image, and speech, with a SigLIP image tower, a Conformer speech tower, and per-modality LoRAs. 12.8 GB across three bf16 shards, which carry BOTH adapters beside the base weights (`base_layer` plus `lora_A`/`lora_B`.{vision,speech}); the repository's `vision-lora/` and `speech-lora/` directories duplicate them and are not fetched. The five `.py` files are the release's remote code, which the `phi4mm` oracle environment runs (`run_reference.py phi4mm --checkpoint <directory>/release`, transformers 4.46.1); the Swift port reads only the JSON, the tokenizer files, and the shards. On the overflow volume beside the other large releases, because the home volume could not hold it. The parity records are written by oracle runs from the validation clip and photo, not fetched: IK_PARITY_PHI4MM by `phi4mm` (one turn in every mode), IK_PARITY_PHI4MM_CONVERSATION by `phi4mm_conversation` (a multi-turn chat with two pictures and two clips, two clips batched, and a 45 s clip past the encoder's 500-frame window)."
+      "note": "Phi-4-multimodal (Microsoft, MIT): a Phi-4-mini decoder serving text, image, and speech, with a SigLIP image tower, a Conformer speech tower, and per-modality LoRAs. 12.8 GB across three bf16 shards, which carry BOTH adapters beside the base weights (`base_layer` plus `lora_A`/`lora_B`.{vision,speech}); the repository's `vision-lora/` and `speech-lora/` directories duplicate them and are not fetched. The five `.py` files are the release's remote code, which the `phi4mm` oracle environment runs (`run_reference.py phi4mm --checkpoint <directory>/release`, transformers 4.46.1); the Swift port reads only the JSON, the tokenizer files, and the shards. In the model store at `/Volumes/InferKit Models/InferKit/raw/phi4mm`. The parity records are written by oracle runs from the validation clip and photo, not fetched: IK_PARITY_PHI4MM by `phi4mm` (one turn in every mode), IK_PARITY_PHI4MM_CONVERSATION by `phi4mm_conversation` (a multi-turn chat with two pictures and two clips, two clips batched, and a 45 s clip past the encoder's 500-frame window)."
     },
     {
       "key": "CHATTERBOX",
@@ -3283,7 +3283,7 @@
         "IK_VAL_REENHANCE": "resemble-enhance/ds/G/default/mp_rank_00_model_states.pt",
         "IK_PARITY_REENHANCE": "records"
       },
-      "note": "Resemble Enhance (resemble-ai, MIT), a five-network general speech restorer (fixes noise + reverberation + clipping + band-limiting together). Weights on HF (ResembleAI/resemble-enhance/enhancer_stage2, the DeepSpeed shard ds/G/default/mp_rank_00_model_states.pt keyed `module`, ~713 MB; nest under module. so the loader strips that prefix). It uses OLD weight_g/weight_v weight-norm, which fusedWeightNorm handles; the source builds modules with the parametrization API, so the ORACLE renames weight_g/v -> parametrizations.weight.original0/1 before a strict load. SOURCE (git-clone-safeguard: cp the cloned tree) to reference-sources/resemble-enhance/resemble_enhance; the oracle imports leaf modules (melspec/common/enhancer.lcfm/enhancer.univnet/denoiser) directly to AVOID deepspeed (which the top-level enhancer.py pulls via utils.distributed). Oracle env reenhancevenv (Python 3.12, torch/torchaudio/scipy/omegaconf/matplotlib/pandas/rich/librosa, numpy<2; see oracle_environments.reenhance). SIX modes, all --checkpoint the mp_rank shard with IK_REENHANCE_SRC=<reference-sources/resemble-enhance>: reenhance_mel (torchaudio magnitude mel + preemphasis + amp-to-db + headroom normalize), reenhance_irmae (encode/decode), reenhance_cfm (WaveNet velocity seam + the exponential-decay midpoint sampler nfe=32), reenhance_univnet (LVC vocoder with a recorded noise z), reenhance_denoiser (STFT-mask 2D UNet wav->wav), reenhance_e2e (the full enhance() path lambd=0.5/tau=0.5/nfe=32 with recorded tau/vocoder noises). Records write to ~/.inferkit-validation/records/reenhance_*.safetensors; IK_PARITY_REENHANCE is that DIRECTORY. THE load-bearing facts, all found by seam localization: the KernelPredictor's LeakyReLU is slope 0.2 (LVCBlock overrides the KernelPredictor's own 0.1 default) -- with 0.1 the vocoder scores ~0.84; the LVCBlock convt_pre is Sequential(LeakyReLU, ConvTranspose) so the activation runs BEFORE the transposed conv; and _reenhance_hp MUST load the released hparams.yaml because the enhancer default lcfm_z_scale is 5 but the release is 6, which is cosine-invisible (it changes only the prior/noise blend magnitude) and only surfaces in the e2e. The LVC (location-variable convolution, dilation 1) is a per-segment im2col matmul (MLX has no unfold). At reference parity on the released weights: mel 0.9999998, IRMAE encode 0.9999985 / decode 1.0000002, CFM velocity 1.0000001 / sample 1.0000001, UnivNet 0.9999365, denoiser 0.9999996, end-to-end waveform 0.9999971."
+      "note": "Resemble Enhance (resemble-ai, MIT), a five-network general speech restorer (fixes noise + reverberation + clipping + band-limiting together). Weights on HF (ResembleAI/resemble-enhance/enhancer_stage2, the DeepSpeed shard ds/G/default/mp_rank_00_model_states.pt keyed `module`, ~713 MB; nest under module. so the loader strips that prefix). It uses OLD weight_g/weight_v weight-norm, which fusedWeightNorm handles; the source builds modules with the parametrization API, so the ORACLE renames weight_g/v -> parametrizations.weight.original0/1 before a strict load. SOURCE (git-clone-safeguard: cp the cloned tree) to reference-sources/resemble-enhance/resemble_enhance; the oracle imports leaf modules (melspec/common/enhancer.lcfm/enhancer.univnet/denoiser) directly to AVOID deepspeed (which the top-level enhancer.py pulls via utils.distributed). Oracle env reenhancevenv (Python 3.12, torch/torchaudio/scipy/omegaconf/matplotlib/pandas/rich/librosa, numpy<2; see oracle_environments.reenhance). SIX modes, all --checkpoint the mp_rank shard with IK_REENHANCE_SRC=<reference-sources/resemble-enhance>: reenhance_mel (torchaudio magnitude mel + preemphasis + amp-to-db + headroom normalize), reenhance_irmae (encode/decode), reenhance_cfm (WaveNet velocity seam + the exponential-decay midpoint sampler nfe=32), reenhance_univnet (LVC vocoder with a recorded noise z), reenhance_denoiser (STFT-mask 2D UNet wav->wav), reenhance_e2e (the full enhance() path lambd=0.5/tau=0.5/nfe=32 with recorded tau/vocoder noises). Records write to <validation root>/records/reenhance_*.safetensors; IK_PARITY_REENHANCE is that DIRECTORY. THE load-bearing facts, all found by seam localization: the KernelPredictor's LeakyReLU is slope 0.2 (LVCBlock overrides the KernelPredictor's own 0.1 default) -- with 0.1 the vocoder scores ~0.84; the LVCBlock convt_pre is Sequential(LeakyReLU, ConvTranspose) so the activation runs BEFORE the transposed conv; and _reenhance_hp MUST load the released hparams.yaml because the enhancer default lcfm_z_scale is 5 but the release is 6, which is cosine-invisible (it changes only the prior/noise blend magnitude) and only surfaces in the e2e. The LVC (location-variable convolution, dilation 1) is a per-segment im2col matmul (MLX has no unfold). At reference parity on the released weights: mel 0.9999998, IRMAE encode 0.9999985 / decode 1.0000002, CFM velocity 1.0000001 / sample 1.0000001, UnivNet 0.9999365, denoiser 0.9999996, end-to-end waveform 0.9999971."
     },
     {
       "key": "SGMSE",
@@ -4062,7 +4062,7 @@
       "config": {
         "IK_VAL_GEMMA2_2B": ""
       },
-      "note": "Gemma 2 2B (5.2 GB bf16), an ungated re-export of Google's gated gemma-2-2b-it and the size SANA's caption encoder runs. Records, gemma venv: `IK_PROBE_LAYERS=0 run_reference.py hf_layer_probe records/gemma2_2b_f32.safetensors --checkpoint <dir>` (float32) and `IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,1,13 ... records/gemma2_2b_bf16_probe.safetensors` (bf16, eager, every submodule of the probed layers). NFKMLXBFloat16ParityTests reads both from ~/.inferkit-validation/records."
+      "note": "Gemma 2 2B (5.2 GB bf16), an ungated re-export of Google's gated gemma-2-2b-it and the size SANA's caption encoder runs. Records, gemma venv: `IK_PROBE_LAYERS=0 run_reference.py hf_layer_probe records/gemma2_2b_f32.safetensors --checkpoint <dir>` (float32) and `IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,1,13 ... records/gemma2_2b_bf16_probe.safetensors` (bf16, eager, every submodule of the probed layers). NFKMLXBFloat16ParityTests reads both from <validation root>/records."
     },
     {
       "key": "WAV2VEC2_BASE_960H",
@@ -4083,7 +4083,7 @@
         "IK_PARITY_WAV2VEC2_BASE_960H": "records/wav2vec2-base-960h.safetensors",
         "IK_PARITY_WAV2VEC2_LOSS": "records/wav2vec2-base-960h-loss.safetensors"
       },
-      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-base-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too. The recipe's record: `run_reference.py wav2vec2_loss ~/.inferkit-validation/records/wav2vec2-base-960h-loss.safetensors --checkpoint <dir>`."
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-base-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too. The recipe's record: `run_reference.py wav2vec2_loss <validation root>/records/wav2vec2-base-960h-loss.safetensors --checkpoint <dir>`."
     },
     {
       "key": "WAV2VEC2_BASE",
@@ -4102,7 +4102,7 @@
         "IK_VAL_WAV2VEC2_BASE": "",
         "IK_PARITY_WAV2VEC2_BASE": "records/wav2vec2-base.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-base.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-base.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "WAV2VEC2_LARGE_960H",
@@ -4121,7 +4121,7 @@
         "IK_VAL_WAV2VEC2_LARGE_960H": "",
         "IK_PARITY_WAV2VEC2_LARGE_960H": "records/wav2vec2-large-960h.safetensors"
       },
-      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-large-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
     },
     {
       "key": "WAV2VEC2_LARGE_960H_LV60_SELF",
@@ -4141,7 +4141,7 @@
         "IK_VAL_WAV2VEC2_LARGE_960H_LV60_SELF": "",
         "IK_PARITY_WAV2VEC2_LARGE_960H_LV60_SELF": "records/wav2vec2-large-960h-lv60-self.safetensors"
       },
-      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-960h-lv60-self.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-large-960h-lv60-self.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
     },
     {
       "key": "WAV2VEC2_LARGE_LV60",
@@ -4160,7 +4160,7 @@
         "IK_VAL_WAV2VEC2_LARGE_LV60": "",
         "IK_PARITY_WAV2VEC2_LARGE_LV60": "records/wav2vec2-large-lv60.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-lv60.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-large-lv60.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "WAV2VEC2_LARGE_XLSR_53",
@@ -4176,7 +4176,7 @@
         "IK_VAL_WAV2VEC2_LARGE_XLSR_53": "",
         "IK_PARITY_WAV2VEC2_LARGE_XLSR_53": "records/wav2vec2-large-xlsr-53.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-xlsr-53.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-large-xlsr-53.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "WAV2VEC2_XLS_R_300M",
@@ -4192,7 +4192,7 @@
         "IK_VAL_WAV2VEC2_XLS_R_300M": "",
         "IK_PARITY_WAV2VEC2_XLS_R_300M": "records/wav2vec2-xls-r-300m.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-300m.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-xls-r-300m.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "WAV2VEC2_XLS_R_1B",
@@ -4208,7 +4208,7 @@
         "IK_VAL_WAV2VEC2_XLS_R_1B": "",
         "IK_PARITY_WAV2VEC2_XLS_R_1B": "records/wav2vec2-xls-r-1b.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-1b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-xls-r-1b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "WAV2VEC2_XLS_R_2B",
@@ -4225,7 +4225,7 @@
         "IK_VAL_WAV2VEC2_XLS_R_2B": "",
         "IK_PARITY_WAV2VEC2_XLS_R_2B": "records/wav2vec2-xls-r-2b.safetensors"
       },
-      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-2b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor. The repo also carries the reference fine-tuning script, `run_speech_recognition_ctc.py`."
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/wav2vec2-xls-r-2b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor. The repo also carries the reference fine-tuning script, `run_speech_recognition_ctc.py`."
     },
     {
       "key": "HUBERT_BASE_LS960",
@@ -4241,7 +4241,7 @@
         "IK_VAL_HUBERT_BASE_LS960": "",
         "IK_PARITY_HUBERT_BASE_LS960": "records/hubert-base-ls960.safetensors"
       },
-      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-base-ls960.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/hubert-base-ls960.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "HUBERT_LARGE_LL60K",
@@ -4257,7 +4257,7 @@
         "IK_VAL_HUBERT_LARGE_LL60K": "",
         "IK_PARITY_HUBERT_LARGE_LL60K": "records/hubert-large-ll60k.safetensors"
       },
-      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-large-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/hubert-large-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "HUBERT_LARGE_LS960_FT",
@@ -4276,7 +4276,7 @@
         "IK_VAL_HUBERT_LARGE_LS960_FT": "",
         "IK_PARITY_HUBERT_LARGE_LS960_FT": "records/hubert-large-ls960-ft.safetensors"
       },
-      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-large-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/hubert-large-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
     },
     {
       "key": "HUBERT_XLARGE_LL60K",
@@ -4292,7 +4292,7 @@
         "IK_VAL_HUBERT_XLARGE_LL60K": "",
         "IK_PARITY_HUBERT_XLARGE_LL60K": "records/hubert-xlarge-ll60k.safetensors"
       },
-      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-xlarge-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/hubert-xlarge-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
     },
     {
       "key": "HUBERT_XLARGE_LS960_FT",
@@ -4311,7 +4311,7 @@
         "IK_VAL_HUBERT_XLARGE_LS960_FT": "",
         "IK_PARITY_HUBERT_XLARGE_LS960_FT": "records/hubert-xlarge-ls960-ft.safetensors"
       },
-      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-xlarge-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 <validation root>/records/hubert-xlarge-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
     },
     {
       "key": "W2V_BERT_2",
@@ -4328,7 +4328,7 @@
         "IK_PARITY_W2V_BERT_2": "records/w2v-bert-2.0.safetensors",
         "IK_PARITY_W2V_BERT_LOSS": "records/w2v-bert-2.0-loss.safetensors"
       },
-      "note": "W2V-BERT 2.0 (Meta, MIT, 2.3 GB float32) for NFKMLXWav2Vec2Bert; `conformer_shaw.pt` is not fetched. Records (llm env): `run_reference.py w2v_bert ~/.inferkit-validation/records/w2v-bert-2.0.safetensors --checkpoint <dir>` and the recipe's `run_reference.py w2v_bert_loss ~/.inferkit-validation/records/w2v-bert-2.0-loss.safetensors --checkpoint <dir>` (about 12 GB: a float32 full fine-tune of three steps)."
+      "note": "W2V-BERT 2.0 (Meta, MIT, 2.3 GB float32) for NFKMLXWav2Vec2Bert; `conformer_shaw.pt` is not fetched. Records (llm env): `run_reference.py w2v_bert <validation root>/records/w2v-bert-2.0.safetensors --checkpoint <dir>` and the recipe's `run_reference.py w2v_bert_loss <validation root>/records/w2v-bert-2.0-loss.safetensors --checkpoint <dir>` (about 12 GB: a float32 full fine-tune of three steps)."
     },
     {
       "key": "TIMESFM25_PYTORCH",
@@ -4344,7 +4344,7 @@
         "IK_VAL_TIMESFM25_PYTORCH": "",
         "IK_PARITY_TIMESFM25": "records/timesfm-2.5.safetensors"
       },
-      "note": "TimesFM 2.5 (Google, Apache-2.0, 0.93 GB float32), the official checkpoint, for NFKMLXTimesFM. Record (qwenimage env, IK_TIMESFM_SRC set): `run_reference.py timesfm ~/.inferkit-validation/records/timesfm-2.5.safetensors --checkpoint <dir>`, the official package's forecasts under two flag settings and the prefill's seams."
+      "note": "TimesFM 2.5 (Google, Apache-2.0, 0.93 GB float32), the official checkpoint, for NFKMLXTimesFM. Record (qwenimage env, IK_TIMESFM_SRC set): `run_reference.py timesfm <validation root>/records/timesfm-2.5.safetensors --checkpoint <dir>`, the official package's forecasts under two flag settings and the prefill's seams."
     },
     {
       "key": "TIMESFM25",
@@ -4360,7 +4360,7 @@
         "IK_VAL_TIMESFM25": "",
         "IK_PARITY_TIMESFM25_LOSS": "records/timesfm-2.5-loss.safetensors"
       },
-      "note": "TimesFM 2.5 in transformers' names (the same weights, q/k/v unfused). The LoRA recipe's record (qwenimage env): `run_reference.py timesfm_loss ~/.inferkit-validation/records/timesfm-2.5-loss.safetensors --checkpoint <dir>`."
+      "note": "TimesFM 2.5 in transformers' names (the same weights, q/k/v unfused). The LoRA recipe's record (qwenimage env): `run_reference.py timesfm_loss <validation root>/records/timesfm-2.5-loss.safetensors --checkpoint <dir>`."
     }
   ],
   "oracle_environments": {
@@ -4492,7 +4492,7 @@
     },
     "phi4mm": {
       "interpreter": "/Volumes/InferKit Models/InferKit/phi4mmvenv/bin/python",
-      "why": "Phi-4-multimodal's reference is the release's own remote code (trust_remote_code), written for transformers 4.46.1; the llm environment's 4.57 breaks its imports. It also needs peft (the release builds its adapters with it), torchvision (the image processor), soundfile and scipy (the audio processor), and numpy < 2 for torch 2.6. The home volume could not hold it, so it lives on the overflow volume; set HF_HOME there too, since the remote code is copied into the Hugging Face modules cache.",
+      "why": "Phi-4-multimodal's reference is the release's own remote code (trust_remote_code), written for transformers 4.46.1; the llm environment's 4.57 breaks its imports. It also needs peft (the release builds its adapters with it), torchvision (the image processor), soundfile and scipy (the audio processor), and numpy < 2 for torch 2.6. It lives in the model store beside the release; set HF_HOME there too, since the remote code is copied into the Hugging Face modules cache.",
       "rebuild": "/opt/homebrew/bin/python3.12 -m venv \"/Volumes/InferKit Models/InferKit/phi4mmvenv\" && \"/Volumes/InferKit Models/InferKit/phi4mmvenv/bin/pip\" install 'torch==2.6.0' 'torchvision==0.21.0' 'transformers==4.46.1' 'peft==0.13.2' 'accelerate>=0.34' soundfile librosa pillow scipy einops safetensors sentencepiece backoff 'numpy<2' tiktoken blobfile",
       "modes": [
         "phi4mm",
@@ -4769,7 +4769,7 @@
       ]
     }
   },
-  "shapes_comment": "Releases held to the module STRUCTURALLY (every parameter's shape against the safetensors headers, no weights downloaded): `python3 shapes.py <repo> ~/.inferkit-validation/shapes/<directory>`; `IK_SHAPES_ROOT` names the parent, and NFKMLXReleasedSizesTests reads each entry by directory name.",
+  "shapes_comment": "Releases held to the module STRUCTURALLY (every parameter's shape against the safetensors headers, no weights downloaded): `python3 shapes.py <repo> <validation root>/shapes/<directory>`; `IK_SHAPES_ROOT` names the parent, and NFKMLXReleasedSizesTests reads each entry by directory name.",
   "shapes": [
     {
       "repo": "Wan-AI/Wan2.2-Animate-2-14B",
@@ -4978,7 +4978,7 @@
       "note": "FLUX.2's small decoder (62M, ungated): the full encoder at a narrower decoder, `decoder_block_out_channels` [96,192,384,384] against [128,256,512,512]. The first ASYMMETRIC autoencoder here, which is why `NFKMLXSDVAEConfiguration` gained `decoderBlockChannels`. The repository keeps `config.json` AND `diffusion_pytorch_model.safetensors` at its ROOT, which is why shapes.py no longer picks the weight name from whether a subfolder was given: it tries the likely name and falls back."
     }
   ],
-  "cuts_comment": "Releases too large for float32 here, cut to their first N decoder layers by `python3 truncate.py <repo> <out> N`, which fetches only the kept tensors by HTTP range request into compact shards and writes a reduced config.json and index. Each cut is a valid small release that transformers and the Swift loaders read unchanged. Its records come from `run_reference.py hf_layer_probe --checkpoint <cut>` at float32 (with `IK_PROBE_STREAM_F32=1` where the float32 model does not fit: a bf16 load whose modules widen to float32 one at a time) and at `IK_PROBE_DTYPE=bfloat16`, named `<record>_f32` / `<record>_bf16` (Gemma 3: `gemma3_<size>-cut4_f32eager` / `_bf16`) in ~/.inferkit-validation/records, where NFKMLXBFloat16ParityTests reads them.",
+  "cuts_comment": "Releases too large for float32 here, cut to their first N decoder layers by `python3 truncate.py <repo> <out> N`, which fetches only the kept tensors by HTTP range request into compact shards and writes a reduced config.json and index. Each cut is a valid small release that transformers and the Swift loaders read unchanged. Its records come from `run_reference.py hf_layer_probe --checkpoint <cut>` at float32 (with `IK_PROBE_STREAM_F32=1` where the float32 model does not fit: a bf16 load whose modules widen to float32 one at a time) and at `IK_PROBE_DTYPE=bfloat16`, named `<record>_f32` / `<record>_bf16` (Gemma 3: `gemma3_<size>-cut4_f32eager` / `_bf16`) in <validation root>/records, where NFKMLXBFloat16ParityTests reads them.",
   "cuts": [
     {
       "repo": "mistralai/Mamba-Codestral-7B-v0.1",
@@ -5084,7 +5084,7 @@
       "directory": "gemma-4-12b-cut6",
       "config": "IK_VAL_GEMMA4_12B_CUT6",
       "record": "gemma4_12b_cut6",
-      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under <validation root>/cuts/<directory>. Records: hf_layer_probe in the gemma oracle environment."
     },
     {
       "repo": "google/gemma-4-31B-it",
@@ -5092,7 +5092,7 @@
       "directory": "gemma-4-31b-cut6",
       "config": "IK_VAL_GEMMA4_31B_CUT6",
       "record": "gemma4_31b_cut6",
-      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under <validation root>/cuts/<directory>. Records: hf_layer_probe in the gemma oracle environment."
     },
     {
       "repo": "google/gemma-4-26B-A4B-it",
@@ -5100,7 +5100,7 @@
       "directory": "gemma-4-26b-a4b-cut6",
       "config": "IK_VAL_GEMMA4_26B_CUT6",
       "record": "gemma4_26b_cut6",
-      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under ~/.inferkit-validation/cuts/<directory> (backed up to /Volumes/Code/InferKit/validation/cuts). Records: hf_layer_probe in the gemma oracle environment."
+      "note": "Six layers reach the first full-attention layer (index 5), where the large Gemma 4 releases set attention_k_eq_v. Kept under <validation root>/cuts/<directory>. Records: hf_layer_probe in the gemma oracle environment."
     },
     {
       "repo": "unsloth/gemma-2-9b-it",
@@ -5117,7 +5117,7 @@
       "record": "mistral_small_cut4"
     }
   ],
-  "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from ~/.inferkit-validation/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",
+  "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from <validation root>/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",
   "bf16_records": [
     {
       "records": "granite_speech_bf16 / _bf16in / _bf16_folded",
@@ -5165,7 +5165,7 @@
       "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights gemma4_moe | gemma4_unified --checkpoint unused"
     }
   ],
-  "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under ~/.inferkit-validation or an absolute one for a record kept on another volume, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
+  "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
   "training_records": [
     {
       "key": "IK_PARITY_GTCRN_LOSS",

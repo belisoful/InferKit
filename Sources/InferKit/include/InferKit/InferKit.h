@@ -3,7 +3,8 @@
 //  InferKit
 //
 //  A cross-platform inference toolkit: a swappable backend protocol, request/result value
-//  types, the shipped passthrough / Core ML / remote backends, the texture-tensor conversion,
+//  types, the shipped passthrough, Core ML, Apple-framework, and remote backends, the server
+//  that hosts a backend for other machines, the texture-tensor conversion, the tokenizers,
 //  and the Hugging Face access layer. No host-framework dependency.
 //
 

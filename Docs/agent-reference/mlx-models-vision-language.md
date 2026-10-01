@@ -316,7 +316,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Greedy transcription, its decode, and the backend's text equal the reference's on all eleven.
   The small releases' oracle needs protobuf 3.20 or later, because transformers builds their fast
   tokenizer by converting the slow XLM-R one, and the `llm` environment pins 3.19.6 for
-  `descript-audiotools`: `PYTHONPATH=~/.inferkit-validation/protobuf-4` (protobuf 4.25.3, installed with
+  `descript-audiotools`: `PYTHONPATH=<validation root>/protobuf-4` (protobuf 4.25.3, installed with
   `pip install --target`).
 
 ## Sa2VA
@@ -490,7 +490,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `tokenizer.json`); with `.llamaFast` decoding the same class is LLaVA-1.5's Llama tokenizer, whose fast
   form encodes identically and decodes each token in place. Two slow-decode quirks reproduce: the prefix
   space it prepends cancels out, and `clean_up_tokenization` always runs. The oracle needs sentencepiece 0.2.0
-  (`PYTHONPATH=~/.inferkit-validation/sentencepiece-0.2.0`), because 0.2.2 rejects the model's
+  (`PYTHONPATH=<validation root>/sentencepiece-0.2.0`), because 0.2.2 rejects the model's
   null-character piece (id 354), and transformers 4.57's `AutoTokenizer` returns a bool for the
   release, so `run_reference.py` builds the tokenizer class from the remote code directly.
 - **Released sizes** (Hugging Face API, 2026-09-23), all fourteen measured at float32 on both sides:

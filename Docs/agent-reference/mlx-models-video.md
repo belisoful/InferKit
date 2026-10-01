@@ -36,7 +36,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   stubbing.
   Customization: trainable at `full`, with no recipe written yet. hzwer/Practical-RIFE links the v4
   training code from its README as Google Drive archives; v4.12 and v4.15 are kept under
-  `~/.inferkit-validation/reference-sources/practical-rife-train`. The loss is a VGG19 perceptual term
+  `<validation root>/reference-sources/practical-rife-train`. The loss is a VGG19 perceptual term
   (torchvision's ImageNet weights) minus 0.1 × SSIM, plus 0.1 × the L1 of every scale's merge (0.05 in
   v4.15), 0.1 × a teacher term, and a flow-magnitude term. The teacher is the confidence-weighted blend
   of the student's own per-scale flows, and the released blocks already emit the confidence channel.
@@ -202,7 +202,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXVJEPA2.save(_:toDirectoryURL:)` writes a directory (`model.safetensors`, `config.json` with
   `id2label`, `video_preprocessor_config.json`) that the `@objc` `backendWithDirectoryURL:` loads.
   Measured against the reference's own code (`run_reference.py vjepa2_probe`, `IK_PARITY_VJEPA2_PROBE`,
-  the reference files under `~/.inferkit-validation/vjepa2-ref`): the loss on identical logits
+  the reference files under `<validation root>/vjepa2-ref`): the loss on identical logits
   2.8547907 against 2.8547912; the schedule equal at every step, with and without a warm-up; and every
   fresh tensor's standard deviation within 2% of the reference's `AttentiveClassifier(depth=4)` at width
   512 (the query token within its 512-draw sampling error). `NFKMLXVJEPA2TrainingTests` holds the tiny

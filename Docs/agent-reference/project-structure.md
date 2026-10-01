@@ -22,6 +22,9 @@ The full repository tree with per-directory notes.
 │   │   ├── NFKCoreMLLanguageBackend.h  # On-device causal language model through Core ML (macOS 15 / iOS 18)
 │   │   ├── NFKRemoteBackend.h       # OpenAI-compatible chat client
 │   │   ├── NFKRemoteTranscriptionBackend.h  # OpenAI-compatible audio→text (Whisper) client
+│   │   ├── NFKRemoteProvider.h      # The named provider presets, discovery, and the backend factory
+│   │   ├── NFKInferenceServer.h     # Hosts backends for other machines: OpenAI-compatible routes plus the native route
+│   │   ├── NFKRemoteInferKitBackend.h  # Client of the server's native route
 │   │   ├── NFKAsyncGenerationBackend.h  # Submit-poll-fetch base for generation services
 │   │   ├── NFKComputePlan.h         # Where Core ML plans to run each operation (ANE / GPU / CPU)
 │   │   ├── NFKHardwareProfile.h     # What the machine is and how much of it is left
@@ -37,24 +40,27 @@ The full repository tree with per-directory notes.
 │   │   ├── NFKAudioSegment.h        # Time-span value type (start/end seconds + label + confidence)
 │   │   ├── NFKModality.h            # Text/Image/Video/Audio enum
 │   │   ├── NFKInferenceKeys.h       # Shared input/parameter/output key vocabulary
-│   │   └── NFKErrors.h              # NFKInferenceErrorDomain + codes
+│   │   ├── NFKErrors.h              # NFKInferenceErrorDomain + codes
+│   │   └── NFK*.h                   # The remaining public headers: the Apple-framework engines, the other remote
+│   │                                #   backends and stores, and the value types. The directory is the full set.
 │   ├── NFK*.m                       # Implementations
 │   └── NFK_ARC.h                    # Private ARC/MRC shim (NARC_ macros)
 ├── Tests/InferKitTests/             # XCTest (NFK*Tests.m)
 ├── Examples/                        # Compiled ObjC examples mirroring Docs/examples.md
 ├── SwiftExamples/                   # The same examples in Swift — pins the imported API shape
-├── Docs/                            # README links out to these: inference-guide, examples,
-│                                    #   installation, coreml-llm, companions
+├── Docs/                            # Consumer documents the README links to: inference-guide, examples,
+│                                    #   installation, coreml-llm, companions, model-index, model-parity,
+│                                    #   mlx-runtime-hazards, porting-candidates
 ├── Docs/agent-reference/            # Auxiliary maintainer notes behind AGENTS.md / CLAUDE.md, one file
 │                                    #   per subject; README.md there is the index
-├── InferKit.xcworkspace             # Opens the core + both companions in one Xcode window. Each
+├── InferKit.xcworkspace             # Opens the core + the three companions in one Xcode window. Each
 │                                    #   FileRef must name a package DIRECTORY (`group:.`), not its
 │                                    #   Package.swift, or Xcode treats that package as a dependency
 │                                    #   and gives it no schemes. Un-ignored in .gitignore. Xcode does
 │                                    #   not autocreate a scheme for `InferKitTests`, so that one is
 │                                    #   shared in xcshareddata/xcschemes — ONE testable per scheme,
 │                                    #   because several in one scheme silently collapse to the first.
-│                                    #   A hand-written scheme needs all FIVE actions (Build, Test,
+│                                    #   A hand-written scheme needs all SIX actions (Build, Test,
 │                                    #   Launch, Profile, Analyze, Archive); omitting LaunchAction
 │                                    #   makes Xcode refuse to build it — "not configured for running".
 │                                    #   The core is referenced as `self:` (what Xcode's own generated
@@ -69,6 +75,7 @@ The full repository tree with per-directory notes.
 │                                    #   the repository root to be consumable by URL at all.
 ├── InferKitMLX/                     # Optional MLX companion package (own Package.swift + tests)
 ├── InferKitFoundationModels/        # Optional Foundation Models companion (own Package.swift + tests)
+├── InferKitAppleSwift/              # Optional companion for Apple's Swift-only inference APIs (own Package.swift + tests)
 ├── Tools/inferkit-convert/          # Offline Python converter: HF causal-LM -> Core ML model dir
 ├── Tools/ane-placement/            # Paired Core ML models, to MEASURE what lands on the ANE
 ├── Tools/realesrgan-to-safetensors/ # Offline: Real-ESRGAN .pth -> safetensors for NFKMLXRealESRGAN
@@ -107,7 +114,23 @@ The full repository tree with per-directory notes.
 ├── Tools/gtcrn-to-safetensors/      # Offline: GTCRN .tar/.pth -> safetensors (names pass through; the GRU fold + conv transpose live in Swift)
 ├── Tools/sgmse-to-safetensors/      # Offline: SGMSE+ Lightning .ckpt -> EMA safetensors (torch_ema applies EMA via model.eval(), then dumps dnn.state_dict())
 ├── Tools/storm-to-safetensors/      # Offline: StoRM Lightning .ckpt -> EMA safetensors (both nets under denoiser_net./score_net.)
-├── Tools/build-all.sh               # Builds (and optionally tests) all three packages in one command
+├── Tools/allin1-to-safetensors/     # Offline: All-In-One music structure checkpoint -> safetensors
+├── Tools/basic-pitch-to-safetensors/ # Offline: Basic Pitch's released ONNX graph -> safetensors
+├── Tools/dac-to-safetensors/        # Offline: Descript Audio Codec .pth -> safetensors (optional; the native reader loads the .pth)
+├── Tools/hft-transformer-to-safetensors/ # Offline: hFT-Transformer model_016_003.pkl -> safetensors
+├── Tools/kokoro-voice-to-safetensors/ # Offline: Kokoro voicepack .pt -> safetensors with one `voice` tensor
+├── Tools/ltx-vae-to-safetensors/    # Offline: normalizes the LTX-Video VAE checkpoint to safetensors
+├── Tools/retinaface-to-safetensors/ # Offline: RetinaFace .pth -> safetensors (optional; the native reader loads the .pth)
+├── Tools/siglip2-to-safetensors/    # Offline: normalizes a SigLIP 2 checkpoint to safetensors
+├── Tools/silero-vad-to-safetensors/ # Offline: Silero VAD v6 TorchScript model -> safetensors (optional; the native reader loads it)
+├── Tools/snac-to-safetensors/       # Offline: SNAC codec checkpoint -> safetensors (optional; the native reader loads it)
+├── Tools/taesd-to-safetensors/      # Offline: TAESD encoder + decoder checkpoints -> one safetensors
+├── Tools/lmc/                       # lmc.py: the Large Model Coordination lock, and its test suite
+├── Tools/docc/build.sh              # Builds the core's DocC archive from a clang symbol graph, and a companion's
+├── Tools/doc-snippets/              # check-objc.py type-checks every Objective-C block in the consumer documents
+├── Tools/mlx-metallib.sh            # Compiles mlx-swift's Metal kernels and places mlx.metallib beside the SwiftPM test binary
+├── Tools/build-all.sh               # Builds (and optionally tests) the core, InferKitMLX, and InferKitFoundationModels;
+│                                    #   InferKitAppleSwift is not in its loop
 ├── Tools/xcframework/build.sh       # Core -> a 3-slice universal static XCFramework. `swift build`
 │                                    #   emits objects + a module, never a binary; `xcodebuild archive`
 │                                    #   on a package scheme emits ONE merged .o, which `xcrun libtool
@@ -118,11 +141,13 @@ The full repository tree with per-directory notes.
 │                                    #   See "Packaging InferKitMLX as an XCFramework" in `distribution-and-packaging.md`.
 ├── Tools/xcframework/verify-mlx.sh  # Links a consumer against each artifact and RUNS a model, because
 │                                    #   a binary that links can still fail to find its metallib.
-├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into a durable ~/.inferkit-validation
+├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into the validation root (/Volumes/InferKit Models/inferkit-validation)
 │                                    #   shapes.py: a release's config + every tensor's shape by HTTP range request (no weights), for the structural checks
 ├── Tools/reference-parity/          # Offline: runs a model's (or a training objective's) reference implementation, records input + result for numeric comparison
 ├── Package.swift                    # SwiftPM manifest
 ├── InferKit.podspec                 # CocoaPods source spec
+├── CHANGELOG.md                     # What each release contains
+├── .github/workflows/ci.yml         # The hosted-runner subset of the Full Check
 ├── AGENTS.md / CLAUDE.md            # One document, two names: edit CLAUDE.md and copy it to AGENTS.md.
 │                                    #   They drifted apart between v0.2.0 and 0.3.0 (AGENTS.md took
 │                                    #   abbreviated edits) and were reconciled on 2026-09-01.

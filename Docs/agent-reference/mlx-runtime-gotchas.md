@@ -46,7 +46,7 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
 - A size too large to run here is held to the module by shape, and the convention is fixed.
   `Tools/validation-assets/shapes.py <repo> <dir>` fetches a release's `config.json` and every
   tensor's shape from its safetensors headers by HTTP range request (no weights; about a megabyte for
-  a 54 GB release) into `~/.inferkit-validation/shapes/<name>/{shapes.json,config.json}`, and
+  a 54 GB release) into `<validation root>/shapes/<name>/{shapes.json,config.json}`, and
   `IK_SHAPES_ROOT` in `~/.inferkit-validation.json` names that directory. `NFKMLXReleasedSizesTests`
   reads a release through `shapes(name)`, builds the module from the release's own config, and
   `assertStructure` compares `net.parameters().flattened()` — converted to the release's names and

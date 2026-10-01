@@ -409,11 +409,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   The bfloat16 run builds only the text model (12.89 GiB of layers and 1.89 GiB of embeddings; the tied
   output projection and the vision tower are never built). Its xctest process peaked at about 16 GB
   (`footprint`, whole-GB resolution, 2026-09-24) with swap flat; schedule it as needing 18 GB free. It
-  takes about 61 s with the weights in the page cache and about 32 min when they page in from
-  WindowsBoot.
+  takes about 61 s with the weights in the page cache. A cold read from the retired WindowsBoot volume
+  took about 32 min (2026-09-24), and the cold read from `/Volumes/InferKit Models` is not measured.
   **The 27B release** (`-27B-v1.1`) is the same recipe over `Qwen/Qwen3.8-27B` at `1d4bf0f2`, a
-  `qwen3_5` model (64 layers, 48 recurrent and 16 attention, hidden 5120). Its base is about 54 GB and
-  is not downloaded here: the structure test reads the 62 MB adapter package (`OPEN_JEV_27B`) and the
+  `qwen3_5` model (64 layers, 48 recurrent and 16 attention, hidden 5120). Its base is about 54 GB. The
+  model store holds it at `InferKit/Qwen3.8-27B`, and no test loads it: the structure test reads the 62 MB adapter package (`OPEN_JEV_27B`) and the
   base's `config.json` and shard-header shapes (`IK_CONFIG_QWEN3_8`, `IK_SHAPES_QWEN3_8`, both
   byte-identical to that revision): 320 adapter tensors and 850 base parameters, 0 mismatched.
   Qwen3.8's tokenizer adds seven audio and TTS tokens (ids 248070–248076) to Qwen3.5's; the vocabulary,

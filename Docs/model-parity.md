@@ -17,14 +17,16 @@ depend on each.
   prints one `VALIDATION PARITY` line per measurement; the numbers below are copied from those lines.
   A cosine is over the flattened tensor. "Exact" means an integer result (tokens, labels, codes,
   argmax) matched element for element.
-- **Assets.** `Tools/validation-assets/fetch.py` downloads every checkpoint and record into
-  `~/.inferkit-validation` and writes their paths to `~/.inferkit-validation.json`. A test whose asset is
+- **Assets.** `Tools/validation-assets/fetch.py` downloads every checkpoint and record into the
+  validation root and writes their paths to `~/.inferkit-validation.json`. The validation root is
+  `IK_VALIDATION_ROOT` when set, else `/Volumes/InferKit Models/inferkit-validation` while that volume
+  is mounted, else `~/.inferkit-validation`. A test whose asset is
   absent skips rather than fails, so a green run on a machine without the assets proves nothing; the run
   below had every asset present except the one listed under "Skipped".
 - **Structure.** A size too large to run here is held to the module by shape.
   `Tools/validation-assets/shapes.py` reads a release's `config.json` and every tensor's shape from its
   safetensors headers by HTTP range request (no weights, about a megabyte for a 54 GB release) into
-  `~/.inferkit-validation/shapes/<name>/` (`IK_SHAPES_ROOT`), and `NFKMLXReleasedSizesTests` builds the
+  `<validation root>/shapes/<name>/` (`IK_SHAPES_ROOT`), and `NFKMLXReleasedSizesTests` builds the
   module from that config and compares every parameter's name and shape against the inventory, both
   directions. A row below that says "structural" reports the released tensors consumed, missing,
   mismatched, named as deliberately dropped, and unaccounted; every one of them reads 0 missing,
@@ -683,7 +685,7 @@ model's parity number, which is what makes the per-model measurements above a ch
 ## Reproducing a number
 
 ```bash
-python3 Tools/validation-assets/fetch.py            # every checkpoint and record → ~/.inferkit-validation
+python3 Tools/validation-assets/fetch.py            # every checkpoint and record → the validation root
 cd InferKitMLX && xcodebuild test -scheme InferKitMLXTests -destination 'platform=macOS' \
     -skipPackagePluginValidation -only-testing:InferKitMLXTests/NFKMLXReferenceParityTests 2>&1 \
     | grep 'VALIDATION PARITY'

@@ -8,7 +8,7 @@ tensor inventory of a release at a few hundred kilobytes against hundreds of gig
 cannot run on the machine (`NFKMLXHybridLanguageTests`, `NFKMLXDeepSeekTests`, the Qwen3-MoE check
 in `NFKMLXLanguageModelTests`).
 
-    python3 shapes.py Qwen/Qwen3-30B-A3B ~/.inferkit-validation/qwen3-30b-a3b
+    python3 shapes.py Qwen/Qwen3-30B-A3B "/Volumes/InferKit Models/inferkit-validation/qwen3-30b-a3b"
 
 writes `config.json`, `model.safetensors.index.json` (when the release is sharded), `shapes.json`,
 and `dtypes.json` into the directory. `HF_TOKEN` is sent when set, for a gated repository.

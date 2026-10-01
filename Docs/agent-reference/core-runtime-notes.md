@@ -15,7 +15,8 @@ dictionaries for the keys with a single natural type: `result.text` / `result.st
 (NSArray<NFKDetection *> for `NFKOutputDetections`) / `result.pose`
 (NSArray<NFKKeypoint *> for `NFKOutputPose`) / `result.classifications`
 (NSArray<NFKClassification *> for `NFKOutputClassifications`) / `result.segments`
-(NSArray<NFKAudioSegment *> for `NFKOutputSegments`) and
+(NSArray<NFKAudioSegment *> for `NFKOutputSegments`) / `result.toolCalls` / `result.midi` /
+`result.beats` / `result.answers`, and
 `request.prompt` / `request.negativePrompt` / `request.messages`. Each is a read-only computed getter
 that type-checks and returns nil on a mismatch (no crashing cast). Image / mask / video keys stay on
 `outputForKey:` / `inputForKey:` because their representation is chosen by the backend or caller
@@ -112,7 +113,7 @@ honors the key a request needs. A backend that declares nothing is used the way 
   other string through, so a caller reaches a level only one provider names. `NFKRemoteBackend` has
   `NFKRemoteReasoningEfforts()` beside `NFKRemoteWireNames()` because this key renames its **value**
   as well as its name. `NFKAnthropicBackend` has a budget table plus a numeric-string escape, and
-  refuses anything else in `urlRequestForRequest:`, where there is an error out-parameter to report
+  refuses anything else in `urlRequestForRequest:streaming:error:`, where there is an error out-parameter to report
   through (`bodyForRequest:attachments:` has only one nil meaning). Extended thinking there forbids
   temperature / `top_p` / `top_k` and needs `max_tokens` above the budget, so the backend drops the
   three and raises the limit.
@@ -155,7 +156,10 @@ brought by the consumer and discovered at runtime.
   - `NFKCapabilityStableDiffusion` (`"stable-diffusion"`) → `NFKStableDiffusionProvider` — **InferKitMLX
     ships it** (wraps `NFKMLXBackend`), so linking InferKitMLX makes `stableDiffusionBackend()` work.
   - `NFKCapabilityTranscription` (`"transcription"`) → `NFKMLXWhisperProvider` — **InferKitMLX ships it**
-    (wraps `NFKMLXWhisper`); a consumer's native engine (whisper.cpp) registers to override.
+    (wraps `NFKMLXWhisper`); a consumer's native engine (whisper.cpp) registers to override. Then
+    `NFKSpeechAnalyzerProvider` (InferKitAppleSwift), then the core's `NFKSpeechRecognitionProvider`.
+  - `NFKCapabilityTranslation` (`"translation"`) → `NFKMLXTranslationProvider` (InferKitMLX), then
+    `NFKTranslationProvider` (InferKitAppleSwift). The core ships no translator.
   - `NFKCapabilityTextGeneration` (`"text-generation"`) → `NFKFoundationModelsProvider` —
     **InferKitFoundationModels ships it** (wraps `NFKFoundationModelsBackend`), so linking that package
     activates on-device LLM.
@@ -174,7 +178,7 @@ brought by the consumer and discovered at runtime.
   - `.inferkit-owned` → the hub owns the snapshot and may evict it. Its modification date is the
     snapshot's last use; a download and a cache hit both write it. The hub writes it into every
     snapshot it downloads into, so a new snapshot is owned from the start.
-  - `.inferkit-keep` → pinned. Eviction skips it; `removeCachedRepo:` still removes it. Pinning
+  - `.inferkit-keep` → pinned. Eviction skips it; `removeCachedRepo:revision:error:` still removes it. Pinning
     creates the folder, so a model can be pinned before its first download.
 - Ownership is positive on purpose. A missing marker means "not the hub's", so a user-chosen folder
   never loses converted packages, fine-tuned weights, or other files the hub cannot re-download. The

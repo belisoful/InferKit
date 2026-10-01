@@ -14,7 +14,7 @@ live-module-tree forms) natively, so every model loads a raw checkpoint directly
 
 ### Checkpoint converters — `*-to-safetensors/`
 
-~30 offline scripts that turn a released PyTorch checkpoint into a safetensors file. Since the native
+46 offline scripts that turn a released checkpoint into a safetensors file. Since the native
 reader loads raw checkpoints, these are **optional**. They stay for two non-consumer reasons:
 
 - **The byte oracle.** `NFKMLXTorchParityTests` proves the native reader correct by comparing a raw
@@ -31,7 +31,8 @@ The measurement discipline the whole package rests on. `reference-parity/run_ref
 model's (or a training objective's) real reference implementation — torch, `transformers`, `diffusers`
 — and records input + output for numeric comparison; `validation-assets/{manifest.json,fetch.py}`
 fetches every real checkpoint the parity suites load into the validation root (`IK_VALIDATION_ROOT`, else
-`/Volumes/InferKit Models/inferkit-validation`), and
+`/Volumes/InferKit Models/inferkit-validation` while that volume is mounted, else
+`~/.inferkit-validation`), and
 `validation-assets/shapes.py` fetches a release's config and every tensor's shape by HTTP range request
 over its safetensors headers, for the structural checks against releases too large to run. This ground truth
 is **irreducibly Python**: a Swift port cannot be validated against another Swift port.
@@ -40,8 +41,8 @@ is **irreducibly Python**: a Swift port cannot be validated against another Swif
 
 XCFramework packaging (`xcframework/build*.sh`, `verify-mlx.sh`), the DocC catalog builder
 (`docc/build.sh`), the Core ML ANE-placement measurement (`ane-placement/`), the optional system
-espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), the all-packages build/test driver
-(`build-all.sh`), and `mlx-metallib.sh`, which compiles mlx-swift's Metal kernels with `xcrun metal`
+espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), the build/test driver for the core, InferKitMLX, and
+InferKitFoundationModels (`build-all.sh`), and `mlx-metallib.sh`, which compiles mlx-swift's Metal kernels with `xcrun metal`
 and places the library beside the InferKitMLX SwiftPM test binary, so `swift test` runs the
 MLX-dependent tests SwiftPM's own build cannot (it compiles no shaders). Also `inferkit-convert/`,
 the offline HF-causal-LM → Core ML model-directory exporter.
@@ -65,7 +66,7 @@ the tool's own tests. The rule that binds sessions to it is in
 `Docs/inference-guide.md` with `clang -fsyntax-only` against the core's public headers and the
 Objective-C headers the three companions generate. `snippet-context.h` declares the variables the
 blocks take from their prose. A block that differs uses an `<!-- objc-check: … -->` directive above
-its fence (`given`, `continues`, or `skip`); the script's own help lists them. The check is step 5 of
+its fence (`given`, `continues`, or `skip`); the script's own help lists them. The check is step 7 of
 the Full Check in `Docs/agent-reference/build-and-verification.md`.
 
 ## Requirements

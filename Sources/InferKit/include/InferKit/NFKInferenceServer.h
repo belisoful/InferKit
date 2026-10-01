@@ -31,8 +31,8 @@ extern NSString * const NFKInferenceServerErrorDomain;
 				error, when there is one, is under NSUnderlyingErrorKey.
 	@constant   NFKInferenceServerErrorAPIKeyRequired The configuration requires a key from some
 				client and no key is set.
-	@constant   NFKInferenceServerErrorInvalidConfiguration The configuration contradicts itself, for
-				example a loopback-only server that advertises itself on the network.
+	@constant   NFKInferenceServerErrorInvalidConfiguration The configuration cannot be served:
+				maximumConcurrentRunsPerModel or maximumRequestBodyBytes is zero.
 	@constant   NFKInferenceServerErrorModelNotFound A request named a model the server does not host.
 	@constant   NFKInferenceServerErrorUnauthorized A request carried no key, or the wrong one.
 	Introduced in InferKit 0.4.0.

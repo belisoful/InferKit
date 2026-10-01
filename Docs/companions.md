@@ -1,9 +1,9 @@
 # Optional companion packages
 
-InferKit's core ships only backends built on Apple frameworks. Two companion packages add heavier
-engines without raising the core's platform floor or adding dependencies to it. Each is a separate
-SwiftPM package in a subdirectory of this repository; see the README's "Adding a companion" for how
-to consume one.
+InferKit's core ships only backends built on Apple frameworks. Three companion packages add engines
+the core cannot host, without raising the core's platform floor or adding dependencies to it. Each is
+a separate SwiftPM package in a subdirectory of this repository; see "Adding a companion" in
+[Installation](installation.md) for how to consume one.
 
 ## InferKitFoundationModels (optional companion)
 
@@ -937,12 +937,17 @@ error. Built-in capabilities light up when you link a companion:
 
 - **`stable-diffusion`** — linking **InferKitMLX** ships `NFKStableDiffusionProvider`, so
   `NFKDynamicBackend.stableDiffusionBackend()` returns the bundled SD backend.
-- **`transcription`** — InferKitMLX also ships `NFKMLXWhisperProvider` (a native whisper.cpp can override).
+- **`transcription`** — InferKitMLX ships `NFKMLXWhisperProvider` (a native whisper.cpp can override),
+  InferKitAppleSwift ships `NFKSpeechAnalyzerProvider`, and the core's own recognizer answers when
+  neither is linked.
+- **`translation`** — InferKitMLX ships `NFKMLXTranslationProvider`, and InferKitAppleSwift ships
+  `NFKTranslationProvider`.
 - **`text-generation`** — linking **InferKitFoundationModels** ships `NFKFoundationModelsProvider` for
   on-device LLM.
 - **`controlnet`** — no shipped default; bring a ControlNet engine and register its provider.
 
-Without the companion, the capability is simply unavailable. Model weights are downloaded at runtime
+A capability with no linked provider is unavailable. Eight capabilities resolve with nothing linked,
+because the core's Apple-framework engines answer them. Model weights are downloaded at runtime
 (not bundled at build time) and cached under Application Support (`NFKHFHub.defaultCacheDirectoryURL`, or
 a host-supplied security-scoped folder); the download blocks, so run it off the main thread or use the
 async `downloadRepo:…completionHandler:` (`try await`).

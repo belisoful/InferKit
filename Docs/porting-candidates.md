@@ -212,7 +212,7 @@ Notes:
 
 | Model | Vendor | License | Status |
 |-------|--------|---------|--------|
-| **DeepSeek V4.1 Flash** — SHIPPED (`NFKMLXDeepSeek`) | DeepSeek | MIT | The decoder, image tower, aligner, and DSpark draft stack match the release's own `inference/model.py`, bit-exact in bf16. Experts and n-gram tables page. The released weights (510.3 GB) are parked on the Meta share and are held structurally, not run |
+| **DeepSeek V4.1 Flash** — SHIPPED (`NFKMLXDeepSeek`) | DeepSeek | MIT | The decoder, image tower, aligner, and DSpark draft stack match the release's own `inference/model.py`, bit-exact in bf16. Experts and n-gram tables page. The full released weights (510.3 GB) are not in the model store, and the release is held structurally, not run |
 | **Qwen3.8-Flash-Next** — SHIPPED (`NFKMLXQwen4Exp`) | Alibaba Qwen | other | The `qwen4_exp` architecture at reference parity on a tiny oracle; the 180B release is held structurally |
 | **FLUX.2 [dev]** — PARTIAL (`NFKMLXFlux2`) | Black Forest Labs | FLUX Non-Commercial, gated | [klein] 4B runs end to end at released-weight parity. [dev] needs Mistral-Small 3 as its text encoder and a 60 GB bf16 transformer, which exceeds a 32 GB machine |
 | **LTX-2.5** — PARTIAL (`NFKMLXLTX2TransformerNet`) | Lightricks | other, gated | The audio-video transformer is at reference parity, with a structural check on the ungated LTX-2.3. The video and audio autoencoders, the Gemma 4 text front end, the vocoder, and the pipeline are not built |

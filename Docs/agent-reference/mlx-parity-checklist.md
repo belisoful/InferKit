@@ -29,7 +29,8 @@ to prevent. Update all of these, in the modality's existing section, mirroring t
 - `Tools/validation-assets/manifest.json` — the checkpoint/record/config entry (and an
   `oracle_environments` note if the model needs a new interpreter or extra packages).
 - `~/.inferkit-validation.json` — the model's `IK_VAL_*` / `IK_PARITY_*` keys, as absolute paths into
-  the local validation store, so the full check exercises the model by default rather than only when
+  the validation store (`/Volumes/InferKit Models`), or into a resident copy on the home volume while
+  the model is under development, so the full check exercises the model by default rather than only when
   those keys are set in the environment. The test class must read them through
   `NFKMLXValidationConfig.environment` (the process environment merged with that JSON), not
   `ProcessInfo.processInfo.environment` directly, or the JSON keys never reach it. This file is a
@@ -72,7 +73,7 @@ parity"). This checklist adds the listings that half touches:
 - `Docs/model-index.md` and the DocC `ModelIndex.md` — the construction cell gains the
   `network(weightsURL:)` line, the way the HT Demucs row carries its fine-tuned form.
 - `Tools/validation-assets/manifest.json` — the objective's record in `training_records` (its
-  `IK_PARITY_*` key, the file under `~/.inferkit-validation` or its absolute path on another volume,
+  `IK_PARITY_*` key, the file under the validation root or its absolute path outside it,
   the oracle environment, and the `run_reference.py` command that regenerates it), and its mode in
   that environment's `modes`. A record is an oracle output, so `fetch.py` does not provision it; the
   key reaches `~/.inferkit-validation.json` through the IO Coordinator.

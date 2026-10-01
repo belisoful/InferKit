@@ -28,8 +28,8 @@ job.completionHandler = ^(NFKInferenceJob *done) { NSLog(@"%@", done.result.text
 .package(url: "https://github.com/belisoful/InferKit.git", from: "0.3.1")
 ```
 
-or `pod 'InferKit'`. The optional MLX and Foundation Models companions are separate packages in this
-repository — see **[Installation](Docs/installation.md)** for those and for the CocoaPods details.
+or `pod 'InferKit'`. The optional MLX, Foundation Models, and Apple Swift-only companions are separate
+packages in this repository — see **[Installation](Docs/installation.md)** for those and for the CocoaPods details.
 
 ## What's in it
 
@@ -42,6 +42,8 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
   video beside the prompt, remote embeddings / speech / image generation / transcription / video
   generation / reranking / moderation clients, a typed-decision client for TypeSafe's Jev, and a
   submit-poll-fetch base for job-style services.
+- **Apple-framework engines** — Vision, VideoToolbox, Speech, SoundAnalysis, AVFoundation's voices, and
+  NaturalLanguage, each behind the same protocol with no weights to ship.
 - **Remote providers** — `NFKRemoteProvider` names fifteen services (OpenAI, Anthropic, xAI, Gemini,
   Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, the local runners Ollama, LM Studio,
   llama.cpp, and vLLM, and an InferKit server), lists each one's models from the server rather than a constant, probes the local ports to
@@ -58,13 +60,15 @@ repository — see **[Installation](Docs/installation.md)** for those and for th
 - **Runtime discovery** — `NFKDynamicBackend` activates an optional engine only when it is linked,
   resolving it by name, so the core never references it.
 
-A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Two
-companion packages already do: **InferKitMLX** (60-plus models across image, video, audio, and
+A consumer brings a heavier runtime (MLX, a C or Rust engine) by adopting `NFKInferenceBackend`. Three
+companion packages build on the core: **InferKitMLX** (60-plus models across image, video, audio, and
 language — text-to-image with Stable Diffusion (1.x–3.5), FLUX.1, FLUX.2, Z-Image, SANA, and Qwen-Image 2.1, text-to-video with LTX-Video, LTX-2, and Wan,
 on-device language models (Qwen3, Qwen3.5, Qwen3.8-Flash-Next, Gemma 3, Gemma 3n, Gemma 4, DeepSeek V4 and V4.1, Codestral-Mamba, Granite 4.0-H, Nemotron Nano 2, and any dense GGUF), text embeddings
 and reranking, vision-language, speech recognition and synthesis, neural audio codecs, and MiniMax
-Music 3 text-to-music — each validated numerically against its reference implementation) and
-**InferKitFoundationModels** (Apple's on-device model, with tool calling and structured output).
+Music 3 text-to-music — each validated numerically against its reference implementation),
+**InferKitFoundationModels** (Apple's on-device model, with tool calling and structured output), and
+**InferKitAppleSwift** (Apple's Swift-only speech, document, lens-smudge, and translation APIs, wrapped
+so Objective-C reaches them).
 
 ## Models (InferKitMLX)
 
@@ -92,7 +96,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 | **[Examples](Docs/examples.md)** | Complete examples across every modality, backend, and subsystem — compiled by CI in both Swift and Objective-C. |
 | **[Installation](Docs/installation.md)** | Swift Package Manager, CocoaPods, and adding a companion package. |
 | [Core ML language models](Docs/coreml-llm.md) | Converting a Hugging Face checkpoint and running it on device. |
-| **[Companion packages](Docs/companions.md)** | InferKitMLX and InferKitFoundationModels: what each ships, and the full model gallery. |
+| **[Companion packages](Docs/companions.md)** | InferKitMLX, InferKitFoundationModels, and InferKitAppleSwift: what each ships, and the full model gallery. |
 | **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
 | **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
 | **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
@@ -109,14 +113,14 @@ Tools/docc/build.sh          # the core        (--preview to serve it, --all for
 Do not use Xcode's Product ▸ Build Documentation for the core. Neither `xcodebuild docbuild` nor
 the swift-docc-plugin extracts a symbol graph from a pure Objective-C SwiftPM target, so that path
 produces an archive with no symbols in it and reports every ``NFKFoo`` link as
-`'NFKFoo' doesn't exist` — 94 symbol pages become 0. `Tools/docc/build.sh` exists for exactly this
-reason: it runs `clang -extract-api` over the public headers and hands the result to `docc`. The two
+`'NFKFoo' doesn't exist`, with no symbol pages. `Tools/docc/build.sh` exists for exactly this
+reason: it runs `clang -extract-api` over the public headers and hands the result to `docc`. The
 Swift companions have no such problem and build either way.
 
 ## Build & test
 
 ```bash
-Tools/build-all.sh --test                       # all three packages
+Tools/build-all.sh --test                       # the core, InferKitMLX, InferKitFoundationModels
 swift build && swift test                       # just the core
 pod lib lint InferKit.podspec --quick           # the CocoaPods spec
 ```
@@ -129,7 +133,7 @@ Tools/xcframework/build.sh                      # -> xcframework-build/InferKit.
 ```
 
 That yields a universal static XCFramework with three slices — macOS (arm64 + x86_64), iOS device,
-and iOS simulator — carrying the 44 public headers.
+and iOS simulator — carrying the public headers.
 
 The MLX companion packages too, through its own script:
 
@@ -161,9 +165,9 @@ three shared schemes in turn — `InferKitMLXTests`, `InferKitMLXExamples`, and 
 (the library scheme `InferKitMLX` runs only the first of them). The parity suites read real checkpoints
 from the validation store (`/Volumes/InferKit Models`), fetched by `Tools/validation-assets/fetch.py`, and skip where a
 checkpoint is absent.
-`InferKit.xcworkspace` opens all three packages in one window, each still built as its own package.
-Its schemes cover every target; the core's suite splits across `InferKitTests` (297),
-`InferKitExamples` (20), and `InferKitSwiftExamples` (20) — the same 337 `swift test` runs.
+`InferKit.xcworkspace` opens all four packages in one window, each still built as its own package.
+Its schemes cover every target; the core's suite splits across `InferKitTests` (620),
+`InferKitExamples` (40), and `InferKitSwiftExamples` (34) — the same 694 `swift test` runs.
 
 ## Consumers
 
