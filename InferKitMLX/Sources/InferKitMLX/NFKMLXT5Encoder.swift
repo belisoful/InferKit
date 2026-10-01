@@ -242,22 +242,32 @@ final class NFKMLXT5EncoderNet: Module {
     /// Token ids `[B, S]` → the text embedding `[B, S, dModel]`.
     ///
     /// `mask` `[B, S]` is 1 for a token the attention reads and 0 for padding, which transformers adds
-    /// to the position bias as `(1 − mask) · float32.min`; nil reads every position, as a caller that
-    /// passes no attention mask to `T5EncoderModel` does.
+    /// to the position bias as `(1 − mask) · finfo(dtype).min` in the model's own type; nil reads every
+    /// position, as a caller that passes no attention mask to `T5EncoderModel` does.
     func callAsFunction(_ tokens: MLXArray, mask: MLXArray? = nil) -> MLXArray {
         var hidden = shared(tokens)
         let length = tokens.shape[1]
-        let padding = mask.map {
-            ((1 - $0.asType(.float32)) * -Float.greatestFiniteMagnitude).reshaped([$0.dim(0), 1, 1, length])
-        }
         // umT5 gives every layer its own bias; plain T5 shares block 0's across the stack.
         let sharedBias = configuration.perLayerBias ? nil
             : encoder.block[0].selfAttention.attention.computeBias(length)
         for block in encoder.block {
             let bias = sharedBias ?? block.selfAttention.attention.computeBias(length)
-            hidden = block(hidden, bias: padding.map { bias + $0 } ?? bias)
+            hidden = block(hidden, bias: mask.map { bias + Self.padding($0, dtype: bias.dtype) } ?? bias)
         }
         return encoder.finalLayerNorm(hidden)
+    }
+
+    /// The additive padding mask `[B, 1, 1, S]` in `dtype`. The fused attention takes a mask only in the
+    /// queries' type, and float32's most negative value rounds past bfloat16's range to −inf, so each
+    /// type takes its own most negative finite value.
+    static func padding(_ mask: MLXArray, dtype: DType) -> MLXArray {
+        let minimum: Float
+        switch dtype {
+        case .bfloat16: minimum = -Float(bitPattern: 0x7F7F_0000)
+        case .float16: minimum = -65504
+        default: minimum = -Float.greatestFiniteMagnitude
+        }
+        return ((1 - mask.asType(.float32)) * minimum).asType(dtype).reshaped([mask.dim(0), 1, 1, mask.dim(1)])
     }
 }
 

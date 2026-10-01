@@ -22,6 +22,19 @@ final class NFKMLXWanPipelineTests: XCTestCase {
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
+    func testAMaskedEncodeRunsInBFloat16AndIgnoresThePadding() throws {
+        try requireMLXRuntime()
+        // The released umT5 loads in bfloat16, and the fused attention refuses a mask of another type.
+        let encoder = NFKMLXT5EncoderNet(.tinyUMT5)
+        encoder.update(parameters: encoder.parameters().mapValues { $0.asType(.bfloat16) })
+        let tokens = MLXArray([Int32(5), 9, 13, 0, 0], [1, 5])
+        let padded = encoder(tokens, mask: MLXArray([Int32(1), 1, 1, 0, 0], [1, 5]))
+        let unpadded = encoder(tokens[0..., 0 ..< 3])
+        XCTAssertEqual(padded.dtype, .bfloat16)
+        let gap = abs(padded[0..., 0 ..< 3].asType(.float32) - unpadded.asType(.float32)).max().item(Float.self)
+        XCTAssertLessThan(gap, 2e-2, "the padding reaches no real token")
+    }
+
     private func pipeline() -> NFKMLXWanPipeline {
         let transformer = NFKMLXWanTransformerNet(.tiny)                 // inChannels 4, textDim 10
         let vae = NFKMLXWanVideoVAENet(.tiny)                          // zDim 4

@@ -893,6 +893,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXLoRA.apply` and `merge` now put each layer in place through the module that owns it, passing
   a held container whole. The gradient-safe convolution swap uses the same placement.
 
+#### A masked umT5 encode runs in bfloat16
+
+- A umT5 or T5 encode with a padding mask built the mask in float32. The fused attention takes a mask
+  only in the queries' type, so a bfloat16 release such as Wan's text encoder aborted the process.
+- The mask is now built in the encoder's own type, at that type's most negative finite value, as
+  transformers builds it. Float32 encodes are unchanged.
+
 #### An unreadable checkpoint says it cannot be read
 
 - `NFKMLXWeights.loadCheckpoint(url:)` read a file's first bytes to recognize a PyTorch checkpoint and
