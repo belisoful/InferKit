@@ -1694,7 +1694,7 @@
       "config": {
         "IK_VAL_NEMOTRON_H": ""
       },
-      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory -> IK_PARITY_NEMOTRON_H_REAL, then IK_VAL_NEMOTRON_H = the directory) needs the ~17.8 GB download and is run when disk permits; the tiny numeric + structural records carry the shipped parity claim otherwise. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
+      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory) -> IK_PARITY_NEMOTRON_H_REAL, recorded 2026-10-01 (run nemotron-h-real-1); the oracle loads transformers' native class, as the directory carries no remote modeling file. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
     },
     {
       "key": "GRANITE_SPEECH",
@@ -4518,7 +4518,9 @@
         "music_dit",
         "music_ar",
         "music_tokenizer",
-        "nemotron_h_loss"
+        "nemotron_h_loss",
+        "nemotron_h",
+        "nemotron_h_real"
       ]
     },
     "gemma": {

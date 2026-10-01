@@ -3536,12 +3536,19 @@ def run_nemotron_h_real(image, checkpoint):
     do). A fixed id prompt is fed directly (the tokenizer is sidestepped; parity is a function of the
     ids). The record carries the tokens, the per-layer hidden states for seam isolation, the prefill
     logits, and the greedy continuation. Requires the music oracle (transformers >= 5).
+
+    The release's `config.json` maps to remote `modeling_nemotron_h.py`, which the downloaded directory
+    does not carry, so this loads transformers' own `NemotronHForCausalLM`, whose conversion mapping
+    renames the checkpoint's `backbone.*` to `model.*`. Every model weight must load: a renaming gap
+    would otherwise leave random weights and a record that compares against nothing.
     """
     import torch
     from transformers import AutoModelForCausalLM
 
-    model = AutoModelForCausalLM.from_pretrained(
-        checkpoint, dtype=torch.bfloat16, trust_remote_code=True).eval()
+    model, loading = AutoModelForCausalLM.from_pretrained(
+        checkpoint, dtype=torch.bfloat16, trust_remote_code=False, output_loading_info=True)
+    assert not loading["missing_keys"], loading["missing_keys"]
+    model.eval()
     ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)
     with torch.no_grad():
         out = model(ids, output_hidden_states=True)

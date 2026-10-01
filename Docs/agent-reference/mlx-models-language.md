@@ -1191,9 +1191,15 @@ attention and feed-forward.
   0.99999994 (embedding 1.0, the final-normed state 1.0; no multipliers to amplify a seam). **Released
   Nemotron-Nano-9B-v2** (56 layers = 27 Mamba + 25 ReLU-squared MLP + 4 NoPE attention): the checkpoint's
   341 tensors all match by name and shape (0 missing, 0 mismatched, 0 unaccounted). The released numeric
-  run (`run_reference.py nemotron_h_real`, bf16 since the 9B does not fit float32 on a 32 GB machine) is
-  available when disk permits the ~17.8 GB download; the tiny numeric and the full structural check carry
-  the shipped parity otherwise. Two facts are load-bearing. **The released checkpoint uses the original
+  run (`run_reference.py nemotron_h_real`, both sides bf16, since the 9B does not fit float32 on a 32 GB
+  machine) reads a worst block seam of 0.99984145 and a logit cosine of 0.9997359 against transformers
+  at bf16, and the greedy continuation matches 12 of 12 tokens. Each side rounds independently, so these
+  cosines measure two bf16 runs against each other. No float32 reference of the full 56 layers fits this
+  machine, so the floor for that distance is unmeasured; the fifteen-layer cut below measures the
+  rounding placement against the reference's own bf16-versus-float32 distance. The oracle loads
+  transformers' own `NemotronHForCausalLM`, because the release's `auto_map` names a remote
+  `modeling_nemotron_h.py` the directory does not carry, and it asserts that no weight is missing. Two
+  facts are load-bearing. **The released checkpoint uses the original
   `backbone.*` naming** while the module tree follows the transformers-integrated `model.*` naming (which
   the tiny oracle records), so the directory loader remaps `backbone.` → `model.` and drops any `mtp.*`
   multi-token-prediction tensors, as transformers does; the module tree mirrors the checkpoint with a
