@@ -1068,6 +1068,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   release's); and `fineTune` (AdamW 1e-4, betas 0.5 and 0.999, weight decay 0.01, a 5,000-step linear
   warm-up).
 
+#### Wav2Vec2, HuBERT, and W2V-BERT
+
+- `NFKMLXWav2Vec2` ports Wav2Vec2 and HuBERT (Meta, Apache-2.0), the self-supervised speech encoders that
+  read the raw waveform, in one configuration-driven network: post-norm base and pre-norm large, the
+  group- and layer-normalized feature encoders, and the CTC head. A CTC release transcribes under
+  `NFKOutputText`; every release returns a mean-pooled `NFKOutputEmbedding`.
+- At reference parity against transformers on every release measured, each against its own record:
+  `wav2vec2-base-960h` last hidden state 0.999999995 and logits 0.999999999 with the transcription
+  exact, and the base, large-960h, XLS-R 300M and 1B, and HuBERT base, large, and large-ft releases
+  each at 0.99999999 or better.
+- `NFKMLXWav2Vec2Bert` ports W2V-BERT 2.0 (Meta, MIT), the 600M Conformer encoder behind Seamless, with
+  SeamlessM4T's filterbank extractor computed in double precision as the reference computes it: output
+  0.99999999999633 from its own features.
+- Factories: `backendWithDirectoryURL:error:`, the download `backendWithRepo:revision:cacheDirectoryURL:error:`,
+  and both `completionHandler:` peers, for each.
+- Customization ships for both. Wav2Vec2 and HuBERT follow transformers' `run_speech_recognition_ctc.py`:
+  `NFKMLXWav2Vec2.network(directoryURL:vocabulary:)` retargets the CTC head to a consumer's characters
+  (`NFKMLXWav2Vec2Tokenizer(characters:)`), `fineTune` trains with the feature encoder frozen under
+  `NFKMLXWav2Vec2Objective` and `NFKMLXSpecAugment`, and `save(_:tokenizer:toDirectoryURL:)` writes a
+  directory the factory loads. The CTC loss matches `ctc_loss` within 1.2e-7 relative; three recipe steps
+  match transformers' within the reference's own float32 drift. W2V-BERT follows Hugging Face's recipe:
+  the output adapter and a CTC head added, every parameter trained after a linear warm-up
+  (`NFKMLXLearningRateSchedule.linearWithWarmup`, transformers' `get_linear_schedule_with_warmup`).
+
 #### Typed decisions on device
 
 - `NFKMLXLaya` ports Laya (`convaiinnovations/laya`, Apache-2.0), the open reproduction of TypeSafe's

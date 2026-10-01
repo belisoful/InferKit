@@ -4026,6 +4026,272 @@
         "IK_VAL_GEMMA2_2B": ""
       },
       "note": "Gemma 2 2B (5.2 GB bf16), an ungated re-export of Google's gated gemma-2-2b-it and the size SANA's caption encoder runs. Records, gemma venv: `IK_PROBE_LAYERS=0 run_reference.py hf_layer_probe records/gemma2_2b_f32.safetensors --checkpoint <dir>` (float32) and `IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,1,13 ... records/gemma2_2b_bf16_probe.safetensors` (bf16, eager, every submodule of the probed layers). NFKMLXBFloat16ParityTests reads both from ~/.inferkit-validation/records."
+    },
+    {
+      "key": "WAV2VEC2_BASE_960H",
+      "repo": "facebook/wav2vec2-base-960h",
+      "revision": "22aad52d435eb6dbaf354bdad9b0da84ce7d6156",
+      "directory": "wav2vec2-base-960h",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "feature_extractor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_BASE_960H": "",
+        "IK_PARITY_WAV2VEC2_BASE_960H": "records/wav2vec2-base-960h.safetensors",
+        "IK_PARITY_WAV2VEC2_LOSS": "records/wav2vec2-base-960h-loss.safetensors"
+      },
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-base-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too. The recipe's record: `run_reference.py wav2vec2_loss ~/.inferkit-validation/records/wav2vec2-base-960h-loss.safetensors --checkpoint <dir>`."
+    },
+    {
+      "key": "WAV2VEC2_BASE",
+      "repo": "facebook/wav2vec2-base",
+      "revision": "0b5b8e868dd84f03fd87d01f9c4ff0f080fecfe8",
+      "directory": "wav2vec2-base",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_BASE": "",
+        "IK_PARITY_WAV2VEC2_BASE": "records/wav2vec2-base.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-base.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "WAV2VEC2_LARGE_960H",
+      "repo": "facebook/wav2vec2-large-960h",
+      "revision": "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab",
+      "directory": "wav2vec2-large-960h",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_LARGE_960H": "",
+        "IK_PARITY_WAV2VEC2_LARGE_960H": "records/wav2vec2-large-960h.safetensors"
+      },
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-960h.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+    },
+    {
+      "key": "WAV2VEC2_LARGE_960H_LV60_SELF",
+      "repo": "facebook/wav2vec2-large-960h-lv60-self",
+      "revision": "54074b1c16f4de6a5ad59affb4caa8f2ea03a119",
+      "directory": "wav2vec2-large-960h-lv60-self",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "feature_extractor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_LARGE_960H_LV60_SELF": "",
+        "IK_PARITY_WAV2VEC2_LARGE_960H_LV60_SELF": "records/wav2vec2-large-960h-lv60-self.safetensors"
+      },
+      "note": "A CTC Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-960h-lv60-self.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+    },
+    {
+      "key": "WAV2VEC2_LARGE_LV60",
+      "repo": "facebook/wav2vec2-large-lv60",
+      "revision": "0cde644b64dac88d8416bec1c92a4099b850ba0b",
+      "directory": "wav2vec2-large-lv60",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_LARGE_LV60": "",
+        "IK_PARITY_WAV2VEC2_LARGE_LV60": "records/wav2vec2-large-lv60.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-lv60.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "WAV2VEC2_LARGE_XLSR_53",
+      "repo": "facebook/wav2vec2-large-xlsr-53",
+      "revision": "c3f9d884181a224a6ac87bf8885c84d1cff3384f",
+      "directory": "wav2vec2-large-xlsr-53",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_LARGE_XLSR_53": "",
+        "IK_PARITY_WAV2VEC2_LARGE_XLSR_53": "records/wav2vec2-large-xlsr-53.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-large-xlsr-53.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "WAV2VEC2_XLS_R_300M",
+      "repo": "facebook/wav2vec2-xls-r-300m",
+      "revision": "1a640f32ac3e39899438a2931f9924c02f080a54",
+      "directory": "wav2vec2-xls-r-300m",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_XLS_R_300M": "",
+        "IK_PARITY_WAV2VEC2_XLS_R_300M": "records/wav2vec2-xls-r-300m.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-300m.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "WAV2VEC2_XLS_R_1B",
+      "repo": "facebook/wav2vec2-xls-r-1b",
+      "revision": "35eaea9a0ed0f97592277d79208e40ab8917d1e3",
+      "directory": "wav2vec2-xls-r-1b",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_XLS_R_1B": "",
+        "IK_PARITY_WAV2VEC2_XLS_R_1B": "records/wav2vec2-xls-r-1b.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-1b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "WAV2VEC2_XLS_R_2B",
+      "repo": "facebook/wav2vec2-xls-r-2b",
+      "revision": "3b6d89d0fabead7da552eaaa07549c7c9c36d303",
+      "directory": "wav2vec2-xls-r-2b",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin",
+        "run_speech_recognition_ctc.py"
+      ],
+      "config": {
+        "IK_VAL_WAV2VEC2_XLS_R_2B": "",
+        "IK_PARITY_WAV2VEC2_XLS_R_2B": "records/wav2vec2-xls-r-2b.safetensors"
+      },
+      "note": "A pretraining Wav2Vec2 release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/wav2vec2-xls-r-2b.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor. The repo also carries the reference fine-tuning script, `run_speech_recognition_ctc.py`."
+    },
+    {
+      "key": "HUBERT_BASE_LS960",
+      "repo": "facebook/hubert-base-ls960",
+      "revision": "dba3bb02fda4248b6e082697eee756de8fe8aa8a",
+      "directory": "hubert-base-ls960",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_HUBERT_BASE_LS960": "",
+        "IK_PARITY_HUBERT_BASE_LS960": "records/hubert-base-ls960.safetensors"
+      },
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-base-ls960.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "HUBERT_LARGE_LL60K",
+      "repo": "facebook/hubert-large-ll60k",
+      "revision": "ff022d095678a2995f3c49bab18a96a9e553f782",
+      "directory": "hubert-large-ll60k",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_HUBERT_LARGE_LL60K": "",
+        "IK_PARITY_HUBERT_LARGE_LL60K": "records/hubert-large-ll60k.safetensors"
+      },
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-large-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "HUBERT_LARGE_LS960_FT",
+      "repo": "facebook/hubert-large-ls960-ft",
+      "revision": "ece5fabbf034c1073acae96d5401b25be96709d8",
+      "directory": "hubert-large-ls960-ft",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_HUBERT_LARGE_LS960_FT": "",
+        "IK_PARITY_HUBERT_LARGE_LS960_FT": "records/hubert-large-ls960-ft.safetensors"
+      },
+      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-large-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+    },
+    {
+      "key": "HUBERT_XLARGE_LL60K",
+      "repo": "facebook/hubert-xlarge-ll60k",
+      "revision": "b0cef767123fe004883915a053f538f1737a1e47",
+      "directory": "hubert-xlarge-ll60k",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_HUBERT_XLARGE_LL60K": "",
+        "IK_PARITY_HUBERT_XLARGE_LL60K": "records/hubert-xlarge-ll60k.safetensors"
+      },
+      "note": "A pretraining HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-xlarge-ll60k.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor."
+    },
+    {
+      "key": "HUBERT_XLARGE_LS960_FT",
+      "repo": "facebook/hubert-xlarge-ls960-ft",
+      "revision": "86a09e67e0c8d074533992379242405825516eca",
+      "directory": "hubert-xlarge-ls960-ft",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_HUBERT_XLARGE_LS960_FT": "",
+        "IK_PARITY_HUBERT_XLARGE_LS960_FT": "records/hubert-xlarge-ls960-ft.safetensors"
+      },
+      "note": "A CTC HuBERT release (Meta, Apache-2.0) for NFKMLXWav2Vec2. Record: `run_reference.py wav2vec2 ~/.inferkit-validation/records/hubert-xlarge-ls960-ft.safetensors --checkpoint <dir>` (llm env), the validation speech clip through the release's own feature extractor; the transcription is recorded too."
+    },
+    {
+      "key": "W2V_BERT_2",
+      "repo": "facebook/w2v-bert-2.0",
+      "revision": "da985ba0987f70aaeb84a80f2851cfac8c697a7b",
+      "directory": "w2v-bert-2.0",
+      "files": [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_W2V_BERT_2": "",
+        "IK_PARITY_W2V_BERT_2": "records/w2v-bert-2.0.safetensors",
+        "IK_PARITY_W2V_BERT_LOSS": "records/w2v-bert-2.0-loss.safetensors"
+      },
+      "note": "W2V-BERT 2.0 (Meta, MIT, 2.3 GB float32) for NFKMLXWav2Vec2Bert; `conformer_shaw.pt` is not fetched. Records (llm env): `run_reference.py w2v_bert ~/.inferkit-validation/records/w2v-bert-2.0.safetensors --checkpoint <dir>` and the recipe's `run_reference.py w2v_bert_loss ~/.inferkit-validation/records/w2v-bert-2.0-loss.safetensors --checkpoint <dir>` (about 12 GB: a float32 full fine-tune of three steps)."
     }
   ],
   "oracle_environments": {
@@ -4101,7 +4367,11 @@
         "trocr_loss",
         "vjepa2_probe",
         "nuwave2",
-        "cosmos_tokenizer_loss"
+        "cosmos_tokenizer_loss",
+        "wav2vec2",
+        "wav2vec2_loss",
+        "w2v_bert",
+        "w2v_bert_loss"
       ]
     },
     "voicerestore": {
@@ -4990,6 +5260,18 @@
       "record": "records/basic-pitch-targets.safetensors",
       "environment": "basic_pitch_tf",
       "command": "basic_pitch_targets"
+    },
+    {
+      "key": "IK_PARITY_WAV2VEC2_LOSS",
+      "record": "records/wav2vec2-base-960h-loss.safetensors",
+      "environment": "llm",
+      "command": "wav2vec2_loss --checkpoint <wav2vec2-base-960h>"
+    },
+    {
+      "key": "IK_PARITY_W2V_BERT_LOSS",
+      "record": "records/w2v-bert-2.0-loss.safetensors",
+      "environment": "llm",
+      "command": "w2v_bert_loss --checkpoint <w2v-bert-2.0>"
     }
   ]
 }

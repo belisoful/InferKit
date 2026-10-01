@@ -575,6 +575,8 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Granite Speech 3.3-2b | ``NFKMLXGraniteSpeech`` | ``NFKMLXGraniteSpeechNet`` | `net(fromDirectory:)` (Conformer encoder + BLIP-2 Q-former + dense Granite decoder) | `backend(directoryURL:)` | ``NFKMLXGraniteSpeechBackend`` (audio → text) |
 | Voxtral-Mini 3B | ``NFKMLXVoxtral`` | ``NFKMLXVoxtralNet`` | `net(fromDirectory:)` (Whisper encoder + 2-linear projector + Llama decoder) | `backend(directoryURL:)` | ``NFKMLXVoxtralBackend`` (audio → text) |
 | Canary-1B-v2 | ``NFKMLXCanary`` | ``NFKMLXCanaryNet`` | `NFKMLXCanaryConfiguration.v2` (biased FastConformer encoder + Transformer attention encoder-decoder) | `canary-1b-v2`; `backend(directoryURL:)` | ``NFKMLXCanaryBackend`` (audio → text; `src>tgt` translates) |
+| Wav2Vec2 / HuBERT | ``NFKMLXWav2Vec2`` | ``NFKMLXWav2Vec2Net`` | ``NFKMLXWav2Vec2Configuration`` read from the release's `config.json` (base post-norm, large pre-norm) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2Backend`` (audio → text from a CTC release, and an embedding) |
+| W2V-BERT 2.0 | ``NFKMLXWav2Vec2Bert`` | ``NFKMLXWav2Vec2BertNet`` | `NFKMLXWav2Vec2BertConfiguration.v2` (SeamlessM4T filterbanks + relative-key Conformer) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2BertBackend`` (audio → embedding; text from a CTC fine-tune) |
 | Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on every stage (VoiceEncoder 3×256, S3 tokenizer 6×1280, T3 Llama 520M with llama3 rope, S3Gen flow + HiFT) | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
@@ -618,6 +620,11 @@ let voxtral = try NFKMLXVoxtral.backend(directoryURL: dir)
 
 // Canary-1B-v2 (a release directory; speech → text, multitask ASR/translation)
 let canary = try NFKMLXCanary.backend(directoryURL: dir)
+// Wav2Vec2 / HuBERT (a release directory; speech → text from a CTC release, and features)
+let wav2vec2 = try NFKMLXWav2Vec2.backend(directoryURL: dir)
+// fine-tune: network(directoryURL:vocabulary:), fineTune(_:examples:steps:), save(_:tokenizer:toDirectoryURL:)
+// W2V-BERT 2.0 (a release directory; speech → features)
+let w2vBert = try NFKMLXWav2Vec2Bert.backend(directoryURL: dir)
 // Chatterbox (a release directory; nil voice = the built-in conds.pt)
 let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // .small / .medium / .largeV3 · …VariantSmall / …VariantMedium / …VariantLargeV3
@@ -702,6 +709,10 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 [NFKMLXParakeet backendWithDirectoryURL:dir error:&error]
 // Canary-1B-v2
 [NFKMLXCanary backendWithDirectoryURL:dir error:&error]
+// Wav2Vec2 / HuBERT
+[NFKMLXWav2Vec2 backendWithDirectoryURL:dir error:&error]
+// W2V-BERT 2.0
+[NFKMLXWav2Vec2Bert backendWithDirectoryURL:dir error:&error]
 // Chatterbox
 [NFKMLXChatterbox chatterboxBackendWithDirectoryURL:dir voiceURL:voiceWAV error:&error]
 // Demucs v2

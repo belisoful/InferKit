@@ -3,6 +3,7 @@
 //  InferKitMLX
 //
 
+import Accelerate
 import Foundation
 import InferKit
 import MLX
@@ -31,6 +32,14 @@ enum NFKKaldiFbank {
 
     /// `[frames, bins]` log-mel energies, mean-removed over the frames.
     static func features(_ samples: [Float]) -> MLXArray {
+        let logMel = logEnergies(samples)
+        return logMel - logMel.mean(axis: 0, keepDims: true)
+    }
+
+    /// `[frames, bins]` log-mel energies: 400-sample frames every 160, each with its mean removed,
+    /// pre-emphasized at 0.97, and Povey-windowed, then a 512-point power spectrum through the filterbank,
+    /// floored at `Float.ulpOfOne` before the logarithm.
+    static func logEnergies(_ samples: [Float]) -> MLXArray {
         let frames = samples.count >= frameLength ? 1 + (samples.count - frameLength) / frameShift : 0
         // Povey window: a symmetric Hann raised to 0.85.
         let window = (0 ..< frameLength).map { powf(0.5 - 0.5 * cosf(2 * .pi * Float($0) / Float(frameLength - 1)), 0.85) }
@@ -50,8 +59,68 @@ enum NFKKaldiFbank {
         let spectrum = rfft(framed.withUnsafeBufferPointer { MLXArray($0, [frames, paddedLength]) }, axis: 1)
         let power = spectrum.realPart() * spectrum.realPart() + spectrum.imaginaryPart() * spectrum.imaginaryPart()
         let energies = power.matmul(melBanks())
-        let logMel = log(maximum(energies, MLXArray(Float.ulpOfOne)))
-        return logMel - logMel.mean(axis: 0, keepDims: true)
+        return log(maximum(energies, MLXArray(Float.ulpOfOne)))
+    }
+
+    /// The same log-mel energies computed in double precision throughout, the framing, the transform as a
+    /// real DFT, and the filterbank, rounded to float32 at the end. Near-silent frames sit within float32
+    /// round-off of the log floor, where a float32 transform reads up to 2 above a float64 reference.
+    static func logEnergiesInDoublePrecision(_ samples: [Float]) -> MLXArray {
+        let frames = samples.count >= frameLength ? 1 + (samples.count - frameLength) / frameShift : 0
+        let spectrumBins = paddedLength / 2 + 1
+        let window = (0 ..< frameLength).map { pow(0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(frameLength - 1)), 0.85) }
+        var framed = [Double](repeating: 0, count: frames * frameLength)
+        for frame in 0 ..< frames {
+            let start = frame * frameShift
+            var mean = 0.0
+            for index in 0 ..< frameLength { mean += Double(samples[start + index]) }
+            mean /= Double(frameLength)
+            var previous = Double(samples[start]) - mean
+            for index in 0 ..< frameLength {
+                let current = Double(samples[start + index]) - mean
+                framed[frame * frameLength + index] = (current - 0.97 * previous) * window[index]
+                previous = current
+            }
+        }
+        // The zero padding to 512 contributes nothing, so the transform reads the 400 framed samples.
+        var cosines = [Double](repeating: 0, count: frameLength * spectrumBins)
+        var sines = [Double](repeating: 0, count: frameLength * spectrumBins)
+        for n in 0 ..< frameLength {
+            for k in 0 ..< spectrumBins {
+                let angle = 2 * Double.pi * Double(n * k % paddedLength) / Double(paddedLength)
+                cosines[n * spectrumBins + k] = cos(angle)
+                sines[n * spectrumBins + k] = sin(angle)
+            }
+        }
+        var real = [Double](repeating: 0, count: frames * spectrumBins)
+        var imaginary = [Double](repeating: 0, count: frames * spectrumBins)
+        vDSP_mmulD(framed, 1, cosines, 1, &real, 1, vDSP_Length(frames), vDSP_Length(spectrumBins), vDSP_Length(frameLength))
+        vDSP_mmulD(framed, 1, sines, 1, &imaginary, 1, vDSP_Length(frames), vDSP_Length(spectrumBins), vDSP_Length(frameLength))
+        let power = zip(real, imaginary).map { $0 * $0 + $1 * $1 }
+        let banks = melBankValues()
+        var energies = [Double](repeating: 0, count: frames * bins)
+        vDSP_mmulD(power, 1, banks, 1, &energies, 1, vDSP_Length(frames), vDSP_Length(bins), vDSP_Length(spectrumBins))
+        let floor = Double(Float.ulpOfOne)
+        let logged = energies.map { Float(Foundation.log(max($0, floor))) }
+        return MLXArray(logged).reshaped([frames, bins])
+    }
+
+    /// ``melBanks()`` as `[257 · 80]` row-major values, in double precision.
+    static func melBankValues() -> [Double] {
+        func mel(_ hz: Double) -> Double { 1127 * Foundation.log(1 + hz / 700) }
+        let fftBins = paddedLength / 2
+        let binWidth = Double(sampleRate) / Double(paddedLength)
+        let low = mel(20), high = mel(Double(sampleRate) / 2)
+        let delta = (high - low) / Double(bins + 1)
+        var banks = [Double](repeating: 0, count: (fftBins + 1) * bins)
+        for bin in 0 ..< bins {
+            let left = low + Double(bin) * delta, center = left + delta, right = center + delta
+            for k in 0 ..< fftBins {
+                let m = mel(binWidth * Double(k))
+                banks[k * bins + bin] = max(0, min((m - left) / (center - left), (right - m) / (right - center)))
+            }
+        }
+        return banks
     }
 
     /// Kaldi's HTK-scale triangular filterbank over the 257 FFT bins (the last bin carries no weight),

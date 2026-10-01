@@ -197,6 +197,8 @@ Voxtral-Mini 3B transcribes through `NFKMLXVoxtral.backend(directoryURL:)` (`vox
 
 Canary-1B-v2 transcribes and translates through `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`): the biased FastConformer encoder feeds a Transformer attention encoder-decoder. Pass the clip under `NFKInputAudio` and, under `NFKInputPrompt`, a language code (default `en`, transcribe) or a `src>tgt` pair (`en>de`, translate); the transcript comes back under `NFKOutputText`.
 
+Wav2Vec2 and HuBERT read the raw waveform through `NFKMLXWav2Vec2.backend(directoryURL:)` (`backendWithDirectoryURL:error:`), any size from a release directory. A CTC release (`facebook/wav2vec2-base-960h`, `-large-960h`, `facebook/hubert-large-ls960-ft`) returns the transcript under `NFKOutputText`; every release returns the mean of its frame features under `NFKOutputEmbedding`, the speech representation downstream classifiers read. W2V-BERT 2.0 (`NFKMLXWav2Vec2Bert.backend(directoryURL:)`) is the multilingual encoder behind Seamless; it reads the clip's filterbanks and returns the same embedding.
+
 **Bounding the cache.** A key-value cache that keeps every position grows with the conversation, and
 past a certain length that growth is what ends the run. `contextWindow` drops the oldest positions
 instead:
@@ -4097,6 +4099,29 @@ frozen in both. The optimizer is the reference's AdamW at 5e-3 with weight decay
 zero. The reference sweeps twenty rate and decay pairs and keeps the best on validation; pass
 `learningRate:` and `weightDecay:` to run another. The saved directory loads through the Objective-C
 `+[NFKMLXVJEPA2 backendWithDirectoryURL:error:]` as well.
+
+### Teaching speech recognition your own vocabulary (Wav2Vec2, HuBERT, W2V-BERT)
+
+A CTC recognizer spells its transcript one character a frame, so it adapts to a new alphabet by swapping
+its head. Build the network with your characters, train on transcribed clips, and save:
+
+```swift
+let tokenizer = try NFKMLXWav2Vec2Tokenizer(characters: Array("abcdefghijklmnopqrstuvwxyz'").map(String.init))
+let net = try NFKMLXWav2Vec2.network(directoryURL: release, vocabulary: tokenizer.characters)
+try NFKMLXWav2Vec2.fineTune(net, examples: { step in
+    (samples: myClips[step].samples16kHz, labels: tokenizer.labels(for: myClips[step].transcript))
+}, steps: 2_000)
+
+try NFKMLXWav2Vec2.save(net, tokenizer: tokenizer, toDirectoryURL: tuned)
+let backend = try NFKMLXWav2Vec2.backend(directoryURL: tuned)    // Objective-C: backendWithDirectoryURL:error:
+```
+
+The recipe is transformers' `run_speech_recognition_ctc.py`: the convolutional feature encoder stays
+frozen, SpecAugment masks spans of frames, and the loss is `ctc_loss`, with AdamW at 5e-5 on a linear
+decay. `trainable: .head` trains the head alone over frozen features. W2V-BERT's recipe
+(`NFKMLXWav2Vec2Bert.network(directoryURL:vocabulary:)`, `fineTune`, `save`) adds the output adapter
+Hugging Face's recipe adds, a strided layer that halves the frame rate, and trains every parameter after a
+500-step warm-up.
 
 ### Any model
 

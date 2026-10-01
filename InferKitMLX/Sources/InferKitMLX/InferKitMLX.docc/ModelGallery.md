@@ -239,6 +239,8 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXGraniteSpeech`` | `backend(directoryURL:)` | speech → text (Granite Speech 3.3-2b: Conformer encoder + BLIP-2 Q-former + dense Granite decoder, audio LoRA folded; transcribes the validation clip exactly) |
 | ``NFKMLXVoxtral`` | `backend(directoryURL:)` | speech → text (Voxtral-Mini 3B: Whisper encoder + 2-linear projector + Llama decoder, tekken tokenizer; transcribes the validation clip exactly) |
 | ``NFKMLXCanary`` | `canary-1b-v2`; `backend(directoryURL:)` | speech → text (Canary-1B-v2: biased FastConformer encoder + Transformer attention encoder-decoder; multitask ASR/translation; transcribes the validation clip exactly) |
+| ``NFKMLXWav2Vec2`` | `backend(directoryURL:)` | speech → text and features (Wav2Vec2 and HuBERT, every size: convolutional feature encoder + transformer; CTC releases transcribe exactly; CTC fine-tune) |
+| ``NFKMLXWav2Vec2Bert`` | `backend(directoryURL:)` | speech → features (W2V-BERT 2.0: Kaldi filterbanks + relative-key Conformer, output 0.99999999999633; CTC fine-tune with the output adapter) |
 | ``NFKMLXVAD`` | `vad-marblenet` | voice-activity detection (MarbleNet) |
 | ``NFKMLXSileroVAD`` | `silero-vad` | voice-activity detection (Silero v6, streaming) |
 | ``NFKMLXAudioTagger`` | `audio-tagger-panns` | audio tagging |

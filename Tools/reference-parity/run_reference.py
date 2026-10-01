@@ -18038,6 +18038,363 @@ def run_umt5_tokenizer(image, checkpoint):
 CHECKPOINT_MODELS["umt5_tokenizer"] = run_umt5_tokenizer
 
 
+
+def _speech_clip():
+    """The validation speech WAV (`IK_VAL_AUDIO`, 16 kHz mono PCM16) as float32 samples in [-1, 1)."""
+    import wave as wavemodule
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
+    with wavemodule.open(path) as handle:
+        assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
+        pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+    return pcm.astype(np.float32) / 32768.0
+
+
+def run_wav2vec2(image, checkpoint):
+    """Wav2Vec2 or HuBERT (`facebook/wav2vec2-*`, `facebook/hubert-*`) on a RELEASED directory
+    (`--checkpoint`), from transformers' own `Wav2Vec2ForCTC` / `HubertForCTC` for a CTC release and
+    `Wav2Vec2Model` / `HubertModel` otherwise (a pretraining release's quantizer and projections are
+    not part of the encoder's forward). Float32, eager attention. The clip is the validation speech WAV
+    through the release's own `Wav2Vec2FeatureExtractor`. Records the waveform, the extractor's
+    `input_values`, the feature encoder's output, the projected features, the outputs of the first,
+    middle, and last encoder layers, the last hidden state (the output), and for a CTC release the
+    logits, the greedy frame tokens, and the processor's decoded text (`text_bytes`, UTF-8).
+    Runs under the `llm` oracle env.
+    """
+    from transformers import AutoConfig, Wav2Vec2FeatureExtractor
+
+    config = AutoConfig.from_pretrained(checkpoint)
+    ctc = any(name.endswith("ForCTC") for name in (config.architectures or []))
+    if config.model_type == "hubert":
+        from transformers import HubertForCTC as CTC, HubertModel as Encoder
+    else:
+        from transformers import Wav2Vec2ForCTC as CTC, Wav2Vec2Model as Encoder
+    loaded = (CTC if ctc else Encoder).from_pretrained(checkpoint, torch_dtype=torch.float32,
+                                                      attn_implementation="eager").eval()
+    encoder = getattr(loaded, config.model_type if config.model_type == "hubert" else "wav2vec2") if ctc else loaded
+    extractor = Wav2Vec2FeatureExtractor.from_pretrained(checkpoint)
+    wave = _speech_clip()
+    input_values = extractor(wave, sampling_rate=16000, return_tensors="pt").input_values.float()
+
+    layers = encoder.encoder.layers
+    picks = sorted({0, len(layers) // 2, len(layers) - 1})
+    seams = {}
+    for index in picks:
+        layers[index].register_forward_hook(
+            lambda m, i, o, index=index: seams.__setitem__(f"layer{index}", o[0][0].detach().clone()))
+    encoder.feature_projection.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("projected", (o[0] if isinstance(o, tuple) else o)[0].detach().clone()))
+    with torch.no_grad():
+        features = encoder.feature_extractor(input_values)[0].transpose(0, 1).contiguous()   # [frames, 512]
+        out = encoder(input_values)
+        extra = {"waveform": torch.from_numpy(wave).contiguous(), "input_values": input_values[0].contiguous(),
+                 "features": features, "projected": seams["projected"].contiguous(),
+                 "layer_indices": torch.tensor(picks, dtype=torch.int64)}
+        for index in picks:
+            extra[f"layer{index}"] = seams[f"layer{index}"].contiguous()
+        if ctc:
+            logits = loaded.lm_head(out.last_hidden_state)[0]
+            tokens = logits.argmax(-1)
+            from transformers import Wav2Vec2CTCTokenizer
+            text = Wav2Vec2CTCTokenizer.from_pretrained(checkpoint).decode(tokens.tolist())
+            extra["logits"] = logits.contiguous()
+            extra["tokens"] = tokens.to(torch.int64).contiguous()
+            extra["text_bytes"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.int64)
+            print(f"text: {text!r}")
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].contiguous()
+
+
+CHECKPOINT_MODELS["wav2vec2"] = run_wav2vec2
+
+
+
+def run_wav2vec2_loss(image, checkpoint):
+    """Wav2Vec2's fine-tuning objective and three recipe steps on a released CTC directory
+    (`--checkpoint`), from transformers' own `Wav2Vec2ForCTC` with the overrides
+    `run_speech_recognition_ctc.py` applies (every dropout and layer drop 0, `mask_time_prob` 0.05,
+    `ctc_loss_reduction` "mean", `ctc_zero_infinity` False) and its `freeze_feature_encoder()`.
+
+    The objective on identical logits: the eval-mode logits of the validation speech clip, scored by
+    `torch.nn.functional.ctc_loss` over their float32 log-softmax for the clip's greedy transcript
+    (`labels_real`) and for "HELLO BOOK" (`labels_repeat`, whose doubled letters exercise the recursion's
+    blocked skip), each at reductions mean and sum, with the gradient of each with respect to the logits.
+    A 200-label sequence longer than the frames records the infinite loss and its zeroed form. The
+    record carries the clip's samples (`waveform`) beside the extractor's `input_values`.
+
+    The steps: `torch.optim.AdamW` at 1e-4 (betas 0.9 and 0.999, epsilon 1e-8, no weight decay),
+    `get_linear_schedule_with_warmup` over 3 steps with no warm-up, and `clip_grad_norm_` at 1.0, as the
+    Trainer runs them, on the clip with its greedy transcript. SpecAugment's masks come from
+    `_compute_mask_indices` under numpy seed 0 and are recorded (`mask{step}`) so the port applies the same
+    frames. Records each step's loss, the first step's gradients and every step's parameter deltas for a
+    watched set of parameters (frozen ones included), and the learning rate at each step. The same steps
+    replayed in float64 under the same masks give `step_losses_f64`, the exact losses the float32 run's
+    own drift is measured from.
+    """
+    import torch.nn.functional as F
+    from transformers import Wav2Vec2ForCTC, Wav2Vec2FeatureExtractor, Wav2Vec2CTCTokenizer
+    from transformers import get_linear_schedule_with_warmup
+    import transformers.models.wav2vec2.modeling_wav2vec2 as w2v
+
+    model = Wav2Vec2ForCTC.from_pretrained(
+        checkpoint, torch_dtype=torch.float32, attn_implementation="eager", attention_dropout=0.0,
+        hidden_dropout=0.0, feat_proj_dropout=0.0, final_dropout=0.0, activation_dropout=0.0, layerdrop=0.0,
+        mask_time_prob=0.05, ctc_loss_reduction="mean", ctc_zero_infinity=False)
+    torch.manual_seed(0)
+    with torch.no_grad():
+        model.wav2vec2.masked_spec_embed.uniform_()   # the release carries none; transformers initializes it so
+    model.freeze_feature_encoder()
+    extractor = Wav2Vec2FeatureExtractor.from_pretrained(checkpoint)
+    tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(checkpoint)
+    wave = _speech_clip()
+    input_values = extractor(wave, sampling_rate=16000, return_tensors="pt").input_values.float()
+
+    model.eval()
+    with torch.no_grad():
+        logits = model(input_values).logits[0]
+    text = tokenizer.decode(logits.argmax(-1).tolist())
+    extra = {"waveform": torch.from_numpy(wave).contiguous(), "input_values": input_values[0].contiguous(),
+             "logits": logits.contiguous(), "masked_spec_embed": model.wav2vec2.masked_spec_embed.detach().clone()}
+    frames = logits.shape[0]
+    label_sets = {"real": tokenizer(text).input_ids, "repeat": tokenizer("HELLO BOOK").input_ids,
+                  "long": [5] * 200}
+    for name, labels in label_sets.items():
+        extra[f"labels_{name}"] = torch.tensor(labels, dtype=torch.int64)
+        for reduction in ["mean", "sum"]:
+            for zero in ([False, True] if name == "long" else [False]):
+                leaf = logits.clone().requires_grad_(True)
+                log_probs = F.log_softmax(leaf, dim=-1, dtype=torch.float32)[:, None, :]
+                loss = F.ctc_loss(log_probs, torch.tensor([labels]), torch.tensor([frames]),
+                                  torch.tensor([len(labels)]), blank=model.config.pad_token_id,
+                                  reduction=reduction, zero_infinity=zero)
+                key = f"{name}_{reduction}" + ("_zero" if zero else "")
+                extra[f"loss_{key}"] = loss.detach().reshape(1)
+                if torch.isfinite(loss):
+                    loss.backward()
+                    extra[f"grad_{key}"] = leaf.grad.detach().clone()
+
+    watched = ["lm_head.weight", "lm_head.bias", "wav2vec2.masked_spec_embed",
+               "wav2vec2.feature_projection.projection.weight", "wav2vec2.feature_projection.layer_norm.weight",
+               "wav2vec2.encoder.pos_conv_embed.conv.bias",
+               "wav2vec2.encoder.pos_conv_embed.conv.parametrizations.weight.original0",
+               "wav2vec2.encoder.pos_conv_embed.conv.parametrizations.weight.original1",
+               "wav2vec2.encoder.layer_norm.weight", "wav2vec2.encoder.layers.0.attention.q_proj.weight",
+               "wav2vec2.encoder.layers.11.feed_forward.output_dense.weight",
+               "wav2vec2.feature_extractor.conv_layers.0.conv.weight"]
+    parameters = dict(model.named_parameters())
+    start = {name: parameters[name].detach().clone() for name in watched}
+    captured = []
+    original = w2v._compute_mask_indices
+
+    def recording(*args, **kwargs):
+        mask = original(*args, **kwargs)
+        captured.append(np.array(mask))
+        return mask
+
+    w2v._compute_mask_indices = recording
+    np.random.seed(0)
+    model.train()
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4,
+                                  betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0)
+    schedule = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=3)
+    labels = torch.tensor([label_sets["real"]])
+    losses, rates = [], []
+    for step in range(3):
+        optimizer.zero_grad()
+        rates.append(optimizer.param_groups[0]["lr"])
+        out = model(input_values, labels=labels)
+        out.loss.backward()
+        losses.append(out.loss.item())
+        if step == 0:
+            for name in watched:
+                if parameters[name].grad is not None:
+                    extra[f"step_grad.{name}"] = parameters[name].grad.detach().clone()
+        torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
+        optimizer.step()
+        schedule.step()
+        for name in watched:
+            extra[f"step{step}_delta.{name}"] = (parameters[name].detach() - start[name]).clone()
+    # The same three steps in float64 under the same masks: the reference's own float32 run sits this far
+    # from exact arithmetic, which is the floor a port's step losses are held to.
+    replay = iter(captured)
+    w2v._compute_mask_indices = lambda *args, **kwargs: next(replay)
+    exact = Wav2Vec2ForCTC.from_pretrained(
+        checkpoint, torch_dtype=torch.float64, attn_implementation="eager", attention_dropout=0.0,
+        hidden_dropout=0.0, feat_proj_dropout=0.0, final_dropout=0.0, activation_dropout=0.0, layerdrop=0.0,
+        mask_time_prob=0.05, ctc_loss_reduction="mean", ctc_zero_infinity=False)
+    with torch.no_grad():
+        exact.wav2vec2.masked_spec_embed.copy_(extra["masked_spec_embed"].double())
+    exact.freeze_feature_encoder()
+    exact.train()
+    exact_optimizer = torch.optim.AdamW([p for p in exact.parameters() if p.requires_grad], lr=1e-4,
+                                        betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0)
+    exact_schedule = get_linear_schedule_with_warmup(exact_optimizer, num_warmup_steps=0, num_training_steps=3)
+    exact_losses = []
+    for step in range(3):
+        exact_optimizer.zero_grad()
+        out = exact(input_values.double(), labels=labels)
+        out.loss.backward()
+        exact_losses.append(out.loss.item())
+        torch.nn.utils.clip_grad_norm_([p for p in exact.parameters() if p.requires_grad], 1.0)
+        exact_optimizer.step()
+        exact_schedule.step()
+    extra["step_losses_f64"] = torch.tensor(exact_losses, dtype=torch.float64)
+    w2v._compute_mask_indices = original
+    for step, mask in enumerate(captured):
+        extra[f"mask{step}"] = torch.from_numpy(mask.astype(np.int64))
+    extra["step_losses"] = torch.tensor(losses, dtype=torch.float64)
+    extra["step_rates"] = torch.tensor(rates, dtype=torch.float64)
+    extra["text_bytes"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.int64)
+    print(f"text {text!r}; losses {losses}; masked frames {[int(m.sum()) for m in captured]}")
+    globals()["_extra"] = extra
+    return extra["loss_real_mean"].clone()
+
+
+CHECKPOINT_MODELS["wav2vec2_loss"] = run_wav2vec2_loss
+
+
+
+def run_w2v_bert(image, checkpoint):
+    """W2V-BERT 2.0 (`facebook/w2v-bert-2.0`) on the RELEASED directory (`--checkpoint`), from transformers'
+    own `Wav2Vec2BertModel` at float32 and its `SeamlessM4TFeatureExtractor`. The clip is the validation
+    speech WAV. Records the waveform, the extractor's raw log-mel filterbank before normalization
+    (`fbank`, `[frames, 80]`, from its `_extract_fbank_features` on the 16-bit-scaled waveform), the
+    stacked, normalized `input_features` `[frames / 2, 160]` (padded to an even frame count with the release's
+    padding value) and the extractor's `attention_mask`, which the model receives, the feature projection, the outputs of the
+    first, middle, and last Conformer layers, and the last hidden state (the output). Runs under the
+    `llm` oracle env.
+    """
+    from transformers import Wav2Vec2BertModel, AutoFeatureExtractor
+
+    model = Wav2Vec2BertModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    extractor = AutoFeatureExtractor.from_pretrained(checkpoint)
+    wave = _speech_clip()
+    extracted = extractor(wave, sampling_rate=16000, return_tensors="pt")
+    features = extracted.input_features.float()
+    attention_mask = extracted.attention_mask
+    fbank = extractor._extract_fbank_features(wave)
+    layers = model.encoder.layers
+    picks = sorted({0, len(layers) // 2, len(layers) - 1})
+    seams = {}
+    for index in picks:
+        layers[index].register_forward_hook(
+            lambda m, i, o, index=index: seams.__setitem__(f"layer{index}", o[0][0].detach().clone()))
+    model.feature_projection.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("projected", o[0][0].detach().clone()))
+    with torch.no_grad():
+        out = model(features, attention_mask=attention_mask)
+    extra = {"waveform": torch.from_numpy(wave).contiguous(), "fbank": torch.from_numpy(np.ascontiguousarray(fbank, np.float32)),
+             "attention_mask": attention_mask[0].to(torch.int64).contiguous(),
+             "input_features": features[0].contiguous(), "projected": seams["projected"].contiguous(),
+             "layer_indices": torch.tensor(picks, dtype=torch.int64)}
+    for index in picks:
+        extra[f"layer{index}"] = seams[f"layer{index}"].contiguous()
+    globals()["_extra"] = extra
+    return out.last_hidden_state[0].contiguous()
+
+
+CHECKPOINT_MODELS["w2v_bert"] = run_w2v_bert
+
+
+
+def run_w2v_bert_loss(image, checkpoint):
+    """W2V-BERT 2.0's CTC fine-tuning objective and three recipe steps on the release (`--checkpoint`), from
+    transformers' own `Wav2Vec2BertForCTC` with the settings of Hugging Face's "Fine-Tune W2V2-Bert for
+    low-resource ASR": every dropout and layer drop 0, `mask_time_prob` 0, `ctc_loss_reduction` "mean", and
+    `add_adapter=True`, plus `conformer_conv_dropout`, `final_dropout`, and `activation_dropout` at 0 (the
+    recipe leaves the first two at the release's 0.1, which makes its steps stochastic; zeroing them makes
+    the replay deterministic), over a 32-character vocabulary (`IK_W2V_BERT_VOCAB`, default the
+    `wav2vec2-base-960h` vocabulary, whose blank is `<pad>` at 0). The adapter and the head are initialized
+    under seed 0 by the model's own `_init_weights` and recorded (`init.<parameter>`). The clip is the
+    validation speech WAV through `SeamlessM4TFeatureExtractor`, with its attention mask; the labels spell
+    "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG".
+
+    The objective on identical logits: the eval-mode logits, `ctc_loss` over their float32 log-softmax with
+    the input length the model derives through the adapter's pooling, and its gradient with respect to the
+    logits. The steps: `torch.optim.AdamW` at 5e-5 with no weight decay over every parameter, clipping at
+    1.0, and a linear decay over the 3 steps with no warm-up, so every step moves. The recipe's 500-step
+    warm-up is recorded separately, from `get_linear_schedule_with_warmup` over a 2,000-step run, at sample
+    steps (`schedule.steps`, `schedule.scales`). Runs under the `llm` oracle env.
+    """
+    import json
+    import torch.nn.functional as F
+    from transformers import Wav2Vec2BertForCTC, AutoFeatureExtractor, get_linear_schedule_with_warmup
+
+    vocabulary = json.load(open(os.environ.get(
+        "IK_W2V_BERT_VOCAB", "/Volumes/WindowsBoot/InferKit/validation/wav2vec2-base-960h/vocab.json")))
+    torch.manual_seed(0)
+    model = Wav2Vec2BertForCTC.from_pretrained(
+        checkpoint, torch_dtype=torch.float32, attention_dropout=0.0, hidden_dropout=0.0, feat_proj_dropout=0.0,
+        mask_time_prob=0.0, layerdrop=0.0, ctc_loss_reduction="mean", add_adapter=True, pad_token_id=0,
+        vocab_size=len(vocabulary), conformer_conv_dropout=0.0, final_dropout=0.0, activation_dropout=0.0)
+    extractor = AutoFeatureExtractor.from_pretrained(checkpoint)
+    wave = _speech_clip()
+    extracted = extractor(wave, sampling_rate=16000, return_tensors="pt")
+    features, attention_mask = extracted.input_features.float(), extracted.attention_mask
+    text = "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG"
+    labels = torch.tensor([[vocabulary["|" if c == " " else c] for c in text]])
+    extra = {"waveform": torch.from_numpy(wave).contiguous(), "labels": labels[0].clone(),
+             "vocabulary_size": torch.tensor([len(vocabulary)], dtype=torch.int64)}
+    for name, value in model.state_dict().items():
+        if name.startswith("wav2vec2_bert.adapter.") or name.startswith("lm_head."):
+            extra["init." + name.removeprefix("wav2vec2_bert.")] = value.detach().clone()
+
+    model.eval()
+    with torch.no_grad():
+        logits = model(features, attention_mask=attention_mask).logits[0]
+    frames = int(model._get_feat_extract_output_lengths(attention_mask.sum(-1))[0])
+    leaf = logits.clone().requires_grad_(True)
+    loss = F.ctc_loss(F.log_softmax(leaf, dim=-1, dtype=torch.float32)[:frames, None, :], labels,
+                      torch.tensor([frames]), torch.tensor([labels.shape[1]]), blank=0, reduction="mean")
+    loss.backward()
+    extra.update({"logits": logits.contiguous(), "frames": torch.tensor([frames], dtype=torch.int64),
+                  "objective.loss": loss.detach().reshape(1), "objective.grad": leaf.grad.detach().clone()})
+
+    watched = ["lm_head.weight", "lm_head.bias", "wav2vec2_bert.adapter.layers.0.residual_conv.weight",
+               "wav2vec2_bert.adapter.layers.0.self_attn.linear_q.weight", "wav2vec2_bert.adapter.layers.0.ffn.output_dense.weight",
+               "wav2vec2_bert.encoder.layers.23.ffn2.output_dense.weight",
+               "wav2vec2_bert.encoder.layers.0.conv_module.depthwise_conv.weight",
+               "wav2vec2_bert.encoder.layers.0.self_attn.distance_embedding.weight",
+               "wav2vec2_bert.feature_projection.projection.weight"]
+    parameters = dict(model.named_parameters())
+    start = {name: parameters[name].detach().clone() for name in watched}
+    optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0)
+    schedule = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=3)
+    model.train()
+    losses = []
+    for step in range(3):
+        optimizer.zero_grad()
+        out = model(features, attention_mask=attention_mask, labels=labels)
+        out.loss.backward()
+        losses.append(out.loss.item())
+        if step == 0:
+            for name in watched:
+                extra[f"step_grad.{name.removeprefix('wav2vec2_bert.')}"] = parameters[name].grad.detach().clone()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+        schedule.step()
+        for name in watched:
+            extra[f"step{step}_delta.{name.removeprefix('wav2vec2_bert.')}"] = (parameters[name].detach() - start[name]).clone()
+    extra["step_losses"] = torch.tensor(losses, dtype=torch.float64)
+
+    probe = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1.0)
+    warmup = get_linear_schedule_with_warmup(probe, num_warmup_steps=500, num_training_steps=2000)
+    sample = [0, 1, 250, 499, 500, 501, 1000, 1999, 2000]
+    scales = []
+    for step in range(2001):
+        if step in sample:
+            scales.append(probe.param_groups[0]["lr"])
+        probe.step()
+        warmup.step()
+    extra["schedule.steps"] = torch.tensor(sample, dtype=torch.int64)
+    extra["schedule.scales"] = torch.tensor(scales, dtype=torch.float64)
+    print(f"objective {loss.item():.6f} over {frames} frames; steps {losses}")
+    globals()["_extra"] = extra
+    return extra["objective.loss"].clone()
+
+
+CHECKPOINT_MODELS["w2v_bert_loss"] = run_w2v_bert_loss
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")

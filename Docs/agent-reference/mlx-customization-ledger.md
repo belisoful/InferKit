@@ -290,6 +290,8 @@ negatives.
 | `NFKMLXGraniteSpeech` | trainable | LoRA | public | transformers computes a `labels=` loss, and the 2B decoder is under the 4B line. |
 | `NFKMLXVoxtral` | trainable | LoRA | public | The 3B decoder with the Whisper encoder frozen is the shipped Whisper recipe at one more billion parameters. |
 | `NFKMLXCanary` | trainable | LoRA | public | NeMo publishes `transf_loss` with a prompt loss mask, and a 1B encoder-decoder is within budget. |
+| `NFKMLXWav2Vec2` | ships | full | public | transformers' `run_speech_recognition_ctc.py`: a retargetable CTC head, the feature encoder frozen, SpecAugment; loss and steps at measured parity. |
+| `NFKMLXWav2Vec2Bert` | ships | full | public | Hugging Face's W2V-BERT recipe: the output adapter and a CTC head added, every parameter trained; loss and steps at measured parity. |
 | `NFKMLXParakeet` | trainable | head-retarget | public | NeMo's `TDTLossPytorch` is pure PyTorch and portable. The prediction network and joint retrain over a frozen FastConformer. |
 | `NFKMLXVAD` | ships | full | public | The release's own recipe: NeMo's masked cross-entropy, SGD, and `PolynomialHoldDecayAnnealing`, matched by `run_reference.py vad_training`. |
 | `NFKMLXSileroVAD` | trainable | head-retarget | internal | snakers4 publishes `tuning/tune.py`, which freezes the transform and encoder and trains the decoder alone. That is exactly this port's split. |

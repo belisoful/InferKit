@@ -366,6 +366,70 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(Set(classes?.map(\.label) ?? []), ["pour", "stir"])
     }
 
+    // Docs/examples.md: Teaching speech recognition your own vocabulary
+    func testExampleTeachingWav2Vec2OwnVocabulary() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent("wav2vec2-release-\(UUID().uuidString)")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("wav2vec2-tuned-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: release)
+            try? FileManager.default.removeItem(at: tuned)
+        }
+        // A real run passes a downloaded release such as facebook/wav2vec2-base; a tiny encoder written in
+        // the same layout keeps the example free of downloads.
+        var tiny = NFKMLXWav2Vec2Configuration()
+        tiny.hiddenSize = 32
+        tiny.numHiddenLayers = 1
+        tiny.numAttentionHeads = 4
+        tiny.intermediateSize = 64
+        tiny.convDimensions = [16, 16]
+        tiny.convKernels = [10, 3]
+        tiny.convStrides = [5, 2]
+        tiny.positionalConvKernel = 8
+        tiny.positionalConvGroups = 4
+        try NFKMLXWav2Vec2.save(NFKMLXWav2Vec2Net(tiny), tokenizer: nil, toDirectoryURL: release)
+
+        let tokenizer = try NFKMLXWav2Vec2Tokenizer(characters: ["a", "b", "c"])
+        let net = try NFKMLXWav2Vec2.network(directoryURL: release, vocabulary: tokenizer.characters)
+        let myClip = (samples16kHz: (0 ..< 4000).map { Float(sin(Double($0) * 0.07)) * 0.3 }, transcript: "ab c")
+        let history = try NFKMLXWav2Vec2.fineTune(net, examples: { _ in
+            (samples: myClip.samples16kHz, labels: tokenizer.labels(for: myClip.transcript))
+        }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWav2Vec2.save(net, tokenizer: tokenizer, toDirectoryURL: tuned)
+        XCTAssertTrue(try NFKMLXWav2Vec2.backend(directoryURL: tuned).transcribes)
+    }
+
+    // Docs/examples.md: Teaching speech recognition your own vocabulary (the W2V-BERT recipe)
+    func testExampleTeachingW2VBertOwnVocabulary() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent("w2vbert-release-\(UUID().uuidString)")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("w2vbert-tuned-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: release)
+            try? FileManager.default.removeItem(at: tuned)
+        }
+        var tiny = NFKMLXWav2Vec2BertConfiguration()
+        tiny.hiddenSize = 32
+        tiny.outputHiddenSize = 32
+        tiny.numHiddenLayers = 1
+        tiny.numAttentionHeads = 2
+        tiny.intermediateSize = 64
+        try NFKMLXWav2Vec2Bert.save(NFKMLXWav2Vec2BertNet(tiny), tokenizer: nil, toDirectoryURL: release)
+
+        let tokenizer = try NFKMLXWav2Vec2Tokenizer(characters: ["a", "b"])
+        let net = try NFKMLXWav2Vec2Bert.network(directoryURL: release, vocabulary: tokenizer.characters)
+        let samples = (0 ..< 16000).map { Float(sin(Double($0) * 0.05)) * 0.3 }
+        let history = try NFKMLXWav2Vec2Bert.fineTune(net, examples: { _ in (samples, tokenizer.labels(for: "ab")) },
+                                                      steps: 2)
+        XCTAssertEqual(history.count, 2)
+        try NFKMLXWav2Vec2Bert.save(net, tokenizer: tokenizer, toDirectoryURL: tuned)
+        XCTAssertEqual(try NFKMLXWav2Vec2Bert.backend(directoryURL: tuned).backendIdentifier, NFKMLXWav2Vec2Bert.modelName)
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

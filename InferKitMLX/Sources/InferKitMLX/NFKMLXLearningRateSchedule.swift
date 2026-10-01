@@ -44,6 +44,15 @@ public struct NFKMLXLearningRateSchedule {
         }
     }
 
+    /// transformers' `get_linear_schedule_with_warmup`, the `Trainer`'s default: `k / warmupSteps` during the
+    /// warm-up, then a linear fall to zero at `steps`, `(steps − k) / (steps − warmupSteps)`.
+    public static func linearWithWarmup(steps: Int, warmupSteps: Int) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in
+            if step < warmupSteps { return Float(step) / Float(max(1, warmupSteps)) }
+            return max(0, Float(steps - step) / Float(max(1, steps - warmupSteps)))
+        }
+    }
+
     /// SAM 3's `InverseSquareRootParamScheduler`: a linear warm-up over `warmupSteps`, decay as
     /// `1 / √((k + timescale − warmupSteps) / timescale)` after it, and a linear cool-down over the
     /// last `cooldownSteps` of a run of `steps`.

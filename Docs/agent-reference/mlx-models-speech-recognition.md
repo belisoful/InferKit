@@ -251,6 +251,87 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   on `(audio, transcript)` pairs the way the shipped Whisper recipe does. The release is the unpacked `.nemo` (`model_weights.ckpt`
   through the native torch reader, `tokenizer.json` beside it); `nvidia/canary-1b-v2` (~6 GB `.nemo`),
   the `nemo` oracle env. `IK_VAL_CANARY`, `IK_PARITY_CANARY`.
+- `NFKMLXWav2Vec2` / `NFKMLXWav2Vec2Net` / `NFKMLXWav2Vec2Backend` (`@objc`) — **Wav2Vec2 and HuBERT**
+  (transformers `Wav2Vec2Model` / `HubertModel` and their `…ForCTC` heads, Meta, Apache-2.0), the
+  self-supervised speech encoders that read the raw 16 kHz waveform, in one configuration-driven network.
+  A strided convolutional feature encoder (seven layers, 320 samples a frame) feeds a feature projection,
+  a grouped convolutional position embedding (128 taps, 16 groups, weight-normalized, its trailing frame
+  dropped), and a transformer encoder that is post-norm in the base releases and pre-norm ("stable layer
+  norm", a final layer norm after the stack) in the large ones. The base releases group-normalize the
+  first convolution alone; the large ones layer-normalize every convolution and carry biases. HuBERT is
+  the same network under a `hubert.` prefix. A CTC release adds `lm_head` over a 32-character vocabulary
+  (`Wav2Vec2CTCTokenizer`: the pad token is the blank, `|` the word delimiter). **At reference parity on
+  every release measured, each against its own record** (`run_reference.py wav2vec2`, float32, eager
+  attention, the validation clip through the release's own `Wav2Vec2FeatureExtractor`): the
+  normalization within 4.8e-7, every seam at 0.99999999 or better, and the last hidden state at
+  0.999999995267 (`wav2vec2-base-960h`), 0.999999999994 (`wav2vec2-base`), 0.999999999840
+  (`wav2vec2-large-960h`), 0.999999999968 (`xls-r-300m`), 0.999999992094 (`xls-r-1b`), 0.999999999997
+  (`hubert-base-ls960`), 0.999999998048 (`hubert-large-ll60k`), and 0.999999997454
+  (`hubert-large-ls960-ft`). The CTC releases' logits read 0.9999999990 to 0.99999999999 with every
+  greedy token equal, and the backend transcribes the clip as each release does: "THE QUICK BROWN FOX
+  JUMPS OVER THE LAZY DOG" from base-960h, "THEQUICK …" from large-960h, "EQUICK …" from
+  hubert-large-ls960-ft (the releases' own readings of the clip's start). Several facts are load-bearing.
+  The position convolution keeps its weight-norm gain and direction as parameters (`weight_g`,
+  `weight_v`), read from either spelling the releases use, because a fine-tune trains them rather than
+  the product. `masked_spec_embed` is optional at load: base-960h does not ship it. The releases store
+  `pytorch_model.bin` except base-960h and hubert-xlarge-ls960-ft, and the native torch reader loads
+  them directly. **The GPU gradient of a convolution wider than 16 taps is wrong in mlx 0.32.2**
+  (`mlx-runtime-gotchas.md`), so the position convolution sums eight 16-tap slices; its forward is the
+  same, and without the slices the feature projection's first-step gradient read 0.997.
+  **Customization ships at `full`**, the reference's `run_speech_recognition_ctc.py` (the copy shipped
+  beside `facebook/wav2vec2-xls-r-2b`): `NFKMLXWav2Vec2.network(directoryURL:vocabulary:)` retargets the
+  head to a consumer's characters (`NFKMLXWav2Vec2Tokenizer(characters:)`), `fineTune` trains everything
+  but the frozen feature encoder under `NFKMLXWav2Vec2Objective` (`ctc_loss` over the float32
+  log-softmax, reduction mean) with SpecAugment's time masks (`NFKMLXSpecAugment`, the reference's span
+  rule), the Trainer's AdamW at 5e-5 with no weight decay, a linear decay, and clipping at 1.0, and
+  `save(_:tokenizer:toDirectoryURL:)` writes a directory the `@objc` factory loads. The script's 8-bit
+  optimizer states (bitsandbytes `Adam8bit`) are a CUDA memory saving and are not reproduced; the update
+  is Adam's. Measured against transformers' own `Wav2Vec2ForCTC` (`run_reference.py wav2vec2_loss`): the
+  loss within 1.2e-7 relative at both reductions, including a label set whose doubled letters block the
+  recursion's skip, its gradient at 0.99999999995, and the impossible alignment and its
+  `zero_infinity` form. Three recipe steps under the reference's recorded masks: every first-step
+  gradient at 0.99999997 or better, every parameter's movement at 0.9999 or better, and the step losses
+  within 6.2e-6, 2.0e-4, and 1.6e-4 of a float64 replay of the same steps, against the reference's own
+  float32 drift of 1.5e-5, 4.7e-5, and 3.2e-4. Adam's first steps move near-zero gradients by nearly the
+  full rate, so per-step drift is not monotone; the test holds each step to twice the reference's worst
+  drift. `IK_VAL_WAV2VEC2_*`, `IK_VAL_HUBERT_*`, `IK_PARITY_*` for each, `IK_PARITY_WAV2VEC2_LOSS`.
+- `NFKMLXWav2Vec2Bert` / `NFKMLXWav2Vec2BertNet` / `NFKMLXWav2Vec2BertBackend` (`@objc`) — **W2V-BERT 2.0**
+  (transformers `Wav2Vec2BertModel`, Meta, MIT), the 600M-parameter multilingual encoder behind Seamless.
+  It reads filterbanks, not the waveform: `SeamlessM4TFeatureExtractor`'s 80-bin Kaldi filterbank of the
+  waveform scaled to 16-bit range, each bin normalized over the utterance (sample variance), padded to an
+  even frame count with the release's padding value 1.0, and frames stacked in pairs (160 wide, 50 per
+  second), with a mask marking a stacked frame whose second half is padding. The encoder is 24 Conformer
+  layers: a half-step swish feed-forward, self-attention with a **clipped relative-key position table**
+  (`q · E[clamp(j − i, −64, 8)]` added to the scores, both scaled by `1/√d`), a convolution block (a
+  pointwise projection, a GLU, a causal depthwise convolution of 31 taps padded on the left only, a layer
+  norm, a swish, a pointwise projection), a second half-step feed-forward, and a final layer norm per
+  layer. Masked frames are zeroed before the encoder and before each depthwise convolution and excluded
+  as attention keys. **At reference parity on the release** (`run_reference.py w2v_bert`, float32, the
+  extractor's attention mask passed as the processor returns it): the filterbank within 1.9e-6 of the
+  extractor's, the stacked features within 4.8e-7, the projection 0.99999999999987, layers 0, 12, and 23
+  at 0.99999999999945, 0.99999999999645, and 0.99999999999744, and the output from this port's own
+  features 0.99999999999633. Two facts are load-bearing. The filterbank is computed in double precision
+  (`NFKKaldiFbank.logEnergiesInDoublePrecision`): the extractor's transform is NumPy's float64, and a
+  near-silent frame sits within float32 round-off of the log floor, where a float32 transform read 2.1
+  above it. The extractor pads to an even frame count, so a clip of 345 filterbank frames yields 173
+  stacked frames, the last one masked.
+  **Customization ships at `full`**, Hugging Face's W2V-BERT recipe ("Fine-Tune W2V2-Bert for low-resource
+  ASR"): `NFKMLXWav2Vec2Bert.network(directoryURL:vocabulary:)` adds the output adapter (`add_adapter`: one
+  layer that pools the residual and the attention input to half the frames through a stride-2 convolution
+  and a GLU, then a plain self-attention and a relu feed-forward) and a CTC head over the consumer's
+  characters, both initialized as `_init_weights` does; `fineTune` trains every parameter under the CTC
+  loss over the adapter's real frames, with the Trainer's AdamW at 5e-5, no weight decay, a 500-step
+  linear warm-up then a linear decay (`NFKMLXLearningRateSchedule.linearWithWarmup`), and clipping at 1.0;
+  `save(_:tokenizer:toDirectoryURL:)` writes a directory the factory loads. The recipe's own settings leave
+  `conformer_conv_dropout` and `final_dropout` at the release's 0.1, and it trains in fp16 over batches of
+  16 with two accumulation steps; the port runs without dropout at float32, one utterance a step. Measured
+  against transformers' own `Wav2Vec2BertForCTC` from the reference's adapter and head initialization
+  (`run_reference.py w2v_bert_loss`, the dropouts zeroed so the replay is deterministic): the loss over 86
+  pooled frames 5.2926073 vs 5.2926073 with its gradient at 0.99999999978, the adapted logits
+  0.9999999999948, three steps' losses within 1.2e-6 relative (5.2926073 / 3.6675189 / 3.2128937 vs
+  5.2926073 / 3.6675167 / 3.21289), every watched first-step gradient at 0.9999999987 or better and every
+  watched movement at 0.9999975 or better, and the warm-up schedule equal to transformers' at every sampled
+  step. `IK_VAL_W2V_BERT_2`, `IK_PARITY_W2V_BERT_2`, `IK_PARITY_W2V_BERT_LOSS`.
 - `NFKMLXPhi4MM` (`@objc`) / `NFKMLXPhi4MMBackend` (`@objc`) — **Phi-4-multimodal** (Microsoft, MIT)
   transcribes as one of its modes: audio alone runs the speech LoRA on its Phi-4-mini decoder over a
   Conformer speech tower with a T5 relative bias. At reference parity on the released weights (encoder

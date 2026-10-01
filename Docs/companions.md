@@ -879,6 +879,21 @@ models.
   BPE. At reference parity against NeMo's `EncDecMultiTaskModel`: the released model matches by shape
   across all 1475 base tensors and reproduces the encoder and decoder seams, and the backend transcribes
   the validation clip exactly.
+- **`NFKMLXWav2Vec2`** — Wav2Vec2 and HuBERT (`facebook/wav2vec2-*`, `facebook/hubert-*`, Meta,
+  Apache-2.0), the self-supervised speech encoders that read the raw waveform: a strided convolutional
+  feature encoder, a convolutional position embedding, and a post-norm (base) or pre-norm (large)
+  transformer. `NFKMLXWav2Vec2.backend(directoryURL:)` (`backendWithDirectoryURL:error:`) and the download
+  factories read `NFKInputAudio`; a CTC release (`-960h`, `-ls960-ft`) returns the transcription under
+  `NFKOutputText`, and every release a mean-pooled `NFKOutputEmbedding`. At reference parity against
+  transformers on every released size measured, each against its own record, with the CTC releases'
+  tokens and transcriptions exact. Customization ships: a CTC fine-tune retargeted to a consumer's own
+  characters, the reference script's frozen feature encoder and SpecAugment time masks, measured against
+  transformers' own loss and steps.
+- **`NFKMLXWav2Vec2Bert`** — W2V-BERT 2.0 (`facebook/w2v-bert-2.0`, Meta, MIT), the 600M multilingual
+  Conformer encoder behind Seamless, reading SeamlessM4T's stacked Kaldi filterbanks. The backend returns
+  a mean-pooled `NFKOutputEmbedding` from the release and a transcription from a CTC fine-tune. At
+  reference parity against transformers, the filterbank included. Customization ships as Hugging Face's
+  W2V-BERT recipe: the output adapter and a CTC head added, every parameter trained.
 - **`NFKMLXVideoBackend`** — the first backend that produces video: an `NFKVideoAsset` in, every frame
   through a whole-sequence transform, a new clip out through `NFKMLXVideoFile` (AVFoundation).
   `NFKMLXRIFE.clipBackend` doubles a clip's frame rate and `NFKMLXVideoSR.clipBackend` upscales one.

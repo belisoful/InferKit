@@ -354,6 +354,10 @@ limits.
 - ``NFKMLXVoxtralBackend``
 - ``NFKMLXCanary``
 - ``NFKMLXCanaryBackend``
+- ``NFKMLXWav2Vec2``
+- ``NFKMLXWav2Vec2Backend``
+- ``NFKMLXWav2Vec2Bert``
+- ``NFKMLXWav2Vec2BertBackend``
 - ``NFKMLXVAD``
 - ``NFKMLXSileroVAD``
 - ``NFKMLXAudioTagger``
@@ -482,6 +486,15 @@ limits.
 - ``NFKMLXVJEPA2Objective``
 - ``NFKMLXVJEPA2Trainable``
 - ``NFKMLXVJEPA2Processor``
+- ``NFKMLXWav2Vec2Net``
+- ``NFKMLXWav2Vec2Objective``
+- ``NFKMLXWav2Vec2Trainable``
+- ``NFKMLXWav2Vec2Tokenizer``
+- ``NFKMLXWav2Vec2Processor``
+- ``NFKMLXSpecAugment``
+- ``NFKMLXWav2Vec2BertNet``
+- ``NFKMLXWav2Vec2BertTrainable``
+- ``NFKMLXWav2Vec2BertProcessor``
 - ``NFKMLXVGG16Features``
 - ``NFKMLXCLIPNet``
 - ``NFKMLXCLIPProbe``
