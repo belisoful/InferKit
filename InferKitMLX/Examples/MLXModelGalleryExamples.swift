@@ -39,6 +39,8 @@ final class MLXModelGalleryExamples: XCTestCase {
         // AdaIN stylizes with any style image rather than a baked-in style.
         let adain = try NFKMLXAdaIN.backend(encoderURL: nil, decoderURL: nil)
         let colorizer = try NFKMLXColorizer.backend(weightsURL: nil)
+        // The siggraph17 colorizer regresses the color channels directly where eccv16 classifies them.
+        let siggraphColorizer = try NFKMLXSiggraphColorizer.backend(weightsURL: nil)
         // DDColor is the modern colorizer: a ConvNeXt encoder under learned color queries.
         let ddcolor = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: nil)
         let codeFormer = try NFKMLXCodeFormer.backend(weightsURL: nil)
@@ -50,6 +52,7 @@ final class MLXModelGalleryExamples: XCTestCase {
         }
         XCTAssertEqual(adain.backendIdentifier, "adain")
         XCTAssertEqual(ddcolor.backendIdentifier, "ddcolor")
+        XCTAssertEqual(siggraphColorizer.backendIdentifier, "colorizer-siggraph17")
 
         // Every released SwinIR and NAFNet fits its own variant: the lightweight ×3 / ×4, the classical
         // ×2, the real-world ×4 (nearest-neighbor tail; the large one with the 3-conv residual), and
@@ -133,9 +136,12 @@ final class MLXModelGalleryExamples: XCTestCase {
         let segformer = try NFKMLXSegFormer.backend(weightsURL: nil)
         let deeplab = try NFKMLXDeepLab.backend(weightsURL: nil)
         let bisenet = try NFKMLXBiSeNet.backend(weightsURL: nil)
-        for backend in [segformer, deeplab, bisenet] {
+        // BiSeNetV2 replaces the ResNet-18 context path with a detail branch and a semantic branch.
+        let bisenetV2 = try NFKMLXBiSeNetV2.backend(weightsURL: nil)
+        for backend in [segformer, deeplab, bisenet, bisenetV2] {
             XCTAssertTrue(backend.isReady)
         }
+        XCTAssertEqual(bisenetV2.backendIdentifier, "bisenet-v2")
         // Recover a class index from the grayscale label map as round(gray · (classCount − 1)).
         let result = try bisenet.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "label map")
@@ -179,6 +185,17 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(rtdetrSmall.backendIdentifier, "rtdetr-r18vd")
         let rfdetrNano = try NFKMLXRFDetr.backend(variant: .nano, weightsURL: nil, labels: nil)
         XCTAssertEqual(rfdetrNano.backendIdentifier, "rf-detr-nano")
+
+        // RF-DETR segmentation: the detector's instances, and their combined mask under NFKOutputMask.
+        let segmenter = try NFKMLXRFDetrSegmentation.backend(variant: .nano, weightsURL: nil, labels: nil)
+        XCTAssertEqual(segmenter.backendIdentifier, "rf-detr-seg")
+        let segmented = try segmenter.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(segmented.detections, "detections (possibly empty)")
+        // Each instance's own mask comes from the network: [K, h, w] probabilities at the mask resolution,
+        // one for each detection, in the same order.
+        let net = NFKMLXRFDetrSegmentationNet(.segNano)
+        let (found, masks) = net.segment(try NFKMLXTrainingData.tensor(Self.solid(64)), labels: nil)
+        XCTAssertEqual(masks.dim(0), found.count)
 
         // Pose returns NFKKeypoint joints under NFKOutputPose; positions are normalized 0…1.
         let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: nil)
@@ -623,11 +640,14 @@ final class MLXModelGalleryExamples: XCTestCase {
         try requireMLXRuntime()
         // RIFE / RAFT take two frames under frame0 / frame1; VideoSR upscales single frames or a clip.
         let rife = try NFKMLXRIFE.backend(weightsURL: nil)
+        // RIFE v4 is the later release, conditioned on a timestep; the backend asks for the midpoint.
+        let rifeV4 = try NFKMLXRIFEv4.backend(weightsURL: nil)
         let raft = try NFKMLXRAFT.backend(weightsURL: nil)
         let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)
-        for backend in [rife, raft, videoSR] {
+        for backend in [rife, rifeV4, raft, videoSR] {
             XCTAssertTrue(backend.isReady)
         }
+        XCTAssertEqual(rifeV4.backendIdentifier, "rife-v4")
         let result = try videoSR.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(16)]))
         XCTAssertNotNil(result.output(forKey: NFKOutputImage), "×4 upscaled frame")
 

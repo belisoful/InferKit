@@ -2012,6 +2012,28 @@ let found = sam3.detect(image: plate, tokens: ids, valid: valid)
 let keep = (0 ..< found.logits.dim(1)).filter { found.logits[0, $0].item(Float.self) > 0 }
 ```
 
+### RF-DETR instance segmentation (`NFKMLXRFDetrSegmentation`, a shipped MLX model)
+
+`NFKMLXRFDetrSegmentation` adds a mask head to the RF-DETR detector. The image goes under
+`NFKInputImage`. The instances come back under `NFKOutputDetections`, and the per-pixel maximum over
+their masks under `NFKOutputMask`. As in the detector, no non-max suppression runs.
+
+```swift
+let segmenter = try NFKMLXRFDetrSegmentation.backend(variant: .nano, weightsURL: checkpointURL, labels: cocoLabels)
+let result = try segmenter.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: photo]))
+let instances = result.detections                        // [NFKDetection]
+let foreground = result.output(forKey: NFKOutputMask)    // every instance's mask, combined
+
+// Each instance's own mask comes from the network: [K, h, w] probabilities at the mask resolution,
+// one for each detection, in the same order.
+let net = NFKMLXRFDetrSegmentationNet(.segNano)
+try NFKMLXRFDetr.loadWeights(into: net, from: checkpointURL)
+let (found, masks) = net.segment(try NFKMLXTrainingData.tensor(photo), labels: cocoLabels)
+```
+
+Every released `Roboflow/rf-detr-seg-*` size is a variant, `.nano` through `.extraExtraLarge`. A
+checkpoint fits only its own size.
+
 ### Arbitrary style transfer (`NFKMLXAdaIN`, a shipped MLX model)
 
 `NFKMLXAdaIN` stylizes a photograph with any style image, where `NFKMLXStyleTransfer` bakes one style
@@ -3328,6 +3350,7 @@ let lowLight2  = try NFKMLXZeroDCEPlus.backend(weightsURL: nil)                 
 let stylizer   = try NFKMLXStyleTransfer.backend(weightsURL: nil)              // "fast-style-transfer"
 let adain      = try NFKMLXAdaIN.backend(encoderURL: nil, decoderURL: nil)      // "adain"; style image under NFKInputControl
 let colorizer  = try NFKMLXColorizer.backend(weightsURL: nil)                  // "colorizer-eccv16"
+let siggraph   = try NFKMLXSiggraphColorizer.backend(weightsURL: nil)          // "colorizer-siggraph17"; regresses ab where eccv16 classifies it
 let ddcolor    = try NFKMLXDDColor.backend(variant: .modelscope, weightsURL: nil)  // "ddcolor"; .paper / .artistic
 let faceRestore = try NFKMLXCodeFormer.backend(weightsURL: nil)                // "codeformer"
 
@@ -3346,10 +3369,14 @@ let sam2     = try NFKMLXSAM2.backend(variant: .tiny, release: .sam21, weightsUR
 let segformer = try NFKMLXSegFormer.backend(weightsURL: nil)                   // "segformer-b0"
 let deeplab   = try NFKMLXDeepLab.backend(weightsURL: nil)                     // "deeplabv3"
 let bisenet   = try NFKMLXBiSeNet.backend(weightsURL: nil)                     // "bisenet"
+let bisenetV2 = try NFKMLXBiSeNetV2.backend(weightsURL: nil)                   // "bisenet-v2"; detail and semantic branches
 
 // Detection & pose (new core value types)
 let yolo = try NFKMLXYOLO.backend(weightsURL: nil, labels: cocoLabels)         // result.detections : [NFKDetection]
 let yolo26 = try NFKMLXYOLOGenerations.backend(release: .v26Nano, weightsURL: nil, labels: cocoLabels)   // "yolo26n"; every v9/v10/11/12/26 size is a release
+let rtdetr = try NFKMLXRTDetr.backend(weightsURL: nil, labels: cocoLabels)     // "rtdetr" (r50vd), no NMS; .r18vd / .r34vd / .r101vd and the .v2 releases
+let rfdetr = try NFKMLXRFDetr.backend(weightsURL: nil, labels: cocoLabels)     // "rf-detr" (base), no NMS; .nano / .small / .medium / .large
+let segmenter = try NFKMLXRFDetrSegmentation.backend(variant: .nano, weightsURL: nil, labels: cocoLabels)  // "rf-detr-seg"; result.detections and their combined mask under NFKOutputMask
 let pose = try NFKMLXPose.backend(weightsURL: nil, jointNames: cocoJoints)     // result.pose : [NFKKeypoint]
 let vitPose = try NFKMLXVitPose.backend(variant: .base, weightsURL: nil, jointNames: cocoJoints)  // "vitpose-base"; .baseSimple is the simple decoder; DARK-refined [NFKKeypoint]
 
@@ -3358,6 +3385,7 @@ let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          /
 let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text); every release under NFKMLXSigLIP2Variant
 let taesd   = try NFKMLXTAESD.backend(weightsURL: nil)                         // tiny AE: image → latent → image (NFKMLXTAESD.encode/decode for previews)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"
+let rifeV4  = try NFKMLXRIFEv4.backend(weightsURL: nil)                        // "rife-v4"; frame0 + frame1 → the midpoint frame
 let cosmos  = try NFKMLXCosmosTokenizer.backend(variant: .discreteImage8x8, weightsURL: nil)  // image/clip → latent or tokens → reconstruction; "cosmos-tokenizer-di8x8" (one name per variant)
 let sam     = try NFKMLXSAM.backend(weightsURL: nil)                           // plate + point under NFKSAMPointKey; .vitB / .vitL / .vitH
 
