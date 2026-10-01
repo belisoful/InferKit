@@ -20,7 +20,7 @@ import InferKitMLX
 
 final class MLXCustomizationExamples: XCTestCase {
 
-    // Docs/examples.md: Retargeting SAM 2 onto a consumer's own subject
+    // Docs/examples.md: Retargeting a promptable segmenter to your own subject
     func testExampleRetargetingSAM2OnOwnMasks() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -48,7 +48,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(backend.isReady, "the fine-tuned checkpoint loads through the shipped factory")
     }
 
-    // Docs/examples.md: Adapting Qwen3-VL retrieval to a consumer's own corpus
+    // Docs/examples.md: Adapting retrieval to your own corpus
     func testExampleAdaptingQwen3VLRetrievalOnOwnPairs() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -97,7 +97,7 @@ final class MLXCustomizationExamples: XCTestCase {
         }
     }
 
-    // Docs/examples.md: Retargeting the Qwen3-VL reranker onto a consumer's own relevance
+    // Docs/examples.md: Adapting retrieval to your own corpus (the reranker's head)
     func testExampleRetargetingQwen3VLRerankerOnOwnLabels() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -119,7 +119,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertLessThan(history[history.count - 1], history[0], "the binary loss falls")
     }
 
-    // Docs/examples.md: Retargeting SAM 3's detector onto a consumer's own instances
+    // Docs/examples.md: Retargeting a text-prompted detector to your own instances
     func testExampleRetargetingSAM3OnOwnBoxes() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -174,7 +174,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(backend.backendIdentifier, NFKMLXZeroDCE.modelName)
     }
 
-    // Docs/examples.md: Adapting a Cosmos Tokenizer to your own footage
+    // Docs/examples.md: Adapting an image or video tokenizer to your own footage
     func testExampleAdaptingACosmosTokenizerToOwnFootage() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -337,7 +337,7 @@ final class MLXCustomizationExamples: XCTestCase {
         }
     }
 
-    // Docs/examples.md: Training a V-JEPA 2 probe on your own clips
+    // Docs/examples.md: Training a video classifier on your own clips
     func testExampleTrainingAVJEPA2ProbeOnOwnClips() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -373,7 +373,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(Set(classes?.map(\.label) ?? []), ["pour", "stir"])
     }
 
-    // Docs/examples.md: Teaching speech recognition your own vocabulary
+    // Docs/examples.md: Teaching speech recognition your own vocabulary (Wav2Vec2, HuBERT, W2V-BERT)
     func testExampleTeachingWav2Vec2OwnVocabulary() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -409,7 +409,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(try NFKMLXWav2Vec2.backend(directoryURL: tuned).transcribes)
     }
 
-    // Docs/examples.md: Teaching speech recognition your own vocabulary (the W2V-BERT recipe)
+    // Docs/examples.md: Teaching speech recognition your own vocabulary (Wav2Vec2, HuBERT, W2V-BERT), the W2V-BERT recipe
     func testExampleTeachingW2VBertOwnVocabulary() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -735,7 +735,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(result.classifications?.count, 2)
     }
 
-    // Docs/examples.md: A custom image classifier over SigLIP 2
+    // Docs/examples.md: A custom image classifier from a handful of photos (SigLIP 2)
     func testExampleSigLIP2ProbeClassifiesThroughABackend() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -759,7 +759,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(result.classifications?.count, 2)
     }
 
-    // Docs/examples.md: Adapting a text embedder to a consumer's own corpus
+    // Docs/examples.md: Adapting retrieval to your own corpus (the text embedders)
     func testExampleAdaptingATextEmbedderOnOwnPairs() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
@@ -1053,7 +1053,8 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // The networks that carry a dropout switch ship with it off, so a fine-tune is deterministic
         // unless the caller asks for the release's rates. They apply while training, frozen layers
-        // included, and never at inference.
+        // included, and never at inference. All-In-One, the MarbleNet VAD, DeepLabV3, Silero VAD, and
+        // the PANNs tagger build their references' dropout in instead.
         let net = try NFKMLXMarian.network(directoryURL: nil)
         net.dropout = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: release)
         XCTAssertEqual(net.dropout.dropout, 0.1)
