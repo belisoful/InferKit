@@ -494,8 +494,8 @@ backend(directoryURL:)
 backend(directoryURL:)
 // Gemma 2
 NFKMLXGemma2Net.load(directoryURL:)
-// DeepSeek V4 Flash / Pro
-// Swift API
+// DeepSeek V4.1 Flash, V4 Flash / Pro
+NFKMLXDeepSeek.backend(directoryURL:), backend(directoryURL:residency:), backend(directoryURL:paging:)
 // Codestral-Mamba (Mamba-2 SSM)
 NFKMLXMamba.backend(directoryURL:)
 // Granite 4.0-H (hybrid Mamba/attention, dense + MoE)
@@ -508,6 +508,31 @@ encoder(configuration:directory:)
 // chatTemplate request parameter
 // Constrained decoding
 // —
+```
+
+```objc
+// Qwen3 (dense), Qwen2, Llama, Qwen3-MoE, Qwen2-MoE, Mixtral, gpt-oss
+[NFKMLXLanguage backendWithDirectoryURL:dir error:&error]
+[NFKMLXLanguage backendWithDirectoryURL:dir draftDirectoryURL:draftDir error:&error]
+// Dense GGUF
+[NFKMLXLanguage backendWithGGUFURL:url error:&error]
+// Gemma 3 270M / 1B / 4B
+[NFKMLXGemma3 backendWithDirectoryURL:dir error:&error]
+// Gemma 3n E2B / E4B
+[NFKMLXGemma3n backendWithDirectoryURL:dir error:&error]
+// Gemma 4 E2B / E4B / 26B-A4B, 12B unified
+[NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:dir error:&error]
+// DeepSeek V4.1 Flash, V4 Flash / Pro
+[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir error:&error]
+[NFKMLXDeepSeek deepSeekBackendWithDirectoryURL:dir options:options error:&error]
+// Codestral-Mamba
+[NFKMLXMamba mambaBackendWithDirectoryURL:dir error:&error]
+// Granite 4.0-H
+[NFKMLXGraniteHybrid graniteBackendWithDirectoryURL:dir error:&error]
+// Nemotron Nano 2
+[NFKMLXNemotronH nemotronBackendWithDirectoryURL:dir error:&error]
+// Chat templates: the NFKMLXGenerationParameterKey.chatTemplate request parameter
+// Constrained decoding: NFKParameterJSONSchema, or the outputFormat / choices request parameters
 ```
 
 
@@ -534,6 +559,19 @@ NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
 // Fine-tuning
 // The release directory supplies its geometry from its config.json
 NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
+```
+
+```objc
+// OPUS-MT, by pair or from a release directory
+[NFKMLXMarian backendWithSourceLanguage:@"en" targetLanguage:@"de" cacheDirectoryURL:nil error:&error]
+[NFKMLXMarian backendWithDirectoryURL:dir error:&error]
+// M2M-100 418M / 1.2B, SMaLL-100
+[NFKMLXM2M100 backendWithVariant:NFKMLXM2M100VariantM418M directoryURL:dir error:&error]
+[NFKMLXM2M100 backendWithVariant:NFKMLXM2M100VariantM418M revision:nil cacheDirectoryURL:nil error:&error]
+// MADLAD-400 3B-MT, bfloat16
+[NFKMLXMADLAD backendWithDirectoryURL:dir halfPrecision:YES error:&error]
+// TranslateGemma, at the checkpoint's bfloat16
+[NFKMLXTranslateGemma backendWithDirectoryURL:dir precision:NFKMLXWeightPrecisionCheckpoint error:&error]
 ```
 
 ### Video
@@ -603,7 +641,6 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Canary-1B-v2 | ``NFKMLXCanary`` | ``NFKMLXCanaryNet`` | `NFKMLXCanaryConfiguration.v2` (biased FastConformer encoder + Transformer attention encoder-decoder) | `backend(directoryURL:)`; `register()` registers `canary-1b-v2` | ``NFKMLXCanaryBackend`` (audio → text; `src>tgt` translates) |
 | Wav2Vec2 / HuBERT | ``NFKMLXWav2Vec2`` | ``NFKMLXWav2Vec2Net`` | ``NFKMLXWav2Vec2Configuration`` read from the release's `config.json` (base post-norm, large pre-norm) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2Backend`` (audio → text from a CTC release, and an embedding) |
 | W2V-BERT 2.0 | ``NFKMLXWav2Vec2Bert`` | ``NFKMLXWav2Vec2BertNet`` | `NFKMLXWav2Vec2BertConfiguration.v2` (SeamlessM4T filterbanks + relative-key Conformer) | `backend(directoryURL:)` | ``NFKMLXWav2Vec2BertBackend`` (audio → embedding; text from a CTC fine-tune) |
-| Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on the VoiceEncoder (3×256), the S3 tokenizer (6×1280), and T3 (Llama 520M with llama3 rope); S3Gen flow + HiFT takes no configuration | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Demucs v2 | ``NFKMLXDemucs`` | `NFKMLXDemucsNet` | `NFKMLXDemucsConfiguration()` = music (stereo, depth 6, 4 stems, BLSTM, context 3) | `demucs` | ``NFKMLXDemucsBackend`` |
 | Speech denoiser | ``NFKMLXDenoiser`` | `NFKMLXDemucsNet` | ``NFKMLXDemucsConfiguration`` set to dns48 (mono, depth 5, 1 stem, causal, context 1) | `denoiser` | ``NFKMLXDenoiserBackend`` |
 | MP-SENet | ``NFKMLXMPSENet`` | TS-transformer (bidirectional-GRU FFN) over compressed magnitude + phase | `NFKMLXMPSENetConfiguration()` (fftSize 400, hop 100, 4 blocks) | `mpsenet`; `NFKMLXMPSENetFactory.backend(weightsURL:)` | ``NFKMLXMPSENetBackend`` |
@@ -651,8 +688,6 @@ let wav2vec2 = try NFKMLXWav2Vec2.backend(directoryURL: dir)
 // fine-tune: network(directoryURL:vocabulary:), fineTune(_:examples:steps:), save(_:tokenizer:toDirectoryURL:)
 // W2V-BERT 2.0 (a release directory; speech → features)
 let w2vBert = try NFKMLXWav2Vec2Bert.backend(directoryURL: dir)
-// Chatterbox (a release directory; nil voice = the built-in conds.pt)
-let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // .small / .medium / .largeV3 · …VariantSmall / …VariantMedium / …VariantLargeV3
 // Demucs v2
 let backend = try NFKMLXDemucs.backend(weightsURL: url)
@@ -741,8 +776,6 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 [NFKMLXWav2Vec2 backendWithDirectoryURL:dir error:&error]
 // W2V-BERT 2.0
 [NFKMLXWav2Vec2Bert backendWithDirectoryURL:dir error:&error]
-// Chatterbox
-[NFKMLXChatterbox chatterboxBackendWithDirectoryURL:dir voiceURL:voiceWAV error:&error]
 // Demucs v2
 [NFKMLXDemucs backendWithWeightsURL:url error:&error]
 // Speech denoiser
@@ -780,6 +813,7 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 | FastSpeech2 conformer + paired HiFi-GAN | ``NFKMLXVoice`` | ``NFKMLXFastSpeech2Net``, `NFKMLXHiFiGANNet` | `NFKMLXFastSpeech2Configuration()` = espnet LJSpeech; `NFKMLXHiFiGANConfiguration()` = UNIVERSAL_V1 geometry (the paired `vocoder.` weights) | `fastspeech2-voice`; `makeSpeechBackend(phonemize:)` | ``NFKMLXSpeechBackend`` |
 | HiFi-GAN | ``NFKMLXHiFiGAN`` | `NFKMLXHiFiGANNet` | `NFKMLXHiFiGANConfiguration()` (80 mel bins, 512 channels, rates 8/8/2/2) | — | mel → waveform object |
 | Kokoro-82M | ``NFKMLXKokoro`` | ``NFKMLXKokoroNet`` | `NFKMLXKokoroConfiguration.v1`; a voice from `loadVoice` | `backend(directoryURL:voiceName:)` | ``NFKMLXSpeechBackend`` (phonemes in) |
+| Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on the VoiceEncoder (3×256), the S3 tokenizer (6×1280), and T3 (Llama 520M with llama3 rope); S3Gen flow + HiFT takes no configuration | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Phonemizers | ``NFKMLXNeuralG2P``, ``NFKMLXEspeakPhonemizer`` | `NFKMLXG2PNet` | ``NFKMLXG2PConfiguration`` | — | ``NFKMLXPhonemizer`` protocol |
 | Hand-chained TTS | ``NFKMLXTTS`` | `NFKMLXAcousticNet` + `NFKMLXHiFiGANNet` | ``NFKMLXAcousticConfiguration`` | `makeSpeechBackend()` | ``NFKMLXSpeechBackend`` |
 | MiniMax Music 3 | ``NFKMLXMusic3`` | `NFKMusic3VocoderNet`, `NFKMusic3DepthDecoderNet`, `NFKMusic3ConditionEncoderNet`, `NFKMusic3DiTNet`, ``NFKMLXLanguageNet`` | the release directory (bf16 LM, float32 DiT); `quantizeRelease(at:to:bits:transformerBits:groupSize:)` for the 7.7 GiB copy | `minimax-music3`; `backend(directoryURL:)` | ``NFKMLXMusicBackend`` |
@@ -792,6 +826,8 @@ let voice = try NFKMLXVoice.voice(acousticURL: acousticURL, vocoderURL: vocoderU
 // no standalone public entry; the net is built and loaded inside NFKMLXVoice.voice(acousticURL:vocoderURL:vocabularyURL:) and NFKMLXTTS.loadWeights(acousticURL:vocoderURL:)
 // Kokoro-82M
 let backend = try NFKMLXKokoro.backend(directoryURL: dir, voiceName: "af_heart")
+// Chatterbox (a release directory; nil voice = the built-in conds.pt)
+let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // Phonemizers
 let g2p = NFKMLXNeuralG2P(); try g2p.loadWeights(from: url)
 // NFKMLXEspeakPhonemizer() when isInstalled; Swift only
@@ -806,6 +842,8 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 ```objc
 // Kokoro-82M
 [NFKMLXKokoro kokoroBackendWithDirectoryURL:dir voiceName:@"af_heart" error:&error]
+// Chatterbox
+[NFKMLXChatterbox chatterboxBackendWithDirectoryURL:dir voiceURL:voiceWAV error:&error]
 // MiniMax Music 3
 [NFKMLXMusic3 backendWithDirectoryURL:dir error:&error]
 ```
@@ -880,6 +918,11 @@ let dit = NFKMLXLTX2TransformerNet(.ltx25); try NFKMLXLTX2TransformerNet.loadWei
 let animate = NFKMLXWanAnimate.makeNet(.base)
 let cache = NFKMLXWanAnimateKVCache(layerCount: 40)
 // Swift only — NFKMLXWanAnimateConfiguration is a Swift struct
+
+// Qwen-Image 2.1 (text-to-image)
+let qwenImage = try NFKMLXQwenImageGenerator.generator(directoryURL: releaseDirectory, residency: .automatic)
+let picture = try qwenImage.image(forPrompt: "a red fox in the snow", width: 1024, height: 1024, seed: 0)
+// ObjC: [NFKMLXQwenImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&e], then imageForPrompt:negativePrompt:width:height:seed:error:
 
 // Wan
 let dit = NFKMLXWanTransformerNet(.base); let vae = NFKMLXWanVideoVAENet(.wan22)
