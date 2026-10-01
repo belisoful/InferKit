@@ -18253,6 +18253,103 @@ CHECKPOINT_MODELS["wav2vec2_loss"] = run_wav2vec2_loss
 
 
 
+def _timesfm_series():
+    """The TimesFM oracle's inputs, one per forecasting path: a trend plus two seasons with noise (300
+    steps, signed), a positive count-like series (700 steps), a long series the context truncates (1500),
+    a short series with leading and interior NaNs (50), and a constant series (the zero-deviation path)."""
+    rng = np.random.default_rng(0)
+    t = np.arange(1500, dtype=np.float64)
+    seasonal = 0.02 * t[:300] + np.sin(2 * np.pi * t[:300] / 24) + 0.5 * np.sin(2 * np.pi * t[:300] / 7)
+    counts = np.maximum(0, 20 + 8 * np.sin(2 * np.pi * t[:700] / 50) + rng.normal(0, 2, 700)).round()
+    long = 100 + 0.05 * t + 5 * np.sin(2 * np.pi * t / 96) + rng.normal(0, 1, 1500)
+    gappy = np.sin(t[:50] / 4) * 3 + 1
+    gappy[:4] = np.nan
+    gappy[[10, 11, 30]] = np.nan
+    return {"seasonal": (seasonal + rng.normal(0, 0.1, 300)).astype(np.float32), "counts": counts.astype(np.float32),
+            "long": long.astype(np.float32), "gappy": gappy.astype(np.float32),
+            "constant": np.full(80, 3.5, dtype=np.float32)}
+
+
+def run_timesfm(image, checkpoint):
+    """TimesFM 2.5 (`google/timesfm-2.5-200m-pytorch`) on the RELEASED directory (`--checkpoint`), from the
+    official `google-research/timesfm` package (`IK_TIMESFM_SRC`, the commit the manifest pins):
+    `TimesFM_2p5_200M_torch.load_checkpoint` with `torch_compile=False`, float32 on the CPU.
+
+    Forecasts under two compiled configurations: the release card's (`max_context` 1024, `max_horizon`
+    384, `normalize_inputs`, `use_continuous_quantile_head`, `force_flip_invariance`, `infer_is_positive`,
+    `fix_quantile_crossing` all on; recorded as `on.<series>` `[horizon, 10]`) and every flag off
+    (`max_context` 512, `max_horizon` 384; `off.<series>`). Horizons: 64 for `seasonal`, 300 for `counts`
+    and `long` (two autoregressive steps past the first 128), 24 for `gappy`, 16 for `constant`. The
+    inputs are recorded as `series.<name>` (NaNs included).
+
+    Seams, from the module's first forward of the card-configuration `seasonal` forecast (the prefill of
+    its unflipped decode): the normalized patches and their masks (`seam.inputs`, `seam.masks`), the
+    tokenizer's embeddings, the first and last transformer layers' outputs, and the point and quantile
+    projections, each over every patch (`seam.*`, masked patches included). Runs under the `qwenimage`
+    oracle env (torch).
+    """
+    source = os.environ.get("IK_TIMESFM_SRC", os.path.expanduser(VALIDATION_ROOT + "/reference-sources/timesfm/src"))
+    sys.path.insert(0, source)
+    import timesfm
+
+    model = timesfm.TimesFM_2p5_200M_torch(torch_compile=False)
+    model.load_checkpoint(checkpoint)
+    module = model.model
+    series = _timesfm_series()
+    horizons = {"seasonal": 64, "counts": 300, "long": 300, "gappy": 24, "constant": 16}
+    extra = {f"series.{name}": torch.from_numpy(values.copy()) for name, values in series.items()}
+
+    seams = {}
+    hooks = []
+
+    def capture(name):
+        def hook(module_, inputs, output):
+            if name not in seams:
+                value = output[0] if isinstance(output, tuple) else output
+                seams[name] = value.detach()[0].clone()
+        return hook
+
+    def capture_inputs(module_, args):
+        if "inputs" not in seams:
+            seams["inputs"] = args[0].detach()[0].clone()
+            seams["masks"] = args[1].detach()[0].to(torch.int64).clone()
+
+    hooks.append(module.register_forward_pre_hook(capture_inputs))
+    hooks.append(module.tokenizer.register_forward_hook(capture("embeddings")))
+    hooks.append(module.stacked_xf[0].register_forward_hook(capture("layer0")))
+    hooks.append(module.stacked_xf[-1].register_forward_hook(capture("layer_last")))
+    hooks.append(module.output_projection_point.register_forward_hook(capture("point")))
+    hooks.append(module.output_projection_quantiles.register_forward_hook(capture("quantiles")))
+
+    configurations = {
+        "on": timesfm.ForecastConfig(max_context=1024, max_horizon=384, normalize_inputs=True,
+                                     use_continuous_quantile_head=True, force_flip_invariance=True,
+                                     infer_is_positive=True, fix_quantile_crossing=True),
+        "off": timesfm.ForecastConfig(max_context=512, max_horizon=384, normalize_inputs=False,
+                                      use_continuous_quantile_head=False, force_flip_invariance=False,
+                                      infer_is_positive=False, fix_quantile_crossing=False),
+    }
+    for tag, configuration in configurations.items():
+        model.compile(configuration)
+        for name, values in series.items():
+            with torch.no_grad():
+                _, quantile_forecast = model.forecast(horizon=horizons[name], inputs=[values.copy()])
+            extra[f"{tag}.{name}"] = torch.from_numpy(np.asarray(quantile_forecast[0], dtype=np.float32))
+            if tag == "on" and name == "seasonal":
+                for hook in hooks:
+                    hook.remove()
+    for name, value in seams.items():
+        extra[f"seam.{name}"] = value.contiguous()
+    extra["horizons"] = torch.tensor([horizons[name] for name in series], dtype=torch.int64)
+    print({name: tuple(extra[f"on.{name}"].shape) for name in series}, "seams", {k: tuple(v.shape) for k, v in seams.items()})
+    globals()["_extra"] = extra
+    return extra["on.seasonal"].clone()
+
+
+CHECKPOINT_MODELS["timesfm"] = run_timesfm
+
+
+
 def run_w2v_bert(image, checkpoint):
     """W2V-BERT 2.0 (`facebook/w2v-bert-2.0`) on the RELEASED directory (`--checkpoint`), from transformers'
     own `Wav2Vec2BertModel` at float32 and its `SeamlessM4TFeatureExtractor`. The clip is the validation
@@ -18293,6 +18390,115 @@ def run_w2v_bert(image, checkpoint):
 
 
 CHECKPOINT_MODELS["w2v_bert"] = run_w2v_bert
+
+
+
+def run_timesfm_loss(image, checkpoint):
+    """TimesFM 2.5's fine-tuning objective and three recipe steps on the transformers release
+    (`--checkpoint`, `google/timesfm-2.5-200m-transformers`), from transformers' own
+    `TimesFm2_5ModelForPrediction` at float32 and the settings of google-research/timesfm's
+    `timesfm-forecasting/examples/finetuning/finetune_lora.py`.
+
+    The objective on identical tensors: `mse_loss` of the median channel plus `_quantile_loss` over the
+    other nine channels, as the model's forward combines them, on a random forecast `[4, 13, 10]` and target
+    `[4, 13]` (`objective.*`).
+
+    The model's loss: four 64-step context windows cut from the `timesfm` oracle's seasonal and count
+    series, each with the 13 values that follow (`windows.context`, `windows.target`), scored by
+    `model(past_values=…, future_values=…, forecast_context_len=64)` (`loss`).
+
+    The steps: LoRA of rank 4 and alpha 8 on every `nn.Linear` (PEFT's `all-linear` on this model, which
+    has no output embedding to exclude), written out here as PEFT computes it (`W x + 2 · B(A x)`, A
+    kaiming-uniform with a = √5 under seed 0, B zero, no dropout so the steps are deterministic), then
+    `torch.optim.AdamW` at 1e-4 with weight decay 0.01 over the adapters, `CosineAnnealingLR` over the 3
+    steps, and `clip_grad_norm_` at 1.0. Records every adapter's initial A (`lora_a.<module>`), each step's
+    loss, the first step's gradient of a watched set of B matrices, and every step's movement of the
+    watched A and B matrices. Runs under the `qwenimage` oracle env (transformers 5).
+    """
+    import math
+    from transformers import TimesFm2_5ModelForPrediction
+
+    model = TimesFm2_5ModelForPrediction.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+
+    rng = torch.Generator().manual_seed(1)
+    forecast = torch.randn(4, 13, 10, generator=rng)
+    target = torch.randn(4, 13, generator=rng)
+    decode_index = model.config.decode_index
+    mse = torch.nn.functional.mse_loss(forecast[:, :, decode_index], target)
+    indices = [i for i in range(forecast.shape[-1]) if i != decode_index]
+    objective = mse + model._quantile_loss(forecast[..., indices], target)
+    extra = {"objective.forecast": forecast, "objective.target": target, "objective.loss": objective.reshape(1)}
+
+    series = _timesfm_series()
+    windows = [series["seasonal"][100:164], series["seasonal"][200:264], series["counts"][300:364],
+               series["counts"][500:564]]
+    targets = [series["seasonal"][164:177], series["seasonal"][264:277], series["counts"][364:377],
+               series["counts"][564:577]]
+    context = torch.from_numpy(np.stack(windows)).float()
+    future = torch.from_numpy(np.stack(targets)).float()
+    extra["windows.context"] = context
+    extra["windows.target"] = future
+    with torch.no_grad():
+        extra["loss"] = model(past_values=context, future_values=future, forecast_context_len=64).loss.reshape(1)
+
+    class LoRA(torch.nn.Module):
+        def __init__(self, base, rank=4, alpha=8):
+            super().__init__()
+            self.base = base
+            self.lora_A = torch.nn.Parameter(torch.empty(rank, base.in_features))
+            self.lora_B = torch.nn.Parameter(torch.zeros(base.out_features, rank))
+            torch.nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            self.scale = alpha / rank
+
+        @property
+        def weight(self):
+            return self.base.weight
+
+        def forward(self, x):
+            return self.base(x) + (x @ self.lora_A.T @ self.lora_B.T) * self.scale
+
+    torch.manual_seed(0)
+    names = [name for name, module in model.named_modules() if isinstance(module, torch.nn.Linear)]
+    adapters = {}
+    for name in names:
+        parent_name, _, child = name.rpartition(".")
+        parent = model.get_submodule(parent_name) if parent_name else model
+        adapter = LoRA(getattr(parent, child))
+        setattr(parent, child, adapter)
+        adapters[name] = adapter
+        extra[f"lora_a.{name}"] = adapter.lora_A.detach().clone()
+    watched = ["model.layers.0.self_attn.q_proj", "model.layers.19.mlp.fc2", "model.input_ff_layer.input_layer",
+               "output_projection_point.output_layer", "output_projection_quantiles.residual_layer"]
+    trainable = [p for a in adapters.values() for p in (a.lora_A, a.lora_B)]
+    optimizer = torch.optim.AdamW(trainable, lr=1e-4, weight_decay=0.01)
+    schedule = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=3)
+    start = {name: (adapters[name].lora_A.detach().clone(), adapters[name].lora_B.detach().clone()) for name in watched}
+    losses = []
+    model.train()
+    for step in range(3):
+        loss = model(past_values=context, future_values=future, forecast_context_len=64).loss
+        loss.backward()
+        losses.append(loss.item())
+        if step == 0:
+            for name in watched:
+                extra[f"step_grad_b.{name}"] = adapters[name].lora_B.grad.detach().clone()
+        torch.nn.utils.clip_grad_norm_(trainable, max_norm=1.0)
+        optimizer.step()
+        optimizer.zero_grad()
+        schedule.step()
+        for name in watched:
+            extra[f"step{step}_delta_a.{name}"] = adapters[name].lora_A.detach() - start[name][0]
+            extra[f"step{step}_delta_b.{name}"] = adapters[name].lora_B.detach() - start[name][1]
+    extra["step_losses"] = torch.tensor(losses, dtype=torch.float64)
+    extra["adapted_count"] = torch.tensor([len(names)], dtype=torch.int64)
+    print(f"objective {objective.item():.6f}; loss {extra['loss'].item():.6f}; steps {losses}; {len(names)} adapters")
+    globals()["_extra"] = extra
+    return extra["loss"].clone()
+
+
+CHECKPOINT_MODELS["timesfm_loss"] = run_timesfm_loss
 
 
 

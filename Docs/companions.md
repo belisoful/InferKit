@@ -236,6 +236,15 @@ weights:
   per quantile level (0.1 … 0.9) and `medianForecastForContext:horizon:` the point forecast. At reference
   parity against the `chronos` package's own `ChronosBoltPipeline`, every seam ~1.0 and all nine quantile
   rows matching.
+- **`NFKMLXTimesFM`** — TimesFM 2.5 (`google/timesfm-2.5-200m-pytorch`, Google, Apache-2.0), a
+  decoder-only forecaster over 32-step patches with running per-patch normalization, a ten-channel
+  quantile head, and a 1024-step continuous quantile head; horizons past 128 steps decode
+  autoregressively. `forecast(context:horizon:options:)` and `forecastForContext:horizon:options:error:`
+  take the official forecasting flags (`NFKMLXTimesFMForecastOptions`: context length, normalization, flip
+  invariance, the continuous head, quantile-crossing repair, nonnegativity). At reference parity against
+  the official `google-research/timesfm` package on every seam and on forecasts under both flag settings;
+  the transformers-format release loads the identical network. Customization ships as the official LoRA
+  fine-tune, measured against transformers' own loss and steps.
 - **`NFKMLXQwen3VLEmbedder`** and **`NFKMLXQwen3VLReranker`** — multimodal retrieval
   (`Qwen3-VL-Embedding-2B`, `Qwen3-VL-Reranker-2B`): a text, an image, or both embed into one space,
   and a reranker reads a query and a document together whichever of them carries the image. An

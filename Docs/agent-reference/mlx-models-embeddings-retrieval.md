@@ -451,3 +451,48 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   12 + 12 layers, 16-sample patches, 64-step horizon). Customization (a pinball-loss regression fine-tune
   on a consumer's own series) is implementable on this small model and is NOT yet shipped; it is the
   remaining half per the customization-is-part-of-parity rule, named here rather than claimed done.
+- `NFKMLXTimesFM` (`@objc`) / `NFKMLXTimesFMNet` — **TimesFM 2.5** (`google/timesfm-2.5-200m-pytorch`,
+  Google, Apache-2.0), a second time-series forecaster, a standalone object like Chronos-Bolt. A
+  decoder-only transformer over 32-step patches: each patch is normalized by the running mean and
+  population deviation of every unpadded value so far (Welford's merge, `update_running_stats`),
+  concatenated with its padding mask, embedded by a swish residual block, and passed through 20 causal
+  layers. A layer is RMS-normed before and after its attention and its swish feed-forward; the attention
+  rotates queries and keys by position (timescales `10000^(2i/d)`, halves paired) BEFORE their RMS norms,
+  and scales queries only by the learned `1.442695041/√d · softplus(per_dim_scale)`. The last patch's
+  output projects to a 128-step forecast of ten channels (the mean, then the 0.1 … 0.9 quantiles) and to a
+  1024-step continuous quantile spread, each restored by that patch's statistics. Horizons past 128
+  decode autoregressively, 128 steps at a time over a key-value cache, the running statistics continuing
+  over the forecast. `forecast(context:horizon:options:)` reproduces the official
+  `TimesFM_2p5_200M_torch.compile` flags (`NFKMLXTimesFMForecastOptions`, the release card's settings by
+  default): `max_context` truncation and zero padding, global normalization by the padded context's mean
+  and sample deviation, flip invariance (the negated series' forecast, negated, averaged in), the
+  continuous quantile head, quantile-crossing repair, and nonnegativity; NaNs are filled as the
+  reference's `forecast` fills them. **At reference parity against the official `google-research/timesfm`
+  package** (`run_reference.py timesfm`, its torch module at float32, `IK_TIMESFM_SRC`), first run: the
+  prefill's seams (embeddings 0.99999999999991, the first and last layers 0.99999999999974 and
+  0.9999999999988, the point and quantile projections 0.9999999999993 and 0.9999999999984), and ten
+  forecasts, five series under the card's flags and with every flag off, each within 1.6e-6 relative of
+  the reference at every step and channel: a seasonal series, a count series and a long series at a
+  300-step horizon (two autoregressive steps), a series with leading and interior NaNs, and a constant
+  series. Two facts are load-bearing. Padding patches that are padding throughout are left out: they are
+  excluded as keys and shift no position, so the result is the reference's while the context costs only
+  its real patches. The attention is the official module's unfused form (`query`, `key`, `value`); the
+  current checkpoint fuses them (`qkv_proj`), and the loader splits them. The transformers-format
+  release (`google/timesfm-2.5-200m-transformers`) loads to the bit-identical network.
+  `timesFMWithDirectoryURL:error:` and the download and asynchronous peers build it; TimesFM 3.0 carries
+  a non-commercial license and is not read. **Customization ships at LoRA**, google-research/timesfm's own
+  `timesfm-forecasting/examples/finetuning/finetune_lora.py`: rank-4, alpha-8 adapters on every linear
+  layer (PEFT's `all-linear`, 129 layers on this model), AdamW at 1e-4 with weight decay 0.01,
+  `CosineAnnealingLR` over the run, clipping at 1.0, and the loss transformers'
+  `TimesFm2_5ModelForPrediction` computes from `future_values` (`NFKMLXTimesFMObjective`): in the
+  normalized space, the median channel's mean squared error plus a pinball loss over the other nine
+  channels, which the reference pairs with the nine levels in order, so the mean channel takes level 0.1
+  and each quantile channel the level after its own; the port keeps the pairing. The script loads the
+  model in bfloat16 and uses LoRA dropout 0.05; the recipe trains at float32 without dropout.
+  `NFKMLXTimesFM.network(directoryURL:)`, `fineTune(_:windows:…)`, and `save(_:toDirectoryURL:)` (which
+  folds the adapters in) complete the path. Measured against transformers with the adapters written out as
+  PEFT computes them (`run_reference.py timesfm_loss`): the objective on identical tensors to 7e-8
+  relative, the training loss on four 64-step windows to 2.9e-7, three steps from the reference's own
+  adapter initialization with every step's loss within 1.2e-6 relative, every watched first-step gradient
+  at 0.99999999997 or better, and every watched adapter's movement at 0.99999995 or better.
+  `IK_VAL_TIMESFM25_PYTORCH`, `IK_VAL_TIMESFM25`, `IK_PARITY_TIMESFM25`, `IK_PARITY_TIMESFM25_LOSS`.

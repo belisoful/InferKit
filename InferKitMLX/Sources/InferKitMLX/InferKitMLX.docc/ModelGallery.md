@@ -122,6 +122,7 @@ a backend.
 | ``NFKMLXOpenJevDeBERTa`` | — | typed decisions (open-jev-deberta: one DeBERTa-v3-large pass over the state and every question) |
 | ``NFKMLXOpenJev`` | — | typed decisions (Open-Jev 2B / 9B / 27B: a LoRA-adapted Qwen3.5 or Qwen3.8 scoring each candidate answer) |
 | ``NFKMLXChronos`` | — | time-series forecasting (Chronos-Bolt, quantile forecasts; an object) |
+| ``NFKMLXTimesFM`` | ``NFKMLXTimesFMNet`` | time-series forecasting (TimesFM 2.5: decoder-only over patches, ten quantile channels and a continuous quantile head, autoregressive past 128 steps; the official forecasting flags; at parity with google-research/timesfm, forecasts within 1.6e-6 relative; LoRA fine-tune) |
 | ``NFKMLXQwen3VLEmbedder`` | — | text + image embeddings in one space (Qwen3-VL-Embedding-2B, instruction-conditioned) |
 | ``NFKMLXQwen3VLReranker`` | — | multimodal cross-encoder reranking (Qwen3-VL-Reranker-2B) |
 

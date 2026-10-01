@@ -10,7 +10,8 @@ This file is the index: one row per model entry, so a session can see what is se
 and know what it has to read before it writes the recipe. The prose that explains a ruling belongs in
 the model's own `mlx-models-<class>.md` entry, not here.
 
-**Triaged 2026-09-24** over the 164 model entries in the seventeen class files. The fifteen rows left
+**Triaged 2026-09-24** over the 164 model entries in the seventeen class files; three entries added
+2026-09-25 (Wav2Vec2 / HuBERT, W2V-BERT 2.0, TimesFM 2.5) shipped with their recipes. The fifteen rows left
 `uncertain` were settled on 2026-09-25 from each reference's own training code (below).
 
 ## How to use it
@@ -44,19 +45,19 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 34 |
+| `ships` | 37 |
 | `trainable`, no recipe yet | 61 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
 | Shared infrastructure, no objective of its own | 1 |
-| Total rows | 148 |
+| Total rows | 151 |
 
-The 164 model entries become 148 rows because a few entries take one ruling for several symbols: the
+The 167 model entries become 151 rows because a few entries take one ruling for several symbols: the
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Thirty-four recipes ship and 61 models are trainable with none written. That is the size of
+Thirty-seven recipes ship and 61 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -280,6 +281,7 @@ negatives.
 | `NFKMLXTextEmbedder` | ships | probe | public | `NFKMLXTextEmbeddingBackend`'s identity-initialized adapter under `MultipleNegativesRankingLoss`, the objective measured for Qwen3-VL. |
 | `NFKMLXEmbeddingGemma` | ships | probe | public | The same backend adapter over the Dense-projected embedding. The released Dense head stays untouched. |
 | `NFKMLXModernBERTReranker` | trainable | head-retarget | internal | The mean-pool head and single-logit classifier over a frozen encoder, the same pair objective the Qwen3-VL reranker ports. |
+| `NFKMLXTimesFM` | ships | LoRA | public | google-research/timesfm's `finetune_lora.py` under transformers' own loss, at measured parity. |
 | `NFKMLXChronos` | trainable | full | public | The entry already names a pinball-loss fine-tune as implementable. Only the objective, the data adapter, and the recipe are missing. |
 
 ## Speech recognition

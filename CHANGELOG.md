@@ -1092,6 +1092,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the output adapter and a CTC head added, every parameter trained after a linear warm-up
   (`NFKMLXLearningRateSchedule.linearWithWarmup`, transformers' `get_linear_schedule_with_warmup`).
 
+#### TimesFM 2.5
+
+- `NFKMLXTimesFM` ports TimesFM 2.5 (Google, Apache-2.0), a decoder-only time-series forecaster, from the
+  official `google-research/timesfm` torch module: running per-patch normalization, a ten-channel
+  quantile head and a 1024-step continuous quantile head, autoregressive decoding past 128 steps, and the
+  official forecasting flags (`NFKMLXTimesFMForecastOptions`). `forecast(context:horizon:options:)` and
+  `forecastForContext:horizon:options:error:` return an `NFKMLXTimesFMForecast`.
+- At reference parity against the official package: ten forecasts under two flag settings within 1.6e-6
+  relative at every step and channel, and every prefill seam at 0.9999999999984 or better. The
+  transformers-format release loads the bit-identical network.
+- Factories: `timesFMWithDirectoryURL:error:`, the download `timesFMWithRepo:revision:cacheDirectoryURL:error:`,
+  and both `completionHandler:` peers.
+- Customization is the official LoRA fine-tune (`finetune_lora.py`): rank-4 adapters on every linear layer
+  under the loss transformers computes for this model (`NFKMLXTimesFMObjective`), measured against
+  transformers from the reference's own adapter initialization (three step losses within 1.2e-6
+  relative); `save(_:toDirectoryURL:)` folds the adapters in.
+
 #### Typed decisions on device
 
 - `NFKMLXLaya` ports Laya (`convaiinnovations/laya`, Apache-2.0), the open reproduction of TypeSafe's

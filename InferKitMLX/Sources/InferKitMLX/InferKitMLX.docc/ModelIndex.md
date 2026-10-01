@@ -307,6 +307,7 @@ let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 | open-jev-deberta (typed decisions) | ``NFKMLXOpenJevDeBERTa`` | ``NFKMLXOpenJevDeBERTaNet`` (``NFKMLXDeBERTaV2Net`` + scoring head) | `NFKMLXOpenJevDeBERTaConfiguration.v3Large`, or the release directory | Swift API | ``NFKMLXDecisionBackend`` (`backendWithDirectoryURL:error:`, or `backendWithRevision:cacheDirectoryURL:error:` to download) |
 | Open-Jev 2B / 9B / 27B (typed decisions) | ``NFKMLXOpenJev`` | ``NFKMLXOpenJevNet`` (``NFKMLXHybridLanguageNet`` + LoRA + scalar head) | read from the release's `checkpoint` directory and its base | Swift API | ``NFKMLXDecisionBackend`` (`backendWithVariant:revision:cacheDirectoryURL:error:`) |
 | chronos-bolt-base | ``NFKMLXChronos`` | ``NFKMLXChronosNet`` | `NFKMLXChronosConfiguration()` | Swift API | forecasting object (`forecast(context:horizon:)`) |
+| timesfm-2.5-200m | ``NFKMLXTimesFM`` | ``NFKMLXTimesFMNet`` | `NFKMLXTimesFMConfiguration.v2_5`; ``NFKMLXTimesFMForecastOptions`` | `timesFM(directoryURL:)` | forecasting object (`forecast(context:horizon:options:)`) |
 | Qwen3-VL-Embedding-2B (text + image) | ``NFKMLXQwen3VLEmbedder`` | ``NFKMLXQwen3VLVisionNet`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` and `preprocessor_config.json` | `embedder(directoryURL:)` / `backend(directoryURL:)` | ``NFKMLXTextEmbeddingBackend`` (text path) |
 | Qwen3-VL-Reranker-2B (text + image) | ``NFKMLXQwen3VLReranker`` | ``NFKMLXQwen3VLVisionNet`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` and `1_LogitScore/config.json` | `reranker(directoryURL:)` | scoring object (`scores(query:documents:)`) |
 | SmolVLM2-500M | ``NFKMLXSmolVLM`` | ``NFKMLXSmolVLMNet`` (``NFKMLXSigLIPNet`` + ``NFKMLXSmolVLMConnector`` + ``NFKMLXLanguageNet``) | `NFKMLXSigLIPConfiguration.smolVLM`, `.smolVLM2Decoder` | `smolVLM(directoryURL:)` | object (`answer(image:question:)`) |
@@ -354,6 +355,9 @@ let openJev = try NFKMLXOpenJev.openJev(variant: .twoB, revision: nil, cacheDire
 // chronos-bolt-base (time-series forecasting)
 let chronos = try NFKMLXChronos.chronos(weightsURL: url)
 // then forecast(context:horizon:) · medianForecastForContext:horizon:
+// timesfm-2.5-200m (time-series forecasting; the release directory)
+let timesFM = try NFKMLXTimesFM.timesFM(directoryURL: dir)
+// then forecast(context:horizon:options:) · forecastForContext:horizon:options:error:; fine-tune: fineTune(_:windows:steps:) then save(_:toDirectoryURL:)
 // Qwen3-VL-Embedding-2B (text + image)
 let embedder = try NFKMLXQwen3VLEmbedder.embedder(directoryURL: dir)
 // then embedding(forText:) · embeddingForText:, embedding(forImage:text:instruction:) · embeddingForImage:text:instruction:

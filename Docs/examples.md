@@ -833,6 +833,25 @@ patches, runs the encoder and a single-token decoder, and maps that vector to `q
 Reference parity against the `chronos` package's own `ChronosBoltPipeline`: every seam ~1.0 and all nine
 quantile rows matching.
 
+### Time-series forecasting with TimesFM (`NFKMLXTimesFM`)
+
+TimesFM 2.5 is Google's decoder-only forecaster. It reads up to 16,384 steps, forecasts 128 at a time, and
+continues autoregressively past that; its quantile head spans 1,024 steps.
+
+```swift
+let timesFM = try NFKMLXTimesFM.timesFM(directoryURL: release)         // google/timesfm-2.5-200m-pytorch
+let forecast = try timesFM.forecast(context: history, horizon: 300)
+let median = forecast.pointForecast                                    // [NSNumber], 300 steps
+let interval = (forecast.quantileForecasts[0], forecast.quantileForecasts[8])   // 0.1 and 0.9
+```
+
+The options are the official forecasting flags, the release card's settings by default:
+`NFKMLXTimesFMForecastOptions` holds the context length (1,024), global normalization, flip invariance,
+the continuous quantile head, quantile-crossing repair, and nonnegativity for a nonnegative series. From
+Objective-C, `-forecastForContext:horizon:options:error:` takes the same options. NaN gaps are filled by
+linear interpolation, as the reference fills them. Reference parity against the official
+`google-research/timesfm` package: ten forecasts under both flag settings within 1.6e-6 of the reference.
+
 ### Multimodal retrieval (`NFKMLXQwen3VLEmbedder`, `NFKMLXQwen3VLReranker`)
 
 The two embedders above read text. `NFKMLXQwen3VLEmbedder` is the released `Qwen3-VL-Embedding-2B`,
@@ -4122,6 +4141,26 @@ decay. `trainable: .head` trains the head alone over frozen features. W2V-BERT's
 (`NFKMLXWav2Vec2Bert.network(directoryURL:vocabulary:)`, `fineTune`, `save`) adds the output adapter
 Hugging Face's recipe adds, a strided layer that halves the frame rate, and trains every parameter after a
 500-step warm-up.
+
+### Adapting a forecaster to your own series
+
+TimesFM's authors fine-tune with LoRA: rank-4 adapters on every linear layer, the base frozen. Cut your
+series into windows of context and the values that follow:
+
+```swift
+let net = try NFKMLXTimesFM.network(directoryURL: release)
+try NFKMLXTimesFM.fineTune(net, windows: { _ in
+    myWindows.shuffled().prefix(32).map { (context: $0.history, target: $0.next13) }
+}, steps: 1_000)
+
+try NFKMLXTimesFM.save(net, toDirectoryURL: tuned)             // folds the adapters into the weights
+let forecaster = try NFKMLXTimesFM.timesFM(directoryURL: tuned) // Objective-C: timesFMWithDirectoryURL:error:
+```
+
+A context window works best as a whole number of 32-step patches with no padding, since padding enters the
+normalization's statistics. Every target in a batch holds the same number of steps, at most 128. The loss
+is the one transformers computes for this model; the optimizer is AdamW at 1e-4 with weight decay 0.01 on
+a cosine to zero.
 
 ### Any model
 

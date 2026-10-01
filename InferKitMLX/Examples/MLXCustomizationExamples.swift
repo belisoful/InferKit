@@ -430,6 +430,33 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(try NFKMLXWav2Vec2Bert.backend(directoryURL: tuned).backendIdentifier, NFKMLXWav2Vec2Bert.modelName)
     }
 
+    // Docs/examples.md: Adapting a forecaster to your own series
+    func testExampleAdaptingTimesFMToOwnSeries() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("timesfm-tuned-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+        // A real run builds the network from google/timesfm-2.5-200m-pytorch with network(directoryURL:); a tiny
+        // one keeps the example free of downloads.
+        var tiny = NFKMLXTimesFMConfiguration()
+        tiny.hiddenSize = 64
+        tiny.intermediateSize = 64
+        tiny.numLayers = 1
+        tiny.numHeads = 4
+        let net = NFKMLXTimesFMNet(tiny)
+        let series = (0 ..< 200).map { Float(sin(Double($0) * 0.3)) * 5 + 20 }
+        let myWindows = (0 ..< 4).map { (history: Array(series[($0 * 20) ..< ($0 * 20 + 64)]),
+                                        next13: Array(series[($0 * 20 + 64) ..< ($0 * 20 + 77)])) }
+        let history = try NFKMLXTimesFM.fineTune(net, windows: { _ in
+            myWindows.shuffled().prefix(32).map { (context: $0.history, target: $0.next13) }
+        }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXTimesFM.save(net, toDirectoryURL: tuned)
+        let forecaster = try NFKMLXTimesFM.timesFM(directoryURL: tuned)
+        XCTAssertEqual(try forecaster.forecast(context: series, horizon: 10).pointForecast.count, 10)
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

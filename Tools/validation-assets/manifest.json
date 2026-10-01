@@ -1239,7 +1239,7 @@
     }
   ],
   "sources": {
-    "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the models whose reference is a whole small package get their own variable (the Cosmos Tokenizer's is NVIDIA's `cosmos_predict1.tokenizer`, pinned to one commit, with its package markers empty). Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py. The V-JEPA 2 probe oracle reads facebookresearch/vjepa2's attentive pooler and its frozen-evaluation `eval.py` (`IK_VJEPA2_SRC`), pinned to one commit. TrOCR's loss oracle runs fairseq's own `inverse_sqrt` scheduler file (`IK_FAIRSEQ_SRC`), pinned to one commit, with its fairseq imports stubbed. Table Transformer's loss oracle runs microsoft/table-transformer's vendored DETR matcher and SetCriterion (`IK_TABLE_TRANSFORMER_SRC`), pinned to one commit, with empty package markers in place of the modules' __init__ files. Sa2VA's loss oracle runs bytedance/Sa2VA's own training code and vendored mmdet losses, and mmengine's param_scheduler.py (`IK_SA2VA_SRC`), each pinned to one commit; the oracle extracts the functions it needs and stubs the framework imports.",
+    "comment": "Reference implementations the oracles import. `IK_REF_SRC` points at <root>/refsrc; the models whose reference is a whole small package get their own variable (the Cosmos Tokenizer's is NVIDIA's `cosmos_predict1.tokenizer`, pinned to one commit, with its package markers empty). Paths are relative to the source root. The sam2 entries reconstruct the package the SAM 2 oracles import: it cannot be pip-installed here (it needs Python >= 3.10) and was previously vendored by hand, which left that oracle unreproducible. An entry with an empty URL is an empty __init__.py. The V-JEPA 2 probe oracle reads facebookresearch/vjepa2's attentive pooler and its frozen-evaluation `eval.py` (`IK_VJEPA2_SRC`), pinned to one commit. TrOCR's loss oracle runs fairseq's own `inverse_sqrt` scheduler file (`IK_FAIRSEQ_SRC`), pinned to one commit, with its fairseq imports stubbed. Table Transformer's loss oracle runs microsoft/table-transformer's vendored DETR matcher and SetCriterion (`IK_TABLE_TRANSFORMER_SRC`), pinned to one commit, with empty package markers in place of the modules' __init__ files. Sa2VA's loss oracle runs bytedance/Sa2VA's own training code and vendored mmdet losses, and mmengine's param_scheduler.py (`IK_SA2VA_SRC`), each pinned to one commit; the oracle extracts the functions it needs and stubs the framework imports. TimesFM 2.5's oracle imports google-research/timesfm's own torch module and forecasting wrapper (`IK_TIMESFM_SRC`), pinned to one commit, run on the CPU without torch.compile.",
     "root_var": "IK_REF_SRC",
     "files": [
       [
@@ -1589,6 +1589,42 @@
       [
         "sa2va/mmengine/param_scheduler.py",
         "https://raw.githubusercontent.com/open-mmlab/mmengine/f8a8b1b3b3051175a8babe5df9c753a981919087/mmengine/optim/scheduler/param_scheduler.py"
+      ],
+      [
+        "timesfm/src/timesfm/__init__.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/__init__.py"
+      ],
+      [
+        "timesfm/src/timesfm/configs.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/configs.py"
+      ],
+      [
+        "timesfm/src/timesfm/timesfm_2p5/timesfm_2p5_base.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/timesfm_2p5/timesfm_2p5_base.py"
+      ],
+      [
+        "timesfm/src/timesfm/timesfm_2p5/timesfm_2p5_torch.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/timesfm_2p5/timesfm_2p5_torch.py"
+      ],
+      [
+        "timesfm/src/timesfm/torch/__init__.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/torch/__init__.py"
+      ],
+      [
+        "timesfm/src/timesfm/torch/dense.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/torch/dense.py"
+      ],
+      [
+        "timesfm/src/timesfm/torch/normalization.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/torch/normalization.py"
+      ],
+      [
+        "timesfm/src/timesfm/torch/transformer.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/torch/transformer.py"
+      ],
+      [
+        "timesfm/src/timesfm/torch/util.py",
+        "https://raw.githubusercontent.com/google-research/timesfm/e31dadd84cb26bd5153fde6687502b8312e918fb/src/timesfm/torch/util.py"
       ]
     ],
     "env": {
@@ -1600,7 +1636,8 @@
       "IK_VJEPA2_SRC": "vjepa2",
       "IK_FAIRSEQ_SRC": "fairseq",
       "IK_TABLE_TRANSFORMER_SRC": "table-transformer",
-      "IK_SA2VA_SRC": "sa2va"
+      "IK_SA2VA_SRC": "sa2va",
+      "IK_TIMESFM_SRC": "timesfm/src"
     }
   },
   "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place — the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
@@ -4292,6 +4329,38 @@
         "IK_PARITY_W2V_BERT_LOSS": "records/w2v-bert-2.0-loss.safetensors"
       },
       "note": "W2V-BERT 2.0 (Meta, MIT, 2.3 GB float32) for NFKMLXWav2Vec2Bert; `conformer_shaw.pt` is not fetched. Records (llm env): `run_reference.py w2v_bert ~/.inferkit-validation/records/w2v-bert-2.0.safetensors --checkpoint <dir>` and the recipe's `run_reference.py w2v_bert_loss ~/.inferkit-validation/records/w2v-bert-2.0-loss.safetensors --checkpoint <dir>` (about 12 GB: a float32 full fine-tune of three steps)."
+    },
+    {
+      "key": "TIMESFM25_PYTORCH",
+      "repo": "google/timesfm-2.5-200m-pytorch",
+      "revision": "1d952420fba87f3c6dee4f240de0f1a0fbc790e3",
+      "directory": "timesfm-2.5-200m-pytorch",
+      "files": [
+        "config.json",
+        "README.md",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TIMESFM25_PYTORCH": "",
+        "IK_PARITY_TIMESFM25": "records/timesfm-2.5.safetensors"
+      },
+      "note": "TimesFM 2.5 (Google, Apache-2.0, 0.93 GB float32), the official checkpoint, for NFKMLXTimesFM. Record (qwenimage env, IK_TIMESFM_SRC set): `run_reference.py timesfm ~/.inferkit-validation/records/timesfm-2.5.safetensors --checkpoint <dir>`, the official package's forecasts under two flag settings and the prefill's seams."
+    },
+    {
+      "key": "TIMESFM25",
+      "repo": "google/timesfm-2.5-200m-transformers",
+      "revision": "5a9806b9b291fad9233b5249d88263f1846304d3",
+      "directory": "timesfm-2.5-200m-transformers",
+      "files": [
+        "config.json",
+        "README.md",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TIMESFM25": "",
+        "IK_PARITY_TIMESFM25_LOSS": "records/timesfm-2.5-loss.safetensors"
+      },
+      "note": "TimesFM 2.5 in transformers' names (the same weights, q/k/v unfused). The LoRA recipe's record (qwenimage env): `run_reference.py timesfm_loss ~/.inferkit-validation/records/timesfm-2.5-loss.safetensors --checkpoint <dir>`."
     }
   ],
   "oracle_environments": {
@@ -4627,7 +4696,9 @@
         "flux2_real_f32",
         "flux2_real_truncated",
         "flux2_vae_real",
-        "flux2_text_real"
+        "flux2_text_real",
+        "timesfm",
+        "timesfm_loss"
       ]
     },
     "deepseek_v41": {
@@ -5272,6 +5343,12 @@
       "record": "records/w2v-bert-2.0-loss.safetensors",
       "environment": "llm",
       "command": "w2v_bert_loss --checkpoint <w2v-bert-2.0>"
+    },
+    {
+      "key": "IK_PARITY_TIMESFM25_LOSS",
+      "record": "records/timesfm-2.5-loss.safetensors",
+      "environment": "qwenimage",
+      "command": "timesfm_loss --checkpoint <timesfm-2.5-200m-transformers>"
     }
   ]
 }

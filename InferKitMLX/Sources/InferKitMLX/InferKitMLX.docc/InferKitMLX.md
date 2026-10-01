@@ -161,6 +161,9 @@ limits.
 - ``NFKMLXQwen3VLEmbedder``
 - ``NFKMLXQwen3VLReranker``
 - ``NFKMLXChronos``
+- ``NFKMLXTimesFM``
+- ``NFKMLXTimesFMForecast``
+- ``NFKMLXTimesFMForecastOptions``
 
 ### Language models
 
@@ -495,6 +498,9 @@ limits.
 - ``NFKMLXWav2Vec2BertNet``
 - ``NFKMLXWav2Vec2BertTrainable``
 - ``NFKMLXWav2Vec2BertProcessor``
+- ``NFKMLXTimesFMNet``
+- ``NFKMLXTimesFMObjective``
+- ``NFKMLXTimesFMTrainable``
 - ``NFKMLXVGG16Features``
 - ``NFKMLXCLIPNet``
 - ``NFKMLXCLIPProbe``
