@@ -823,6 +823,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
   without an error.
 
+#### SegFormer and LaMa backends normalize with their released statistics
+
+- `NFKMLXSegFormer` and `NFKMLXLaMa` built their networks in training mode, so the decode head's
+  `BatchNorm` (SegFormer) and every `BatchNorm` in the generator (LaMa) normalized each image by its
+  own statistics and folded them into the running statistics on every call. Their reference parity
+  tests switched the network to evaluation themselves, so the recorded figures describe the corrected
+  path, not what the backends ran.
+- Both networks now switch to evaluation mode when built. A fine-tune switches training on for its run
+  and restores evaluation afterward.
+
 #### Basic Pitch fine-tunes on a consumer's own recordings and notes
 
 - `NFKMLXBasicPitch.network(weightsURL:reinitializing:)`, `trainingExample(s)`, and

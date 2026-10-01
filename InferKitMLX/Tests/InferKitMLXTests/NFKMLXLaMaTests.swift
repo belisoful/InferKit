@@ -11,6 +11,7 @@ import XCTest
 import CoreGraphics
 import InferKit
 import MLX
+import MLXNN
 @testable import InferKitMLX
 
 final class NFKMLXLaMaTests: XCTestCase {
@@ -46,6 +47,22 @@ final class NFKMLXLaMaTests: XCTestCase {
                 XCTAssertEqual(outValues[index], inValues[index], accuracy: 1e-5)
             }
         }
+    }
+
+    /// The backend inpaints through the network as built, so a BatchNorm left in training mode would
+    /// normalize each plate by its own statistics and overwrite the released ones.
+    func testANetworkIsBuiltInEvaluationModeAndKeepsItsStatistics() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXLaMaNet(tinyConfiguration())
+        let normalizations = net.leafModules().flattened().filter { $0.1 is BatchNorm }
+        XCTAssertFalse(normalizations.isEmpty)
+        XCTAssertTrue(normalizations.allSatisfy { !$0.1.training })
+        func statistics() -> [Float] {
+            net.parameters().flattened().filter { $0.0.hasSuffix("running_mean") }.flatMap { $0.1.asArray(Float.self) }
+        }
+        let before = statistics()
+        eval(net.inpaint(Self.image(height: 16, width: 16), mask: Self.leftHalfMask(height: 16, width: 16)))
+        XCTAssertEqual(statistics(), before, "inference reads the running statistics without folding into them")
     }
 
     func testASafetensorsCheckpointLoadsAndReproducesTheForward() throws {

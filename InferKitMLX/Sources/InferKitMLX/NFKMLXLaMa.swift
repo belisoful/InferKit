@@ -233,6 +233,10 @@ final class NFKMLXLaMaNet: Module {
         _up.wrappedValue = ups
         _upBN.wrappedValue = upBNs
         _outConv.wrappedValue = Conv2d(inputChannels: base, outputChannels: 3, kernelSize: 7)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// - Parameters:

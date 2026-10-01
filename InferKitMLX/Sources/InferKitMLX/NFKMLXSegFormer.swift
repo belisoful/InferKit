@@ -203,6 +203,10 @@ public final class NFKMLXSegFormerNet: Module {
                                           kernelSize: 1, bias: false)
         _batchNorm.wrappedValue = BatchNorm(featureCount: c.decodeDimensions)
         _classifier.wrappedValue = Conv2d(inputChannels: c.decodeDimensions, outputChannels: c.classCount, kernelSize: 1)
+        super.init()
+        // A module starts in training mode, which would normalize with each batch's statistics at
+        // inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Applies the input normalization SegFormer's image processor performs, taking a bridged image

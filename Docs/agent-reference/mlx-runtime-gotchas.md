@@ -246,6 +246,17 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   when its training dropouts arrived, with the loader blamed first. A network that holds a
   training-only layer calls `train(false)` in its own initializer, and `NFKMLXTrainer` switches it on
   for a run and restores the prior flag.
+  - **A test that sets the mode itself hides a backend that does not.** SegFormer's and LaMa's parity
+    tests called `net.train(false)` before measuring, and their backends never did, so the shipped
+    backends normalized each image by its own statistics while the parity numbers held. Both networks
+    now switch in their initializers (`testANetworkIsBuiltInEvaluationModeAndKeepsItsStatistics`).
+  - **Audit, 2026-09-30.** The mode-dependent layers are `BatchNorm` (and the package's subclasses),
+    `Dropout` with a nonzero rate (All-In-One, VAD), and the branches in All-In-One and RT-DETR. LoRA
+    adapters hold none, and the convolution swap carries each original's mode. These networks switch
+    only in their backend or loader: BiSeNet and BiSeNetV2, MODNet,
+    RF-DETR and its segmentation head, RVM, BiRefNet, U²-Net, IS-Net, Parakeet, Canary, Granite Speech,
+    and the Chatterbox networks. Their factories run in evaluation mode; a network built and run
+    outside a factory does not.
 
 - **A tensor addressed to an absent optional module kills the process.** `Module.update(parameters:)`
   ignores a key the module does not declare, but a key under an optional `@ModuleInfo` that is nil

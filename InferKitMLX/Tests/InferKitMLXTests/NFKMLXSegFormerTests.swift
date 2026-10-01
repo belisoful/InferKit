@@ -42,6 +42,20 @@ final class NFKMLXSegFormerTests: XCTestCase {
                        "stage-1 is H/4, one channel per class")
     }
 
+    /// The backend segments through the network as built, so a decode-head BatchNorm left in training
+    /// mode would normalize each image by its own statistics and overwrite the released ones.
+    func testANetworkIsBuiltInEvaluationModeAndKeepsItsStatistics() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        XCTAssertFalse(net.batchNorm.training)
+        func statistics() -> [Float] {
+            net.parameters().flattened().first { $0.0 == "batch_norm.running_mean" }!.1.asArray(Float.self)
+        }
+        let before = statistics()
+        eval(net.segment(Self.image(height: 32, width: 32)))
+        XCTAssertEqual(statistics(), before, "inference reads the running statistics without folding into them")
+    }
+
     func testSegmentationIsALabelMapAtInputSize() throws {
         try requireMLXRuntime()
         let net = tinyNet()
