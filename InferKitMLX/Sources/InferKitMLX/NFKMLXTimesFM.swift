@@ -271,6 +271,8 @@ extension NFKMLXTimesFMNet {
     /// Loads a release directory's `model.safetensors`: the official layout (its fused `qkv_proj` split
     /// into the three projections), the transformers one (`google/timesfm-2.5-200m-transformers`), or a
     /// directory ``NFKMLXTimesFM/save(_:toDirectoryURL:)`` wrote.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func loadWeights(fromDirectory directory: URL) throws {
         try loadWeights(url: directory.appendingPathComponent("model.safetensors"))
     }

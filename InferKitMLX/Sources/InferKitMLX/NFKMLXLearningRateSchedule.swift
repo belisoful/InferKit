@@ -47,6 +47,8 @@ public struct NFKMLXLearningRateSchedule {
     /// BiSeNet's `WarmupPolyLrScheduler` with its exponential warm-up (CoinCheung/BiSeNet at 6b4b67a):
     /// `warmupRatio^(1 − k / warmupSteps)` during the warm-up, then
     /// `(1 − (k − warmupSteps) / (steps − warmupSteps))^power`.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public static func exponentialWarmupPoly(steps: Int, power: Float, warmupSteps: Int,
                                              warmupRatio: Float) -> NFKMLXLearningRateSchedule {
         NFKMLXLearningRateSchedule { step in
@@ -60,6 +62,8 @@ public struct NFKMLXLearningRateSchedule {
 
     /// transformers' `get_linear_schedule_with_warmup`, the `Trainer`'s default: `k / warmupSteps` during the
     /// warm-up, then a linear fall to zero at `steps`, `(steps − k) / (steps − warmupSteps)`.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public static func linearWithWarmup(steps: Int, warmupSteps: Int) -> NFKMLXLearningRateSchedule {
         NFKMLXLearningRateSchedule { step in
             if step < warmupSteps { return Float(step) / Float(max(1, warmupSteps)) }

@@ -136,6 +136,8 @@ extension NFKMLXBiSeNet {
     ///   - observer: receives each step and can end the run early.
     ///
     /// A run is multi-second; call it off the render thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXBiSeNetNet,

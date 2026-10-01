@@ -28,6 +28,8 @@ extension NFKMLXWav2Vec2Net {
     /// direction load under `weight_g` and `weight_v` from either spelling the releases use (the
     /// `parametrizations.weight.original0/1` form included); convolutions move to MLX's channels-last
     /// layout.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func loadWeights(fromDirectory directory: URL) throws {
         try loadWeights(url: try Self.weightsURL(inDirectory: directory), leavingFresh: [])
     }

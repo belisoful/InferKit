@@ -152,6 +152,8 @@ extension NFKMLXAudioTagger {
     /// The reference mixes pairs of clips by default (`--augmentation mixup`), which needs a batch; a
     /// caller mixes its own examples for the same effect. A run is seconds to minutes; call it off the
     /// render thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXAudioTaggerNet,

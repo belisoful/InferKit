@@ -124,6 +124,8 @@ extension NFKMLXSileroVAD {
     ///
     /// The reference also augments each training clip and crops it to eight seconds; both are the
     /// caller's data choices here. A run is seconds to minutes; call it off the render thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXSileroVADNet,

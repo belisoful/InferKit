@@ -383,5 +383,7 @@ extension NFKMLXWav2Vec2Tokenizer {
     }
 
     /// The tokens in id order.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public var characters: [String] { tokens }
 }
