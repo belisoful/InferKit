@@ -212,9 +212,39 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `BatchNorm` branches on the flag alone. A frozen backbone under a head-only fine-tune therefore
   normalizes with the training batch's statistics instead of the released ones, and folds the batch
   into `running_mean` / `running_var`, which a checkpoint write persists. `NFKMLXTrainer` returns every
-  wholly frozen subtree to evaluation mode after `train(true)`; a subtree with no parameters at all
-  follows its parent, so a dropout in the trainable group still drops. Consumer-facing write-up and
-  probes: `Docs/mlx-runtime-hazards.md`.
+  module that keeps running statistics and has no trainable parameter to evaluation mode after
+  `train(true)`; every other module trains, so a dropout in a frozen encoder still drops, as PyTorch's
+  `model.train()` runs it. Consumer-facing write-up and probes: `Docs/mlx-runtime-hazards.md`.
+
+- **`update(modules:)` rebuilds a container from the entries an update names.** For an array it
+  branches on the first named entry. A module there replaces the whole array with the entries named,
+  so an update naming a prefix drops the rest of the array with no error. An empty first entry (a path
+  through `layers.1` alone) is refused. A sub-tree there recurses block by block and throws on a gap.
+  A module dictionary is rebuilt from the keys named, so naming one key drops the others. Probe:
+  `testUpdatingAnArrayThroughAPartialPathTruncatesOrRefuses`.
+  - **Where it struck.** The gradient-safe convolution swap was refused on W2V-BERT's 24-layer stack
+    (layers 1 to 23; layer 0 swapped). `NFKMLXLoRA` sent one batch from the root, then fell back to
+    each replacement's owner on a throw. That left two holes: adapting the `Linear`s of a
+    `[Linear, GELU, Linear, Dropout]` array dropped the `Dropout` silently, because the batch did not
+    throw, and a `Linear` held directly in an array was refused when the batch did throw. No shipped
+    recipe selected such a layer. MLXNN's own `quantize(model:)` sends the same root batch through the
+    non-throwing `update(modules:)`, which is a `try!`. `NFKMLXQuantization.quantize` skips a `Linear`
+    whose input width the group size does not divide, so a skipped last entry of an array dropped the
+    tail and a skipped first entry aborted the process. The shipped quantized models escaped because
+    their `Linear` arrays (Music 3's `audio_heads`, `to_out`) share one input width, so an array was
+    packed whole or skipped whole.
+  - **The rule.** Replace a child through its owner: `NFKMLXModuleReplacement.place`, which LoRA, the
+    convolution swap, and the quantizer use. A child held directly in an array or a dictionary goes
+    back with its owner's whole container, every other entry unchanged. MLXNN's `quantize(model:)`
+    and `QuantizedLinear.quantize(model:)` are the two MLXNN entry points that batch module
+    replacements from the root; quantize through `NFKMLXQuantization`. A root call whose filter
+    names only direct children of the root (an embedding-only pass on `embed_tokens`) is safe.
+  - **`update(parameters:)` is not affected.** It walks each named array beside the module's own
+    array and writes values in place; an entry the update does not name stays as it is.
+  - **The limit.** A module held directly in an array nested inside another array (`[[Module]]`)
+    cannot be replaced: the array branch throws `unexpectedStructure` when the first named entry is
+    itself an array, and no owner module sits between. `place` throws for it. A module one level
+    further down (a block inside `[[Block]]`) has the block as its owner and is placed normally.
 
 - **A parent's `unfreeze()` reaches a `BatchNorm`'s running statistics.** `BatchNorm` re-freezes
   `running_mean` / `running_var` in its own `unfreeze` override, but a recursive `unfreeze()` on a
@@ -223,6 +253,16 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   every step. `NFKMLXTrainer` freezes them again before every run. A module that must keep a parameter
   out of training however its tree is unfrozen overrides `noGrad()`, which is what the trainable filter
   reads. Probe: `testAParentsUnfreezeMakesABatchNormsStatisticsTrainable`.
+  - **Quantized layers thaw the same way.** `QuantizedLinear`, `QuantizedEmbedding`, and the package's
+    `NFKLMQuantizedSwitchLinear` freeze every array they hold when built. A parent's `unfreeze()` makes
+    the packed `uint32` weight, scales, and biases trainable, and `QuantizedEmbedding` has no `unfreeze`
+    override, so it thaws under its own call too. The next gradient aborts the process:
+    `[QuantizedMatmul::vjp] no gradient wrt the quantized weights`. `NFKMLXTrainer.freezeHeldState`
+    freezes every `Quantized` module's arrays with the statistics; `NFKLMQuantizedSwitchLinear`
+    re-freezes in its own `unfreeze` as `QuantizedLinear` does. Probe:
+    `testAParentsUnfreezeThawsAQuantizedLayer`.
+  - **Audit, 2026-09-30.** Every `unfreeze` caller in the package is a recipe that runs through
+    `NFKMLXTrainer`, except `NFKMLXLoRA.merge`, which now applies the same freezing after it unfreezes.
 
 - **MLXNN's `BatchNorm` folds the biased batch variance into its running variance.** PyTorch's
   `BatchNorm` and TensorFlow's fused kernel fold the unbiased one. The difference is `n / (n − 1)` for
@@ -238,6 +278,20 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   parameter stayed put passes whatever happened. Snapshot evaluated copies (`$0 + 0`, then `eval`).
   A cosine helper that returns 1 for a zero-length difference hides the same mistake, so return 1 only
   when both sides are zero. Both struck Basic Pitch's recipe tests on 2026-09-25.
+  - **What stays safe.** The update repoints the target's own objects and never hands out the value's,
+    so updating from another module's live `parameters()` (a head re-initialization, the convolution
+    swap's copies, a weight average applied to the network) shares no object. An operation such as
+    `now - start` captures the value its inputs hold when it is built, so a lazy difference taken in an
+    observer records that step.
+  - **One object at two paths.** `valueAndGrad(model:)` writes every path's tracer into the shared
+    object, and the last path in `items()` order wins, so that path carries the whole gradient and the
+    other gets zero. The optimizer's update walks the same order, so the last write is the one with the
+    gradient, and the tie trains correctly. A per-path replacement (the convolution swap, LoRA) gives
+    each path its own module and unties it for the run. The package ties weights through one path (a
+    single `shared` embedding, remapped at load) and holds no module at two paths.
+  - **Audit, 2026-09-30.** Every source `update(parameters:)` caller and every test snapshot that
+    outlives an update was read; the snapshots copy (`+ 0`, `* 1`, `asArray`) or compare separate
+    modules, and none aliased.
 
 - **A module starts in training mode.** mlx-swift's `Module.training` is `true` until something calls
   `train(false)`. A network with no `Dropout`, `BatchNorm`, or stochastic depth never notices, which is
@@ -518,6 +572,56 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     reclaiming the cache makes a lone backward accurate, and holding the cache limit at zero is what
     a training loop needs. The clamp reading above stands as a separate fact about that test's
     conditioning, and is not what made the gradients move.
+- **The GPU backward of a convolution wider than 16 taps returns a wrong input gradient (2026-09-25).**
+  Measured in Python mlx 0.32.2 (the core the package's mlx-swift revision vendors, and the newest
+  release) against the CPU, then confirmed in Swift.
+  - **The fault.** `conv1d`, `conv2d`, and `conv3d` on the GPU compute the gradient with respect to
+    their input wrongly when the convolution runs at stride 1 and a kernel axis has 17 or more taps.
+    The forward and the weight gradient stay exact. The channel counts that fail follow no rule the
+    measurements support: a multiple of 16 is not required (`conv2d` 1×17 with 8 → 24 channels reads
+    0.92), and 16 → 8 is exact. A stride above 1 on any axis was exact in every probe, and so was every
+    transposed convolution. Dilation does not help (`conv1d` 17 taps at dilation 2: 0.09); a 9-tap
+    kernel at dilation 3 is exact, so the count is taps, not span. 9×9 and 11×11 kernels are exact.
+  - **Measured readings (cosine against the CPU).**
+    - `conv1d`, 48 channels, 173 frames: 16 taps 1.0, 17 taps 0.969, 128 taps 0.881.
+    - `conv1d`, 128 taps, 32 frames: 0.10.
+    - `conv1d`, 32 taps, by channel count: 8 and 24 exact; 16, 32, and 48 at 0.91.
+    - `conv2d` with a 17- or 31-tap axis: 0.63 and 0.04.
+    - A depthwise `conv1d` of 31 taps over 1024 channels: exact.
+    - `conv3d` 1×1×17: 0.88; 17×1×1: exact.
+    - The trained models' own geometries (2026-09-30): Wav2Vec2's position convolution 0.041 fused;
+      Basic Pitch's 3×39 contour convolution (8 → 8 over `[2, 172, 264, 8]`) 0.959; MarbleNet's
+      depthwise 17- and 29-tap and W2V-BERT's depthwise 31-tap: exact.
+  - **How it shows in a training run.** Every parameter after the convolution matches the reference,
+    because its gradient needs only the forward and the output gradient. Only the parameters before it
+    drift, because their gradient crosses the convolution's input gradient.
+  - **Where it was found.** Wav2Vec2's 128-tap, 16-group position convolution. The feature projection
+    and `masked_spec_embed` sit before it, and their first-step gradients read 0.997 and 0.99986
+    against transformers, while every encoder and head parameter read 0.99999999.
+  - **The workaround.** Sum convolutions over kernel slices of at most 16 taps, each over the input
+    window it reaches, after an explicit zero pad
+    (`NFKWav2Vec2WeightNormConv.groupedConvolution`). The forward is unchanged up to summation order.
+    The input gradient matches the CPU at 1 − 1e-12, and the Wav2Vec2 gradients then read 0.99999997
+    or better.
+  - **The package-wide fix (2026-09-30).** `NFKMLXGradientSafeConvolution.convolve` is the sliced form
+    for any rank, padding, dilation, and grouping. `install(in:)` swaps every stride-1 MLXNN `Conv1d`,
+    `Conv2d`, and `Conv3d` (and the package's `NFKConv1d` / `NFKConv2d`, keeping their round-once
+    arithmetic) with a kernel axis above 16 taps for a sliced subclass carrying the same parameters,
+    frozen state, and mode; `restore()` copies the trained values back and returns the originals.
+    `NFKMLXTrainer` installs it for every run, so every recipe and any caller of the trainer gets the
+    right gradient, and inference never changes. An affected convolution in a plain property cannot be
+    swapped, and the run throws naming it. The swap keys on stride and tap count alone, so it also
+    slices convolutions the GPU happens to get right (the depthwise ones), which costs speed and nothing
+    else. Wav2Vec2's own sliced module predates it and stays.
+  - **Rule for recipes.** Train through `NFKMLXTrainer` / `NFKMLXFineTune.run`. A test or loop that
+    calls `valueAndGrad` directly installs the swap around it.
+  - **Rule for gradient tests.** Compare magnitudes as well as directions. A cosine between one-value
+    parameters is 1 whenever the signs agree: Basic Pitch's two upstream parameters, `log_norm.weight`
+    and `log_norm.bias`, passed a cosine check on 2026-09-25 while their gradient crossed a convolution
+    the GPU got wrong.
+  - **Rule for probes.** Probe at the release's own geometry. A 4-tap probe of the same code passed.
+  - **Tooling.** `~/.inferkit-validation/mlxvenv` holds Python mlx 0.32.2 with torch, for op-level
+    checks like this one without a Swift build.
 - **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
   loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
   forward, and that one evaluation carries every file read, every conversion, and the forward itself.

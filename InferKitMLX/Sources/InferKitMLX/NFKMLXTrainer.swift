@@ -135,9 +135,10 @@ public enum NFKMLXTrainer {
     ///   when a schedule is given for an optimizer without a single rate to scale.
     ///
     /// The module is put in training mode for the duration and restored afterward, so the group that
-    /// trains updates its batch-normalization statistics and returns ready to infer. A subtree whose
-    /// parameters are all frozen stays in evaluation mode instead, so a frozen backbone normalizes
-    /// with the statistics it was released with rather than folding the training batches into them.
+    /// trains updates its batch-normalization statistics and returns ready to infer. A normalization
+    /// whose own parameters are all frozen stays in evaluation mode instead, so a frozen backbone
+    /// normalizes with the statistics it was released with and does not fold the training batches
+    /// into them. Dropout runs everywhere, frozen parts included, as PyTorch's `model.train()` runs it.
     ///
     /// A run is multi-second; call it off the main thread.
     @discardableResult
@@ -243,7 +244,7 @@ public enum NFKMLXTrainer {
         constraint: ((Model) -> Void)? = nil,
         observer: Observer?
     ) throws -> [Float] {
-        freezeRunningStatistics(of: model)
+        freezeHeldState(of: model)
         guard !model.trainableParameters().flattened().isEmpty else {
             throw NFKMLXError.nothingToTrain(
                 "every parameter of this model is frozen, so the run would compute gradients for "
@@ -261,6 +262,11 @@ public enum NFKMLXTrainer {
             scheduled = groups
         }
         defer { for (group, rate) in scheduled { group.learningRate = rate } }
+
+        // Installed before the training mode is set and restored after it is unset, so the swapped
+        // convolutions take the run's mode and the originals get back the mode the caller left.
+        let convolutions = try NFKMLXGradientSafeConvolution.install(in: model)
+        defer { convolutions.restore() }
 
         let wasTraining = model.training
         enterTrainingMode(model)
@@ -326,29 +332,40 @@ public enum NFKMLXTrainer {
         return history
     }
 
-    /// Keeps every normalization's running statistics out of the trainable set.
+    /// Keeps out of the trainable set what no run trains: every normalization's running statistics
+    /// and every array of a quantized layer.
     ///
-    /// @discussion A running mean or variance is an average of what the batches looked like, updated in
-    /// place during the forward pass, never a gradient target. MLXNN's `BatchNorm` freezes the two when
-    /// it is built, but a parent's recursive `unfreeze()` clears every child's frozen set without
-    /// calling the child, so a recipe that unfreezes a network makes them trainable. Their gradient is
-    /// zero, so a plain step leaves them alone, but the optimizer still carries state for them and a
-    /// decoupled weight decay shrinks them every step, which no reference does. The loss is unaffected,
-    /// because training mode normalizes by each batch's own statistics. Freezing them here, after the
-    /// recipe's freezing and before the loop, holds for every recipe.
-    static func freezeRunningStatistics(of model: Module) {
-        let statistics: Set<String> = ["running_mean", "running_var"]
+    /// @discussion Both are frozen when their layer is built, and a parent's recursive `unfreeze()`
+    /// clears every child's frozen set without calling the child, so a recipe that unfreezes a network
+    /// makes them trainable. MLXNN's `QuantizedEmbedding` thaws under its own `unfreeze()` too.
+    ///
+    /// - A running mean or variance is an average of what the batches looked like, updated in place
+    ///   during the forward pass. Its gradient is zero, but the optimizer carries state for it and a
+    ///   decoupled weight decay shrinks it every step, which no reference does.
+    /// - A quantized layer's packed `uint32` weight, scales, and biases have no gradient. MLX aborts the
+    ///   process when asked for one (`[QuantizedMatmul::vjp] no gradient wrt the quantized weights`).
+    ///   A quantized base trains through adapters or not at all.
+    ///
+    /// Freezing them here, after the recipe's freezing and before the loop, holds for every recipe.
+    static func freezeHeldState(of model: Module) {
         for (_, module) in model.leafModules().flattened() {
-            let held = statistics.filter { key in
-                module.parameters().flattened().contains { $0.0 == key }
-            }
+            let held = heldKeys(of: module)
             if !held.isEmpty {
-                module.freeze(recursive: false, keys: Array(held))
+                module.freeze(recursive: false, keys: held)
             }
         }
     }
 
-    /// Puts the model into training mode, leaving every fully frozen subtree in evaluation mode.
+    /// The keys of `module`'s own parameters that no run trains.
+    static func heldKeys(of module: Module) -> [String] {
+        let keys = module.parameters().flattened().map(\.0)
+        if module is Quantized {
+            return keys
+        }
+        return keys.filter { $0 == "running_mean" || $0 == "running_var" }
+    }
+
+    /// Puts the model into training mode, leaving every frozen normalization in evaluation mode.
     ///
     /// @discussion `train(true)` sets the flag on every module in the tree, and freezing does not
     /// touch it. A `BatchNorm` whose flag is set normalizes with the batch's own mean and variance
@@ -358,24 +375,22 @@ public enum NFKMLXTrainer {
     /// ``NFKMLXWeights/save(_:to:)`` then writes those statistics into the checkpoint, which is how
     /// the damage outlives the run.
     ///
-    /// A subtree that holds parameters and has none trainable is therefore returned to evaluation
-    /// mode. A subtree holding no parameters at all follows its parent, so a dropout inside the
-    /// trainable group still drops.
+    /// A module that keeps running statistics and has no trainable parameter is therefore returned
+    /// to evaluation mode. Every other module trains, so a dropout or drop path in a frozen encoder
+    /// still drops, as it does in a PyTorch reference that calls `model.train()` and freezes by
+    /// `requires_grad_(False)`.
     private static func enterTrainingMode(_ model: Module) {
         model.train(true)
-        restoreEvaluationMode(inFrozenSubtreesOf: model)
+        for (_, module) in [("", model)] + model.namedModules()
+        where keepsRunningStatistics(module) && module.trainableParameters().flattened().isEmpty {
+            module.train(false)
+        }
     }
 
-    /// Walks down from `module`, returning each wholly frozen subtree to evaluation mode.
-    private static func restoreEvaluationMode(inFrozenSubtreesOf module: Module) {
-        guard module.parameters().flattened().isEmpty
-                || !module.trainableParameters().flattened().isEmpty else {
-            // Nothing below this point trains, so the whole subtree evaluates.
-            module.train(false)
-            return
-        }
-        for (_, child) in module.children().flattened() {
-            restoreEvaluationMode(inFrozenSubtreesOf: child)
+    /// Whether `module` holds a running mean or variance of its own.
+    private static func keepsRunningStatistics(_ module: Module) -> Bool {
+        module is BatchNorm || module.parameters().flattened().contains {
+            $0.0 == "running_mean" || $0.0 == "running_var"
         }
     }
 

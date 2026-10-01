@@ -4183,8 +4183,9 @@ Notes:
   can overwrite a checkpoint with ruined weights.
 - `train` throws `NFKMLXError.nothingToTrain` when every parameter is frozen, so a predicate that
   matched no layer reports itself rather than running a loss curve over an update that changes nothing.
-- A frozen group stays in evaluation mode for the run, so a frozen `BatchNorm` backbone normalizes with
-  the statistics it was released with and does not fold the training batches into them.
+- A frozen normalization stays in evaluation mode for the run, so a frozen `BatchNorm` backbone
+  normalizes with the statistics it was released with and does not fold the training batches into
+  them. A frozen dropout still drops, as it does under PyTorch's `model.train()`.
 - Checkpoints record the model's parameters, not the optimizer's state: an `SGD` run resumes exactly,
   an `Adam` run rebuilds its moment estimates and shows a brief rise in loss.
 

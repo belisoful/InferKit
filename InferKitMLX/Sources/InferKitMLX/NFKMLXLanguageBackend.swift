@@ -1001,7 +1001,7 @@ public final class NFKMLXLanguage: NSObject {
         let kept: [(String, MLXArray)]
         if files.count == 1 {
             let checkpoint = try NFKMLXWeights.loadCheckpoint(url: files[0])
-            NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+            try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
             recorded = checkpoint.quantization
             if checkpoint.quantization != nil {
                 stored = .checkpoint
@@ -1051,7 +1051,7 @@ public final class NFKMLXLanguage: NSObject {
         // A quantized checkpoint reshapes the module to match and loads at its stored dtypes: the
         // packed weights are uint32 whatever the request, and the scales keep the precision the
         // quantization was computed at.
-        NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+        try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
         let keepStored = precision == .checkpoint || checkpoint.quantization != nil
         let tied = net.lmHead == nil
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in

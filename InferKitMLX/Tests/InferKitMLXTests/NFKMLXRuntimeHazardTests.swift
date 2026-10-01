@@ -288,7 +288,7 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
         XCTAssertNotEqual(runningMean(), released,
                           "a frozen BatchNorm folded the batch into its released statistics")
 
-        // The rule the package applies: a wholly frozen subtree goes back to evaluation mode, after
+        // The rule the package applies: a frozen normalization goes back to evaluation mode, after
         // which the same call leaves the statistics alone.
         normalization.train(false)
         let beforeInference = runningMean()
@@ -311,6 +311,24 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
                       "mlx-swift changed: a parent's unfreeze no longer reaches the statistics")
     }
 
+    /// A quantized layer freezes every array it holds when it is built. A parent's `unfreeze()` thaws
+    /// them, and `QuantizedEmbedding` thaws under its own. A gradient for a thawed packed weight aborts
+    /// the process, so the probe stops at the trainable set.
+    func testAParentsUnfreezeThawsAQuantizedLayer() throws {
+        try requireMLXRuntime()
+        let parent = Sequential(layers: QuantizedLinear(Linear(64, 8), groupSize: 32, bits: 4))
+        let trainable = { Set(parent.trainableParameters().flattened().map { $0.0 }) }
+        XCTAssertTrue(trainable().isEmpty, "the premise: built frozen")
+        parent.unfreeze()
+        XCTAssertTrue(trainable().contains("layers.0.weight"),
+                      "mlx-swift changed: a parent's unfreeze no longer reaches a quantized layer")
+
+        let embedding = QuantizedEmbedding(Embedding(embeddingCount: 16, dimensions: 64), groupSize: 32, bits: 4)
+        embedding.unfreeze()
+        XCTAssertTrue(embedding.trainableParameters().flattened().contains { $0.0 == "weight" },
+                      "mlx-swift changed: QuantizedEmbedding re-freezes under its own unfreeze")
+    }
+
     /// MLXNN's `BatchNorm` folds the BIASED batch variance into its running variance. PyTorch's
     /// `BatchNorm` and TensorFlow's fused kernel both fold the unbiased one. The two differ by
     /// `n / (n − 1)` for `n` values per channel, which is negligible over a feature map and a factor
@@ -325,6 +343,37 @@ final class NFKMLXRuntimeHazardTests: XCTestCase {
         // Momentum 0.1 from 1: the biased variance 1 keeps it at 1; the unbiased 2 would reach 1.1.
         XCTAssertEqual(variance.item(Float.self), 1.0, accuracy: 1e-6,
                        "mlx-swift changed: BatchNorm now folds a different variance")
+    }
+
+    // MARK: Replacing modules inside a container
+
+    private final class ArrayHolder: Module {
+        @ModuleInfo(key: "net") var net: [Module]
+
+        override init() {
+            _net.wrappedValue = [Linear(4, 4), GELU(), Linear(4, 4)]
+            super.init()
+        }
+    }
+
+    /// `update(modules:)` reads an array from the entries the update names, deciding from the first.
+    /// Naming the first entry alone REPLACES the array with that one entry, so the rest disappear with
+    /// no error. Naming a later entry alone is refused. `NFKMLXModuleReplacement` updates each child
+    /// through its owner, passing the whole container, for that reason.
+    func testUpdatingAnArrayThroughAPartialPathTruncatesOrRefuses() throws {
+        try requireMLXRuntime()
+        let truncated = ArrayHolder()
+        try truncated.update(modules: ModuleChildren.unflattened([("net.0", Linear(4, 4))]), verify: .none)
+        XCTAssertEqual(truncated.net.count, 1, "mlx-swift changed: naming the first entry no longer drops the rest")
+
+        let refused = ArrayHolder()
+        XCTAssertThrowsError(
+            try refused.update(modules: ModuleChildren.unflattened([("net.2", Linear(4, 4))]), verify: .none),
+            "mlx-swift changed: a path naming a later entry alone is now accepted")
+
+        let placed = ArrayHolder()
+        try NFKMLXModuleReplacement.place(Linear(4, 4), at: "net.2", in: placed)
+        XCTAssertEqual(placed.net.count, 3)
     }
 
     // MARK: Subnormal flushing

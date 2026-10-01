@@ -302,7 +302,7 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         try requireMLXRuntime()
         MLXRandom.seed(14)
         let source = NFKMLXLanguage.makeNet(.tinyMixture)
-        NFKMLXQuantization.quantize(module: source, bits: 8, groupSize: 32)
+        try NFKMLXQuantization.quantize(module: source, bits: 8, groupSize: 32)
         let directory = try scratchDirectory()
         try NFKMLXWeights.save(source, to: directory.appendingPathComponent("model.safetensors"))
         let paged = try assertPagedMatchesResident(directory, geometry: .tinyMixture, precision: .float32)

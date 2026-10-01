@@ -344,6 +344,65 @@ final class NFKMLXTrainerTests: XCTestCase {
                        "the frozen backbone's running statistics did not move")
     }
 
+    /// A frozen encoder holding a dropout and a normalization, under a head that trains.
+    private final class DropoutOverFrozenEncoder: Module {
+        @ModuleInfo(key: "encoder") var encoder: Sequential
+        @ModuleInfo(key: "head") var head: Linear
+
+        override init() {
+            _encoder.wrappedValue = Sequential(layers: Linear(4, 4), Dropout(p: 0.5), BatchNorm(featureCount: 4))
+            _head.wrappedValue = Linear(4, 2)
+            super.init()
+        }
+
+        var dropout: Module { encoder.layers[1] as Module }
+        var normalization: Module { encoder.layers[2] as Module }
+    }
+
+    /// The trainer evaluates a frozen normalization and leaves a frozen dropout dropping, as a PyTorch
+    /// reference does when it freezes by `requires_grad_(False)` and calls `model.train()`.
+    func testAFrozenEncoderStillDropsButKeepsItsStatistics() throws {
+        try requireMLXRuntime()
+        let model = DropoutOverFrozenEncoder()
+        model.train(false)
+        model.encoder.freeze()
+        var modes = [(dropout: Bool, normalization: Bool)]()
+        let input = MLXArray((0 ..< 8).map { Float($0) / 8 }).reshaped([2, 4])
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.01), steps: 2,
+                                    batch: { _ in (input, MLXArray.zeros([2, 2])) },
+                                    loss: { model, input, target in
+                                        modes.append((model.dropout.training, model.normalization.training))
+                                        return (model.head(model.encoder(input)) - target).square().mean()
+                                    })
+        XCTAssertFalse(modes.isEmpty)
+        XCTAssertTrue(modes.allSatisfy { $0.dropout }, "the frozen encoder's dropout drops")
+        XCTAssertTrue(modes.allSatisfy { !$0.normalization }, "the frozen normalization evaluates")
+        XCTAssertFalse(model.dropout.training, "the run restores the mode the caller left")
+    }
+
+    /// A recipe that unfreezes a whole network thaws its quantized layers with it. A gradient for a
+    /// packed weight aborts the process, so the run freezes them again and trains the rest.
+    func testARunOverAnUnfrozenQuantizedNetworkTrainsTheRest() throws {
+        try requireMLXRuntime()
+        let model = Sequential(layers: QuantizedLinear(Linear(64, 64), groupSize: 32, bits: 4), Linear(64, 2))
+        model.unfreeze()
+        func value(_ key: String) -> MLXArray {
+            model.parameters().flattened().first { $0.0 == key }!.1
+        }
+        let packedBefore = value("layers.0.weight").asArray(UInt32.self)
+        let headBefore = value("layers.1.weight").asArray(Float.self)
+
+        let input = MLXArray((0 ..< 128).map { Float($0 % 9) / 9 }).reshaped([2, 64])
+        _ = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.1), steps: 2,
+                                    batch: { _ in (input, MLXArray.ones([2, 2])) },
+                                    loss: { model, input, target in
+                                        (model(input) - target).square().mean()
+                                    })
+
+        XCTAssertEqual(value("layers.0.weight").asArray(UInt32.self), packedBefore, "the packed weight is held")
+        XCTAssertNotEqual(value("layers.1.weight").asArray(Float.self), headBefore, "the head trains")
+    }
+
     /// The frozen backbone also has to compute what it computes at inference. In training mode a
     /// BatchNorm normalizes with the batch's own mean and variance, which over two examples is a
     /// different function from the released one.

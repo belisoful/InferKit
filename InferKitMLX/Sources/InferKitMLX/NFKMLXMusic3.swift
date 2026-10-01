@@ -943,7 +943,7 @@ public final class NFKMLXMusic3: NSObject {
         let needsConvTranspose: Bool
         if let singleFile {
             let checkpoint = try NFKMLXWeights.loadCheckpoint(url: singleFile)
-            NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+            try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
             let stored: NFKMLXWeightPrecision = checkpoint.quantization != nil ? .checkpoint : precision
             pairs = NFKMLXWeights.converted(checkpoint.arrays.map { ($0, $1) }, to: stored)
             needsConvTranspose = checkpoint.needsConvTranspose
@@ -963,7 +963,7 @@ public final class NFKMLXMusic3: NSObject {
     static func loadDepthWeights(into net: NFKMusic3DepthDecoderNet, from url: URL,
                                  precision: NFKMLXWeightPrecision = .float32) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
-        NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+        try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
         let stored: NFKMLXWeightPrecision = checkpoint.quantization != nil ? .checkpoint : precision
         let mapped = NFKMLXWeights.converted(checkpoint.arrays.map { ($0, $1) }, to: stored)
         try NFKMLXWeights.apply(mapped, to: net)

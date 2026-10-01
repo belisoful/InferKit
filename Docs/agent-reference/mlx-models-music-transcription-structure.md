@@ -147,6 +147,14 @@ already carries under `NFKOutputSegments`.
     - Two biases, `contour_conv.bias` and `onset_conv.bias`, feed a batch normalization, so their
       gradient is exactly zero and they move only by rounding: at most 1.1e-5 over three reference
       steps against 2.8e-3 for a trained parameter. A cosine on them measures nothing.
+    - The 3×39 contour convolution runs at stride 1, and mlx 0.32.2's GPU backward gets its input
+      gradient wrong (cosine 0.959 at this geometry; `mlx-runtime-gotchas.md`). That gradient reaches
+      `log_norm.weight` and `log_norm.bias`, the only trained parameters before it. The gradient test
+      passed it on 2026-09-25 because a cosine between one-value parameters is 1 whenever the signs
+      agree. Measured: `log_norm.weight`'s gradient was 2.5% off the reference through MLX's own
+      convolution and is within 6.7e-5 sliced. Since 2026-09-30 the trainer computes that convolution in
+      16-tap slices for every run, and the gradient and step tests also bound each parameter's
+      norm-relative error.
 
 - `NFKMLXAllInOne` (`@objc`) — All-In-One music structure analysis (`mir-aidj/all-in-one`, Kim and
   Nam, ISMIR 2023, MIT), the model that divides a track into what a listener hears as its parts. It

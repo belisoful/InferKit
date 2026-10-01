@@ -301,6 +301,13 @@ final class NFKMLXBasicPitchTrainingTests: XCTestCase {
         return dot / (xx * yy).squareRoot()
     }
 
+    /// `‖ours − theirs‖ / ‖theirs‖`. It reads a wrong magnitude on a one-value parameter, where a cosine is
+    /// 1 whenever the signs agree, and it is not dominated by a few near-zero entries that Adam's
+    /// sign-like early steps move in opposite directions, which a largest-entry ratio is.
+    private static func relativeError(_ ours: MLXArray, _ theirs: MLXArray) -> Float {
+        sqrt((ours - theirs).square().sum()).item(Float.self) / sqrt(theirs.square().sum()).item(Float.self)
+    }
+
     func testTheTrainableLayoutMatchesTheReferenceForwardInBothModes() throws {
         try requireMLXRuntime()
         let reference = try reference()
@@ -358,14 +365,32 @@ final class NFKMLXBasicPitchTrainingTests: XCTestCase {
         net.cqt.freeze()
         net.train(true)
         let objective = NFKMLXBasicPitchObjective()
-        let lossAndGradient = valueAndGrad(model: net) { net, _ in [objective(net, batch)] }
-        let (_, gradients) = lossAndGradient(net, [])
-        let ours = Dictionary(uniqueKeysWithValues: gradients.flattened())
+        func gradients() -> [String: MLXArray] {
+            let lossAndGradient = valueAndGrad(model: net) { net, _ in [objective(net, batch)] }
+            return Dictionary(uniqueKeysWithValues: lossAndGradient(net, []).1.flattened())
+        }
         let recorded = record.compactMap { key, value -> (String, MLXArray)? in
             key.hasPrefix("grad::") ? (String(key.dropFirst(6)), layout(value)) : nil
         }
+        func relativeError(_ ours: MLXArray, _ theirs: MLXArray) -> Float {
+            Self.relativeError(ours, theirs)
+        }
+
+        // MLX's own GPU backward of the 3×39 contour convolution gets its input gradient wrong, which
+        // reaches the normalization after the log. That normalization's two parameters hold one value
+        // each, where a cosine is 1 whenever the signs agree, so the reading is a relative error.
+        let unswapped = gradients()["log_norm.weight"]!
+        let installation = try NFKMLXGradientSafeConvolution.install(in: net)
+        defer { installation.restore() }
+        XCTAssertEqual(installation.paths, ["contour_conv"])
+        let ours = gradients()
+        let recordedLogNorm = recorded.first { $0.0 == "log_norm.weight" }!.1
+        print("PARITY basic-pitch-gradient: log_norm.weight relative error \(relativeError(ours["log_norm.weight"]!, recordedLogNorm)) "
+              + "sliced, \(relativeError(unswapped, recordedLogNorm)) through MLX's own convolution")
+
         let largest = recorded.map { abs($0.1).max().item(Float.self) }.max() ?? 0
         var worst = 1.0
+        var worstRelative: Float = 0
         for (name, reference) in recorded {
             guard let gradient = ours[name] else { return XCTFail("no gradient for \(name)") }
             // A bias feeding a batch normalization has a gradient of exactly zero, because the
@@ -376,11 +401,15 @@ final class NFKMLXBasicPitchTrainingTests: XCTestCase {
                 continue
             }
             let similarity = cosine(gradient, reference)
+            let relative = relativeError(gradient, reference)
             worst = min(worst, similarity)
+            worstRelative = max(worstRelative, relative)
             XCTAssertGreaterThan(similarity, 0.9999, name)
+            XCTAssertLessThan(relative, 2e-3, "\(name): the magnitude, which a cosine does not measure")
         }
         XCTAssertNil(ours["contour_norm.running_mean"], "a moving statistic takes no gradient")
-        print("PARITY basic-pitch-gradient: worst cosine \(worst) over \(recorded.count) parameters")
+        print("PARITY basic-pitch-gradient: worst cosine \(worst), worst relative error \(worstRelative) "
+              + "over \(recorded.count) parameters")
     }
 
     /// Keras's first step from the reference's own gradients, then the unit-norm constraint, isolated
@@ -439,6 +468,7 @@ final class NFKMLXBasicPitchTrainingTests: XCTestCase {
         let largest = gradients.map { abs($0.1).max().item(Float.self) }.max() ?? 0
         let untrained = Set(gradients.filter { abs($0.1).max().item(Float.self) < largest * 1e-5 }.map { $0.0 })
         var worst = 1.0
+        var worstRelative: Float = 0
         for (key, value) in record where key.hasPrefix("step3::") {
             let name = String(key.dropFirst(7))
             if untrained.contains(name) {
@@ -446,12 +476,17 @@ final class NFKMLXBasicPitchTrainingTests: XCTestCase {
                 continue
             }
             let start = released[name]!
-            let similarity = cosine(ours[name]! - start, layout(value) - start)
+            let movement = ours[name]! - start, theirs = layout(value) - start
+            let similarity = cosine(movement, theirs)
+            let relative = Self.relativeError(movement, theirs)
             worst = min(worst, similarity)
+            worstRelative = max(worstRelative, relative)
             XCTAssertGreaterThan(similarity, 0.999, name)
+            XCTAssertLessThan(relative, 1e-2, "\(name): the size of the movement, which a cosine does not measure")
         }
         XCTAssertEqual(untrained, ["contour_conv.bias", "onset_conv.bias"])
-        print("PARITY basic-pitch-steps: worst cosine of the three steps' movement \(worst)")
+        print("PARITY basic-pitch-steps: worst cosine of the three steps' movement \(worst), worst relative "
+              + "error \(worstRelative)")
     }
 
     // MARK: The data adapter

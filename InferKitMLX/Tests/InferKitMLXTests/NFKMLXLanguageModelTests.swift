@@ -1081,7 +1081,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     func testAQuantizedMixtureRoundTripsThroughTheCheckpoint() throws {
         try requireMLXRuntime()
         let net = tinyMixtureNet()
-        NFKMLXQuantization.quantize(module: net, bits: 8, groupSize: 32)
+        try NFKMLXQuantization.quantize(module: net, bits: 8, groupSize: 32)
         XCTAssertTrue(net.model.layers[0].feedForward is NFKLMMixtureFeedForward)
         let experts = (net.model.layers[0].feedForward as! NFKLMMixtureFeedForward).experts as! NFKLMSwitchGLU
         XCTAssertTrue(experts.gate is NFKLMQuantizedSwitchLinear)

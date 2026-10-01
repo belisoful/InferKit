@@ -52,28 +52,41 @@ public enum NFKMLXQuantization {
     /// output projection, so quantizing it quantizes the logit head too — a cost that has to be
     /// measured per model rather than assumed free. It is safe to enable for an untied model, whose
     /// embedding is a lookup table separate from `lm_head`.
+    ///
+    /// Each layer is replaced through the module that owns it. MLX's own `quantize(model:)` updates
+    /// the root with every replaced path at once, which rebuilds a module array from the entries
+    /// named: a skipped layer at an array's end drops the tail, and one at its start aborts.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when an eligible layer sits directly in an
+    ///   array nested inside another, which MLX cannot update in place.
     public static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
-                                includeEmbeddings: Bool = false) {
-        MLXNN.quantize(model: module, groupSize: groupSize, bits: bits, mode: .affine, filter: { _, layer in
-            if let linear = layer as? Linear, !(linear is QuantizedLinear) {
-                return linear.weight.shape[1] % groupSize == 0
+                                includeEmbeddings: Bool = false) throws {
+        let replacements = module.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
+            guard isEligible(layer, groupSize: groupSize, includeEmbeddings: includeEmbeddings) else {
+                return nil
             }
-            if let experts = layer as? NFKLMSwitchLinear, !(experts is NFKLMQuantizedSwitchLinear) {
-                return experts.inputSize % groupSize == 0
-            }
-            if includeEmbeddings, let embedding = layer as? Embedding,
-               !(embedding is QuantizedEmbedding) {
-                return embedding.weight.shape[1] % groupSize == 0
-            }
-            return false
-        }, apply: { layer, groupSize, bits, mode in
             // A mixture's stacked expert weights are not a `Linear`, so MLX's own quantizer does not
             // know them; everything else takes the standard path.
             if let experts = layer as? NFKLMSwitchLinear {
-                return experts.quantized(groupSize: groupSize, bits: bits)
+                return (path, experts.quantized(groupSize: groupSize, bits: bits))
             }
-            return quantizeSingle(layer: layer, groupSize: groupSize, bits: bits, mode: mode)
-        })
+            return quantizeSingle(layer: layer, groupSize: groupSize, bits: bits, mode: .affine)
+                .map { (path, $0) }
+        }
+        try NFKMLXModuleReplacement.place(replacements, in: module)
+    }
+
+    private static func isEligible(_ layer: Module, groupSize: Int, includeEmbeddings: Bool) -> Bool {
+        if let linear = layer as? Linear, !(linear is QuantizedLinear) {
+            return linear.weight.shape[1] % groupSize == 0
+        }
+        if let experts = layer as? NFKLMSwitchLinear, !(experts is NFKLMQuantizedSwitchLinear) {
+            return experts.inputSize % groupSize == 0
+        }
+        if includeEmbeddings, let embedding = layer as? Embedding, !(embedding is QuantizedEmbedding) {
+            return embedding.weight.shape[1] % groupSize == 0
+        }
+        return false
     }
 
     /// Applies a checkpoint's recorded quantization to a freshly built module, so the packed arrays
@@ -83,7 +96,7 @@ public enum NFKMLXQuantization {
     /// embedding was packed is read from the checkpoint itself: a quantized embedding weight is stored
     /// as `uint32` where an unquantized one is a float. This keeps a checkpoint self-describing, so a
     /// file saved before embeddings were quantizable still loads.
-    static func matchStructure(of checkpoint: NFKMLXWeights.Checkpoint, on module: Module) {
+    static func matchStructure(of checkpoint: NFKMLXWeights.Checkpoint, on module: Module) throws {
         // An MXFP4 record describes packed experts alone, which the language loader installs from the
         // arrays' own dtypes; there is no affine structure to rebuild for it.
         guard let quantization = checkpoint.quantization, quantization.mode == .affine else { return }
@@ -91,8 +104,8 @@ public enum NFKMLXQuantization {
             guard layer is Embedding, !(layer is QuantizedEmbedding) else { return false }
             return checkpoint.arrays[path + ".weight"]?.dtype == .uint32
         }
-        quantize(module: module, bits: quantization.bits, groupSize: quantization.groupSize,
-                 includeEmbeddings: embeddingsPacked)
+        try quantize(module: module, bits: quantization.bits, groupSize: quantization.groupSize,
+                     includeEmbeddings: embeddingsPacked)
     }
 }
 

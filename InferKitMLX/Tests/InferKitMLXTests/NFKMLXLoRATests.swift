@@ -286,4 +286,140 @@ final class NFKMLXLoRATests: XCTestCase {
         let adapted = try NFKMLXLoRA.apply(to: model, where: { path, _ in !path.contains("q") })
         XCTAssertEqual(adapted, 1)
     }
+
+    // MARK: - Layers inside containers
+
+    /// A feed-forward held as a module array, the shape Whisper's `mlp` and the diffusion
+    /// transformers' `net` arrays take. MLX rebuilds an array from the entries an update names, so an
+    /// adapter set that misses the array's tail would drop it.
+    private final class ArrayHeld: Module {
+        @ModuleInfo(key: "net") var net: [Module]
+
+        override init() {
+            _net.wrappedValue = [Linear(8, 16), GELU(), Linear(16, 8), Dropout(p: 0)]
+            super.init()
+        }
+
+        func callAsFunction(_ x: MLXArray) -> MLXArray {
+            net.reduce(x) { ($1 as! UnaryLayer)($0) }
+        }
+    }
+
+    private final class DictionaryHeld: Module {
+        @ModuleInfo(key: "heads") var heads: [String: Linear]
+
+        override init() {
+            _heads.wrappedValue = ["a": Linear(8, 8), "b": Linear(8, 8)]
+            super.init()
+        }
+    }
+
+    private final class Stack: Module {
+        @ModuleInfo(key: "blocks") var blocks: [Block]
+
+        override init() {
+            _blocks.wrappedValue = [Block(), Block(), Block()]
+            super.init()
+        }
+    }
+
+    func testAdaptingTheLinearsOfAnArrayKeepsItsOtherEntries() throws {
+        try requireMLXRuntime()
+        let model = ArrayHeld()
+        let before = model(input())
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model), 2)
+        XCTAssertEqual(model.net.count, 4, "the activation and the dropout after the last adapter stay")
+        XCTAssertTrue(model.net[0] is NFKMLXLoRALinear)
+        XCTAssertTrue(model.net[1] is GELU)
+        XCTAssertTrue(model.net[2] is NFKMLXLoRALinear)
+        XCTAssertTrue(model.net[3] is Dropout)
+        XCTAssertEqual(abs(model(input()) - before).max().item(Float.self), 0, accuracy: 1e-6)
+    }
+
+    func testAdaptingOnlyTheFirstLinearOfAnArrayKeepsTheRest() throws {
+        try requireMLXRuntime()
+        let model = ArrayHeld()
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model) { path, _ in path == "net.0" }, 1)
+        XCTAssertEqual(model.net.count, 4)
+        XCTAssertTrue(model.net[0] is NFKMLXLoRALinear)
+        XCTAssertTrue(type(of: model.net[2]) == Linear.self)
+    }
+
+    func testAdaptingOnlyTheLastLinearOfAnArray() throws {
+        try requireMLXRuntime()
+        let model = ArrayHeld()
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model) { path, _ in path == "net.2" }, 1)
+        XCTAssertEqual(model.net.count, 4)
+        XCTAssertTrue(type(of: model.net[0]) == Linear.self)
+        XCTAssertTrue(model.net[2] is NFKMLXLoRALinear)
+    }
+
+    func testAdaptingOneEntryOfADictionaryKeepsTheOthers() throws {
+        try requireMLXRuntime()
+        let model = DictionaryHeld()
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model) { path, _ in path == "heads.a" }, 1)
+        XCTAssertEqual(Set(model.heads.keys), ["a", "b"])
+        XCTAssertTrue(model.heads["a"] is NFKMLXLoRALinear)
+        XCTAssertTrue(type(of: model.heads["b"]!) == Linear.self)
+    }
+
+    func testAdaptingOneBlockOfAStackLeavesTheOthers() throws {
+        try requireMLXRuntime()
+        let model = Stack()
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model) { path, _ in path.hasPrefix("blocks.1.") }, 3)
+        XCTAssertEqual(model.blocks.count, 3)
+        XCTAssertTrue(model.blocks[1].q is NFKMLXLoRALinear)
+        XCTAssertTrue(type(of: model.blocks[0].q) == Linear.self)
+        XCTAssertTrue(type(of: model.blocks[2].mlp) == Linear.self)
+    }
+
+    func testMergingAnArrayHeldAdapterKeepsTheArrayAndTheForward() throws {
+        try requireMLXRuntime()
+        let model = ArrayHeld()
+        try NFKMLXLoRA.apply(to: model) { path, _ in path == "net.0" }
+        let adapter = model.net[0] as! NFKMLXLoRALinear
+        adapter.update(parameters: ModuleParameters.unflattened([("lora_b", MLXArray.ones(adapter.loraB.shape) * 0.1)]))
+        let adapted = model(input())
+        XCTAssertEqual(try NFKMLXLoRA.merge(into: model), 1)
+        XCTAssertEqual(model.net.count, 4)
+        XCTAssertTrue(type(of: model.net[0]) == Linear.self)
+        XCTAssertLessThan(abs(model(input()) - adapted).max().item(Float.self), 1e-5)
+    }
+
+    // MARK: - State no run trains
+
+    private final class Normalized: Module {
+        @ModuleInfo(key: "proj") var proj: Linear
+        @ModuleInfo(key: "norm") var norm: BatchNorm
+        @ModuleInfo(key: "table") var table: Embedding
+
+        override init() {
+            _proj.wrappedValue = Linear(8, 8)
+            _norm.wrappedValue = BatchNorm(featureCount: 8)
+            _table.wrappedValue = QuantizedEmbedding(Embedding(embeddingCount: 4, dimensions: 64), groupSize: 32, bits: 4)
+            super.init()
+        }
+    }
+
+    func testMergingLeavesRunningStatisticsAndQuantizedArraysFrozen() throws {
+        try requireMLXRuntime()
+        let model = Normalized()
+        try NFKMLXLoRA.apply(to: model) { path, _ in path == "proj" }
+        try NFKMLXLoRA.merge(into: model)
+        let trainable = Set(model.trainableParameters().flattened().map(\.0))
+        XCTAssertTrue(trainable.contains("proj.weight"), "merging unfreezes the model")
+        XCTAssertTrue(trainable.contains("norm.weight"))
+        XCTAssertFalse(trainable.contains("norm.running_mean"))
+        XCTAssertFalse(trainable.contains("norm.running_var"))
+        XCTAssertFalse(trainable.contains("table.weight"), "a packed table has no gradient")
+        XCTAssertFalse(trainable.contains("table.scales"))
+    }
+
+    func testTheTrainableCountLeavesOutWhatARunFreezesAgain() throws {
+        try requireMLXRuntime()
+        let model = Normalized()
+        model.unfreeze()
+        XCTAssertEqual(NFKMLXLoRA.trainableParameterCount(of: model), 8 * 8 + 8 + 8 + 8,
+                       "the projection and the normalization's affine pair")
+    }
 }

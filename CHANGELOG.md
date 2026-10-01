@@ -823,6 +823,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   geometry for every file, so the 16 kHz release loaded into the wrong stride and separated wrongly
   without an error.
 
+#### LoRA adapts a layer held inside a module array or dictionary without changing the container
+
+- MLX's `update(modules:)` rebuilds an array or a dictionary of modules from the entries an update
+  names. `NFKMLXLoRA` updated from the model's root, so adapting the `Linear`s of an array such as
+  `[Linear, GELU, Linear, Dropout]` dropped the `Dropout` without an error, and a `Linear` held directly
+  in an array could be refused. No shipped recipe adapted such a layer.
+- `NFKMLXLoRA.apply` and `merge` now put each layer in place through the module that owns it, passing
+  a held container whole. The gradient-safe convolution swap uses the same placement.
+
 #### An unreadable checkpoint says it cannot be read
 
 - `NFKMLXWeights.loadCheckpoint(url:)` read a file's first bytes to recognize a PyTorch checkpoint and
@@ -860,6 +869,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Both networks now switch to evaluation mode when built. A fine-tune switches training on for its run
   and restores evaluation afterward.
 
+#### Training over a quantized network keeps its packed weights frozen
+
+- A quantized layer freezes its packed weight, scales, and biases when built. A recipe's `unfreeze()`
+  on the network thawed them, because a parent's recursive `unfreeze()` never calls a child's
+  override, and MLXNN's `QuantizedEmbedding` thawed under its own `unfreeze()`. The next gradient
+  aborted the process (`[QuantizedMatmul::vjp] no gradient wrt the quantized weights`).
+- `NFKMLXTrainer` now freezes every quantized layer's arrays along with the running statistics before
+  each run, and `NFKMLXLoRA.merge` does the same after it unfreezes the model. The package's packed
+  expert layer re-freezes under its own `unfreeze()`.
+- `NFKMLXLoRA.trainableParameterCount` no longer counts running statistics or quantized arrays an
+  `unfreeze()` thawed; a run freezes them again before it starts.
+
+#### Runtime quantization keeps the layers it skips inside a module array
+
+- `NFKMLXQuantization.quantize(module:bits:groupSize:includeEmbeddings:)` went through MLXNN's
+  `quantize(model:)`, which updates the root with every replaced path at once. MLX rebuilds a module
+  array from the entries an update names, so a `Linear` the quantizer skipped at the end of an array
+  was dropped without an error, and one skipped at the start aborted the process. The shipped models
+  that quantize (the language models, Music 3) hold `Linear` arrays whose entries share one input
+  width, so each array was packed whole or left whole; a mixed array in any other model was exposed.
+- The quantizer now replaces each layer through the module that owns it, the placement LoRA uses.
+  `quantize` and `matchStructure(of:on:)` throw, naming a layer held directly in a nested array, which
+  MLX cannot update in place.
+
 #### The Cosmos Tokenizer fine-tune can keep its reference's weight average
 
 - `NFKMLXCosmosTokenizer.fineTune` gains `weightAverageDecay`. Set to the reference's 0.9999, it keeps
@@ -878,6 +911,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXAllInOne.fineTune` defaulted to no gradient clip and documented that the reference does not
   clip. The reference passes `gradient_clip` 0.5 to Lightning's `Trainer`, which clips the global norm,
   and the released checkpoint's stored configuration records 0.5. The recipe now defaults to 0.5.
+
+#### A frozen encoder's dropout drops during training, as PyTorch's does
+
+- `NFKMLXTrainer` returned every wholly frozen subtree to evaluation mode, which protected a frozen
+  `BatchNorm`'s statistics and also switched off any dropout in that subtree. A PyTorch reference that
+  freezes by `requires_grad_(False)` and calls `model.train()` keeps that dropout on.
+- The trainer now returns only the modules that keep running statistics and have no trainable
+  parameter to evaluation mode. A dropout or drop path in a frozen part drops for the run, so a LoRA
+  fine-tune with a network's `dropout` set applies it in the frozen encoder too. No shipped recipe's
+  default changes: every module that held a nonzero dropout already trained.
+
+#### Training gets the right gradient through a wide convolution on the GPU
+
+- mlx 0.32.2's GPU backward of a stride-1 `conv1d`, `conv2d`, or `conv3d` with a kernel axis wider
+  than 16 taps returns a wrong gradient with respect to its input; the forward and the weight gradient
+  are exact. Parameters before such a convolution trained on that wrong gradient. Basic Pitch's 3×39
+  contour convolution was one (cosine 0.959 against the CPU), reaching its log normalization's two
+  parameters: their gradient was 2.5% off the reference, and is within 6.7e-5 now.
+- `NFKMLXGradientSafeConvolution` computes the same convolution as a sum over kernel slices of at most
+  16 taps, whose input gradient matches the CPU. `NFKMLXTrainer` swaps every affected MLXNN
+  convolution for that form for the length of a run and restores the originals afterward, so every
+  recipe and any caller of the trainer gets the right gradient and inference is unchanged. A loop
+  built directly on `valueAndGrad` calls `install(in:)` and `restore()` itself.
+- An affected convolution held in a plain property cannot be swapped, and the run throws naming it.
 
 #### Basic Pitch fine-tunes on a consumer's own recordings and notes
 

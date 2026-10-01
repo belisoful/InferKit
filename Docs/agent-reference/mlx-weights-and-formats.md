@@ -11,7 +11,8 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   bits:groupSize:includeEmbeddings:)` packs `Linear` layers whose input width divides the group size
   into affine 4- or 8-bit `QuantizedLinear` (everything else computes as built; already-quantized
   layers are excluded, which matters because `QuantizedLinear` subclasses `Linear` and satisfies a
-  type test silently). `includeEmbeddings` (default off) also packs `Embedding` layers into
+  type test silently). Each layer is replaced through its owner (`NFKMLXModuleReplacement.place`),
+  so a skipped layer inside a module array stays; the call throws. `includeEmbeddings` (default off) also packs `Embedding` layers into
   `QuantizedEmbedding`; it is off by default because a tied model reuses its input embedding as the
   logit head, so quantizing it quantizes the head too — a per-model cost. That cost is measured and
   small (`testTheTiedEmbeddingQuantizationCostAgainstTheRecord`, opt-in `IK_QWEN_EMB_PROBE=1`): on

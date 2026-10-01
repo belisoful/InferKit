@@ -1030,6 +1030,12 @@ final class NFKLMQuantizedSwitchLinear: NFKLMSwitchLinear, Quantized {
 
     override var inputSize: Int { weight.dim(2) * 32 / bits }
 
+    // MLXNN's `QuantizedLinear` re-freezes the same way; packed experts have no gradient to train.
+    override func unfreeze(recursive: Bool = true, keys: [String]? = nil, strict: Bool = false) throws {
+        try super.unfreeze(recursive: recursive, keys: keys, strict: strict)
+        freeze(recursive: false)
+    }
+
     override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
         gatherQuantizedMM(x, weight, scales: scales, biases: biases, rhsIndices: experts,
                           transpose: true, groupSize: groupSize, bits: bits, mode: mode)

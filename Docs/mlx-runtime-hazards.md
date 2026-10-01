@@ -109,6 +109,23 @@ the model is quietly worse.
 evaluation mode. A subtree with no parameters at all follows its parent, or a dropout inside the
 group that trains would stop dropping. `NFKMLXTrainer` does this for every run.
 
+### A wide stride-1 convolution's input gradient is wrong on the GPU
+
+In mlx 0.32.2, the GPU backward of `conv1d`, `conv2d`, and `conv3d` returns a wrong gradient with
+respect to the input when the convolution runs at stride 1 and a kernel axis has more than 16 taps. The
+forward and the weight gradient are exact, and the CPU is exact. Measured against the CPU, a 3×39
+`conv2d` reads a cosine of 0.80 and a 128-tap grouped `conv1d` 0.04. A stride above 1 and a transposed
+convolution were exact in every probe.
+
+Only parameters before such a convolution train on the wrong gradient. Parameters after it read
+parity, so a test of the loss or of the head does not see it.
+
+**Rule:** compute the convolution as a sum over kernel slices of at most 16 taps. `NFKMLXTrainer`
+does this for every run by swapping each affected MLXNN convolution for
+`NFKMLXGradientSafeConvolution`'s sliced form and swapping it back afterward. A training loop of your
+own built on `valueAndGrad` calls `NFKMLXGradientSafeConvolution.install(in:)` around its steps and
+`restore()` after.
+
 ### A parent's `unfreeze()` makes a `BatchNorm`'s statistics trainable
 
 `BatchNorm` keeps `running_mean` and `running_var` frozen, and re-freezes them in its own `unfreeze`
@@ -117,9 +134,15 @@ visitor and never calls that override, so the statistics come back into the trai
 gradient is zero, so a plain optimizer step leaves them alone. An optimizer with a decoupled weight
 decay shrinks them every step, and every optimizer keeps state for them.
 
+A quantized layer thaws the same way. `QuantizedLinear` and `QuantizedEmbedding` freeze their packed
+weight, scales, and biases when built; after a parent's `unfreeze()` they are trainable, and
+`QuantizedEmbedding` thaws under its own `unfreeze()` as well. The next gradient aborts the process with
+`[QuantizedMatmul::vjp] no gradient wrt the quantized weights`.
+
 **Rule:** after the recipe's own freezing, freeze every module's `running_mean` and `running_var`
-again, or override `noGrad()` in a module that keeps statistics. `NFKMLXTrainer` does the first for
-every run. Probe: `testAParentsUnfreezeMakesABatchNormsStatisticsTrainable`.
+again, and every array of a quantized layer, or override `noGrad()` in a module that keeps statistics.
+`NFKMLXTrainer` does the first for every run, and `NFKMLXLoRA.merge` does it after unfreezing. Probes:
+`testAParentsUnfreezeMakesABatchNormsStatisticsTrainable`, `testAParentsUnfreezeThawsAQuantizedLayer`.
 
 ### `BatchNorm` folds the biased batch variance into its running variance
 

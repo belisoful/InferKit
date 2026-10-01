@@ -545,8 +545,8 @@ public final class NFKMLXSeq2SeqNet: Module {
 
     /// The dropout the network applies while it trains; none by default. Set it to
     /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's rates. A module in
-    /// evaluation mode applies none, and the trainer evaluates a wholly frozen subtree, so under LoRA
-    /// the frozen encoder runs without its dropout.
+    /// evaluation mode applies none; the trainer runs every module that keeps no statistics in
+    /// training mode, so under LoRA the frozen encoder drops as well.
     ///
     /// Introduced in InferKit 0.4.0.
     public var dropout: NFKMLXSeq2SeqDropout {

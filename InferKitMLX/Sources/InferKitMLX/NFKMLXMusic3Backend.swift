@@ -243,7 +243,7 @@ extension NFKMLXMusic3 {
         // input embedding costs almost nothing — measured at logits cosine 0.99933 against 0.99952
         // for the bf16 embedding — and reclaims the 1.6 GiB it occupies unquantized, the largest
         // remaining tensor in the stack.
-        NFKMLXQuantization.quantize(module: language!, bits: bits, groupSize: groupSize,
+        try NFKMLXQuantization.quantize(module: language!, bits: bits, groupSize: groupSize,
                                     includeEmbeddings: true)
         try NFKMLXWeights.save(language!, to: languageDestination.appendingPathComponent("model.safetensors"))
         language = nil
@@ -254,7 +254,7 @@ extension NFKMLXMusic3 {
             into: depth!,
             from: source.appendingPathComponent("rvq_depth_decoder/diffusion_pytorch_model.safetensors"),
             precision: .checkpoint)
-        NFKMLXQuantization.quantize(module: depth!, bits: bits, groupSize: groupSize)
+        try NFKMLXQuantization.quantize(module: depth!, bits: bits, groupSize: groupSize)
         try manager.createDirectory(at: destination.appendingPathComponent("rvq_depth_decoder"),
                                     withIntermediateDirectories: true)
         try NFKMLXWeights.save(depth!, to: destination
@@ -264,7 +264,7 @@ extension NFKMLXMusic3 {
 
         var transformer: NFKMusic3DiTNet? = makeDiT()
         try loadDiTWeights(into: transformer!, from: source.appendingPathComponent("transformer"))
-        NFKMLXQuantization.quantize(module: transformer!, bits: transformerBits, groupSize: groupSize)
+        try NFKMLXQuantization.quantize(module: transformer!, bits: transformerBits, groupSize: groupSize)
         try manager.createDirectory(at: destination.appendingPathComponent("transformer"),
                                     withIntermediateDirectories: true)
         try NFKMLXWeights.save(transformer!, to: destination

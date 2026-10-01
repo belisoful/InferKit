@@ -8069,10 +8069,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 fromHuggingFace: release.appendingPathComponent("config.json"))
             XCTAssertTrue(configuration.tiesWordEmbeddings, "\(label) is expected to be tied")
 
-            func measure(_ prepare: (NFKMLXLanguageNet) -> Void) throws -> Double {
+            func measure(_ prepare: (NFKMLXLanguageNet) throws -> Void) throws -> Double {
                 let net = NFKMLXLanguage.makeNet(configuration)
                 try NFKMLXLanguage.loadWeights(into: net, fromDirectory: release)
-                prepare(net)
+                try prepare(net)
                 let logits = net(MLXArray(tokens).reshaped([1, tokens.count]))
                 eval(logits)
                 let ours = logits[0].reshaped([-1]).asArray(Float.self).map(Double.init)
@@ -8088,16 +8088,16 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 }
             }
             let baseline = try measure { _ in }
-            let linear4 = try measure { NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64) }
+            let linear4 = try measure { try NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64) }
             let linear4embedding4 = try measure {
-                NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64, includeEmbeddings: true)
+                try NFKMLXQuantization.quantize(module: $0, bits: 4, groupSize: 64, includeEmbeddings: true)
             }
-            let linear8 = try measure { NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64) }
+            let linear8 = try measure { try NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64) }
             let linear8embedding8 = try measure {
-                NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64, includeEmbeddings: true)
+                try NFKMLXQuantization.quantize(module: $0, bits: 8, groupSize: 64, includeEmbeddings: true)
             }
             let linear4embedding8 = try measure { net in
-                NFKMLXQuantization.quantize(module: net, bits: 4, groupSize: 64)
+                try NFKMLXQuantization.quantize(module: net, bits: 4, groupSize: 64)
                 packEmbedding(net, bits: 8)
             }
             print("EMB PROBE \(label): float \(baseline)")

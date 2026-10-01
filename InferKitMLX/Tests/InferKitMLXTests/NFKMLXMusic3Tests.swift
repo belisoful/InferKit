@@ -453,7 +453,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
         defer { NFKMLXGPU.clearCache() }
 
         let depth = NFKMLXMusic3.makeDepthDecoder(.tiny)
-        NFKMLXQuantization.quantize(module: depth, bits: 4, groupSize: 32)
+        try NFKMLXQuantization.quantize(module: depth, bits: 4, groupSize: 32)
         let depthInput = MLXRandom.normal([1, 5, 64], key: MLXRandom.key(41))
         let depthBefore = depth.hiddenStates(depthInput)
         let depthURL = scratch.appendingPathComponent("\(UUID().uuidString).safetensors")
@@ -467,7 +467,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
                        "the quantized depth decoder reloads exactly")
 
         let transformer = NFKMLXMusic3.makeDiT(.tiny)
-        NFKMLXQuantization.quantize(module: transformer, bits: 8, groupSize: 32)
+        try NFKMLXQuantization.quantize(module: transformer, bits: 8, groupSize: 32)
         let latents = MLXRandom.normal([1, 6, 8], key: MLXRandom.key(42))
         let condition = MLXRandom.normal([1, 6, 16], key: MLXRandom.key(43))
         let timestep = MLXArray([Float(0.5)])
@@ -487,7 +487,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
             intermediateSize: 96, vocabularySize: 128, tiesWordEmbeddings: false)
         languageConfiguration.normalizesQueryAndKey = true
         let language = NFKMLXLanguage.makeNet(languageConfiguration)
-        NFKMLXQuantization.quantize(module: language, bits: 4, groupSize: 32)
+        try NFKMLXQuantization.quantize(module: language, bits: 4, groupSize: 32)
         let tokens = MLXArray([Int32(3), 17, 42, 99]).reshaped([1, 4])
         let logitsBefore = language(tokens)
         let languageURL = scratch.appendingPathComponent("\(UUID().uuidString).safetensors")
@@ -505,7 +505,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
         // reconstructs the QuantizedEmbedding by seeing the saved weight is uint32 — a saved file
         // without a quantized embedding (the case above) reloads through the same path unchanged.
         let embeddedLanguage = NFKMLXLanguage.makeNet(languageConfiguration)
-        NFKMLXQuantization.quantize(module: embeddedLanguage, bits: 4, groupSize: 32,
+        try NFKMLXQuantization.quantize(module: embeddedLanguage, bits: 4, groupSize: 32,
                                     includeEmbeddings: true)
         XCTAssertTrue(embeddedLanguage.model.embedTokens is QuantizedEmbedding,
                       "includeEmbeddings packs the input embedding")
@@ -775,7 +775,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
             let transformer = NFKMLXMusic3.makeDiT()
             try NFKMLXMusic3.loadDiTWeights(into: transformer, from: transformerURL)
             if let bits {
-                NFKMLXQuantization.quantize(module: transformer, bits: bits, groupSize: 64)
+                try NFKMLXQuantization.quantize(module: transformer, bits: bits, groupSize: 64)
             }
             let velocity = transformer.velocity(latents: latents, timestep: MLXArray([Float(0.5)]),
                                                 condition: condition)
@@ -833,10 +833,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
             let language = NFKMLXLanguage.makeNet(configuration)
             try NFKMLXLanguage.loadWeights(into: language, fromDirectory: languageDirectory,
                                            precision: .checkpoint)
-            MLXNN.quantize(model: language, groupSize: 64, bits: 4) { _, layer in
-                guard let linear = layer as? Linear, !(linear is QuantizedLinear) else { return false }
-                return linear.weight.shape[1] % 64 == 0
-            }
+            try NFKMLXQuantization.quantize(module: language, bits: 4, groupSize: 64)
             if let embeddingBits {
                 MLXNN.quantize(model: language, groupSize: 64, bits: embeddingBits) { _, layer in
                     guard let embedding = layer as? Embedding,
