@@ -45,8 +45,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 37 |
-| `trainable`, no recipe yet | 61 |
+| `ships` | 41 |
+| `trainable`, no recipe yet | 57 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -57,7 +57,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Thirty-seven recipes ship and 61 models are trainable with none written. That is the size of
+Forty-one recipes ship and 57 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -84,9 +84,9 @@ own loss module.
 | `NFKMLXBiRefNet` | trainable | head-retarget | internal | The decoder trains with Swin-v1-L frozen. `ZhengPeng7/BiRefNet` pins the terms. |
 | `NFKMLXRVM` | trainable | full | internal | An existing test already trains the tiny net to a falling loss with an ad-hoc alpha term. `PeterL1n/RobustVideoMatting` holds the real terms. |
 | `NFKMLXMODNet` | trainable | full | internal | 6M parameters, three separately supervised branches. `ZHKKKe/MODNet` pins them. |
-| `NFKMLXDeepLab` | trainable | head-retarget | internal | Per-pixel cross-entropy. torchvision's criterion is in `references/segmentation`, not the wheel. |
-| `NFKMLXBiSeNet` | trainable | head-retarget | internal | The checkpoint's two auxiliary heads are training-only supervision. `CoinCheung/BiSeNet` pins the weights. |
-| `NFKMLXBiSeNetV2` | trainable | head-retarget | internal | Same repository. Its four auxiliary heads the port neither builds nor loads. |
+| `NFKMLXDeepLab` | ships | head-retarget | public | torchvision's `references/segmentation` (v0.23.0): cross-entropy over both heads ignoring label 255, SGD with the auxiliary head at ten times the rate, `PolynomialLR`. Loss, schedule, and one training step measured by `run_reference.py deeplab_loss` and `deeplab_training`. |
+| `NFKMLXBiSeNet` | ships | head-retarget | public | CoinCheung/BiSeNet at 6b4b67a, `tools/train_amp.py`: OHEM cross-entropy on all three heads, SGD over `get_params`' four groups, an exponential warm-up into `poly`. Loss, schedule, and one training step measured by `run_reference.py bisenet_loss` and `bisenet_training`. |
+| `NFKMLXBiSeNetV2` | trainable | head-retarget | internal | Same repository. Its four auxiliary heads the port neither builds nor loads, and the release's pixel-shuffle heads predate the repository's training code, which now interpolates; a recipe pins the older heads' code first. |
 | `NFKMLXDepthAnything` | trainable | full | internal | The metric fine-tune (`metric_depth/train.py`) is published: SiLog over the released relative encoder at 5e-6 and a fresh Sigmoid × `max_depth` head at ten times the rate. The relative release's distillation recipe is not. |
 | `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
@@ -296,8 +296,8 @@ negatives.
 | `NFKMLXWav2Vec2Bert` | ships | full | public | Hugging Face's W2V-BERT recipe: the output adapter and a CTC head added, every parameter trained; loss and steps at measured parity. |
 | `NFKMLXParakeet` | trainable | head-retarget | public | NeMo's `TDTLossPytorch` is pure PyTorch and portable. The prediction network and joint retrain over a frozen FastConformer. |
 | `NFKMLXVAD` | ships | full | public | The release's own recipe: NeMo's masked cross-entropy, SGD, and `PolynomialHoldDecayAnnealing`, matched by `run_reference.py vad_training`. |
-| `NFKMLXSileroVAD` | trainable | head-retarget | internal | snakers4 publishes `tuning/tune.py`, which freezes the transform and encoder and trains the decoder alone. That is exactly this port's split. |
-| `NFKMLXAudioTagger` | trainable | head-retarget | internal | PANNs publishes `finetune_template.py` and a clip-level binary cross-entropy. |
+| `NFKMLXSileroVAD` | ships | head-retarget | public | snakers4's `tuning/` (v6.2.1): the decoder alone under Adam at 5e-4, a per-chunk binary cross-entropy weighing non-speech by 0.5. Targets, loss, and two Adam steps measured by `run_reference.py silero_vad_training`. |
+| `NFKMLXAudioTagger` | ships | head-retarget | public | PANNs at d2f4b8c: `finetune_template.py`'s new classifier over the frozen Cnn14, `main.py`'s `clip_bce` and Adam with AMSGrad at 1e-3. Loss and three steps measured by `run_reference.py audio_tagger_training`. |
 
 ## Translation
 
@@ -350,8 +350,8 @@ unimplemented; a later DC-Gen commit that implements it reopens the row.
 
 These are `trainable` on the architecture and the entry's own prose. The level is settled and the
 reference's optimizer, rate, and loss weights are not, which item 3 and item 5 of the minimum shipped
-set both need: `NFKMLXU2Net`, `NFKMLXBiRefNet`, `NFKMLXRVM`, `NFKMLXMODNet`, `NFKMLXBiSeNet`,
-`NFKMLXBiSeNetV2`, `NFKMLXDeepLab`, `NFKMLXPose`, `NFKMLXVitPose`, `NFKMLXNAFNet`.
+set both need: `NFKMLXU2Net`, `NFKMLXBiRefNet`, `NFKMLXRVM`, `NFKMLXMODNet`, `NFKMLXBiSeNetV2`,
+`NFKMLXPose`, `NFKMLXVitPose`, `NFKMLXNAFNet`.
 
 ## Corrections this triage found
 
@@ -384,9 +384,9 @@ Ordered by what a session gets per unit of effort, and grounded in what the tria
    Denoiser, FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
    metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
-   generation, and RT-DETR ships, every release of both versions. RF-DETR and its segmentation head,
-   Silero VAD (whose reference tuning script freezes exactly what this port freezes), the PANNs
-   tagger, and the segmenters remain.
+   generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
+   DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other
+   segmenters remain.
 3. **Reachability for the language decoders.** The dense Qwen, hybrid, and Gemma 3 decoders are
    LoRA-feasible at 4B and under and have no public builder. That is a visibility change plus a
    recipe, and it is the largest single piece of demand.

@@ -122,8 +122,8 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 | Depth Anything 3 | ``NFKMLXDepthAnything3``; ``NFKMLXDepth3Estimator`` for the camera and the ray map | `NFKMLXDepthAnything3Net` | ``NFKMLXDepth3Variant`` `.small` / `.base` / `.large` (`NFKMLXDepth3Configuration.small` …) | `depth-anything-3-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
 | Marigold depth | ``NFKMLXMarigold`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.marigold` | `marigold-depth` | ``NFKMLXDiffusionBackend`` |
 | SegFormer | ``NFKMLXSegFormer`` | ``NFKMLXSegFormerNet`` | `NFKMLXSegFormerConfiguration.mitB0`; `network(weightsURL:classCount:)` for a custom head | `segformer-b0` | ``NFKMLXModuleBackend`` |
-| DeepLabV3 | ``NFKMLXDeepLab`` | `NFKMLXDeepLabNet` over `NFKMLXResNetBackbone` | `NFKMLXDeepLabConfiguration.base` (`NFKMLXResNetConfiguration.deepLab`) | `deeplabv3` | ``NFKMLXModuleBackend`` |
-| BiSeNet V1 | ``NFKMLXBiSeNet`` | `NFKMLXBiSeNetNet` | `NFKMLXBiSeNetConfiguration.base` (ResNet-18 context path) | `bisenet` | ``NFKMLXModuleBackend`` |
+| DeepLabV3 | ``NFKMLXDeepLab`` | ``NFKMLXDeepLabNet`` over `NFKMLXResNetBackbone` | `NFKMLXDeepLabConfiguration.base` (`NFKMLXResNetConfiguration.deepLab`); `network(weightsURL:configuration:)` for a custom head | `deeplabv3` | ``NFKMLXModuleBackend`` |
+| BiSeNet V1 | ``NFKMLXBiSeNet`` | ``NFKMLXBiSeNetNet`` | `NFKMLXBiSeNetConfiguration.base` (ResNet-18 context path); `network(weightsURL:configuration:)` for a custom head | `bisenet` | ``NFKMLXModuleBackend`` |
 | BiSeNet V2 | ``NFKMLXBiSeNetV2`` | `NFKMLXBiSeNetV2Net` | fixed geometry (older pixel-shuffle head) | `bisenet-v2` | ``NFKMLXModuleBackend`` |
 
 ```swift
@@ -140,8 +140,10 @@ let backend = try NFKMLXSegFormer.backend(weightsURL: url)
 // custom classes: try NFKMLXSegFormer.network(weightsURL: url, classCount: 4)
 // DeepLabV3
 let backend = try NFKMLXDeepLab.backend(weightsURL: url)
+// custom classes: try NFKMLXDeepLab.network(weightsURL: url, configuration: NFKMLXDeepLabConfiguration(classCount: 4))
 // BiSeNet V1
 let backend = try NFKMLXBiSeNet.backend(weightsURL: url)
+// custom classes: try NFKMLXBiSeNet.network(weightsURL: url, configuration: NFKMLXBiSeNetConfiguration(classCount: 4))
 // BiSeNet V2
 let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 ```
@@ -601,8 +603,8 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | HT Demucs (v4) | ``NFKMLXHTDemucs`` | ``NFKMLXHTDemucsNet``, ``NFKMLXHTDemucsBag`` | ``NFKMLXHTDemucsVariant`` `.fourStem` / `.sixStem`; the fine-tuned release through `backend(fineTunedWeightsURLs:)` | `htdemucs` · `htdemucs-6s` | ``NFKMLXHTDemucsBackend`` |
 | Conv-TasNet | ``NFKMLXConvTasNet`` | `NFKMLXConvTasNetNet` | `NFKMLXConvTasNetConfiguration.libri2Mix16k`; `perChannelPReLU` optional | `conv-tasnet` | ``NFKMLXConvTasNetBackend`` |
 | MarbleNet VAD | ``NFKMLXVAD`` | `NFKMLXVADNet` | `NFKMLXVADConfiguration.marbleNet` | `vad-marblenet` | ``NFKMLXVADBackend`` |
-| Silero VAD v6 | ``NFKMLXSileroVAD`` | `NFKMLXSileroVADNet` | `NFKMLXSileroVADConfiguration.v6` | `silero-vad` | ``NFKMLXSileroVADBackend`` |
-| PANNs Cnn14 | ``NFKMLXAudioTagger`` | `NFKMLXAudioTaggerNet` | `NFKMLXAudioTaggerConfiguration.panns` | `audio-tagger-panns` | ``NFKMLXAudioTaggerBackend`` (`labels:`) |
+| Silero VAD v6 | ``NFKMLXSileroVAD`` | ``NFKMLXSileroVADNet`` | `NFKMLXSileroVADConfiguration.v6`; `network(weightsURL:)` to fine-tune the decoder | `silero-vad` | ``NFKMLXSileroVADBackend`` |
+| PANNs Cnn14 | ``NFKMLXAudioTagger`` | ``NFKMLXAudioTaggerNet`` | `NFKMLXAudioTaggerConfiguration.panns`; `network(weightsURL:configuration:)` for a custom classifier | `audio-tagger-panns` | ``NFKMLXAudioTaggerBackend`` (`labels:`) |
 | Descript Audio Codec | ``NFKMLXDAC`` | `NFKMLXDACNet` (`NFKDACEncoderNet`, `NFKDACDecoderNet`) | `NFKMLXDACConfiguration.dac44kHz` / `.dac24kHz` / `.dac16kHz` | `dac` | ``NFKMLXDACBackend``; `encode` / `decode` for the tokens |
 | SNAC | ``NFKMLXSNAC`` | `NFKMLXSNACNet` (`NFKSNACEncoderNet`, `NFKSNACDecoderNet`) | ``NFKMLXSNACVariant`` `.speech24kHz` / `.music32kHz` / `.music44kHz` | `snac` · `snac-32khz` · `snac-44khz` | ``NFKMLXSNACBackend``; `decode(_:deterministic:)` |
 | BigVGAN v2 | ``NFKMLXBigVGAN`` | SnakeBeta + anti-aliased `Activation1d` generator | `NFKMLXBigVGANConfiguration()` (24 kHz, 100-band) | `bigvgan-v2-24khz` | ``NFKMLXBigVGANBackend`` |
@@ -676,8 +678,10 @@ let backend = try NFKMLXVAD.backend(weightsURL: url)
 // fine-tuned: let net = try NFKMLXVAD.network(weightsURL: url), then fineTune and NFKMLXWeights.save
 // Silero VAD v6
 let backend = try NFKMLXSileroVAD.backend(weightsURL: url)
+// fine-tuned: let net = try NFKMLXSileroVAD.network(weightsURL: url)
 // PANNs Cnn14
 let backend = try NFKMLXAudioTagger.backend(weightsURL: url, labels: nil)
+// custom classes: try NFKMLXAudioTagger.network(weightsURL: url, configuration: myClasses)
 // Descript Audio Codec
 let backend = try NFKMLXDAC.backend(weightsURL: url)
 // tokens: let codec = try NFKMLXDAC.codec(configuration: .dac44kHz, weightsURL: url) then codec.encode(samples) / codec.decode(codes)

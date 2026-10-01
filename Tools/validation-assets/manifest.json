@@ -4440,7 +4440,12 @@
         "wav2vec2",
         "wav2vec2_loss",
         "w2v_bert",
-        "w2v_bert_loss"
+        "w2v_bert_loss",
+        "silero_vad_training",
+        "deeplab_loss",
+        "deeplab_training",
+        "bisenet_loss",
+        "bisenet_training"
       ]
     },
     "voicerestore": {
@@ -4624,7 +4629,8 @@
         "segformer_loss",
         "zero_dce_losses",
         "gtcrn",
-        "convtasnet"
+        "convtasnet",
+        "audio_tagger_training"
       ]
     },
     "basic_pitch": {
@@ -5350,6 +5356,42 @@
       "record": "records/timesfm-2.5-loss.safetensors",
       "environment": "qwenimage",
       "command": "timesfm_loss --checkpoint <timesfm-2.5-200m-transformers>"
+    },
+    {
+      "key": "IK_PARITY_SILERO_VAD_TRAINING",
+      "record": "reference/silero-vad-training.safetensors",
+      "environment": "llm",
+      "command": "IK_SILERO_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/silero-vad\" silero_vad_training"
+    },
+    {
+      "key": "IK_PARITY_AUDIO_TAGGER_TRAINING",
+      "record": "reference/audio-tagger-training.safetensors",
+      "environment": "ultralytics",
+      "command": "IK_PANNS_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/panns\" audio_tagger_training --checkpoint ~/.inferkit-validation/raw/panns_cnn14.pth"
+    },
+    {
+      "key": "IK_PARITY_DEEPLAB_LOSS",
+      "record": "reference/deeplab-loss.safetensors",
+      "environment": "llm",
+      "command": "IK_TORCHVISION_SEGMENTATION_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/torchvision-references/references/segmentation\" deeplab_loss --size 64"
+    },
+    {
+      "key": "IK_PARITY_DEEPLAB_TRAINING",
+      "record": "reference/deeplab-training.safetensors",
+      "environment": "llm",
+      "command": "IK_TORCHVISION_SEGMENTATION_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/torchvision-references/references/segmentation\" deeplab_training --size 64 --checkpoint ~/.inferkit-validation/raw/deeplabv3_resnet50.pth"
+    },
+    {
+      "key": "IK_PARITY_BISENET_LOSS",
+      "record": "reference/bisenet-loss.safetensors",
+      "environment": "llm",
+      "command": "IK_BISENET_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/bisenet\" bisenet_loss --size 64"
+    },
+    {
+      "key": "IK_PARITY_BISENET_TRAINING",
+      "record": "reference/bisenet-training.safetensors",
+      "environment": "llm",
+      "command": "IK_BISENET_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/bisenet\" bisenet_training --size 64 --checkpoint ~/.inferkit-validation/converted/bisenet.safetensors"
     }
   ]
 }

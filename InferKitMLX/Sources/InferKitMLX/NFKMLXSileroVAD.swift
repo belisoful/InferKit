@@ -106,8 +106,8 @@ final class NFKSileroEncoder: Module {
     }
 }
 
-/// The LSTM decoder scoring one speech probability per chunk. Dropout is identity in evaluation, so it is
-/// omitted rather than modeled.
+/// The LSTM decoder scoring one speech probability per chunk. The reference drops the LSTM output at 0.1
+/// before its activation while training.
 final class NFKSileroDecoder: Module {
     @ModuleInfo(key: "rnn") var rnn: LSTM
     @ModuleInfo(key: "final") var final: Conv1d
@@ -122,13 +122,16 @@ final class NFKSileroDecoder: Module {
     func callAsFunction(_ feats: MLXArray) -> MLXArray {
         let sequence = feats.reshaped([1, feats.shape[0], feats.shape[2]])   // [1, chunks, hidden]
         let hidden = rnn(sequence).0                                          // [1, chunks, hidden]
-        let logits = final(relu(hidden))                                      // [1, chunks, 1]
+        let dropped = NFKDropout.apply(hidden, rate: 0.1, active: training)
+        let logits = final(relu(dropped))                                     // [1, chunks, 1]
         return sigmoid(logits).reshaped([-1])                                 // [chunks]
     }
 }
 
 /// The Silero VAD network: the STFT encoder and the LSTM decoder, plus the chunking and span extraction.
-final class NFKMLXSileroVADNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXSileroVADNet: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKSileroEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKSileroDecoder
 
@@ -138,6 +141,10 @@ final class NFKMLXSileroVADNet: Module {
         configuration = c
         _encoder.wrappedValue = NFKSileroEncoder(c)
         _decoder.wrappedValue = NFKSileroDecoder(c)
+        super.init()
+        // A module starts in training mode, which would drop decoder features at inference; the
+        // trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Speech probability per 512-sample chunk for a mono waveform.

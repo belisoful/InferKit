@@ -147,6 +147,15 @@ final class NFKMLXResNetBackbone: Module {
         return (stem, first, second, out)
     }
 
+    /// The outputs of stages three and four, which a segmentation head and its auxiliary head read.
+    func lastTwoStages(_ x: MLXArray) -> (third: MLXArray, fourth: MLXArray) {
+        var out = NFKMLXResample.maxPooled(relu(bn1(conv1(x))), kernel: 3, stride: 2, padding: 1)
+        for block in layer1 + layer2 + layer3 { out = block(out) }
+        let third = out
+        for block in layer4 { out = block(out) }
+        return (third, out)
+    }
+
     /// The reference nests a block's projection shortcut in a two-entry `Sequential`, so its keys are
     /// `downsample.0` (the convolution) and `downsample.1` (the normalization).
     static func remapReferenceKey(_ key: String) -> String {

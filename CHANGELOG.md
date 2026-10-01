@@ -798,6 +798,36 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   A released checkpoint's `denoising_class_embed` is skipped by an inference network, which has none.
 - `NFKMLXModelWeightAverage` is the moving average YOLO and RT-DETR share.
 
+#### DeepLabV3, BiSeNet, Silero VAD, and the PANNs tagger retarget to a consumer's own data
+
+- `NFKMLXDeepLab.network(weightsURL:configuration:)` and `fineTune(_:examples:…)` retrain the ASPP head
+  over the frozen backbone, or every weight, under torchvision's `references/segmentation`:
+  cross-entropy over the main and auxiliary heads ignoring label 255, SGD with the auxiliary head at
+  ten times the rate, and `PolynomialLR`. The network now builds the auxiliary head the release
+  carries, and drops at the reference's rates while training.
+- `NFKMLXBiSeNet.network(weightsURL:configuration:)` and `fineTune(_:examples:…)` follow CoinCheung's
+  `train_amp.py`: `NFKMLXBiSeNetObjective` is its OHEM cross-entropy on all three heads, under SGD's four
+  parameter groups and `NFKMLXLearningRateSchedule.exponentialWarmupPoly`. Both segmenters train on
+  batches of two or more images, because a batch normalization after a global pool has one value per
+  image to normalize.
+- `NFKMLXSileroVAD.network(weightsURL:)`, `chunkTargets(speech:sampleCount:noiseWeight:configuration:)`,
+  and `fineTune(_:examples:…)` retrain the decoder as snakers4's `tuning/` does, with its masked binary
+  cross-entropy and Adam. The folded LSTM bias steps at twice the rate, which moves it as the
+  reference's two biases move together.
+- `NFKMLXAudioTagger.network(weightsURL:configuration:)`, `fineTune(_:examples:…)`, and `save(_:to:)`
+  retarget the classifier over the frozen Cnn14 with PANNs' `clip_bce` and Adam with AMSGrad, while
+  Cnn14's dropouts and `NFKMLXAudioTaggerSpecAugment` run. A saved file carries the release's mel
+  filterbank, which a recomputed one does not equal.
+- Each objective, schedule, and optimizer step is measured against its reference, the steps on the
+  released weights (`run_reference.py deeplab_loss`, `deeplab_training`, `bisenet_loss`,
+  `bisenet_training`, `silero_vad_training`, `audio_tagger_training`).
+- A retargeted segmenter's label map encodes its own classes. `NFKMLXSegFormer`, `NFKMLXDeepLab`, and
+  `NFKMLXBiSeNet` scaled the class index by the configuration's class count, which each factory builds
+  at the release's, so a SegFormer retargeted to three classes and loaded through
+  `backendWithWeightsURL:error:` encoded class 2 as 2/149 of white. The map now scales by the
+  classifier's own width.
+- `NFKMLXWeights.save(_:extraArrays:to:)` writes arrays a model keeps off its parameters beside them.
+
 #### The MarbleNet VAD fine-tunes on a consumer's own audio, and follows NeMo 3.0
 
 - `NFKMLXVAD.network(weightsURL:)`, `frameLabels(speech:frameCount:)`, and `fineTune(_:examples:…)` run

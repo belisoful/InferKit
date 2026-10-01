@@ -426,7 +426,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   cross entropy with the logits upsampled to the label resolution, measured against the reference
   (`run_reference.py segformer_loss`, `testSegFormerTrainingLossMatchesTheReference`). The reference
   optimizer is mmcv's grouped AdamW, and the schedule is `poly` decay after a 1,500-step warm-up.
-  `NFKMLXSegFormerTrainingTests.testAFineTunedCheckpointRoundTrips` reloads the result.
+  `NFKMLXSegFormerTrainingTests.testAFineTunedCheckpointRoundTrips` reloads the result. `segment` scales
+  the label map by the classifier's own width rather than the configuration's 150, so a retargeted
+  checkpoint loaded through `backendWithWeightsURL:error:` encodes its own classes
+  (`testARetargetedCheckpointLabelsAtItsOwnClassCountThroughTheFactory`).
 - `NFKMLXDeepLab` (`@objc`) — real semantic segmentation (DeepLabV3): `NFKMLXResNetBackbone` with its
   last two stages dilated (so features reach the head at stride 8) and an Atrous Spatial Pyramid Pooling
   head (1×1 + three dilated 3×3 branches + global image pooling, fused, then a 3×3 convolution before
@@ -436,11 +439,32 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Reference parity against torchvision (logit cosine 0.9999999999999, label agreement 1.0).
   `remapReferenceKey` maps the reference's positional `classifier.N` Sequential onto the module's names.
   Complements `NFKMLXSegFormer` (CNN vs transformer segmentation).
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXDeepLabTraining.swift`):
+  `NFKMLXDeepLab.network(weightsURL:configuration:)` builds the net at the configuration's class count
+  and leaves both classifiers at their random initialization when the checkpoint's count differs.
+  `NFKMLXDeepLabTrainable` picks `.head` (ASPP, the 3×3 convolution, and the classifier over the frozen
+  backbone) or `.everything`. The port builds torchvision's auxiliary `FCNHead` over stage three, which
+  the release carries (`aux_classifier.0/1/4` → `auxiliary.conv.conv`, `auxiliary.conv.norm`,
+  `auxiliary.classifier`), and the training-only dropouts: 0.5 after the ASPP projection, 0.1 in the
+  auxiliary head. `NFKMLXDeepLabObjective` is `train.py`'s `criterion` (torchvision 0.23.0): both heads
+  upsampled to the labels, cross-entropy ignoring 255, the auxiliary term at 0.5. A head-only run leaves
+  the auxiliary term out, because its loss reaches no trained parameter. The reference optimizer is SGD
+  at 0.02 with momentum 0.9, weight decay 1e-4 on every parameter, and the auxiliary head at ten times
+  the rate; the schedule is `PolynomialLR` at power 0.9. Measured: the loss on the reference's logits
+  2.7055824 against 2.7055826 (main head alone 1.8021542 against 1.8021543), the schedule within 6e-8
+  over 45 steps, and one training step on the release (two images at 64², dropouts off, every
+  BatchNorm training) with loss 13.523303 against 13.523301 and each sampled group's update at cosine
+  0.999993 or better, norms within 0.14% (`testDeepLabTrainingLossMatchesTheReference`,
+  `testDeepLabTrainingStepMatchesTheReference`). The ASPP pooling branch normalizes one value per
+  image, so the recipe takes batches of two or more and throws on one, as torch refuses one.
+  `segment` scales the label map by the classifier's own width, so a retargeted checkpoint loaded
+  through `backendWithWeightsURL:error:` encodes its own classes.
 - `NFKMLXResNetBackbone` (`NFKMLXResNet.swift`) — the shared bottleneck residual backbone (ResNet-50 and
   up) in the reference layout, including the stride-to-dilation substitution DeepLab depends on
   (`replaceStrideWithDilation`; the reference gives a stage's first block the previous stage's dilation).
   `remapReferenceKey` names the projection shortcut the reference keeps in a `Sequential`
   (`downsample.0/1` → `downsample_conv`/`downsample_bn`). Pose's ResNet-50 reuses this.
+  `lastTwoStages(_:)` returns stages three and four from one pass, for DeepLab's auxiliary head.
   Its stem pools through `NFKMLXResample.maxPooled` (see `mlx-runtime-gotchas.md`).
 - `NFKMLXBiSeNet` (`@objc`) — real real-time semantic segmentation: the reference **BiSeNetV1**
   (CoinCheung) in `MLXNN` — a shallow Spatial Path (three strided convolutions and a 1×1 projection)
@@ -459,6 +483,26 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   released Cityscapes checkpoint (logit cosine 0.9999999999989, **label agreement 1.0**), every
   parameter covered on the first triage run. Weights: the `CoinCheung/BiSeNet` GitHub release
   (`model_final_v1_city_new.pth`) — they were never actually unavailable.
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXBiSeNetTraining.swift`):
+  `NFKMLXBiSeNet.network(weightsURL:configuration:)` builds the net at the configuration's class count
+  and leaves all three classifiers at their random initialization when the checkpoint's count differs.
+  `NFKMLXBiSeNetTrainable` picks `.allButBackbone` (the ResNet-18 frozen, the one part the reference
+  starts from ImageNet) or `.everything`. `NFKMLXBiSeNetObjective` is `OhemCELoss(0.7, 255)` on the main
+  head and both auxiliary heads, summed as `tools/train_amp.py` sums them (CoinCheung/BiSeNet at
+  6b4b67a): the mean over pixels whose cross-entropy exceeds `−log 0.7`, or over the largest sixteenth
+  of the scored pixels when fewer are hard. The reference optimizer is `set_optimizer`'s SGD at 0.01,
+  momentum 0.9, weight decay 5e-4 on parameters of more than one dimension only, and ten times the rate
+  on the fusion module and the heads (`NFKMLXReferenceOptimizers.sgd(learningRate:momentum:over:group:)`).
+  The schedule is `WarmupPolyLrScheduler`: an exponential warm-up from 0.1 over 1,000 steps, then
+  `poly` at 0.9 (`NFKMLXLearningRateSchedule.exponentialWarmupPoly`). Measured: both OHEM branches
+  exact (5.978854 summed over three heads, 0.8680405 on the top-n branch), the schedule within 6e-8
+  over 1,501 steps, and one training step on the release run through `fineTune` itself (two images at
+  64², every layer training) with loss 21.327307 against 21.32739 and each sampled group's update at
+  cosine 0.99999 or better, norms within 0.29% (`testBiSeNetTrainingLossMatchesTheReference`,
+  `testBiSeNetTrainingStepMatchesTheReference`). The attention refinement, global-context, and fusion
+  modules each normalize one pooled value per image, so the recipe takes batches of two or more and
+  throws on one, as torch refuses one. A batch is cropped to sides that are multiples of 32.
+  `segment` scales the label map by the classifier's own width.
 - `NFKMLXBiSeNetV2` (`@objc`) — the second BiSeNet, a separate architecture rather than a variant, at
   reference parity on the released Cityscapes checkpoint (logit cosine 0.9999999999992, **label
   agreement 1.0**), every parameter covered on the first triage run. It replaces V1's ResNet context
@@ -475,3 +519,6 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   not three ×2 shuffles (the channel interleaving differs), so `NFKBiSeNetPixelShuffle` implements
   PyTorch's `c·r² + i·r + j` order directly and a test asserts it. The four `aux*` heads supervise
   training only and are neither built nor loaded — they hold the largest tensors in the file.
+  Customization is a head retarget with no recipe yet: the repository's training code at 6b4b67a
+  trains the interpolating heads, not the release's pixel-shuffle ones, so a recipe pins the older
+  heads' training code first.

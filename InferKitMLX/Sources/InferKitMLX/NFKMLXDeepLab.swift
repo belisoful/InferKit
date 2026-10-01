@@ -54,7 +54,8 @@ final class NFKDeepLabBranch: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray { relu(norm(conv(x))) }
 }
 
-/// The ASPP head: a 1×1 branch, dilated 3×3 branches, a global-pooling branch, and a fusion projection.
+/// The ASPP head: a 1×1 branch, dilated 3×3 branches, a global-pooling branch, and a fusion projection
+/// whose output the reference drops at 0.5 while training.
 final class NFKDeepLabASPP: Module {
     @ModuleInfo(key: "convs") var convs: [NFKDeepLabBranch]
     @ModuleInfo(key: "pool") var pool: NFKDeepLabBranch
@@ -73,16 +74,36 @@ final class NFKDeepLabASPP: Module {
         var branches = convs.map { $0(x) }
         let pooled = pool(mean(x, axes: [1, 2], keepDims: true))    // global context
         branches.append(NFKMLXResample.resizeBilinear(pooled, height: x.shape[1], width: x.shape[2]))
-        return project(concatenated(branches, axis: 3))
+        return NFKDropout.apply(project(concatenated(branches, axis: 3)), rate: 0.5, active: training)
+    }
+}
+
+/// torchvision's `FCNHead` over the backbone's third stage: a 3×3 convolution to a quarter of its
+/// channels, dropped at 0.1 while training, then a 1×1 classifier. It supervises the backbone during
+/// training and inference never reads it.
+final class NFKDeepLabAuxiliary: Module {
+    @ModuleInfo(key: "conv") var conv: NFKDeepLabBranch
+    @ModuleInfo(key: "classifier") var classifier: Conv2d
+
+    init(inChannels: Int, classCount: Int) {
+        _conv.wrappedValue = NFKDeepLabBranch(inChannels, inChannels / 4, dilation: 1)
+        _classifier.wrappedValue = Conv2d(inputChannels: inChannels / 4, outputChannels: classCount, kernelSize: 1)
+    }
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        classifier(NFKDropout.apply(conv(x), rate: 0.1, active: training))
     }
 }
 
 /// The DeepLabV3 network: a dilated residual backbone, an ASPP head, and a per-pixel classifier.
-final class NFKMLXDeepLabNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXDeepLabNet: Module {
     @ModuleInfo(key: "backbone") var backbone: NFKMLXResNetBackbone
     @ModuleInfo(key: "aspp") var aspp: NFKDeepLabASPP
     @ModuleInfo(key: "head") var head: NFKDeepLabBranch
     @ModuleInfo(key: "classifier") var classifier: Conv2d
+    @ModuleInfo(key: "auxiliary") var auxiliary: NFKDeepLabAuxiliary
 
     let configuration: NFKMLXDeepLabConfiguration
 
@@ -94,11 +115,24 @@ final class NFKMLXDeepLabNet: Module {
         // The reference follows ASPP with one 3×3 convolution before the 1×1 classifier.
         _head.wrappedValue = NFKDeepLabBranch(c.asppChannels, c.asppChannels, dilation: 1)
         _classifier.wrappedValue = Conv2d(inputChannels: c.asppChannels, outputChannels: c.classCount, kernelSize: 1)
+        _auxiliary.wrappedValue = NFKDeepLabAuxiliary(inChannels: c.backbone.outputChannels / 2,
+                                                      classCount: c.classCount)
+        super.init()
+        // A module starts in training mode, which would normalize with each image's statistics and drop
+        // features at inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// Produces class logits `[1, h, w, classCount]` at the backbone's output stride (8).
     func logits(_ image: MLXArray) -> MLXArray {
         classifier(head(aspp(backbone(image))))
+    }
+
+    /// The class logits and the auxiliary head's, both `[1, h, w, classCount]` at stride 8, from one
+    /// pass through the backbone.
+    func trainingLogits(_ image: MLXArray) -> (main: MLXArray, auxiliary: MLXArray) {
+        let (third, fourth) = backbone.lastTwoStages(image)
+        return (classifier(head(aspp(fourth))), auxiliary(third))
     }
 
     /// Segments a bridged image `[H, W, 3]` (`0...1`), returning a grayscale label map `[H, W, 1]` whose
@@ -109,7 +143,8 @@ final class NFKMLXDeepLabNet: Module {
         // The reference upsamples the logits, then takes the label; taking the label first would
         // quantize before the interpolation and blur class boundaries into nonexistent classes.
         let full = NFKMLXResample.resizeBilinear(scores, height: height, width: width)
-        let normalized = full.argMax(axis: -1).asType(.float32) / Float(max(configuration.classCount - 1, 1))
+        // The classifier's own width, which a retargeted checkpoint sets when a factory loads it.
+        let normalized = full.argMax(axis: -1).asType(.float32) / Float(max(full.dim(-1) - 1, 1))
         return normalized.reshaped([height, width, 1])
     }
 
@@ -138,9 +173,7 @@ public final class NFKMLXDeepLab: NSObject {
     @objc public static let modelName = "deeplabv3"
 
     static func makeNet(_ configuration: NFKMLXDeepLabConfiguration = .base) -> NFKMLXDeepLabNet {
-        let net = NFKMLXDeepLabNet(configuration)
-        net.train(false)                                       // BatchNorm running statistics
-        return net
+        NFKMLXDeepLabNet(configuration)
     }
 
     /// Builds a segmentation backend directly from optional local weights — no registry required. A nil
@@ -185,11 +218,22 @@ public final class NFKMLXDeepLab: NSObject {
     /// The reference builds its head from `nn.Sequential`s, so its keys are positional: `classifier.0`
     /// is ASPP (whose branches nest a convolution at `.0` and a normalization at `.1`, the pooling
     /// branch one slot later because the pool itself occupies `.0`), `classifier.1`/`.2` are the 3×3
-    /// convolution and its normalization, and `classifier.4` is the classifier. Map those onto the
-    /// module's names. The auxiliary classifier the checkpoint carries is a training aid and is ignored.
+    /// convolution and its normalization, and `classifier.4` is the classifier. The auxiliary head
+    /// follows the same layout: `aux_classifier.0`/`.1` its convolution and normalization, `.4` its
+    /// classifier. Map those onto the module's names.
     static func remapReferenceKey(_ key: String, poolBranch: Int) -> String {
         if key.hasPrefix("backbone.") {
             return "backbone." + NFKMLXResNetBackbone.remapReferenceKey(String(key.dropFirst("backbone.".count)))
+        }
+        if key.hasPrefix("aux_classifier.") {
+            let parts = key.split(separator: ".").map(String.init)
+            let tail = parts.dropFirst(2).joined(separator: ".")
+            switch parts[1] {
+            case "0": return "auxiliary.conv.conv.\(tail)"
+            case "1": return "auxiliary.conv.norm.\(tail)"
+            case "4": return "auxiliary.classifier.\(tail)"
+            default: return key
+            }
         }
         guard key.hasPrefix("classifier.") else { return key }
         let parts = key.split(separator: ".").map(String.init)
@@ -214,7 +258,11 @@ public final class NFKMLXDeepLab: NSObject {
 
     /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
     /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
-    static func loadWeights(into net: NFKMLXDeepLabNet, from url: URL) throws {
+    ///
+    /// `retargeting` leaves both classifiers at their random initialization when the checkpoint's class
+    /// count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes wholesale, so
+    /// loading them would silently restore the old class set.
+    static func loadWeights(into net: NFKMLXDeepLabNet, from url: URL, retargeting: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let poolBranch = net.configuration.dilations.count + 1
@@ -222,6 +270,13 @@ public final class NFKMLXDeepLab: NSObject {
             (remapReferenceKey(key, poolBranch: poolBranch),
              checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        let classes = mapped.first { $0.0 == "classifier.weight" }?.1.dim(0)
+        guard retargeting, let classes, classes != net.configuration.classCount else {
+            try NFKMLXWeights.apply(mapped, to: net)
+            return
+        }
+        let heads = ["classifier.", "auxiliary.classifier."]
+        try NFKMLXWeights.apply(mapped.filter { key, _ in !heads.contains { key.hasPrefix($0) } }, to: net,
+                                strict: false)
     }
 }

@@ -18660,6 +18660,445 @@ def run_w2v_bert_loss(image, checkpoint):
 CHECKPOINT_MODELS["w2v_bert_loss"] = run_w2v_bert_loss
 
 
+def _stub_missing(modules):
+    """Stand in for top-level imports a reference file makes and the measured code never calls."""
+    import importlib
+    import types
+
+    for name, attributes in modules.items():
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            stub = types.ModuleType(name)
+            for attribute in attributes:
+                setattr(stub, attribute, None)
+            sys.modules[name] = stub
+
+
+def _bisenet_ohem(source):
+    """BiSeNet's `OhemCELoss` factory. The class moves its threshold to CUDA on construction, which a
+    CPU-only host cannot, so `Tensor.cuda` is an identity while the module loads and builds."""
+    module = _import_reference(os.path.join(source, "lib"), "bisenet_lib", "ohem_ce_loss")
+    original = torch.Tensor.cuda
+
+    def build():
+        torch.Tensor.cuda = lambda self, *args, **kwargs: self
+        try:
+            return module.OhemCELoss(0.7, 255)
+        finally:
+            torch.Tensor.cuda = original
+    return build
+
+
+def run_silero_vad_training(image):
+    """Silero VAD's decoder fine-tune, from snakers4/silero-vad v6.2.1's own `tuning/`.
+
+    IK_SILERO_SRC is the repository checkout. `tuning/utils.py` supplies `VADDecoderRNNJIT` and the
+    dataset's `get_ground_truth_annotated`, which turns speech spans into per-chunk labels and the
+    `noise_loss` mask, and the forward is `train()`'s own loop: the clip padded left by the 64-sample
+    context, each 576-sample window through the released STFT and encoder, the decoder threading its
+    state across chunks. The decoder runs in evaluation mode, so its 0.1 dropout leaves the comparison
+    deterministic. Two Adam steps at the configuration's 5e-4 follow; the record carries the decoder
+    after them, with the LSTM's two bias vectors summed into the one the port keeps, and the loss
+    before each step and after the last. The spans are fixed here and in the Swift test, because the
+    record stores floats at single precision and a span edge read back at it can move a sample.
+    Requires: `silero_vad`, `torchaudio`.
+    """
+    from silero_vad import load_silero_vad
+
+    _stub_missing({"sklearn": [], "sklearn.metrics": ["roc_auc_score", "accuracy_score"],
+                   "pandas": [], "tqdm": ["tqdm"]})
+    utils = _import_reference(os.path.join(os.environ["IK_SILERO_SRC"], "tuning"), "silero_tuning", "utils")
+    model = load_silero_vad(onnx=False)
+    decoder = utils.VADDecoderRNNJIT()
+    decoder.load_state_dict(model._model.decoder.state_dict())
+    decoder.eval()
+
+    rate, chunk, context = 16000, 512, 64
+    samples = 24 * chunk - 200                      # not whole chunks, so the zero padding enters
+    time = np.arange(samples, dtype=np.float32) / rate
+    generator = np.random.default_rng(31)
+    speech = sum(0.3 / (h + 1) * np.sin(2 * np.pi * 150 * (h + 1) * time) for h in range(6))
+    # 0.112 s is sample 1792, half way through chunk 3, which a majority must not call speech.
+    spans = [(0.112, 0.43), (0.55, 0.7)]
+    voiced = np.zeros(samples, dtype=bool)
+    for start, end in spans:
+        voiced[int(start * rate):int(end * rate)] = True
+    wave = np.where(voiced, speech, 0.02 * generator.standard_normal(samples)).astype(np.float32)
+
+    padded = np.pad(wave, (0, (-samples) % chunk))
+    dataset = utils.SileroVadDataset.__new__(utils.SileroVadDataset)
+    dataset.sr, dataset.num_samples, dataset.noise_loss = rate, chunk, 0.5
+    labels, mask = dataset.get_ground_truth_annotated([{"start": s, "end": e} for s, e in spans], len(padded))
+    targets = torch.FloatTensor(labels)[None]
+    masks = torch.from_numpy(mask)[None]           # float64, as the dataset hands it to the loss
+    x = torch.nn.functional.pad(torch.from_numpy(padded)[None], (context, 0))
+
+    stft, encoder = model._model.stft, model._model.encoder
+    criterion = torch.nn.BCELoss(reduction="none")
+    optimizer = torch.optim.Adam(decoder.parameters(), lr=5e-4)
+
+    def forward():
+        outs, state = [], torch.zeros(0)
+        for i in range(context, x.shape[1], chunk):
+            out = encoder(stft(x[:, i - context:i + chunk]))
+            out, state = decoder(out, state)
+            outs.append(out)
+        return torch.cat(outs, dim=2).squeeze(1)
+
+    losses = []
+    with torch.enable_grad():
+        for step in range(3):
+            probabilities = forward()
+            loss = (criterion(probabilities, targets) * masks).mean()
+            if step == 0:
+                first = probabilities.detach()[0].clone()
+            losses.append(loss.item())
+            if step == 2:
+                break
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    rnn = decoder.rnn
+    globals()["_extra"] = {
+        "waveform": torch.from_numpy(wave).contiguous(),
+        "labels": targets[0].contiguous(),
+        "mask": masks[0].float().contiguous(),
+        "probabilities": first.contiguous(),
+        "losses": torch.tensor(losses, dtype=torch.float64),
+        "rnn.weight_ih": rnn.weight_ih.detach().clone().contiguous(),
+        "rnn.weight_hh": rnn.weight_hh.detach().clone().contiguous(),
+        "rnn.bias": (rnn.bias_ih + rnn.bias_hh).detach().clone().contiguous(),
+        "final.weight": decoder.decoder[2].weight.detach().clone().contiguous(),     # [1, 128, 1]
+        "final.bias": decoder.decoder[2].bias.detach().clone().contiguous(),
+    }
+    return torch.tensor([losses[0]])
+
+
+def run_audio_tagger_training(image, checkpoint):
+    """PANNs' transfer recipe: a new classifier over the frozen Cnn14, trained by `clip_bce` under
+    `torch.optim.Adam` with AMSGrad, as qiuqiangkong/audioset_tagging_cnn at d2f4b8c builds them.
+
+    IK_PANNS_SRC is the repository checkout; `pytorch/models.py` supplies Cnn14 and `init_layer`,
+    `pytorch/losses.py` the loss, and `pytorch/main.py` the optimizer's settings (rate 1e-3, betas 0.9
+    and 0.999, epsilon 1e-8, no weight decay, AMSGrad). `--checkpoint` is the released
+    `Cnn14_mAP=0.431.pth`. `finetune_template.py` freezes the base and puts a fresh `Linear(2048,
+    classes)` over its embedding; this runs the base in evaluation mode, so its dropout, SpecAugment,
+    and batch normalizations leave the comparison deterministic, and scores the new layer's sigmoid with
+    `clip_bce`. The record carries the clip, the targets, the embedding, the layer's initial and final
+    weights, and the loss before each of three steps and after the last.
+    """
+    source = os.path.join(os.environ["IK_PANNS_SRC"], "pytorch")
+    sys.path.insert(0, source)                      # models.py imports pytorch_utils flatly
+    models = _import_reference(source, "panns_training", "models")
+    losses_module = _import_reference(source, "panns_training", "losses")
+    model = models.Cnn14(sample_rate=32000, window_size=1024, hop_size=320, mel_bins=64,
+                         fmin=50, fmax=14000, classes_num=527).eval()
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=False)["model"], strict=True)
+    for parameter in model.parameters():
+        parameter.requires_grad = False
+
+    classes = 5
+    torch.manual_seed(7)
+    head = torch.nn.Linear(2048, classes, bias=True)
+    models.init_layer(head)
+    initial_weight, initial_bias = head.weight.detach().clone(), head.bias.detach().clone()
+
+    rate, samples = 32000, 64000
+    time = np.arange(samples, dtype=np.float32) / rate
+    generator = np.random.default_rng(43)
+    tone = sum(0.3 / (h + 1) * np.sin(2 * np.pi * 220 * (h + 1) * time) for h in range(6))
+    wave = np.where(time < 1.0, tone, 0.1 * generator.standard_normal(samples)).astype(np.float32)
+    target = torch.tensor([[1.0, 0.0, 1.0, 0.0, 0.0]])
+
+    with torch.no_grad():
+        embedding = model(torch.from_numpy(wave)[None])["embedding"]
+    loss_func = losses_module.get_loss_func("clip_bce")
+    optimizer = torch.optim.Adam(head.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08,
+                                 weight_decay=0., amsgrad=True)
+    history = []
+    for step in range(4):
+        loss = loss_func({"clipwise_output": torch.sigmoid(head(embedding))}, {"target": target})
+        history.append(loss.item())
+        if step == 3:
+            break
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    globals()["_extra"] = {
+        "waveform": torch.from_numpy(wave).contiguous(),
+        "targets": target[0].contiguous(),
+        "embedding": embedding[0].contiguous(),
+        "initial.weight": initial_weight.contiguous(),
+        "initial.bias": initial_bias.contiguous(),
+        "final.weight": head.weight.detach().clone().contiguous(),
+        "final.bias": head.bias.detach().clone().contiguous(),
+        "losses": torch.tensor(history, dtype=torch.float64),
+    }
+    return torch.tensor([history[0]])
+
+
+def _torchvision_segmentation_train():
+    """torchvision's `references/segmentation/train.py` (v0.23.0) as a module, from
+    IK_TORCHVISION_SEGMENTATION_SRC. Its COCO loader needs `pycocotools`, which nothing measured here
+    reaches, so `coco_utils` is a stand-in."""
+    import importlib.util
+    import types
+
+    source = os.environ["IK_TORCHVISION_SEGMENTATION_SRC"]
+    sys.path.insert(0, source)
+    stand_in = types.ModuleType("coco_utils")
+    stand_in.get_coco = None
+    sys.modules["coco_utils"] = stand_in
+    spec = importlib.util.spec_from_file_location("torchvision_segmentation_train", os.path.join(source, "train.py"))
+    train = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(train)
+    return train
+
+
+def run_deeplab_loss(image):
+    """DeepLabV3's training criterion and schedule, from torchvision's own `references/segmentation`.
+
+    The logits and the auxiliary head's are synthesized at stride 8 for a batch of two, upsampled as
+    the model's forward upsamples them (bilinear, `align_corners=False`), and scored by `train.py`'s
+    `criterion`: cross-entropy ignoring label 255, the auxiliary term at half weight. A tenth of the
+    labels are 255. `main_loss` is the same criterion without the auxiliary output. `schedule` is
+    `PolynomialLR` at power 0.9 over a 40-step run, as `train.py` builds it without warm-up, read back
+    for 45 steps.
+    """
+    import torch.nn.functional as F
+
+    train = _torchvision_segmentation_train()
+    height, width = image.shape[0], image.shape[1]
+    batch, classes = 2, 5
+    generator = np.random.default_rng(37)
+    logits = generator.normal(size=(batch, classes, height // 8, width // 8)).astype(np.float32)
+    auxiliary = generator.normal(size=(batch, classes, height // 8, width // 8)).astype(np.float32)
+    labels = generator.integers(0, classes, size=(batch, height, width)).astype(np.int64)
+    labels[generator.random(labels.shape) < 0.1] = 255
+
+    def full(x):
+        return F.interpolate(torch.from_numpy(x), size=(height, width), mode="bilinear", align_corners=False)
+
+    target = torch.from_numpy(labels)
+    loss = train.criterion({"out": full(logits), "aux": full(auxiliary)}, target)
+    main = train.criterion({"out": full(logits)}, target)
+
+    parameter = torch.nn.Parameter(torch.zeros(1))
+    sgd = torch.optim.SGD([parameter], lr=0.02)
+    scheduler = train.PolynomialLR(sgd, total_iters=40, power=0.9)
+    rates = []
+    for _ in range(45):
+        rates.append(sgd.param_groups[0]["lr"] / 0.02)
+        sgd.step()
+        scheduler.step()
+
+    globals()["_extra"] = {
+        "logits": torch.from_numpy(logits).permute(0, 2, 3, 1).contiguous(),       # NHWC
+        "auxiliary": torch.from_numpy(auxiliary).permute(0, 2, 3, 1).contiguous(),
+        "labels": target.to(torch.int32).contiguous(),
+        "main_loss": main.reshape(1).contiguous(),
+        "schedule": torch.tensor(rates, dtype=torch.float64),
+    }
+    return loss.reshape(1).contiguous()
+
+
+def run_deeplab_training(image, checkpoint):
+    """One step of DeepLabV3's reference training on the released weights.
+
+    `--checkpoint` is the released `deeplabv3_resnet50_coco-cd0a2569.pth`, loaded as `run_deeplab`
+    loads it. The batch is the plate and its mirror image, ImageNet-normalized, with synthetic labels
+    over the 21 classes and a tenth of them 255. The model trains as `train.py` trains it, every
+    parameter in training mode, except its two dropouts, which evaluation mode switches off so the
+    step is deterministic. The loss is `criterion` over both heads; the update is `train.py`'s SGD
+    (rate 0.02, momentum 0.9, weight decay 1e-4, the auxiliary head at ten times the rate) at
+    `PolynomialLR`'s first factor, 1. The record carries the batch, the loss, and a parameter from each
+    group after the step.
+    """
+    from torchvision.models.segmentation import deeplabv3_resnet50
+
+    train = _torchvision_segmentation_train()
+    model = deeplabv3_resnet50(weights=None, weights_backbone=None, num_classes=21, aux_loss=True)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    model.load_state_dict(state.get("model", state), strict=True)
+    model.train()
+    for module in model.modules():
+        if isinstance(module, torch.nn.Dropout):
+            module.eval()
+
+    plate = torch.from_numpy(image).permute(2, 0, 1)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    images = torch.stack([plate, plate.flip(-1)])
+    height, width = image.shape[0], image.shape[1]
+    generator = np.random.default_rng(47)
+    labels = generator.integers(0, 21, size=(2, height, width)).astype(np.int64)
+    labels[generator.random(labels.shape) < 0.1] = 255
+    target = torch.from_numpy(labels)
+
+    params_to_optimize = [
+        {"params": [p for p in model.backbone.parameters() if p.requires_grad]},
+        {"params": [p for p in model.classifier.parameters() if p.requires_grad]},
+        {"params": [p for p in model.aux_classifier.parameters() if p.requires_grad], "lr": 0.02 * 10},
+    ]
+    optimizer = torch.optim.SGD(params_to_optimize, lr=0.02, momentum=0.9, weight_decay=1e-4)
+    loss = train.criterion(model((images - mean) / deviation), target)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    names = ["backbone.conv1.weight", "backbone.layer4.2.bn3.weight", "classifier.0.convs.0.0.weight",
+             "classifier.0.project.1.bias", "classifier.4.weight", "classifier.4.bias",
+             "aux_classifier.0.weight", "aux_classifier.4.bias"]
+    parameters = dict(model.named_parameters())
+    globals()["_extra"] = {
+        "images": images.permute(0, 2, 3, 1).contiguous(),                    # NHWC, 0...1
+        "labels": target.to(torch.int32).contiguous(),
+        **{f"after.{name}": parameters[name].detach().clone().contiguous() for name in names},
+    }
+    return loss.detach().reshape(1).contiguous()
+
+
+def run_bisenet_loss(image):
+    """BiSeNet's training loss and schedule, from CoinCheung/BiSeNet at 6b4b67a.
+
+    IK_BISENET_SRC is the repository checkout. Three heads' logits are synthesized at full resolution
+    for a batch of two, with a tenth of the labels 255, and each is scored by its own `OhemCELoss(0.7,
+    255)`, summed as `tools/train_amp.py` sums them: random logits leave most pixels hard, so this is
+    the mean over the hard pixels. `confident_loss` scores logits that are right by a wide margin
+    almost everywhere, which leaves fewer hard pixels than a sixteenth of the scored ones and takes the
+    top-n branch. `schedule` is `WarmupPolyLrScheduler` as `train_amp.py` builds it (power 0.9, 1,000
+    exponential warm-up steps from 0.1) over a 1,500-step run, read back at every step through the end.
+    """
+    source = os.environ["IK_BISENET_SRC"]
+    ohem = _bisenet_ohem(source)
+    height, width = image.shape[0], image.shape[1]
+    batch, classes = 2, 5
+    generator = np.random.default_rng(41)
+    heads = [generator.normal(size=(batch, classes, height, width)).astype(np.float32) for _ in range(3)]
+    labels = generator.integers(0, classes, size=(batch, height, width)).astype(np.int64)
+    labels[generator.random(labels.shape) < 0.1] = 255
+    target = torch.from_numpy(labels)
+    loss = sum(ohem()(torch.from_numpy(head), target) for head in heads)
+
+    confident = np.full((batch, classes, height, width), -4, dtype=np.float32)
+    n, row, column = np.nonzero(labels != 255)
+    confident[n, labels[n, row, column], row, column] = 4
+    n, row, column = np.nonzero(generator.random((batch, height, width)) < 0.03)
+    confident[n, :, row, column] = generator.normal(size=(len(n), classes)).astype(np.float32)
+    confident_loss = ohem()(torch.from_numpy(confident), target)
+
+    schedulers = _import_reference(os.path.join(source, "lib"), "bisenet_lib", "lr_scheduler")
+    parameter = torch.nn.Parameter(torch.zeros(1))
+    sgd = torch.optim.SGD([parameter], lr=0.01)
+    scheduler = schedulers.WarmupPolyLrScheduler(sgd, power=0.9, max_iter=1500, warmup_iter=1000,
+                                                 warmup_ratio=0.1, warmup="exp", last_epoch=-1)
+    rates = []
+    for step in range(1501):
+        rates.append(sgd.param_groups[0]["lr"] / 0.01)
+        if step == 1500:
+            break                                   # past the run the decay's base turns negative
+        sgd.step()
+        scheduler.step()
+
+    globals()["_extra"] = {
+        **{f"logits.{index}": torch.from_numpy(head).permute(0, 2, 3, 1).contiguous()
+           for index, head in enumerate(heads)},
+        "confident": torch.from_numpy(confident).permute(0, 2, 3, 1).contiguous(),
+        "labels": target.to(torch.int32).contiguous(),
+        "confident_loss": confident_loss.reshape(1).contiguous(),
+        "schedule": torch.tensor(rates, dtype=torch.float64),
+    }
+    return loss.reshape(1).contiguous()
+
+
+def run_bisenet_training(image, checkpoint):
+    """One step of BiSeNet V1's reference training on the released Cityscapes weights.
+
+    IK_BISENET_SRC is the repository checkout. `--checkpoint` is the released
+    `model_final_v1_city_new.pth`, or its conversion (`converted/bisenet.safetensors`), which keeps the
+    reference's names and layout and drops only the `num_batches_tracked` counters a single step never
+    reads. The model is built in `aux_mode="train"`, loaded, then trained as
+    `tools/train_amp.py` trains it, at single precision: every head scored by `OhemCELoss(0.7, 255)`
+    and summed, and SGD over `set_optimizer`'s four groups (rate 0.01, momentum 0.9, weight decay 5e-4
+    on weights of more than one dimension, the fusion module and the heads at ten times the rate) at
+    the warm-up's first factor, 0.1. The batch is the plate and its mirror image with synthetic labels
+    over the 19 classes, a tenth of them 255. The record carries the batch, the loss, and a parameter
+    from each group after the step.
+    """
+    import types
+
+    source = os.environ["IK_BISENET_SRC"]
+    models_source = os.path.join(source, "lib", "models")
+    for name in ["lib", "lib.models"]:
+        package = types.ModuleType(name)
+        package.__path__ = []
+        sys.modules[name] = package
+    resnet = _import_reference(models_source, "bisenet_training", "resnet")
+    resnet.Resnet18.init_weight = lambda self: None             # skip the torchvision download
+    sys.modules["lib.models.resnet"] = resnet
+    module = _import_reference(models_source, "bisenet_training", "bisenetv1", injected={"resnet": resnet})
+    model = module.BiSeNetV1(n_classes=19, aux_mode="train")
+    if checkpoint.endswith(".safetensors"):
+        from safetensors.torch import load_file
+        state = load_file(checkpoint)
+    else:
+        state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        state = state.get("state_dict", state)
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    assert not unexpected and all(name.endswith("num_batches_tracked") for name in missing), (missing, unexpected)
+    model.train()
+
+    wd_params, nowd_params, lr_mul_wd_params, lr_mul_nowd_params = model.get_params()
+    optimizer = torch.optim.SGD([
+        {"params": wd_params},
+        {"params": nowd_params, "weight_decay": 0},
+        {"params": lr_mul_wd_params, "lr": 1e-2 * 10},
+        {"params": lr_mul_nowd_params, "weight_decay": 0, "lr": 1e-2 * 10},
+    ], lr=1e-2, momentum=0.9, weight_decay=5e-4)
+    schedulers = _import_reference(os.path.join(source, "lib"), "bisenet_lib", "lr_scheduler")
+    schedulers.WarmupPolyLrScheduler(optimizer, power=0.9, max_iter=80000, warmup_iter=1000,
+                                     warmup_ratio=0.1, warmup="exp", last_epoch=-1)
+
+    plate = torch.from_numpy(image).permute(2, 0, 1)
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
+    images = torch.stack([plate, plate.flip(-1)])
+    height, width = image.shape[0], image.shape[1]
+    generator = np.random.default_rng(53)
+    labels = generator.integers(0, 19, size=(2, height, width)).astype(np.int64)
+    labels[generator.random(labels.shape) < 0.1] = 255
+    target = torch.from_numpy(labels)
+
+    ohem = _bisenet_ohem(source)
+    logits, *logits_aux = model((images - mean) / deviation)
+    loss = ohem()(logits, target) + sum(ohem()(lgt, target) for lgt in logits_aux)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    names = ["cp.resnet.conv1.weight", "cp.arm16.bn_atten.weight", "sp.conv1.bn.bias",
+             "ffm.convblk.conv.weight", "ffm.bn.weight", "conv_out.conv_out.weight", "conv_out.conv_out.bias",
+             "conv_out16.conv.conv.weight", "conv_out32.conv_out.bias"]
+    parameters = dict(model.named_parameters())
+    globals()["_extra"] = {
+        "images": images.permute(0, 2, 3, 1).contiguous(),                    # NHWC, 0...1
+        "labels": target.to(torch.int32).contiguous(),
+        **{f"after.{name}": parameters[name].detach().clone().contiguous() for name in names},
+    }
+    return loss.detach().reshape(1).contiguous()
+
+
+MODELS["silero_vad_training"] = run_silero_vad_training
+MODELS["deeplab_loss"] = run_deeplab_loss
+MODELS["bisenet_loss"] = run_bisenet_loss
+CHECKPOINT_MODELS["audio_tagger_training"] = run_audio_tagger_training
+CHECKPOINT_MODELS["deeplab_training"] = run_deeplab_training
+CHECKPOINT_MODELS["bisenet_training"] = run_bisenet_training
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")

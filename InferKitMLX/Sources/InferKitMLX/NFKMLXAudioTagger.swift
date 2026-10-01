@@ -127,7 +127,9 @@ final class NFKPANNsConvBlock: Module {
 
 /// The PANNs Cnn14 tagging network: a spectrogram normalization, a stack of convolution blocks, and a
 /// classifier over the pooled embedding.
-final class NFKMLXAudioTaggerNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXAudioTaggerNet: Module {
     @ModuleInfo(key: "bn0") var bn0: BatchNorm
     @ModuleInfo(key: "conv_block") var blocks: [NFKPANNsConvBlock]
     @ModuleInfo(key: "fc1") var fc1: Linear
@@ -152,24 +154,34 @@ final class NFKMLXAudioTaggerNet: Module {
         _blocks.wrappedValue = stack
         _fc1.wrappedValue = Linear(channels, c.embedding)
         _classifier.wrappedValue = Linear(c.embedding, c.classCount)
+        super.init()
+        // A module starts in training mode, which would normalize with each clip's statistics and drop
+        // features at inference; the trainer switches training on for a run and restores this.
+        train(false)
     }
 
     /// The clip embedding `[1, embedding]` the classifier reads, from a log-mel spectrogram
     /// `[1, frames, mels]`.
-    func embedding(_ mel: MLXArray) -> MLXArray {
+    ///
+    /// While training, the reference drops each block's output at 0.2 and the pooled vector at 0.5, and
+    /// `augmentation` masks stripes of the normalized spectrogram.
+    func embedding(_ mel: MLXArray, augmentation: NFKMLXAudioTaggerSpecAugment? = nil) -> MLXArray {
         var x = bn0(mel).reshaped([1, mel.shape[1], mel.shape[2], 1])  // single-channel spectrogram image
+        if training, let augmentation {
+            x = augmentation(x)
+        }
         for block in blocks {
-            x = block(x)
+            x = NFKDropout.apply(block(x), rate: 0.2, active: training)
         }
         let overBands = mean(x, axis: 2)                               // [1, frames, channels]
         // The reference sums the two pools rather than choosing between them.
         let pooled = overBands.max(axis: 1) + mean(overBands, axis: 1)
-        return relu(fc1(pooled))
+        return relu(fc1(NFKDropout.apply(pooled, rate: 0.5, active: training)))
     }
 
     /// Per-class logits `[1, classCount]` from a log-mel spectrogram `[1, frames, mels]`.
-    func logits(_ mel: MLXArray) -> MLXArray {
-        classifier(embedding(mel))
+    func logits(_ mel: MLXArray, augmentation: NFKMLXAudioTaggerSpecAugment? = nil) -> MLXArray {
+        classifier(embedding(mel, augmentation: augmentation))
     }
 
     /// Tags a mono waveform: the highest-scoring classes, most-confident first. `labels` names classes
@@ -262,9 +274,7 @@ public final class NFKMLXAudioTagger: NSObject {
     @objc public static let modelName = "audio-tagger-panns"
 
     static func makeNet(_ configuration: NFKMLXAudioTaggerConfiguration = .panns) -> NFKMLXAudioTaggerNet {
-        let net = NFKMLXAudioTaggerNet(configuration)
-        net.train(false)                                       // BatchNorm running statistics
-        return net
+        NFKMLXAudioTaggerNet(configuration)
     }
 
     /// Builds an audio-tagging backend directly from optional local weights — no registry required. A
@@ -320,7 +330,11 @@ public final class NFKMLXAudioTagger: NSObject {
     /// `[out, kH, kW, in]`. The checkpoint carries the mel filterbank the reference front end built, so
     /// it loads instead of being recomputed; its short-time transform is stored as convolution weights,
     /// which this port computes directly and ignores.
-    static func loadWeights(into net: NFKMLXAudioTaggerNet, from url: URL) throws {
+    ///
+    /// `retargeting` leaves the classifier at its random initialization when the checkpoint's class
+    /// count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes wholesale, so
+    /// loading it would silently restore the old class set.
+    static func loadWeights(into net: NFKMLXAudioTaggerNet, from url: URL, retargeting: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         if let filterbank = raw["logmel_extractor.melW"] {
@@ -331,6 +345,11 @@ public final class NFKMLXAudioTagger: NSObject {
             let name = remapReferenceKey(key)
             return checkpoint.needsConvTranspose && value.ndim == 4 ? (name, value.transposed(0, 2, 3, 1)) : (name, value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        let classes = mapped.first { $0.0 == "fc_audioset.weight" }?.1.dim(0)
+        guard retargeting, let classes, classes != net.configuration.classCount else {
+            try NFKMLXWeights.apply(mapped, to: net)
+            return
+        }
+        try NFKMLXWeights.apply(mapped.filter { !$0.0.hasPrefix("fc_audioset.") }, to: net, strict: false)
     }
 }

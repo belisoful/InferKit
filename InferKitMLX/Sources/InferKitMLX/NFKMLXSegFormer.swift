@@ -324,7 +324,8 @@ public final class NFKMLXSegFormerNet: Module {
         let (height, width) = (image.shape[0], image.shape[1])
         let scores = logits(normalized(image))
         let labels = scores.argMax(axis: -1)                    // [1, h, w]
-        let normalized = labels.asType(.float32) / Float(max(configuration.classCount - 1, 1))
+        // The classifier's own width, which a retargeted checkpoint sets when a factory loads it.
+        let normalized = labels.asType(.float32) / Float(max(scores.dim(-1) - 1, 1))
         let map = normalized.reshaped([1, scores.shape[1], scores.shape[2], 1])
         let full = NFKMLXResample.resizeNearest(map, height: height, width: width)
         return full.reshaped([height, width, 1])

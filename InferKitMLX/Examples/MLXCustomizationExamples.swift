@@ -664,6 +664,33 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(labels.dtype, .int32, "cross-entropy takes class indices")
     }
 
+    // Docs/examples.md: Retargeting DeepLabV3 or BiSeNet to your own classes
+    func testExampleRetargetingDeepLabAndBiSeNetToOwnClasses() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deeplab-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+        let myFrames = [Self.gray(64, level: 60), Self.gray(64, level: 200)]
+        let myMasks = [Self.gray(64, level: 0), Self.gray(64, level: 255)]
+        let sampler = NFKMLXBatchSampler(count: myFrames.count, batchSize: 2, seed: 7)
+        let examples = { (step: Int) -> (images: MLXArray, labels: MLXArray) in
+            let indices = sampler.indices(forStep: step)
+            return (images: try! NFKMLXTrainingData.batch(indices.map { myFrames[$0] }),
+                    labels: stacked(indices.map { try! NFKMLXTrainingData.labels(myMasks[$0], classCount: 3) }))
+        }
+
+        // A real run loads the release: NFKMLXDeepLab.network(weightsURL: releasedWeights, configuration: ...).
+        let net = try NFKMLXDeepLab.network(weightsURL: nil, configuration: NFKMLXDeepLabConfiguration(classCount: 3))
+        XCTAssertEqual(try NFKMLXDeepLab.fineTune(net, examples: examples, steps: 1).count, 1)
+        try NFKMLXWeights.save(net, to: tuned)
+        let segmenter = try NFKMLXDeepLab.backend(weightsURL: tuned)       // also backendWithWeightsURL:error:
+        XCTAssertTrue(segmenter.isReady)
+
+        let bisenet = try NFKMLXBiSeNet.network(weightsURL: nil, configuration: NFKMLXBiSeNetConfiguration(classCount: 3))
+        XCTAssertEqual(try NFKMLXBiSeNet.fineTune(bisenet, examples: examples, steps: 1).count, 1)
+    }
+
     // Docs/examples.md: LoRA, for models with no small head to train
     func testExampleLoRAAdaptsMergesAndLeavesAnOrdinaryCheckpoint() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
@@ -863,6 +890,49 @@ final class MLXCustomizationExamples: XCTestCase {
         try NFKMLXWeights.save(net, to: tuned)
         let detector = try NFKMLXVAD.backend(weightsURL: tuned)                // also backendWithWeightsURL:error:
         XCTAssertTrue(detector.isReady)
+    }
+
+    // Docs/examples.md: Teaching Silero VAD your own audio
+    func testExampleFineTuningSileroVADOnOwnAudio() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("silero-vad-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the converted release: NFKMLXSileroVAD.network(weightsURL: releasedWeights).
+        let net = try NFKMLXSileroVAD.network(weightsURL: nil)
+        let samples = (0 ..< 16000).map { $0 < 8000 ? sinf(Float($0) * 0.06) * 0.3 : 0 }
+        let targets = NFKMLXSileroVAD.chunkTargets(speech: [(0, 0.5)], sampleCount: samples.count)
+        let history = try NFKMLXSileroVAD.fineTune(net, examples: { _ in (samples, targets.labels, targets.mask) },
+                                                   steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let detector = try NFKMLXSileroVAD.backend(weightsURL: tuned)      // also backendWithWeightsURL:error:
+        XCTAssertTrue(detector.isReady)
+    }
+
+    // Docs/examples.md: Teaching the audio tagger your own sounds
+    func testExampleRetargetingTheAudioTaggerToOwnSounds() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("audio-tagger-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the converted release: NFKMLXAudioTagger.network(weightsURL: releasedWeights, ...).
+        var configuration = NFKMLXAudioTaggerConfiguration.panns
+        configuration.classCount = 4
+        let net = try NFKMLXAudioTagger.network(weightsURL: nil, configuration: configuration)
+        let samples = (0 ..< 32000).map { sinf(Float($0) * 0.08) * 0.3 }
+        let history = try NFKMLXAudioTagger.fineTune(net, examples: { _ in (samples, 32000, [1, 0, 1, 0]) }, steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXAudioTagger.save(net, to: tuned)
+        let tagger = try NFKMLXAudioTagger.backend(weightsURL: tuned,     // also backendWithWeightsURL:labels:error:
+                                                   labels: ["doorbell", "knock", "kettle", "dog"])
+        XCTAssertTrue(tagger.isReady)
     }
 
     // Docs/examples.md: Teaching speech separation your own speakers

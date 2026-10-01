@@ -227,7 +227,9 @@ final class NFKBiSeNetOutput: Module {
 
 /// The BiSeNet network: a detail-preserving spatial path, a deep context path, and the fusion module
 /// that combines them into class logits.
-final class NFKMLXBiSeNetNet: Module {
+///
+/// Introduced as public in InferKit 0.5.0, for fine-tuning.
+public final class NFKMLXBiSeNetNet: Module {
     @ModuleInfo(key: "cp") var cp: NFKBiSeNetContextPath
     @ModuleInfo(key: "sp") var sp: NFKBiSeNetSpatialPath
     @ModuleInfo(key: "ffm") var ffm: NFKBiSeNetFFM
@@ -267,6 +269,15 @@ final class NFKMLXBiSeNetNet: Module {
         return NFKMLXResample.resizeBilinear(out, height: image.shape[1], width: image.shape[2])
     }
 
+    /// The class logits and both auxiliary heads', each `[1, H, W, classCount]` at the input
+    /// resolution, from one pass. The auxiliary heads read the context path at strides 8 and 16.
+    func trainingLogits(_ image: MLXArray) -> (main: MLXArray, auxiliary: [MLXArray]) {
+        let (height, width) = (image.shape[1], image.shape[2])
+        let (feat8, feat16) = cp(image)
+        let full = { (logits: MLXArray) in NFKMLXResample.resizeBilinear(logits, height: height, width: width) }
+        return (full(convOut(ffm(sp(image), feat8))), [full(convOut16(feat8)), full(convOut32(feat16))])
+    }
+
     /// The label map as a grayscale image `[H, W, 1]`, the same convention `NFKMLXSegFormer` and
     /// `NFKMLXDeepLab` use: recover the class index as `round(gray · (classCount − 1))`.
     func segment(_ image: MLXArray) -> MLXArray {
@@ -290,7 +301,8 @@ final class NFKMLXBiSeNetNet: Module {
             predicted = NFKMLXResample.resizeBilinear(predicted, height: height, width: width)
         }
         let labels = predicted.argMax(axis: -1)
-        let scale = Float(max(configuration.classCount - 1, 1))
+        // The classifier's own width, which a retargeted checkpoint sets when a factory loads it.
+        let scale = Float(max(predicted.dim(-1) - 1, 1))
         return (labels.asType(.float32) / scale).reshaped([height, width, 1])
     }
 
@@ -365,8 +377,6 @@ public final class NFKMLXBiSeNet: NSObject {
         }
     }
 
-    /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
-    /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
     /// Maps the reference's names onto the module's: only the ResNet block's projection shortcut is
     /// positional (`downsample.0` the convolution, `downsample.1` its normalization).
     static func remapReferenceKey(_ key: String) -> String {
@@ -376,13 +386,26 @@ public final class NFKMLXBiSeNet: NSObject {
         return key[..<range.lowerBound] + name + key[range.upperBound...].dropFirst(2)
     }
 
-    static func loadWeights(into net: NFKMLXBiSeNetNet, from url: URL) throws {
+    /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
+    /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
+    ///
+    /// `retargeting` leaves the three classifiers at their random initialization when the checkpoint's
+    /// class count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes
+    /// wholesale, so loading them would silently restore the old class set.
+    static func loadWeights(into net: NFKMLXBiSeNetNet, from url: URL, retargeting: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        let classes = mapped.first { $0.0 == "conv_out.conv_out.weight" }?.1.dim(0)
+        guard retargeting, let classes, classes != net.configuration.classCount else {
+            try NFKMLXWeights.apply(mapped, to: net)
+            return
+        }
+        let heads = ["conv_out.conv_out.", "conv_out16.conv_out.", "conv_out32.conv_out."]
+        try NFKMLXWeights.apply(mapped.filter { key, _ in !heads.contains { key.hasPrefix($0) } }, to: net,
+                                strict: false)
     }
 }
 

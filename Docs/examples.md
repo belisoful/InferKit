@@ -3481,6 +3481,33 @@ The optimizer and schedule default to NVlabs' configuration: the head at 6e-4, t
 1,500-step linear warm-up, which a 300-step run never leaves. Pass `learningRateSchedule: .constant` to
 hold the rate instead.
 
+### Retargeting DeepLabV3 or BiSeNet to your own classes
+
+DeepLabV3 and BiSeNet V1 retarget the same way, each with its reference's own recipe: torchvision's
+cross-entropy over the main and auxiliary heads for DeepLab, and CoinCheung's OHEM cross-entropy over
+three heads for BiSeNet. Both train on batches of at least two images, because their pooled branches
+normalize one value per image:
+
+```swift
+let net = try NFKMLXDeepLab.network(weightsURL: releasedWeights,
+                                    configuration: NFKMLXDeepLabConfiguration(classCount: 3))
+
+let sampler = NFKMLXBatchSampler(count: myFrames.count, batchSize: 4, seed: 7)
+try NFKMLXDeepLab.fineTune(net, examples: { step in
+    let indices = sampler.indices(forStep: step)
+    return (images: try! NFKMLXTrainingData.batch(indices.map { myFrames[$0] }),
+            labels: stacked(indices.map { try! NFKMLXTrainingData.labels(myMasks[$0], classCount: 3) }))
+}, steps: 300)                                           // .head: the backbone stays frozen
+
+try NFKMLXWeights.save(net, to: tuned)
+let segmenter = try NFKMLXDeepLab.backend(weightsURL: tuned)      // Objective-C: backendWithWeightsURL:error:
+```
+
+`NFKMLXBiSeNet.network(weightsURL:configuration:)` and `NFKMLXBiSeNet.fineTune` take the same shapes;
+the default `.allButBackbone` freezes the ResNet-18 the reference starts from ImageNet. A label of 255
+leaves a pixel unscored in both. The loaded backend's label map encodes the retargeted classes, so
+`round(gray · 2)` recovers each of the three.
+
 ### Retargeting a promptable segmenter to your own subject
 
 SAM 2 already segments what a click points at; what a consumer usually wants changed is what it reads
@@ -3764,6 +3791,42 @@ try NFKMLXVAD.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 
 
 try NFKMLXWeights.save(net, to: tuned)
 let detector = try NFKMLXVAD.backend(weightsURL: tuned)            // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching Silero VAD your own audio
+
+Silero VAD retrains its decoder alone, as snakers4's `tuning/` does: the learned STFT and the encoder
+stay as released. `chunkTargets` labels each 512-sample chunk from the spans that hold speech and
+weighs a non-speech chunk by half.
+
+```swift
+let net = try NFKMLXSileroVAD.network(weightsURL: releasedWeights)
+let examples = myClips.map { clip -> (samples: [Float], labels: [Float], mask: [Float]) in
+    let targets = NFKMLXSileroVAD.chunkTargets(speech: clip.speechSpans, sampleCount: clip.samples.count)
+    return (clip.samples, targets.labels, targets.mask)            // 16 kHz samples
+}
+try NFKMLXSileroVAD.fineTune(net, examples: { examples[$0 % examples.count] }, steps: 1000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let detector = try NFKMLXSileroVAD.backend(weightsURL: tuned)     // Objective-C: backendWithWeightsURL:error:
+```
+
+### Teaching the audio tagger your own sounds
+
+The PANNs tagger retargets its classifier over the frozen Cnn14, scored by the reference's clip-level
+binary cross-entropy, so one clip can carry several of the consumer's classes:
+
+```swift
+var configuration = NFKMLXAudioTaggerConfiguration.panns
+configuration.classCount = 4                                       // doorbell, knock, kettle, dog
+let net = try NFKMLXAudioTagger.network(weightsURL: releasedWeights, configuration: configuration)
+try NFKMLXAudioTagger.fineTune(net, examples: { step in
+    let clip = myClips[step % myClips.count]
+    return (samples: clip.samples, sampleRate: clip.sampleRate, targets: clip.presentClasses)
+}, steps: 500)
+
+try NFKMLXAudioTagger.save(net, to: tuned)                        // carries the release's filterbank
+let tagger = try NFKMLXAudioTagger.backend(weightsURL: tuned, labels: ["doorbell", "knock", "kettle", "dog"])
 ```
 
 ### Teaching speech separation your own speakers

@@ -234,8 +234,9 @@ public enum NFKMLXWeights {
     /// file records its layout in metadata, which ``loadCheckpoint(url:)`` reads back.
     ///
     /// Non-trainable parameters are included, so a model carrying batch-normalization running
-    /// statistics reloads complete.
-    public static func save(_ module: Module, to url: URL) throws {
+    /// statistics reloads complete. `extraArrays` joins them under its own keys, for a constant a model
+    /// keeps off its parameters that its loader reads back, such as a stored filterbank.
+    public static func save(_ module: Module, extraArrays: [String: MLXArray] = [:], to url: URL) throws {
         guard url.pathExtension == "safetensors" else {
             throw NFKMLXError.checkpointNotWritable(
                 "a checkpoint must be written as .safetensors to carry its layout metadata, "
@@ -243,6 +244,7 @@ public enum NFKMLXWeights {
         }
         eval(module)
         let arrays = Dictionary(uniqueKeysWithValues: module.parameters().flattened())
+            .merging(extraArrays) { parameter, _ in parameter }
 
         // A periodic checkpoint overwrites the only copy of the run's progress. Writing in place means
         // a process killed part way through the write destroys both the new state and the previous

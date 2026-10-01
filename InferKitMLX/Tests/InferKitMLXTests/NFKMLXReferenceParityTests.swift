@@ -10851,6 +10851,282 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(try array("optimizer").asArray(Float.self), [0.01, 0.9, 0.001])
     }
 
+    // MARK: Head-retarget recipes
+
+    /// How one run's change to a parameter compares with the reference's, from the same starting value:
+    /// the cosine between the two changes and the ratio of their norms. An absolute difference of the
+    /// final values is dominated by the weights the run barely moved; a wrong rate multiple or a
+    /// misplaced weight decay shows in the ratio.
+    private func updateAgreement(before: MLXArray, after: MLXArray, referenceAfter: MLXArray) -> (cosine: Double, ratio: Double) {
+        let ours = (after - before).reshaped([-1]).asArray(Float.self).map(Double.init)
+        let theirs = (referenceAfter - before).reshaped([-1]).asArray(Float.self).map(Double.init)
+        let norm = { (values: [Double]) in values.reduce(0) { $0 + $1 * $1 }.squareRoot() }
+        return (cosine(ours, theirs), norm(ours) / norm(theirs))
+    }
+
+    /// A snapshot that survives the next update: `update(parameters:)` repoints a module's own arrays,
+    /// so a plain reference would read the post-step values.
+    private func snapshot(_ module: Module) -> [String: MLXArray] {
+        let copies = Dictionary(uniqueKeysWithValues: module.parameters().flattened().map { ($0.0, $0.1 * 1) })
+        eval(Array(copies.values))
+        return copies
+    }
+
+    // Silero VAD's decoder fine-tune against snakers4's own `tuning/` (v6.2.1): the chunk targets its
+    // dataset builds from the same spans, the decoder's probabilities, the masked binary cross-entropy,
+    // and the decoder after two Adam steps, where the folded LSTM bias must move as the reference's pair
+    // of biases moves together.
+    //
+    // `python run_reference.py silero_vad_training out/silero-vad-training.safetensors` (IK_SILERO_SRC)
+    func testSileroVADTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SILERO_VAD_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SILERO_VAD_TRAINING to a record from run_reference.py silero_vad_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let waveform = try array("waveform").asArray(Float.self)
+        let targets = NFKMLXSileroVAD.chunkTargets(speech: [(0.112, 0.43), (0.55, 0.7)], sampleCount: waveform.count)
+        XCTAssertEqual(targets.labels, try array("labels").asArray(Float.self), "the chunk labels")
+        XCTAssertEqual(targets.mask, try array("mask").asArray(Float.self), "the noise-weighted mask")
+
+        let net = try NFKMLXSileroVAD.network(weightsURL: weights("IK_VAL_SILERO_VAD"))
+        net.encoder.freeze()
+        let input = NFKMLXSileroVADNet.chunkedInput(waveform, net.configuration)
+        let labels = MLXArray(targets.labels), mask = MLXArray(targets.mask)
+        let objective = NFKMLXSileroVADObjective()
+        let probabilityDifference = abs(net.decoder(net.encoder(input)) - (try array("probabilities")))
+            .max().item(Float.self)
+
+        let before = snapshot(net.decoder)
+        let optimizer = NFKMLXSileroVAD.referenceOptimizer(for: net)
+        let lossAndGradient = valueAndGrad(model: net) { net, _ in
+            [objective.loss(probabilities: net.decoder(net.encoder(input)), labels: labels, mask: mask)]
+        }
+        var losses = [Float]()
+        for step in 0 ..< 3 {
+            let (values, gradients) = lossAndGradient(net, [])
+            losses.append(values[0].item(Float.self))
+            guard step < 2 else { break }
+            optimizer.update(model: net, gradients: gradients)
+            eval(net)
+        }
+        let after = Dictionary(uniqueKeysWithValues: net.decoder.parameters().flattened())
+        let expectedLosses = try array("losses").asArray(Float.self)
+        print("PARITY silero-vad-training: probabilities worst \(probabilityDifference); losses ours \(losses), "
+              + "reference \(expectedLosses)")
+        XCTAssertLessThan(probabilityDifference, 1e-5)
+        for (ours, theirs) in zip(losses, expectedLosses) {
+            XCTAssertEqual(ours, theirs, accuracy: max(abs(theirs) * 1e-4, 1e-6))
+        }
+        for (name, reference) in [("rnn.Wx", "rnn.weight_ih"), ("rnn.Wh", "rnn.weight_hh"), ("rnn.bias", "rnn.bias"),
+                                  ("final.weight", "final.weight"), ("final.bias", "final.bias")] {
+            let start = try XCTUnwrap(before[name], name)
+            let agreement = updateAgreement(before: start, after: try XCTUnwrap(after[name], name),
+                                            referenceAfter: try array(reference).reshaped(start.shape))
+            print("PARITY silero-vad-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            XCTAssertGreaterThan(agreement.cosine, 0.9999, name)
+            XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-3, name)
+        }
+    }
+
+    // PANNs' transfer recipe against qiuqiangkong/audioset_tagging_cnn (d2f4b8c): a fresh five-class
+    // classifier over the frozen Cnn14, scored by `clip_bce` and stepped three times by torch's Adam with
+    // AMSGrad.
+    //
+    // `/usr/bin/python3 run_reference.py audio_tagger_training out/audio-tagger-training.safetensors
+    //  --checkpoint Cnn14_mAP=0.431.pth` (IK_PANNS_SRC)
+    func testAudioTaggerTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_AUDIO_TAGGER_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_AUDIO_TAGGER_TRAINING to a record from run_reference.py audio_tagger_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        var configuration = NFKMLXAudioTaggerConfiguration.panns
+        configuration.classCount = 5
+        let net = try NFKMLXAudioTagger.network(weightsURL: weights("IK_VAL_AUDIOTAGGER"), configuration: configuration)
+        net.update(parameters: ModuleParameters.unflattened([("fc_audioset.weight", try array("initial.weight") * 1),
+                                                             ("fc_audioset.bias", try array("initial.bias") * 1)]))
+        net.freeze()
+        net.classifier.unfreeze()
+
+        let mel = net.frontEnd.logMel(try array("waveform").asArray(Float.self))
+        let embeddingCosine = cosine(net.embedding(mel).reshaped([-1]).asArray(Float.self).map(Double.init),
+                                     try array("embedding").asArray(Float.self).map(Double.init))
+        let targets = try array("targets").reshaped([1, 5])
+        let objective = NFKMLXAudioTaggerObjective()
+        let before = snapshot(net.classifier)
+        let optimizer = NFKMLXAMSGrad(learningRate: 1e-3)
+        let lossAndGradient = valueAndGrad(model: net) { net, _ in [objective.loss(logits: net.logits(mel), targets: targets)] }
+        var losses = [Float]()
+        for step in 0 ..< 4 {
+            let (values, gradients) = lossAndGradient(net, [])
+            losses.append(values[0].item(Float.self))
+            guard step < 3 else { break }
+            optimizer.update(model: net, gradients: gradients)
+            eval(net)
+        }
+        let expectedLosses = try array("losses").asArray(Float.self)
+        print("PARITY audio-tagger-training: embedding cosine \(embeddingCosine); losses ours \(losses), "
+              + "reference \(expectedLosses)")
+        XCTAssertGreaterThan(embeddingCosine, 0.99999)
+        for (ours, theirs) in zip(losses, expectedLosses) {
+            XCTAssertEqual(ours, theirs, accuracy: max(abs(theirs) * 1e-4, 1e-6))
+        }
+        for name in ["weight", "bias"] {
+            let start = try XCTUnwrap(before[name], name)
+            let agreement = updateAgreement(before: start, after: name == "weight" ? net.classifier.weight : try XCTUnwrap(net.classifier.bias),
+                                            referenceAfter: try array("final.\(name)"))
+            print("PARITY audio-tagger-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            XCTAssertGreaterThan(agreement.cosine, 0.9999, name)
+            XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-3, name)
+        }
+    }
+
+    // DeepLabV3's criterion and schedule against torchvision's own `references/segmentation` (v0.23.0),
+    // on the logits it scored: both heads upsampled to the labels, label 255 ignored, the auxiliary term
+    // at half weight; and `PolynomialLR` over a 40-step run.
+    //
+    // `python run_reference.py deeplab_loss out/deeplab-loss.safetensors --size 64`
+    // (IK_TORCHVISION_SEGMENTATION_SRC)
+    func testDeepLabTrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DEEPLAB_LOSS"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DEEPLAB_LOSS to a record from run_reference.py deeplab_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let objective = NFKMLXDeepLabObjective()
+        let total = objective.loss(logits: try array("logits"), auxiliaryLogits: try array("auxiliary"),
+                                   labels: try array("labels")).item(Float.self)
+        let main = objective.loss(logits: try array("logits"), auxiliaryLogits: nil, labels: try array("labels"))
+            .item(Float.self)
+        let schedule = NFKMLXLearningRateSchedule.poly(steps: 40, power: 0.9)
+        let rates = try array("schedule").asArray(Float.self)
+        let worstRate = rates.indices.map { abs(schedule.multiplier($0) - rates[$0]) }.max() ?? .infinity
+        let expected = try array("output").item(Float.self), expectedMain = try array("main_loss").item(Float.self)
+        print("PARITY deeplab-loss: ours \(total) / main \(main), reference \(expected) / \(expectedMain); "
+              + "worst schedule difference over \(rates.count) steps \(worstRate)")
+        XCTAssertEqual(total, expected, accuracy: max(abs(expected) * 1e-5, 1e-7))
+        XCTAssertEqual(main, expectedMain, accuracy: max(abs(expectedMain) * 1e-5, 1e-7))
+        XCTAssertLessThan(worstRate, 1e-6)
+    }
+
+    // One DeepLabV3 training step on the released weights against torchvision's `train.py`: the loss
+    // over both heads with every layer training, and the SGD update of a parameter from each group. Both
+    // sides switch the two dropouts off and leave every batch normalization training.
+    //
+    // `python run_reference.py deeplab_training out/deeplab-training.safetensors --size 64
+    //  --checkpoint deeplabv3_resnet50_coco-cd0a2569.pth` (IK_TORCHVISION_SEGMENTATION_SRC)
+    func testDeepLabTrainingStepMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DEEPLAB_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DEEPLAB_TRAINING to a record from run_reference.py deeplab_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let net = try NFKMLXDeepLab.network(weightsURL: weights("IK_VAL_DEEPLAB"))
+        net.train(true)
+        // A dropout reads its own module's switch, and each batch normalization reads its own.
+        net.aspp.train(false)
+        for branch in net.aspp.convs + [net.aspp.pool, net.aspp.project] {
+            branch.train(true)
+        }
+        net.auxiliary.train(false)
+        net.auxiliary.conv.train(true)
+
+        let images = NFKMLXDeepLabNet.normalized(try array("images")), labels = try array("labels")
+        let objective = NFKMLXDeepLabObjective()
+        let before = snapshot(net)
+        let optimizer = NFKMLXDeepLab.referenceOptimizer(for: net)
+        let (values, gradients) = valueAndGrad(model: net) { net, _ in
+            let logits = net.trainingLogits(images)
+            return [objective.loss(logits: logits.main, auxiliaryLogits: logits.auxiliary, labels: labels)]
+        }(net, [])
+        optimizer.update(model: net, gradients: gradients)
+        eval(net)
+        net.train(false)
+
+        let loss = values[0].item(Float.self), expected = try array("output").item(Float.self)
+        print("PARITY deeplab-training: loss ours \(loss), reference \(expected)")
+        XCTAssertEqual(loss, expected, accuracy: max(abs(expected) * 1e-4, 1e-6))
+        let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        let poolBranch = net.configuration.dilations.count + 1
+        for (key, value) in arrays where key.hasPrefix("after.") {
+            let name = NFKMLXDeepLab.remapReferenceKey(String(key.dropFirst("after.".count)), poolBranch: poolBranch)
+            let reference = value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            let agreement = updateAgreement(before: try XCTUnwrap(before[name], name),
+                                            after: try XCTUnwrap(after[name], name), referenceAfter: reference)
+            print("PARITY deeplab-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            XCTAssertGreaterThan(agreement.cosine, 0.999, name)
+            XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-2, name)
+        }
+    }
+
+    // BiSeNet's OHEM loss and schedule against CoinCheung/BiSeNet (6b4b67a): three heads summed on
+    // random logits, which takes the hard-pixel mean; confident logits, which take the top-n branch; and
+    // `WarmupPolyLrScheduler` over a 1,500-step run.
+    //
+    // `python run_reference.py bisenet_loss out/bisenet-loss.safetensors --size 64` (IK_BISENET_SRC)
+    func testBiSeNetTrainingLossMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_BISENET_LOSS"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_BISENET_LOSS to a record from run_reference.py bisenet_loss")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let objective = NFKMLXBiSeNetObjective()
+        let labels = try array("labels")
+        let total = objective.loss(logits: try array("logits.0"),
+                                   auxiliaryLogits: [try array("logits.1"), try array("logits.2")],
+                                   labels: labels).item(Float.self)
+        let confident = objective.ohem(try array("confident"), labels).item(Float.self)
+        let schedule = NFKMLXLearningRateSchedule.exponentialWarmupPoly(steps: 1500, power: 0.9, warmupSteps: 1000,
+                                                                        warmupRatio: 0.1)
+        let rates = try array("schedule").asArray(Float.self)
+        let worstRate = rates.indices.map { abs(schedule.multiplier($0) - rates[$0]) }.max() ?? .infinity
+        let expected = try array("output").item(Float.self), expectedConfident = try array("confident_loss").item(Float.self)
+        print("PARITY bisenet-loss: ours \(total) / confident \(confident), reference \(expected) / "
+              + "\(expectedConfident); worst schedule difference over \(rates.count) steps \(worstRate)")
+        XCTAssertEqual(total, expected, accuracy: max(abs(expected) * 1e-5, 1e-7))
+        XCTAssertEqual(confident, expectedConfident, accuracy: max(abs(expectedConfident) * 1e-5, 1e-7))
+        XCTAssertLessThan(worstRate, 1e-6)
+    }
+
+    // One BiSeNet V1 training step on the released weights against CoinCheung's `train_amp.py`, run
+    // through the shipped recipe end to end: every layer training, the OHEM loss on all three heads,
+    // and the reference optimizer's four groups at the warm-up's first factor.
+    //
+    // `python run_reference.py bisenet_training out/bisenet-training.safetensors --size 64
+    //  --checkpoint converted/bisenet.safetensors` (IK_BISENET_SRC; the released `.pth` reads the same)
+    func testBiSeNetTrainingStepMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_BISENET_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_BISENET_TRAINING to a record from run_reference.py bisenet_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        let net = try NFKMLXBiSeNet.network(weightsURL: weights("IK_VAL_BISENET"))
+        let before = snapshot(net)
+        let batch = (images: try array("images"), labels: try array("labels"))
+        let history = try NFKMLXBiSeNet.fineTune(net, examples: { _ in batch }, trainable: .everything, steps: 1)
+
+        let expected = try array("output").item(Float.self)
+        print("PARITY bisenet-training: loss ours \(history), reference \(expected)")
+        XCTAssertEqual(history.first ?? .nan, expected, accuracy: max(abs(expected) * 1e-4, 1e-6))
+        let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        for (key, value) in arrays where key.hasPrefix("after.") {
+            let name = NFKMLXBiSeNet.remapReferenceKey(String(key.dropFirst("after.".count)))
+            let reference = value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            let agreement = updateAgreement(before: try XCTUnwrap(before[name], name),
+                                            after: try XCTUnwrap(after[name], name), referenceAfter: reference)
+            print("PARITY bisenet-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            XCTAssertGreaterThan(agreement.cosine, 0.999, name)
+            XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-2, name)
+        }
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

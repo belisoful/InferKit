@@ -418,6 +418,21 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   streams the JIT chunk by chunk. Resampled to 16 kHz through `NFKMLXAudioRate.matched`. The last
   chunk is zero-padded to 512 samples, so a span that reaches it ends at the clip's duration, as the
   reference's `get_speech_timestamps` sets the last end to `audio_length_samples`.
+  **Customization is a HEAD RETARGET of the decoder and it ships** (`NFKMLXSileroVADTraining.swift`),
+  following snakers4's own `tuning/` at v6.2.1: `NFKMLXSileroVAD.network(weightsURL:)` builds the net,
+  `NFKMLXSileroVADTrainable` picks `.decoder` (the STFT and encoder frozen, as `tune.py` freezes them)
+  or `.everything`, and `chunkTargets(speech:sampleCount:noiseWeight:configuration:)` is the dataset's
+  `get_ground_truth_annotated`: a chunk is speech when more than half its samples are, and the mask
+  weighs a non-speech chunk by 0.5. `NFKMLXSileroVADObjective` is the masked mean of `BCELoss` with its
+  −100 log floor. The decoder drops its LSTM output at 0.1 while training, as `VADDecoderRNNJIT` does.
+  The reference optimizer is Adam at 5e-4 with one deliberate difference in form: the reference's
+  `LSTMCell` keeps `bias_ih` and `bias_hh`, both receive the gradient the folded bias receives, and Adam
+  moves each by the same step, so the folded bias steps at twice the rate to move exactly as the pair
+  moves. Measured against the released JIT and `tune.py`'s own forward loop: targets and mask exact,
+  probabilities within 9.2e-7, the loss 0.23334178 against 0.233342 and after two Adam steps 0.11447279
+  against 0.11447296, every decoder update at cosine 0.999996 or better with norms within 6e-6, the
+  folded bias's included (`testSileroVADTrainingMatchesTheReference`). The reference's augmentations and
+  eight-second crop are the caller's data choices.
 - `NFKMLXAudioTagger` (`@objc`) — real audio tagging (PANNs Cnn14): a log-mel spectrogram, normalized
   across its mel bands (`bn0`), feeds six VGG-style blocks (two 3×3 convolutions and an average pooling
   each), and the result pools over time — max plus mean — into an independent score per class; the top
@@ -434,3 +449,22 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `conv_blockN` onto the module's array. A clip arriving at another sample rate is resampled to
   32 kHz through `NFKMLXAudioRate.matched`: the filterbank is built for one rate, so feeding another
   puts every frequency in the wrong mel bin — wrong tags, with nothing that looks like an error.
+  **Customization is a HEAD RETARGET and it ships** (`NFKMLXAudioTaggerTraining.swift`), from PANNs at
+  d2f4b8c: `NFKMLXAudioTagger.network(weightsURL:configuration:)` builds the net at the configuration's
+  class count and leaves the classifier at its random initialization when the checkpoint's differs,
+  and `NFKMLXAudioTaggerTrainable` picks `.classifier` (`finetune_template.py`'s frozen base) or
+  `.everything`. `NFKMLXAudioTaggerObjective` is `losses.py`'s `clip_bce` on the classifier's sigmoid,
+  and the reference optimizer is `main.py`'s Adam at 1e-3 with AMSGrad (`NFKMLXAMSGrad`). The template
+  keeps the model in training mode, so Cnn14's dropouts (0.2 after each block, 0.5 on the pooled
+  vector) and torchlibrosa's SpecAugment (`NFKMLXAudioTaggerSpecAugment`, two time stripes up to 64
+  frames and two band stripes up to 8) run over the frozen base as well; the base's BatchNorms hold
+  their statistics, where the template's frozen base updates them. The recipe retargets
+  `fc_audioset`, which reads the embedding before its final dropout, where the template's
+  `fc_transfer` reads it after. `NFKMLXAudioTagger.save(_:to:)` writes the filterbank beside the
+  parameters (`NFKMLXWeights.save(_:extraArrays:to:)`), because a recomputed one differs from the
+  stored one by up to 4.8e-8, 1e-3 relative at the filter edges. Measured against the released Cnn14
+  with a fresh five-class layer: embedding cosine 0.99999994, losses within 2.8e-5 relative over three
+  AMSGrad steps (0.72625655 against 0.72627217 first, 0.48410437 against 0.4841176 last), and the
+  layer's update at cosine 0.9999999999999 with norm ratio 1.0000002
+  (`testAudioTaggerTrainingMatchesTheReference`). The reference's default mixup needs a batch; a caller
+  mixes its own examples for the same effect.

@@ -93,6 +93,29 @@ corrected one, and the two differ wherever a gradient is near ε. `NFKMLXKerasAd
 the moments updated as Keras writes them (`m += (g − m)(1 − β₁)`) and single-precision step scalars.
 Basic Pitch's recipe runs it, held within 9.4e-7 of the reference's first step from its own gradients.
 
+**SGD groups, AMSGrad, and a folded LSTM bias.** `NFKMLXReferenceOptimizers.sgd(learningRate:momentum:over:group:)`
+is `torch.optim.SGD` over a configuration's parameter groups, each with its rate multiple and its weight
+decay, which joins the gradient; mlx-swift's `SGD` computes torch's update, momentum buffer included.
+DeepLab's and BiSeNet's recipes run it. `NFKMLXAMSGrad` is `torch.optim.Adam(amsgrad=True)`, which PANNs
+trains with: the denominator holds the running maximum of the second moment. A PyTorch LSTM keeps
+`bias_ih` and `bias_hh`, where MLX's `LSTM` keeps their sum. Both receive the gradient the sum
+receives, and Adam moves each by the same step, so the sum moves twice as far. Silero VAD's recipe gives
+the folded bias twice the rate, which moves it exactly as the pair moves (norm ratio 1.000005 against
+`tune.py` after two steps).
+
+**A batch normalization after a global pool needs a batch.** DeepLab's ASPP pooling branch and
+BiSeNet's attention refinement, global-context, and fusion modules normalize one pooled value per image.
+In training mode, a batch of one gives such a normalization one value per channel: torch raises, and
+MLX normalizes it to zero and leaves only the bias. Both recipes take batches of two or more and throw
+`NFKMLXError.trainingDataMismatch` on one, as their references train on 8 to 32.
+
+**MLX folds the biased batch variance into the running variance.** MLXNN's `BatchNorm` updates
+`running_var` with the batch's population variance, where torch uses the unbiased one, so every recipe
+whose normalizations train in training mode writes statistics `(n − 1) / n` of the reference's: about 1%
+over a 100-frame map, half over a pooled map in a batch of two. The normalization during the step
+itself matches, since both use the population variance there. `NFKBasicPitchBatchNorm` folds the
+unbiased variance for Keras; a package-wide fix is open.
+
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the
 run ends. A `MultiOptimizer`'s groups keep their ratios. The schedules are the references' own formulas,
@@ -109,6 +132,11 @@ checked against their code at sample steps:
 - `mmengineWarmupCosine(steps:warmupRatio:startFactor:)` → mmengine's `LinearLR` then `CosineAnnealingLR`,
   the warm-up `end − begin − 1` steps long as `LinearParamScheduler` counts it; equal to mmengine's own
   schedulers at every step (`run_reference.py sa2va_loss`).
+- `exponentialWarmupPoly(steps:power:warmupSteps:warmupRatio:)` → BiSeNet's `WarmupPolyLrScheduler`:
+  `warmupRatio^(1 − k / warmupSteps)` during the warm-up, then `poly`; within 6e-8 of the reference at
+  every step of a 1,500-step run (`run_reference.py bisenet_loss`). `poly(steps:power:)` without a
+  warm-up is torchvision's `PolynomialLR` as DeepLab's `train.py` builds it, within 6e-8 over 45 steps
+  (`deeplab_loss`).
 - `warmupCosine(steps:warmupSteps:startScale:endScale:)` → V-JEPA 2's `WarmupCosineLRSchedule`, which
   steps before each update, so update `k` runs at step `k + 1`; equal to the reference at every step
   (`run_reference.py vjepa2_probe`).

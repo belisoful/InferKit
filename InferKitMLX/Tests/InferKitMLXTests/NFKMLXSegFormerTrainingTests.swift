@@ -11,6 +11,7 @@ import XCTest
 import CoreGraphics
 import InferKit
 import MLX
+import MLXNN
 import MLXOptimizers
 @testable import InferKitMLX
 
@@ -175,6 +176,22 @@ final class NFKMLXSegFormerTrainingTests: XCTestCase {
         eval(expected, actual)
         XCTAssertEqual(actual.asArray(Float.self), expected.asArray(Float.self),
                        "the fine-tuned checkpoint reproduces the segmentation exactly")
+    }
+
+    func testARetargetedCheckpointLabelsAtItsOwnClassCountThroughTheFactory() throws {
+        try requireMLXRuntime()
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("segformer-factory-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let net = try NFKMLXSegFormer.network(weightsURL: nil, classCount: 3)
+        // Every pixel's top class is the last of three, which a three-class label map encodes as white.
+        net.update(parameters: ModuleParameters.unflattened([("classifier.bias", MLXArray([Float(0), 0, 50]))]))
+        try NFKMLXWeights.save(net, to: url)
+
+        let backend = try NFKMLXSegFormer.backend(weightsURL: url)
+        let image = NFKMLXLabelMapTesting.solid(64, 64)
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))
+        XCTAssertEqual(try NFKMLXLabelMapTesting.levels(result.output(forKey: NFKOutputImage)), [255])
     }
 
     /// The public `network(weightsURL:classCount:)` builds the full-size model, which is far too slow

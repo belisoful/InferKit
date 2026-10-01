@@ -87,6 +87,33 @@ enum NFKMLXReferenceOptimizers {
     static func biasOrLayerNorm(_ layerNorms: [String]) -> (String) -> Bool {
         { key in key.contains("bias") || layerNorms.contains(where: { key.hasPrefix($0) }) }
     }
+
+    /// `torch.optim.SGD` over the parameter groups a configuration names: `group` gives each of
+    /// `module`'s trainable parameters its rate (as a multiple of `learningRate`) and its weight decay,
+    /// which joins the gradient, and the parameters that agree on both share one optimizer. Build it
+    /// after freezing.
+    static func sgd(learningRate: Float, momentum: Float, over module: Module,
+                    group: (String) -> (rateScale: Float, weightDecay: Float)) -> Optimizer {
+        var settings = [(rateScale: Float, weightDecay: Float)]()
+        var members = [Set<String>]()
+        for (key, _) in module.trainableParameters().flattened() {
+            let setting = group(key)
+            if let index = settings.firstIndex(where: { $0 == setting }) {
+                members[index].insert(key)
+            } else {
+                settings.append(setting)
+                members.append([key])
+            }
+        }
+        let optimizers = settings.map {
+            SGD(learningRate: learningRate * $0.rateScale, momentum: momentum, weightDecay: $0.weightDecay)
+        }
+        guard optimizers.count > 1 else {
+            return optimizers.first ?? SGD(learningRate: learningRate, momentum: momentum)
+        }
+        let filters = members.dropLast().map { keys in { (key: String, _: MLXArray) in keys.contains(key) } }
+        return MultiOptimizer(optimizers: optimizers, filters: Array(filters))
+    }
 }
 
 /// `torch.optim.Adam` with its `weight_decay`: the decay joins the gradient before the moment estimates
@@ -218,5 +245,51 @@ final class NFKMLXRAdam: Optimizer, NFKMLXRateScheduled {
 
     func innerState() -> [MLXArray] {
         moments.values.flatMap { [$0.m, $0.v] }
+    }
+}
+
+/// `torch.optim.Adam` with `amsgrad=True`, as PANNs trains: the second-moment estimate in the denominator
+/// is the running maximum of every estimate so far, which keeps a parameter's step from growing when its
+/// gradients shrink. Bias-corrected, with the moments updated as torch's `lerp_` and `addcmul_` write
+/// them and the per-step scalars in double precision, as the reference computes them in Python.
+final class NFKMLXAMSGrad: Optimizer, NFKMLXRateScheduled {
+    var learningRate: Float
+    let betas: (Double, Double)
+    let eps: Float
+
+    /// Each parameter's moments, the running maximum of its second moment, and its step, keyed by its
+    /// flattened path.
+    var moments = [String: (m: MLXArray, v: MLXArray, maximumV: MLXArray, step: Int)]()
+
+    init(learningRate: Float, betas: (Double, Double) = (0.9, 0.999), eps: Float = 1e-8) {
+        self.learningRate = learningRate
+        self.betas = betas
+        self.eps = eps
+    }
+
+    func update(model: Module, gradients: ModuleParameters) {
+        let parameters = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
+        let (b1, b2) = betas
+        var updated = [(String, MLXArray)]()
+        for (key, gradient) in gradients.flattened() {
+            guard let parameter = parameters[key] else { continue }
+            let zeros = MLXArray.zeros(like: parameter)
+            let previous = moments[key] ?? (zeros, zeros, zeros, 0)
+            let step = previous.step + 1
+            let m = previous.m + Float(1 - b1) * (gradient - previous.m)
+            let v = Float(b2) * previous.v + Float(1 - b2) * square(gradient)
+            let maximumV = maximum(previous.maximumV, v)
+            moments[key] = (m, v, maximumV, step)
+
+            let stepSize = Double(learningRate) / (1 - Foundation.pow(b1, Double(step)))
+            let correction = (1 - Foundation.pow(b2, Double(step))).squareRoot()
+            let denominator = sqrt(maximumV) / Float(correction) + eps
+            updated.append((key, parameter - Float(stepSize) * (m / denominator)))
+        }
+        model.update(parameters: ModuleParameters.unflattened(updated))
+    }
+
+    func innerState() -> [MLXArray] {
+        moments.values.flatMap { [$0.m, $0.v, $0.maximumV] }
     }
 }

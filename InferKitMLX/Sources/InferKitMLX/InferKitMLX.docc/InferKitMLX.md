@@ -471,6 +471,12 @@ limits.
 - ``NFKMLXSegFormerNet``
 - ``NFKMLXSegFormerObjective``
 - ``NFKMLXSegFormerTrainable``
+- ``NFKMLXDeepLabNet``
+- ``NFKMLXDeepLabObjective``
+- ``NFKMLXDeepLabTrainable``
+- ``NFKMLXBiSeNetNet``
+- ``NFKMLXBiSeNetObjective``
+- ``NFKMLXBiSeNetTrainable``
 - ``NFKMLXSAM2Objective``
 - ``NFKMLXSAM2Trainable``
 - ``NFKMLXSAM3Objective``
@@ -521,6 +527,13 @@ limits.
 - ``NFKMLXVADNet``
 - ``NFKMLXVADObjective``
 - ``NFKMLXVADSpecAugment``
+- ``NFKMLXSileroVADNet``
+- ``NFKMLXSileroVADObjective``
+- ``NFKMLXSileroVADTrainable``
+- ``NFKMLXAudioTaggerNet``
+- ``NFKMLXAudioTaggerObjective``
+- ``NFKMLXAudioTaggerSpecAugment``
+- ``NFKMLXAudioTaggerTrainable``
 - ``NFKMLXYOLONet``
 - ``NFKMLXYOLOGenerationNet``
 - ``NFKMLXYOLOBox``
