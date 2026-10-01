@@ -302,8 +302,7 @@
       "converter": "siglip2-to-safetensors",
       "note": "SigLIP 2 base-patch16-224, the CLIP upgrade / VLM vision tower. The release is ALREADY a PyTorch-layout safetensors the loader reads directly (transposing the 4-D patch conv, mapping the vision_model./text_model. prefixes), so the converter is a passthrough normalizer. Most of the 1.5 GB is the 256k multilingual text embedding table. Parity via `run_reference.py siglip2` (llm oracle env, transformers >= 4.51). The architecture is SigLIP v1 (model_type 'siglip'); '2' is the training.",
       "config": [
-        "IK_VAL_SIGLIP2",
-        "IK_TRIAGE_SIGLIP2"
+        "IK_VAL_SIGLIP2"
       ]
     },
     {
@@ -2107,7 +2106,7 @@
       "config": {
         "IK_VAL_TROCR": "trocr",
         "IK_PARITY_TROCR": "trocr/record.safetensors",
-        "IK_VAL_TROCR_IMAGE": "trocr_line.png"
+        "IK_VAL_TROCR_IMAGE": "/Volumes/InferKit Models/inferkit-validation/trocr_line.png"
       },
       "note": "TrOCR (microsoft/trocr-base-handwritten, Microsoft, MIT), ~1.3 GB float32, a handwriting-line reader (VisionEncoderDecoder: a google/vit image encoder + a BART-style trocr decoder). The oracle is the transformers-NATIVE VisionEncoderDecoderModel (no trust_remote_code): `run_reference.py trocr --checkpoint <dir> --size 384 --image trocr_line.png` records the pixels, the ViT embeddings, the first encoder block, the encoder last hidden state (the decoder memory), the first-step logits, and the greedy transcription ids. IK_VAL_TROCR is the release directory; IK_PARITY_TROCR is the record. IK_VAL_TROCR_IMAGE is a locally rendered text line (any single-line image works; the backend test asserts the port reads the same string the reference does, not ground truth). Ported at reference parity (embeddings 1.0, first block 0.99999976, encoder 0.999999, first-step logits 0.9999999, greedy token-exact); the backend reads the line end to end. Offline-only to customize."
     },
@@ -2322,7 +2321,7 @@
       "config": {
         "IK_VAL_TABLE_TRANSFORMER": "table-transformer",
         "IK_PARITY_TABLE_TRANSFORMER": "table-transformer/record.safetensors",
-        "IK_VAL_TABLE_TRANSFORMER_IMAGE": "table_structure.png"
+        "IK_VAL_TABLE_TRANSFORMER_IMAGE": "/Volumes/InferKit Models/inferkit-validation/table_structure.png"
       },
       "note": "Table Transformer (microsoft/table-transformer-structure-recognition, Microsoft, MIT), ~110 MB float32, table-structure recognition (a vanilla DETR: a timm ResNet-18 backbone with frozen batch norm, a normalized 2D sine position embedding, a pre-norm encoder-decoder over 125 object queries, and the class / box heads). The oracle is the transformers-NATIVE TableTransformerForObjectDetection with its DETR image processor: `run_reference.py table_transformer --checkpoint <dir> --size 800 --image table_structure.png` records the preprocessed pixels, the ResNet-18 feature map, the encoder and decoder outputs, the class logits, the predicted boxes, and the post-processed detections. IK_VAL_TABLE_TRANSFORMER is the release directory; IK_PARITY_TABLE_TRANSFORMER is the record. IK_VAL_TABLE_TRANSFORMER_IMAGE is a locally rendered grid table (any table crop works; the backend test asserts the port finds a table with its rows and columns). Ported at reference parity (backbone 1.0000001, encoder 0.9999998, decoder 1.0, logits 0.9999999, boxes 0.99999994); the pre-norm placement is the one difference from post-norm DETR. Offline-only to customize."
     },
@@ -2400,7 +2399,7 @@
       "config": {
         "IK_VAL_VJEPA2": "vjepa2",
         "IK_PARITY_VJEPA2": "vjepa2/record.safetensors",
-        "IK_PARITY_VJEPA2_PROBE": "probe_record.safetensors"
+        "IK_PARITY_VJEPA2_PROBE": "vjepa2-probe/record.safetensors"
       },
       "note": "V-JEPA 2 (facebook/vjepa2-vitl-fpc64-256, Meta, MIT), ~1.3 GB float32, a self-supervised video encoder (a ViT-L: a 3D tubelet Conv3d patch embedding, 24 pre-norm blocks with 3D rotary attention, and a final layer norm; no class token and no learned position table). The oracle is the transformers-NATIVE VJEPA2Model with skip_predictor=True: `run_reference.py vjepa2 --checkpoint <dir>` builds a small deterministic 8-frame clip (so the token count stays light while all three rotary axes vary) and records the clip, the patch embedding, a middle block's hidden state, and the final normed token features. IK_VAL_VJEPA2 is the release directory; IK_PARITY_VJEPA2 is the record. The 3D rotary bands tile the cosine and sine tables as two halves, which is the one departure from a standard interleaved rotation. Ported at reference parity (patch embedding 0.9999998, middle block 1.0000001, final features 1.0000004); the backend embeds a video or an image into a mean-pooled feature vector. Offline-only to customize (the released checkpoint is the SSL encoder without a task head). The probe recipe's record: `run_reference.py vjepa2_probe <dir>/probe_record.safetensors` (IK_VJEPA2_SRC set), which scores the loss, steps the reference's WarmupCosineLRSchedule, and builds AttentiveClassifier(depth=4) for its initialization statistics."
     },
@@ -3595,7 +3594,7 @@
     {
       "key": "RTDETR_V2_R18VD",
       "repo": "PekingU/rtdetr_v2_r18vd",
-      "directory": "raw/rtdetr-v2-r18vd",
+      "directory": "rtdetr-v2-r18vd",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3609,7 +3608,7 @@
     {
       "key": "RTDETR_V2_R34VD",
       "repo": "PekingU/rtdetr_v2_r34vd",
-      "directory": "raw/rtdetr-v2-r34vd",
+      "directory": "rtdetr-v2-r34vd",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3623,7 +3622,7 @@
     {
       "key": "RTDETR_V2_R50VD",
       "repo": "PekingU/rtdetr_v2_r50vd",
-      "directory": "raw/rtdetr-v2-r50vd",
+      "directory": "rtdetr-v2-r50vd",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3637,7 +3636,7 @@
     {
       "key": "RTDETR_V2_R101VD",
       "repo": "PekingU/rtdetr_v2_r101vd",
-      "directory": "raw/rtdetr-v2-r101vd",
+      "directory": "rtdetr-v2-r101vd",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3732,7 +3731,7 @@
     {
       "key": "VITPOSE",
       "repo": "usyd-community/vitpose-base-simple",
-      "directory": "raw/vitpose-base-simple",
+      "directory": "vitpose-base-simple",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3740,14 +3739,14 @@
       ],
       "config": {
         "IK_VAL_VITPOSE": "",
-        "IK_PARITY_VITPOSE": "records/vitpose.safetensors"
+        "IK_PARITY_VITPOSE": "reference/vitpose-base-simple-reference.safetensors"
       },
       "note": "ViTPose base with the SIMPLE decoder (ViTAE-Transformer, Apache-2.0), a plain ViT-B backbone under a ReLU + bilinear upsample + 3x3 convolution head, at 256x192 with patch 16. Loads directly through NFKMLXVitPose.loadWeights (the module keys are the checkpoint's; only the convolution layouts move). Two load-bearing facts: the patch-embedding convolution pads by 2, which at this geometry leaves the patch count at 16x12 either way, so a plain non-overlapping patchify loads cleanly and samples every window two pixels early (a wrong patchify scores the backbone 0.998 instead of 0.9999999999); and the position table carries a class-token row the sequence does not, added to every patch as a constant bias (pos[:, 1:] + pos[:, :1]). The backbone layer_norm_eps is 1e-12, not a ViT's usual 1e-6. Record: `run_reference.py vitpose --checkpoint <this directory>` (llm env, needs Pillow) -> IK_PARITY_VITPOSE; one mode serves both released decoders, since the geometry comes from each release's config.json. The oracle resizes and normalizes the image itself rather than through VitPoseImageProcessor, which warps a person's BOX through an affine transform that a whole-image caller has no box for, and records the prepared pixels, the backbone feature map, the heatmaps, the integer peaks, the DARK-refined keypoints, and the scores. The DARK decode (post_dark_unbiased_data_processing) is ported in full: keypoints_from_heatmaps defaults kernel=11 (Gaussian radius 5) while the callee's own signature defaults to 3, and scipy's default reflect mode is SYMMETRIC where mirror is not, so the blur's border gathers reflected indices. At reference parity on these released weights (testVitPoseMatchesTheReference): backbone feature map 0.9999999999995017, heatmaps 0.9999999999966225, every integer peak exact, the refinement within 8.80751758813858e-05 of a cell. vitpose-plus-* releases route the feed-forward through per-dataset experts and need a dataset index at inference; the configuration reader refuses them."
     },
     {
       "key": "VITPOSE_BASE",
       "repo": "usyd-community/vitpose-base",
-      "directory": "raw/vitpose-base",
+      "directory": "vitpose-base",
       "files": [
         "config.json",
         "preprocessor_config.json",
@@ -3755,7 +3754,7 @@
       ],
       "config": {
         "IK_VAL_VITPOSE_BASE": "",
-        "IK_PARITY_VITPOSE_BASE": "records/vitpose_base.safetensors"
+        "IK_PARITY_VITPOSE_BASE": "reference/vitpose-base-reference.safetensors"
       },
       "note": "ViTPose base with the CLASSIC decoder (`.base`): the same ViT-B backbone under two transposed-convolution blocks (no bias, each followed by a BatchNorm and a ReLU) and a 1x1 convolution, which is the head SimpleBaseline uses; use_simple_decoder in the release's config.json selects it. Record: `run_reference.py vitpose --checkpoint <this directory>` (llm env) -> IK_PARITY_VITPOSE_BASE. At reference parity on these released weights: feature map 0.9999999999931072, heatmaps 0.9999999999953517, every integer peak exact, refinement within 4.622340202331543e-05 of a cell. This release is what showed that the DARK refinement must NOT be clamped: a flat neighborhood can move a peak past its own heatmap, and clamping the shift to one cell disagreed with the reference by 1.04 cells, so NFKMLXVitPoseNet.estimate clamps the final normalized position instead, because NFKKeypoint promises one."
     },
@@ -3770,7 +3769,7 @@
       ],
       "config": {
         "IK_VAL_DDCOLOR": "ddcolor_modelscope.pth",
-        "IK_PARITY_DDCOLOR": "records/ddcolor.safetensors"
+        "IK_PARITY_DDCOLOR": "reference/ddcolor-reference.safetensors"
       },
       "note": "DDColor (piddnad/DDColor, Apache-2.0), the modern colorizer beside the 2016 and 2017 ports: a ConvNeXt-L encoder (depths [3,3,27,3], widths [192,384,768,1536]) hooked at its four stages, a spectral-normalized U-Net decoder (three UnetBlockWide blocks over CustomPixelShuffle_ICNR, then a last pixel shuffle at scale 4 for the pixel embedding), and a Mask2Former-style color decoder (100 learned color queries cross-attending the three U-Net stage outputs over nine layers, dotted against the pixel embedding into one color attention map each, read by a final 1x1 convolution beside the input). The three released .pth checkpoints are the NFKMLXDDColorVariant cases (.modelscope, .paper, .artistic), loaded by the native torch reader. Coverage on ddcolor_modelscope.pth: 573 built parameters all loaded, 31 released tensors deliberately dropped (the weight_u/weight_v power-iteration vectors the spectral-norm fusion consumes, the encoder's classification head and its pooled norm, the normalization buffers the port applies itself, and the BatchNorm step counters), 0 unaccounted. Oracle: `run_reference.py ddcolor --checkpoint <release .pth>` on the llm env (which gained scikit-image). The reference is not in transformers, so IK_DDCOLOR_SRC names the cloned repository's basicsr/ directory (ddcolor_arch.py plus ddcolor_arch_utils/) and the oracle stubs basicsr's registry so the import stays to the architecture itself; the record carries the prepared gray pixels, the lightness, the four hooked encoder features, the three U-Net stage outputs, the pixel embedding, the color attention maps, and the chroma. THE load-bearing facts: forward_features calls each norm{i} for its hook's side effect only (the assignment back to x is commented out), so the trunk carries the un-normalized stage output forward; spectral_norm stores weight_orig beside weight_u/weight_v and in eval mode divides by u^T W v using the vectors as stored, which the loader fuses; custom_conv_layer builds an nn.Sequential where a ReLU slot still consumes its index (a BatchNorm after an activation lands at 2, one with no activation before it at 1); and those Sequentials are held as [Module] arrays, because MLX parses a numeric @ModuleInfo key as an array index and aborts the process when the checkpoint's list meets a child module. At reference parity on ddcolor_modelscope.pth: hooks 0.9999999999961443 / 0.9999999999975543 / 0.999999999986007 / 0.9999999999450404, U-Net stages 0.9999999998703757 / 0.9999999998944228 / 0.9999999999032585, pixel embedding 0.9999999999013038, color attention maps 0.9999999998470392, chroma 0.9999999998455213."
     },
