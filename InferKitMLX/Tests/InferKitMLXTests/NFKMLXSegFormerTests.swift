@@ -56,6 +56,45 @@ final class NFKMLXSegFormerTests: XCTestCase {
         XCTAssertEqual(statistics(), before, "inference reads the running statistics without folding into them")
     }
 
+    func testTheDropPathRisesAcrossEveryStagesBlocks() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXSegFormerConfiguration.tiny
+        configuration.depths = [2, 1, 1, 1]
+        let net = NFKMLXSegFormerNet(configuration)
+        let shares = [net.stage1, net.stage2, net.stage3, net.stage4].flatMap { $0.blocks.map(\.depth) }
+        XCTAssertEqual(shares, [0, 0.25, 0.5, 0.75, 1], "torch.linspace(0, rate, sum(depths))")
+        XCTAssertEqual(net.dropout, .none)
+    }
+
+    func testTheDropoutRunsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let net = tinyNet()
+        let image = Self.image(height: 32, width: 32).reshaped([1, 32, 32, 3])
+        let plain = net.logits(image)
+        net.dropout = .reference
+        XCTAssertEqual(abs(net.logits(image) - plain).max().item(Float.self), 0, "evaluation never drops")
+        net.train(true)
+        net.dropout = .none
+        let undropped = net.logits(image)
+        XCTAssertEqual(abs(net.logits(image) - undropped).max().item(Float.self), 0)
+        net.dropout = .reference
+        XCTAssertGreaterThan(abs(net.logits(image) - undropped).max().item(Float.self), 0)
+    }
+
+    func testTheClassifierDropoutZeroesWholeChannels() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let net = tinyNet()
+        net.dropout = NFKMLXSegFormerDropout(classifier: 0.5)
+        net.train(true)
+        let dropped = net.channelDropout(MLXArray.ones([2, 3, 3, 16]))
+        let perChannel = dropped.transposed(0, 3, 1, 2).reshaped([32, 9])
+        XCTAssertEqual(perChannel.min(axis: 1).asArray(Float.self), perChannel.max(axis: 1).asArray(Float.self),
+                       "Dropout2d drops a channel at every position")
+        XCTAssertEqual(Set(perChannel[0..., 0].asArray(Float.self)), [0, 2])
+    }
+
     func testSegmentationIsALabelMapAtInputSize() throws {
         try requireMLXRuntime()
         let net = tinyNet()

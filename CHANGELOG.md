@@ -922,6 +922,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   evaluation mode. The loader transposes convolution weights only for a PyTorch-layout checkpoint, so a
   fine-tuned save reloads; it had transposed every file.
 
+#### SegFormer trains with NVlabs' dropout and drop path on request
+
+- NVlabs' SegFormer trains with a classifier dropout of 0.1 (`Dropout2d`, which zeroes whole feature
+  channels before the decode head's classifier) and a drop path of 0.1 at the encoder's last block,
+  rising linearly from 0 across the blocks of all four stages (`mix_transformer.py`).
+- `NFKMLXSegFormerDropout` holds the two rates, and `.reference` is NVlabs'. `NFKMLXSegFormerNet.dropout`,
+  none by default, applies them while the network trains.
+
 #### NU-Wave 2 fine-tunes on a consumer's own wide-band audio
 
 - `NFKMLXNUWave2.network(weightsURL:)`, `trainingPair(wideband:narrowbandRate:)`, and

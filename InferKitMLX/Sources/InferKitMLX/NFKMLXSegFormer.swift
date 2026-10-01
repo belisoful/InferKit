@@ -45,6 +45,34 @@ public struct NFKMLXSegFormerConfiguration: Sendable {
                                                           decodeDimensions: 16, classCount: 4)
 }
 
+/// The two stochastic regularizers NVlabs' SegFormer trains with.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKMLXSegFormerDropout: Sendable, Equatable {
+    /// The decode head's `Dropout2d` before the classifier, which zeroes whole feature channels.
+    public var classifier: Float
+    /// The encoder's stochastic depth at its last block, rising linearly from 0 at the first block
+    /// across all four stages.
+    public var dropPath: Float
+
+    public init(classifier: Float = 0, dropPath: Float = 0) {
+        self.classifier = classifier
+        self.dropPath = dropPath
+    }
+
+    /// No dropout.
+    public static let none = NFKMLXSegFormerDropout()
+
+    /// NVlabs' rates for every MiT size: `dropout_ratio` 0.1 (`local_configs/segformer/*`) and
+    /// `drop_path_rate` 0.1 (`mix_transformer.py`).
+    public static let reference = NFKMLXSegFormerDropout(classifier: 0.1, dropPath: 0.1)
+}
+
+/// The rates every block reads when it runs, so setting them once reaches them all.
+final class NFKSegFormerDropoutRates {
+    var values = NFKMLXSegFormerDropout.none
+}
+
 /// Overlapping patch embedding: a strided convolution that also overlaps neighbors, then a LayerNorm.
 final class NFKSegFormerPatchEmbed: Module {
     @ModuleInfo(key: "proj") var proj: Conv2d
@@ -137,7 +165,14 @@ final class NFKSegFormerBlock: Module {
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
     @ModuleInfo(key: "ffn") var ffn: NFKSegFormerMixFFN
 
-    init(dimensions: Int, heads: Int, reduction: Int) {
+    let rates: NFKSegFormerDropoutRates
+    /// This block's share of the drop-path rate: the reference's `linspace(0, rate, sum(depths))` entry.
+    let depth: Float
+
+    init(dimensions: Int, heads: Int, reduction: Int, rates: NFKSegFormerDropoutRates = NFKSegFormerDropoutRates(),
+         depth: Float = 0) {
+        self.rates = rates
+        self.depth = depth
         _norm1.wrappedValue = LayerNorm(dimensions: dimensions)
         _attn.wrappedValue = NFKSegFormerAttention(dimensions: dimensions, heads: heads, reduction: reduction)
         _norm2.wrappedValue = LayerNorm(dimensions: dimensions)
@@ -145,8 +180,20 @@ final class NFKSegFormerBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, height: Int, width: Int) -> MLXArray {
-        let h = x + attn(norm1(x), height: height, width: width)
-        return h + ffn(norm2(h), height: height, width: width)
+        let rate = rates.values.dropPath * depth
+        let h = x + dropPath(attn(norm1(x), height: height, width: width), rate: rate)
+        return h + dropPath(ffn(norm2(h), height: height, width: width), rate: rate)
+    }
+
+    /// timm's `DropPath`: each example's whole branch zeroed at `rate` and the kept ones scaled by
+    /// `1 / (1 − rate)`, while the block trains.
+    private func dropPath(_ x: MLXArray, rate: Float) -> MLXArray {
+        guard training, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        let shape = [x.dim(0)] + [Int](repeating: 1, count: x.ndim - 1)
+        return x * MLXRandom.bernoulli(MLXArray(keep), shape).asType(x.dtype) / keep
     }
 }
 
@@ -156,9 +203,13 @@ final class NFKSegFormerStage: Module {
     @ModuleInfo(key: "blocks") var blocks: [NFKSegFormerBlock]
     @ModuleInfo(key: "norm") var norm: LayerNorm
 
-    init(inChannels: Int, outChannels: Int, patch: Int, stride: Int, heads: Int, reduction: Int, depth: Int) {
+    init(inChannels: Int, outChannels: Int, patch: Int, stride: Int, heads: Int, reduction: Int, depth: Int,
+         rates: NFKSegFormerDropoutRates = NFKSegFormerDropoutRates(), depths: [Float] = []) {
         _patchEmbed.wrappedValue = NFKSegFormerPatchEmbed(inChannels: inChannels, outChannels: outChannels, patch: patch, stride: stride)
-        _blocks.wrappedValue = (0 ..< depth).map { _ in NFKSegFormerBlock(dimensions: outChannels, heads: heads, reduction: reduction) }
+        _blocks.wrappedValue = (0 ..< depth).map {
+            NFKSegFormerBlock(dimensions: outChannels, heads: heads, reduction: reduction, rates: rates,
+                              depth: $0 < depths.count ? depths[$0] : 0)
+        }
         _norm.wrappedValue = LayerNorm(dimensions: outChannels)
     }
 
@@ -189,14 +240,28 @@ public final class NFKMLXSegFormerNet: Module {
     @ModuleInfo(key: "classifier") var classifier: Conv2d
 
     let configuration: NFKMLXSegFormerConfiguration
+    let rates = NFKSegFormerDropoutRates()
+
+    /// The dropout while the network trains; none by default. Set it to
+    /// ``NFKMLXSegFormerDropout/reference`` to train at NVlabs' rates.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXSegFormerDropout {
+        get { rates.values }
+        set { rates.values = newValue }
+    }
 
     init(_ c: NFKMLXSegFormerConfiguration) {
         configuration = c
         let e = c.embedDimensions
-        _stage1.wrappedValue = NFKSegFormerStage(inChannels: 3, outChannels: e[0], patch: 7, stride: 4, heads: c.heads[0], reduction: c.reductions[0], depth: c.depths[0])
-        _stage2.wrappedValue = NFKSegFormerStage(inChannels: e[0], outChannels: e[1], patch: 3, stride: 2, heads: c.heads[1], reduction: c.reductions[1], depth: c.depths[1])
-        _stage3.wrappedValue = NFKSegFormerStage(inChannels: e[1], outChannels: e[2], patch: 3, stride: 2, heads: c.heads[2], reduction: c.reductions[2], depth: c.depths[2])
-        _stage4.wrappedValue = NFKSegFormerStage(inChannels: e[2], outChannels: e[3], patch: 3, stride: 2, heads: c.heads[3], reduction: c.reductions[3], depth: c.depths[3])
+        let blockCount = c.depths.reduce(0, +)
+        let shares = (0 ..< blockCount).map { Float($0) / Float(max(blockCount - 1, 1)) }
+        let starts = c.depths.indices.map { c.depths[..<$0].reduce(0, +) }
+        func depths(_ stage: Int) -> [Float] { Array(shares[starts[stage] ..< starts[stage] + c.depths[stage]]) }
+        _stage1.wrappedValue = NFKSegFormerStage(inChannels: 3, outChannels: e[0], patch: 7, stride: 4, heads: c.heads[0], reduction: c.reductions[0], depth: c.depths[0], rates: rates, depths: depths(0))
+        _stage2.wrappedValue = NFKSegFormerStage(inChannels: e[0], outChannels: e[1], patch: 3, stride: 2, heads: c.heads[1], reduction: c.reductions[1], depth: c.depths[1], rates: rates, depths: depths(1))
+        _stage3.wrappedValue = NFKSegFormerStage(inChannels: e[1], outChannels: e[2], patch: 3, stride: 2, heads: c.heads[2], reduction: c.reductions[2], depth: c.depths[2], rates: rates, depths: depths(2))
+        _stage4.wrappedValue = NFKSegFormerStage(inChannels: e[2], outChannels: e[3], patch: 3, stride: 2, heads: c.heads[3], reduction: c.reductions[3], depth: c.depths[3], rates: rates, depths: depths(3))
         _linearC.wrappedValue = e.map { Linear($0, c.decodeDimensions) }
         // The reference fuses with a bias-free 1×1 convolution followed by BatchNorm and ReLU.
         _linearFuse.wrappedValue = Conv2d(inputChannels: c.decodeDimensions * 4, outputChannels: c.decodeDimensions,
@@ -239,7 +304,18 @@ public final class NFKMLXSegFormerNet: Module {
         // The reference concatenates the projected stages COARSEST FIRST (`all_hidden_states[::-1]`), so
         // the fuse convolution's input channels are ordered stage 4 → stage 1.
         let fused = relu(batchNorm(linearFuse(concatenated(projected.reversed(), axis: 3))))
-        return classifier(fused)
+        return classifier(channelDropout(fused))
+    }
+
+    /// mmseg's `Dropout2d`: each example's feature channels zeroed whole at the classifier rate and
+    /// the kept ones scaled by `1 / (1 − rate)`, while the network trains.
+    func channelDropout(_ x: MLXArray) -> MLXArray {
+        let rate = rates.values.classifier
+        guard training, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        return x * MLXRandom.bernoulli(MLXArray(keep), [x.dim(0), 1, 1, x.dim(3)]).asType(x.dtype) / keep
     }
 
     /// Segments a bridged image `[H, W, 3]` (`0...1`), returning a grayscale label map `[H, W, 1]` whose
