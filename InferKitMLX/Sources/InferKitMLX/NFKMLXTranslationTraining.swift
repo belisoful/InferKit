@@ -73,7 +73,8 @@ enum NFKMLXTranslationTraining {
         _ net: Net, adapting predicate: @escaping (String) -> Bool,
         examples: (Int) -> (source: MLXArray, target: MLXArray), rank: Int?, alpha: Float,
         loss: @escaping (Net, MLXArray, MLXArray) -> MLXArray, optimizer: Optimizer?, steps: Int,
-        clipGradientNorm: Float?, checkpoint: NFKMLXTrainingCheckpoint?, observer: NFKMLXTrainer.Observer?
+        clipGradientNorm: Float?, accumulationSteps: Int, checkpoint: NFKMLXTrainingCheckpoint?,
+        observer: NFKMLXTrainer.Observer?
     ) throws -> [Float] {
         try NFKMLXFineTune.run(
             net,
@@ -91,7 +92,7 @@ enum NFKMLXTranslationTraining {
             referenceSchedule: { .constant },
             steps: steps,
             batch: { let example = examples($0); return (example.source, example.target) },
-            loss: loss, clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            loss: loss, clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }
 
@@ -111,6 +112,8 @@ extension NFKMLXMarian {
     ///     script beyond its model's `labels=` loss, and the learning rate is this package's choice.
     ///   - steps: how many pairs to train on.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
@@ -129,18 +132,19 @@ extension NFKMLXMarian {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try NFKMLXTranslationTraining.fineTune(
             net, adapting: NFKMLXTranslationTraining.isSeq2SeqDecoderProjection, examples: examples,
             rank: rank, alpha: alpha, loss: objective.callAsFunction, optimizer: optimizer, steps: steps,
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }
 
 extension NFKMLXM2M100 {
-    /// Adapts an M2M-100 network the way ``NFKMLXMarian/fineTune(_:examples:rank:alpha:objective:optimizer:steps:clipGradientNorm:checkpoint:observer:)``
+    /// Adapts an M2M-100 network the way ``NFKMLXMarian/fineTune(_:examples:rank:alpha:objective:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``
     /// adapts Marian: source ids from ``NFKMLXM2M100Translator/sourceIds(for:source:target:)``, target
     /// ids as the target marker, the pieces, and the end token.
     @discardableResult
@@ -153,13 +157,14 @@ extension NFKMLXM2M100 {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try NFKMLXTranslationTraining.fineTune(
             net, adapting: NFKMLXTranslationTraining.isSeq2SeqDecoderProjection, examples: examples,
             rank: rank, alpha: alpha, loss: objective.callAsFunction, optimizer: optimizer, steps: steps,
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }
 
@@ -177,12 +182,13 @@ extension NFKMLXMADLAD {
         optimizer: Optimizer? = nil,
         steps: Int,
         clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         try NFKMLXTranslationTraining.fineTune(
             net, adapting: NFKMLXTranslationTraining.isT5DecoderProjection, examples: examples,
             rank: rank, alpha: alpha, loss: objective.callAsFunction, optimizer: optimizer, steps: steps,
-            clipGradientNorm: clipGradientNorm, checkpoint: checkpoint, observer: observer)
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
     }
 }
