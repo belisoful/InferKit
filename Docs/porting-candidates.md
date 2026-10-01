@@ -102,7 +102,7 @@ Notes:
 | **TimesFM 2.5** — SHIPPED (`NFKMLXTimesFM`) | Google | Time-series forecasting | Decoder-only over non-overlapping patches, single-pass horizon, 9-quantile head | Apache-2.0 (2.5 only) | HF + `google-research/timesfm` | Med |
 | **Cosmos Tokenizer** — SHIPPED (`NFKMLXCosmosTokenizer`) | NVIDIA | Image and video tokenizer | Haar wavelet patcher → 2D (image) or factorized causal 3D (video) autoencoder; continuous latents or FSQ tokens; all ten 0.1 releases | Code Apache-2.0, weights NVIDIA Open Model License | `nvidia-cosmos/cosmos-predict1` tokenizer modules + HF | Med |
 | **Sa2VA** — SHIPPED (`NFKMLXSa2VA`) | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | Apache-2.0 | `bytedance/Sa2VA` + HF | Med |
-| **SD 3.5 Large/Medium** | Stability AI | Text-to-image | MMDiT-X with QK-norm and dual attention, three text encoders (2×CLIP + T5) | Stability Community (free under $1M revenue) | HF `diffusers` (`SD3Transformer2DModel`) | Med–High |
+| **SD 3.5 Large/Medium** — medium at release parity; large and turbo measured on cuts | Stability AI | Text-to-image | MMDiT-X with QK-norm and dual attention, three text encoders (2×CLIP + T5) | Stability Community (free under $1M revenue) | HF `diffusers` (`SD3Transformer2DModel`) | Med–High |
 | **Stable Audio Open 1.0** | Stability AI | Text-to-audio | Latent audio DiT over an Oobleck autoencoder, T5 conditioning | Stability Community | HF `diffusers` (`StableAudioPipeline`) | Med–High |
 
 Notes:

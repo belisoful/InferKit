@@ -4698,7 +4698,8 @@
         "flux2_vae_real",
         "flux2_text_real",
         "timesfm",
-        "timesfm_loss"
+        "timesfm_loss",
+        "sd35_release"
       ]
     },
     "deepseek_v41": {

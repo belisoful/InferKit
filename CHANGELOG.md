@@ -1109,6 +1109,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   transformers from the reference's own adapter initialization (three step losses within 1.2e-6
   relative); `save(_:toDirectoryURL:)` folds the adapters in.
 
+#### Stable Diffusion 3.5 on released weights
+
+- The released SD3.5-medium transformer and VAE are at reference parity against diffusers at float32:
+  velocity 0.99999999999971, every block seam 0.9999999999992 or better, VAE decode 0.9999999999907.
+  All three SD3.5 releases share that VAE byte for byte, and their text encoders are the SDXL towers and
+  the T5-XXL already at parity.
+- `Tools/validation-assets/truncate.py --diffusers-transformer` cuts a diffusers MMDiT to its first blocks
+  plus its final block, for measuring a release too large for float32 on one machine.
+
 #### Typed decisions on device
 
 - `NFKMLXLaya` ports Laya (`convaiinnovations/laya`, Apache-2.0), the open reproduction of TypeSafe's

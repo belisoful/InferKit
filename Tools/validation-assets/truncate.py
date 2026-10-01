@@ -13,6 +13,13 @@ layers, for a release whose tower alone exceeds the machine at float32 (Sa2VA-26
 
     python3 truncate.py ByteDance/Sa2VA-26B ~/.inferkit-validation/sa2va-26b-cut4 4 4
 
+`--diffusers-transformer` cuts a diffusers MMDiT (`transformer/`, blocks `transformer_blocks.N`) instead.
+The cut keeps the first N - 1 blocks and the release's final block, renumbered N - 1, because that block
+is built differently (SD3's `context_pre_only` ends the text stream); `num_layers` becomes N and
+`dual_attention_layers` keeps the indices below N - 1. The cut is written under `<out>/transformer/`:
+
+    python3 truncate.py stabilityai/stable-diffusion-3.5-large ~/.inferkit-validation/sd35-large-cut4 4 --diffusers-transformer
+
 The script writes `config.json` with the layer count set to N (every per-layer list cut to N, nested text configs
 included), `model.safetensors.index.json` listing only the kept tensors, and one compact shard per
 source shard holding exactly those tensors. Each tensor arrives by an HTTP range request against its
@@ -50,16 +57,18 @@ def fetch(repo, path, out):
     curl(repo, path, out=out)
 
 
-def write_compact_shard(repo, shard, names, out):
-    """A safetensors file at `out` holding `names` from `shard`, each read by its own byte range."""
+def write_compact_shard(repo, shard, names, out, rename=None):
+    """A safetensors file at `out` holding `names` from `shard`, each read by its own byte range and stored
+    under `rename[name]` where given."""
+    rename = rename or {}
     length = struct.unpack("<Q", curl(repo, shard, (0, 7)))[0]
     header = json.loads(curl(repo, shard, (8, 8 + length - 1)))
     base = 8 + length
     entries, offset = {}, 0
     for name in sorted(names):
         start, end = header[name]["data_offsets"]
-        entries[name] = {"dtype": header[name]["dtype"], "shape": header[name]["shape"],
-                         "data_offsets": [offset, offset + end - start]}
+        entries[rename.get(name, name)] = {"dtype": header[name]["dtype"], "shape": header[name]["shape"],
+                                           "data_offsets": [offset, offset + end - start]}
         offset += end - start
     encoded = json.dumps(entries, separators=(",", ":")).encode("utf-8")
     encoded += b" " * ((8 - len(encoded) % 8) % 8)
@@ -118,7 +127,56 @@ def kept(name, layers, vision_prefixes, vision_layers=None):
     return int(match.group(1)) < layers
 
 
+def cut_diffusers_transformer(repo, out, layers):
+    """A diffusers MMDiT cut to `layers` blocks under `out/transformer/`, its final block kept last."""
+    directory = os.path.join(out, "transformer")
+    os.makedirs(directory, exist_ok=True)
+    config = json.loads(curl(repo, "transformer/config.json"))
+    total_layers = config["num_layers"]
+    config["num_layers"] = layers
+    if isinstance(config.get("dual_attention_layers"), list):
+        config["dual_attention_layers"] = [index for index in config["dual_attention_layers"] if index < layers - 1]
+    json.dump(config, open(os.path.join(directory, "config.json"), "w"), indent=2)
+    try:
+        index = json.loads(curl(repo, "transformer/diffusion_pytorch_model.safetensors.index.json"))
+    except subprocess.CalledProcessError:
+        shard = "diffusion_pytorch_model.safetensors"
+        length = struct.unpack("<Q", curl(repo, f"transformer/{shard}", (0, 7)))[0]
+        header = json.loads(curl(repo, f"transformer/{shard}", (8, 8 + length - 1)))
+        index = {"weight_map": {name: shard for name in header if name != "__metadata__"}}
+    block = re.compile(r"^transformer_blocks\.(\d+)\.")
+    renamed = {}
+    for name, shard in index["weight_map"].items():
+        match = block.match(name)
+        if match is None:
+            renamed[name] = (name, shard)
+            continue
+        number = int(match.group(1))
+        if number < layers - 1:
+            renamed[name] = (name, shard)
+        elif number == total_layers - 1:
+            renamed[f"transformer_blocks.{layers - 1}." + name[match.end():]] = (name, shard)
+    total = 0
+    weight_map = {}
+    for shard in sorted({shard for _, shard in renamed.values()}):
+        chosen = {target: source for target, (source, source_shard) in renamed.items() if source_shard == shard}
+        print(f"  {shard}: {len(chosen)} tensors")
+        total += write_compact_shard(repo, f"transformer/{shard}", list(chosen.values()),
+                                     os.path.join(directory, shard), rename={v: k for k, v in chosen.items()})
+        weight_map.update({target: shard for target in chosen})
+    json.dump({"metadata": {"total_size": total}, "weight_map": weight_map},
+              open(os.path.join(directory, "diffusion_pytorch_model.safetensors.index.json"), "w"), indent=2)
+    print(f"{repo}: {len(weight_map)} transformer tensors, {layers} of {total_layers} blocks")
+    return 0
+
+
 def main(argv):
+    if "--diffusers-transformer" in argv:
+        argv = [a for a in argv if a != "--diffusers-transformer"]
+        if len(argv) != 4:
+            print(__doc__)
+            return 2
+        return cut_diffusers_transformer(argv[1], os.path.expanduser(argv[2]), int(argv[3]))
     if len(argv) not in (4, 5):
         print(__doc__)
         return 2

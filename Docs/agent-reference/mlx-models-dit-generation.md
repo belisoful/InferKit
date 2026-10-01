@@ -471,6 +471,15 @@ arithmetic as before.
   attention 0…12, `pos_embed_max_size` 384), `.sd35Large` (8B, 38 layers × 38 heads, RMS qk-norm, no
   dual attention). Held to the released headers by shape: SD3.5-large 1227 tensors, SD3.5-medium 909
   (the dual-attention path), each 0 missing, 0 mismatched, 0 unaccounted. Oracle `run_sd3`, `IK_PARITY_SD3`.
+  At reference parity on the released SD3.5-medium at float32 against diffusers' own transformer and VAE
+  (`run_reference.py sd35_release`: a 512-pixel latent, a 333-token joint sequence, timestep 750): the
+  patch embedding 0.99999999999986; after block 0, the first dual-attention block, image 0.9999999999995
+  and text 0.9999999999992; after block 12, the last dual-attention block, image 0.99999999999999 and
+  text 0.9999999999998; the velocity 0.99999999999971. The VAE, byte-identical across SD3.5-medium,
+  -large, and -large-turbo by LFS hash, decodes at 0.9999999999907 and encodes at 0.9999999999946. The
+  three releases also share their text encoders, each already at parity elsewhere: CLIP-G is byte-identical
+  to SDXL-Turbo's second tower, CLIP-L is SDXL's first tower with its projection, and all 219 T5-XXL
+  tensors equal the LTX-Video T5's rounded to fp16. `IK_VAL_SD35_MEDIUM`, `IK_PARITY_SD35_MEDIUM`.
 - `NFKMLXFluxTransformerNet` — the FLUX.1 transformer (`FluxTransformer2DModel`, Black Forest Labs), the
   seventh DiT family. Two block kinds. The double-stream blocks (`transformer_blocks`) are MMDiT
   joint-attention blocks like SD3's, but concatenate `[text, image]` (text first, the opposite of SD3)

@@ -18393,6 +18393,65 @@ CHECKPOINT_MODELS["w2v_bert"] = run_w2v_bert
 
 
 
+def run_sd35_release(image, checkpoint):
+    """A released SD 3.5 transformer and VAE (`--checkpoint`, a diffusers directory such as
+    `stabilityai/stable-diffusion-3.5-medium`) at float32 from diffusers' own `SD3Transformer2DModel` and
+    `AutoencoderKL`, the stored bf16 weights widened as the pipeline's float32 load widens them.
+
+    The transformer runs once on a deterministic 512-pixel latent `[1, 16, 64, 64]` (1024 image tokens), a
+    333-token joint text sequence `[1, 333, 4096]` and a pooled projection `[1, 2048]` drawn at the scale the
+    text encoders produce, at timestep 750 (`IK_SD35_TIMESTEP`). Recorded seams: the patch embedding, the
+    image and text streams after block 0 and after the last dual-attention block, the image stream after
+    the middle block, and the velocity (the output). Where the directory carries `vae/`, the VAE decodes the
+    latent after undoing the release's scale and shift (`vae_image`, `[1, 3, 512, 512]`), and encodes that
+    image back to its mean (`vae_mean`); a transformer cut from `truncate.py --diffusers-transformer`
+    carries none. Runs under the `qwenimage` oracle env (diffusers 0.41).
+    """
+    from diffusers import SD3Transformer2DModel, AutoencoderKL
+
+    transformer = SD3Transformer2DModel.from_pretrained(checkpoint, subfolder="transformer", torch_dtype=torch.float32).eval()
+    generator = torch.Generator().manual_seed(35)
+    latent = torch.randn(1, 16, 64, 64, generator=generator)
+    encoder = torch.randn(1, 333, 4096, generator=generator) * 0.25
+    pooled = torch.randn(1, 2048, generator=generator)
+    timestep = torch.tensor([float(os.environ.get("IK_SD35_TIMESTEP", "750"))])
+    dual = list(transformer.config.dual_attention_layers or [])
+    blocks = transformer.transformer_blocks
+    picks = sorted({0, (dual[-1] if dual else 0), len(blocks) // 2})
+    seams = {}
+    transformer.pos_embed.register_forward_hook(lambda m, i, o: seams.__setitem__("patch", o.detach()[0].clone()))
+    for index in picks:
+        def hook(m, i, o, index=index):
+            context, hidden = o
+            seams[f"block{index}.image"] = hidden.detach()[0].clone()
+            if context is not None:
+                seams[f"block{index}.text"] = context.detach()[0].clone()
+        blocks[index].register_forward_hook(hook)
+    with torch.no_grad():
+        velocity = transformer(hidden_states=latent, encoder_hidden_states=encoder, pooled_projections=pooled,
+                               timestep=timestep, return_dict=False)[0]
+    del transformer
+
+    extra = {"latent": latent.contiguous(), "encoder": encoder.contiguous(), "pooled": pooled.contiguous(),
+             "timestep": timestep.contiguous(), "block_indices": torch.tensor(picks, dtype=torch.int64)}
+    if os.path.isdir(os.path.join(checkpoint, "vae")):
+        vae = AutoencoderKL.from_pretrained(checkpoint, subfolder="vae", torch_dtype=torch.float32).eval()
+        with torch.no_grad():
+            decoded = vae.decode(latent / vae.config.scaling_factor + vae.config.shift_factor, return_dict=False)[0]
+            mean = vae.encode(decoded.clamp(-1, 1)).latent_dist.mean
+        extra["vae_image"] = decoded.contiguous()
+        extra["vae_mean"] = mean.contiguous()
+    for name, value in seams.items():
+        extra[name] = value.contiguous()
+    print("seams", {k: tuple(v.shape) for k, v in seams.items()}, "velocity", tuple(velocity.shape))
+    globals()["_extra"] = extra
+    return velocity[0].contiguous()
+
+
+CHECKPOINT_MODELS["sd35_release"] = run_sd35_release
+
+
+
 def run_timesfm_loss(image, checkpoint):
     """TimesFM 2.5's fine-tuning objective and three recipe steps on the transformers release
     (`--checkpoint`, `google/timesfm-2.5-200m-transformers`), from transformers' own

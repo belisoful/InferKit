@@ -644,7 +644,9 @@ models.
   and MMDiT-X dual attention exercised), the SD3 autoencoder (`NFKMLXSDAutoencoder`, quant convolutions
   kept), a CLIP-L + CLIP-G + T5-XXL text context, and the rectified-flow sampler with classifier-free
   guidance. Presets `.sd3Medium` / `.sd35Medium` / `.sd35Large`; the released sizes held to the module
-  by shape (SD3.5-large 1227, SD3.5-medium 909 tensors, 0 missing / mismatched / unaccounted).
+  by shape (SD3.5-large 1227, SD3.5-medium 909 tensors, 0 missing / mismatched / unaccounted), and the
+  released SD3.5-medium transformer and VAE at reference parity against diffusers at float32 (velocity
+  0.99999999999971).
 - **`NFKMLXFluxPipeline`** — FLUX.1 text-to-image: the double- and single-stream transformer
   (`NFKMLXFluxTransformerNet`, at reference parity against diffusers; axial rotary, guidance embedding),
   the FLUX autoencoder (`NFKMLXSDAutoencoder`, `.flux`), a CLIP-L pooled + T5-XXL text context, and the

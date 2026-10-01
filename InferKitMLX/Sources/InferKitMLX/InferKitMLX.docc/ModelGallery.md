@@ -273,7 +273,7 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 | ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` + umT5 | Wan text-to-video |
 | ``NFKMLXWanAnimate`` | ``NFKMLXWanAnimateNet`` | Wan 2.2 Animate 2: a reference character driven by a video's motion (the arithmetic is measured; the released weights exceed a workstation) |
 | ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + the Wan VAE at `.qwenImage21` + a Qwen3-VL 8B text encoder | Qwen-Image 2.1 text-to-image (Qwen Research License, non-commercial) |
-| ``NFKMLXSD3Generator`` / ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP/T5 | Stable Diffusion 3 / 3.5 text-to-image from a release, staged where it does not fit whole |
+| ``NFKMLXSD3Generator`` / ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP/T5 | Stable Diffusion 3 / 3.5 text-to-image from a release, staged where it does not fit whole; the released SD3.5-medium transformer and VAE at parity with diffusers (velocity 0.99999999999971) |
 | ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + CLIP-L/T5 | FLUX.1 text-to-image |
 | ``NFKMLXSD3ControlNetPipeline`` | ``NFKMLXSD3ControlNetNet`` + ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` | SD3 ControlNet: a spatial control image steers generation |
 | ``NFKMLXFlux2`` | ``NFKMLXFlux2TransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux2`) + ``NFKMLXFlux2LatentCodec`` + a Qwen3 | FLUX.2 [klein] text-to-image, end to end |
