@@ -8087,7 +8087,7 @@ def run_sam3_vision(image):
     from transformers import AutoConfig
     from transformers.models.sam3.modeling_sam3 import Sam3VisionModel
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "/Volumes/InferKit Models/InferKit/validation/sam3"))
     config = AutoConfig.from_pretrained(directory).detector_config.vision_config
     # The global layers' rotary table is built from the CONFIGURED image size, not the input's, so a
     # plate of another size needs the configuration to say so.
@@ -8132,7 +8132,7 @@ def run_sam3_text(image):
     from safetensors.torch import safe_open
     from transformers import AutoConfig, CLIPTextModelWithProjection
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "/Volumes/InferKit Models/InferKit/validation/sam3"))
     detector = AutoConfig.from_pretrained(directory).detector_config
     model = CLIPTextModelWithProjection(detector.text_config)
     projection = torch.nn.Linear(detector.text_config.hidden_size, detector.detr_encoder_config.hidden_size)
@@ -8180,7 +8180,7 @@ def run_sam3_detector(image):
     from transformers import AutoConfig
     from transformers.models.sam3.modeling_sam3 import Sam3Model
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "/Volumes/InferKit Models/InferKit/validation/sam3"))
     config = AutoConfig.from_pretrained(directory)
     size = int(os.environ.get("IK_SAM3_SIZE", 504))
     config.detector_config.vision_config.backbone_config.image_size = size
@@ -18592,7 +18592,7 @@ def run_w2v_bert_loss(image, checkpoint):
     from transformers import Wav2Vec2BertForCTC, AutoFeatureExtractor, get_linear_schedule_with_warmup
 
     vocabulary = json.load(open(os.environ.get(
-        "IK_W2V_BERT_VOCAB", "/Volumes/WindowsBoot/InferKit/validation/wav2vec2-base-960h/vocab.json")))
+        "IK_W2V_BERT_VOCAB", "/Volumes/InferKit Models/InferKit/validation/wav2vec2-base-960h/vocab.json")))
     torch.manual_seed(0)
     model = Wav2Vec2BertForCTC.from_pretrained(
         checkpoint, torch_dtype=torch.float32, attention_dropout=0.0, hidden_dropout=0.0, feat_proj_dropout=0.0,

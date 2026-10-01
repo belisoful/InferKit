@@ -6,7 +6,7 @@ the prefix keeps every geometry-specific piece (the widths, the head layout, the
 embedding) and drops only repeated blocks. The result is a valid small release that transformers and
 the Swift loaders both read unchanged:
 
-    python3 truncate.py Qwen/Qwen3-14B /Volumes/WindowsBoot/InferKit/validation/qwen3-14b-cut4 4
+    python3 truncate.py Qwen/Qwen3-14B "/Volumes/InferKit Models/InferKit/validation/qwen3-14b-cut4" 4
 
 A fifth argument M also cuts an InternVL vision tower (`vision_model.encoder.layers`) to its first M
 layers, for a release whose tower alone exceeds the machine at float32 (Sa2VA-26B's InternViT-6B):

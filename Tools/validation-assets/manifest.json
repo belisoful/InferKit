@@ -3151,7 +3151,7 @@
     {
       "key": "PHI4MM",
       "repo": "microsoft/Phi-4-multimodal-instruct",
-      "directory": "/Volumes/WindowsBoot/InferKit/raw/phi4mm",
+      "directory": "/Volumes/InferKit Models/InferKit/raw/phi4mm",
       "files": [
         "release/config.json",
         "release/generation_config.json",
@@ -4491,9 +4491,9 @@
       ]
     },
     "phi4mm": {
-      "interpreter": "/Volumes/WindowsBoot/InferKit/phi4mmvenv/bin/python",
+      "interpreter": "/Volumes/InferKit Models/InferKit/phi4mmvenv/bin/python",
       "why": "Phi-4-multimodal's reference is the release's own remote code (trust_remote_code), written for transformers 4.46.1; the llm environment's 4.57 breaks its imports. It also needs peft (the release builds its adapters with it), torchvision (the image processor), soundfile and scipy (the audio processor), and numpy < 2 for torch 2.6. The home volume could not hold it, so it lives on the overflow volume; set HF_HOME there too, since the remote code is copied into the Hugging Face modules cache.",
-      "rebuild": "/opt/homebrew/bin/python3.12 -m venv /Volumes/WindowsBoot/InferKit/phi4mmvenv && /Volumes/WindowsBoot/InferKit/phi4mmvenv/bin/pip install 'torch==2.6.0' 'torchvision==0.21.0' 'transformers==4.46.1' 'peft==0.13.2' 'accelerate>=0.34' soundfile librosa pillow scipy einops safetensors sentencepiece backoff 'numpy<2' tiktoken blobfile",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv \"/Volumes/InferKit Models/InferKit/phi4mmvenv\" && \"/Volumes/InferKit Models/InferKit/phi4mmvenv/bin/pip\" install 'torch==2.6.0' 'torchvision==0.21.0' 'transformers==4.46.1' 'peft==0.13.2' 'accelerate>=0.34' soundfile librosa pillow scipy einops safetensors sentencepiece backoff 'numpy<2' tiktoken blobfile",
       "modes": [
         "phi4mm",
         "phi4mm_conversation"
@@ -4713,7 +4713,7 @@
     "deepseek_v41": {
       "interpreter": "~/.inferkit-validation/qwenimagevenv/bin/python3.12",
       "why": "transformers carries deepseek_v4 and no deepseek_v41, so the reference is the release's own inference/model.py. It needs nothing beyond torch; this interpreter is already provisioned.",
-      "source": "~/.inferkit-validation/reference-sources/deepseek-v41 (IK_DEEPSEEK_V41_SRC): model.py, engram.py, vision.py, image_processor.py and convert.py from the release's inference/ directory, fetched rather than cloned.",
+      "source": "/Volumes/InferKit Models/inferkit-validation/reference-sources/deepseek-v41 (IK_DEEPSEEK_V41_SRC): model.py, engram.py, vision.py, image_processor.py and convert.py from the release's inference/ directory, fetched rather than cloned.",
       "note": "model.py imports six symbols from kernel, whose real bodies are tilelang kernels that compile for CUDA. The mode stands a CPU kernel module in front of it: the two quantized GEMMs raise (only a quantized weight reaches them, and a float configuration has none), the two activation quantizers are neutral (inplace=True is a fused quantize-then-dequantize, so skipping it gives the unquantized model), and sparse_attn and hc_split_sinkhorn are transcribed from transformers' own plain-PyTorch deepseek_v4, the third party this package already measured those two mechanisms against. kernel.py itself is never imported, so tilelang is not needed. The vision mode needs no substitute at all: vision.py imports torch and nothing else, and the released tower ships unquantized.",
       "decode_note": "deepseek_v41_decode records a prefill of 11 tokens then three single-token steps, with every buffer a step carries written out after each: the sliding window, the shared compressed key-value, the index keys, the compressor's parked partial group and the n-gram id history. The prompt is 11 on purpose. It is odd, so a ratio-2 group parks a partial at the boundary; longer than the window of 8, so the ring has already wrapped; and longer than the n-gram look-back, so that look-back crosses the prefill/decode split. ONE LINE OF THE REFERENCE IS CORRECTED: Indexer.forward publishes shared_attn.index_k only when its compressor emitted a latent, while _compress_kv publishes unconditionally, so on a no-emit step a ratio-2 layer scores against whatever layer published last, at a different stride. The publish is hoisted BEFORE the call, because Indexer.forward reads index_k itself and publishing on the way out leaves the owner scoring its own step against stale keys.",
       "modes": [
@@ -4746,14 +4746,14 @@
       ],
       "quantized_note": "deepseek_v41_quantized and deepseek_v41_dspark_quantized run the same code with the kernel shim's act_quant and fp4_act_quant made REAL, transcribed from kernel.py: the next power of two of the block maximum times the reciprocal of the format's range, clamp, cast, cast back, multiply; the compressed latent alone divides by 6 and rounds that scale to e4m3. They run under the gemma environment, not this one, because the fp4 cast needs ml_dtypes, which this interpreter does not carry. The index heads are 32 wide in both, because the real kernel asserts a row divides into its fp4 blocks. The unquantized records reproduce byte for byte with the switch in place.",
       "bf16_note": "deepseek_v41_bf16_plain builds the release's code under set_dtype(bfloat16), so every parameter the constructor does not make float32 is bf16 and every activation is bf16 between the places the code computes in float32; deepseek_v41_bf16 does the same with the quantizers and the narrow GEMMs of deepseek_v41_quantized. Both run under the gemma environment for ml_dtypes, and both record dtype::<parameter> (1 for float32) from the reference's own state_dict, which is what the port's float32 rule is held to. Every deepseek_v41 record also carries probe.hc.*: hc_post and hc_pre on independently drawn copies from a private generator, because the decoder's own copies never diverge far enough to tell which index comb sums over. Adding it left every other entry byte-identical. The decode, dspark, vision and vl_router modes each have a _bf16 twin built through the same helper, and each float32 record reproduces byte for byte with the switch in place. deepseek_v41_vision_bf16 runs under sdpa_kernel(SDPBackend.MATH), torch's definition of scaled_dot_product_attention, because the default CPU backend's bf16 attention exponentiates through its own fast polynomial; the default backend's result is kept as default_sdpa.* for comparison.",
-      "v4_note": "The deepseek_v4_* modes run V4's own inference/model.py behind the same kernel shim: ~/.inferkit-validation/reference-sources/deepseek-v4 (V4 Flash, whose model.py V4 Pro shares) and deepseek-v4-pro-0813, each fetched from the release's inference/ directory at a recorded revision (SOURCE). V4's indexer rotates through fast_hadamard_transform, a CUDA library; the mode supplies it as the library's hadamard_transform_ref with the kernel's float32 accumulation and one rounding, and a float32 record runs the same rotation past rotate_activation's bf16 assertion. deepseek_v4_pro_dspark runs 0813's DSpark stack (two stages over the decoder's experts) through its own forward and forward_spec at temperature 0, and records each stage's sparse-attention inputs and output.",
+      "v4_note": "The deepseek_v4_* modes run V4's own inference/model.py behind the same kernel shim: /Volumes/InferKit Models/inferkit-validation/reference-sources/deepseek-v4 (V4 Flash, whose model.py V4 Pro shares) and deepseek-v4-pro-0813, each fetched from the release's inference/ directory at a recorded revision (SOURCE). V4's indexer rotates through fast_hadamard_transform, a CUDA library; the mode supplies it as the library's hadamard_transform_ref with the kernel's float32 accumulation and one rounding, and a float32 record runs the same rotation past rotate_activation's bf16 assertion. deepseek_v4_pro_dspark runs 0813's DSpark stack (two stages over the decoder's experts) through its own forward and forward_spec at temperature 0, and records each stage's sparse-attention inputs and output.",
       "image_note": "deepseek_v41_image measures the PREPROCESSOR, which deepseek_v41_vision leaves out by starting from patches. Its input is a deterministic RGB array encoded to PNG only so the release's own load_image runs its real path; PNG is lossless, so the recorded pixels are exactly the ones the reference resized and a port reads them without agreeing about PNG decoding. Two sizes are recorded: an ordinary picture whose sides are not multiples of the patch size, so the pad runs, and one wide enough to trip vision_max_wh_ratio, which takes the resize-without-padding branch. Matching it needs PIL's two-pass 8-bit resample in fixed point, not a float resample of the same coefficients."
     },
     "open_jev": {
       "interpreter": "~/.inferkit-validation/openjevvenv/bin/python",
       "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/openjevvenv && ~/.inferkit-validation/openjevvenv/bin/pip install 'torch>=2.8' 'transformers==5.10.2' 'peft==0.19.1' 'accelerate==1.13.0' safetensors sentencepiece protobuf numpy",
       "why": "Open-Jev pins transformers 5.10.2 and PEFT 0.19.1 (its pyproject's train extra), and no other oracle carries PEFT at a 5.x transformers.",
-      "source": "~/.inferkit-validation/reference-sources/open-jev/be624f36b6f6cfc4b146c801bee3d7a7b1bff411 (OPEN_JEV_SOURCE): jev/{__init__,api,metrics,model}.py from github.com/Zefan-Cai/Open-Jev at that commit, fetched rather than cloned. The training commit the release cards name (99e8811) is not in the public repository; the inference files are what the mode runs.",
+      "source": "/Volumes/InferKit Models/inferkit-validation/reference-sources/open-jev/be624f36b6f6cfc4b146c801bee3d7a7b1bff411 (OPEN_JEV_SOURCE): jev/{__init__,api,metrics,model}.py from github.com/Zefan-Cai/Open-Jev at that commit, fetched rather than cloned. The training commit the release cards name (99e8811) is not in the public repository; the inference files are what the mode runs.",
       "note": "The mode loads through jev.model.DecisionModel.load with the two from_pretrained calls redirected to OPEN_JEV_BASE (the base at the revision model.json pins, from the QWEN3_5_2B / QWEN3_5_9B releases) at OPEN_JEV_DTYPE: float32 for the 2B parity record, bfloat16 (the loader's own) for the 9B record, whose float32 form needs about 36 GB.",
       "modes": [
         "open_jev"
@@ -4762,7 +4762,7 @@
     "typed_decisions": {
       "interpreter": "~/.inferkit-validation/llmvenv/bin/python3",
       "why": "open-jev-deberta was saved with transformers 4.57.6, which this interpreter carries with sentencepiece.",
-      "source": "open_jev_deberta imports the typed_decisions package the release ships beside its weights (--checkpoint). open_jev_deberta_budget imports the repository's current collator from ~/.inferkit-validation/reference-sources/typed-decisions/e4ed807630c061179a6834d77e18c43227e4f19d (TYPED_DECISIONS_SOURCE), whose state budget the bundled copy predates.",
+      "source": "open_jev_deberta imports the typed_decisions package the release ships beside its weights (--checkpoint). open_jev_deberta_budget imports the repository's current collator from /Volumes/InferKit Models/inferkit-validation/reference-sources/typed-decisions/e4ed807630c061179a6834d77e18c43227e4f19d (TYPED_DECISIONS_SOURCE), whose state budget the bundled copy predates.",
       "modes": [
         "open_jev_deberta",
         "open_jev_deberta_budget"
@@ -4941,7 +4941,7 @@
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-base-9B",
-      "directory": "/Volumes/WindowsBoot/InferKit/validation/flux2-klein-base-9b",
+      "directory": "/Volumes/InferKit Models/InferKit/validation/flux2-klein-base-9b",
       "note": "The base 9B RELEASE's transformer (17 GB, two shards, fetched with curl -4), under IK_VAL_FLUX2_KLEIN_BASE_9B. It backs `run_reference.py flux2_real` (the whole transformer at bfloat16, 18 GB) and `flux2_real_truncated` (the first two double and two single blocks at float32 and bfloat16, read tensor by tensor through safe_open so the release never exists whole in memory). The whole release is 36 GB at float32, which this machine cannot hold. Its VAE is byte-identical to klein 4B's (same lfs sha256), so that stage is covered by the klein 4B release. The 18 GB oracle is killed when it shares the machine with a build or another oracle; it ran cleanly with 82% of memory free."
     },
     {
@@ -4963,7 +4963,7 @@
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-4B",
-      "directory": "/Volumes/WindowsBoot/InferKit/validation/flux2-klein-4b",
+      "directory": "/Volumes/InferKit Models/InferKit/validation/flux2-klein-4b",
       "note": "The klein 4B RELEASE itself, not a shape inventory: `transformer/` (7.22 GB), `vae/` (0.16 GB), `text_encoder/` (7.5 GB, two shards) and `tokenizer/`, 15 GB in all, fetched with `curl -4` because `hf download` stalls on this host's IPv6 route. The root `flux-2-klein-4b.safetensors` duplicates `transformer/` and is not fetched. It backs the released-weight measurements `run_reference.py flux2_real` / `flux2_real_f32` (--checkpoint <root>/transformer), `flux2_vae_real` (<root>/vae) and `flux2_text_real` (<root>), read through IK_VAL_FLUX2_KLEIN_4B, IK_VAL_FLUX2_KLEIN_4B_VAE and IK_VAL_FLUX2_KLEIN_4B_ROOT. The text encoder is a Qwen3ForCausalLM that is NOT byte-identical to Qwen/Qwen3-4B (two shards against three, no shard hash in common)."
     },
     {
@@ -5171,31 +5171,31 @@
       "key": "IK_PARITY_GTCRN_LOSS",
       "record": "raw/gtcrn/loss-record.safetensors",
       "environment": "basic_pitch",
-      "command": "IK_GTCRN_SRC=~/.inferkit-validation/reference-sources/gtcrn gtcrn_loss"
+      "command": "IK_GTCRN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/gtcrn\" gtcrn_loss"
     },
     {
       "key": "IK_PARITY_NUWAVE2_LOSS",
       "record": "nuwave2/nuwave2-loss.safetensors",
       "environment": "llm",
-      "command": "IK_NUWAVE2_SRC=~/.inferkit-validation/reference-sources/nuwave2 nuwave2_loss --checkpoint ~/.inferkit-validation/nuwave2/nuwave2_official.ckpt"
+      "command": "IK_NUWAVE2_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/nuwave2\" nuwave2_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/nuwave2/nuwave2_official.ckpt\""
     },
     {
       "key": "IK_PARITY_ALLIN1_TRAINING",
       "record": "records/allin1-training.safetensors",
       "environment": "allin1",
-      "command": "IK_ALLIN1_SRC=~/.inferkit-validation/reference-sources/allin1 IK_TIMM_OPTIM_SRC=~/.inferkit-validation/reference-sources/timm-optim allin1_training"
+      "command": "IK_ALLIN1_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/allin1\" IK_TIMM_OPTIM_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/timm-optim\" allin1_training"
     },
     {
       "key": "IK_PARITY_VAD_TRAINING",
       "record": "reference/vad-training.safetensors",
       "environment": "nemo",
-      "command": "vad_training --checkpoint ~/.inferkit-validation/raw/marblenet_vad.nemo"
+      "command": "vad_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/marblenet_vad.nemo\""
     },
     {
       "key": "IK_PARITY_CONVTASNET_LOSS",
       "record": "reference/convtasnet-loss.safetensors",
       "environment": "llm",
-      "command": "IK_ASTEROID_SRC=~/.inferkit-validation/reference-sources/asteroid convtasnet_loss"
+      "command": "IK_ASTEROID_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/asteroid\" convtasnet_loss"
     },
     {
       "key": "IK_PARITY_YOLO_LOSS",
@@ -5231,13 +5231,13 @@
       "key": "IK_PARITY_RTDETR_TRAINING_SETUP",
       "record": "reference/rtdetr-training-setup.safetensors",
       "environment": "llm",
-      "command": "IK_RTDETR_SRC=~/.inferkit-validation/reference-sources/rtdetr rtdetr_training_setup"
+      "command": "IK_RTDETR_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/rtdetr\" rtdetr_training_setup"
     },
     {
       "key": "IK_PARITY_FLORENCE2_BASE_FT_LOSS",
       "record": "florence2-base-ft/loss_record.safetensors",
       "environment": "llm",
-      "command": "FLORENCE2_REPO=~/.inferkit-validation/florence2-base-ft HF_HUB_OFFLINE=1 florence2_loss --checkpoint ~/.inferkit-validation/florence2-base-ft --image ~/.inferkit-validation/inputs/face960.jpg"
+      "command": "FLORENCE2_REPO=\"/Volumes/InferKit Models/inferkit-validation/florence2-base-ft\" HF_HUB_OFFLINE=1 florence2_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/florence2-base-ft\" --image \"/Volumes/InferKit Models/inferkit-validation/inputs/face960.jpg\""
     },
     {
       "key": "IK_PARITY_GRANITE_LOSS",
@@ -5249,7 +5249,7 @@
       "key": "IK_PARITY_LAYA_LOSS",
       "record": "reference/laya-loss-reference.safetensors",
       "environment": "llm",
-      "command": "laya_loss --checkpoint ~/.inferkit-validation/laya"
+      "command": "laya_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/laya\""
     },
     {
       "key": "IK_PARITY_NEMOTRON_H_LOSS",
@@ -5267,19 +5267,19 @@
       "key": "IK_PARITY_SA2VA_1B_LOSS",
       "record": "sa2va-1b/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_SA2VA_SRC=~/.inferkit-validation/sources/sa2va HF_HUB_OFFLINE=1 sa2va_loss --checkpoint ~/.inferkit-validation/sa2va-1b"
+      "command": "IK_SA2VA_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/sa2va\" HF_HUB_OFFLINE=1 sa2va_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/sa2va-1b\""
     },
     {
       "key": "IK_PARITY_SAM2_LOSS",
       "record": "reference/sam2-loss-reference.safetensors",
       "environment": "wananimate",
-      "command": "IK_SAM2_SRC=~/.inferkit-validation/reference-sources/sam2 sam2_loss"
+      "command": "IK_SAM2_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/sam2\" sam2_loss"
     },
     {
       "key": "IK_PARITY_SAM3_LOSS",
       "record": "reference/sam3-loss-reference.safetensors",
       "environment": "wananimate",
-      "command": "IK_SAM3_SRC=~/.inferkit-validation/reference-sources/sam3 sam3_loss"
+      "command": "IK_SAM3_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/sam3\" sam3_loss"
     },
     {
       "key": "IK_PARITY_SEGFORMER_LOSS",
@@ -5291,31 +5291,31 @@
       "key": "IK_PARITY_TABLE_TRANSFORMER_DETECTION_LOSS",
       "record": "table-transformer-detection/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_TABLE_TRANSFORMER_SRC=~/.inferkit-validation/sources/table-transformer HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint ~/.inferkit-validation/table-transformer-detection --image ~/.inferkit-validation/table_structure.png"
+      "command": "IK_TABLE_TRANSFORMER_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/table-transformer\" HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/table-transformer-detection\" --image \"/Volumes/InferKit Models/inferkit-validation/table_structure.png\""
     },
     {
       "key": "IK_PARITY_TABLE_TRANSFORMER_V11_ALL_LOSS",
       "record": "table-transformer-v11-all/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_TABLE_TRANSFORMER_SRC=~/.inferkit-validation/sources/table-transformer HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint ~/.inferkit-validation/table-transformer-v11-all --image ~/.inferkit-validation/table_structure.png"
+      "command": "IK_TABLE_TRANSFORMER_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/table-transformer\" HF_HUB_OFFLINE=1 table_transformer_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/table-transformer-v11-all\" --image \"/Volumes/InferKit Models/inferkit-validation/table_structure.png\""
     },
     {
       "key": "IK_PARITY_TROCR_BASE_PRINTED_LOSS",
       "record": "trocr-base-printed/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_FAIRSEQ_SRC=~/.inferkit-validation/sources/fairseq PYTHONPATH=~/.inferkit-validation/protobuf-4 HF_HUB_OFFLINE=1 trocr_loss --checkpoint ~/.inferkit-validation/trocr-base-printed --size 500 --image ~/.inferkit-validation/trocr_line.png"
+      "command": "IK_FAIRSEQ_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/fairseq\" PYTHONPATH=\"/Volumes/InferKit Models/inferkit-validation/protobuf-4\" HF_HUB_OFFLINE=1 trocr_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/trocr-base-printed\" --size 500 --image \"/Volumes/InferKit Models/inferkit-validation/trocr_line.png\""
     },
     {
       "key": "IK_PARITY_TROCR_SMALL_HANDWRITTEN_LOSS",
       "record": "trocr-small-handwritten/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_FAIRSEQ_SRC=~/.inferkit-validation/sources/fairseq PYTHONPATH=~/.inferkit-validation/protobuf-4 HF_HUB_OFFLINE=1 trocr_loss --checkpoint ~/.inferkit-validation/trocr-small-handwritten --size 500 --image ~/.inferkit-validation/trocr_line.png"
+      "command": "IK_FAIRSEQ_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/fairseq\" PYTHONPATH=\"/Volumes/InferKit Models/inferkit-validation/protobuf-4\" HF_HUB_OFFLINE=1 trocr_loss --checkpoint \"/Volumes/InferKit Models/inferkit-validation/trocr-small-handwritten\" --size 500 --image \"/Volumes/InferKit Models/inferkit-validation/trocr_line.png\""
     },
     {
       "key": "IK_PARITY_VJEPA2_PROBE",
       "record": "vjepa2-probe/record.safetensors",
       "environment": "llm",
-      "command": "IK_VJEPA2_SRC=~/.inferkit-validation/sources/vjepa2 vjepa2_probe"
+      "command": "IK_VJEPA2_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/vjepa2\" vjepa2_probe"
     },
     {
       "key": "IK_PARITY_ZERO_DCE_LOSSES",
@@ -5325,9 +5325,9 @@
     },
     {
       "key": "IK_PARITY_COSMOS_TOKENIZER_LOSS",
-      "record": "/Volumes/WindowsBoot/InferKit/validation/cosmos-tokenizer/loss_record.safetensors",
+      "record": "/Volumes/InferKit Models/InferKit/validation/cosmos-tokenizer/loss_record.safetensors",
       "environment": "llm",
-      "command": "IK_COSMOS_TOKENIZER_SRC=~/.inferkit-validation/cosmos-tokenizer-src cosmos_tokenizer_loss --checkpoint /Volumes/WindowsBoot/InferKit/validation/vgg16/model.safetensors"
+      "command": "IK_COSMOS_TOKENIZER_SRC=\"/Volumes/InferKit Models/inferkit-validation/cosmos-tokenizer-src\" cosmos_tokenizer_loss --checkpoint \"/Volumes/InferKit Models/InferKit/validation/vgg16/model.safetensors\""
     },
     {
       "key": "IK_PARITY_BASIC_PITCH_TRAINING",
@@ -5369,7 +5369,7 @@
       "key": "IK_PARITY_AUDIO_TAGGER_TRAINING",
       "record": "reference/audio-tagger-training.safetensors",
       "environment": "ultralytics",
-      "command": "IK_PANNS_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/panns\" audio_tagger_training --checkpoint ~/.inferkit-validation/raw/panns_cnn14.pth"
+      "command": "IK_PANNS_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/panns\" audio_tagger_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/panns_cnn14.pth\""
     },
     {
       "key": "IK_PARITY_DEEPLAB_LOSS",
@@ -5381,7 +5381,7 @@
       "key": "IK_PARITY_DEEPLAB_TRAINING",
       "record": "reference/deeplab-training.safetensors",
       "environment": "llm",
-      "command": "IK_TORCHVISION_SEGMENTATION_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/torchvision-references/references/segmentation\" deeplab_training --size 64 --checkpoint ~/.inferkit-validation/raw/deeplabv3_resnet50.pth"
+      "command": "IK_TORCHVISION_SEGMENTATION_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/torchvision-references/references/segmentation\" deeplab_training --size 64 --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/deeplabv3_resnet50.pth\""
     },
     {
       "key": "IK_PARITY_BISENET_LOSS",
@@ -5393,7 +5393,7 @@
       "key": "IK_PARITY_BISENET_TRAINING",
       "record": "reference/bisenet-training.safetensors",
       "environment": "llm",
-      "command": "IK_BISENET_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/bisenet\" bisenet_training --size 64 --checkpoint ~/.inferkit-validation/converted/bisenet.safetensors"
+      "command": "IK_BISENET_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/bisenet\" bisenet_training --size 64 --checkpoint \"/Volumes/InferKit Models/inferkit-validation/converted/bisenet.safetensors\""
     }
   ]
 }
