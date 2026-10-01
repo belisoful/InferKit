@@ -26,9 +26,13 @@ with no registration:
 | Capability | Constant | Default provider (shipped by) |
 | --- | --- | --- |
 | `stable-diffusion` | ``NFKCapabilityStableDiffusion`` | `NFKStableDiffusionProvider` — InferKitMLX |
-| `transcription` | ``NFKCapabilityTranscription`` | `NFKMLXWhisperProvider` — InferKitMLX |
+| `transcription` | ``NFKCapabilityTranscription`` | `NFKMLXWhisperProvider` — InferKitMLX, then `NFKSpeechAnalyzerProvider` — InferKitAppleSwift, then `NFKSpeechRecognitionProvider` — the core |
+| `translation` | ``NFKCapabilityTranslation`` | `NFKMLXTranslationProvider` — InferKitMLX, then `NFKTranslationProvider` — InferKitAppleSwift |
 | `text-generation` | ``NFKCapabilityTextGeneration`` | `NFKFoundationModelsProvider` — InferKitFoundationModels |
 | `controlnet` | ``NFKCapabilityControlNet`` | `NFKControlNetProvider` — you |
+
+Seven more capabilities name the core's own Apple-framework providers and resolve with nothing linked:
+text recognition, segmentation, pose, face detection, image embedding, upscaling, and optical flow.
 
 ```objc
 // Available because a companion (or your provider) is linked; nil otherwise.

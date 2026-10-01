@@ -27,7 +27,7 @@ Heavier engines live outside the core and link in only when a consumer wants the
 
 ### The companions
 
-Two optional Swift packages build on the core without raising its platform floor or adding
+Three optional Swift packages build on the core without raising its platform floor or adding
 dependencies to it:
 
 - **InferKitMLX** (Apple Silicon) — 60-plus real MLXNN models: image restoration and analysis,
@@ -35,6 +35,8 @@ dependencies to it:
   and vision-language, plus a bundled Stable Diffusion and on-device fine-tuning.
 - **InferKitFoundationModels** (macOS 26 / iOS 26) — a bridge to Apple's on-device system language
   model.
+- **InferKitAppleSwift** (macOS 26 / iOS 26) — Apple's Swift-only inference APIs, wrapped so
+  Objective-C reaches them.
 
 Linking a companion ships its provider classes, so the core's discovery lights up the matching
 capability automatically.

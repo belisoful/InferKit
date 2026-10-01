@@ -9,7 +9,7 @@ resolution returns nil.
 ![A capability maps to a provider class name; present classes build a backend, absent ones return nil.](dynamic-discovery)
 
 ```objc
-// Linking InferKitMLX ships NFKStableDiffusionProvider and NFKMLXWhisperProvider.
+// Linking InferKitMLX ships NFKStableDiffusionProvider, NFKMLXWhisperProvider, and NFKMLXTranslationProvider.
 if ([NFKDynamicBackend isCapabilityAvailable:NFKCapabilityStableDiffusion]) {
     id<NFKInferenceBackend> sd = [NFKDynamicBackend stableDiffusionBackendWithError:&error];
 }

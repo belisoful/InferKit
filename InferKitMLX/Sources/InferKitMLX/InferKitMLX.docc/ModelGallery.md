@@ -171,7 +171,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 
 | Model | Factory | Task |
 | --- | --- | --- |
-| ``NFKMLXSmolVLM`` | `smolVLM(directoryURL:)` | an image and a question → an answer (SmolVLM2 256M, 500M, 2.2B) |
+| ``NFKMLXSmolVLM`` | `load(directoryURL:)` | an image and a question → an answer (SmolVLM2 256M, 500M, 2.2B) |
 | ``NFKMLXGemma3`` | `load(directoryURL:)` | an image and a question → an answer (Gemma 3 4B: SigLIP so400m at 896, 256 soft tokens, bidirectional attention among them) |
 | ``NFKMLXGemma3n`` | `load(directoryURL:)` | an image or a clip and a question → an answer (MobileNetV5-300M at 768 → 256 soft tokens; a USM Conformer → 188) |
 | ``NFKMLXQwen3VL`` | — | the Qwen3-VL-2B vision tower (2-D rotary ViT, deepstack) |
@@ -268,13 +268,13 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 | ``NFKMLXBackend`` / ``NFKMLXTextToImage`` | SD UNet + VAE + CLIP towers | Stable Diffusion 1.5, 2.1, SDXL-Turbo |
 | ``NFKMLXZImageGenerator`` / ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + the Flux VAE + Qwen3 | Z-Image text-to-image from a release, staged where it does not fit whole; image-to-image through the pipeline |
 | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` + Gemma 2 | SANA text-to-image |
-| ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformer`` + ``NFKMLXLTXVideoVAE`` + T5-XXL | LTX-Video text-to-video |
+| ``NFKMLXLTXVideoGenerator`` / ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformer`` + ``NFKMLXLTXVideoVAE`` + T5-XXL | LTX-Video text-to-video |
 | ``NFKMLXLTX2TransformerNet`` | the LTX-2 audio-video transformer alone | one transformer denoising a video latent and an audio latent together |
-| ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` + umT5 | Wan text-to-video |
+| ``NFKMLXWanVideoGenerator`` / ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` + umT5 | Wan text-to-video |
 | ``NFKMLXWanAnimate`` | ``NFKMLXWanAnimateNet`` | Wan 2.2 Animate 2: a reference character driven by a video's motion (the arithmetic is measured; the released weights exceed a workstation) |
-| ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + the Wan VAE at `.qwenImage21` + a Qwen3-VL 8B text encoder | Qwen-Image 2.1 text-to-image (Qwen Research License, non-commercial) |
+| ``NFKMLXQwenImageGenerator`` / ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + the Wan VAE at `.qwenImage21` + a Qwen3-VL 8B text encoder | Qwen-Image 2.1 text-to-image (Qwen Research License, non-commercial) |
 | ``NFKMLXSD3Generator`` / ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP/T5 | Stable Diffusion 3 / 3.5 text-to-image from a release, staged where it does not fit whole; the released SD3.5-medium transformer and VAE at parity with diffusers (velocity 0.99999999999971) |
-| ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + CLIP-L/T5 | FLUX.1 text-to-image |
+| ``NFKMLXFlux`` / ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + CLIP-L/T5 | FLUX.1 text-to-image |
 | ``NFKMLXSD3ControlNetPipeline`` | ``NFKMLXSD3ControlNetNet`` + ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` | SD3 ControlNet: a spatial control image steers generation |
 | ``NFKMLXFlux2`` | ``NFKMLXFlux2TransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux2`) + ``NFKMLXFlux2LatentCodec`` + a Qwen3 | FLUX.2 [klein] text-to-image, end to end |
 | ``NFKMLXFluxControlNetPipeline`` | ``NFKMLXFluxControlNetNet`` + ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | FLUX.1 ControlNet: a spatial control image steers generation |

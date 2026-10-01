@@ -31,7 +31,7 @@ public enum NFKMLXError: Error {
     case trainingDiverged(String)
     /// Training data does not have the shape the model needs. See `NFKMLXTrainingData`.
     case trainingDataMismatch(String)
-    /// A layer selected for low-rank adaptation cannot be replaced. See `NFKMLXLoRA.apply(to:rank:alpha:where:)`.
+    /// A layer selected for low-rank adaptation cannot be replaced. See `NFKMLXLoRA.apply(to:rank:alpha:dropout:where:)`.
     case loRANotApplicable(String)
     /// A training run was asked for over a model with no trainable parameter left.
     /// See `NFKMLXTrainer.train(_:optimizer:steps:batch:loss:)`.

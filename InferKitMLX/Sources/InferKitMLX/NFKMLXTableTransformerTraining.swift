@@ -133,10 +133,12 @@ extension NFKMLXTableTransformer {
     /// Builds the network itself, ready to fine-tune, from a release directory or a directory
     /// ``save(_:toDirectoryURL:release:)`` wrote.
     ///
-    /// - Parameter labels: the consumer's own classes. Nil keeps the release's. A different class
-    ///   count leaves the classifier at its fresh initialization and loads everything else; MLX adopts
-    ///   a checkpoint's shapes rather than validating them, so the release's classifier would otherwise
-    ///   replace the new one.
+    /// - Parameters:
+    ///   - directoryURL: a release directory, or a directory `save(_:toDirectoryURL:release:)` wrote.
+    ///   - labels: the consumer's own classes. Nil keeps the release's. A different class count leaves
+    ///     the classifier at its fresh initialization and loads everything else; MLX adopts a
+    ///     checkpoint's shapes rather than validating them, so the release's classifier would otherwise
+    ///     replace the new one.
     ///
     /// Introduced in InferKit 0.4.0.
     public static func network(directoryURL: URL, labels: [String]? = nil) throws -> NFKMLXTableTransformerNet {

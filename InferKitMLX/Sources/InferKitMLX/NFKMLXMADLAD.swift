@@ -303,7 +303,7 @@ public final class NFKMLXT5Seq2SeqNet: Module {
         try load(try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint), half: half)
     }
 
-    /// Loads one checkpoint file, such as one ``NFKMLXWeights/save(_:to:)`` wrote after a fine-tune.
+    /// Loads one checkpoint file, such as one ``NFKMLXWeights/save(_:extraArrays:to:)`` wrote after a fine-tune.
     public func loadWeights(from url: URL, half: Bool = false) throws {
         try load(Array(try NFKMLXWeights.loadCheckpoint(url: url).arrays), half: half)
     }

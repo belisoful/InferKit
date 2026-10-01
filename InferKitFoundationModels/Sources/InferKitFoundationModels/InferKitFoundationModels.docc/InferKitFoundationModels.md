@@ -83,6 +83,7 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 
 - ``NFKFoundationTool``
 - ``NFKFoundationModelsErrorKey``
+- ``NFKSchemaError``
 
 ### The provider bridge
 

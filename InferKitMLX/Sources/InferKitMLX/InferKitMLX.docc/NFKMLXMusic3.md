@@ -35,7 +35,7 @@ The full-precision stack is 27 GB. ``quantizeRelease(at:to:bits:transformerBits:
 quantized copy in the release's own layout, so ``backend(directoryURL:)`` takes the result unchanged.
 The default split is measured, not assumed: the language model and depth decoder pack to 4-bit while
 the DiT stays at 8-bit, because the flow field is the quantization-sensitive stage. The stack falls to
-about 8.9 GiB, which fits the working set with room to stay resident.
+about 7.7 GiB, which fits the working set with room to stay resident.
 
 ```swift
 try NFKMLXMusic3.quantizeRelease(at: releaseDirectory, to: quantizedDirectory)

@@ -51,7 +51,7 @@ receive streamed partials, and cancel.
 
 ```objc
 NFKInferenceJob *job = [backend submitInferenceJobForRequest:request];
-job.progressHandler = ^(double fraction) { /* update UI */ };
+job.progressHandler = ^(NFKInferenceJob *running) { /* running.progress, update UI */ };
 job.completionHandler = ^(NFKInferenceJob *finished) {
     if (finished.result) { /* use finished.result */ }
 };

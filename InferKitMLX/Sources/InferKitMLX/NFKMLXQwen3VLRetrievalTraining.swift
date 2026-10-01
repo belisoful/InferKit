@@ -86,7 +86,7 @@ extension NFKMLXQwen3VLEmbedder {
     /// Builds an adapter over this model's embeddings, loading `weightsURL` when one is given.
     ///
     /// A nil `weightsURL` is the identity adapter, which is where a fine-tune starts. A file written
-    /// by ``NFKMLXWeights/save(_:to:)`` after a run loads here and reproduces that run's embeddings.
+    /// by ``NFKMLXWeights/save(_:extraArrays:to:)`` after a run loads here and reproduces that run's embeddings.
     public func makeAdapter(weightsURL: URL? = nil) throws -> NFKMLXQwen3VLEmbeddingAdapter {
         guard let weightsURL else {
             return NFKMLXEmbeddingAdapter(dimensions: embeddingDimensions)

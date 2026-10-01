@@ -140,9 +140,13 @@ public struct NFKMLXRTDetrObjective: Sendable {
     /// the final set, with `_aux_<i>` for the auxiliary sets and `_dn_<i>` for the denoising sets.
     ///
     /// - Parameters:
+    ///   - final: the last decoder layer's set, the one inference reads.
     ///   - auxiliary: the earlier decoder layers' sets, then the encoder's top-k proposals.
+    ///   - denoising: the denoising queries' sets, one per decoder layer.
     ///   - denoisingPositives: for each image, the denoising query indices that carry its targets in group
     ///     order (`dn_positive_idx`), `targets.count · groups` of them.
+    ///   - denoisingGroups: the number of denoising groups, which scales the denoising terms' box count.
+    ///   - targets: each image's classes and boxes.
     public func losses(final: NFKMLXRTDetrPredictions, auxiliary: [NFKMLXRTDetrPredictions] = [],
                        denoising: [NFKMLXRTDetrPredictions] = [], denoisingPositives: [[Int]] = [],
                        denoisingGroups: Int = 0, targets: [NFKMLXRTDetrTarget]) -> [String: MLXArray] {

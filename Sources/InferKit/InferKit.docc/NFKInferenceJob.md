@@ -10,8 +10,9 @@ final result or error, and cancels.
 
 ```objc
 NFKInferenceJob *job = [backend submitInferenceJobForRequest:request];
-job.progressHandler   = ^(double fraction) { /* 0…1, update UI */ };
-job.partialResultHandler = ^(NFKInferenceResult *partial) { /* stream tokens */ };
+job.progressHandler   = ^(NFKInferenceJob *running) {
+    /* running.progress is 0…1; running.partialResult carries the tokens so far */
+};
 job.completionHandler = ^(NFKInferenceJob *finished) {
     if (finished.result) { /* success */ }
     else if (finished.error) { /* failed */ }

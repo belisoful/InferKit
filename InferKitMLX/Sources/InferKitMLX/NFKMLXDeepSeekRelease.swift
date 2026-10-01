@@ -630,7 +630,7 @@ public extension NFKMLXDeepSeek {
     }
 
     /// The paging policy a residency comes to for a configuration, planned by
-    /// ``NFKMLXResidencyBudget`` like every other paged model.
+    /// `NFKMLXResidencyBudget` like every other paged model.
     ///
     /// @discussion The release is one stage whose pageable bytes are what ``NFKMLXDeepSeekPaging/fullyMapped``
     /// leaves in the release: the routed experts and the n-gram tables.

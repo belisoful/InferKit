@@ -188,7 +188,7 @@ enum NFKMLXCosmosTokenizerProcessor {
  @abstract A Cosmos Tokenizer: image or video to a continuous latent or discrete tokens, and back.
  @discussion Build one with ``tokenizer(variant:weightsURL:)`` (or the `@objc` factories) from a
  release's `autoencoder.jit`, its `encoder.jit` and `decoder.jit` together, or a safetensors file
- ``NFKMLXWeights/save(_:to:)`` wrote after a fine-tune. The Swift surface works on channels-last
+ ``NFKMLXWeights/save(_:extraArrays:to:)`` wrote after a fine-tune. The Swift surface works on channels-last
  `MLXArray`s in `[-1, 1]`: an image `[B, H, W, 3]`, a clip `[B, T, H, W, 3]` whose frame count is one
  more than a multiple of the temporal compression. The Objective-C surface works on `CGImage`s and
  ``NFKMLXCosmosTokenizerCode``.

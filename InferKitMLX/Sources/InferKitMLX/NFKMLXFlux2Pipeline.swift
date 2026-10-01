@@ -410,7 +410,7 @@ public final class NFKMLXFlux2: NSObject {
     /// How a release is held: whether the text encoder and the transformer stay loaded together, and
     /// whether the encoder runs at float32 or as stored.
     ///
-    /// @discussion The shared ``NFKMLXResidencyBudget`` plan decides, with the encoder's float32 form as
+    /// @discussion The shared `NFKMLXResidencyBudget` plan decides, with the encoder's float32 form as
     /// its wider precision: a resident placement takes float32 where the whole still fits, which is
     /// diffusers' own default of a bfloat16 pipeline otherwise; a staged one takes it where the encoder
     /// alone fits. A staged stage known not to load on its own is refused. On a 32 GB machine (a

@@ -121,7 +121,7 @@ public enum NFKMLXWeights {
         }
     }
 
-    /// Metadata written by ``save(_:to:)`` to mark a checkpoint as already being in the module's layout.
+    /// Metadata written by ``save(_:extraArrays:to:)`` to mark a checkpoint as already being in the module's layout.
     private static let layoutKey = "inferkit.layout"
     private static let mlxLayout = "mlx"
     /// Metadata naming the MLX affine quantization a checkpoint's packed weights were stored under,
@@ -146,7 +146,7 @@ public enum NFKMLXWeights {
 
         /// True for a converted PyTorch checkpoint, whose 4-D weights are `[out, in, kH, kW]` and need
         /// the model's transpose to MLX's `[out, kH, kW, in]`. False for a checkpoint written by
-        /// ``NFKMLXWeights/save(_:to:)``, whose weights are already in the module's own layout.
+        /// ``NFKMLXWeights/save(_:extraArrays:to:)``, whose weights are already in the module's own layout.
         ///
         /// A model's `loadWeights` skips its transpose when this is false. Skipping rather than
         /// inverting is what keeps the round trip exact for the models whose transpose is not the
@@ -178,7 +178,7 @@ public enum NFKMLXWeights {
     /// Reads a checkpoint and reports which layout its convolution weights are in.
     ///
     /// A model's `loadWeights` calls this in place of `loadArrays(url:)` so that both a converted
-    /// PyTorch checkpoint and one written by ``save(_:to:)`` load correctly through the same path.
+    /// PyTorch checkpoint and one written by ``save(_:extraArrays:to:)`` load correctly through the same path.
     ///
     /// The format is sniffed from the file's leading bytes rather than its extension: a raw PyTorch
     /// checkpoint (`.pth`, `.pt`, `.ckpt`, `.th`, or an HF `.bin`, which shares its extension with

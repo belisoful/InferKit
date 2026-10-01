@@ -290,7 +290,7 @@ extension NFKMLXLearningRateSchedule {
 extension NFKMLXSa2VA {
 
     /// Builds the network itself at float32, ready to fine-tune, from a release directory or a directory
-    /// ``save(_:toDirectoryURL:release:)`` wrote.
+    /// `save(_:toDirectoryURL:release:)` wrote.
     ///
     /// Introduced in InferKit 0.4.0.
     public static func network(directoryURL: URL) throws -> NFKMLXSa2VANet {
@@ -331,7 +331,7 @@ extension NFKMLXSa2VA {
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
-    /// Call `NFKMLXLoRA.merge(into:)` before ``save(_:toDirectoryURL:release:)``.
+    /// Call `NFKMLXLoRA.merge(into:)` before `save(_:toDirectoryURL:release:)`.
     ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult

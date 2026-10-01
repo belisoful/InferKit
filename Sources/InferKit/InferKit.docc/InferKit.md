@@ -67,6 +67,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKAnthropicBackend``
 - ``NFKRemoteEmbeddingBackend``
 - ``NFKRemoteSpeechBackend``
+- ``NFKRemoteVoice``
 - ``NFKRemoteImageBackend``
 - ``NFKRemoteTranscriptionBackend``
 - ``NFKAsyncGenerationBackend``
@@ -96,12 +97,24 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKRemoteClassifierBackend``
 - ``NFKRemoteTokenCounter``
 - ``NFKRealtimeSession``
+- ``NFKRealtimeSocket``
 - ``NFKRealtimeWebSocket``
 - ``NFKRemoteFileStore``
 - ``NFKRemoteFile``
 - ``NFKRemoteRetrievalStore``
+- ``NFKRetrievalStoreRecord``
+- ``NFKRetrievalDocument``
+- ``NFKRetrievalMatch``
 - ``NFKRemoteUsageReporter``
+- ``NFKUsageBucket``
+- ``NFKCostEntry``
+- ``NFKAccountBalance``
 - ``NFKTypeSafeBackend``
+
+### Serving
+
+- ``NFKInferenceServer``
+- ``NFKRemoteInferKitBackend``
 
 ### Media coding
 
@@ -112,6 +125,14 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 
 - ``NFKDynamicBackend``
 - ``NFKDynamicBackendProvider``
+- ``NFKVisionTextProvider``
+- ``NFKVisionSegmentationProvider``
+- ``NFKVisionPoseProvider``
+- ``NFKVisionFaceProvider``
+- ``NFKVisionFeaturePrintProvider``
+- ``NFKVideoToolboxUpscalingProvider``
+- ``NFKVideoToolboxOpticalFlowProvider``
+- ``NFKSpeechRecognitionProvider``
 
 ### Downloading models
 
@@ -123,6 +144,10 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKKeypoint``
 - ``NFKClassification``
 - ``NFKAudioSegment``
+- ``NFKQuadrilateral``
+- ``NFKMIDINote``
+- ``NFKMIDISequence``
+- ``NFKMusicBeat``
 - ``NFKDecisionQuestion``
 - ``NFKDecisionAnswer``
 
@@ -134,6 +159,11 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 ### Tokenizers & tensors
 
 - ``NFKTokenizer``
+- ``NFKTokenVocabulary``
+- ``NFKTokenConstraint``
+- ``NFKTokenConstraintCursor``
+- ``NFKJSONConstraint``
+- ``NFKChoiceConstraint``
 
 ### The machine
 

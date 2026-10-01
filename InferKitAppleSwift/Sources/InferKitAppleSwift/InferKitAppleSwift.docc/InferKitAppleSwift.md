@@ -8,10 +8,10 @@ Apple's Swift-only inference APIs, behind the InferKit contract, reachable from 
 
 ## Overview
 
-The core wraps the Apple frameworks an Objective-C target can call. Three APIs it cannot:
-`SpeechAnalyzer` is an actor whose results arrive as an `AsyncSequence`, and Vision's
+The core wraps the Apple frameworks an Objective-C target can call. Four APIs it cannot:
+`SpeechAnalyzer` is an actor whose results arrive as an `AsyncSequence`, Vision's
 `RecognizeDocumentsRequest` and `DetectLensSmudgeRequest` ship in `Vision.swiftmodule` with no `VN*`
-header. This companion hosts them, and every type it adds is `@objc`.
+header, and the Translation framework is Swift-only. This companion hosts them, and every type it adds is `@objc`.
 
 ```swift
 let read = try NFKVisionDocumentBackend()

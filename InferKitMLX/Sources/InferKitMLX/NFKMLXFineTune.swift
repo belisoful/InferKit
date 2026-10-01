@@ -4,7 +4,7 @@
 //
 //  The sequence every fine-tune recipe runs, in one place.
 //
-//  A recipe is a public `fineTune` over `NFKMLXTrainer.train`, and the sixteen that ship do the same
+//  A recipe is a public `fineTune` over `NFKMLXTrainer.train`, and the recipes that ship do the same
 //  four things in the same order before the loop starts: freeze what the caller's `trainable` excludes,
 //  take the caller's optimizer or build the reference's, resolve the schedule against whether the
 //  CALLER supplied an optimizer, and hand the rest to the trainer unchanged. Three of those four are
@@ -25,7 +25,7 @@ import MLXOptimizers
 
 /// Runs the fine-tuning sequence a recipe wraps.
 ///
-/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:precision:accumulation:learningRateSchedule:checkpoint:cachePolicy:observer:)``
+/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:precision:accumulation:learningRateSchedule:checkpoint:cachePolicy:constraint:observer:)``
 /// in place of calling `NFKMLXTrainer.train` directly, so the ordering and the two resolution rules
 /// are written once. The recipe keeps its own public signature.
 ///

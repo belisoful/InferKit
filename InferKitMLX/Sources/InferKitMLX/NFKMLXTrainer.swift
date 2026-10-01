@@ -158,9 +158,9 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
 /// the cache left alone, and 25 of 25 matched it with the cache held at zero. The full measurements
 /// are in `Docs/mlx-runtime-hazards.md`.
 ///
-/// The defect belongs to mlx core, which fixes it in 0.32.0. mlx-swift 0.31.6 vendors core 0.31.1
-/// and is the newest tag, so this package still needs the workaround. **Retire this type when
-/// mlx-swift ships a release vendoring core 0.32.0 or later:** run
+/// The defect belongs to mlx core, which fixes it in 0.32.0. The package pins an mlx-swift revision
+/// that vendors core 0.32.2. A training loop with the cache left on is unmeasured on that core.
+/// **Retire this type once that is measured:** run
 /// `swift test --filter NFKMLXUpstreamWatchTests` alone in a fresh process, and make ``unchanged``
 /// the trainer default once the watch reports the fault is not observed.
 public enum NFKMLXTrainingCachePolicy: Sendable {
@@ -306,13 +306,17 @@ public enum NFKMLXTrainer {
     ///     `gradient_accumulation_steps` and mmengine's `accumulative_counts` do. `steps` counts
     ///     updates; the schedule, the clip, the checkpoint, and the observer act once per update, and
     ///     the loss reported for a step is the mean over its batches.
+    ///   - precision: the precision the passes compute in, float32 by default. See
+    ///     ``NFKMLXTrainingPrecision``.
+    ///   - accumulation: groups batches into updates by a rule, and `steps` then counts batches. See
+    ///     ``NFKMLXGradientAccumulation``.
     ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step. Every
     ///     group of a `MultiOptimizer` is scaled from its own base rate, and the rates are restored
     ///     when the run ends. ``NFKMLXLearningRateSchedule`` builds the recipes' reference schedules.
-    ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress. The
-    ///     optimizer's own state is not written, because mlx-swift keeps it private: a resumed `SGD`
-    ///     run continues exactly, while a resumed `Adam` run rebuilds its moment estimates and shows
-    ///     a brief rise in loss.
+    ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress. With
+    ///     `optimizerStateURL` it also writes the optimizer's state, and with `resumes` a later run
+    ///     continues at the next update. Writing the state needs an ``NFKMLXResumableOptimizer``. A
+    ///     weights-only checkpoint restarts Adam's moments at zero. See ``NFKMLXTrainingCheckpoint``.
     ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
     ///     gradients correct. See ``NFKMLXTrainingCachePolicy``.
     ///   - observer: receives each step and can end the run early.
@@ -370,6 +374,10 @@ public enum NFKMLXTrainer {
     ///   - loss: scores the model on that batch alone.
     ///   - clipGradientNorm: bounds the global gradient norm before the update.
     ///   - accumulationSteps: how many batches each update averages; see the supervised form.
+    ///   - precision: the precision the passes compute in, float32 by default. See
+    ///     ``NFKMLXTrainingPrecision``.
+    ///   - accumulation: groups batches into updates by a rule, and `steps` then counts batches. See
+    ///     ``NFKMLXGradientAccumulation``.
     ///   - learningRateSchedule: multiplies the optimizer's rate at each zero-based step.
     ///   - checkpoint: writes the model periodically, so a suspended run keeps its progress.
     ///   - cachePolicy: how the run treats MLX's Metal buffer cache. The default keeps a GPU run's
@@ -696,7 +704,7 @@ public enum NFKMLXTrainer {
     /// and folds them into its running statistics, so a head-only run over a pretrained
     /// convolutional backbone changes what the frozen backbone computes and overwrites the
     /// statistics it was released with, from batches of one or two examples.
-    /// ``NFKMLXWeights/save(_:to:)`` then writes those statistics into the checkpoint, which is how
+    /// ``NFKMLXWeights/save(_:extraArrays:to:)`` then writes those statistics into the checkpoint, which is how
     /// the damage outlives the run.
     ///
     /// A module that keeps running statistics and has no trainable parameter is therefore returned
@@ -755,8 +763,6 @@ public enum NFKMLXTrainer {
         return ModuleParameters.unflattened(sanitized.map { ($0.0, $0.1 * factor) })
     }
 
-    /// The mean loss and the mean gradients of `count` batches, each batch evaluated before the next
-    /// runs, so the graph and the memory it holds stay one batch deep.
     /// The loss and the gradient with respect to the float32 masters, through a forward in `dtype`.
     /// The loss is multiplied by `lossScale` before the backward pass and both are divided by it after.
     private static func halfPrecisionLossAndGradient<Model: Module>(
@@ -784,6 +790,8 @@ public enum NFKMLXTrainer {
         gradients.flattened().allSatisfy { MLX.isFinite($0.1).all().item(Bool.self) }
     }
 
+    /// The mean loss and the mean gradients of `count` batches, each batch evaluated before the next
+    /// runs, so the graph and the memory it holds stay one batch deep.
     private static func averaged(over count: Int,
                                  _ batch: (Int) -> ([MLXArray], ModuleParameters)) -> (MLXArray, ModuleParameters) {
         var lossSum = MLXArray(Float(0))

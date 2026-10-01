@@ -89,8 +89,9 @@ Pure Apple frameworks, always available:
 ### Companion (link to enable)
 
 Bringing a heavier runtime is a matter of linking a package: InferKitMLX (60-plus MLX models across
-image, video, audio, and language, plus the bundled Stable Diffusion `NFKMLXBackend`) and
-InferKitFoundationModels (Apple's on-device LLM).
+image, video, audio, and language, plus the bundled Stable Diffusion `NFKMLXBackend`),
+InferKitFoundationModels (Apple's on-device LLM), and InferKitAppleSwift (Apple's Swift-only speech,
+document, lens-smudge, and translation APIs).
 
 ### Brought by you
 
@@ -157,6 +158,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 
 - ``NFKInferenceServer``
 - ``NFKRemoteInferKitBackend``
+- ``NFKInferenceServerError``
 
 ### Local runners
 

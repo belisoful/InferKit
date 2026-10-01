@@ -123,8 +123,8 @@ that downloads during onboarding and builds the model later.
 ### Fine-tune and reload
 
 The release's README reports that the base checkpoints sit near chance on a new decision task until
-they are fine-tuned. ``NFKMLXLaya/fineTune(examples:steps:learningRate:trainable:objective:observer:)`` trains on
-labeled examples and ``NFKMLXLaya/fineTune(episodes:steps:learningRate:trainable:lambda:objective:observer:)`` on conversations.
+they are fine-tuned. ``NFKMLXLaya/fineTune(examples:steps:learningRate:trainable:objective:precision:observer:)`` trains on
+labeled examples and ``NFKMLXLaya/fineTune(episodes:steps:learningRate:trainable:lambda:objective:precision:observer:)`` on conversations.
 Save the tuned network with `NFKMLXWeights.save`, then rebuild from the downloaded folder with the
 tuned file in place of the release's weights:
 
