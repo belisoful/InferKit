@@ -59,6 +59,7 @@ extension NFKMLXSa2VANet {
         configuration.template = try NFKMLXSa2VATemplate.named(json["template"] as? String)
         configuration.visionRMSNorm = (vision["norm_type"] as? String) == "rms_norm"
         configuration.visionQueryKeyNormalization = (vision["qk_normalization"] as? NSNumber)?.boolValue ?? false
+        configuration.visionDropPathRate = vReal("drop_path_rate", 0)
         if let endToken = NFKMLXSa2VAProcessor.endToken(inDirectory: directory),
            let id = NFKMLXSa2VAProcessor.tokenId(endToken, inDirectory: directory) {
             configuration.endTokenId = id

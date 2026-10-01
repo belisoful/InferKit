@@ -87,6 +87,11 @@ public struct NFKMLXSa2VAConfiguration: Sendable {
     /// Per-token RMS normalization of the queries and keys across all heads (`qk_normalization`,
     /// InternViT-6B).
     public var visionQueryKeyNormalization: Bool = false
+    /// The release's stochastic-depth rate at the last vision block (`drop_path_rate`): 0.1 on the
+    /// InternVL3 releases, 0 on the others. ``NFKMLXSa2VANet/visionDropPath`` applies it.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var visionDropPathRate: Float = 0
 
     // Projector + fusion
     public var downsampleRatio: Double
@@ -232,7 +237,13 @@ final class NFKSa2VAEncoderLayer: Module {
     @ParameterInfo(key: "ls1") var layerScale1: MLXArray
     @ParameterInfo(key: "ls2") var layerScale2: MLXArray
 
-    init(_ c: NFKMLXSa2VAConfiguration) {
+    let dropPath: NFKSa2VADropPath
+    /// This block's share of the drop-path rate: the reference's `linspace(0, rate, layers)` entry.
+    let depth: Float
+
+    init(_ c: NFKMLXSa2VAConfiguration, dropPath: NFKSa2VADropPath = NFKSa2VADropPath(), depth: Float = 0) {
+        self.dropPath = dropPath
+        self.depth = depth
         func norm() -> UnaryLayer {
             c.visionRMSNorm ? RMSNorm(dimensions: c.visionHiddenSize, eps: c.visionLayerNormEps)
                 : LayerNorm(dimensions: c.visionHiddenSize, eps: c.visionLayerNormEps)
@@ -247,9 +258,26 @@ final class NFKSa2VAEncoderLayer: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var h = x + attention(norm1(x)) * layerScale1
-        h = h + mlp(norm2(h)) * layerScale2
+        let rate = dropPath.rate * depth
+        var h = x + NFKSa2VADropPath.apply(attention(norm1(x)) * layerScale1, rate: rate, active: training)
+        h = h + NFKSa2VADropPath.apply(mlp(norm2(h)) * layerScale2, rate: rate, active: training)
         return h
+    }
+}
+
+/// The vision tower's stochastic-depth rate, shared by its blocks so one setting reaches them all.
+final class NFKSa2VADropPath {
+    var rate: Float = 0
+
+    /// timm's `DropPath`: `x` with each tile's whole branch zeroed at `rate` and the kept ones scaled by
+    /// `1 / (1 − rate)`, while `active`; `x` itself otherwise.
+    static func apply(_ x: MLXArray, rate: Float, active: Bool) -> MLXArray {
+        guard active, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        let shape = [x.dim(0)] + [Int](repeating: 1, count: x.ndim - 1)
+        return x * MLXRandom.bernoulli(MLXArray(keep), shape).asType(x.dtype) / keep
     }
 }
 
@@ -258,6 +286,12 @@ final class NFKSa2VAEncoderLayer: Module {
 public final class NFKMLXSa2VAVisionNet: Module {
     @ModuleInfo(key: "embeddings") var embeddings: NFKSa2VAVisionEmbeddings
     @ModuleInfo(key: "encoder") var encoder: NFKSa2VAVisionEncoder
+
+    /// The stochastic-depth rate at the last block while the tower trains; 0 by default.
+    var dropPath: Float {
+        get { encoder.dropPath.rate }
+        set { encoder.dropPath.rate = newValue }
+    }
 
     init(_ c: NFKMLXSa2VAConfiguration) {
         _embeddings.wrappedValue = NFKSa2VAVisionEmbeddings(c)
@@ -275,8 +309,15 @@ public final class NFKMLXSa2VAVisionNet: Module {
 final class NFKSa2VAVisionEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [NFKSa2VAEncoderLayer]
 
+    let dropPath: NFKSa2VADropPath
+
     init(_ c: NFKMLXSa2VAConfiguration) {
-        _layers.wrappedValue = (0 ..< c.visionLayers).map { _ in NFKSa2VAEncoderLayer(c) }
+        let shared = NFKSa2VADropPath()
+        let last = Float(max(c.visionLayers - 1, 1))
+        dropPath = shared
+        _layers.wrappedValue = (0 ..< c.visionLayers).map {
+            NFKSa2VAEncoderLayer(c, dropPath: shared, depth: Float($0) / last)
+        }
         super.init()
     }
 
@@ -368,6 +409,17 @@ public final class NFKMLXSa2VANet: Module {
 
     public let configuration: NFKMLXSa2VAConfiguration
 
+    /// The vision tower's stochastic-depth rate at its last block while the network trains, rising
+    /// linearly from 0 at the first; 0 by default. Set it to the configuration's
+    /// ``NFKMLXSa2VAConfiguration/visionDropPathRate`` to train as the reference does: the reference
+    /// freezes the tower without leaving training mode, so its drop path runs during a fine-tune.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var visionDropPath: Float {
+        get { vision.dropPath }
+        set { vision.dropPath = newValue }
+    }
+
     public init(_ c: NFKMLXSa2VAConfiguration) {
         configuration = c
         _vision.wrappedValue = NFKMLXSa2VAVisionNet(c)
@@ -377,6 +429,7 @@ public final class NFKMLXSa2VANet: Module {
             inputSize: c.decoderHiddenSize, outputSize: c.groundingConfiguration.hiddenDimensions)
         _grounding.wrappedValue = NFKSa2VAGroundingEncoder(c.groundingConfiguration)
         super.init()
+        train(false)
     }
 
     /// The projected vision tokens for a batch of tiles, `[tiles, tokensPerTile, decoderHidden]`.

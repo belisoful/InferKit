@@ -875,6 +875,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   weight loaders, so a network built with `makeNet` and run without one of them normalized each input
   by its own statistics. Each now switches when built, as the rest of the package does.
 
+#### Sa2VA trains with its release's vision drop path on request
+
+- The InternVL3 releases set the InternViT tower's `drop_path_rate` to 0.1, and the reference runs it
+  during a fine-tune: xtuner freezes the tower without leaving training mode, and mmengine's loop calls
+  `model.train()`.
+- `NFKMLXSa2VAConfiguration.visionDropPathRate` reads the rate from `config.json`.
+  `NFKMLXSa2VANet.visionDropPath`, 0 by default, applies it while the network trains, rising linearly
+  from 0 at the first block to the rate at the last, and drops a tile's whole residual branch.
+- `NFKMLXSa2VANet` is built in evaluation mode, so a fine-tune restores evaluation afterward and
+  inference never drops.
+
 #### SegFormer and LaMa backends normalize with their released statistics
 
 - `NFKMLXSegFormer` and `NFKMLXLaMa` built their networks in training mode, so the decode head's

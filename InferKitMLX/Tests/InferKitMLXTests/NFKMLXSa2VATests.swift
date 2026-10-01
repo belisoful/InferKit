@@ -116,6 +116,67 @@ final class NFKMLXSa2VATests: XCTestCase {
         }
     }
 
+    private static func tinyConfiguration(visionLayers: Int) -> NFKMLXSa2VAConfiguration {
+        NFKMLXSa2VAConfiguration(
+            visionHiddenSize: 64, visionLayers: visionLayers, visionHeads: 4, visionIntermediateSize: 96,
+            patchSize: 14, imageSize: 28, decoderHiddenSize: 32,
+            decoder: .init(hiddenSize: 32, layerCount: 1, headCount: 2, keyValueHeadCount: 1, intermediateSize: 32,
+                           vocabularySize: 16, ropeTheta: 10_000, rmsEpsilon: 1e-6, tiesWordEmbeddings: false,
+                           attentionBias: true),
+            imageContextTokenId: 1, segmentationTokenId: 2)
+    }
+
+    func testTheVisionDropPathRisesAcrossTheBlocksAndRunsOnlyInTraining() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let net = NFKMLXSa2VANet(Self.tinyConfiguration(visionLayers: 3))
+        XCTAssertFalse(net.training, "built in evaluation mode")
+        XCTAssertEqual(net.visionDropPath, 0)
+        XCTAssertEqual(net.vision.encoder.layers.map(\.depth), [0, 0.5, 1], "torch.linspace(0, rate, layers)")
+        let pixels = MLXRandom.normal([4, 3, 28, 28])
+        let plain = net.imageFeatures(pixelValues: pixels)
+        net.visionDropPath = 0.5
+        XCTAssertEqual(net.vision.encoder.layers.map(\.dropPath.rate), [0.5, 0.5, 0.5])
+        XCTAssertEqual(abs(net.imageFeatures(pixelValues: pixels) - plain).max().item(Float.self), 0,
+                       "evaluation never drops")
+        net.train(true)
+        XCTAssertGreaterThan(abs(net.imageFeatures(pixelValues: pixels) - plain).max().item(Float.self), 0)
+        net.visionDropPath = 0
+        XCTAssertEqual(abs(net.imageFeatures(pixelValues: pixels) - plain).max().item(Float.self), 0,
+                       "a zero rate trains without dropping")
+    }
+
+    func testTheDropPathDropsEachTilesWholeBranch() throws {
+        try requireMLXRuntime()
+        NFKMLXRandom.seed(20_260_930)
+        let branch = MLXArray.ones([64, 5, 4])
+        let dropped = NFKSa2VADropPath.apply(branch, rate: 0.5, active: true)
+        let perTile = dropped.reshaped([64, -1])
+        XCTAssertEqual(perTile.min(axis: 1).asArray(Float.self), perTile.max(axis: 1).asArray(Float.self),
+                       "a tile is dropped or kept whole")
+        let values = Set(perTile[0..., 0].asArray(Float.self))
+        XCTAssertEqual(values, [0, 2], "the kept branches scale by 1 / (1 − rate)")
+        XCTAssertEqual(NFKSa2VADropPath.apply(branch, rate: 0.5, active: false).asArray(Float.self), branch.asArray(Float.self))
+    }
+
+    func testTheConfigurationReadsTheReleasesDropPathRate() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("sa2va-drop-path-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func configuration(_ vision: [String: Any]) throws -> NFKMLXSa2VAConfiguration {
+            let json: [String: Any] = [
+                "vision_config": vision,
+                "llm_config": ["model_type": "qwen2", "hidden_size": 32, "num_hidden_layers": 1,
+                               "num_attention_heads": 2, "num_key_value_heads": 1, "intermediate_size": 32,
+                               "vocab_size": 16]]
+            try JSONSerialization.data(withJSONObject: json).write(to: directory.appendingPathComponent("config.json"))
+            return try NFKMLXSa2VANet.configuration(fromDirectory: directory)
+        }
+        XCTAssertEqual(try configuration(["drop_path_rate": 0.1]).visionDropPathRate, 0.1)
+        XCTAssertEqual(try configuration([:]).visionDropPathRate, 0)
+    }
+
     /// PARITY: the InternViT tower and the pixel-shuffle projector against the recorded oracle. The
     /// pixel values are the reference's own, so the resize is not a variable.
     func testVisionAndProjectorParity() throws {
