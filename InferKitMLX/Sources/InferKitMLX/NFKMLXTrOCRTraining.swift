@@ -99,7 +99,9 @@ extension NFKMLXTrOCR {
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
     ///
-    /// A run is multi-second per step for the large releases; call it off the render thread.
+    /// The run applies ``NFKMLXTrOCRNet/dropout``, none by default; `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`
+    /// reads the release's rates. A run is multi-second per step for the large releases; call it off the
+    /// render thread.
     ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult

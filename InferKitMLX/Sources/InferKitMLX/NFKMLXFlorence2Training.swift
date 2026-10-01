@@ -71,7 +71,8 @@ extension NFKMLXFlorence2 {
     ///   - observer: receives each step and can end the run early.
     ///
     /// Call `NFKMLXLoRA.merge(into:)` before ``save(_:toDirectoryURL:release:)``, so the result is one
-    /// checkpoint the ordinary factory reads.
+    /// checkpoint the ordinary factory reads. The run applies ``NFKMLXFlorence2Net/dropout``, none by
+    /// default; `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` reads the release's rates.
     ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult

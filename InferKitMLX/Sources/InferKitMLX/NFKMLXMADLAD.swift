@@ -80,9 +80,11 @@ final class NFKT5CachedAttention: Module {
     @ModuleInfo(key: "o") var o: Linear
     @ModuleInfo(key: "relative_attention_bias") var relativeAttentionBias: Embedding?
     let configuration: NFKMLXT5Configuration
+    let rates: NFKDropoutRates
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates) {
         configuration = c
+        self.rates = rates
         _q.wrappedValue = Linear(c.dModel, c.inner, bias: false)
         _k.wrappedValue = Linear(c.dModel, c.inner, bias: false)
         _v.wrappedValue = Linear(c.dModel, c.inner, bias: false)
@@ -110,7 +112,7 @@ final class NFKT5CachedAttention: Module {
         }
         cachedKeys = keys
         cachedValues = values
-        return merge(MLXFast.scaledDotProductAttention(queries: split(q(x)), keys: keys, values: values, scale: 1, mask: bias))
+        return merge(attend(split(q(x)), keys, values, mask: bias))
     }
 
     /// Cross-attention to `memory`, whose projections are computed once per cache.
@@ -119,7 +121,12 @@ final class NFKT5CachedAttention: Module {
             cachedKeys = split(k(memory))
             cachedValues = split(v(memory))
         }
-        return merge(MLXFast.scaledDotProductAttention(queries: split(q(x)), keys: cachedKeys!, values: cachedValues!, scale: 1, mask: nil))
+        return merge(attend(split(q(x)), cachedKeys!, cachedValues!, mask: nil))
+    }
+
+    private func attend(_ queries: MLXArray, _ keys: MLXArray, _ values: MLXArray, mask: MLXArray?) -> MLXArray {
+        NFKDropout.attention(queries: queries, keys: keys, values: values, scale: 1, mask: mask,
+                             rate: rates.values.attentionDropout, active: training)
     }
 
     /// The causal bias `[1, heads, T, offset + T]` for queries at `offset ..< offset + T` over every
@@ -160,8 +167,8 @@ final class NFKT5DecoderSelfAttentionLayer: Module {
     @ModuleInfo(key: "SelfAttention") var attention: NFKT5CachedAttention
     @ModuleInfo(key: "layer_norm") var layerNorm: NFKT5LayerNorm
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
-        _attention.wrappedValue = NFKT5CachedAttention(c, hasBias: hasBias)
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates) {
+        _attention.wrappedValue = NFKT5CachedAttention(c, hasBias: hasBias, rates: rates)
         _layerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 }
@@ -170,8 +177,8 @@ final class NFKT5CrossAttentionLayer: Module {
     @ModuleInfo(key: "EncDecAttention") var attention: NFKT5CachedAttention
     @ModuleInfo(key: "layer_norm") var layerNorm: NFKT5LayerNorm
 
-    init(_ c: NFKMLXT5Configuration) {
-        _attention.wrappedValue = NFKT5CachedAttention(c, hasBias: false)
+    init(_ c: NFKMLXT5Configuration, rates: NFKDropoutRates) {
+        _attention.wrappedValue = NFKT5CachedAttention(c, hasBias: false, rates: rates)
         _layerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 }
@@ -179,10 +186,12 @@ final class NFKT5CrossAttentionLayer: Module {
 /// A decoder block: `layer = [self-attention, cross-attention, feed-forward]`.
 final class NFKT5DecoderBlock: Module {
     @ModuleInfo(key: "layer") var layer: [Module]
+    let rates: NFKDropoutRates
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
-        _layer.wrappedValue = [NFKT5DecoderSelfAttentionLayer(c, hasBias: hasBias),
-                               NFKT5CrossAttentionLayer(c), NFKT5FeedForwardLayer(c)]
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates) {
+        self.rates = rates
+        _layer.wrappedValue = [NFKT5DecoderSelfAttentionLayer(c, hasBias: hasBias, rates: rates),
+                               NFKT5CrossAttentionLayer(c, rates: rates), NFKT5FeedForwardLayer(c, rates: rates)]
     }
 
     var selfAttention: NFKT5DecoderSelfAttentionLayer { layer[0] as! NFKT5DecoderSelfAttentionLayer }
@@ -190,11 +199,12 @@ final class NFKT5DecoderBlock: Module {
     var feedForward: NFKT5FeedForwardLayer { layer[2] as! NFKT5FeedForwardLayer }
 
     func callAsFunction(_ x: MLXArray, memory: MLXArray, bias: MLXArray, cache: NFKMLXSeq2SeqCache, index: Int) -> MLXArray {
+        func dropped(_ x: MLXArray) -> MLXArray { NFKDropout.apply(x, rate: rates.values.dropout, active: training) }
         var h = x
-        h = h + selfAttention.attention(selfAttention.layerNorm(h), bias: bias,
-                                        cachedKeys: &cache.selfKeys[index], cachedValues: &cache.selfValues[index])
-        h = h + crossAttention.attention(crossAttention.layerNorm(h), memory: memory,
-                                         cachedKeys: &cache.crossKeys[index], cachedValues: &cache.crossValues[index])
+        h = h + dropped(selfAttention.attention(selfAttention.layerNorm(h), bias: bias,
+                                                cachedKeys: &cache.selfKeys[index], cachedValues: &cache.selfValues[index]))
+        h = h + dropped(crossAttention.attention(crossAttention.layerNorm(h), memory: memory,
+                                                 cachedKeys: &cache.crossKeys[index], cachedValues: &cache.crossValues[index]))
         return feedForward(h)
     }
 }
@@ -203,8 +213,8 @@ final class NFKT5DecoderStack: Module {
     @ModuleInfo(key: "block") var block: [NFKT5DecoderBlock]
     @ModuleInfo(key: "final_layer_norm") var finalLayerNorm: NFKT5LayerNorm
 
-    init(_ c: NFKMLXT5Configuration, layers: Int) {
-        _block.wrappedValue = (0 ..< layers).map { NFKT5DecoderBlock(c, hasBias: $0 == 0) }
+    init(_ c: NFKMLXT5Configuration, layers: Int, rates: NFKDropoutRates) {
+        _block.wrappedValue = (0 ..< layers).map { NFKT5DecoderBlock(c, hasBias: $0 == 0, rates: rates) }
         _finalLayerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 }
@@ -226,38 +236,53 @@ public final class NFKMLXT5Seq2SeqNet: Module {
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
     public let configuration: NFKMLXMADLADConfiguration
+    private let rates = NFKDropoutRates()
+
+    /// The dropout the network applies while it trains; none by default. T5 applies one rate,
+    /// `dropout_rate`, at the positions ``NFKMLXSeq2SeqDropout`` names `dropout`, `attentionDropout`,
+    /// and `activationDropout`, and after each stack's final norm; it has no layer drop. Set it to
+    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's rate.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXSeq2SeqDropout {
+        get { rates.values }
+        set { rates.values = newValue }
+    }
 
     public init(_ configuration: NFKMLXMADLADConfiguration) {
         self.configuration = configuration
         let c = configuration.encoder
         _shared.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.dModel)
-        _encoder.wrappedValue = NFKT5Stack(c)
-        _decoder.wrappedValue = NFKT5DecoderStack(c, layers: configuration.decoderLayers)
+        _encoder.wrappedValue = NFKT5Stack(c, rates: rates)
+        _decoder.wrappedValue = NFKT5DecoderStack(c, layers: configuration.decoderLayers, rates: rates)
         if configuration.untiedHead {
             _lmHead.wrappedValue = Linear(c.dModel, c.vocabularySize, bias: false)
         }
         super.init()
+        // A module starts in training mode, which would apply the dropout at inference; the trainer
+        // switches training on for a run and restores this.
+        train(false)
     }
 
     /// Token ids `[B, S]` → the encoder output `[B, S, dModel]`.
     public func encode(_ tokens: MLXArray) -> MLXArray {
-        var hidden = shared(tokens)
+        var hidden = NFKDropout.apply(shared(tokens), rate: dropout.dropout, active: encoder.training)
         let bias = encoder.block[0].selfAttention.attention.computeBias(tokens.dim(1))
         for block in encoder.block {
             hidden = block(hidden, bias: bias)
         }
-        return encoder.finalLayerNorm(hidden)
+        return NFKDropout.apply(encoder.finalLayerNorm(hidden), rate: dropout.dropout, active: encoder.training)
     }
 
     /// Decoder ids `[B, T]` against `memory` → logits `[B, T, vocabulary]`, extending `cache`.
     public func decode(_ tokens: MLXArray, memory: MLXArray, cache: NFKMLXSeq2SeqCache) -> MLXArray {
         let offset = cache.length
-        var hidden = shared(tokens)
+        var hidden = NFKDropout.apply(shared(tokens), rate: dropout.dropout, active: decoder.training)
         let bias = decoder.block[0].selfAttention.attention.causalBias(queryLength: tokens.dim(1), offset: offset)
         for (index, block) in decoder.block.enumerated() {
             hidden = block(hidden, memory: memory, bias: bias, cache: cache, index: index)
         }
-        hidden = decoder.finalLayerNorm(hidden)
+        hidden = NFKDropout.apply(decoder.finalLayerNorm(hidden), rate: dropout.dropout, active: decoder.training)
         if let lmHead {
             return lmHead(hidden)
         }

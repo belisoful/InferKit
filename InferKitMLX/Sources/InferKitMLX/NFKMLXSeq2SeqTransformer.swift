@@ -184,6 +184,114 @@ public struct NFKMLXSeq2SeqConfiguration: Sendable {
     var headDim: Int { dModel / heads }
 }
 
+// MARK: - Dropout
+
+/// The dropout a BART-family or T5 network applies while it trains, at the positions transformers
+/// applies each rate. Every rate is zero by default, so a network computes deterministically until a
+/// caller sets ``NFKMLXSeq2SeqNet/dropout``; in evaluation mode no rate applies.
+///
+/// - `dropout`: the embeddings, and each attention and feed-forward output before its residual add.
+/// - `attentionDropout`: the attention probabilities.
+/// - `activationDropout`: the feed-forward's activation.
+/// - `encoderLayerDrop`, `decoderLayerDrop`: the chance a whole layer is skipped on one forward pass.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKMLXSeq2SeqDropout: Sendable, Equatable {
+    public var dropout: Float
+    public var attentionDropout: Float
+    public var activationDropout: Float
+    public var encoderLayerDrop: Float
+    public var decoderLayerDrop: Float
+
+    public init(dropout: Float = 0, attentionDropout: Float = 0, activationDropout: Float = 0,
+                encoderLayerDrop: Float = 0, decoderLayerDrop: Float = 0) {
+        self.dropout = dropout
+        self.attentionDropout = attentionDropout
+        self.activationDropout = activationDropout
+        self.encoderLayerDrop = encoderLayerDrop
+        self.decoderLayerDrop = decoderLayerDrop
+    }
+
+    /// No dropout anywhere.
+    public static let none = NFKMLXSeq2SeqDropout()
+
+    /// The rates a transformers `config.json` declares: `dropout`, `attention_dropout`,
+    /// `activation_dropout`, `encoder_layerdrop`, and `decoder_layerdrop`, each zero when absent. T5's
+    /// single `dropout_rate` fills the first three, the positions T5 applies it at.
+    public init(huggingFaceConfig json: [String: Any]) {
+        func rate(_ key: String) -> Float { (json[key] as? NSNumber)?.floatValue ?? 0 }
+        if let t5 = (json["dropout_rate"] as? NSNumber)?.floatValue {
+            self.init(dropout: t5, attentionDropout: t5, activationDropout: t5)
+            return
+        }
+        self.init(dropout: rate("dropout"), attentionDropout: rate("attention_dropout"),
+                  activationDropout: rate("activation_dropout"), encoderLayerDrop: rate("encoder_layerdrop"),
+                  decoderLayerDrop: rate("decoder_layerdrop"))
+    }
+
+    /// The rates a release directory's `config.json` declares for its language model: the top level
+    /// for a translator, `text_config` for Florence-2, and `decoder` for TrOCR.
+    public init(releaseDirectoryURL directory: URL) throws {
+        let url = directory.appendingPathComponent("config.json")
+        guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not a JSON object")
+        }
+        let language = (json["text_config"] as? [String: Any]) ?? (json["decoder"] as? [String: Any]) ?? json
+        self.init(huggingFaceConfig: language)
+    }
+}
+
+/// The rates every module of one network reads when it runs, so setting them once reaches them all.
+final class NFKDropoutRates {
+    var values: NFKMLXSeq2SeqDropout
+    init(_ values: NFKMLXSeq2SeqDropout = .none) { self.values = values }
+}
+
+enum NFKDropout {
+    /// `x` with each element zeroed at `rate` and the survivors scaled by `1 / (1 − rate)`, while
+    /// `active`; `x` itself otherwise.
+    static func apply(_ x: MLXArray, rate: Float, active: Bool) -> MLXArray {
+        guard active, rate > 0 else {
+            return x
+        }
+        let keep = 1 - rate
+        return x * MLXRandom.bernoulli(MLXArray(keep), x.shape).asType(x.dtype) / keep
+    }
+
+    /// `layer(x)`, or `x` itself with probability `rate` while `active`. The layer runs either way,
+    /// so a skipped layer contributes a zero gradient instead of a host-side branch.
+    static func layer(_ x: MLXArray, rate: Float, active: Bool, _ layer: (MLXArray) -> MLXArray) -> MLXArray {
+        let output = layer(x)
+        guard active, rate > 0 else {
+            return output
+        }
+        return MLX.where(MLXRandom.uniform(low: 0, high: 1, [Int]()) .< rate, x, output)
+    }
+
+    /// Scaled dot-product attention with dropout on the probabilities while `active`; the fused
+    /// kernel when no dropout applies.
+    static func attention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float, mask: MLXArray?,
+                          rate: Float, active: Bool) -> MLXArray {
+        guard active, rate > 0 else {
+            return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values,
+                                                     scale: scale, mask: mask)
+        }
+        return explicitAttention(queries: queries, keys: keys, values: values, scale: scale, mask: mask) {
+            apply($0, rate: rate, active: true)
+        }
+    }
+
+    /// The attention written out, with `probabilities` applied to the softmax.
+    static func explicitAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float, mask: MLXArray?,
+                                  probabilities: (MLXArray) -> MLXArray = { $0 }) -> MLXArray {
+        var scores = queries.matmul(keys.transposed(0, 1, 3, 2)) * scale
+        if let mask {
+            scores = scores + mask
+        }
+        return probabilities(softmax(scores, axis: -1, precise: true)).matmul(values)
+    }
+}
+
 // MARK: - Cache
 
 /// The decoder's per-step state: each block's self-attention keys and values so far, and the
@@ -232,10 +340,12 @@ final class NFKSeq2SeqAttention: Module {
     @ModuleInfo(key: "out_proj") var outProj: Linear
     let heads: Int
     let headDim: Int
+    let rates: NFKDropoutRates
 
-    init(_ c: NFKMLXSeq2SeqConfiguration, keyValueWidth: Int? = nil) {
+    init(_ c: NFKMLXSeq2SeqConfiguration, rates: NFKDropoutRates, keyValueWidth: Int? = nil) {
         heads = c.heads
         headDim = c.headDim
+        self.rates = rates
         _qProj.wrappedValue = Linear(c.dModel, c.dModel)
         _kProj.wrappedValue = Linear(keyValueWidth ?? c.dModel, c.dModel)
         _vProj.wrappedValue = Linear(keyValueWidth ?? c.dModel, c.dModel)
@@ -269,8 +379,9 @@ final class NFKSeq2SeqAttention: Module {
     }
 
     private func attend(_ queries: MLXArray, _ keys: MLXArray, _ values: MLXArray, mask: MLXArray?) -> MLXArray {
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: 1 / sqrt(Float(headDim)), mask: mask)
+        let attended = NFKDropout.attention(
+            queries: queries, keys: keys, values: values, scale: 1 / sqrt(Float(headDim)), mask: mask,
+            rate: rates.values.attentionDropout, active: training)
         return outProj(attended.transposed(0, 2, 1, 3).reshaped([queries.dim(0), queries.dim(2), heads * headDim]))
     }
 }
@@ -282,10 +393,12 @@ final class NFKSeq2SeqEncoderLayer: Module {
     @ModuleInfo(key: "fc2") var fc2: Linear
     @ModuleInfo(key: "final_layer_norm") var finalLayerNorm: LayerNorm
     let configuration: NFKMLXSeq2SeqConfiguration
+    let rates: NFKDropoutRates
 
-    init(_ c: NFKMLXSeq2SeqConfiguration) {
+    init(_ c: NFKMLXSeq2SeqConfiguration, rates: NFKDropoutRates) {
         configuration = c
-        _selfAttn.wrappedValue = NFKSeq2SeqAttention(c)
+        self.rates = rates
+        _selfAttn.wrappedValue = NFKSeq2SeqAttention(c, rates: rates)
         _selfAttnLayerNorm.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps)
         _fc1.wrappedValue = Linear(c.dModel, c.encoderFFDim)
         _fc2.wrappedValue = Linear(c.encoderFFDim, c.dModel)
@@ -295,15 +408,28 @@ final class NFKSeq2SeqEncoderLayer: Module {
     func callAsFunction(_ x: MLXArray, mask: MLXArray?) -> MLXArray {
         var none: MLXArray?
         var noneValues: MLXArray?
+        func attend(_ h: MLXArray) -> MLXArray {
+            dropped(selfAttn(h, mask: mask, cachedKeys: &none, cachedValues: &noneValues))
+        }
         var h = x
         if configuration.normalizeBefore {
-            h = h + selfAttn(selfAttnLayerNorm(h), mask: mask, cachedKeys: &none, cachedValues: &noneValues)
-            h = h + fc2(configuration.activate(fc1(finalLayerNorm(h))))
+            h = h + attend(selfAttnLayerNorm(h))
+            h = h + feedForward(finalLayerNorm(h))
         } else {
-            h = selfAttnLayerNorm(h + selfAttn(h, mask: mask, cachedKeys: &none, cachedValues: &noneValues))
-            h = finalLayerNorm(h + fc2(configuration.activate(fc1(h))))
+            h = selfAttnLayerNorm(h + attend(h))
+            h = finalLayerNorm(h + feedForward(h))
         }
         return h
+    }
+
+    private func dropped(_ x: MLXArray) -> MLXArray {
+        NFKDropout.apply(x, rate: rates.values.dropout, active: training)
+    }
+
+    private func feedForward(_ x: MLXArray) -> MLXArray {
+        let activated = NFKDropout.apply(configuration.activate(fc1(x)), rate: rates.values.activationDropout,
+                                         active: training)
+        return dropped(fc2(activated))
     }
 }
 
@@ -316,12 +442,14 @@ final class NFKSeq2SeqDecoderLayer: Module {
     @ModuleInfo(key: "fc2") var fc2: Linear
     @ModuleInfo(key: "final_layer_norm") var finalLayerNorm: LayerNorm
     let configuration: NFKMLXSeq2SeqConfiguration
+    let rates: NFKDropoutRates
 
-    init(_ c: NFKMLXSeq2SeqConfiguration) {
+    init(_ c: NFKMLXSeq2SeqConfiguration, rates: NFKDropoutRates) {
         configuration = c
-        _selfAttn.wrappedValue = NFKSeq2SeqAttention(c)
+        self.rates = rates
+        _selfAttn.wrappedValue = NFKSeq2SeqAttention(c, rates: rates)
         _selfAttnLayerNorm.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps)
-        _encoderAttn.wrappedValue = NFKSeq2SeqAttention(c, keyValueWidth: c.crossAttentionWidth)
+        _encoderAttn.wrappedValue = NFKSeq2SeqAttention(c, rates: rates, keyValueWidth: c.crossAttentionWidth)
         _encoderAttnLayerNorm.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps)
         _fc1.wrappedValue = Linear(c.dModel, c.decoderFFDim)
         _fc2.wrappedValue = Linear(c.decoderFFDim, c.dModel)
@@ -329,17 +457,33 @@ final class NFKSeq2SeqDecoderLayer: Module {
     }
 
     func callAsFunction(_ x: MLXArray, memory: MLXArray, mask: MLXArray?, cache: NFKMLXSeq2SeqCache, layer: Int) -> MLXArray {
+        func attendSelf(_ h: MLXArray) -> MLXArray {
+            dropped(selfAttn(h, mask: mask, cachedKeys: &cache.selfKeys[layer], cachedValues: &cache.selfValues[layer]))
+        }
+        func attendMemory(_ h: MLXArray) -> MLXArray {
+            dropped(encoderAttn(h, memory: memory, cachedKeys: &cache.crossKeys[layer], cachedValues: &cache.crossValues[layer]))
+        }
         var h = x
         if configuration.normalizeBefore {
-            h = h + selfAttn(selfAttnLayerNorm(h), mask: mask, cachedKeys: &cache.selfKeys[layer], cachedValues: &cache.selfValues[layer])
-            h = h + encoderAttn(encoderAttnLayerNorm(h), memory: memory, cachedKeys: &cache.crossKeys[layer], cachedValues: &cache.crossValues[layer])
-            h = h + fc2(configuration.activate(fc1(finalLayerNorm(h))))
+            h = h + attendSelf(selfAttnLayerNorm(h))
+            h = h + attendMemory(encoderAttnLayerNorm(h))
+            h = h + feedForward(finalLayerNorm(h))
         } else {
-            h = selfAttnLayerNorm(h + selfAttn(h, mask: mask, cachedKeys: &cache.selfKeys[layer], cachedValues: &cache.selfValues[layer]))
-            h = encoderAttnLayerNorm(h + encoderAttn(h, memory: memory, cachedKeys: &cache.crossKeys[layer], cachedValues: &cache.crossValues[layer]))
-            h = finalLayerNorm(h + fc2(configuration.activate(fc1(h))))
+            h = selfAttnLayerNorm(h + attendSelf(h))
+            h = encoderAttnLayerNorm(h + attendMemory(h))
+            h = finalLayerNorm(h + feedForward(h))
         }
         return h
+    }
+
+    private func dropped(_ x: MLXArray) -> MLXArray {
+        NFKDropout.apply(x, rate: rates.values.dropout, active: training)
+    }
+
+    private func feedForward(_ x: MLXArray) -> MLXArray {
+        let activated = NFKDropout.apply(configuration.activate(fc1(x)), rate: rates.values.activationDropout,
+                                         active: training)
+        return dropped(fc2(activated))
     }
 }
 
@@ -350,8 +494,8 @@ final class NFKSeq2SeqEncoder: Module {
     @ModuleInfo(key: "layer_norm") var layerNorm: LayerNorm?
     @ModuleInfo(key: "embed_positions") var embedPositions: Embedding?
 
-    init(_ c: NFKMLXSeq2SeqConfiguration) {
-        _layers.wrappedValue = (0 ..< c.encoderLayers).map { _ in NFKSeq2SeqEncoderLayer(c) }
+    init(_ c: NFKMLXSeq2SeqConfiguration, rates: NFKDropoutRates) {
+        _layers.wrappedValue = (0 ..< c.encoderLayers).map { _ in NFKSeq2SeqEncoderLayer(c, rates: rates) }
         if c.layerNormEmbedding { _layerNormEmbedding.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps) }
         if c.finalLayerNorm { _layerNorm.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps) }
         if c.positions == .learned { _embedPositions.wrappedValue = Embedding(embeddingCount: c.maxPositions + 2, dimensions: c.dModel) }
@@ -365,8 +509,8 @@ final class NFKSeq2SeqDecoder: Module {
     @ModuleInfo(key: "layer_norm") var layerNorm: LayerNorm?
     @ModuleInfo(key: "embed_positions") var embedPositions: Embedding?
 
-    init(_ c: NFKMLXSeq2SeqConfiguration) {
-        _layers.wrappedValue = (0 ..< c.decoderLayers).map { _ in NFKSeq2SeqDecoderLayer(c) }
+    init(_ c: NFKMLXSeq2SeqConfiguration, rates: NFKDropoutRates) {
+        _layers.wrappedValue = (0 ..< c.decoderLayers).map { _ in NFKSeq2SeqDecoderLayer(c, rates: rates) }
         if c.layerNormEmbedding { _layerNormEmbedding.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps) }
         if c.finalLayerNorm { _layerNorm.wrappedValue = LayerNorm(dimensions: c.dModel, eps: c.layerNormEps) }
         if c.positions == .learned { _embedPositions.wrappedValue = Embedding(embeddingCount: c.maxPositions + 2, dimensions: c.dModel) }
@@ -397,14 +541,26 @@ public final class NFKMLXSeq2SeqNet: Module {
     public let configuration: NFKMLXSeq2SeqConfiguration
     // Held behind a plain class so the module's parameter walk does not count the table as a weight.
     private let sinusoids: NFKSeq2SeqSinusoids?
+    private let rates = NFKDropoutRates()
+
+    /// The dropout the network applies while it trains; none by default. Set it to
+    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's rates. A module in
+    /// evaluation mode applies none, and the trainer evaluates a wholly frozen subtree, so under LoRA
+    /// the frozen encoder runs without its dropout.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXSeq2SeqDropout {
+        get { rates.values }
+        set { rates.values = newValue }
+    }
 
     public init(_ configuration: NFKMLXSeq2SeqConfiguration) {
         self.configuration = configuration
         _shared.wrappedValue = Embedding(embeddingCount: configuration.vocabularySize, dimensions: configuration.dModel)
         if configuration.encoderLayers > 0 {
-            _encoder.wrappedValue = NFKSeq2SeqEncoder(configuration)
+            _encoder.wrappedValue = NFKSeq2SeqEncoder(configuration, rates: rates)
         }
-        _decoder.wrappedValue = NFKSeq2SeqDecoder(configuration)
+        _decoder.wrappedValue = NFKSeq2SeqDecoder(configuration, rates: rates)
         if configuration.untiedOutputProjection {
             _lmHead.wrappedValue = Linear(configuration.dModel, configuration.vocabularySize, bias: false)
         }
@@ -422,6 +578,9 @@ public final class NFKMLXSeq2SeqNet: Module {
             sinusoids = nil
         }
         super.init()
+        // A module starts in training mode, which would apply the dropout at inference; the trainer
+        // switches training on for a run and restores this.
+        train(false)
     }
 
     /// Marian's table: `pos / 10000^(2i/d)`, sines in the first half and cosines in the second.
@@ -495,7 +654,10 @@ public final class NFKMLXSeq2SeqNet: Module {
         }
         var h = embeddings + positions(length: embeddings.dim(1), offset: 0, table: encoder.embedPositions)
         if let norm = encoder.layerNormEmbedding { h = norm(h) }
-        for layer in encoder.layers { h = layer(h, mask: nil) }
+        h = NFKDropout.apply(h, rate: dropout.dropout, active: encoder.training)
+        for layer in encoder.layers {
+            h = NFKDropout.layer(h, rate: dropout.encoderLayerDrop, active: encoder.training) { layer($0, mask: nil) }
+        }
         if let norm = encoder.layerNorm { h = norm(h) }
         return h
     }
@@ -511,9 +673,12 @@ public final class NFKMLXSeq2SeqNet: Module {
         let length = tokens.dim(1)
         var h = shared(tokens) * embedScale + positions(length: length, offset: offset, table: decoder.embedPositions)
         if let norm = decoder.layerNormEmbedding { h = norm(h) }
+        h = NFKDropout.apply(h, rate: dropout.dropout, active: decoder.training)
         let mask = Self.causalMask(length, offset: offset)
         for (index, layer) in decoder.layers.enumerated() {
-            h = layer(h, memory: memory, mask: mask, cache: cache, layer: index)
+            h = NFKDropout.layer(h, rate: dropout.decoderLayerDrop, active: decoder.training) {
+                layer($0, memory: memory, mask: mask, cache: cache, layer: index)
+            }
         }
         if let norm = decoder.layerNorm { h = norm(h) }
         var logits = lmHead.map { $0(h) } ?? h.matmul(shared.weight.transposed(1, 0))

@@ -831,6 +831,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A file that exists but cannot be read now throws `NFKMLXError.checkpointNotReadable`, naming the
   path and the system's reason. A missing file raises the reader's own error, as before.
 
+#### The translators, Florence-2, and TrOCR train with their releases' dropout on request
+
+- `NFKMLXSeq2SeqDropout` holds the five rates transformers applies to a BART-family network (dropout,
+  attention dropout, activation dropout, encoder and decoder layer drop), and
+  `init(releaseDirectoryURL:)` reads a release's `config.json`: the top level for a translator,
+  `text_config` for Florence-2, `decoder` for TrOCR, and T5's single `dropout_rate` for MADLAD-400.
+- `NFKMLXSeq2SeqNet`, `NFKMLXT5Seq2SeqNet`, `NFKMLXFlorence2Net`, and `NFKMLXTrOCRNet` gain a
+  `dropout` property, none by default, applied at the reference's positions while a module trains. Every
+  recipe runs deterministically until a caller sets it.
+- The four networks are built in evaluation mode, so a fine-tune restores evaluation afterward and
+  inference never drops.
+
 #### Every network with a BatchNorm is built in evaluation mode
 
 - BiSeNet, BiSeNetV2, MODNet, RF-DETR, RF-DETR segmentation, RVM, BiRefNet, U²-Net, IS-Net, Parakeet,

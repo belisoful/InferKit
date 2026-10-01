@@ -86,11 +86,14 @@ final class NFKT5Attention: Module {
     let heads: Int
     let keyDim: Int
     let configuration: NFKMLXT5Configuration
+    /// MADLAD-400's dropout while it trains; nil for a text encoder that only runs inference.
+    let rates: NFKDropoutRates?
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates? = nil) {
         heads = c.heads
         keyDim = c.keyDim
         configuration = c
+        self.rates = rates
         _q.wrappedValue = Linear(c.dModel, c.inner, bias: false)
         _k.wrappedValue = Linear(c.dModel, c.inner, bias: false)
         _v.wrappedValue = Linear(c.dModel, c.inner, bias: false)
@@ -107,8 +110,9 @@ final class NFKT5Attention: Module {
             t.reshaped([batch, length, heads, keyDim]).transposed(0, 2, 1, 3)
         }
         // T5 attention is UNSCALED; the relative-position bias enters as the additive mask.
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1, mask: bias)
+        let attended = NFKDropout.attention(
+            queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1, mask: bias,
+            rate: rates?.values.attentionDropout ?? 0, active: training)
         return o(attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * keyDim]))
     }
 
@@ -147,48 +151,61 @@ final class NFKT5FeedForward: Module {
     @ModuleInfo(key: "wi_0") var wi0: Linear
     @ModuleInfo(key: "wi_1") var wi1: Linear
     @ModuleInfo(key: "wo") var wo: Linear
+    let rates: NFKDropoutRates?
 
-    init(_ c: NFKMLXT5Configuration) {
+    init(_ c: NFKMLXT5Configuration, rates: NFKDropoutRates? = nil) {
+        self.rates = rates
         _wi0.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
         _wi1.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
         _wo.wrappedValue = Linear(c.ffDim, c.dModel, bias: false)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { wo(geluApproximate(wi0(x)) * wi1(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        wo(NFKDropout.apply(geluApproximate(wi0(x)) * wi1(x), rate: rates?.values.activationDropout ?? 0, active: training))
+    }
 }
 
 /// The self-attention sublayer: a T5LayerNorm, the attention, and a residual.
 final class NFKT5SelfAttentionLayer: Module {
     @ModuleInfo(key: "SelfAttention") var attention: NFKT5Attention
     @ModuleInfo(key: "layer_norm") var layerNorm: NFKT5LayerNorm
+    let rates: NFKDropoutRates?
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
-        _attention.wrappedValue = NFKT5Attention(c, hasBias: hasBias)
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates? = nil) {
+        self.rates = rates
+        _attention.wrappedValue = NFKT5Attention(c, hasBias: hasBias, rates: rates)
         _layerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 
-    func callAsFunction(_ x: MLXArray, bias: MLXArray) -> MLXArray { x + attention(layerNorm(x), bias: bias) }
+    func callAsFunction(_ x: MLXArray, bias: MLXArray) -> MLXArray {
+        x + NFKDropout.apply(attention(layerNorm(x), bias: bias), rate: rates?.values.dropout ?? 0, active: training)
+    }
 }
 
 /// The feed-forward sublayer: a T5LayerNorm, the gated FFN, and a residual.
 final class NFKT5FeedForwardLayer: Module {
     @ModuleInfo(key: "DenseReluDense") var ff: NFKT5FeedForward
     @ModuleInfo(key: "layer_norm") var layerNorm: NFKT5LayerNorm
+    let rates: NFKDropoutRates?
 
-    init(_ c: NFKMLXT5Configuration) {
-        _ff.wrappedValue = NFKT5FeedForward(c)
+    init(_ c: NFKMLXT5Configuration, rates: NFKDropoutRates? = nil) {
+        self.rates = rates
+        _ff.wrappedValue = NFKT5FeedForward(c, rates: rates)
         _layerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { x + ff(layerNorm(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        x + NFKDropout.apply(ff(layerNorm(x)), rate: rates?.values.dropout ?? 0, active: training)
+    }
 }
 
 /// One T5 block: the self-attention sublayer then the feed-forward sublayer.
 final class NFKT5Block: Module {
     @ModuleInfo(key: "layer") var layer: [Module]
 
-    init(_ c: NFKMLXT5Configuration, hasBias: Bool) {
-        _layer.wrappedValue = [NFKT5SelfAttentionLayer(c, hasBias: hasBias), NFKT5FeedForwardLayer(c)]
+    init(_ c: NFKMLXT5Configuration, hasBias: Bool, rates: NFKDropoutRates? = nil) {
+        _layer.wrappedValue = [NFKT5SelfAttentionLayer(c, hasBias: hasBias, rates: rates),
+                               NFKT5FeedForwardLayer(c, rates: rates)]
     }
 
     var selfAttention: NFKT5SelfAttentionLayer { layer[0] as! NFKT5SelfAttentionLayer }
@@ -203,8 +220,8 @@ final class NFKT5Stack: Module {
     @ModuleInfo(key: "block") var block: [NFKT5Block]
     @ModuleInfo(key: "final_layer_norm") var finalLayerNorm: NFKT5LayerNorm
 
-    init(_ c: NFKMLXT5Configuration) {
-        _block.wrappedValue = (0 ..< c.layers).map { NFKT5Block(c, hasBias: c.perLayerBias || $0 == 0) }
+    init(_ c: NFKMLXT5Configuration, rates: NFKDropoutRates? = nil) {
+        _block.wrappedValue = (0 ..< c.layers).map { NFKT5Block(c, hasBias: c.perLayerBias || $0 == 0, rates: rates) }
         _finalLayerNorm.wrappedValue = NFKT5LayerNorm(c.dModel, eps: c.layerNormEps)
     }
 }

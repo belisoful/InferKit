@@ -24,6 +24,16 @@ public final class NFKMLXFlorence2Net: Module {
     let textConfig: NFKMLXSeq2SeqConfiguration
     public let imageTokenId: Int
 
+    /// The language model's dropout while it trains; none by default. Set it to
+    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's `text_config` rates. The
+    /// vision tower's drop path is not reproduced.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXSeq2SeqDropout {
+        get { language.dropout }
+        set { language.dropout = newValue }
+    }
+
     /// Florence-2's BART-large text model.
     public static let bartLarge = NFKMLXSeq2SeqConfiguration(
         vocabularySize: 51289, dModel: 1024, encoderLayers: 12, decoderLayers: 12, heads: 16,
@@ -86,6 +96,9 @@ public final class NFKMLXFlorence2Net: Module {
                                                            maxPositionEmbeddings: visionConfig.maxPositionEmbeddings)
         _language.wrappedValue = NFKMLXSeq2SeqNet(textConfig)
         super.init()
+        // A module starts in training mode, which would apply the dropout at inference; the trainer
+        // switches training on for a run and restores this.
+        train(false)
     }
 
     /// `pixels`: `[B, H, W, 3]` (NHWC, normalized). Returns the projected image tokens `[B, 1+H*W, dModel]`.

@@ -114,9 +114,11 @@ extension NFKMLXMarian {
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
     ///
-    /// Only the decoder's query and value projections adapt; the encoder stays frozen. Call
-    /// `NFKMLXLoRA.merge(into:)` before saving, so the result is one checkpoint
-    /// ``NFKMLXSeq2SeqNet/loadWeights(from:)`` reads back. A run is minutes; call it off the render thread.
+    /// Only the decoder's query and value projections adapt; the encoder stays frozen. The run applies
+    /// ``NFKMLXSeq2SeqNet/dropout``, none by default; `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` reads
+    /// the release's rates, which apply where the run trains. Call `NFKMLXLoRA.merge(into:)` before
+    /// saving, so the result is one checkpoint ``NFKMLXSeq2SeqNet/loadWeights(from:)`` reads back. A run
+    /// is minutes; call it off the render thread.
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXSeq2SeqNet,

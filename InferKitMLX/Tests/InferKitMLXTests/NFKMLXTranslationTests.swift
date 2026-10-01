@@ -11,6 +11,8 @@
 import XCTest
 import InferKit
 import MLX
+import MLXFast
+import MLXNN
 @testable import InferKitMLX
 
 final class NFKMLXTranslationTests: XCTestCase {
@@ -626,6 +628,114 @@ final class NFKMLXTranslationTests: XCTestCase {
         let a = net(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
         let b = reloaded(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
         XCTAssertLessThan(abs(a - b).max().item(Float.self), 1e-5, "the merged checkpoint reloads through the factory")
+    }
+
+    // MARK: Dropout
+
+    func testDropoutRatesReadFromEachFamilysConfig() throws {
+        let m2m = NFKMLXSeq2SeqDropout(huggingFaceConfig: [
+            "dropout": 0.1, "attention_dropout": 0.1, "activation_dropout": 0.0,
+            "encoder_layerdrop": 0.05, "decoder_layerdrop": 0.05])
+        XCTAssertEqual(m2m, NFKMLXSeq2SeqDropout(dropout: 0.1, attentionDropout: 0.1, encoderLayerDrop: 0.05,
+                                                 decoderLayerDrop: 0.05))
+        XCTAssertEqual(NFKMLXSeq2SeqDropout(huggingFaceConfig: ["dropout_rate": 0.1]),
+                       NFKMLXSeq2SeqDropout(dropout: 0.1, attentionDropout: 0.1, activationDropout: 0.1),
+                       "T5's one rate fills the three positions it applies at")
+        XCTAssertEqual(NFKMLXSeq2SeqDropout(huggingFaceConfig: [:]), .none)
+
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        for (key, nested) in [("text_config", 0.1), ("decoder", 0.2)] {
+            let json: [String: Any] = ["dropout": 0.9, key: ["dropout": nested, "attention_dropout": nested]]
+            try JSONSerialization.data(withJSONObject: json).write(to: scratch.appendingPathComponent("config.json"))
+            let rates = try NFKMLXSeq2SeqDropout(releaseDirectoryURL: scratch)
+            XCTAssertEqual(rates.dropout, Float(nested), accuracy: 1e-7, "\(key) holds the language model's rates")
+            XCTAssertEqual(rates.attentionDropout, Float(nested), accuracy: 1e-7)
+        }
+    }
+
+    private static let heavyDropout = NFKMLXSeq2SeqDropout(dropout: 0.3, attentionDropout: 0.3, activationDropout: 0.3,
+                                                           encoderLayerDrop: 0.3, decoderLayerDrop: 0.3)
+
+    func testANetworkAppliesNoDropoutInEvaluation() throws {
+        try requireMLXRuntime()
+        let source = MLXArray([Int32(5), 6, 7, 8]).reshaped([1, 4])
+        let target = MLXArray([Int32(1), 9, 10, 11]).reshaped([1, 4])
+        let net = NFKMLXSeq2SeqNet(.tinyM2M100)
+        XCTAssertFalse(net.training, "built in evaluation mode")
+        let plain = net(source: source, target: target)
+        net.dropout = Self.heavyDropout
+        XCTAssertEqual(abs(net(source: source, target: target) - plain).max().item(Float.self), 0)
+
+        let t5 = NFKMLXT5Seq2SeqNet(.tiny)
+        XCTAssertFalse(t5.training)
+        let t5Plain = t5(source: source, target: target)
+        t5.dropout = Self.heavyDropout
+        XCTAssertEqual(abs(t5(source: source, target: target) - t5Plain).max().item(Float.self), 0)
+    }
+
+    func testDropoutRandomizesOnlyTheTrainingForward() throws {
+        try requireMLXRuntime()
+        let source = MLXArray([Int32(5), 6, 7, 8]).reshaped([1, 4])
+        let target = MLXArray([Int32(1), 9, 10, 11]).reshaped([1, 4])
+        let nets: [(String, Module, (MLXArray, MLXArray) -> MLXArray, (NFKMLXSeq2SeqDropout) -> Void)] = {
+            let marian = NFKMLXSeq2SeqNet(.tinyMarian), t5 = NFKMLXT5Seq2SeqNet(.tiny)
+            return [("Marian", marian, { marian(source: $0, target: $1) }, { marian.dropout = $0 }),
+                    ("T5", t5, { t5(source: $0, target: $1) }, { t5.dropout = $0 })]
+        }()
+        for (name, net, forward, setDropout) in nets {
+            let evaluated = forward(source, target)
+            net.train(true)
+            XCTAssertEqual(abs(forward(source, target) - evaluated).max().item(Float.self), 0,
+                           "\(name): no rate, no change in training")
+            setDropout(NFKMLXSeq2SeqDropout(dropout: 0.3, attentionDropout: 0.3, activationDropout: 0.3))
+            let first = forward(source, target), second = forward(source, target)
+            XCTAssertGreaterThan(abs(first - second).max().item(Float.self), 0, "\(name): each training forward draws")
+            XCTAssertTrue(isFinite(first).all().item(Bool.self))
+            net.train(false)
+            XCTAssertEqual(abs(forward(source, target) - evaluated).max().item(Float.self), 0, "\(name): evaluation again")
+        }
+    }
+
+    func testAFullLayerDropSkipsEveryLayer() throws {
+        try requireMLXRuntime()
+        let source = MLXArray([Int32(5), 6, 7, 8]).reshaped([1, 4])
+        let target = MLXArray([Int32(2), 9, 10, 11]).reshaped([1, 4])
+        let net = NFKMLXSeq2SeqNet(.tinyM2M100)
+        net.train(true)
+        net.dropout = NFKMLXSeq2SeqDropout(encoderLayerDrop: 1, decoderLayerDrop: 1)
+        let skipped = net(source: source, target: target)
+        net.encoder!.layers[0].fc1.update(parameters: ModuleParameters.unflattened([("weight", net.encoder!.layers[0].fc1.weight * 5)]))
+        net.decoder.layers[1].fc2.update(parameters: ModuleParameters.unflattened([("weight", net.decoder.layers[1].fc2.weight * 5)]))
+        XCTAssertEqual(abs(net(source: source, target: target) - skipped).max().item(Float.self), 0,
+                       "no layer's weights reach the output")
+    }
+
+    func testTheExplicitAttentionMatchesTheFusedKernel() throws {
+        try requireMLXRuntime()
+        let queries = MLXRandom.normal([1, 2, 3, 4]), keys = MLXRandom.normal([1, 2, 5, 4])
+        let values = MLXRandom.normal([1, 2, 5, 4]), mask = MLXRandom.normal([1, 2, 3, 5])
+        let fused = MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: 0.5, mask: mask)
+        let explicit = NFKDropout.explicitAttention(queries: queries, keys: keys, values: values, scale: 0.5, mask: mask)
+        XCTAssertLessThan(abs(fused - explicit).max().item(Float.self), 1e-5)
+    }
+
+    func testMarianFineTunesWithTheReleaseDropoutAndReturnsToEvaluation() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(11)
+        let net = try NFKMLXMarian.network(directoryURL: nil, configuration: .tinyMarian)
+        net.dropout = NFKMLXSeq2SeqDropout(dropout: 0.1)
+        let source = MLXArray([Int32(5), 6, 7, 0])
+        let target = MLXArray([Int32(9), 10, 11, 0])
+        let before = NFKMLXTranslationObjective()(net, source, target).item(Float.self)
+        let losses = try NFKMLXMarian.fineTune(net, examples: { _ in (source, target) }, rank: 2, steps: 12)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        XCTAssertLessThan(NFKMLXTranslationObjective()(net, source, target).item(Float.self), before)
+        XCTAssertFalse(net.training, "the run restores evaluation, so inference does not drop")
+        let a = net(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
+        let b = net(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
+        XCTAssertEqual(abs(a - b).max().item(Float.self), 0)
     }
 
     func testMADLADFineTuningAdaptsTheDecoderAndReloads() throws {

@@ -341,6 +341,23 @@ final class NFKMLXTrOCRTrainingTests: XCTestCase {
         }
     }
 
+    /// A run with the decoder's dropout on leaves the network in evaluation mode, so a transcription
+    /// after it does not drop.
+    func testAFineTuneWithDropoutReturnsTheNetworkToEvaluation() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(4)
+        let net = Self.tinyNet()
+        XCTAssertFalse(net.training)
+        net.dropout = NFKMLXSeq2SeqDropout(dropout: 0.1)
+        let pixels = MLXRandom.normal([1, 32, 32, 3])
+        let target = MLXArray([Int32(7), 12, 19, 2])
+        let losses = try NFKMLXTrOCR.fineTune(net, examples: { _ in (pixels, target) }, trainable: .decoder,
+                                              learningRate: 1e-3, steps: 4, learningRateSchedule: .constant)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        XCTAssertFalse(net.training)
+        XCTAssertTrue(net.leafModules().flattened().allSatisfy { !$0.1.training })
+    }
+
     /// The round trip on a released network: a fine-tuned directory reloads through the factory with the
     /// same logits, and the backend transcribes from it.
     func testAFineTunedReleaseReloadsThroughTheFactory() throws {

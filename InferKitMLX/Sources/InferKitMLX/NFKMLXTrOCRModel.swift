@@ -20,12 +20,25 @@ public final class NFKMLXTrOCRNet: Module {
     public let visionConfiguration: NFKMLXTrOCRVisionConfiguration
     public let languageConfiguration: NFKMLXSeq2SeqConfiguration
 
+    /// The text decoder's dropout while it trains; none by default. Set it to
+    /// `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)` to train at the release's `decoder` rates. The image
+    /// encoder's releases set no dropout.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var dropout: NFKMLXSeq2SeqDropout {
+        get { language.dropout }
+        set { language.dropout = newValue }
+    }
+
     public init(vision: NFKMLXTrOCRVisionConfiguration, language: NFKMLXSeq2SeqConfiguration) {
         visionConfiguration = vision
         languageConfiguration = language
         _vision.wrappedValue = NFKMLXTrOCRVisionNet(vision)
         _language.wrappedValue = NFKMLXSeq2SeqNet(language)
         super.init()
+        // A module starts in training mode, which would apply the dropout at inference; the trainer
+        // switches training on for a run and restores this.
+        train(false)
     }
 
     /// Reads the ViT geometry and the decoder geometry from a vision-encoder-decoder `config.json`.
