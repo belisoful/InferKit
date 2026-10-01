@@ -7632,7 +7632,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     /// bf16-rounded weights (`_bf16w`) as the floor: each layer on the reference's own bf16 input within
     /// a quarter of the floor, and the logits within twice it (see NFKMLXBFloat16ParityTests).
     private func mixtureInBFloat16(mode: String, label: String, geometry: NFKMLXLanguageConfiguration) throws {
-        let records = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation/records")
+        let records = NFKMLXValidationConfig.root.appendingPathComponent("records")
         let bf16URL = records.appendingPathComponent("\(mode)_tiny_bf16.safetensors")
         let floorURL = records.appendingPathComponent("\(mode)_tiny_bf16w.safetensors")
         guard FileManager.default.fileExists(atPath: bf16URL.path),

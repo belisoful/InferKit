@@ -142,8 +142,19 @@ CASES = {
 }
 
 
+def validation_root():
+    """The validation store: IK_VALIDATION_ROOT, else the InferKit Models volume while it is mounted,
+    else ~/.inferkit-validation."""
+    if os.environ.get("IK_VALIDATION_ROOT"):
+        return os.environ["IK_VALIDATION_ROOT"]
+    external = "/Volumes/InferKit Models/inferkit-validation"
+    if os.path.isdir(external):
+        return external
+    return os.path.expanduser("~/.inferkit-validation")
+
+
 def main():
-    default = os.path.expanduser("~/.inferkit-validation/reference/chat-template-reference.json")
+    default = os.path.join(validation_root(), "reference/chat-template-reference.json")
     out_path = sys.argv[1] if len(sys.argv) > 1 else default
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     ref = {}

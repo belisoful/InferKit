@@ -70,8 +70,8 @@ build (zero warnings) + tests, the iOS and tvOS compile legs, the analyzer at a 
 path, the podspec lint, and compile checks for the companions. `InferKitFoundationModels` and
 `InferKitAppleSwift` each build and test behind an SDK guard: both need the macOS 26 SDK, so a runner
 on an older image reports what it skipped instead of failing on toolchain availability. The MLX test schemes stay a local
-step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints from
-`~/.inferkit-validation`, which a runner does not have — there they would skip, proving nothing.
+step: they evaluate real MLX arrays (Metal) and read multi-gigabyte checkpoints from the validation
+store (`/Volumes/InferKit Models`), which a runner does not have — there they would skip, proving nothing.
 
 The workflow also carries `workflow_dispatch`, so a branch runs the same jobs before it reaches
 `main`.
@@ -327,14 +327,24 @@ interpreter is hostage to the next rename. The environments built from Homebrew'
 `wananimatevenv`) were never affected. A new environment takes the Homebrew interpreter for that
 reason.
 
-## The asset store spans two volumes
+## The asset store
 
-The vision, vision-language, and image/video-generation assets live on an external volume at
-`/Volumes/WindowsBoot/InferKit/validation`, in the same relative layout they had under
-`~/.inferkit-validation` (moved 2026-09-22, 514 files, 119 GiB). The language, audio, and music
-assets, the oracle environments, `records/`, `shapes/`, and the remainder of `raw/` and `converted/`
-stay on the home volume. `~/.inferkit-validation.json` is what resolves either one, so a key is the
-only thing a test reads; nothing derives a path from the store root.
+The model store lives on the external volume `/Volumes/InferKit Models` (APFS, Thunderbolt):
+
+- `inferkit-validation/` holds what `~/.inferkit-validation` held: checkpoints, `records/`, `shapes/`,
+  `raw/`, `converted/`, `inputs/`, and the reference sources.
+- `InferKit/` holds the whole releases and the vision, vision-language, and generation assets, in the
+  layout of the retired Meta backup share (`validation/`, `raw/`, one folder per release).
+- The oracle environments (`*venv`) stay in `~/.inferkit-validation` on the home volume. A virtual
+  environment records absolute paths, so it does not move.
+- A model under active development may have a resident copy on the home volume. Its keys point at that
+  copy until development ends; the store keeps the original.
+
+`~/.inferkit-validation.json` resolves every key, so a test reads keys. A test or tool that falls back
+to a conventional file builds the path from the validation root: `IK_VALIDATION_ROOT` when set, else
+`/Volumes/InferKit Models/inferkit-validation` while that volume is mounted, else
+`~/.inferkit-validation` (`NFKMLXValidationConfig.root` in the tests, `validation_root()` in `fetch.py`
+and `run_reference.py`).
 
 Relocating any part of the store has one invariant: **no key in `~/.inferkit-validation.json` points
 at a path that does not exist.** Check that over every key, not over the set of files moved. A key

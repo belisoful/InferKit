@@ -663,8 +663,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
         XCTAssertLessThan(rms, 0.9, "the clip is signal, not full-scale clipping")
 
         let keepPath = config["IK_MUSIC3_KEEP_CLIP"]
-            ?? FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".inferkit-validation/music3-listen.wav").path
+            ?? NFKMLXValidationConfig.root.appendingPathComponent("music3-listen.wav").path
         try? FileManager.default.removeItem(atPath: keepPath)
         try FileManager.default.copyItem(at: sourceURL, to: URL(fileURLWithPath: keepPath))
         try? FileManager.default.removeItem(at: sourceURL)
@@ -673,8 +672,7 @@ final class NFKMLXMusic3Tests: XCTestCase {
     /// The cached quantized release. The directory name carries the recipe, so changing the
     /// defaults regenerates rather than silently reusing a stale packing.
     private var quantizedReleaseURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".inferkit-validation/minimax-music3-q4lm-q4emb-q8dit")
+        NFKMLXValidationConfig.root.appendingPathComponent("minimax-music3-q4lm-q4emb-q8dit")
     }
 
     /// Quantizes the release once (4-bit language model incl. its input embedding, 4-bit depth

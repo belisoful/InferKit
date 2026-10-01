@@ -4,7 +4,7 @@
 //
 //  The torch container layer is exercised two ways: against checkpoints built byte by byte in the
 //  test, which pins each container's layout without a download, and against the real checkpoints in
-//  ~/.inferkit-validation/raw (skipped when absent), whose converted safetensors are a byte-level
+//  the validation root's raw/ (skipped when absent), whose converted safetensors are a byte-level
 //  oracle the offline converters already proved. Everything here is pure parsing, so it runs under
 //  `swift test`.
 //
@@ -392,8 +392,7 @@ final class NFKMLXTorchCheckpointTests: XCTestCase {
     }()
 
     private func rawPath(_ key: String, _ fileName: String) throws -> URL {
-        let fallback = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".inferkit-validation/raw/\(fileName)").path
+        let fallback = NFKMLXValidationConfig.root.appendingPathComponent("raw/\(fileName)").path
         let path = config[key] ?? fallback
         try XCTSkipUnless(FileManager.default.fileExists(atPath: path),
                           "fetch \(fileName) with Tools/validation-assets/fetch.py (looked at \(path))")

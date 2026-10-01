@@ -188,7 +188,7 @@ final class NFKMLXFlorence2Tests: XCTestCase {
         let directory = URL(fileURLWithPath: weightsPath).deletingLastPathComponent()
         // The oracle records this exact photo (run_reference.py florence2 --image .../face960.jpg), so the
         // image-processor parity below compares the same image on both sides.
-        let imagePath = "\(NSHomeDirectory())/.inferkit-validation/inputs/face960.jpg"
+        let imagePath = NFKMLXValidationConfig.root.appendingPathComponent("inputs/face960.jpg").path
         guard let image = Self.loadImage(imagePath) else { throw XCTSkip("missing inputs/face960.jpg") }
 
         // The image processor matches the reference's preprocessed pixels (the bridge + bilinear resize

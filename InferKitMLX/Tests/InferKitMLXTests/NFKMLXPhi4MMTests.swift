@@ -347,7 +347,7 @@ final class NFKMLXPhi4MMTests: XCTestCase {
 
         // The public backend, end to end: the validation clip as a WAV file transcribes exactly.
         let backend = NFKMLXPhi4MMBackend(model: model, identifier: NFKMLXPhi4MM.modelName)
-        let clip = try Data(contentsOf: URL(fileURLWithPath: NSHomeDirectory() + "/.inferkit-validation/inputs/speech.wav"))
+        let clip = try Data(contentsOf: NFKMLXValidationConfig.root.appendingPathComponent("inputs/speech.wav"))
         let request = NFKInferenceRequest(inputs: [NFKInputAudio: clip], parameters: [:])
         let transcript = try backend.runInference(for: request).output(forKey: NFKOutputText) as? String
         print("VALIDATION PARITY phi4mm: backend transcription \(transcript.debugDescription)")

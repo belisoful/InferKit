@@ -169,8 +169,8 @@ Notes:
   on-device LoRA fine-tune. This closes the SSM/hybrid track — one selective-scan mixer now serves all
   three (Codestral-Mamba, Granite 4.0-H, Nemotron Nano 2).
 - **BAGEL** is the scheduled priority-1 port (permissive Apache-2.0, runnable official reference). Its
-  weights download to Meta (`/Volumes/Code/InferKit`) through the IO Manager, as for every scheduled
-  port.
+  weights download to the model store (`/Volumes/InferKit Models`) through the IO Manager, as for every
+  scheduled port.
 - **BAGEL** and **Phi-4-multimodal** are large multi-component integrations whose novelty concentrates
   in one part (the Mixture-of-Transformer routing; the audio Conformer and mixture-of-LoRAs).
   **Phi-4-multimodal is now shipped at reference parity** (`NFKMLXPhi4MM`) in all four of its modes
@@ -253,8 +253,8 @@ releases postdate the survey author's knowledge, so audition samples before comm
 
 Priority rules:
 
-- Priority 1 is scheduled. Its weights are downloaded to Meta (`/Volumes/Code/InferKit`) through the
-  IO Manager, at the pinned revisions below.
+- Priority 1 is scheduled. Its weights are downloaded to the model store (`/Volumes/InferKit Models`)
+  through the IO Manager, at the pinned revisions below.
 - Priority 2 is permissive and unscheduled.
 - Priority 3 holds every model whose weight license is non-commercial, research-only, or undeclared. A
   restrictive license keeps a model at priority 3 unless the user asks for that model by name. A model

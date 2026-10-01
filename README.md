@@ -159,7 +159,7 @@ The MLX companion's tests need the Metal library only Xcode's build system bundl
 through `xcodebuild test -destination 'platform=macOS' -skipPackagePluginValidation` with each of its
 three shared schemes in turn — `InferKitMLXTests`, `InferKitMLXExamples`, and `InferKitMLXObjCExamples`
 (the library scheme `InferKitMLX` runs only the first of them). The parity suites read real checkpoints
-from `~/.inferkit-validation`, fetched by `Tools/validation-assets/fetch.py`, and skip where a
+from the validation store (`/Volumes/InferKit Models`), fetched by `Tools/validation-assets/fetch.py`, and skip where a
 checkpoint is absent.
 `InferKit.xcworkspace` opens all three packages in one window, each still built as its own package.
 Its schemes cover every target; the core's suite splits across `InferKitTests` (297),

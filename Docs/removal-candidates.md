@@ -35,8 +35,8 @@ Deprecation:
 
 - A retired, obsolete, deprecated, or superseded model is a candidate for InferKit deprecation, where it
   is no longer fully supported.
-- Deprecation removes testing. It deletes no code, weights, or backups. A deprecated model stays in the
-  source tree and on the Meta backup share.
+- Deprecation removes testing. It deletes no code or weights. A deprecated model stays in the source
+  tree and in the model store (`/Volumes/InferKit Models`) until it is retired from support entirely.
 
 ## Deprecation levels
 
@@ -148,7 +148,7 @@ Beyond the machine (over 30 GB):
 
 The dense rows over 30 GB are level 1 cases by definition: supported, structural-only, not downloaded
 for testing. The mixtures stay testable through paging. The download rule applies to new downloads. The
-Meta backup share keeps what it already holds.
+model store keeps what it already holds.
 
 A release stored at a wider precision than it runs at is sized at the precision it runs at.
 HunyuanVideo-1.5 stores each transformer variant as 33.3 GB of float32, about 17 GB at bfloat16.

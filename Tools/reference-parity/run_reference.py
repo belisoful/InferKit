@@ -38,6 +38,20 @@ import torch
 from safetensors.torch import save_file
 
 
+def validation_root():
+    """The validation store: IK_VALIDATION_ROOT, else the InferKit Models volume while it is mounted,
+    else ~/.inferkit-validation."""
+    if os.environ.get("IK_VALIDATION_ROOT"):
+        return os.environ["IK_VALIDATION_ROOT"]
+    external = "/Volumes/InferKit Models/inferkit-validation"
+    if os.path.isdir(external):
+        return external
+    return os.path.expanduser("~/.inferkit-validation")
+
+
+VALIDATION_ROOT = validation_root()
+
+
 def deterministic_image(height=224, width=224, seed=7):
     """A fixed pseudo-random RGB plate in 0...1. Structured enough to exercise a real forward, and
     identical on both sides of the comparison."""
@@ -1579,7 +1593,7 @@ RTDETR_TRAINING_LOSS_KEYS = [f"loss_{term}{suffix}" for suffix in ["", "_aux_0",
 
 def _rtdetr_original(subproject):
     """The original RT-DETR repository's `YAMLConfig`, imported from `IK_RTDETR_SRC` (default
-    `~/.inferkit-validation/reference-sources/rtdetr`, lyuwenyu/RT-DETR at 29320b6) for `subproject`
+    `<validation root>/reference-sources/rtdetr`, lyuwenyu/RT-DETR at 29320b6) for `subproject`
     (`rtdetr_pytorch` or `rtdetrv2_pytorch`).
 
     Both subprojects are packages named `src`, so any earlier import is dropped first. `src` itself is
@@ -1590,7 +1604,7 @@ def _rtdetr_original(subproject):
     import importlib
     import types
     root = os.path.join(os.path.expanduser(os.environ.get(
-        "IK_RTDETR_SRC", "~/.inferkit-validation/reference-sources/rtdetr")), subproject)
+        "IK_RTDETR_SRC", VALIDATION_ROOT + "/reference-sources/rtdetr")), subproject)
     for name in [n for n in sys.modules if n == "src" or n.startswith("src.")]:
         del sys.modules[name]
     sys.path[:] = [p for p in sys.path if not p.endswith(("rtdetr_pytorch", "rtdetrv2_pytorch"))]
@@ -5439,7 +5453,7 @@ def _deepseek_v4_release_net(release, bf16=False, dspark=False):
 
     hadamard.hadamard_transform = hadamard_transform
     sys.modules["fast_hadamard_transform"] = hadamard
-    source = os.path.expanduser(f"~/.inferkit-validation/reference-sources/{release}")
+    source = os.path.expanduser(VALIDATION_ROOT + f"/reference-sources/{release}")
     sys.path.insert(0, source)
     import model as reference
     if not bf16:
@@ -5818,7 +5832,7 @@ def _run_deepseek_v41(image, quantizes=False, bf16=False):
 
     _deepseek_v41_kernel_shim(quantizes=quantizes)
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     import model as reference
 
@@ -6080,7 +6094,7 @@ def run_deepseek_v41_decode(image, bf16=False):
 
     _deepseek_v41_kernel_shim()
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     import model as reference
 
@@ -6259,7 +6273,7 @@ def _run_deepseek_v41_dspark(image, quantizes=False, bf16=False):
 
     _deepseek_v41_kernel_shim(quantizes=quantizes)
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     import model as reference
 
@@ -6390,7 +6404,7 @@ def run_deepseek_v41_vision(image, bf16=False):
     import torch
 
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     _deepseek_v41_kernel_shim()
     import model as reference
@@ -6491,7 +6505,7 @@ def run_deepseek_v41_image(image):
     from PIL import Image
 
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     _deepseek_v41_kernel_shim()
     import model as reference
@@ -7433,7 +7447,7 @@ def run_taesd(image):
     import tempfile
     import urllib.request
 
-    sys.path.insert(0, os.environ.get("IK_REF_SRC", os.path.expanduser("~/.inferkit-validation/sources")))
+    sys.path.insert(0, os.environ.get("IK_REF_SRC", os.path.expanduser(VALIDATION_ROOT + "/sources")))
     from taesd import TAESD
 
     def weights(name):
@@ -7454,14 +7468,14 @@ def run_taesd(image):
 def run_ltx_vae(image):
     """LTX-Video VAE round trip: the deterministic latent (posterior mean) and the decoded video, plus
     the encoder seams (conv_in, first down block, mid block). Uses a fixed random video, so the plate is
-    ignored. The VAE is loaded from `IK_LTX_VAE_DIR` (default `~/.inferkit-validation/raw/ltx-vae`).
+    ignored. The VAE is loaded from `IK_LTX_VAE_DIR` (default `<validation root>/raw/ltx-vae`).
 
     Runs under the `ltx` oracle env (diffusers >= 0.32). Tensors are returned in NDHWC to match the port.
     """
     import os
     from diffusers import AutoencoderKLLTXVideo
 
-    directory = os.environ.get("IK_LTX_VAE_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-vae"))
+    directory = os.environ.get("IK_LTX_VAE_DIR", os.path.expanduser(VALIDATION_ROOT + "/raw/ltx-vae"))
     vae = AutoencoderKLLTXVideo.from_pretrained(directory, torch_dtype=torch.float32).eval()
     generator = np.random.default_rng(11)
     video = (generator.random((1, 3, 9, 64, 64), dtype=np.float32) * 2 - 1)
@@ -7487,12 +7501,12 @@ def run_ltx_transformer(image):
     """LTX-Video DiT velocity prediction from random latent tokens, a random text embedding, and a
     timestep, plus the rope / proj_in / first-block seams. The text embedding is fed directly, so the DiT
     is verified in isolation (no T5). The model loads from `IK_LTX_TF_DIR`
-    (default `~/.inferkit-validation/raw/ltx-transformer`). Runs under the `ltx` oracle env.
+    (default `<validation root>/raw/ltx-transformer`). Runs under the `ltx` oracle env.
     """
     import os
     from diffusers import LTXVideoTransformer3DModel
 
-    directory = os.environ.get("IK_LTX_TF_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-transformer"))
+    directory = os.environ.get("IK_LTX_TF_DIR", os.path.expanduser(VALIDATION_ROOT + "/raw/ltx-transformer"))
     model = LTXVideoTransformer3DModel.from_pretrained(directory, torch_dtype=torch.float32).eval()
     generator = torch.Generator().manual_seed(7)
     frames, height, width = 2, 2, 2
@@ -7527,13 +7541,13 @@ def run_ltx_transformer(image):
 
 def run_ltx_t5(image):
     """LTX-Video T5-XXL text encoder output for a fixed padded token sequence, plus the embedding and
-    first-block seams. Loads from `IK_LTX_T5_DIR` (default `~/.inferkit-validation/raw/ltx-t5`). Runs
+    first-block seams. Loads from `IK_LTX_T5_DIR` (default `<validation root>/raw/ltx-t5`). Runs
     under the `ltx` oracle env (transformers with T5EncoderModel).
     """
     import os
     from transformers import T5EncoderModel
 
-    directory = os.environ.get("IK_LTX_T5_DIR", os.path.expanduser("~/.inferkit-validation/raw/ltx-t5"))
+    directory = os.environ.get("IK_LTX_T5_DIR", os.path.expanduser(VALIDATION_ROOT + "/raw/ltx-t5"))
     model = T5EncoderModel.from_pretrained(directory, torch_dtype=torch.float32).eval()
     ids = torch.tensor([[3, 19, 2523, 40, 8, 1946, 55, 1, 0, 0, 0, 0, 0, 0, 0, 0]])
 
@@ -8066,7 +8080,7 @@ def run_sam3_vision(image):
     from transformers import AutoConfig
     from transformers.models.sam3.modeling_sam3 import Sam3VisionModel
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
     config = AutoConfig.from_pretrained(directory).detector_config.vision_config
     # The global layers' rotary table is built from the CONFIGURED image size, not the input's, so a
     # plate of another size needs the configuration to say so.
@@ -8111,7 +8125,7 @@ def run_sam3_text(image):
     from safetensors.torch import safe_open
     from transformers import AutoConfig, CLIPTextModelWithProjection
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
     detector = AutoConfig.from_pretrained(directory).detector_config
     model = CLIPTextModelWithProjection(detector.text_config)
     projection = torch.nn.Linear(detector.text_config.hidden_size, detector.detr_encoder_config.hidden_size)
@@ -8159,7 +8173,7 @@ def run_sam3_detector(image):
     from transformers import AutoConfig
     from transformers.models.sam3.modeling_sam3 import Sam3Model
 
-    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", "~/.inferkit-validation/sam3"))
+    directory = os.path.expanduser(os.environ.get("IK_SAM3_DIR", VALIDATION_ROOT + "/sam3"))
     config = AutoConfig.from_pretrained(directory)
     size = int(os.environ.get("IK_SAM3_SIZE", 504))
     config.detector_config.vision_config.backbone_config.image_size = size
@@ -8210,14 +8224,14 @@ def run_sam2_loss(image):
     four terms it returns, each before the weighting, so a port can be compared term by term. Runs
     under any oracle env with torch. `image` unused.
 
-    The source is `IK_SAM2_SRC` (default `~/.inferkit-validation/reference-sources/sam2`), curled
+    The source is `IK_SAM2_SRC` (default `<validation root>/reference-sources/sam2`), curled
     from the repository rather than cloned.
     """
     import sys
     import types
 
     directory = os.path.expanduser(os.environ.get("IK_SAM2_SRC",
-                                                  "~/.inferkit-validation/reference-sources/sam2"))
+                                                  VALIDATION_ROOT + "/reference-sources/sam2"))
     trainer = types.ModuleType("training.trainer")
     trainer.CORE_LOSS_KEY = "core_loss"
     distributed = types.ModuleType("training.utils.distributed")
@@ -8269,7 +8283,7 @@ def run_sam3_loss(image):
     mask term to score.
 
     The loss and the matcher are the reference's own files, executed from a tree under `IK_SAM3_SRC`
-    (default `~/.inferkit-validation/reference-sources/sam3`) that was curled rather than cloned. Only
+    (default `<validation root>/reference-sources/sam3`) that was curled rather than cloned. Only
     three leaves are stand-ins, none of them arithmetic the loss depends on: the distributed helpers,
     the metric the loss reports and never trains on, and the focal loss's Triton kernel, which needs
     CUDA and is replaced by the eager form the reference's own file falls back to.
@@ -8279,7 +8293,7 @@ def run_sam3_loss(image):
     needs `scipy` for the reference's `linear_sum_assignment`. `image` unused.
     """
     root = os.path.expanduser(os.environ.get("IK_SAM3_SRC",
-                                             "~/.inferkit-validation/reference-sources/sam3"))
+                                             VALIDATION_ROOT + "/reference-sources/sam3"))
     sys.path.insert(0, root)
     from sam3.model.box_ops import box_cxcywh_to_xyxy
     from sam3.train.loss.loss_fns import Boxes, IABCEMdetr
@@ -8749,7 +8763,7 @@ def run_ip_adapter_unet(image, checkpoint):
     unet = UNet2DConditionModel.from_pretrained(
         os.path.join(checkpoint, "unet"), torch_dtype=torch.float32).eval()
     adapter = os.environ.get("IK_VAL_IPADAPTER",
-                             os.path.expanduser("~/.inferkit-validation/ip-adapter/ip-adapter_sd15.safetensors"))
+                             os.path.expanduser(VALIDATION_ROOT + "/ip-adapter/ip-adapter_sd15.safetensors"))
     state = load_file(adapter)
     image_proj = {k[len("image_proj."):]: v for k, v in state.items() if k.startswith("image_proj.")}
     ip_layers = {k[len("ip_adapter."):]: v for k, v in state.items() if k.startswith("ip_adapter.")}
@@ -8782,13 +8796,13 @@ def run_dc_ae_real(image):
     """The Deep-Compression Autoencoder on the RELEASED SANA weights, from diffusers' AutoencoderDC. A
     real-weights end-to-end validation: it loads the actual `Sana_600M` VAE, encodes the plate, and
     decodes, so the released config, the sharded/real checkpoint, and the loader are exercised — not just
-    the architecture at a tiny config. Loads from `IK_VAL_DCAE` (default `~/.inferkit-validation/raw/
+    the architecture at a tiny config. Loads from `IK_VAL_DCAE` (default `<validation root>/raw/
     sana-dcae`). Runs under the `ltx` oracle env.
     """
     import os
     from diffusers import AutoencoderDC
 
-    directory = os.environ.get("IK_VAL_DCAE", os.path.expanduser("~/.inferkit-validation/raw/sana-dcae"))
+    directory = os.environ.get("IK_VAL_DCAE", os.path.expanduser(VALIDATION_ROOT + "/raw/sana-dcae"))
     model = AutoencoderDC.from_pretrained(directory, torch_dtype=torch.float32).eval()
     sample = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0) * 2 - 1   # [1, 3, H, W] in -1..1
     with torch.no_grad():
@@ -9344,7 +9358,7 @@ def run_deepseek_v41_vl_router(image, bf16=False):
 
     _deepseek_v41_kernel_shim()
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     import model as reference
 
@@ -9411,7 +9425,7 @@ def run_deepseek_v41_tokens(image, checkpoint):
     from tokenizers import Tokenizer
 
     source = os.path.expanduser(os.environ.get(
-        "IK_DEEPSEEK_V41_SRC", "~/.inferkit-validation/reference-sources/deepseek-v41"))
+        "IK_DEEPSEEK_V41_SRC", VALIDATION_ROOT + "/reference-sources/deepseek-v41"))
     sys.path.insert(0, source)
     from engram import build_compressed_token_map
 
@@ -9569,7 +9583,7 @@ def run_deepseek_v41_quant(image, checkpoint):
 
     index_path = os.path.expanduser(os.environ.get(
         "IK_INDEX_DEEPSEEK_V41",
-        "~/.inferkit-validation/shapes/deepseek-v4.1-flash/model.safetensors.index.json"))
+        VALIDATION_ROOT + "/shapes/deepseek-v4.1-flash/model.safetensors.index.json"))
     weight_map = json.load(open(index_path))["weight_map"]
 
     def fetch(url, rng):
@@ -9825,7 +9839,7 @@ def run_frcrn(image, checkpoint):
     state = torch.load(checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(state["model"], strict=True)
     model.eval()
-    clip = os.environ.get("IK_FRCRN_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_noisy.wav"))
+    clip = os.environ.get("IK_FRCRN_CLIP", os.path.expanduser(VALIDATION_ROOT + "/cmgan/p232_052_noisy.wav"))
     waveform, rate = torchaudio.load(clip)
     assert rate == 16000, rate
     noisy = waveform[:1]
@@ -9901,7 +9915,7 @@ def run_mossformer2_sr(image, checkpoint):
                                        map_location="cpu", weights_only=False)["generator"], strict=True)
     model_m.eval()
     model_g.eval()
-    clip = os.environ.get("IK_MOSSFORMER2_SR_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_clean.wav"))
+    clip = os.environ.get("IK_MOSSFORMER2_SR_CLIP", os.path.expanduser(VALIDATION_ROOT + "/cmgan/p232_052_clean.wav"))
     waveform, rate = torchaudio.load(clip)
     audio = torchaudio.functional.resample(waveform[:1], rate, 48000)[0].contiguous()
     with torch.no_grad():
@@ -9974,7 +9988,7 @@ def run_nuwave2(image, checkpoint):
     from scipy.signal import resample_poly
     diffusion, hparams = _load_nuwave2(checkpoint)
 
-    clip = os.environ.get("IK_NUWAVE2_CLIP", os.path.expanduser("~/.inferkit-validation/cmgan/p232_052_clean.wav"))
+    clip = os.environ.get("IK_NUWAVE2_CLIP", os.path.expanduser(VALIDATION_ROOT + "/cmgan/p232_052_clean.wav"))
     wav, sr = librosa.load(clip, sr=None, mono=True)
     wav = wav / np.max(np.abs(wav))
     hop = hparams.audio.hop_length
@@ -10033,7 +10047,7 @@ def run_apollo(image, checkpoint):
     import look2hear.models
 
     model = look2hear.models.BaseModel.from_pretrain(checkpoint, sr=44100, win=20, feature_dim=256, layer=6).eval()
-    clip = os.environ.get("IK_APOLLO_CLIP", os.path.expanduser("~/.inferkit-validation/apollo/input_wav.wav"))
+    clip = os.environ.get("IK_APOLLO_CLIP", os.path.expanduser(VALIDATION_ROOT + "/apollo/input_wav.wav"))
     audio, rate = sf.read(clip, dtype="float32", always_2d=True)
     assert rate == 44100, rate
     mono = torch.from_numpy(np.ascontiguousarray(audio[: 2 * rate, 0])).reshape(1, 1, -1)
@@ -10298,7 +10312,7 @@ def run_table_transformer_loss(image, checkpoint):
         out = model(pixel_values, return_dict=True)
         hf = model(pixel_values, labels=[{"class_labels": target_classes, "boxes": target_boxes}], return_dict=True)
 
-    root = os.path.expanduser(os.environ.get("IK_TABLE_TRANSFORMER_SRC", "~/.inferkit-validation/sources/table-transformer"))
+    root = os.path.expanduser(os.environ.get("IK_TABLE_TRANSFORMER_SRC", VALIDATION_ROOT + "/sources/table-transformer"))
     sys.path.insert(0, os.path.join(root, "detr"))
     from util import box_ops
     from util.misc import accuracy, get_world_size, is_dist_avail_and_initialized
@@ -10404,7 +10418,7 @@ def run_vjepa2_probe(image):
     import math
     import sys
 
-    root = os.path.expanduser(os.environ.get("IK_VJEPA2_SRC", "~/.inferkit-validation/sources/vjepa2"))
+    root = os.path.expanduser(os.environ.get("IK_VJEPA2_SRC", VALIDATION_ROOT + "/sources/vjepa2"))
     sys.path.insert(0, root)
     from src.models.attentive_pooler import AttentiveClassifier
 
@@ -10535,7 +10549,7 @@ def run_sa2va_loss(image, checkpoint):
     from transformers import AutoModel, AutoTokenizer
     from PIL import Image
 
-    root = os.path.expanduser(os.environ.get("IK_SA2VA_SRC", "~/.inferkit-validation/sources/sa2va"))
+    root = os.path.expanduser(os.environ.get("IK_SA2VA_SRC", VALIDATION_ROOT + "/sources/sa2va"))
 
     def extract(path, names, namespace, cls=None):
         tree = ast.parse(open(os.path.join(root, path)).read())
@@ -11372,7 +11386,7 @@ def _allow_bfloat16_average_pool():
 def run_cosmos_tokenizer(image, checkpoint):
     """Cosmos Tokenizer (nvidia/Cosmos-0.1-Tokenizer-*, NVIDIA Open Model License) on the RELEASED
     weights, from NVIDIA's own modules in `cosmos_predict1.tokenizer` (vendored under
-    `IK_COSMOS_TOKENIZER_SRC`, default `~/.inferkit-validation/cosmos-tokenizer-src`). The older
+    `IK_COSMOS_TOKENIZER_SRC`, default `<validation root>/cosmos-tokenizer-src`). The older
     `cosmos_tokenizer` package does not build the releases: it creates every hybrid resampling
     convolution, where the releases omit the ones a level does not use. `checkpoint` is a release
     directory named for its variant (`CI8x8`, `DV8x16x16`, ...) holding `encoder.jit` and `decoder.jit`,
@@ -11395,7 +11409,7 @@ def run_cosmos_tokenizer(image, checkpoint):
     import time
 
     sys.path.insert(0, os.environ.get("IK_COSMOS_TOKENIZER_SRC",
-                                      os.path.expanduser("~/.inferkit-validation/cosmos-tokenizer-src")))
+                                      os.path.expanduser(VALIDATION_ROOT + "/cosmos-tokenizer-src")))
     from cosmos_predict1.tokenizer.networks import TokenizerModels, configs
     from cosmos_predict1.tokenizer.modules import Decoder3DType, DecoderType
 
@@ -11589,7 +11603,7 @@ def run_cosmos_tokenizer_loss(image, checkpoint):
     import types
 
     sys.path.insert(0, os.environ.get("IK_COSMOS_TOKENIZER_SRC",
-                                      os.path.expanduser("~/.inferkit-validation/cosmos-tokenizer-src")))
+                                      os.path.expanduser(VALIDATION_ROOT + "/cosmos-tokenizer-src")))
     for name, attributes in (("cosmos_predict1.utils", {}),
                              ("cosmos_predict1.utils.lazy_config", {"instantiate": lambda x: x}),
                              ("cosmos_predict1.utils.distributed", {"is_rank0": lambda: True})):
@@ -11656,7 +11670,7 @@ def run_kokoro(image, checkpoint):
     `llm` oracle env (torch, transformers, scipy; the model files are vendored, no spacy).
     """
     import sys
-    sys.path.insert(0, os.path.expanduser("~/.inferkit-validation"))
+    sys.path.insert(0, os.path.expanduser(VALIDATION_ROOT))
     import kokoro_vendor.istftnet as istftnet
     from kokoro_vendor.model import KModel
 
@@ -12252,7 +12266,7 @@ def run_parakeet(image, checkpoint):
     model = nemo_asr.models.EncDecRNNTBPEModel.restore_from(checkpoint, strict=False).eval()
     model.preprocessor.featurizer.dither = 0.0
 
-    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
     with wavemodule.open(path) as handle:
         assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
         pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
@@ -12319,7 +12333,7 @@ def run_canary(image, checkpoint):
     model = nemo_asr.models.EncDecMultiTaskModel.restore_from(checkpoint, strict=False).eval()
     model.preprocessor.featurizer.dither = 0.0
 
-    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
     with wavemodule.open(path) as handle:
         assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
         pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
@@ -12402,7 +12416,7 @@ def run_phi4mm(image, checkpoint):
     from scipy.signal import resample_poly
     from transformers import AutoModelForCausalLM, AutoProcessor
 
-    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    root = os.path.expanduser(VALIDATION_ROOT + "/inputs")
     processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer = processor.tokenizer
     model = AutoModelForCausalLM.from_pretrained(
@@ -12512,7 +12526,7 @@ def run_phi4mm_bf16(image, checkpoint):
 
     mode = os.environ.get("IK_PHI4MM_DTYPE", "bfloat16")
     dtype = torch.bfloat16 if mode == "bfloat16" else torch.float32
-    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    root = os.path.expanduser(VALIDATION_ROOT + "/inputs")
     processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer = processor.tokenizer
     model = AutoModelForCausalLM.from_pretrained(
@@ -12597,7 +12611,7 @@ def run_phi4mm_conversation(image, checkpoint):
     from PIL import Image
     from transformers import AutoModelForCausalLM, AutoProcessor
 
-    root = os.path.expanduser("~/.inferkit-validation/inputs")
+    root = os.path.expanduser(VALIDATION_ROOT + "/inputs")
     processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
     tokenizer = processor.tokenizer
     model = AutoModelForCausalLM.from_pretrained(
@@ -12676,7 +12690,7 @@ def _chatterbox_reference_audio():
     prompt: `librosa.load(sr=24000)` (a 16 kHz file resampled up), then `librosa.resample` back down to
     16 kHz. Returns (wav24, wav16) as float32 numpy arrays."""
     import librosa
-    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser("~/.inferkit-validation/inputs/speech.wav"))
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
     wav24, _ = librosa.load(path, sr=24000)
     wav16 = librosa.resample(wav24, orig_sr=24000, target_sr=16000)
     return wav24.astype(np.float32), wav16.astype(np.float32)
@@ -12933,7 +12947,7 @@ def run_chatterbox_s3gen(image, checkpoint):
         return output
     estimator.forward = recording_estimator_forward
 
-    t3_record = os.path.expanduser("~/.inferkit-validation/records/chatterbox_t3.safetensors")
+    t3_record = os.path.expanduser(VALIDATION_ROOT + "/records/chatterbox_t3.safetensors")
     with torch.inference_mode():
         fbank = Kaldi.fbank(ref16, num_mel_bins=80)
         fbank = fbank - fbank.mean(dim=0, keepdim=True)
@@ -13972,7 +13986,7 @@ def run_voicerestore_e2e(image, checkpoint):
 
 def _reenhance_src():
     import os
-    src = os.environ.get("IK_REENHANCE_SRC", os.path.expanduser("~/.inferkit-validation/reference-sources/resemble-enhance"))
+    src = os.environ.get("IK_REENHANCE_SRC", os.path.expanduser(VALIDATION_ROOT + "/reference-sources/resemble-enhance"))
     if src not in sys.path:
         sys.path.insert(0, src)
 
@@ -16378,7 +16392,7 @@ def run_trocr_loss(image, checkpoint):
         exact = F.nll_loss(torch.log_softmax(out.logits[0].double(), dim=-1), labels[0],
                            ignore_index=decoder.pad_token_id, reduction="sum") / len(target)
 
-    root = os.path.expanduser(os.environ.get("IK_FAIRSEQ_SRC", "~/.inferkit-validation/sources/fairseq"))
+    root = os.path.expanduser(os.environ.get("IK_FAIRSEQ_SRC", VALIDATION_ROOT + "/sources/fairseq"))
     stubs = {name: types.ModuleType(name) for name in
              ["fairseq", "fairseq.dataclass", "fairseq.optim", "fairseq.optim.lr_scheduler"]}
 
@@ -17908,9 +17922,9 @@ def run_sd3_pipeline(image, checkpoint):
     # latents by 1e-6; at 0.5 the guided and unguided records are 0.94 apart.
     text_scale = 0.5
     clip_g_directory = os.environ.get("IK_SD3_CLIP_G_TOKENIZER",
-                                      os.path.expanduser("~/.inferkit-validation/clip-bang-tokenizer"))
+                                      os.path.expanduser(VALIDATION_ROOT + "/clip-bang-tokenizer"))
     t5_directory = os.environ.get("IK_SD3_T5_TOKENIZER",
-                                  os.path.expanduser("~/.inferkit-validation/flux-schnell-release/tokenizer_2"))
+                                  os.path.expanduser(VALIDATION_ROOT + "/flux-schnell-release/tokenizer_2"))
     tokenizer = CLIPTokenizer.from_pretrained(checkpoint)
     tokenizer_2 = CLIPTokenizer.from_pretrained(clip_g_directory)
     # The fast tokenizer reads tokenizer.json directly; from_pretrained converts spiece.model, which

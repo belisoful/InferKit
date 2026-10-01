@@ -6,7 +6,7 @@ between sessions: a green parity run then meant "nothing regressed among the rec
 not "everything is verified". This puts them somewhere durable and makes rebuilding them one command.
 
     python3 fetch.py                 # fetch, convert, and point ~/.inferkit-validation.json at the result
-    python3 fetch.py --root DIR      # somewhere other than ~/.inferkit-validation
+    python3 fetch.py --root DIR      # somewhere other than the default validation root
     python3 fetch.py --only SAM CLIP # a subset, by manifest key (an asset or a release)
     python3 fetch.py --check         # report what is present and what is missing, download nothing
     python3 fetch.py --keep-in-backup # leave Time Machine's settings alone
@@ -32,7 +32,18 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.dirname(HERE)
 CONFIG = os.path.expanduser("~/.inferkit-validation.json")
-DEFAULT_ROOT = os.path.expanduser("~/.inferkit-validation")
+def validation_root():
+    """The validation store: IK_VALIDATION_ROOT, else the InferKit Models volume while it is mounted,
+    else ~/.inferkit-validation."""
+    if os.environ.get("IK_VALIDATION_ROOT"):
+        return os.environ["IK_VALIDATION_ROOT"]
+    external = "/Volumes/InferKit Models/inferkit-validation"
+    if os.path.isdir(external):
+        return external
+    return os.path.expanduser("~/.inferkit-validation")
+
+
+DEFAULT_ROOT = validation_root()
 
 
 def huggingface_cache():

@@ -54,10 +54,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         return path
     }
 
-    /// `IK_VALIDATION_RECORDS/<name>`, defaulting to `~/.inferkit-validation/records`.
+    /// `IK_VALIDATION_RECORDS/<name>`, defaulting to `records` under the validation root.
     private func record(_ name: String) throws -> [String: MLXArray] {
         let root = config["IK_VALIDATION_RECORDS"]
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation/records").path
+            ?? NFKMLXValidationConfig.root.appendingPathComponent("records").path
         let path = try existing(URL(fileURLWithPath: root).appendingPathComponent(name).path, name)
         return try loadArrays(url: URL(fileURLWithPath: path))
     }

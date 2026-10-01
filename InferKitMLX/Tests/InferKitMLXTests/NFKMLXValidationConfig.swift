@@ -25,4 +25,19 @@ enum NFKMLXValidationConfig {
 		}
 		return merged
 	}
+
+	/// The validation store's root directory: `IK_VALIDATION_ROOT` from `environment`, else
+	/// `/Volumes/InferKit Models/inferkit-validation` while that volume is mounted, else
+	/// `~/.inferkit-validation`. A test's fallback path under the store is built from this root.
+	static var root: URL {
+		if let path = environment["IK_VALIDATION_ROOT"] {
+			return URL(fileURLWithPath: path, isDirectory: true)
+		}
+		let external = URL(fileURLWithPath: "/Volumes/InferKit Models/inferkit-validation", isDirectory: true)
+		if FileManager.default.fileExists(atPath: external.path) {
+			return external
+		}
+		return FileManager.default.homeDirectoryForCurrentUser
+			.appendingPathComponent(".inferkit-validation", isDirectory: true)
+	}
 }

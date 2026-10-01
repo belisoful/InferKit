@@ -31,7 +31,7 @@ final class NFKMLXTorchParityTests: XCTestCase {
     }()
 
     /// `fallbackFile` covers a checkpoint the manifest does not (yet) record: the file is looked up
-    /// by its conventional name under `~/.inferkit-validation/<directory>/` when the config key is
+    /// by its conventional name under `<directory>/` in the validation root when the config key is
     /// absent.
     private func filePath(_ key: String, fallbackFile: String? = nil,
                           directory: String = "raw") throws -> URL {
@@ -44,10 +44,9 @@ final class NFKMLXTorchParityTests: XCTestCase {
         guard let fallbackFile else {
             throw XCTSkip("set \(key) in ~/.inferkit-validation.json (Tools/validation-assets/fetch.py)")
         }
-        let fallback = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".inferkit-validation/\(directory)/\(fallbackFile)")
+        let fallback = NFKMLXValidationConfig.root.appendingPathComponent("\(directory)/\(fallbackFile)")
         guard FileManager.default.fileExists(atPath: fallback.path) else {
-            throw XCTSkip("set \(key) or place \(fallbackFile) in ~/.inferkit-validation/\(directory)")
+            throw XCTSkip("set \(key) or place \(fallbackFile) in \(fallback.deletingLastPathComponent().path)")
         }
         return fallback
     }
