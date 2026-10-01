@@ -20,6 +20,7 @@ per modality that is already scoped; the entries here are the wider field the ro
 - [Tier 3 — strategic frontier, high cost](#tier-3--strategic-frontier-high-cost)
 - [Updates to shipped families (Tiers A–C)](#updates-to-shipped-families-tiers-ac)
 - [Text-to-speech candidates](#text-to-speech-candidates)
+- [3D asset generation candidates](#3d-asset-generation-candidates)
 - [Novel but license-blocked](#novel-but-license-blocked)
 - [Vendor verdicts](#vendor-verdicts)
 - [Connections to existing work](#connections-to-existing-work)
@@ -178,8 +179,9 @@ Notes:
   released weights with token-exact answers from raw inputs. Its decoder reuses `NFKMLXLanguageNet`,
   which gained partial rotary and LongRoPE; the new work is the Conformer speech tower, the NaViT SigLIP
   embedding and Phi-3.5's HD layout, the runtime mixture-of-LoRAs layer, and both preprocessors.
-- **Hunyuan3D** is the one novel 3D-asset frontier with no covered analog. The Tencent Community License
-  excludes the EU, UK, and South Korea and bans training competitors, so it is not truly open.
+- **Hunyuan3D** is a 3D-asset model with no covered analog. The Tencent Community License excludes the
+  EU, UK, and South Korea and bans training competitors, so it is not truly open. The permissive
+  alternatives are surveyed under [3D asset generation candidates](#3d-asset-generation-candidates).
 
 ## Updates to shipped families (Tiers A–C)
 
@@ -307,6 +309,136 @@ Priority rules:
 
 The Higgs Audio v2 generation repo (`bosonai/higgs-audio-v2-generation-3B-base`) returned an empty
 response on 2026-09-26, and `microsoft/VibeVoice-Large` returned 401.
+
+## 3D asset generation candidates
+
+Surveyed on 2026-09-30 against the Hugging Face detail endpoint (`/api/models/<repo>?blobs=true`), with
+a real file fetch on each priority 1 repo. The modality is image-to-3D and text-to-3D: one image or one
+prompt in, a mesh or a set of 3D Gaussians out. InferKit ships no model of this kind. Download is the
+size of the weights a port needs. Nothing in this section is scheduled.
+
+Two architecture families cover the field:
+
+- **Feed-forward triplane reconstruction.** An image encoder feeds a transformer that emits three
+  feature planes, a small MLP reads density or signed distance from them, and an iso-surface extractor
+  produces the mesh. One forward pass, no sampler. TripoSR, Stable Fast 3D, and SPAR3D.
+- **Latent flow over a 3D representation.** A rectified-flow transformer denoises a 3D latent that a VAE
+  decodes. The latent is a sparse voxel grid in the TRELLIS family (TRELLIS, TRELLIS.2, Pixal3D, Arbor,
+  SAM 3D Objects, Hi3DGen) and an unordered vector set in the other (TripoSG, Hunyuan3D, Step1X-3D).
+
+TRELLIS is the hub. Six of the releases below are TRELLIS checkpoints or fine-tunes that load into its
+networks, and TRELLIS.2 loads TRELLIS's sparse-structure decoder unchanged.
+
+### Priority 1 — recommended
+
+| Model | Vendor | Download | License | Reuses or needs | Revision |
+|-------|--------|----------|---------|-----------------|----------|
+| **TripoSR** | Stability AI and Tripo | 1.68 GB, one checkpoint | MIT | DINO ViT-B/16 image tokenizer, a 16-layer transformer over 3×32×32 triplane tokens with cross-attention, a transposed-convolution upsampler, a 9-layer NeRF MLP, marching cubes. Vertex colors, no UV texture. The reference runs on the CPU | `5b521936` |
+| **Stable Fast 3D** | Stability AI | 4.02 GB, one checkpoint; gated=auto | Stability Community (free under $1M revenue) | TripoSR's triplane lineage with a larger transformer, marching tetrahedra, material and illumination heads (the material head reads OpenCLIP features), a box-projection UV unwrapper, and a texture baker. The reference supports MPS with Metal baking kernels and runs in about 6 GB | `f0c9a8ff` |
+| **SPAR3D** | Stability AI | 7.33 GB, one checkpoint; gated=auto | Stability Community | Stable Fast 3D conditioned on a point cloud that a point-diffusion stage samples from the image. The point cloud is editable before meshing | `5699918c` |
+| **TRELLIS image-large** | Microsoft | 3.3 GB repo; 2.66 GB for the mesh path, plus DINOv2 ViT-L/14 with registers (1.22 GB, Apache-2.0) | MIT | Stage 1: a 24-block flow transformer over a dense 16³ latent, decoded by a Conv3d VAE to a 64³ occupancy grid. Stage 2: a 24-block flow transformer over the occupied voxels with sparse-convolution input and output blocks. Decoders: sparse Swin transformers to a mesh (FlexiCubes), to 3D Gaussians, and to a radiance field. 25 Euler steps a stage | `25e0d31f` |
+| **TRELLIS text** (base, large, xlarge) | Microsoft | 0.70, 2.28, 4.13 GB | MIT | The image model's networks conditioned on the shipped CLIP ViT-L text encoder | `f8e8cf00`, `4aad9f4a`, `e0b00432` |
+| **TRELLIS.2-4B** | Microsoft | 16.24 GB repo; 9.8 GB for the 512³ path, plus DINOv3 ViT-L/16 (1.21 GB; gated=manual, DINOv3 License) | MIT | Three 1.3B flow transformers (30 blocks, width 1536, rotary position): sparse structure, shape, and texture conditioned on shape. Sparse ConvNeXt VAE decoders emit a dual-grid mesh and per-voxel PBR attributes. Loads TRELLIS's sparse-structure decoder. 12 steps a stage. The release's background remover is RMBG-2.0 (CC-BY-NC); the shipped BiRefNet replaces it | `af44b45f` |
+| **TripoSG** | VAST | 7.95 GB (5.76 GB transformer, 0.97 GB VAE, 1.22 GB DINOv2 ViT-L) | MIT | A 21-layer, width-2048 rectified-flow transformer over 2048 vector-set latents of 64 channels. The VAE decoder answers signed-distance queries by cross-attention and marching cubes extracts the surface. Geometry only. `diffusers` layout | `2c1c516d` |
+
+### Priority 2 — potential
+
+| Model | Vendor | Download | License | Reuses or needs |
+|-------|--------|----------|---------|-----------------|
+| **Pixal3D** | Tencent ARC | 46.05 GB repo; 5.4–5.5 GB a stage, single-view and multi-view sets | MIT | TRELLIS.2's networks with pixel-aligned projection conditioning and view-aligned latents; DINOv3 |
+| **Arbor** | Stability AI | 0.63 GB denoiser, plus TRELLIS text weights and the TRELLIS mesh decoder | Stability Community | Text-to-3D under hull, avoidance, and touch constraint meshes. A TRELLIS text fine-tune with a constraint encoder |
+| **SAM 3D Objects** | Meta | 13.17 GB; gated=manual | `other` on the card; the MLX conversion's card names the SAM License | TRELLIS's two stages conditioned on a MoGe point map; reconstructs an object from a masked photograph |
+| **Hi3DGen** (`Stable-X/trellis-normal-v0-1`) | Stable-X | 2.65 GB | MIT | TRELLIS conditioned on a normal map |
+| **Step1X-3D** | StepFun | 19.64 GB repo; 7.25 GB for geometry | Apache-2.0 | A vector-set VAE and a 1.3B flow transformer for geometry; an SDXL-based multi-view model for texture |
+| **MIDI-3D** | VAST | 5.07 GB | Apache-2.0 | TripoSG extended to several objects in one scene |
+| **Direct3D-S2** | DreamTech | 8.51 GB | MIT | A sparse signed-distance VAE with spatial sparse attention, up to 1024³ |
+| **InstantMesh** | Tencent ARC | 7.27 GB repo | Apache-2.0 | A triplane reconstruction model over six generated views. The view generator is Zero123++ v1.2, whose card declares no license |
+| **LGM** | ashawkey | 0.83 GB fp16 | MIT | A U-Net from four views to 3D Gaussians; needs a multi-view diffusion model in front |
+| **Shap-E** | OpenAI | 4.9 GB repo; 1.33 GB fp16 | MIT | A 2023 latent diffusion over implicit-function weights, text- or image-conditioned through CLIP. The one candidate with an HF `diffusers` pipeline as its reference |
+| **Cube 3D v0.5, CubePart** | Roblox | 8.28 GB, 9.90 GB | OpenRAIL on the card | A shape tokenizer and an autoregressive text-to-shape transformer |
+| **UltraShape** | infinith | 8.02 GB | Apache-2.0 on the card | A geometry refiner. Its 7.37 GB checkpoint matches the Hunyuan3D-2.1 shape transformer's size, so confirm its provenance before treating the Apache-2.0 declaration as the whole license |
+
+### Priority 3 — restrictive license (lowest)
+
+| Model | Vendor | Download | License |
+|-------|--------|----------|---------|
+| **Hunyuan3D-2.1** | Tencent | 14.91 GB (8.0 GB shape, 6.9 GB PBR paint) | Tencent Hunyuan Community |
+| **Hunyuan3D-2, 2mini, 2mv, Omni** | Tencent | 74.89, 25.26, 29.58, 25.73 GB repos | Tencent Hunyuan Community |
+| **Hunyuan3D-Part** | Tencent | 9.5 GB | undeclared on the card |
+| **Stable Zero123** | Stability AI | 17.17 GB | Stability non-commercial community |
+| **SV3D** | Stability AI | 18.74 GB; gated=auto | Stability SV3D non-commercial community |
+| **Stable Virtual Camera** | Stability AI | 10.11 GB; gated=auto | Stability non-commercial |
+| **SHARP** | Apple | 2.81 GB | Apple ML research (`apple-amlr`) |
+| **ShapeR** | Meta | 4.18 GB | CC-BY-NC-4.0 |
+| **Large Sparse Reconstruction Model** | Meta | 14.41 GB; gated=manual | CC-BY-NC-4.0 |
+| **VGGT-1B** | Meta | 10.05 GB | CC-BY-NC-4.0; the commercial copy is gated=manual under its own acceptable-use license |
+| **OpenLRM 1.1** | 3DTopia | 2.08 GB (mix-base) | CC-BY-NC-4.0 |
+| **PartPacker** | NVIDIA | 3.18 GB | NVIDIA non-commercial |
+| **LLaMA-Mesh** | NVIDIA research | 16.07 GB | Llama 3.1 Community |
+| **CraftsMan3D** | CraftsMan3D | 4.99 GB | CreativeML OpenRAIL-M |
+
+Stability's SV4D and SV4D 2.0 (Stability Community) are multi-view video synthesis and emit no mesh.
+`openai/point-e`, `craftsman3d/craftsman-DoraVAE`, `ILSparkle/Sparc3D`, and `VAST-AI/MV-Adapter`
+returned 401 on 2026-09-30.
+
+### Access on 2026-09-30
+
+- TripoSR, TRELLIS, TRELLIS.2, TripoSG, Pixal3D, and Arbor serve their files without a token.
+- Stable Fast 3D and SPAR3D return 403 to the project's account. Each gate is automatic and opens when
+  the account holder accepts the terms on the model page.
+- DINOv3 ViT-L/16 and SAM 3D Objects return 403. Each gate is manual and Meta reviews the request.
+  TRELLIS.2 and Pixal3D cannot run without DINOv3.
+
+### What the modality needs
+
+No 3D output type exists in the core, and no shipped model extracts a surface. The new work that is
+shared across candidates:
+
+- **Core value types.** A mesh (positions, normals, triangle indices, vertex colors, texture
+  coordinates, PBR texture images) and a Gaussian set, with request and result keys, as `NFKMIDISequence`
+  preceded the transcription models. ModelIO writes USD, OBJ, PLY, and STL with no third-party
+  dependency. GLB needs an in-house writer.
+- **Iso-surface extraction.** Marching cubes (TripoSR, TripoSG), marching tetrahedra (Stable Fast 3D),
+  FlexiCubes (TRELLIS), and the flexible dual grid (TRELLIS.2). Each runs on the CPU and is
+  deterministic.
+- **Sparse voxel tensors.** A coordinate list with features, a submanifold sparse convolution, and sparse
+  down- and up-sampling. The convolution is a neighbor table built on the CPU and a gather, the form the
+  shipped deformable convolution uses. Token count varies per sample.
+- **UV unwrapping and texture baking.** The references call xatlas, nvdiffrast, and cumesh. The core
+  takes no third-party dependency, so both steps are written in-house. Stable Fast 3D's box-projection
+  unwrapper and its Metal baking kernels are the closest model. A first release can emit vertex colors.
+- **Encoders.** DINO ViT-B/16 and DINOv3 ViT-L/16 are new. DINOv2 ships inside Depth Anything and
+  RF-DETR; the with-registers ViT-L/14 checkpoint needs confirming against that implementation. CLIP
+  ViT-L and BiRefNet ship.
+
+Reference availability on this machine:
+
+- TripoSR runs on the CPU. Stable Fast 3D and SPAR3D run on the CPU and on MPS.
+- TRELLIS depends on spconv, flash-attn or xformers, kaolin, nvdiffrast, and diffoctreerast. TRELLIS.2
+  depends on flash-attn, flex_gemm, o_voxel, nvdiffrast, and cumesh. All are CUDA builds. A community
+  port (`shivampkumar/trellis-mac`) replaces the attention, the sparse convolution, and the hash map with
+  plain PyTorch and runs TRELLIS.2 at 512³ on a 24 GB M4 Pro in about 3.5 minutes at an 18 GB peak, with
+  vertex colors and no baked texture. A parity oracle for the networks needs the same substitutions.
+- TripoSG documents CUDA only. Its `diffusers` layout and scikit-image dependency suggest a CPU path;
+  confirm before starting.
+- Parity is measured at the network seams (triplanes, latents, density or distance grids). The extracted
+  mesh is compared after the seams match.
+
+Customization: TRELLIS publishes its training code under MIT, so its fine-tune objective can be measured
+against a reference. TripoSR, Stable Fast 3D, SPAR3D, and TripoSG publish inference code only, so each
+entry either derives the objective from the paper or rules the path out in writing.
+
+### Order
+
+1. **TripoSR.** The smallest permissive model. It forces the core mesh type, marching cubes, and the
+   writers, which every later port uses.
+2. **Stable Fast 3D**, once the gate is accepted. It reuses TripoSR's lineage, adds UV-textured PBR
+   output, and its reference already runs on Apple GPUs.
+3. **TRELLIS image-large and text.** The sparse-voxel infrastructure and the first generative 3D model,
+   with Gaussian and mesh outputs.
+4. **TRELLIS.2-4B**, once DINOv3 access is granted. The strongest open model at the survey date, and the
+   base of Pixal3D.
+5. **TripoSG.** The vector-set representation, which Step1X-3D, MIDI-3D, and Hunyuan3D share.
 
 ## Novel but license-blocked
 
