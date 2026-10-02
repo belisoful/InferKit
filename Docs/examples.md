@@ -4006,6 +4006,22 @@ try NFKMLXWeights.save(net, to: tuned)
 let enhancer = try NFKMLXFRCRN.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Training MossFormer2 SE on your own recordings
+
+The released 48 kHz MossFormer2 enhancer trains every weight the way ClearerVoice-Studio trains it: the
+phase-sensitive mask error, Adam at 5e-4, and the reference's dropout. Each step takes a batch of noisy
+clips and the clean speech under them, `[N, L]` mono at 48 kHz in [-1, 1].
+
+```swift
+let net = try NFKMLXMossFormer2Factory.network(weightsURL: releasedWeights)   // last_best_checkpoint.pt
+try NFKMLXMossFormer2Factory.fineTune(net, examples: { step in
+    (noisy: myBatches[step].noisy, clean: myBatches[step].clean)
+}, steps: 2000, dither: NFKMLXMossFormer2Factory.referenceDither)
+
+try NFKMLXWeights.save(net, to: tuned)
+let enhancer = try NFKMLXMossFormer2Factory.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

@@ -11416,6 +11416,90 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(lossAfter, try scalar("loss_after_step64"), accuracy: 0.02 * fall)
     }
 
+    // MossFormer2 SE's training against ClearerVoice-Studio's own `train/speech_enhancement` (6b3774d): the
+    // loader's Kaldi features with and without its dither, the released network's mask with the dropout
+    // off, `loss_mossformer2_se_48k`, the gradients of four tensors and the global norm before the clip,
+    // and the loss after one step of `train.py`'s Adam. Each is also recorded at float64.
+    //
+    // `IK_MOSSFORMER2_TRAIN_SRC=reference-sources/clearervoice-train/train/speech_enhancement
+    //  python run_reference.py mossformer2_training out/mossformer2-training.safetensors --checkpoint mossformer2-se/last_best_checkpoint.pt`
+    func testMossFormer2TrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_MOSSFORMER2_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_MOSSFORMER2_TRAINING to a record from run_reference.py mossformer2_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let noisy = try array("noisy"), clean = try array("clean"), feature = try array("feature")
+
+        let featureDifference = abs(NFKMLXMossFormer2Factory.features(noisy) - feature).max().item(Float.self)
+        var configuration = NFKMLXMossFormer2Configuration()
+        var ditherDifference: Float = 0
+        for clip in 0 ..< 2 {
+            let samples = (noisy[clip] * NFKMLXMossFormer2Backend.waveScale).asArray(Float.self)
+            let dithered = NFKMLXKaldiFbank.features(samples: samples, config: configuration,
+                                                     dither: try array("dither::\(clip)").asArray(Float.self))
+            ditherDifference = max(ditherDifference, abs(dithered[0] - (try array("dithered::\(clip)"))).max().item(Float.self))
+        }
+        print("PARITY mossformer2-training: features worst \(featureDifference), dithered worst \(ditherDifference) "
+              + "of peak \(abs(feature).max().item(Float.self))")
+        XCTAssertLessThan(featureDifference, 1e-3)
+        XCTAssertLessThan(ditherDifference, 1e-3)
+
+        // The reference's gradient runs in evaluation mode, which only turns its dropout off.
+        configuration.dropout = 0
+        let net = try NFKMLXMossFormer2Factory.network(weightsURL: weights("IK_VAL_MOSSFORMER2_SE"), configuration: configuration)
+        let objective = NFKMLXMossFormer2Objective()
+        let mask = net(feature)
+        let loss = objective.loss(noisy: noisy, clean: clean, mask: mask).item(Float.self)
+        let maskDifference = abs(mask - (try array("mask"))).max().item(Float.self)
+        let maskFloor = abs(try array("mask") - (try array("mask64"))).max().item(Float.self)
+        let reference = try scalar("output")
+        print("PARITY mossformer2-training: mask worst \(maskDifference) (reference float32 floor \(maskFloor)); "
+              + "loss \(loss) vs \(reference) (float64 \(try scalar("loss64")))")
+        XCTAssertLessThan(maskDifference, max(1e-4, 2 * maskFloor))
+        XCTAssertEqual(loss, reference, accuracy: max(abs(reference) * 1e-4, 2 * abs(reference - (try scalar("loss64")))))
+
+        let installation = try NFKMLXGradientSafeConvolution.install(in: net)
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1], arrays[2])]
+        }(net, [feature, noisy, clean]).1.flattened())
+        installation.restore()
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try scalar("gradient_norm64")
+        print("PARITY mossformer2-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-3, 2 * abs(try scalar("gradient_norm") - norm64)))
+        func layout(_ reference: MLXArray) -> MLXArray {
+            switch reference.ndim {
+            case 4: return reference.transposed(0, 2, 3, 1)
+            case 3: return reference.transposed(0, 2, 1)
+            default: return reference
+            }
+        }
+        for name in ["mossformer.conv1d_encoder.weight", "mossformer.mdl.intra_mdl.mossformerM.layers.0.to_hidden.mdl.1.weight",
+                     "mossformer.mdl.intra_mdl.mossformerM.fsmn.0.gated_fsmn.fsmn.conv1.weight",
+                     "mossformer.conv1_decoder.weight"] {
+            let key = try XCTUnwrap(NFKMLXMossFormer2Factory.remapReferenceKey(name))
+            let ours = try XCTUnwrap(gradients[key], key)
+            let theirs = layout(try array("grad::\(name)")), theirs64 = layout(try array("grad64::\(name)"))
+            let floor = distance(theirs, theirs64)
+            print("PARITY mossformer2-training: \(key) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-3, 2 * floor), key)
+        }
+
+        try NFKMLXMossFormer2Factory.fineTune(net, examples: { _ in (noisy, clean) }, steps: 1)
+        let lossAfter = objective(net, feature, noisy, clean).item(Float.self)
+        let after64 = try scalar("loss_after_step64")
+        let stepFloor = abs(try scalar("loss_after_step") - after64)
+        print("PARITY mossformer2-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-3, 2 * stepFloor))
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

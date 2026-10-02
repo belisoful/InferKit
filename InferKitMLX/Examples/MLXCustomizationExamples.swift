@@ -877,6 +877,27 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(enhancer.isReady)
     }
 
+    // Docs/examples.md: Training MossFormer2 SE on your own recordings
+    func testExampleTrainingMossFormer2OnOwnRecordings() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mossformer2-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXMossFormer2Factory.network(weightsURL: releasedWeights).
+        let net = try NFKMLXMossFormer2Factory.network(weightsURL: nil)
+        let clean = MLXArray((0 ..< 2 * 12_000).map { sinf(2 * .pi * 220 * Float($0 % 12_000) / 48_000) * 0.1 }, [2, 12_000])
+        let noisy = clean + MLXArray((0 ..< 2 * 12_000).map { 0.01 * sinf(Float($0) * 1.7) }, [2, 12_000])
+        let history = try NFKMLXMossFormer2Factory.fineTune(net, examples: { _ in (noisy: noisy, clean: clean) },
+                                                            steps: 1, dither: NFKMLXMossFormer2Factory.referenceDither)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let enhancer = try NFKMLXMossFormer2Factory.backend(weightsURL: tuned)   // also backendWithWeightsURL:error:
+        XCTAssertTrue(enhancer.isReady)
+    }
+
     // Docs/examples.md: Teaching note transcription your own instrument
     func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

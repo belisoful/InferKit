@@ -1272,6 +1272,136 @@ def run_frcrn_training(image, checkpoint):
     return torch.tensor([loss.item()], dtype=torch.float32)
 
 
+def run_mossformer2_training(image, checkpoint):
+    """MossFormer2 SE 48K's training objective and one optimizer step, from ClearerVoice-Studio's own
+    `train/speech_enhancement` (IK_MOSSFORMER2_TRAIN_SRC is that directory at the pinned commit;
+    `--checkpoint` is the released `last_best_checkpoint.pt`).
+
+    Records, on two one-second clips each scaled by the loader's `audio_norm`:
+    - the clips, and the loader's `Fbank_Processor` features of the noisy ones without dither;
+    - the same features with the loader's dither of 1.0, and the Gaussian draws it added, so the port
+      replays them;
+    - `TestNet.forward` in evaluation mode, which only turns the dropout off, its mask, and
+      `loss_mossformer2_se_48k`;
+    - the gradient of four tensors, upstream to downstream, and the global gradient norm before
+      `clip_grad_norm_(10)`;
+    - one step of `train.py`'s `torch.optim.Adam(lr=5e-4)` after that clip, and the loss after it;
+    - the mask, the gradients, the norm, and the stepped loss again at float64, the floor a float32
+      result is measured against.
+
+    `utils.misc` imports `pesq`, which only its PESQ metric calls, so it is stubbed where it is absent.
+    """
+    import argparse
+    import copy
+    import types
+
+    source = os.environ["IK_MOSSFORMER2_TRAIN_SRC"]
+    _stub_missing({"pesq": ["pesq"]})
+    sys.path.insert(0, source)
+    package = types.ModuleType("utils")
+    package.__path__ = [os.path.join(source, "utils")]
+    sys.modules["utils"] = package
+    from models.mossformer2.mossformer2_se_wrapper import MossFormer2_SE_48K
+    import losses.loss as loss_module
+    from dataloader.dataloader import audio_norm, Fbank_Processor
+
+    args = argparse.Namespace(sampling_rate=48000, win_type="hamming", win_len=1920, win_inc=384, fft_len=1920,
+                              num_mels=60)
+    model = MossFormer2_SE_48K(args).model
+    state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    # The release is a flat state dict keyed `mossformer.*`, the names of `TestNet`'s own parameters.
+    model.load_state_dict(state.get("model", state), strict=True)
+    model.eval()
+
+    samples = 48000
+    time = np.arange(samples, dtype=np.float64) / 48000.0
+    generator = np.random.default_rng(23)
+    raw_clean = np.stack([sum(0.2 / (h + 1) * np.sin(2 * np.pi * (140 + 60 * b) * (h + 1) * time) for h in range(6))
+                          * (0.4 + 0.6 * np.abs(np.sin(2 * np.pi * (2 + b) * time))) for b in range(2)])
+    raw_noisy = raw_clean + 0.08 * generator.standard_normal((2, samples))
+    clean = np.stack([audio_norm(row)[0] for row in raw_clean]).astype(np.float32)
+    noisy = np.stack([audio_norm(row)[0] for row in raw_noisy]).astype(np.float32)
+    clean_t, noisy_t = torch.from_numpy(clean), torch.from_numpy(noisy)
+    extra = {"noisy": noisy_t, "clean": clean_t}
+
+    # The loader's own processor, with `torch.randn` replaced: by zeros for the undithered features, and
+    # by a recorder of its draws for the dithered ones.
+    processor = Fbank_Processor()
+    original_randn = torch.randn
+    def features(row, draws):
+        def randn(*shape, **kwargs):
+            values = original_randn(*shape, **kwargs)
+            if draws is None:
+                return torch.zeros_like(values)
+            draws.append(values.clone())
+            return values
+        torch.randn = randn
+        try:
+            return torch.from_numpy(processor.process(row, args))
+        finally:
+            torch.randn = original_randn
+    feature = torch.stack([features(row, None) for row in noisy])
+    torch.manual_seed(5)
+    for index, row in enumerate(noisy):
+        draws = []
+        extra[f"dithered::{index}"] = features(row, draws).contiguous()
+        extra[f"dither::{index}"] = draws[0].contiguous()
+    extra["feature"] = feature.contiguous()
+
+    names = ["mossformer.conv1d_encoder.weight", "mossformer.mdl.intra_mdl.mossformerM.layers.0.to_hidden.mdl.1.weight",
+             "mossformer.mdl.intra_mdl.mossformerM.fsmn.0.gated_fsmn.fsmn.conv1.weight",
+             "mossformer.conv1_decoder.weight"]
+    scale = 32768.0
+
+    def stft64(x, args, center=False):
+        # `utils.misc.stft` builds its window at float32, which `torch.stft` refuses beside a float64 clip.
+        window = torch.hamming_window(args.win_len, periodic=False, dtype=x.dtype)
+        return torch.stft(x, args.fft_len, args.win_inc, args.win_len, center=center, window=window,
+                          return_complex=False)
+    original_stft = loss_module.stft
+
+    model64 = copy.deepcopy(model).double()
+    loss_module.stft = stft64
+    out64 = model64(feature.double())
+    extra["mask64"] = out64[-1].detach().float().contiguous()
+    loss64 = loss_module.loss_mossformer2_se_48k(args, noisy_t.double() * scale, clean_t.double() * scale, out64, "cpu")
+    extra["loss64"] = torch.tensor([loss64.item()])
+    loss64.backward()
+    named64 = dict(model64.named_parameters())
+    for name in names:
+        extra[f"grad64::{name}"] = named64[name].grad.detach().float().clone()
+    extra["gradient_norm64"] = torch.tensor([float(torch.sqrt(sum((p.grad.double() ** 2).sum()
+                                                                  for p in model64.parameters() if p.grad is not None)))])
+    optimizer64 = torch.optim.Adam(model64.parameters(), lr=5e-4)
+    torch.nn.utils.clip_grad_norm_(model64.parameters(), 10.0)
+    optimizer64.step()
+    with torch.no_grad():
+        after64 = model64(feature.double())
+        extra["loss_after_step64"] = torch.tensor([loss_module.loss_mossformer2_se_48k(
+            args, noisy_t.double() * scale, clean_t.double() * scale, after64, "cpu").item()])
+    loss_module.stft = original_stft
+    del model64
+
+    out = model(feature)
+    extra["mask"] = out[-1].detach().contiguous()
+    loss = loss_module.loss_mossformer2_se_48k(args, noisy_t * scale, clean_t * scale, out, "cpu")
+    optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
+    optimizer.zero_grad()
+    loss.backward()
+    named = dict(model.named_parameters())
+    for name in names:
+        extra[f"grad::{name}"] = named[name].grad.detach().clone()
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+    extra["gradient_norm"] = torch.tensor([float(norm)])
+    optimizer.step()
+    with torch.no_grad():
+        after = model(feature)
+        extra["loss_after_step"] = torch.tensor([loss_module.loss_mossformer2_se_48k(
+            args, noisy_t * scale, clean_t * scale, after, "cpu").item()])
+    globals()["_extra"] = extra
+    return torch.tensor([loss.item()], dtype=torch.float32)
+
+
 def _reference_source():
     """The directory holding the single-file reference implementations, from IK_REF_SRC."""
     import os
@@ -14115,9 +14245,11 @@ def run_mossformer2_se(image, checkpoint):
 
     Set IK_MOSSFORMER2_SE_SRC to the ClearerVoice source dir that holds `models/mossformer2_se/`
     (e.g. `.../ClearerVoice-Studio/clearvoice/clearvoice`). `--checkpoint` is `last_best_checkpoint.pt`.
-    The fbank front end forces **dither=0** (the released `compute_fbank` uses dither=1.0, which is
-    random noise and makes parity impossible). Records the 180-dim network feature, the masking STFT,
-    the encoder output, the first and last block outputs, the 961-bin mask, and the waveform.
+    The fbank reads the clip scaled by 32768, as `decode_one_audio_mossformer2_se_48k` scales it, and
+    forces **dither=0** (the released `compute_fbank` uses dither=1.0, which is random noise and makes
+    parity impossible). The mask applies to the unscaled spectrum, which the decoder's final division by
+    32768 makes equal. Records the 180-dim network feature, the masking STFT, the encoder output, the
+    first and last block outputs, the 961-bin mask, and the waveform.
     """
     import os
     import torchaudio
@@ -14140,7 +14272,7 @@ def run_mossformer2_se(image, checkpoint):
     wave = (speech * envelope + 0.05 * gen.standard_normal(samples)).astype(np.float32)
     y = torch.from_numpy(wave).unsqueeze(0)
 
-    fbank = torchaudio.compliance.kaldi.fbank(y, dither=0.0, frame_length=40.0, frame_shift=8.0,
+    fbank = torchaudio.compliance.kaldi.fbank(y * 32768.0, dither=0.0, frame_length=40.0, frame_shift=8.0,
                                               num_mel_bins=60, sample_frequency=sr, window_type="hamming")
     delta = torchaudio.functional.compute_deltas(fbank.transpose(0, 1)).transpose(0, 1)
     delta2 = torchaudio.functional.compute_deltas(
@@ -18029,7 +18161,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_f
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

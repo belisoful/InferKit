@@ -99,8 +99,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 - `NFKMLXMossFormer2SENet` / `NFKMLXMossFormer2Factory` (`@objc(NFKMLXMossFormer2_Factory)`) — MossFormer2
   SE 48K (modelscope/ClearerVoice-Studio, Apache-2.0), full-band speech enhancement, at reference
   parity on the released `last_best_checkpoint.pt`, measured on the M1 at float32: the Kaldi fbank+Δ
-  **1.0000000**, the encoder and FLASH block 0 **0.99999994**, FLASH block last and the 961-bin mask
-  **1.0000000**, and the enhanced waveform **0.9999998**. The shared MossFormer2 backbone is a mask-predicting
+  **1.0** (worst 3.6e-5), the encoder and FLASH block 0 **0.99999994**, FLASH block last and the 961-bin
+  mask **1.0000000**, and the enhanced waveform **1.0000001**. The shared MossFormer2 backbone is a mask-predicting
   net over a Kaldi-fbank front end: a `GroupNorm(1)` input norm, a `Conv1d` bottleneck, a scaled sinusoidal
   positional embedding, 24 `MossformerBlock_GFSMN` layers, and a gated output to a real 961-bin mask
   (final ReLU). Each block interleaves `FLASH_ShareA_FFConvM` (gated single-head attention: quadratic
@@ -110,7 +110,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   depthwise `Conv2d[39,1]` memory, the Chatterbox-S3 FSMN family). Norms are the `ScaleNorm`/`CLayerNorm`/
   `LayerNorm(1e-6)` zoo. The front end is `NFKMLXKaldiFbank` — `torchaudio.compliance.kaldi.fbank`
   reproduced (DC-removal, pre-emphasis 0.97, Povey/hamming, pow2-padded FFT, kaldi-mel, log) + `compute_deltas`
-  ×2 → 180-dim, with `dither` forced to 0 (it is random noise; parity is impossible with it on). The
+  ×2 → 180-dim, on the clip scaled by 32768 (ClearerVoice's `MAX_WAV_VALUE`, which its decoder and its
+  training loader both apply), with `dither` 0. The decoder's `compute_fbank` dithers at 1.0, which is
+  random, so parity forces it off. Until 2026-10-01 the port and its oracle both read the unscaled clip:
+  they matched each other while the released network read a feature unlike the one it trained on. The
+  log-mel floor is torchaudio's float32 epsilon; it was 1e-38 before the same date. The
   mask multiplies a hamming/`center=false` STFT (phase kept) and inverts. Two facts are load-bearing, both
   found on the M1: **`num_spks=2`** (the wrapper builds the MaskNet with the default, so `conv1d_out`
   widens to `dModel·2` and the net returns speaker 0 — the port slices the first `dModel` channels, exact
@@ -119,15 +123,39 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   count is not a multiple of the group size; it dragged FLASH block 0 to 0.9975, localized by the block
   seams). `remapReferenceKey` strips the `mossformer.` wrapper prefix, drops the pos-enc/rotary buffers,
   and translates the `FFConvM.mdl`/`ConvModule`/`Gated_FSMN_Block.conv1`/output-gate Sequential indices.
-  The oracle is `run_reference.py mossformer2_se` (dither=0; records the 180-dim feature, STFT, encoder,
+  The oracle is `run_reference.py mossformer2_se` (the clip ×32768, dither=0; records the 180-dim feature, STFT, encoder,
   first/last block, mask, waveform), run against the source files (`IK_MOSSFORMER2_SE_SRC`) on
   `~/.inferkit-validation/llmvenv` (needs `rotary_embedding_torch` + `torchinfo`); the parity test feeds
   the recorded feature to isolate the backbone from the fbank. The SR sibling is `NFKMLXMossFormer2SRNet`
   below. Registered under `mossformer2-se`.
-  Customization: trainable at `full`, with no recipe written yet. modelscope/ClearerVoice-Studio at
-  6b3774d (`train/speech_enhancement`) trains the 48 kHz release with `psm_loss`, an MSE on the
-  phase-sensitive mask clamped to [0, 1], and no discriminator; Adam at 5e-4 (5e-5 to fine-tune),
-  clipping at 10, the rate halved after five epochs without improvement.
+  **Customization ships** at `full` (`NFKMLXMossFormer2Training.swift`), measured against
+  ClearerVoice-Studio at 6b3774d, `train/speech_enhancement` (`run_reference.py mossformer2_training`,
+  the `llm` env, `IK_MOSSFORMER2_TRAIN_SRC`), on the released checkpoint. The training tree's
+  `models/mossformer2` matches the inference sources the port was built from, docstrings aside.
+  - `NFKMLXMossFormer2Factory.fineTune` trains every parameter on noisy and clean batches `[N, L]` at
+    48 kHz in [-1, 1].
+  - `NFKMLXMossFormer2Objective` is `loss_mossformer2_se_48k`, which is `psm_loss`: the target
+    `|S|²/|Y|² · cos(∠S − ∠Y)` clamped to [0, 1] under a symmetric Hamming STFT, each bin's squared
+    error weighted by the noisy magnitude over its frame's loudest bin, halved and divided by the
+    batch's frame count. The clips are scaled by 32768 first, as the loader returns them.
+  - `NFKMLXMossFormer2Factory.features` is the loader's `Fbank_Processor`: the Kaldi fbank and its
+    deltas on the clip scaled by 32768. The loader dithers at 1.0 in 16-bit units
+    (`referenceDither`); the recipe's `dither` is off by default and draws from `ditherSeed`.
+  - The network gained the reference's dropout: 0.1 after every `FFConvM` and on FLASH's attention
+    weights, six sites a block (`NFKMLXMossFormer2Configuration.dropout`). A built network starts in
+    evaluation mode, so inference is unchanged.
+  - The reference optimizer is `train.py`'s `torch.optim.Adam` at 5e-4 with no decay, clipping at 10.
+    `finetune_learning_rate` 5e-5 is parsed and never read. The loader's batch is 4 four-second clips
+    accumulated to 8 (`referenceBatchSize`, `referenceAccumulationSteps`, `referenceSegmentSeconds`).
+  - Measured on two one-second clips, the dropout off as the reference's evaluation mode turns it off:
+    features within 4.9e-5 of a peak of 25.3, the dithered features within 4.2e-5 from the reference's
+    own draws, the mask within 5.1e-6 (the reference's float32 is 4.9e-6 from float64), the loss
+    2.428895 vs 2.4288979. The gradients are within 2.2e-5 of the reference's float32 and within
+    1.6e-5 of its float64 (the first encoder, FLASH block 0's `to_hidden`, the first FSMN memory, the
+    decoder); the global norm is 34.717983 vs 34.718567. The loss after one Adam step is 1.969826 vs
+    1.9698286.
+  - `loadWeights` reads a file `NFKMLXWeights` saved as written, so `backend(weightsURL:)` loads a
+    fine-tuned network; it previously remapped every key as the release's and found none.
 - `NFKMLXDeepFilterNet` / `NFKMLXDeepFilterNetBackend` (`@objc(NFKMLXDeepFilterNet_Factory)`) —
   **DeepFilterNet3** (Rikorose/DeepFilterNet, dual **MIT/Apache-2.0**), a ~2.3M-parameter real-time
   48 kHz speech denoiser, the cheap counterpart to `NFKMLXDenoiser`. The `DfNet` is a clean torch

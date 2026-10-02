@@ -4493,6 +4493,7 @@
         "bisenet_training",
         "denoiser_training",
         "frcrn_training",
+        "mossformer2_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5510,6 +5511,12 @@
       "record": "reference/frcrn-training.safetensors",
       "environment": "llm",
       "command": "IK_FRCRN_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/clearervoice-train/train/speech_enhancement\" frcrn_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/frcrn-se/last_best_checkpoint.pt\""
+    },
+    {
+      "key": "IK_PARITY_MOSSFORMER2_TRAINING",
+      "record": "reference/mossformer2-training.safetensors",
+      "environment": "llm",
+      "command": "IK_MOSSFORMER2_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/clearervoice-train/train/speech_enhancement\" mossformer2_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/mossformer2-se/last_best_checkpoint.pt\""
     }
   ]
 }

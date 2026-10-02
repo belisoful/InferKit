@@ -42,6 +42,9 @@ public struct NFKMLXMossFormer2Configuration: Sendable {
     /// The MaskNet's speaker count. The released SE net keeps the default 2 (its `conv1d_out` widens to
     /// `dModel·2`) and returns speaker 0, so this stays 2 for parity.
     public var numSpks: Int
+    /// The training dropout rate, applied to every `FFConvM` output and to the FLASH attention weights;
+    /// the reference's 0.1. Introduced in InferKit 0.4.0.
+    public var dropout: Float
 
     public var bins: Int { fftLen / 2 + 1 }
 
@@ -74,6 +77,7 @@ public struct NFKMLXMossFormer2Configuration: Sendable {
         self.fsmnHidden = fsmnHidden
         self.outChannelsFinal = fftLen / 2 + 1
         self.numSpks = 2
+        self.dropout = 0.1
     }
 }
 
@@ -156,24 +160,26 @@ final class NFKMossConvModule: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray { x + conv(x) }
 }
 
-/// `FFConvM`: norm → Linear → SiLU → ConvModule (dropout is identity at inference). The norm is
-/// `ScaleNorm` inside FLASH and `LayerNorm` inside the gated FSMN.
+/// `FFConvM`: norm → Linear → SiLU → ConvModule → dropout. The norm is `ScaleNorm` inside FLASH and
+/// `LayerNorm` inside the gated FSMN.
 final class NFKMossFFConvM: Module {
     enum NormKind { case scale, layer }
     @ModuleInfo(key: "norm") var norm: UnaryLayer
     @ModuleInfo(key: "linear") var linear: Linear
     @ModuleInfo(key: "conv_module") var convModule: NFKMossConvModule
+    @ModuleInfo(key: "dropout") var dropout: Dropout
 
-    init(dimIn: Int, dimOut: Int, norm: NormKind) {
+    init(dimIn: Int, dimOut: Int, norm: NormKind, dropout: Float) {
         switch norm {
         case .scale: _norm.wrappedValue = NFKMossScaleNorm(dim: dimIn)
         case .layer: _norm.wrappedValue = LayerNorm(dimensions: dimIn)
         }
         _linear.wrappedValue = Linear(dimIn, dimOut)
         _convModule.wrappedValue = NFKMossConvModule(dim: dimOut)
+        _dropout.wrappedValue = Dropout(p: dropout)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { convModule(silu(linear(norm(x)))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { dropout(convModule(silu(linear(norm(x))))) }
 }
 
 /// `OffsetScale(dim, heads=4)`: `x · gamma[h] + beta[h]` for each head, unbound into 4 tensors.
@@ -207,17 +213,19 @@ final class NFKMossFLASH: Module {
     @ModuleInfo(key: "to_qk") var toQK: NFKMossFFConvM
     @ModuleInfo(key: "qk_offset_scale") var offsetScale: NFKMossOffsetScale
     @ModuleInfo(key: "to_out") var toOut: NFKMossFFConvM
+    @ModuleInfo(key: "dropout") var dropout: Dropout
     let groupSize: Int
     let rotary: NFKMossRotary
 
-    init(dim: Int, groupSize: Int, queryKeyDim: Int, expansionFactor: Float, rotary: NFKMossRotary) {
+    init(dim: Int, groupSize: Int, queryKeyDim: Int, expansionFactor: Float, dropout: Float, rotary: NFKMossRotary) {
         self.groupSize = groupSize
         self.rotary = rotary
         let hidden = Int(Float(dim) * expansionFactor)                  // dim·4
-        _toHidden.wrappedValue = NFKMossFFConvM(dimIn: dim, dimOut: hidden, norm: .scale)
-        _toQK.wrappedValue = NFKMossFFConvM(dimIn: dim, dimOut: queryKeyDim, norm: .scale)
+        _toHidden.wrappedValue = NFKMossFFConvM(dimIn: dim, dimOut: hidden, norm: .scale, dropout: dropout)
+        _toQK.wrappedValue = NFKMossFFConvM(dimIn: dim, dimOut: queryKeyDim, norm: .scale, dropout: dropout)
         _offsetScale.wrappedValue = NFKMossOffsetScale(dim: queryKeyDim, heads: 4)
-        _toOut.wrappedValue = NFKMossFFConvM(dimIn: dim * 2, dimOut: dim, norm: .scale)
+        _toOut.wrappedValue = NFKMossFFConvM(dimIn: dim * 2, dimOut: dim, norm: .scale, dropout: dropout)
+        _dropout.wrappedValue = Dropout(p: dropout)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -260,7 +268,7 @@ final class NFKMossFLASH: Module {
         let qg = group(qqP, width: d), kg = group(kkP, width: d)
         let vg = group(vP, width: e), ug = group(uP, width: e)
         let sim = matmul(qg, kg.transposed(0, 2, 1)) / Float(g)
-        let attn = pow(maximum(sim, 0), 2)
+        let attn = dropout(pow(maximum(sim, 0), 2))
         let quadV = matmul(attn, vg).reshaped([b, sPad, e])
         let quadU = matmul(attn, ug).reshaped([b, sPad, e])
 
@@ -311,9 +319,9 @@ final class NFKMossGatedFSMN: Module {
     @ModuleInfo(key: "to_v") var toV: NFKMossFFConvM
     @ModuleInfo(key: "fsmn") var fsmn: NFKMossUniDeepFsmn
 
-    init(channels: Int, lorder: Int, hidden: Int) {
-        _toU.wrappedValue = NFKMossFFConvM(dimIn: channels, dimOut: hidden, norm: .layer)
-        _toV.wrappedValue = NFKMossFFConvM(dimIn: channels, dimOut: hidden, norm: .layer)
+    init(channels: Int, lorder: Int, hidden: Int, dropout: Float) {
+        _toU.wrappedValue = NFKMossFFConvM(dimIn: channels, dimOut: hidden, norm: .layer, dropout: dropout)
+        _toV.wrappedValue = NFKMossFFConvM(dimIn: channels, dimOut: hidden, norm: .layer, dropout: dropout)
         _fsmn.wrappedValue = NFKMossUniDeepFsmn(inputDim: channels, outputDim: channels, lorder: lorder, hidden: hidden)
     }
 
@@ -330,11 +338,11 @@ final class NFKMossGatedFSMNBlock: Module {
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
     @ModuleInfo(key: "conv2") var conv2: Conv1d
 
-    init(dim: Int, inner: Int, lorder: Int) {
+    init(dim: Int, inner: Int, lorder: Int, dropout: Float) {
         _conv1.wrappedValue = Conv1d(inputChannels: dim, outputChannels: inner, kernelSize: 1)
         _prelu.wrappedValue = PReLU(count: inner)
         _norm1.wrappedValue = LayerNorm(dimensions: inner)
-        _gatedFSMN.wrappedValue = NFKMossGatedFSMN(channels: inner, lorder: lorder, hidden: inner)
+        _gatedFSMN.wrappedValue = NFKMossGatedFSMN(channels: inner, lorder: lorder, hidden: inner, dropout: dropout)
         _norm2.wrappedValue = LayerNorm(dimensions: inner)
         _conv2.wrappedValue = Conv1d(inputChannels: inner, outputChannels: dim, kernelSize: 1)
     }
@@ -357,10 +365,11 @@ final class NFKMossBlockGFSMN: Module {
         let rotary = NFKMossRotary(rotaryDim: min(32, config.queryKeyDim))
         _layers.wrappedValue = (0 ..< config.numBlocks).map { _ in
             NFKMossFLASH(dim: config.dModel, groupSize: config.groupSize, queryKeyDim: config.queryKeyDim,
-                         expansionFactor: config.expansionFactor, rotary: rotary)
+                         expansionFactor: config.expansionFactor, dropout: config.dropout, rotary: rotary)
         }
         _fsmn.wrappedValue = (0 ..< config.numBlocks).map { _ in
-            NFKMossGatedFSMNBlock(dim: config.dModel, inner: config.fsmnHidden, lorder: config.fsmnLorder)
+            NFKMossGatedFSMNBlock(dim: config.dModel, inner: config.fsmnHidden, lorder: config.fsmnLorder,
+                                  dropout: config.dropout)
         }
     }
 
@@ -453,6 +462,9 @@ public final class NFKMLXMossFormer2SENet: Module {
         _output.wrappedValue = Conv1d(inputChannels: config.dModel, outputChannels: config.dModel, kernelSize: 1)
         _outputGate.wrappedValue = Conv1d(inputChannels: config.dModel, outputChannels: config.dModel, kernelSize: 1)
         _decoder.wrappedValue = Conv1d(inputChannels: config.dModel, outputChannels: config.outChannelsFinal, kernelSize: 1, bias: false)
+        // Dropout acts in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// `[B, S, 180]` → `[B, S, 961]` non-negative mask.
@@ -567,10 +579,14 @@ public final class NFKMLXMossFormer2Backend: NSObject, NFKInferenceBackend {
         return NFKInferenceResult(outputs: [NFKOutputAudio: asset])
     }
 
+    /// ClearerVoice's `MAX_WAV_VALUE`. Its decoder and its training loader scale a clip in [-1, 1] by this
+    /// before the fbank, so the network reads features of 16-bit-range audio.
+    static let waveScale: Float = 32768
+
     /// The full path: Kaldi fbank → MaskNet → real mask applied to the hamming STFT (phase kept) →
     /// iSTFT. Exposed for the parity harness (which can feed a recorded feature instead).
     static func enhance(_ samples: [Float], net: NFKMLXMossFormer2SENet, config: NFKMLXMossFormer2Configuration) -> [Float] {
-        let feature = NFKMLXKaldiFbank.features(samples: samples, config: config)   // [1, S, 180]
+        let feature = NFKMLXKaldiFbank.features(samples: samples.map { $0 * waveScale }, config: config)   // [1, S, 180]
         let mask = net(feature)                                                     // [1, S, 961]
         let stft = NFKMossSTFT(nFFT: config.fftLen, hop: config.winInc)
         let (re, im, frames) = stft.transform(samples)                              // [961, T]
@@ -643,11 +659,13 @@ public final class NFKMLXMossFormer2Factory: NSObject {
 
     /// Loads a released MossFormer2 SE checkpoint (`last_best_checkpoint.pt`, prefix `mossformer.`) into
     /// the MaskNet: unwrap the training container, drop the pos-enc / rotary buffers, remap the nested
-    /// `nn.Sequential` indices, and transpose the convolution weights.
+    /// `nn.Sequential` indices, and transpose the convolution weights. A file `NFKMLXWeights` saved
+    /// carries the module's own keys and loads as written.
     static func loadWeights(into net: NFKMLXMossFormer2SENet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let released = checkpoint.arrays.keys.contains { $0.hasPrefix("mossformer.") }
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
-            guard let name = remapReferenceKey(key) else { return nil }
+            guard let name = released ? remapReferenceKey(key) : key else { return nil }
             let tensor: MLXArray
             if value.ndim == 4, checkpoint.needsConvTranspose {
                 tensor = value.transposed(0, 2, 3, 1)                   // Conv2d [out,in,kH,kW] → [out,kH,kW,in]

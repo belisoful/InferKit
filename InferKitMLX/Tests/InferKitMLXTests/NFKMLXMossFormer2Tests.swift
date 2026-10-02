@@ -124,7 +124,7 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
     }
 
     /// The Kaldi-fbank front end against the reference's recorded 180-dim `feature` (fbank + Δ + ΔΔ),
-    /// isolated from the backbone. This is where a divergence surfaces if the kaldi reproduction is off.
+    /// isolated from the backbone, on the clip scaled by 32768 as the reference's decoder scales it.
     func testKaldiFbankMatchesTheReference() throws {
         try requireMLXRuntime()
         let environment = NFKMLXValidationConfig.environment
@@ -133,10 +133,12 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
         }
         let record = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
         let waveform = record["waveform"]!.asArray(Float.self)
-        let feature = NFKMLXKaldiFbank.features(samples: waveform, config: NFKMLXMossFormer2Configuration())
+        let feature = NFKMLXKaldiFbank.features(samples: waveform.map { $0 * NFKMLXMossFormer2Backend.waveScale },
+                                                config: NFKMLXMossFormer2Configuration())
         // Reference feature is [S, 180]; mine is [1, S, 180]. Compare the fbank band, Δ, and ΔΔ.
-        // Measured on the released waveform: 1.0.
-        XCTAssertGreaterThan(cosine(feature[0], record["feature"]!), 0.999, "Kaldi fbank + deltas")
+        let similarity = cosine(feature[0], record["feature"]!)
+        print("VALIDATION PARITY mossformer2-se: fbank \(similarity), worst \(abs(feature[0] - record["feature"]!).max().item(Float.self))")
+        XCTAssertGreaterThan(similarity, 0.999, "Kaldi fbank + deltas")
     }
 
     /// End to end on the released weights: the recorded waveform through the full enhance path
@@ -158,7 +160,8 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
         let n = min(enhanced.count, reference.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
         for i in 0 ..< n { dot += enhanced[i] * reference[i]; na += enhanced[i] * enhanced[i]; nb += reference[i] * reference[i] }
-        // Measured on the released weights (M1, float32): 0.9999998.
-        XCTAssertGreaterThan(dot / (sqrtf(na) * sqrtf(nb) + 1e-20), 0.999, "enhanced waveform matches the reference")
+        let similarity = dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
+        print("VALIDATION PARITY mossformer2-se: enhanced waveform \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.999, "enhanced waveform matches the reference")
     }
 }

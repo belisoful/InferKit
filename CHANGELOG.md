@@ -441,6 +441,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### MossFormer2 SE trains on a consumer's own recordings
+
+- `NFKMLXMossFormer2Factory.fineTune` trains every parameter on noisy and clean batches, as
+  ClearerVoice-Studio's `train/speech_enhancement` does, with `train.py`'s Adam at 5e-4 and clipping at
+  10 by default.
+- `NFKMLXMossFormer2Objective` is `psm_loss`, the magnitude-weighted error against the clamped
+  phase-sensitive mask.
+- `NFKMLXMossFormer2Factory.features` computes the network's input as the reference loader does, with
+  its fbank dither available. `network(weightsURL:configuration:)` builds the network from the release,
+  a fine-tuned file, or a random initialization.
+- `NFKMLXMossFormer2Configuration.dropout` is the reference's training dropout, 0.1 at six sites in
+  every block. A built network evaluates without it.
+- `NFKMLXMossFormer2Factory.backend(weightsURL:)` loads a fine-tuned file.
+- The MossFormer2 SE backend computes its features on the clip scaled by 32768, as ClearerVoice's
+  decoder does, and floors the log-mel at float32's epsilon as torchaudio does. It previously read the
+  unscaled clip, a feature the released network was not trained on.
+
 #### FRCRN trains on a consumer's own recordings
 
 - `NFKMLXFRCRN.fineTune` trains every parameter on noisy and clean batches, as ClearerVoice-Studio's

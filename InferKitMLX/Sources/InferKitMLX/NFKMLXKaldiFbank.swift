@@ -6,8 +6,8 @@
 // Kaldi's per-frame pipeline (snip_edges framing): remove DC offset (subtract the frame mean),
 // pre-emphasis 0.97 (with x[-1] replicated as x[0]), a Povey/hamming window, an FFT padded up to the
 // next power of two, the power spectrum, a kaldi-mel triangular bank (mel = 1127·ln(1 + f/700)), and a
-// natural log floored at the float epsilon. `dither` is FORCED to 0 (it is random noise; parity is
-// impossible with it on).
+// natural log floored at the float epsilon. Dither is off unless a caller passes its noise: it is
+// random, so parity needs the reference's own draws.
 //
 // SCAFFOLD STATUS: faithful to kaldi's documented steps and marked `PARITY:` at the load-bearing
 // choices. Validated against the recorded `feature` from `run_reference.py mossformer2_se` on the M1.
@@ -18,14 +18,28 @@ import MLXFFT
 
 /// Kaldi-compatible fbank + deltas for MossFormer2 SE.
 enum NFKMLXKaldiFbank {
-    /// `samples` mono at `sampleRate` → `[1, frames, 180]` (fbank60 ‖ Δ ‖ ΔΔ).
-    static func features(samples: [Float], config: NFKMLXMossFormer2Configuration) -> MLXArray {
-        // PARITY: kaldi derives the window/shift in samples from the ms values; for 48 kHz these are
-        // 1920 / 384. Validated at reference parity against the recorded feature.
+    /// The frame length and hop in samples. PARITY: kaldi derives them from the millisecond values; for
+    /// 48 kHz these are 1920 / 384.
+    static func framing(_ config: NFKMLXMossFormer2Configuration) -> (length: Int, hop: Int) {
         let n = Int((Double(config.winLen) / Double(config.sampleRate) * 1000.0) * Double(config.sampleRate) / 1000.0 + 0.5)
         let hop = Int((Double(config.winInc) / Double(config.sampleRate) * 1000.0) * Double(config.sampleRate) / 1000.0 + 0.5)
+        return (n, hop)
+    }
+
+    /// The snip-edges frame count of a clip of `count` samples.
+    static func frameCount(_ count: Int, config: NFKMLXMossFormer2Configuration) -> Int {
+        let (n, hop) = framing(config)
+        return count < n ? 0 : 1 + (count - n) / hop
+    }
+
+    /// `samples` mono at `sampleRate` → `[1, frames, 180]` (fbank60 ‖ Δ ‖ ΔΔ). `dither`, when given, is
+    /// added to the framed samples before the DC removal, `frames · frameLength` values in frame order:
+    /// kaldi's `dither · randn` term.
+    static func features(samples: [Float], config: NFKMLXMossFormer2Configuration, dither: [Float]? = nil) -> MLXArray {
+        let (n, hop) = framing(config)
         guard samples.count >= n else { return MLXArray.zeros([1, 0, config.numMels * 3]) }
-        let frames = 1 + (samples.count - n) / hop                     // snip_edges
+        let frames = frameCount(samples.count, config: config)
+        precondition(dither == nil || dither!.count == frames * n, "dither holds one value per framed sample")
         let padded = nextPow2(n)                                       // kaldi round_to_power_of_two
         let window = poveyHamming(n)
 
@@ -33,11 +47,14 @@ enum NFKMLXKaldiFbank {
         var buffer = [Float](repeating: 0, count: frames * padded)
         for f in 0 ..< frames {
             let start = f * hop
-            var frame = [Float](repeating: 0, count: n)
+            var frame = Array(samples[start ..< start + n])
+            if let dither {
+                for i in 0 ..< n { frame[i] += dither[f * n + i] }
+            }
             var mean: Float = 0
-            for i in 0 ..< n { mean += samples[start + i] }
+            for i in 0 ..< n { mean += frame[i] }
             mean /= Float(n)
-            for i in 0 ..< n { frame[i] = samples[start + i] - mean }   // remove DC
+            for i in 0 ..< n { frame[i] -= mean }                      // remove DC
             // Pre-emphasis 0.97 (x[-1] = x[0]); walk high→low so each read uses the un-emphasized value.
             let coeff: Float = 0.97
             let first = frame[0]                                       // unchanged by the loop below
@@ -51,7 +68,7 @@ enum NFKMLXKaldiFbank {
         let power = spectrum.abs() * spectrum.abs()                    // PARITY: use_power=true
         let bank = melBank(fftBins: padded / 2 + 1, config: config)   // [numMels, bins]
         let mel = matmul(power, bank.transposed(1, 0))                // [frames, numMels]
-        let logMel = log(maximum(mel, Float.leastNormalMagnitude))    // PARITY: floor at float epsilon
+        let logMel = log(maximum(mel, Float.ulpOfOne))                // PARITY: floor at float32 epsilon
 
         let delta = deltas(logMel)
         let deltaDelta = deltas(delta)
