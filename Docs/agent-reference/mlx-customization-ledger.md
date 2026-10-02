@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 50 |
-| `trainable`, no recipe yet | 48 |
+| `ships` | 51 |
+| `trainable`, no recipe yet | 47 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Fifty recipes ship and 48 models are trainable with none written. That is the size of
+Fifty-one recipes ship and 47 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -131,7 +131,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXRAFT` | trainable | full | internal | 5.3M parameters. The sequence loss needs ground-truth flow, and the correlation volume bounds the crop size. |
 | `NFKMLXVideoSR` | trainable | full | internal | BasicVSR's mmediting configuration supplies the loss and the reduced SPyNet rate. Memory scales with clip length. |
 | `NFKMLXWanAnimate` | offline | — | public | The smallest released form is 32.8 GB in bfloat16 against 32 GiB of unified memory. |
-| `NFKMLXRIFEv4` | trainable | full | internal | The v4.12 and v4.15 training archives Practical-RIFE links: VGG19 perceptual minus 0.1 SSIM, L1, and a teacher blended from the student's own flows. A recipe needs VGG19 features. |
+| `NFKMLXRIFEv4` | ships | full | public | The v4.15 training code Practical-RIFE links: VGG-19 perceptual minus 0.1 SSIM, the encoder-feature and L1 terms, a teacher blended from the blocks' own flows, AdamW. Every gradient at its float32 floor; the update within float32 rounding with Adam's first-step sign ties pinned. |
 | `NFKMLXVideoBackend` | untrainable | — | n/a | The AVFoundation decode and encode layer holds no parameters. |
 
 ## Text to speech
@@ -331,7 +331,7 @@ the recipe detail.
 | `NFKMLXRetinaFace` | trainable, full | biubug6/Pytorch_Retinaface at b984b4b, `train.py` and `multibox_loss.py`. |
 | `NFKMLXColorizer` | ships, full | richzhang/colorization `caffe` at a1642d6, `train/`; colorization-pytorch at 66a1cb2. |
 | `NFKMLXDDColor` | offline | piddnad/DDColor at 2adb63f, `options/train/train_ddcolor.yml`. |
-| `NFKMLXRIFEv4` | trainable, full | Practical-RIFE's v4.12 and v4.15 training archives (Google Drive, linked at bbfd2ea). |
+| `NFKMLXRIFEv4` | ships, full | Practical-RIFE's v4.12 and v4.15 training archives (Google Drive, linked at bbfd2ea). |
 | `NFKMLXMossFormer2SENet`, `NFKMLXFRCRN` | trainable, full | modelscope/ClearerVoice-Studio at 6b3774d, `train/speech_enhancement`. |
 | `NFKMLXVoiceRestore` | untrainable | skirdey/voicerestore at bfda753, both branches. |
 | `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
@@ -377,11 +377,10 @@ Ordered by what a session gets per unit of effort, and grounded in what the tria
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
    Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, RetinaFace, the Depth Anything V2
-   metric fine-tune, and both colorizers. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   metric fine-tune, both colorizers, and RIFE v4. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
-   variables. The 2026-09-25 triage adds
-   RIFE v4. It has a published objective with no adversary, and it fits a device.
+   variables. Every model the 2026-09-25 triage added to this bucket ships.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
    DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other

@@ -920,6 +920,29 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertNotNil(detector)
     }
 
+    // Docs/examples.md: Fine-tuning RIFE v4
+    func testExampleFineTuningRIFEv4() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rife-v4-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release and VGG-19's ImageNet weights at 448 pixels; randomly initialized
+        // networks on 64-pixel frames stand in.
+        let pixels: [Float] = (0 ..< 64 * 64 * 3).map { index -> Float in Float(index % 83) / 83 }
+        let frame = MLXArray(pixels, [1, 64, 64, 3])
+        let net = try NFKMLXRIFEv4.network(weightsURL: nil)
+        let objective = try NFKMLXRIFEv4Objective(vggWeightsURL: nil, net: net)
+        let history = try NFKMLXRIFEv4.fineTune(net, examples: { _ in
+            (frame0: frame, frame1: frame[0..., 0..., .stride(by: -1)], middle: frame, timestep: MLXArray([Float(0.5)]))
+        }, objective: objective, steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        XCTAssertNoThrow(try NFKMLXRIFEv4.backend(weightsURL: tuned))
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

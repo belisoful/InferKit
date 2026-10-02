@@ -118,9 +118,9 @@ final class NFKMLXRIFENet: Module {
     }
 
     /// Bilinear backward warp: `output[y, x] = img[y + flow_y, x + flow_x]`, built from gather. `img`
-    /// and `flow` are `[1, H, W, C]` / `[1, H, W, 2]`.
+    /// and `flow` are `[N, H, W, C]` / `[N, H, W, 2]`.
     static func warp(_ img: MLXArray, flow: MLXArray) -> MLXArray {
-        let (h, w, c) = (img.shape[1], img.shape[2], img.shape[3])
+        let (n, h, w, c) = (img.shape[0], img.shape[1], img.shape[2], img.shape[3])
         var baseX = [Float](repeating: 0, count: h * w)
         var baseY = [Float](repeating: 0, count: h * w)
         for y in 0 ..< h {
@@ -132,21 +132,23 @@ final class NFKMLXRIFENet: Module {
         let gridX = baseX.withUnsafeBufferPointer { MLXArray($0, [h, w]) }
         let gridY = baseY.withUnsafeBufferPointer { MLXArray($0, [h, w]) }
 
-        let sampleX = clip(gridX + flow[0, 0..., 0..., 0], min: 0, max: Float(w - 1))
-        let sampleY = clip(gridY + flow[0, 0..., 0..., 1], min: 0, max: Float(h - 1))
+        let sampleX = clip(gridX + flow[0..., 0..., 0..., 0], min: 0, max: Float(w - 1))
+        let sampleY = clip(gridY + flow[0..., 0..., 0..., 1], min: 0, max: Float(h - 1))
         let x0 = sampleX.floor(), y0 = sampleY.floor()
         let x1 = clip(x0 + 1, min: 0, max: Float(w - 1)), y1 = clip(y0 + 1, min: 0, max: Float(h - 1))
-        let weightX = (sampleX - x0).reshaped([h, w, 1])
-        let weightY = (sampleY - y0).reshaped([h, w, 1])
+        let weightX = (sampleX - x0).reshaped([n, h, w, 1])
+        let weightY = (sampleY - y0).reshaped([n, h, w, 1])
 
-        let flat = img.reshaped([h * w, c])
+        let flat = img.reshaped([n * h * w, c])
+        let offsets = (MLXArray(Int32(0) ..< Int32(n)) * Int32(h * w)).reshaped([n, 1, 1])
         func gather(_ yy: MLXArray, _ xx: MLXArray) -> MLXArray {
-            let index = (yy.asType(.int32) * Int32(w) + xx.asType(.int32)).reshaped([h * w])
-            return flat.take(index, axis: 0).reshaped([h, w, c])
+            // The corners carry no gradient; the sample position reaches the flow through the weights.
+            let index = stopGradient((offsets + yy.asType(.int32) * Int32(w) + xx.asType(.int32)).reshaped([n * h * w]))
+            return flat.take(index, axis: 0).reshaped([n, h, w, c])
         }
         let top = gather(y0, x0) * (1 - weightX) + gather(y0, x1) * weightX
         let bottom = gather(y1, x0) * (1 - weightX) + gather(y1, x1) * weightX
-        return (top * (1 - weightY) + bottom * weightY).reshaped([1, h, w, c])
+        return top * (1 - weightY) + bottom * weightY
     }
 
     func interpolate(_ frame0: MLXArray, _ frame1: MLXArray) -> MLXArray {
@@ -384,8 +386,14 @@ final class NFKRIFEv4Block: Module {
                                                   kernelSize: 4, stride: 2, padding: 1)
     }
 
-    /// Returns the flow delta `[1, H, W, 4]` and the mask `[1, H, W, 1]` at the input resolution.
+    /// Returns the flow delta `[N, H, W, 4]` and the mask `[N, H, W, 1]` at the input resolution.
     func callAsFunction(_ x: MLXArray, flow: MLXArray?, scale: Int) -> (flow: MLXArray, mask: MLXArray) {
+        let result = fields(x, flow: flow, scale: scale)
+        return (result.flow, result.mask)
+    }
+
+    /// The flow delta, the mask, and the confidence `[N, H, W, 1]` a training pass blends the teacher by.
+    func fields(_ x: MLXArray, flow: MLXArray?, scale: Int) -> (flow: MLXArray, mask: MLXArray, confidence: MLXArray) {
         let (height, width) = (x.shape[1], x.shape[2])
         func reduced(_ array: MLXArray) -> MLXArray {
             scale == 1 ? array : NFKMLXResample.resizeBilinear(array, height: array.shape[1] / scale,
@@ -407,7 +415,7 @@ final class NFKRIFEv4Block: Module {
         var field = NFKMLXPixelShuffle.apply(lastconv(feature), factor: 2)
         field = NFKMLXResample.resizeBilinear(field, height: height, width: width)
         let flowField = field[0..., 0..., 0..., 0 ..< 4] * Float(scale)
-        return (flowField, field[0..., 0..., 0..., 4 ..< 5])
+        return (flowField, field[0..., 0..., 0..., 4 ..< 5], field[0..., 0..., 0..., 5 ..< 6])
     }
 }
 
@@ -428,15 +436,25 @@ final class NFKRIFEv4Encoder: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var out = leakyRelu(cnn0(x), negativeSlope: 0.2)
-        out = leakyRelu(cnn1(out), negativeSlope: 0.2)
-        out = leakyRelu(cnn2(out), negativeSlope: 0.2)
-        return cnn3(out)
+        features(x)[3]
+    }
+
+    /// The features the training objective's `encode_loss` compares: the first three convolutions after
+    /// their activations, and the last one's output. The reference's leaky ReLU runs in place, so the
+    /// tensors its `Head` returns for the first three are the activated ones.
+    func features(_ x: MLXArray) -> [MLXArray] {
+        let a0 = leakyRelu(cnn0(x), negativeSlope: 0.2)
+        let a1 = leakyRelu(cnn1(a0), negativeSlope: 0.2)
+        let a2 = leakyRelu(cnn2(a1), negativeSlope: 0.2)
+        return [a0, a1, a2, cnn3(a2)]
     }
 }
 
 /// The RIFE v4 IFNet: a frame encoder and four coarse-to-fine blocks, conditioned on a timestep.
-final class NFKMLXRIFEv4Net: Module {
+///
+/// Build it with `NFKMLXRIFEv4.network(weightsURL:)`, train it with `NFKMLXRIFEv4.fineTune`, and save it with
+/// `NFKMLXWeights.save`. Introduced in InferKit 0.4.0.
+public final class NFKMLXRIFEv4Net: Module {
     @ModuleInfo(key: "encode") var encode: NFKRIFEv4Encoder
     @ModuleInfo(key: "block0") var block0: NFKRIFEv4Block
     @ModuleInfo(key: "block1") var block1: NFKRIFEv4Block
@@ -445,7 +463,7 @@ final class NFKMLXRIFEv4Net: Module {
 
     private let scales = [8, 4, 2, 1]
 
-    override init() {
+    override public init() {
         _encode.wrappedValue = NFKRIFEv4Encoder()
         // Seven channels (both frames plus the timestep) and sixteen encoded ones for the first
         // block; the later blocks see the warped frames and features, the timestep, and the mask.
@@ -507,6 +525,74 @@ final class NFKMLXRIFEv4Net: Module {
         let merged = clip(warped0 * blend + warped1 * (1 - blend), min: 0, max: 1)
         let cropped = merged[0..., 0 ..< originalH, 0 ..< originalW, 0...]
         return unbatched ? cropped.reshaped([originalH, originalW, 3]) : cropped
+    }
+}
+
+/// What one training pass of the v4 network computes, as the v4.15 training `FlownetCas` returns it.
+struct NFKRIFEv4TrainingPass {
+    /// Each block's accumulated flow `[N, H, W, 4]`, coarse to fine.
+    let flows: [MLXArray]
+    /// Each block's blend of the two warped frames by its sigmoid mask.
+    let merged: [MLXArray]
+    /// The flow the confidence-weighted teacher blends from the four blocks.
+    let teacherFlow: MLXArray
+    /// The teacher's frame.
+    let teacherMerged: MLXArray
+}
+
+extension NFKMLXRIFEv4Net {
+
+    /// The v4.15 training forward on frames `[N, H, W, 3]` in [0, 1], `H` and `W` multiples of 32, at a
+    /// timestep `[N]` per example, with each block reading at the scale `scales` gives it.
+    ///
+    /// The frames are neither clamped nor padded and no output is clamped, as `FlownetCas.forward` takes them.
+    /// The teacher weighs each block's flow and raw mask by the block's sigmoid confidence over their sum
+    /// plus 1e-3.
+    func trainingPass(_ img0: MLXArray, _ img1: MLXArray, timestep: MLXArray, scales: [Int]) -> NFKRIFEv4TrainingPass {
+        let (n, height, width) = (img0.dim(0), img0.dim(1), img0.dim(2))
+        let feature0 = encode(img0), feature1 = encode(img1)
+        let time = broadcast(timestep.reshaped([n, 1, 1, 1]).asType(img0.dtype), to: [n, height, width, 1])
+
+        var flows = [MLXArray](), masks = [MLXArray](), confidences = [MLXArray](), pairs = [(MLXArray, MLXArray)]()
+        var warped = (img0, img1, feature0, feature1)
+        for (index, block) in [block0, block1, block2, block3].enumerated() {
+            let flow: MLXArray
+            if let current = flows.last {
+                let input = concatenated([warped.0, warped.1, warped.2, warped.3, time, masks.last!], axis: 3)
+                let result = block.fields(input, flow: current, scale: scales[index])
+                flow = current + result.flow
+                masks.append(result.mask)
+                confidences.append(result.confidence)
+            } else {
+                let input = concatenated([img0, img1, feature0, feature1, time], axis: 3)
+                let result = block.fields(input, flow: nil, scale: scales[index])
+                flow = result.flow
+                masks.append(result.mask)
+                confidences.append(result.confidence)
+            }
+            flows.append(flow)
+            let (forward, backward) = (flow[0..., 0..., 0..., 0 ..< 2], flow[0..., 0..., 0..., 2 ..< 4])
+            warped = (NFKMLXRIFENet.warp(img0, flow: forward), NFKMLXRIFENet.warp(img1, flow: backward),
+                      NFKMLXRIFENet.warp(feature0, flow: forward), NFKMLXRIFENet.warp(feature1, flow: backward))
+            pairs.append((warped.0, warped.1))
+        }
+
+        var confidence = sigmoid(concatenated(confidences, axis: 3))
+        confidence = confidence / (confidence.sum(axis: 3, keepDims: true) + 1e-3)
+        var teacherFlow = confidence[0..., 0..., 0..., 0 ..< 1] * flows[0]
+        var teacherMask = confidence[0..., 0..., 0..., 0 ..< 1] * masks[0]
+        for index in 1 ..< 4 {
+            teacherFlow = teacherFlow + confidence[0..., 0..., 0..., index ..< index + 1] * flows[index]
+            teacherMask = teacherMask + confidence[0..., 0..., 0..., index ..< index + 1] * masks[index]
+        }
+        let teacherBlend = sigmoid(teacherMask)
+        let teacherMerged = NFKMLXRIFENet.warp(img0, flow: teacherFlow[0..., 0..., 0..., 0 ..< 2]) * teacherBlend
+            + NFKMLXRIFENet.warp(img1, flow: teacherFlow[0..., 0..., 0..., 2 ..< 4]) * (1 - teacherBlend)
+        let merged = zip(pairs, masks).map { pair, mask in
+            let blend = sigmoid(mask)
+            return pair.0 * blend + pair.1 * (1 - blend)
+        }
+        return NFKRIFEv4TrainingPass(flows: flows, merged: merged, teacherFlow: teacherFlow, teacherMerged: teacherMerged)
     }
 }
 
@@ -597,13 +683,14 @@ public final class NFKMLXRIFEv4: NSObject {
 
     /// Loads a safetensors checkpoint. The upsampling convolutions and the encoder's last layer are
     /// transposed convolutions and take the other axis order; `beta` is a per-channel vector stored
-    /// `[1, C, 1, 1]`, which becomes `[1, 1, 1, C]` in this layout.
+    /// `[1, C, 1, 1]`, which becomes `[1, 1, 1, C]` in this layout. A file `NFKMLXWeights` saved is already
+    /// in this layout.
     static func loadWeights(into net: NFKMLXRIFEv4Net, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)
-            if name.hasSuffix(".beta") {
+            if name.hasSuffix(".beta"), checkpoint.needsConvTranspose {
                 return (name, value.transposed(0, 2, 3, 1))
             }
             if checkpoint.needsConvTranspose, value.ndim == 4 {

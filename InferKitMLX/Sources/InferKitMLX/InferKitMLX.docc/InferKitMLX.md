@@ -605,6 +605,9 @@ limits.
 - ``NFKMLXColorizerObjective``
 - ``NFKMLXSiggraphNet``
 - ``NFKMLXSiggraphColorizerObjective``
+- ``NFKMLXRIFEv4Net``
+- ``NFKMLXRIFEv4Objective``
+- ``NFKMLXVGG19Features``
 - ``NFKMLXYOLOEndToEndObjective``
 - ``NFKMLXYOLOTrainable``
 - ``NFKMLXRTDetrObjective``

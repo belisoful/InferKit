@@ -4497,6 +4497,7 @@
         "retinaface_training",
         "siggraph17_training",
         "eccv16_training",
+        "rife_v4_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5545,6 +5546,12 @@
       "record": "reference/eccv16-training-reference.safetensors",
       "environment": "llm",
       "command": "IK_ECCV16_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/colorization/colorization-caffe\" IK_REF_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc\" eccv16_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/colorizer_eccv16.pth\""
+    },
+    {
+      "key": "IK_PARITY_RIFEV4_TRAINING",
+      "record": "reference/rife-v4-training-reference.safetensors",
+      "environment": "llm",
+      "command": "IK_RIFE_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/practical-rife-train/v4.15/RIFE4.15\" IK_VGG19_WEIGHTS=\"/Volumes/InferKit Models/inferkit-validation/vgg19/vgg19-dcbb9e9d.pth\" rife_v4_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/converted/rife_v4.safetensors\""
     }
   ]
 }

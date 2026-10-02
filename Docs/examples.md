@@ -4079,6 +4079,25 @@ try NFKMLXWeights.save(siggraph17, to: tunedSIGGRAPH17)
 let colorizer = try NFKMLXSiggraphColorizer.backend(weightsURL: tunedSIGGRAPH17)   // Objective-C: backendWithWeightsURL:…
 ```
 
+### Fine-tuning RIFE v4
+
+RIFE v4 fine-tunes on frame triplets: the two outer frames, the frame between them, and where it falls between
+them. The objective compares the result with a VGG-19 perceptual term and the network's own frame encoder,
+whose moving-average copy it keeps, so it is built over the network and needs torchvision's VGG-19 weights. Each
+step takes frames `[N, 448, 448, 3]` in [0, 1] and timesteps `[N]`.
+
+```swift
+let net = try NFKMLXRIFEv4.network(weightsURL: rifeWeights)
+let objective = try NFKMLXRIFEv4Objective(vggWeightsURL: vgg19Weights, net: net)
+try NFKMLXRIFEv4.fineTune(net, examples: { step in
+    (frame0: myTriplets[step].first, frame1: myTriplets[step].last, middle: myTriplets[step].middle,
+     timestep: myTriplets[step].timestep)
+}, objective: objective, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let interpolator = try NFKMLXRIFEv4.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:…
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

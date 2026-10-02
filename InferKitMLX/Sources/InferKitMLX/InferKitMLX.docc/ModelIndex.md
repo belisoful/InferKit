@@ -584,7 +584,7 @@ NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKM
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | RIFE HDv3 | ``NFKMLXRIFE`` | `NFKMLXRIFENet` | fixed geometry (three IFBlocks, width 90, scales 4/2/1) | `rife` | ``NFKMLXTensorBackend`` (`frame0` / `frame1`); `clipBackend(weightsURL:)` for a clip |
-| RIFE v4 | ``NFKMLXRIFEv4`` | `NFKMLXRIFEv4Net` | fixed geometry (four blocks, timestep input, scales 8/4/2/1) | `rife-v4` | ``NFKMLXTensorBackend`` |
+| RIFE v4 | ``NFKMLXRIFEv4`` | ``NFKMLXRIFEv4Net`` | fixed geometry (four blocks, timestep input, scales 8/4/2/1) | `rife-v4` | ``NFKMLXTensorBackend`` |
 | RAFT | ``NFKMLXRAFT`` | `NFKMLXRAFTNet` | RAFT-large (feature 256, 4 levels, radius 4); `iterations` (default 6) | `raft` | ``NFKMLXTensorBackend`` |
 | BasicVSR | ``NFKMLXVideoSR`` | `NFKMLXVideoSRNet` + `NFKVSRSPyNet` | `NFKMLXVideoSRConfiguration.base` (×4) | `video-super-resolution` | ``NFKMLXModuleBackend`` (frame) / `clipBackend(weightsURL:)` |
 | SD ×4 upscaler | ``NFKMLXSDUpscaler`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.upscaler`, `NFKMLXSDVAEConfiguration.upscaler`; `noiseLevel` (20) | `sd-x4-upscaler` | ``NFKMLXDiffusionBackend`` |

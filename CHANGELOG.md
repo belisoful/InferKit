@@ -441,6 +441,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### RIFE v4 fine-tunes as its v4.15 training code trains it
+
+- `NFKMLXRIFEv4.fineTune` trains RIFE v4 as Practical-RIFE's v4.15 training code does: a VGG-19 perceptual term
+  less a tenth of SSIM, each block's frame and encoder features against the target, a teacher blended from the
+  blocks' own flows with a consistency term toward it, AdamW under a warm-up and cosine, a clip at 1, the
+  mirror-doubled batch, and the random block scales.
+- `NFKMLXRIFEv4Objective` is the loss and keeps the moving-average copy of the frame encoder the reference
+  scores features with. `NFKMLXVGG19Features` is torchvision's VGG-19 trunk to `relu5_1`.
+  `NFKMLXRIFEv4Net` is public with a training forward.
+- The RIFE warp runs a batch, and a v4 checkpoint `NFKMLXWeights` saved reloads through `backend(weightsURL:)`.
+
 #### Both colorizers fine-tune as their references train them
 
 - `NFKMLXColorizer.fineTune` trains ECCV-16 as richzhang/colorization's `caffe` branch does: the 313-bin

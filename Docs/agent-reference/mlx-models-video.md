@@ -36,14 +36,41 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   vendored by ComfyUI-Frame-Interpolation (`rife_arch.py`, `arch_ver="4.17"`), whose own `IFNet.py`
   ships inside the model zip rather than in the repository; only one ComfyUI device helper needs
   stubbing.
-  Customization: trainable at `full`, with no recipe written yet. hzwer/Practical-RIFE links the v4
-  training code from its README as Google Drive archives; v4.12 and v4.15 are kept under
-  `<validation root>/reference-sources/practical-rife-train`. The loss is a VGG19 perceptual term
-  (torchvision's ImageNet weights) minus 0.1 × SSIM, plus 0.1 × the L1 of every scale's merge (0.05 in
-  v4.15), 0.1 × a teacher term, and a flow-magnitude term. The teacher is the confidence-weighted blend
-  of the student's own per-scale flows, and the released blocks already emit the confidence channel.
-  AdamW with weight decay 1e-2 at a base rate of 1e-4, a 2,000-step linear warm-up then cosine to zero,
-  batch 16. A recipe needs VGG19 features beside the VGG16 port.
+  **Customization ships** at `full` (`NFKMLXRIFEv4Training.swift`), measured against the v4.15 training code
+  hzwer/Practical-RIFE links from its README as Google Drive archives (kept under `<validation
+  root>/reference-sources/practical-rife-train`). `run_reference.py rife_v4_training` runs that code's own
+  `Model.update` on the CPU: `.cuda()` is an identity while it builds, `torchstat` is stubbed,
+  `torchvision.models.vgg19` loads the local ImageNet weights, and `FlownetCas.module` returns the network
+  the `DistributedDataParallel` wrapper would hold.
+  - `NFKMLXRIFEv4Net.trainingPass` is `FlownetCas.forward` with the teacher. It takes a timestep per example
+    and a scale per block, neither clamps nor pads, and blends the teacher's flow and raw mask by each block's
+    sigmoid confidence over their sum plus 1e-3. The blocks emit that confidence as their sixth channel, and
+    the warp runs a batch.
+  - `NFKMLXRIFEv4Objective` is `Model.update`'s `loss_G`:
+    - the VGG-19 term over `relu1_1`…`relu5_1` at weights 1/32…1 (`NFKMLXVGG19Features`), less 0.1 × SSIM
+      (window 3, σ 1.5, stride 3);
+    - plus each block's `encode_loss`, decayed by 0.8 a block;
+    - plus 0.1 × the teacher term, the consistency term, and 0.05 × the decayed L1.
+  - `encode_loss` compares the four features of a moving-average copy of the frame encoder. The reference's
+    leaky ReLU runs in place, so the first three features it compares are activated. The objective copies
+    the network's encoder when built and moves it 1% toward the network's after every update, as the
+    reference's `soft_update` does. The reference copies the encoder before a checkpoint loads, so a
+    fine-tune that follows its order scores features with a random encoder; the objective copies the
+    loaded one.
+  - `referenceOptimizer()` is AdamW at 1e-4 with decay 0.01 on every parameter. `referenceSchedule(steps:
+    warmupSteps:)` is `get_learning_rate`: 2,000 updates of linear warm-up, then a half cosine to zero, plus
+    1e-7. `fineTune` clips at 1, doubles each batch with its mirror, and draws the block scales per update
+    (`[4, 2, 1, 1]` below 0.3, `[2, 1, 1, 1]` below 0.6, `[8, 4, 2, 1]` otherwise) from `scaleSeed:`.
+  - Measured on the 4.13.2 release, two 96-pixel triplets at timesteps 0.5 and 0.25, mirror-doubled, the
+    blocks at `[4, 2, 1, 1]`:
+    - the frame, the teacher, and every loss term within float32 rounding of float64;
+    - every gradient at the reference's float32 floor (1.3e-4 to 1.5e-3 from float64);
+    - our forward on float64's updated weights and target 4.6e-8 from float64's total.
+  - Adam's first update moves each weight by about the rate in its gradient's direction. 1,456 of the
+    weights have gradients within float32 rounding of zero and step the other way from float64's. The tensors
+    that move most hold one each, biases first, since a bias's gradient sums over every position. Those flips
+    alone put the total after one update 2.7e-4 from float64; with float64's signs pinned it lands 7.4e-5
+    away.
 - `NFKMLXRAFT` (`@objc`) — real optical flow: the RAFT pipeline in `MLXNN` (shared feature encoder,
   all-pairs correlation volume + pyramid + bilinear lookup via `take` gather, context encoder, an
   iterative ConvGRU update). Run through `NFKMLXTensorBackend` (two frames `frame0`/`frame1` → a packed

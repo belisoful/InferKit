@@ -12107,6 +12107,171 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(after.rebalanced.item(Float.self), after64[1], accuracy: max(after64[1] * 1e-4, 2 * abs(after32[1] - after64[1])))
     }
 
+    // RIFE v4's training against the v4.15 training code Practical-RIFE links: the reference's own
+    // `Model.update` on the released 4.13.2 network, with the batch doubled by its mirror and the blocks at
+    // `[4, 2, 1, 1]`. The last block's frame, the teacher, the loss terms, the gradients and their norm, and the
+    // total after one update at 1e-4 with the target encoder moved. Each is also recorded at float64.
+    //
+    // `IK_RIFE_TRAIN_SRC=reference-sources/practical-rife-train/v4.15/RIFE4.15 IK_VGG19_WEIGHTS=vgg19/vgg19-dcbb9e9d.pth
+    //  python run_reference.py rife_v4_training out/rife-v4-training.safetensors --checkpoint converted/rife_v4.safetensors`
+    func testRIFEv4TrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RIFEV4_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RIFEV4_TRAINING to a record from run_reference.py rife_v4_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        func floor(_ key: String) throws -> Float { distance(try array(key), try array("\(key)64")) }
+        let net = try NFKMLXRIFEv4.network(weightsURL: weights("IK_VAL_RIFEV4"))
+        let objective = try NFKMLXRIFEv4Objective(vggWeightsURL: weights("IK_VAL_VGG19"), net: net)
+        let scales = try array("scales").asArray(Int32.self).map(Int.init)
+        XCTAssertEqual(scales, [4, 2, 1, 1])
+        func doubled(_ x: MLXArray) -> MLXArray { concatenated([x, x[0..., 0..., .stride(by: -1)]], axis: 0) }
+        let frame0 = try array("frame0"), frame1 = try array("frame1"), middle = try array("middle")
+        let timestep = try array("timestep")
+        let inputs = [doubled(frame0), doubled(frame1), doubled(middle), concatenated([timestep, timestep], axis: 0)]
+
+        let pass = net.trainingPass(inputs[0], inputs[1], timestep: inputs[3], scales: scales)
+        print("PARITY rife-v4-training: frame from float64 \(distance(pass.merged[3], try array("merged64"))) "
+              + "(reference float32 \(try floor("merged"))); teacher frame \(distance(pass.teacherMerged, try array("teacher_merged64"))) "
+              + "(\(try floor("teacher_merged"))); teacher flow \(distance(pass.teacherFlow, try array("teacher_flow64"))) "
+              + "(\(try floor("teacher_flow")))")
+        XCTAssertLessThan(distance(pass.merged[3], try array("merged64")), max(1e-5, 2 * (try floor("merged"))))
+        XCTAssertLessThan(distance(pass.teacherFlow, try array("teacher_flow64")), max(1e-5, 2 * (try floor("teacher_flow"))))
+
+        let terms = objective.components(pass, target: inputs[2])
+        let ours = [terms.l1.item(Float.self), terms.teacher.item(Float.self), terms.consistency.item(Float.self),
+                    objective.loss(pass, target: inputs[2]).item(Float.self)]
+        let reference = try array("terms").asArray(Float.self), reference64 = try array("terms64").asArray(Float.self)
+        print("PARITY rife-v4-training: L1, teacher, consistency, total \(ours) vs \(reference) (float64 \(reference64))")
+        for (index, name) in ["L1", "teacher", "consistency", "total"].enumerated() {
+            XCTAssertEqual(ours[index], reference64[index],
+                           accuracy: max(abs(reference64[index]) * 1e-5, 2 * abs(reference[index] - reference64[index])), name)
+        }
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1], arrays[2], timestep: arrays[3], scales: scales)]
+        }(net, inputs).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try array("gradient_norm64").item(Float.self)
+        print("PARITY rife-v4-training: global gradient norm \(norm) vs \(try array("gradient_norm").item(Float.self)) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(try array("gradient_norm").item(Float.self) - norm64)))
+        for name in ["block0.conv0.0.0.weight", "block0.convblock.7.beta", "block0.lastconv.0.weight",
+                     "block2.convblock.3.conv.weight", "block3.conv0.1.0.weight", "block3.lastconv.0.bias",
+                     "encode.cnn0.weight", "encode.cnn3.weight"] {
+            let key = NFKMLXRIFEv4.remapReferenceKey(name)
+            func layout(_ value: MLXArray) -> MLXArray {
+                guard value.ndim == 4 else { return value }
+                let transposed = key.hasSuffix("lastconv.weight") || key.hasSuffix("cnn3.weight")
+                return transposed ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            }
+            let mine = try XCTUnwrap(gradients[key], key)
+            let theirs = layout(try array("grad::\(name)")), theirs64 = layout(try array("grad64::\(name)"))
+            let gradientFloor = distance(theirs, theirs64)
+            print("PARITY rife-v4-training: \(key) gradient relative error \(distance(mine, theirs)); "
+                  + "from float64: ours \(distance(mine, theirs64)), reference float32 \(gradientFloor)")
+            XCTAssertLessThan(distance(mine, theirs64), max(1e-4, 2 * gradientFloor), key)
+        }
+
+        // One update of the reference optimizer at 1e-4, clipped at 1, through the trainer the recipe runs, with
+        // the target encoder moved after it.
+        let target = Dictionary(uniqueKeysWithValues: objective.targetEncoder.parameters().flattened().map { ($0.0, $0.1 * 1) })
+        let parametersBefore = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1 * 1) })
+        try NFKMLXFineTune.run(net, freezing: {}, optimizer: nil, reference: { NFKMLXRIFEv4.referenceOptimizer() },
+                               referenceSchedule: { .constant }, steps: 1, arrays: { _ in inputs },
+                               loss: { net, arrays in objective(net, arrays[0], arrays[1], arrays[2], timestep: arrays[3], scales: scales) },
+                               clipGradientNorm: 1, constraint: { objective.updateTarget(from: $0) })
+        let parametersAfter = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        for name in ["block0.conv0.0.0.weight", "block0.convblock.7.beta", "block0.lastconv.0.weight",
+                     "block2.convblock.3.conv.weight", "block3.conv0.1.0.weight", "block3.lastconv.0.bias",
+                     "encode.cnn0.weight", "encode.cnn3.weight"] {
+            let key = NFKMLXRIFEv4.remapReferenceKey(name)
+            func layout(_ value: MLXArray) -> MLXArray {
+                guard value.ndim == 4 else { return value }
+                let transposed = key.hasSuffix("lastconv.weight") || key.hasSuffix("cnn3.weight")
+                return transposed ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            }
+            let step = parametersAfter[key]! - parametersBefore[key]!
+            let step64 = layout(try array("step64::\(name)")), step32 = layout(try array("step::\(name)"))
+            let signs = ((step .> 0) .!= (step64 .> 0)).sum().item(Int.self)
+            let referenceSigns = ((step32 .> 0) .!= (step64 .> 0)).sum().item(Int.self)
+            let differs = (step .> 0) .!= (step64 .> 0)
+            let flippedGradient = MLX.where(differs, abs(layout(try array("grad64::\(name)"))), MLXArray(Float(0))).max()
+            print("PARITY rife-v4-training: \(key) step from float64 \(distance(step, step64)) (reference float32 "
+                  + "\(distance(step32, step64))); signs that differ from float64: ours \(signs), the reference's float32 "
+                  + "\(referenceSigns), of \(step.size), the largest float64 gradient among ours \(flippedGradient.item(Float.self))")
+        }
+        // The target is the reference's `soft_update`: 0.99 of itself and 0.01 of the updated encoder.
+        let encoderAfter = Dictionary(uniqueKeysWithValues: net.encode.parameters().flattened())
+        for (key, value) in objective.targetEncoder.parameters().flattened() {
+            let expected = target[key]! * 0.99 + encoderAfter[key]! * 0.01
+            XCTAssertLessThanOrEqual(abs(value - expected).max().item(Float.self),
+                                     abs(expected).max().item(Float.self).ulp, key)
+        }
+        let move = objective.targetEncoder.parameters().flattened().map { abs($0.1 - target[$0.0]!).max().item(Float.self) }.max()!
+        // Adam's first update moves each weight by about the rate in its gradient's direction, so a gradient
+        // within float32 rounding of zero steps the other way from float64's; a bias, whose gradient sums over
+        // every position, is the likeliest. The pinned update takes float64's step wherever the signs differ,
+        // over every tensor, from float64's updated weights.
+        func released(_ name: String) -> (key: String, value: (MLXArray) -> MLXArray) {
+            let key = NFKMLXRIFEv4.remapReferenceKey(name)
+            return (key, { value in
+                if key.hasSuffix(".beta") {
+                    return value.transposed(0, 2, 3, 1)
+                }
+                guard value.ndim == 4 else { return value }
+                let transposed = key.hasSuffix("lastconv.weight") || key.hasSuffix("cnn3.weight")
+                return transposed ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            })
+        }
+        var stepErrors = [(key: String, error: Float, flips: Int)]()
+        var updated64 = [(String, MLXArray)](), pinned = [(String, MLXArray)]()
+        for (recorded, value) in arrays where recorded.hasPrefix("after64::") {
+            let mapping = released(String(recorded.dropFirst("after64::".count)))
+            let before = parametersBefore[mapping.key]!
+            let step = parametersAfter[mapping.key]! - before, step64 = mapping.value(value) - before
+            let differs = (step .> 0) .!= (step64 .> 0)
+            updated64.append((mapping.key, mapping.value(value)))
+            pinned.append((mapping.key, before + MLX.where(differs, step64, step)))
+            stepErrors.append((mapping.key, distance(step, step64), differs.sum().item(Int.self)))
+        }
+        let worst = stepErrors.sorted { $0.error > $1.error }.prefix(6)
+            .map { "\($0.key) \($0.error) (\($0.flips) signs)" }.joined(separator: ", ")
+        print("PARITY rife-v4-training: every step from float64, the worst of \(stepErrors.count): \(worst); "
+              + "signs that differ in all: \(stepErrors.map(\.flips).reduce(0, +))")
+        XCTAssertEqual(stepErrors.count, net.parameters().flattened().count)
+
+        let lossAfter = objective(net, inputs[0], inputs[1], inputs[2], timestep: inputs[3], scales: scales).item(Float.self)
+        let after64 = try array("loss_after_step64").item(Float.self)
+        let after32 = try array("loss_after_step").item(Float.self)
+        net.update(parameters: ModuleParameters.unflattened(pinned))
+        let pinnedAfter = objective(net, inputs[0], inputs[1], inputs[2], timestep: inputs[3], scales: scales).item(Float.self)
+        print("PARITY rife-v4-training: total after one update \(lossAfter), with float64's step signs pinned \(pinnedAfter), "
+              + "vs \(after32) (float64 \(after64)); target encoder moved \(move) vs "
+              + "\(try array("target_move64").item(Float.self))")
+        XCTAssertEqual(lossAfter, after64, accuracy: abs(after64) * 1e-3)
+        XCTAssertEqual(pinnedAfter, after64, accuracy: max(abs(after64) * 1e-4, 2 * abs(after32 - after64)))
+
+        // Our forward on float64's updated weights and target, which tells a step that differs from a forward
+        // that does.
+        let target64 = arrays.filter { $0.key.hasPrefix("target_after64::") }.map { recorded, value -> (String, MLXArray) in
+            let mapping = released("encode." + recorded.dropFirst("target_after64::".count))
+            return (String(mapping.key.dropFirst("encode.".count)), mapping.value(value))
+        }
+        net.update(parameters: ModuleParameters.unflattened(updated64))
+        objective.targetEncoder.update(parameters: ModuleParameters.unflattened(target64))
+        let onFloat64Weights = objective(net, inputs[0], inputs[1], inputs[2], timestep: inputs[3], scales: scales).item(Float.self)
+        print("PARITY rife-v4-training: total on float64's updated weights and target \(onFloat64Weights) (float64 \(after64))")
+        XCTAssertEqual(onFloat64Weights, after64, accuracy: max(abs(after64) * 1e-5, 2 * abs(after32 - after64)))
+        // The first update moves each weight by about the rate, so the target moves about 1e-6, which the
+        // float32 difference of weights near 10 measures to within one unit in the last place.
+        let largestTarget = target.values.map { abs($0).max().item(Float.self) }.max()!
+        XCTAssertEqual(move, try array("target_move64").item(Float.self), accuracy: largestTarget.ulp)
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.
