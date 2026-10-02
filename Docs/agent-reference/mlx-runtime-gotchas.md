@@ -623,6 +623,28 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **Rule for probes.** Probe at the release's own geometry. A 4-tap probe of the same code passed.
   - **Tooling.** `~/.inferkit-validation/mlxvenv` holds Python mlx 0.32.2 with torch, for op-level
     checks like this one without a Swift build.
+- **The GPU weight gradient of a long 2-D transposed convolution is wrong (2026-10-01).** Measured in
+  Swift against the CPU and against the closed form `dW[k, c] = Σ x[t, c] · g[4t + k]`.
+  - **The fault.** `NFKDemucsConvT1d` builds a 1-D transposed convolution as `ConvTransposed2d` with a
+    `(k, 1)` kernel over a singleton width. On the GPU its weight gradient goes wrong once one example's
+    first spatial axis passes 8,192 positions. The forward and the input gradient stay exact, so only
+    that layer's own parameters drift. The length is per example: a batch of 16 at 1,000 positions is
+    exact, one example at 10,000 is not. MLXNN's `ConvTransposed1d` is exact at the same geometry, and so
+    are strided and stride-1 `Conv1d` at 64,000 positions.
+  - **Measured readings (relative error against the CPU, 48 → 1 channels, kernel 8, stride 4).**
+    8,000 positions exact; 8,192 0.004; 10,000 0.44; 16,000 0.69; 32,000 0.98. 48 → 4 and 48 → 48 at
+    16,000: 0.70. 8 → 1 and 4 → 1 at 16,000: exact. Kernel 4, stride 2 at 16,000: exact.
+  - **Where it was found.** The denoiser's output layer reads 16,000 positions per second of 16 kHz audio.
+    Its L1 gradient read 45% off facebookresearch/denoiser while every upstream gradient matched to 5e-6.
+  - **The fix.** `NFKDemucsConvT1d` computes its training pass with `convTransposed1d` over the same weight
+    squeezed to `[out, kernel, in]`; inference keeps the 2-D form and the parameter layout is unchanged.
+    The GPU weight gradient then matches the CPU to 1.8e-6. Conv-TasNet's decoder is the same layer.
+    The layer now computes by mode, so every network holding it (Demucs and the denoiser, Conv-TasNet,
+    HiFi-GAN, the Music 3 vocoder, SNAC, DAC) calls `train(false)` in its initializer, as "A module
+    starts in training mode" requires; without that, inference took the training form.
+  - **Rule for training parity tests.** Hold gradients to the reference's, not Adam's first update. That
+    update is close to `sign(g)` for every element, so its cosine counts sign agreement and showed the
+    45% error as a 0.94 cosine with a norm ratio of 1.
 - **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
   loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
   forward, and that one evaluation carries every file read, every conversion, and the forward itself.

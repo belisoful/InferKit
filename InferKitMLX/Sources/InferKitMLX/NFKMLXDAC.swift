@@ -229,6 +229,9 @@ final class NFKMLXDACNet: Module {
         _encoder.wrappedValue = NFKDACEncoderNet(c)
         _quantizer.wrappedValue = NFKDACResidualVectorQuantize(c)
         _decoder.wrappedValue = NFKDACDecoderNet(c)
+        // `NFKDemucsConvT1d` computes differently in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// A mono waveform → codes `[1, codebooks, frames]`. The clip is padded to a whole number of hops.

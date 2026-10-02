@@ -166,7 +166,7 @@ configuration on 2026-09-30 (sources under `inferkit-validation/sources/decay-au
 column. All-In-One, VAD, DeepLabV3, Silero VAD, and the PANNs tagger build it at their references'
 rates; every other recipe that has one exposes it off by default, and the row names the property that
 turns it on. A reference whose training runs none (Wav2Vec2 / HuBERT, V-JEPA 2, RT-DETR, YOLO,
-Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev) lists nothing for it.
+Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev, the denoiser) lists nothing for it.
 
 | Recipe | Reference optimizer | Not reproduced |
 | --- | --- | --- |
@@ -198,6 +198,7 @@ Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev) lists no
 | GTCRN | none published; a bias-corrected Adam at 1e-3, no clip, a constant rate, each this package's choice | — |
 | NU-Wave 2 | `hparameter.yaml`: Adam 2e-4, betas 0.9 / 0.99, epsilon 1e-9, no clip, a constant rate | the random Chebyshev type I pre-filter on the narrow-band copy; `trainingPair` band-limits with the package's windowed-sinc resampler |
 | Conv-TasNet | asteroid's Libri2Mix recipe: Adam 1e-3, clip 5 | the halve-on-plateau schedule and early stopping, which need a validation set; the recipe holds the rate |
+| Denoiser | facebookresearch/denoiser 8afd7c1 `train.py` and `launch_dns.sh`: `torch.optim.Adam` 3e-4, betas 0.9 / 0.999, no decay, no clip, a constant rate; L1; the reverb on every batch and a shared one-second shift (`NFKMLXDenoiserAugmentation.dns`) | the augmentations, off by default; `.dns` and `.valentini` turn on each launch script's set. The batch of 128 ten-second clips (`NFKMLXDenoiser.referenceBatchSize`, `referenceSegmentSeconds`); the recipe steps on the batch `examples` returns |
 | Basic Pitch | `basic-pitch` `train.py`: Keras `Adam` 1e-3 (`NFKMLXKerasAdam`), no clip, the `UnitNorm` kernel constraint after each update | the halve-on-plateau schedule (`ReduceLROnPlateau`), which needs a validation set; the recipe holds the rate |
 | YOLO, every generation | ultralytics `optimizer=auto` for a run under 10,000 updates: AdamW at `round(0.002 · 5 / (4 + classes), 6)`, decay `0.0005 · batch · accumulate / 64` on convolution weights alone, clip 10; the per-epoch linear schedule with its warm-up (`NFKMLXLearningRateSchedule.ultralytics`); `ModelEMA` kept | the 64-image nominal batch is `nominalBatchSize: NFKMLXYOLO.referenceNominalBatchSize`, off by default, and `NFKMLXYOLOGenerations.fineTune` does not take it; mosaic and jitter augmentation are the caller's |
 | RT-DETR | lyuwenyu/RT-DETR, each release's configuration: its AdamW groups and freezing (`referenceRecipe(for:)`), clip 0.1, RT-DETRv2's 2,000-update linear warm-up, a constant rate otherwise; the weight average kept | photometric distortion, zoom-out, IoU crop, and flips, the caller's data choices |
@@ -223,7 +224,7 @@ counts below are the ledger's, over its 167 entries in 151 rows.
   are TranslateGemma's (`NFKMLXTranslateGemmaObjective`, over
   `promptTokens(text:sourceCode:targetCode:)`) and `NFKMLXCausalLanguageObjective`, whose example
   carries its prompt's length. Audio
-  adapters exist per recipe: GTCRN's noisy and clean pairs, NU-Wave 2's `trainingPair`, and Basic
+  adapters exist per recipe: GTCRN's noisy and clean pairs, the denoiser's augmentations, NU-Wave 2's `trainingPair`, and Basic
   Pitch's `trainingExample(s)`, which cuts a recording and its notes into windows and targets.
 - A public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
   builders and are offline on size. Feasibility and reachability are separate questions.

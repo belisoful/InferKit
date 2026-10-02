@@ -11127,6 +11127,99 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
+    // The speech denoiser's training against facebookresearch/denoiser (8afd7c1): the released dns48's
+    // estimate on a batch of three, each distance `solver.py` offers and the STFT loss's two terms, one
+    // step of `train.py`'s Adam on L1 (the folded LSTM bias moving as the reference's pair moves), and
+    // the solver's four augmentations chained and replayed from the reference's own draws.
+    //
+    // `IK_DENOISER_SRC=reference-sources/denoiser/denoiser python run_reference.py denoiser_training
+    //  out/denoiser-training.safetensors --checkpoint raw/dns48.th`
+    func testDenoiserTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DENOISER_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DENOISER_TRAINING to a record from run_reference.py denoiser_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        let noisy = try array("noisy"), clean = try array("clean")
+        let net = try NFKMLXDenoiser.network(weightsURL: weights("IK_VAL_DENOISER"))
+
+        let estimate = net(noisy.expandedDimensions(axis: -1)).squeezed(axis: -1)
+        let estimateDifference = abs(estimate - (try array("estimate"))).max().item(Float.self)
+        let l1 = NFKMLXDenoiserObjective(distance: .l1).loss(estimate: estimate, clean: clean).item(Float.self)
+        let l2 = NFKMLXDenoiserObjective(distance: .l2).loss(estimate: estimate, clean: clean).item(Float.self)
+        let huber = NFKMLXDenoiserObjective(distance: .huber).loss(estimate: estimate, clean: clean).item(Float.self)
+        let terms = NFKMLXDenoiserObjective.resolutions.map {
+            NFKMLXDenoiserObjective.stftTerms(estimate: estimate, clean: clean, fft: $0.fft, hop: $0.hop, window: $0.window)
+        }
+        let convergence = terms.map { $0.convergence.item(Float.self) }.reduce(0, +) / Float(terms.count)
+        let magnitude = terms.map { $0.magnitude.item(Float.self) }.reduce(0, +) / Float(terms.count)
+        print("PARITY denoiser-training: estimate worst \(estimateDifference); L1 \(l1) vs \(try scalar("output")), "
+              + "L2 \(l2) vs \(try scalar("loss_l2")), Huber \(huber) vs \(try scalar("loss_huber")), "
+              + "STFT convergence \(convergence) vs \(try scalar("stft_sc")), magnitude \(magnitude) vs \(try scalar("stft_mag"))")
+        XCTAssertLessThan(estimateDifference, 1e-4)
+        for (ours, key) in [(l1, "output"), (l2, "loss_l2"), (huber, "loss_huber"), (convergence, "stft_sc"),
+                            (magnitude, "stft_mag")] {
+            let theirs = try scalar(key)
+            XCTAssertEqual(ours, theirs, accuracy: max(abs(theirs) * 1e-4, 1e-7), key)
+        }
+
+        // Adam's first step is close to the sign of each gradient, so the gradients are held to the
+        // reference's by relative error, and the step by the loss it reaches and by two updates: the first
+        // encoder weight, and the folded LSTM bias, which must move as the reference's two biases together.
+        net.train(true)
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [NFKMLXDenoiserObjective()(net, arrays[0], arrays[1])]
+        }(net, [noisy, clean]).1.flattened())
+        let referenceGradients: [(String, MLXArray)] = [
+            ("encoder.0.conv1.weight", try array("grad::encoder.0.0.weight").transposed(0, 2, 1)),
+            ("decoder.4.convt.conv.weight", try array("grad::decoder.4.2.weight").transposed(1, 2, 0).expandedDimensions(axis: 2)),
+            ("lstm.lstm.0.bias", try array("grad::lstm.bias_l0")),
+        ]
+        for (name, reference) in referenceGradients {
+            let ours = try XCTUnwrap(gradients[name], name)
+            let relative = sqrt(square(ours - reference.reshaped(ours.shape)).sum()).item(Float.self)
+                / sqrt(square(reference).sum()).item(Float.self)
+            print("PARITY denoiser-training: \(name) gradient relative error \(relative)")
+            XCTAssertLessThan(relative, 1e-3, name)
+        }
+
+        let before = snapshot(net)
+        try NFKMLXDenoiser.fineTune(net, examples: { _ in (noisy, clean) }, steps: 1)
+        let after = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        let lossAfter = NFKMLXDenoiserObjective()(net, noisy, clean).item(Float.self)
+        print("PARITY denoiser-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step"))")
+        XCTAssertEqual(lossAfter, try scalar("loss_after_step"), accuracy: try scalar("loss_after_step") * 1e-4)
+        let references: [(String, MLXArray)] = [
+            ("encoder.0.conv1.weight", try array("step::encoder.0.0.weight").transposed(0, 2, 1)),
+            ("lstm.lstm.0.bias", try array("step::lstm.bias_l0")),
+        ]
+        for (name, reference) in references {
+            let start = try XCTUnwrap(before[name], name)
+            let agreement = updateAgreement(before: start, after: try XCTUnwrap(after[name], name),
+                                            referenceAfter: reference.reshaped(start.shape))
+            print("PARITY denoiser-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            XCTAssertGreaterThan(agreement.cosine, 0.9999, name)
+            XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-3, name)
+        }
+
+        let halves = try array("augment.draws").asArray(Float.self)
+        var draws = NFKDenoiserReplayedDraws(
+            values: Swift.stride(from: 0, to: halves.count, by: 2).map { Double(halves[$0]) + Double(halves[$0 + 1]) },
+            permutationValues: try array("augment.permutation").asArray(Int32.self).map(Int.init),
+            offsetValues: try array("augment.offsets").asArray(Int32.self).map(Int.init))
+        let chain = NFKMLXDenoiserAugmentation(remix: true, bandMask: 0.2, shift: 4000, shiftSame: false, revEcho: 1)
+        let augmented = chain.apply(noisy: noisy, clean: clean, draws: &draws)
+        let noisyDifference = abs(augmented.noisy - (try array("augment.noisy"))).max().item(Float.self)
+        let cleanDifference = abs(augmented.clean - (try array("augment.clean"))).max().item(Float.self)
+        print("PARITY denoiser-training: augmented noisy worst \(noisyDifference), clean worst \(cleanDifference); "
+              + "\(draws.values.count) draws left")
+        XCTAssertTrue(draws.values.isEmpty, "every recorded draw is consumed")
+        XCTAssertLessThan(noisyDifference, 1e-5)
+        XCTAssertLessThan(cleanDifference, 1e-5)
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

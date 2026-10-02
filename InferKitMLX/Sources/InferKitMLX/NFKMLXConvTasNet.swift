@@ -154,6 +154,9 @@ public final class NFKMLXConvTasNetNet: Module {
         _maskConv.wrappedValue = Conv1d(inputChannels: c.bottleneck, outputChannels: c.filters * c.speakers, kernelSize: 1)
         _decoder.wrappedValue = NFKDemucsConvT1d(c.filters, 1, kernel: c.kernel, stride: stride,
                                                  padding: 0, bias: false)
+        // `NFKDemucsConvT1d` computes differently in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// Separates a mono waveform `[samples]` (`-1...1`) into `[speakers, samples]`.

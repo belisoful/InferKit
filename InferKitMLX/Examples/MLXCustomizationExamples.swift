@@ -832,6 +832,28 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(denoiser.isReady)
     }
 
+    // Docs/examples.md: Training the Demucs denoiser on your own recordings
+    func testExampleTrainingTheDemucsDenoiserOnOwnRecordings() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("denoiser-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXDenoiser.network(weightsURL: releasedWeights). A narrow
+        // network stands in here, and the clips are long enough for `.dns`'s one-second shift.
+        let net = try NFKMLXDenoiser.network(weightsURL: nil, baseChannels: 4)
+        let clean = MLXArray((0 ..< 2 * 20_000).map { sinf(2 * .pi * 200 * Float($0 % 20_000) / 16_000) * 0.3 }, [2, 20_000])
+        let noisy = clean + MLXArray((0 ..< 2 * 20_000).map { 0.05 * sinf(Float($0) * 1.7) }, [2, 20_000])
+        let history = try NFKMLXDenoiser.fineTune(net, examples: { _ in (noisy: noisy, clean: clean) },
+                                                  augmentation: .dns, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let denoiser = try NFKMLXDenoiser.backend(weightsURL: tuned)       // also backendWithWeightsURL:error:
+        XCTAssertTrue(denoiser.isReady)
+    }
+
     // Docs/examples.md: Teaching note transcription your own instrument
     func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

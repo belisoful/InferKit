@@ -441,6 +441,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The Demucs denoiser trains on a consumer's own recordings
+
+- `NFKMLXDenoiser.fineTune` trains every parameter on noisy and clean batches, as facebookresearch/
+  denoiser's `solver.py` does, with `train.py`'s Adam at 3e-4 by default.
+- `NFKMLXDenoiserObjective` is the solver's L1, L2, or Huber distance, plus the multi-resolution STFT
+  loss when it is on. `.dns` and `.valentini` are the two launch scripts' objectives.
+- `NFKMLXDenoiserAugmentation` applies the solver's remix, band mask, shift, and reverb. It is off by
+  default; `.dns` and `.valentini` are each launch script's set.
+- `NFKMLXDenoiser.network(weightsURL:baseChannels:)` reads the base width from the checkpoint.
+  `backend(weightsURL:)` reads it too, so the released dns64 loads; it previously built width 48 for
+  every file.
+- `NFKMLXDemucsNet` is public and runs a batch `[N, L, channels]`.
+- A training pass through a Demucs, Conv-TasNet, HiFi-GAN, Music 3, SNAC, or DAC transposed convolution
+  computes the right weight gradient on clips past 8,192 positions. MLX's GPU weight gradient of the
+  form the layer uses at inference is wrong there. Those networks are built in evaluation mode.
+
 #### The dense Qwen, Qwen3.5 hybrid, and Gemma 3 decoders fine-tune with LoRA
 
 - `NFKMLXLanguage.fineTune`, `NFKMLXHybridLanguage.fineTune`, and `NFKMLXGemma3Language.fineTune` adapt

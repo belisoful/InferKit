@@ -4491,6 +4491,7 @@
         "deeplab_training",
         "bisenet_loss",
         "bisenet_training",
+        "denoiser_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5496,6 +5497,12 @@
       "record": "reference/gemma3-loss.safetensors",
       "environment": "gemma",
       "command": "gemma3_loss --checkpoint /tmp"
+    },
+    {
+      "key": "IK_PARITY_DENOISER_TRAINING",
+      "record": "reference/denoiser-training.safetensors",
+      "environment": "llm",
+      "command": "IK_DENOISER_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/denoiser/denoiser\" denoiser_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/dns48.th\""
     }
   ]
 }

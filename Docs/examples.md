@@ -3970,6 +3970,25 @@ try NFKMLXWeights.save(net, to: tuned)
 let denoiser = try NFKMLXGTCRNFactory.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Training the Demucs denoiser on your own recordings
+
+The released DNS denoiser trains every weight the way facebookresearch/denoiser trains it: an L1
+distance between the estimate and the clean speech, Adam at 3e-4, and, as `.dns`, the reverb and shift
+the released models were augmented with. Each step takes a batch of noisy clips and the clean speech
+under them, `[N, L]` mono at 16 kHz.
+
+```swift
+let net = try NFKMLXDenoiser.network(weightsURL: releasedWeights)     // dns48 or dns64
+try NFKMLXDenoiser.fineTune(net, examples: { step in
+    (noisy: myBatches[step].noisy, clean: myBatches[step].clean)
+}, augmentation: .dns, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let denoiser = try NFKMLXDenoiser.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
+`NFKMLXDenoiserObjective.valentini` adds the multi-resolution STFT term the Valentini recipe uses.
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

@@ -398,6 +398,9 @@ final class NFKMLXSNACNet: Module {
         _encoder.wrappedValue = NFKSNACEncoderNet(c)
         _quantizer.wrappedValue = NFKSNACResidualVectorQuantize(c)
         _decoder.wrappedValue = NFKSNACDecoderNet(c)
+        // `NFKDemucsConvT1d` computes differently in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// A mono waveform → one code stream per codebook, at the codebook's temporal rate.

@@ -133,6 +133,9 @@ final class NFKMusic3VocoderNet: Module {
         _snakeOut.wrappedValue = NFKMusic3Snake(channels: outputDim)
         _convOut.wrappedValue = Conv1d(inputChannels: outputDim, outputChannels: 1,
                                        kernelSize: 7, padding: 3)
+        // `NFKDemucsConvT1d` computes differently in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// `[B, T, latentChannels]` → `[B, T·hop, 2]`.

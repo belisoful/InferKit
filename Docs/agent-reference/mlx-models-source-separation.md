@@ -99,7 +99,29 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKAudioAsset` under `NFKOutputAudio`. `+register` under `denoiser`. Reference parity against
   facebookresearch/denoiser dns48 (cosine 0.99999999999992), which also guards the shared network
   against a change made for the music model breaking the speech one. Single-output and round-trip tested.
-  Customization: trainable at `full`, with no recipe written yet. facebookresearch/denoiser at 8afd7c1
-  (`denoiser/solver.py`, `conf/config.yaml`) trains with an L1 waveform loss and Adam at 3e-4 (β 0.9,
-  0.999), with no discriminator. The multi-resolution STFT term in `stft_loss.py` is optional: off in
-  the DNS configuration, 0.1 per term in the Valentini one.
+  **Customization ships** at `full` (`NFKMLXDenoiserTraining.swift`), measured against
+  facebookresearch/denoiser at 8afd7c1 (`run_reference.py denoiser_training`) on the released dns48.
+  - `NFKMLXDenoiser.fineTune` trains every parameter on noisy and clean batches `[N, L]`.
+  - `NFKMLXDenoiserObjective` offers `solver.py`'s distances: L1 (the DNS models' loss), L2, and Huber.
+    It adds `stft_loss.py`'s multi-resolution STFT term when it is on: off in `.dns`, 0.1 per term in
+    `.valentini`. The STFT is a pair of DFT matrices, so a gradient reaches the waveform.
+  - `NFKMLXDenoiserAugmentation` ports `augment.py`'s remix, band mask, shift, and reverb in the solver's
+    order. They are off by default, and `.dns` and `.valentini` are the two launch scripts.
+  - The reference optimizer is `train.py`'s `torch.optim.Adam` at 3e-4, β 0.9 and 0.999, with no clip.
+    The bottleneck LSTMs fold the reference's two biases into one, which steps at twice the rate.
+  - Measured on a batch of three: the estimate within 1.1e-6. L1 0.035111126 vs 0.03511115, and the STFT
+    terms 0.3397696 vs 0.3397504 and 3.196455 vs 3.1964548.
+  - The L1 gradients are within 1.2e-5 relative for the first encoder weight, 4.6e-7 for the output
+    transposed convolution, and 8.1e-6 for the LSTM bias. The loss after one Adam step is 0.01620323 vs
+    0.01620335.
+  - The four augmentations, replayed from the reference's recorded draws, are within 1.8e-7.
+  - The reference needs two shims on torch 2.8 and numpy 2. `torch.stft` takes `return_complex=True`,
+    viewed as real. `LowPassFilters` keeps float32 filters, numpy 1's result.
+  - Training needed two network changes, both training-only so inference is unchanged.
+    - The half-sample resampler's 112-tap sinc filter runs through
+      `NFKMLXGradientSafeConvolution.convolve`.
+    - `NFKDemucsConvT1d` runs the 1-D transposed operator, because MLX's GPU weight gradient of the 2-D
+      form is wrong past 8,192 positions (`mlx-runtime-gotchas.md`).
+  - `NFKMLXDenoiser.network(weightsURL:)` reads the base width from the checkpoint, so dns64 and a
+    trained file load. `backend(weightsURL:)` now goes through it; it previously built width 48 whatever
+    the file held.

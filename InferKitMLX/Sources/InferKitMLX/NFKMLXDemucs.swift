@@ -62,17 +62,31 @@ public struct NFKMLXDemucsConfiguration: Sendable {
 }
 
 /// A 1-D transposed convolution, implemented as a 2-D transposed conv over a singleton width.
+///
+/// @discussion Training takes MLX's 1-D operator over the same weight instead. mlx 0.32.2's GPU weight
+/// gradient of the 2-D form is wrong once an example passes 8,192 input positions (0.4 relative error at
+/// 10,000 positions, 48 channels in, kernel 8, stride 4), while the 1-D operator's is exact at the same
+/// geometry. The denoiser's output layer reads 16,000 positions per second of 16 kHz audio.
 final class NFKDemucsConvT1d: Module {
     @ModuleInfo(key: "conv") var conv: ConvTransposed2d
 
+    let stride: Int
+    let padding: Int
+
     /// - Parameter bias: false for a filterbank-style decoder, which carries only a weight matrix.
     init(_ inChannels: Int, _ outChannels: Int, kernel: Int, stride: Int, padding: Int, bias: Bool = true) {
+        self.stride = stride
+        self.padding = padding
         _conv.wrappedValue = ConvTransposed2d(inputChannels: inChannels, outputChannels: outChannels,
                                               kernelSize: IntOrPair((kernel, 1)), stride: IntOrPair((stride, 1)),
                                               padding: IntOrPair((padding, 0)), bias: bias)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard !training else {
+            let y = convTransposed1d(x, conv.weight.squeezed(axis: 2), stride: stride, padding: padding)
+            return conv.bias.map { y + $0 } ?? y
+        }
         let (b, l, c) = (x.shape[0], x.shape[1], x.shape[2])
         let out = conv(x.reshaped([b, l, 1, c]))
         return out.reshaped([out.shape[0], out.shape[1], out.shape[3]])
@@ -136,22 +150,27 @@ enum NFKDemucsResample {
     }
 
     /// Applies the kernel to every channel independently — the decoder side carries one channel per stem.
-    private static func filter(_ x: MLXArray) -> MLXArray {
+    /// The kernel is 112 taps at stride 1, wider than the GPU differentiates exactly, so a training pass
+    /// (`differentiable`) takes the sliced convolution; inference keeps MLX's own.
+    private static func filter(_ x: MLXArray, differentiable: Bool) -> MLXArray {
         let channels = x.shape[2]
         let single = kernel()
         let weight = channels == 1 ? single : repeated(single, count: channels, axis: 0)
-        return conv1d(x, weight, padding: zeros, groups: channels)
+        guard differentiable else {
+            return conv1d(x, weight, padding: zeros, groups: channels)
+        }
+        return NFKMLXGradientSafeConvolution.convolve(x, weight, padding: [zeros], dilation: [1], groups: channels)
     }
 
     /// `[N, L, C]` → `[N, 2L, C]`: the original samples interleaved with half-shifted ones.
-    static func upsample2(_ x: MLXArray) -> MLXArray {
+    static func upsample2(_ x: MLXArray, differentiable: Bool = false) -> MLXArray {
         let (n, length, channels) = (x.shape[0], x.shape[1], x.shape[2])
-        let shifted = filter(x)[0..., 1..., 0...][0..., 0 ..< length, 0...]
+        let shifted = filter(x, differentiable: differentiable)[0..., 1..., 0...][0..., 0 ..< length, 0...]
         return stacked([x, shifted], axis: 2).reshaped([n, 2 * length, channels])
     }
 
     /// `[N, L, C]` → `[N, L/2, C]`: the even samples averaged with the filtered odd ones.
-    static func downsample2(_ x: MLXArray) -> MLXArray {
+    static func downsample2(_ x: MLXArray, differentiable: Bool = false) -> MLXArray {
         var x = x
         if x.shape[1] % 2 != 0 {
             x = MLX.padded(x, widths: [IntOrPair((0, 0)), IntOrPair((0, 1)), IntOrPair((0, 0))], mode: .constant)
@@ -159,7 +178,7 @@ enum NFKDemucsResample {
         let even = x[0..., .stride(by: 2), 0...]
         let odd = x[0..., 1..., 0...][0..., .stride(by: 2), 0...]
         let length = odd.shape[1]
-        let filtered = filter(odd)[0..., ..<(-1), 0...]
+        let filtered = filter(odd, differentiable: differentiable)[0..., ..<(-1), 0...]
         return (even + filtered[0..., 0 ..< length, 0...]) * 0.5
     }
 }
@@ -278,12 +297,17 @@ final class NFKDemucsBLSTM: Module {
     }
 }
 
-final class NFKMLXDemucsNet: Module {
+/// The time-domain Demucs U-Net: strided convolutional encoders, a recurrent bottleneck, and transposed
+/// decoders with skips. The music separator and the speech denoiser are both this network.
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXDemucsNet: Module {
     @ModuleInfo(key: "encoder") var encoder: [NFKDemucsEncoder]
     @ModuleInfo(key: "lstm") var lstm: NFKDemucsBLSTM
     @ModuleInfo(key: "decoder") var decoder: [NFKDemucsDecoder]
 
-    let configuration: NFKMLXDemucsConfiguration
+    /// The geometry the network was built at.
+    public let configuration: NFKMLXDemucsConfiguration
 
     init(_ configuration: NFKMLXDemucsConfiguration) {
         self.configuration = configuration
@@ -312,6 +336,10 @@ final class NFKMLXDemucsNet: Module {
             decoders.append(NFKDemucsDecoder(inChannels, outChannels, context: configuration.context))
         }
         _decoder.wrappedValue = decoders
+        // The transposed convolutions and the resampler compute differently in training mode, so a built
+        // network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// The input length the encoder/decoder stack round-trips exactly, mirroring the reference's
@@ -335,9 +363,17 @@ final class NFKMLXDemucsNet: Module {
     func separate(_ samples: MLXArray) -> MLXArray {
         let length = samples.shape[0]
         // A mono clip feeds every input channel, so a stereo model still runs on one.
-        var x = samples.ndim == 1
+        let x = samples.ndim == 1
             ? repeated(samples.reshaped([1, length, 1]), count: configuration.audioChannels, axis: 2)
             : samples.reshaped([1, length, samples.shape[1]])
+        return self(x)
+    }
+
+    /// Runs a batch `[N, L, channels]` and returns `[N, L, stems·channels]`, each example normalized by
+    /// its own deviation where the configuration normalizes. Introduced in InferKit 0.4.0.
+    public func callAsFunction(_ input: MLXArray) -> MLXArray {
+        var x = input
+        let length = input.shape[1]
 
         // The reference divides by `floor + std` and rescales by `std`, with `std` fixed at 1 when
         // normalization is off — so the input is still scaled by 1/(1 + floor) and never scaled back.
@@ -395,7 +431,9 @@ final class NFKMLXDemucsNet: Module {
         case .halfSampleShift:
             var y = x
             for _ in 0 ..< (max(old, new) / 2) {
-                y = new > old ? NFKDemucsResample.upsample2(y) : NFKDemucsResample.downsample2(y)
+                y = new > old
+                    ? NFKDemucsResample.upsample2(y, differentiable: training)
+                    : NFKDemucsResample.downsample2(y, differentiable: training)
             }
             return y
         case .fractional:

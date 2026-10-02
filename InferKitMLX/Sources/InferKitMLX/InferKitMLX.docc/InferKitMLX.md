@@ -633,6 +633,9 @@ limits.
 - ``NFKMLXHybridLanguageNet``
 - ``NFKMLXGemma3Net``
 - ``NFKMLXCausalLanguageObjective``
+- ``NFKMLXDemucsNet``
+- ``NFKMLXDenoiserObjective``
+- ``NFKMLXDenoiserAugmentation``
 
 ### Chat templates
 

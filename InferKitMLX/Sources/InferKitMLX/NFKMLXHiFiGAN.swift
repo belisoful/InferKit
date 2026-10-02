@@ -81,6 +81,9 @@ public final class NFKMLXHiFiGANNet: Module {
         _ups.wrappedValue = upConvs
         _resblocks.wrappedValue = blocks
         _convPost.wrappedValue = Conv1d(inputChannels: channels, outputChannels: 1, kernelSize: 7, padding: 3)
+        // `NFKDemucsConvT1d` computes differently in training mode, so a built network starts in evaluation.
+        super.init()
+        train(false)
     }
 
     /// `[1, T, melBins]` → `[1, T·hop, 1]`. Introduced in InferKit 0.4.0.

@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 44 |
-| `trainable`, no recipe yet | 54 |
+| `ships` | 45 |
+| `trainable`, no recipe yet | 53 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-four recipes ship and 54 models are trainable with none written. That is the size of
+Forty-five recipes ship and 53 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -65,10 +65,10 @@ onto Hungarian matchers this package already reproduces in `NFKMLXHungarian`. Th
 read on disk rather than assumed. Detection was previously set aside as too expensive to port, and
 that call was wrong.
 
-The second: **eight audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3,
-MossFormer2 SE, FRCRN, Demucs, HT Demucs, and Denoiser each publish a plain reconstruction or
+The second: **seven audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3,
+MossFormer2 SE, FRCRN, Demucs, and HT Demucs each publish a plain reconstruction or
 score-matching objective with no adversary, verified in each repository's own loss module. GTCRN,
-NU-Wave 2, and Conv-TasNet ship.
+NU-Wave 2, Conv-TasNet, and the Denoiser ship.
 
 ## Depth, segmentation, matting
 
@@ -169,7 +169,7 @@ NU-Wave 2, and Conv-TasNet ship.
 | `NFKMLXDemucs` | trainable | full | internal | demucs 4.0.1 `solver.py` trains with an L1 waveform loss and no adversary. |
 | `NFKMLXHTDemucs` | trainable | full | internal | The same solver. 42M parameters, an 81 MB release. |
 | `NFKMLXConvTasNet` | ships | full | public | asteroid v0.5.2's `PITLossWrapper(pairwise_neg_sisdr)`, matched by `run_reference.py convtasnet_loss`. 5M parameters. |
-| `NFKMLXDenoiser` | trainable | full | internal | `denoiser/solver.py`: L1 on the waveform with the multi-resolution STFT term optional, Adam at 3e-4, no discriminator. |
+| `NFKMLXDenoiser` | ships | full | public | `denoiser/solver.py`'s L1 within 1e-6 on the released dns48 and its gradients within 1.2e-5, with the STFT term, the four augmentations, and `train.py`'s Adam at 3e-4. No discriminator. |
 
 ## Audio codecs and music
 
@@ -376,11 +376,11 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
-   Pitch ship. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   Pitch ship, and so does the Denoiser. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
    variables. The 2026-09-25 triage adds
-   Denoiser, FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
+   FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
    metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,

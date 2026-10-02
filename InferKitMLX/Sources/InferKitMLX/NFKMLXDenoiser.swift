@@ -123,15 +123,11 @@ public final class NFKMLXDenoiser: NSObject {
     }
 
     /// Builds a speech-denoising backend directly from optional local weights — no registry required. A
-    /// nil `weightsURL` builds random weights (`isReady` is true). Run
-    /// inference off the render thread.
+    /// nil `weightsURL` builds random weights (`isReady` is true). The base width is read from the
+    /// checkpoint, so `dns48`, `dns64`, and a trained file all load. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = makeNet()
-        if let weightsURL {
-            try NFKMLXDemucs.loadWeights(into: net, from: weightsURL)
-        }
-        return NFKMLXDenoiserBackend(net: net, identifier: modelName)
+        NFKMLXDenoiserBackend(net: try network(weightsURL: weightsURL), identifier: modelName)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
