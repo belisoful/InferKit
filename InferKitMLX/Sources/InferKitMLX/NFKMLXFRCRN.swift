@@ -88,8 +88,8 @@ final class NFKFRCRNComplexBatchNorm: Module {
     @ModuleInfo(key: "bn_im") var im: BatchNorm
 
     init(_ channels: Int) {
-        _re.wrappedValue = BatchNorm(featureCount: channels)
-        _im.wrappedValue = BatchNorm(featureCount: channels)
+        _re.wrappedValue = NFKStagedBatchNorm(featureCount: channels)
+        _im.wrappedValue = NFKStagedBatchNorm(featureCount: channels)
     }
 
     func callAsFunction(_ x: NFKFRCRNComplex) -> NFKFRCRNComplex {
@@ -231,8 +231,8 @@ final class NFKFRCRNSqueezeExcite: Module {
     }
 
     func callAsFunction(_ x: NFKFRCRNComplex) -> NFKFRCRNComplex {
-        let pooledRe = x.real.mean(axes: [1, 2])                                 // [B, C]
-        let pooledIm = x.imaginary.mean(axes: [1, 2])
+        let pooledRe = NFKMLXStagedReduction.mean(x.real, axes: [1, 2])           // [B, C]
+        let pooledIm = NFKMLXStagedReduction.mean(x.imaginary, axes: [1, 2])
         let gateRe = Self.gate(real, pooledRe) - Self.gate(imaginary, pooledIm)
         let gateIm = Self.gate(real, pooledIm) + Self.gate(imaginary, pooledRe)
         let c = x.real.dim(3)

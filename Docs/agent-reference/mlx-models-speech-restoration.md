@@ -457,20 +457,25 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   - Measured on two one-second clips in training mode: the level helper within 7.5e-9, the estimate
     within 4.2e-6 of float64 between the first and last hop, the loss 229.66992 vs 229.67018 (mask term
     223.6987 vs 223.69844, SI-SNR 5.9712176 vs 5.971744).
-  - **The release's gradients are noise-limited at float32.** Many BatchNorm channels are nearly dead:
-    their inputs vary less than the 1e-5 epsilon, so their normalized values are rounding noise magnified
-    up to 316 times, and the backward carries that noise upstream. On the release the first UNet's
-    gradients land 4.3% from the reference's float64 ones, against 1.2% to 1.9% for the reference's own
-    float32, on the opposite side. The global norm is 14,361 against float64's 14,541 and float32's
-    14,645.
-  - **The conditioning control decides it.** The same weights with every BatchNorm epsilon at 1e-2 bound
-    the magnification at 10. There the port's first-UNet gradients land 0.29% to 0.34% from float64 and
-    its global norm 0.2%, while the reference's float32 lands 6.7% to 10% away. The port computes the
-    reference's function; the release's distance is float32 noise. The parity test holds both: the
-    release to bounds that admit the noise, the control to 1e-2 of float64.
-  - Adam's first step moves each parameter by the sign of its gradient, so noise-dominated components
-    step a full learning rate either way: the loss after one step is 61.374 against float64's 59.986,
-    and the reference's float32 reaches 59.032, from 229.67.
+  - **The release's gradients need accurate batch statistics.** Many BatchNorm channels are nearly dead:
+    their inputs vary less than the 1e-5 epsilon, so their normalized values carry rounding magnified up
+    to 316 times, and the backward carries it upstream. With MLXNN's `BatchNorm` the first UNet's
+    gradients landed 4.3% from the reference's float64 ones on the GPU (global norm 14,361 against
+    14,541) and up to 3.0% on the CPU, whose output-convolution gradient read 25 times its GPU distance.
+  - **The complex BatchNorms build `NFKStagedBatchNorm`, and the squeeze-excite pools use
+    `NFKMLXStagedReduction.mean`.** The first UNet's gradients land 1.7e-4 to 2.7e-3 from float64 on the
+    GPU and 1.1e-4 to 3.2e-3 on the CPU, the global norm within 3.3e-5 and 5.0e-5, the output convolution
+    within 3.8e-6 and 1.5e-6. The reference's own float32 lands 1.2% to 1.9% away. Inference parity is
+    unchanged. The parity test holds the release's gradients to 1e-2 of float64 and the norm to 1e-3.
+  - **The conditioning control holds a kink tie.** The same weights with every BatchNorm epsilon at 1e-2
+    bound the magnification at 10. One LeakyReLU input in the second UNet's third encoder (real part,
+    channel 38) lies 1.45e-4 below zero in float64 and carries a cotangent of 5.63, 14 times the layer's
+    RMS. The GPU's float32 forward moves it 4.4e-4, past zero: the port's GPU gradients land 6.8% to 9.6%
+    from float64 and the global norm 5.5%, where the reference's float32 lands 6.7% to 10% and 5.3%. The
+    port's CPU stays on float64's side, within 8e-4 and 1.4e-6. The test holds the control's gradients
+    no farther from float64 than 1.5 times the reference's float32, or 1e-2.
+  - Adam's first step moves each parameter by about the sign of its gradient: the loss after one step is
+    60.072 against float64's 59.986, from 229.67, and the reference's float32 reaches 59.032.
 - `NFKMLXMossFormer2SRNet` / `NFKMLXMossFormer2SRGenerator` / `NFKMLXMossFormer2SRFactory`
   (`@objc(NFKMLXMossFormer2SR_Factory)`) — **MossFormer2 SR 48K** (modelscope/ClearerVoice-Studio,
   `alibabasglab/MossFormer2_SR_48K`, Apache-2.0), speech super-resolution (bandwidth extension), the

@@ -680,11 +680,18 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     layers also brought the CPU to the floor. It moves the forward's rounding, so the near-zero element
     lands on the float64 side. No convolution and no backward kernel is wrong: each primitive agrees across
     the devices to 1e-7 to 2e-6, and evaluation mode, which has no batch reduction, agrees to 2e-6.
-  - **FRCRN's output-side 1×1 convolution gradient, 25 times worse on the CPU than on the GPU,** is not
-    reproduced in this probe. It is consistent with the same reductions feeding its nearly dead BatchNorm
-    channels, which magnify a statistic's error by up to `1/√ε`.
-  - **Rule.** Hold a training-mode gradient to the reference's float64, or to the GPU. A CPU float32
-    gradient through batch statistics is a coarser sample, not an oracle. A CPU comparison stays valid
+  - **FRCRN's output-side 1×1 convolution gradient, 25 times worse on the CPU than on the GPU, is the
+    same reductions.** On the release it read 4.0e-4 from float64 on the CPU and 1.6e-5 on the GPU,
+    through nearly dead BatchNorm channels that magnify a statistic's error by up to `1/√ε`.
+  - **The fix for a BatchNorm is `NFKStagedBatchNorm`.** It sums the statistics one axis at a time in the
+    corrected two-pass form and broadcasts them back one axis at a time, so the backward's reductions are
+    staged too. On a channel of 64,000 values at 0.3 varying by 1e-4, its normalized output lands 4.7e-8
+    from float64 on both devices, against 0.14 for MLXNN's `BatchNorm` on the CPU and 2.3e-4 on the GPU
+    (`NFKMLXStagedBatchNormTests`). FRCRN builds it: its output-convolution gradient lands within 1.5e-6
+    of float64 on the CPU, and its first UNet's GPU gradients moved from 4.3% to 0.27%. Every other
+    BatchNorm network still builds MLXNN's.
+  - **Rule.** Hold a training-mode gradient to the reference's float64. A float32 gradient through
+    MLXNN's batch statistics is a coarser sample on either device, and the CPU's is the coarser of the two. A CPU comparison stays valid
     for a single operation or a graph without batch reductions, which is what the gradient-safe
     convolution and denoiser tests compare. Any training parity test with kinked activations needs the
     seam-gradient localization and random-weight control of the `leakyRelu` entry above.

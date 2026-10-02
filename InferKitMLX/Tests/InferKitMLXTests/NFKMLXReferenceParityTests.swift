@@ -11259,9 +11259,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
               + "loss \(terms.total.item(Float.self)) vs \(try scalar("output")), mask \(terms.mask.item(Float.self)) vs \(try scalar("loss_mask")), "
               + "SI-SNR \(terms.scaleInvariantSNR.item(Float.self)) vs \(try scalar("loss_snr"))")
         // Many of the release's BatchNorm channels are nearly dead: their inputs vary less than the epsilon,
-        // so their normalized values are rounding noise magnified up to 316 times. Every float32 result on
-        // the released weights carries that noise. The release's comparisons are held to bounds that admit
-        // it, and the conditioning control below holds the port to float64 tightly.
+        // so their normalized values carry rounding magnified up to 316 times. The forward is held to bounds
+        // that admit the reference's own float32 noise. The gradients below are held to float64 tightly,
+        // because the staged batch statistics keep a nearly constant channel's digits.
         let maskFloor = abs(reference - (try array("mask64"))).max().item(Float.self)
         let estimateFloor = abs(interior(estimate) - interior(try array("estimate64"))).max().item(Float.self)
         print("PARITY frcrn-training: float32 floor of the reference: mask \(maskFloor), estimate \(estimateFloor)")
@@ -11319,8 +11319,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             ("unet1", relative(NFKFRCRNComplex(real: unet1Gradient[0], imaginary: unet1Gradient[1]), split(try array("seamgrad::unet1")))),
         ]
         print("PARITY frcrn-training: seam values \(seamValues); seam gradients \(seamGradients)")
-        // The gradient reaching the first UNet crosses the second's nearly dead BatchNorm channels; it is held
-        // through the parameter gradients below, against float64.
+        // The gradient reaching the first UNet is recorded only at the reference's float32, whose parameter
+        // gradients there land 1.2% to 1.9% from float64; it is held through those gradients, against float64.
         for (name, error) in seamValues + seamGradients.filter({ $0.0 != "unet1" }) {
             XCTAssertLessThan(error, 1e-3, "seam \(name)")
         }
@@ -11334,7 +11334,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
         let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
         print("PARITY frcrn-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(try scalar("gradient_norm64")))")
-        XCTAssertEqual(norm, try scalar("gradient_norm64"), accuracy: try scalar("gradient_norm64") * 2e-2)
+        XCTAssertEqual(norm, try scalar("gradient_norm64"), accuracy: try scalar("gradient_norm64") * 1e-3)
         func layout(_ name: String, _ reference: MLXArray) -> MLXArray {
             if name.hasSuffix("conv1.weight") {
                 return reference.reshaped([reference.dim(0), reference.dim(2)]).expandedDimensions(axis: 2)
@@ -11351,17 +11351,19 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let theirs64 = layout(name, try array("grad64::\(name)"))
             print("PARITY frcrn-training: \(name) gradient relative error \(distance(ours, theirs)); "
                   + "from float64: ours \(distance(ours, theirs64)), reference float32 \(distance(theirs, theirs64))")
-            // A float32 gradient on these weights is noise-limited: the reference's own lands up to a tenth
-            // from float64 in the control below.
-            XCTAssertLessThan(distance(ours, theirs64), 0.1, name)
+            XCTAssertLessThan(distance(ours, theirs64), 1e-2, name)
         }
 
         // The conditioning control: the released weights with every BatchNorm epsilon at 1e-2, which bounds
-        // a nearly constant channel's amplification at 10, so the port's gradients are held to float64 tightly.
+        // a nearly constant channel's amplification at 10. One LeakyReLU input in it, in the second UNet's
+        // third encoder (real part, channel 38), lies within 1.5e-4 of zero and carries a cotangent 14 times
+        // the layer's RMS, so a float32 forward lands on either side of the kink. The reference's float32
+        // lands 5% to 10% from float64 on the first UNet's gradients, and so does the port's. The control's
+        // gradients are held no farther from float64 than 1.5 times the reference's float32, or 1e-2.
         let control = try NFKMLXFRCRN.network(weightsURL: weights("IK_VAL_FRCRN"))
         for norm in control.modules().compactMap({ $0 as? NFKFRCRNComplexBatchNorm }) {
             func raised(_ old: BatchNorm) -> BatchNorm {
-                let fresh = BatchNorm(featureCount: old.weight!.dim(0), eps: 1e-2)
+                let fresh = NFKStagedBatchNorm(featureCount: old.weight!.dim(0), eps: 1e-2)
                 fresh.update(parameters: old.parameters())
                 return fresh
             }
@@ -11394,7 +11396,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let controlNorm = sqrt(controlGradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
         print("PARITY frcrn-training: control global gradient norm \(controlNorm) vs \(try scalar("eps2::gradient_norm")) "
               + "(float64 \(try scalar("eps2::gradient_norm64")))")
-        XCTAssertEqual(controlNorm, try scalar("eps2::gradient_norm64"), accuracy: try scalar("eps2::gradient_norm64") * 1e-2)
+        let controlNormFloor = abs(try scalar("eps2::gradient_norm") - (try scalar("eps2::gradient_norm64")))
+        XCTAssertEqual(controlNorm, try scalar("eps2::gradient_norm64"),
+                       accuracy: max(try scalar("eps2::gradient_norm64") * 1e-2, 1.5 * controlNormFloor))
         for name in ["unet.encoders.0.conv.conv_re.weight", "unet.fsmn.fsmn_re_L1.conv1.weight",
                      "unet.encoders.3.bn.bn_re.weight", "unet2.linear.conv_re.weight"] {
             let ours = try XCTUnwrap(controlGradients[name], name)
@@ -11402,7 +11406,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let theirs64 = layout(name, try array("eps2::grad64::\(name)"))
             print("PARITY frcrn-training: control \(name) gradient relative error \(distance(ours, theirs)); "
                   + "from float64: ours \(distance(ours, theirs64)), reference float32 \(distance(theirs, theirs64))")
-            XCTAssertLessThan(distance(ours, theirs64), 1e-2, "control \(name)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-2, 1.5 * distance(theirs, theirs64)), "control \(name)")
         }
 
         net.train(false)
@@ -11410,10 +11414,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         net.train(true)
         let lossAfter = NFKMLXFRCRNObjective()(net, noisy, clean).item(Float.self)
         print("PARITY frcrn-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(try scalar("loss_after_step64")))")
-        // Adam's first step moves each parameter by the sign of its gradient, so a component that is rounding
-        // noise steps a full learning rate either way; the step's fall in the loss is held to 2%.
+        // Adam's first step moves each parameter by about the sign of its gradient, so a component the float32
+        // gradient gets wrong steps a full learning rate; the step's fall in the loss is held to 0.5%.
         let fall = try scalar("output") - (try scalar("loss_after_step64"))
-        XCTAssertEqual(lossAfter, try scalar("loss_after_step64"), accuracy: 0.02 * fall)
+        XCTAssertEqual(lossAfter, try scalar("loss_after_step64"), accuracy: 0.005 * fall)
     }
 
     // MossFormer2 SE's training against ClearerVoice-Studio's own `train/speech_enhancement` (6b3774d): the

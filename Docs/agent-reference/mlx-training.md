@@ -120,18 +120,21 @@ unbiased variance as torch does and evaluates exactly as `BatchNorm` does
 (`testAPooledNormalizationFoldsTheUnbiasedVarianceAsPyTorchDoes`). `NFKBasicPitchBatchNorm` does the same
 for Keras.
 
-**A noise-limited gradient is held to float64 and to a conditioning control.** A release whose
-BatchNorm channels are nearly dead (inputs varying less than the epsilon) has float32 gradients that
-are rounding noise magnified up to `1/√ε`, 316 at 1e-5. Two float32 implementations then land several
-percent apart and on either side of the float64 gradient. FRCRN's release is the measured case: the
-port 4.3% from float64, the reference's own float32 1.2% to 1.9%. A tolerance taken from the
-reference's float32 distance fails a correct port there. The parity test records the reference at
-float64 too, holds the release's comparisons to bounds that admit the noise, and repeats the gradient
-on a control with every BatchNorm epsilon at 1e-2, where the port must land within 1e-2 of float64. A
-port difference keeps its distance in the control; FRCRN's fell to 0.3%. MLX's CPU cannot run a
-convolution in float64, so the port's own float64 gradient is not available. The CPU's float32 gradient
-is no substitute: its reductions accumulate in order in float32, and through batch statistics it lands
-further from float64 than the GPU (`mlx-runtime-gotchas.md`, "MLX's CPU reductions accumulate in order").
+**A gradient through nearly dead BatchNorm channels needs accurate batch statistics.** A channel whose
+inputs vary less than the epsilon normalizes rounding, magnified up to `1/√ε` (316 at 1e-5), so its
+gradient carries whatever error the batch mean and variance carry. MLX's reductions over leading axes
+lose those digits on both devices; on the CPU they add in order in float32 (`mlx-runtime-gotchas.md`,
+"MLX's CPU reductions accumulate in order"). FRCRN's release is the measured case: with MLXNN's
+`BatchNorm` the first UNet's GPU gradients landed 4.3% from float64, against 1.2% to 1.9% for the
+reference's own float32. `NFKStagedBatchNorm` sums the statistics one axis at a time in the corrected
+two-pass form and lands them within 2.7e-3 on the GPU and 3.2e-3 on the CPU. A port whose release has
+nearly dead channels builds it; FRCRN does. The parity test records the reference at float64 too and
+holds the release's gradients to it. It keeps a control with every epsilon at 1e-2, and a control can
+hold a kink tie of its own: FRCRN's has one LeakyReLU input within 1.5e-4 of zero carrying a cotangent
+14 times the layer's RMS, where the port's GPU and the reference's float32 both land 5% to 10% from
+float64. The control's gradients are held no farther from float64 than 1.5 times the reference's
+float32. MLX's CPU cannot run a convolution in float64, so the port's own float64 gradient is not
+available.
 
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the

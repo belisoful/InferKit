@@ -479,6 +479,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXFRCRN.network(weightsURL:)` builds the network from the release, a fine-tuned file, or a random
   initialization. `referenceBatchSize` and `referenceAccumulationSteps` are the reference loader's batch.
 - `NFKMLXTrainingData.speechLevelNormalized(_:)` scales a recording as the reference loader does.
+- FRCRN's BatchNorms and squeeze-excite pools take their training statistics one axis at a time, in the
+  corrected two-pass form. MLX's reductions lose the digits of a channel that barely varies, and the
+  release has many: a training step's gradients landed up to 4.3% from float64 on the GPU and 3.0% on
+  the CPU, and now land within 0.32% on either device. Inference is unchanged.
 
 #### MossFormer2 SE and FRCRN enhance a clip as ClearerVoice's inference does
 
