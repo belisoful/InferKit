@@ -118,7 +118,7 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
-| Depth Anything V2 | ``NFKMLXDepthAnything`` | `NFKMLXDepthAnythingNet` | ``NFKMLXDepthVariant`` `.small` / `.base` / `.large` (`NFKMLXDepthConfiguration.small` …) | `depth-anything-v2-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
+| Depth Anything V2 | ``NFKMLXDepthAnything`` | ``NFKMLXDepthAnythingNet`` (a metric head with `maxDepth`) | ``NFKMLXDepthVariant`` `.small` / `.base` / `.large` (`NFKMLXDepthConfiguration.small` …) | `depth-anything-v2-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
 | Depth Anything 3 | ``NFKMLXDepthAnything3``; ``NFKMLXDepth3Estimator`` for the camera and the ray map | `NFKMLXDepthAnything3Net` | ``NFKMLXDepth3Variant`` `.small` / `.base` / `.large` (`NFKMLXDepth3Configuration.small` …) | `depth-anything-3-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
 | Marigold depth | ``NFKMLXMarigold`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.marigold` | `marigold-depth` | ``NFKMLXDiffusionBackend`` |
 | SegFormer | ``NFKMLXSegFormer`` | ``NFKMLXSegFormerNet`` | `NFKMLXSegFormerConfiguration.mitB0`; `network(weightsURL:classCount:)` for a custom head | `segformer-b0` | ``NFKMLXModuleBackend`` |

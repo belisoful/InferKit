@@ -599,6 +599,8 @@ limits.
 - ``NFKMLXRetinaFaceNet``
 - ``NFKMLXRetinaFaceAnnotation``
 - ``NFKMLXRetinaFaceObjective``
+- ``NFKMLXDepthAnythingNet``
+- ``NFKMLXDepthSiLogObjective``
 - ``NFKMLXYOLOEndToEndObjective``
 - ``NFKMLXYOLOTrainable``
 - ``NFKMLXRTDetrObjective``

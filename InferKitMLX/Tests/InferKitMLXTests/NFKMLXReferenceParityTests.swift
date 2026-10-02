@@ -11826,6 +11826,80 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-3, 2 * stepFloor))
     }
 
+    // Depth Anything V2's metric fine-tune against Depth-Anything-V2 at a561b84, `metric_depth/train.py`: the
+    // released relative encoder under a head as the reference initializes it, the training prediction,
+    // `SiLogLoss` over the reference's mask, the gradients of seven tensors and the global norm, and the loss
+    // after one step of the two-group AdamW. Each is also recorded at float64.
+    //
+    // `IK_DEPTH_METRIC_TRAIN_SRC=reference-sources/depth-anything-v2/metric_depth
+    //  python run_reference.py depth_anything_metric_training out/depth-metric-training.safetensors --checkpoint raw/depth_v2_small.pth`
+    func testDepthAnythingMetricTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DEPTH_METRIC_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DEPTH_METRIC_TRAINING to a record from run_reference.py depth_anything_metric_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        var configuration = NFKMLXDepthConfiguration.small
+        configuration.maxDepth = 20
+        let net = try NFKMLXDepthAnything.network(weightsURL: weights("IK_VAL_DEPTH"), configuration: configuration,
+                                                  encoderOnly: true)
+        // The head starts where the reference's `torch.manual_seed(0)` initialization put it. The layout map
+        // reads the full key, so the `depth_head.` prefix comes off afterwards; the strict load checks that
+        // every head parameter arrives.
+        let head = arrays.compactMap { key, value in key.hasPrefix("head::") ? (String(key.dropFirst("head::".count)), value) : nil }
+        let headWeights = NFKMLXDepthAnything.mapped(Dictionary(uniqueKeysWithValues: head), needsConvTranspose: true)
+            .map { (String($0.0.dropFirst("depth_head.".count)), $0.1) }
+        try NFKMLXWeights.apply(headWeights, to: net.depthHead)
+
+        let images = try array("images"), depth = try array("depth"), valid = try array("valid")
+        let input = NFKMLXDepthAnything.trainingInput(images)
+        let objective = NFKMLXDepthSiLogObjective()
+        let prediction = net(input)
+        let loss = objective.loss(prediction: prediction, depth: depth, valid: valid).item(Float.self)
+        let predictionDistance = distance(prediction, try array("prediction64"))
+        let predictionFloor = distance(try array("prediction"), try array("prediction64"))
+        print("PARITY depth-metric-training: prediction from float64 \(predictionDistance) (reference float32 \(predictionFloor)); "
+              + "loss \(loss) vs \(try scalar("output")) (float64 \(try scalar("loss64")))")
+        XCTAssertLessThan(predictionDistance, max(1e-5, 2 * predictionFloor))
+        XCTAssertEqual(loss, try scalar("loss64"), accuracy: max(abs(try scalar("loss64")) * 1e-5, 2 * abs(try scalar("output") - (try scalar("loss64")))))
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1], arrays[2])]
+        }(net, [input, depth, valid]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try scalar("gradient_norm64")
+        print("PARITY depth-metric-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(try scalar("gradient_norm") - norm64)))
+        let transposed: Set<String> = ["depth_head.resize_layers.0.weight"]
+        for name in ["pretrained.patch_embed.proj.weight", "pretrained.blocks.0.attn.qkv.weight",
+                     "pretrained.blocks.11.mlp.fc2.weight", "depth_head.projects.0.weight",
+                     "depth_head.resize_layers.0.weight", "depth_head.scratch.refinenet1.out_conv.weight",
+                     "depth_head.scratch.output_conv2.2.weight"] {
+            func layout(_ value: MLXArray) -> MLXArray {
+                guard value.ndim == 4 else { return value }
+                return transposed.contains(name) ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            }
+            let ours = try XCTUnwrap(gradients[name], name)
+            let theirs = layout(try array("grad::\(name)")), theirs64 = layout(try array("grad64::\(name)"))
+            let floor = distance(theirs, theirs64)
+            print("PARITY depth-metric-training: \(name) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-4, 2 * floor), name)
+        }
+
+        try NFKMLXDepthAnything.fineTune(net, examples: { _ in (images, depth, valid) }, steps: 1)
+        let lossAfter = objective(net, input, depth, valid).item(Float.self)
+        let after64 = try scalar("loss_after_step64")
+        let stepFloor = abs(try scalar("loss_after_step") - after64)
+        print("PARITY depth-metric-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-4, 2 * stepFloor))
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

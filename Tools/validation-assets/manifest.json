@@ -4538,7 +4538,8 @@
       "why": "DeepFilterNet3's reference is the `deepfilternet` pip package, which needs its `deepfilterlib` native Rust wheel (the libdf STFT/ERB/synthesis DSP) plus numpy<2, and pins a torch range that would fight the other oracles, so it runs under its own interpreter on the system Python 3.9 (deepfilterlib ships a cp39 macOS arm64 wheel). `init_df()` downloads the DeepFilterNet3 model on first run.",
       "rebuild": "python3 -m venv ~/.inferkit-validation/dfnvenv && ~/.inferkit-validation/dfnvenv/bin/pip install 'numpy<2' 'torch==2.2.2' 'torchaudio==2.2.2' soundfile safetensors 'deepfilternet==0.5.6'",
       "modes": [
-        "deepfilternet"
+        "deepfilternet",
+        "depth_anything_metric_training"
       ]
     },
     "nemo": {
@@ -5524,6 +5525,12 @@
       "record": "reference/retinaface-training.safetensors",
       "environment": "llm",
       "command": "IK_RETINAFACE_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/retinaface\" retinaface_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/detection_mobilenet0.25_Final.pth\""
+    },
+    {
+      "key": "IK_PARITY_DEPTH_METRIC_TRAINING",
+      "record": "reference/depth-metric-training.safetensors",
+      "environment": "deepfilternet",
+      "command": "IK_DEPTH_METRIC_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/depth-anything-v2/metric_depth\" depth_anything_metric_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/depth_v2_small.pth\""
     }
   ]
 }

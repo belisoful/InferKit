@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 48 |
-| `trainable`, no recipe yet | 50 |
+| `ships` | 49 |
+| `trainable`, no recipe yet | 49 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-eight recipes ship and 50 models are trainable with none written. That is the size of
+Forty-nine recipes ship and 49 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -86,7 +86,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXDeepLab` | ships | head-retarget | public | torchvision's `references/segmentation` (v0.23.0): cross-entropy over both heads ignoring label 255, SGD with the auxiliary head at ten times the rate, `PolynomialLR`. Loss, schedule, and one training step measured by `run_reference.py deeplab_loss` and `deeplab_training`. |
 | `NFKMLXBiSeNet` | ships | head-retarget | public | CoinCheung/BiSeNet at 6b4b67a, `tools/train_amp.py`: OHEM cross-entropy on all three heads, SGD over `get_params`' four groups, an exponential warm-up into `poly`. Loss, schedule, and one training step measured by `run_reference.py bisenet_loss` and `bisenet_training`. |
 | `NFKMLXBiSeNetV2` | trainable | head-retarget | internal | Same repository. Its four auxiliary heads the port neither builds nor loads, and the release's pixel-shuffle heads predate the repository's training code, which now interpolates; a recipe pins the older heads' code first. |
-| `NFKMLXDepthAnything` | trainable | full | internal | The metric fine-tune (`metric_depth/train.py`) is published: SiLog over the released relative encoder at 5e-6 and a fresh Sigmoid × `max_depth` head at ten times the rate. The relative release's distillation recipe is not. |
+| `NFKMLXDepthAnything` | ships | full | public | `metric_depth/train.py`'s fine-tune: SiLog within float32 rounding of the reference, every gradient at its float32 floor, over the released relative encoder at 5e-6 and a fresh Sigmoid × `max_depth` head at ten times the rate. The relative release's distillation recipe is not published. |
 | `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
 
@@ -376,12 +376,12 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
-   Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, and RetinaFace. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, RetinaFace, and the Depth Anything V2
+   metric fine-tune. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
    variables. The 2026-09-25 triage adds
-   RIFE v4, both colorizers, and the Depth Anything V2
-   metric fine-tune. Each has a published objective with no adversary, and each fits a device.
+   RIFE v4 and both colorizers. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
    DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other

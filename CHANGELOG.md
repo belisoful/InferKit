@@ -441,6 +441,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Depth Anything V2 fine-tunes to metric depth, and its maps match the reference
+
+- `NFKMLXDepthAnything.fineTune` trains the metric fine-tune of Depth-Anything-V2's `metric_depth/train.py`:
+  SiLog over the valid depth range, AdamW with the encoder at 5e-6 and the head at ten times that, and the
+  reference's per-iteration poly schedule.
+- `NFKMLXDepthConfiguration.maxDepth` builds the metric head, a sigmoid scaled to the range.
+  `NFKMLXDepthAnything.network(weightsURL:configuration:encoderOnly:)` starts one from a relative release's
+  encoder. `NFKMLXDepthAnythingNet` is public and runs a batch; `NFKMLXDepthSiLogObjective` is the loss.
+- The DINOv2 encoder's LayerNorms use the reference's eps of 1e-6, and the DPT head resizes to the input size
+  before its last convolutions with corners aligned, as the reference's does. The depth map matches the
+  reference at cosine 0.999996 on every size, where it matched at 0.998.
+
 #### Every BatchNorm a recipe trains follows PyTorch's statistics
 
 - The normalizations of FRCRN, RetinaFace, GTCRN, PANNs, SegFormer's decode head, YOLO v8 and v10–26,

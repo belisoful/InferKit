@@ -11,8 +11,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   518×518 (so `pos_embed` matches without interpolation) and the map resizes back. `loadWeights(into:from:remap:)`
   loads a **safetensors** checkpoint; the DPT key layout is intricate, so `Tools/depth-anything-to-safetensors/convert.py`
   is self-validating (matches every key against the module's expected layout, reports mismatches).
-  Reference parity across all three released sizes: Small 0.99992 (encoder seam 0.9999924), Base
-  0.99995, Large 0.99984, on the min-max-normalized 8-bit depth map. Two DPT-head fixes found while
+  Reference parity across all three released sizes: Small 0.9999962 (encoder seam 0.99999999999744),
+  Base 0.9999964, Large 0.9999963, on the min-max-normalized depth map. The map is compared through the
+  8-bit image the backend returns, whose quantization alone leaves a mean difference of 9.8e-4 at every
+  size. Three fixes found while porting the metric fine-tune (2026-10-02) raised these from 0.998: the
+  DINOv2 LayerNorms use eps 1e-6 (`dinov2.py` builds them with `partial(nn.LayerNorm, eps=1e-6)`, where
+  MLXNN defaults to 1e-5), which took the encoder seam from 0.9999924; the DPT head resizes
+  `output_conv1`'s output to the full input size (bilinear, corners aligned) before `output_conv2`; and the
+  map resizes to the image with corners aligned, as `infer_image` does. Two DPT-head fixes found while
   porting Depth Anything 3 raised these from ~0.998: the two `resize_layers` are `ConvTransposed2d`,
   whose PyTorch weight is `[C_in, C_out, kH, kW]` and needs the transposed-conv axis order `(1,2,3,0)` →
   `[C_out, kH, kW, C_in]`, not a regular convolution's `(0,2,3,1)` (both are square, so the wrong order
@@ -22,12 +28,27 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (`IK_DEPTH_VARIANT` picks the encoder config); it drove `transformers` until that package dropped the
   `depth_anything` model type, and the parity test kept passing throughout because it compares against a
   stored record, not a live oracle.
-  Customization: trainable at `full`, with no recipe written yet. The reference publishes the metric
-  fine-tune (`metric_depth/train.py`, DepthAnything/Depth-Anything-V2 at a561b84): `SiLogLoss` (λ 0.5)
-  over the valid pixels, AdamW at 5e-6 on the released relative encoder and 5e-5 on a fresh DPT head
-  that ends in Sigmoid × `max_depth` (20 indoor, 80 outdoor), weight decay 0.01, poly decay at power
-  0.9. The released relative head ends in ReLU, so a recipe builds the metric head beside it. The
-  relative release's distillation recipe is not published.
+  **Customization ships** at `full` (`NFKMLXDepthAnythingTraining.swift`): the metric fine-tune, measured
+  against DepthAnything/Depth-Anything-V2 at a561b84, `metric_depth/train.py` (`run_reference.py
+  depth_anything_metric_training`, the `deepfilternet` env for its OpenCV import, `IK_DEPTH_METRIC_TRAIN_SRC`).
+  - `NFKMLXDepthConfiguration.maxDepth` builds the metric head, which ends in Sigmoid × `max_depth` (20 for
+    Hypersim, 80 for Virtual KITTI) where the relative head ends in a ReLU.
+    `NFKMLXDepthAnything.network(weightsURL:configuration:encoderOnly:)` loads the relative release's encoder
+    alone, as `train.py --pretrained-from` does, and leaves the head at its initialization. The network is
+    public and runs a batch (`NFKMLXDepthAnythingNet(_:)` on `trainingInput(_:)`'s normalized images).
+  - `NFKMLXDepthSiLogObjective` is `SiLogLoss` (λ 0.5) over the pixels the caller's mask keeps whose depth lies
+    in `--min-depth`…`--max-depth`.
+  - The reference optimizer is `train.py`'s AdamW, betas 0.9 / 0.999, decay 0.01 on every parameter, the
+    encoder at 5e-6 and the head at 5e-5. `referenceSchedule(steps:)` is its poly decay at power 0.9, which
+    the loop resets after each update, so update `k` runs at `(1 − (k − 1)/T)^0.9` and the first at the base
+    rate. `fineTune(mirrors:)` is the loop's coin-flip mirror of the image, depth, and mask together.
+  - Measured on the Small release's encoder and a head as `torch.manual_seed(0)` initializes it, two
+    518-pixel images: the prediction within 9.4e-8 of float64 (the reference's float32 8.1e-8), SiLog
+    0.43176848 vs 0.43176848, every gradient at the reference's float32 floor (encoder 1.3e-5 to 5.3e-5,
+    head 1.9e-6 to 4.1e-5), the global norm 0.75300413 vs 0.7530015, and the loss after one AdamW step
+    0.41793087 vs 0.41793084.
+  - The relative release's distillation recipe is not published, so the relative head trains only as a
+    caller's own objective drives it.
 - `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL).
   The whole released model is built: the DINOv2 ViT backbone, both branches of the DualDPT head, the
   camera decoder, and the camera encoder. Every released tensor loads, on all three sizes (437 for Small

@@ -920,6 +920,33 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertNotNil(detector)
     }
 
+    // Docs/examples.md: Fine-tuning Depth Anything V2 to metric depth
+    func testExampleFineTuningDepthAnythingToMetricDepth() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("depth-metric-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the relative release's encoder at 518 pixels; a 112-pixel network stands in here.
+        var metric = NFKMLXDepthConfiguration.small
+        metric.maxDepth = 20
+        metric.inputSize = 112
+        let net = try NFKMLXDepthAnything.network(weightsURL: nil, configuration: metric)
+        let pixels: [Float] = (0 ..< 2 * 112 * 112 * 3).map { index -> Float in Float(index % 101) / 101 }
+        let meters: [Float] = (0 ..< 2 * 112 * 112).map { index -> Float in 2 + Float(index % 97) / 10 }
+        let images = MLXArray(pixels, [2, 112, 112, 3])
+        let depth = MLXArray(meters, [2, 112, 112])
+        let valid = MLXArray.ones([2, 112, 112])
+        let history = try NFKMLXDepthAnything.fineTune(net, examples: { _ in (images: images, depth: depth, valid: valid) },
+                                                      steps: 1, mirrors: true)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let reloaded = try NFKMLXDepthAnything.network(weightsURL: tuned, configuration: metric)
+        XCTAssertEqual(reloaded(NFKMLXDepthAnything.trainingInput(images)).shape, [2, 112, 112])
+    }
+
     // Docs/examples.md: Teaching note transcription your own instrument
     func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

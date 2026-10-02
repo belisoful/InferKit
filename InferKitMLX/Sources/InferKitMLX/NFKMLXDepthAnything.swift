@@ -33,6 +33,10 @@ public struct NFKMLXDepthConfiguration: Sendable {
     public var features: Int = 64
     /// The per-hook reassemble widths (fine → coarse).
     public var outChannels: [Int] = [48, 96, 192, 384]
+    /// The metric head's range in meters. Nil builds the relative model, whose map ends in a ReLU; a value
+    /// builds `metric_depth`'s, whose map ends in a sigmoid scaled to it: 20 for the Hypersim releases,
+    /// 80 for Virtual KITTI. Introduced in InferKit 0.4.0.
+    public var maxDepth: Float?
 
     public init() {}
 
@@ -112,10 +116,11 @@ final class NFKDinoBlock: Module {
     let ls2: NFKDinoLayerScale
 
     init(dimensions: Int, heads: Int, mlpRatio: Int) {
-        norm1 = LayerNorm(dimensions: dimensions)
+        // DINOv2 builds every LayerNorm with eps 1e-6, not the 1e-5 default.
+        norm1 = LayerNorm(dimensions: dimensions, eps: 1e-6)
         attn = NFKDinoAttention(dimensions: dimensions, heads: heads)
         ls1 = NFKDinoLayerScale(dimensions: dimensions)
-        norm2 = LayerNorm(dimensions: dimensions)
+        norm2 = LayerNorm(dimensions: dimensions, eps: 1e-6)
         _mlp.wrappedValue = NFKDinoMLP(dimensions: dimensions, hidden: dimensions * mlpRatio)
         ls2 = NFKDinoLayerScale(dimensions: dimensions)
     }
@@ -167,18 +172,18 @@ final class NFKDinoEncoder: Module {
         blocks = (0 ..< configuration.depth).map { _ in
             NFKDinoBlock(dimensions: dimensions, heads: configuration.heads, mlpRatio: configuration.mlpRatio)
         }
-        norm = LayerNorm(dimensions: dimensions)
+        norm = LayerNorm(dimensions: dimensions, eps: 1e-6)
         hooks = Set(configuration.hooks)
     }
 
-    /// - Parameter x: `[1, inputSize, inputSize, 3]`.
-    /// - Returns: the hooked features, each `[1, grid*grid, dimensions]` (class token dropped).
+    /// - Parameter x: `[N, inputSize, inputSize, 3]`.
+    /// - Returns: the hooked features, each `[N, grid*grid, dimensions]` (class token dropped).
     func hookedFeatures(_ x: MLXArray) -> [MLXArray] {
         let dimensions = x.shape[3] == 3 ? patchEmbed.proj.weight.shape[0] : x.shape[3]
-        let patches = patchEmbed(x)                             // [1, grid, grid, dimensions]
-        let grid = patches.shape[1]
-        var tokens = patches.reshaped([1, grid * grid, dimensions])
-        tokens = concatenated([clsToken, tokens], axis: 1) + posEmbed
+        let patches = patchEmbed(x)                             // [N, grid, grid, dimensions]
+        let (batch, grid) = (patches.shape[0], patches.shape[1])
+        var tokens = patches.reshaped([batch, grid * grid, dimensions])
+        tokens = concatenated([broadcast(clsToken, to: [batch, 1, dimensions]), tokens], axis: 1) + posEmbed
 
         var outputs = [MLXArray]()
         for (index, block) in blocks.enumerated() {
@@ -252,17 +257,19 @@ final class NFKDPTHead: Module {
             Identity(),
             Conv2d(inputChannels: out[3], outputChannels: out[3], kernelSize: 3, stride: 2, padding: 1),
         ]
-        _scratch.wrappedValue = NFKDPTScratch(features: configuration.features, outChannels: out)
+        _scratch.wrappedValue = NFKDPTScratch(features: configuration.features, outChannels: out,
+                                              size: configuration.tokenGrid * configuration.patchSize,
+                                              maxDepth: configuration.maxDepth)
         grid = configuration.tokenGrid
     }
 
-    /// - Parameter features: four hooked token features, each `[1, grid*grid, dimensions]`.
-    /// - Returns: a depth map `[1, H, W, 1]` at the finest fusion resolution.
+    /// - Parameter features: four hooked token features, each `[N, grid*grid, dimensions]`.
+    /// - Returns: a depth map `[N, grid·patch, grid·patch, 1]`.
     func callAsFunction(_ features: [MLXArray]) -> MLXArray {
         var pyramid = [MLXArray]()
         for (index, tokens) in features.enumerated() {
             let dimensions = tokens.shape[2]
-            let spatial = tokens.reshaped([1, grid, grid, dimensions])
+            let spatial = tokens.reshaped([tokens.shape[0], grid, grid, dimensions])
             var reassembled = projects[index](spatial)
             reassembled = (resizeLayers[index] as? UnaryLayer)?.callAsFunction(reassembled) ?? reassembled
             pyramid.append(reassembled)
@@ -284,7 +291,12 @@ final class NFKDPTScratch: Module {
     @ModuleInfo(key: "output_conv1") var outputConv1: Conv2d
     @ModuleInfo(key: "output_conv2") var outputConv2: [Module]
 
-    init(features: Int, outChannels: [Int]) {
+    private let size: Int
+    private let maxDepth: Float?
+
+    init(features: Int, outChannels: [Int], size: Int, maxDepth: Float?) {
+        self.size = size
+        self.maxDepth = maxDepth
         _layer1.wrappedValue = Conv2d(inputChannels: outChannels[0], outputChannels: features, kernelSize: 3, padding: 1, bias: false)
         _layer2.wrappedValue = Conv2d(inputChannels: outChannels[1], outputChannels: features, kernelSize: 3, padding: 1, bias: false)
         _layer3.wrappedValue = Conv2d(inputChannels: outChannels[2], outputChannels: features, kernelSize: 3, padding: 1, bias: false)
@@ -294,12 +306,13 @@ final class NFKDPTScratch: Module {
         _refine3.wrappedValue = NFKDPTFusion(features: features)
         _refine4.wrappedValue = NFKDPTFusion(features: features)
         _outputConv1.wrappedValue = Conv2d(inputChannels: features, outputChannels: features / 2, kernelSize: 3, padding: 1)
-        // A Sequential(conv, relu, conv, relu) in the reference, so the convolutions carry indices 0 and 2.
+        // A Sequential(conv, relu, conv, activation) in the reference, so the convolutions carry indices 0
+        // and 2. The relative model ends in a ReLU, the metric one in a sigmoid.
         _outputConv2.wrappedValue = [
             Conv2d(inputChannels: features / 2, outputChannels: 32, kernelSize: 3, padding: 1),
             ReLU(),
             Conv2d(inputChannels: 32, outputChannels: 1, kernelSize: 1),
-            ReLU(),
+            maxDepth == nil ? ReLU() as Module : Sigmoid(),
         ]
     }
 
@@ -317,9 +330,11 @@ final class NFKDPTScratch: Module {
         path = refine2(path, skip: l2, height: size(l1).0, width: size(l1).1)
         path = refine1(path, skip: l1, height: size(l1).0 * 2, width: size(l1).1 * 2)
 
-        let depth = outputConv1(path)
-        return (outputConv2[3] as! ReLU)((outputConv2[2] as! Conv2d)(
+        // The reference resizes to the full input size between the two output convolutions.
+        let depth = NFKMLXResample.resizeBilinearAlignCorners(outputConv1(path), height: size, width: size)
+        let map = (outputConv2[3] as! UnaryLayer)((outputConv2[2] as! Conv2d)(
             (outputConv2[1] as! ReLU)((outputConv2[0] as! Conv2d)(depth))))
+        return maxDepth.map { map * $0 } ?? map
     }
 }
 
@@ -528,37 +543,47 @@ public final class NFKMLXDepthAnything: NSObject {
     static func loadWeights(into net: NFKMLXDepthAnythingNet, from url: URL,
                             remap: (String) -> String = { $0 }) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        try NFKMLXWeights.apply(mapped(checkpoint.arrays, needsConvTranspose: checkpoint.needsConvTranspose, remap: remap),
+                                to: net)
+    }
+
+    /// Checkpoint arrays under the module's keys and layout.
+    static func mapped(_ arrays: [String: MLXArray], needsConvTranspose: Bool,
+                       remap: (String) -> String = { $0 }) -> [(String, MLXArray)] {
         // The DPT head's two transposed-convolution resize layers (`depth_head.resize_layers.0` and
         // `.1`) store their weight as PyTorch `[C_in, C_out, kH, kW]`, which MLX's ConvTransposed2d
         // reads as `[C_out, kH, kW, C_in]` — a different axis order from a regular convolution's
         // `[out, kH, kW, in]`. Both are square (in == out), so the regular-convolution transpose loads
         // without a shape error but scrambles the kernel's in/out arrangement.
         let convTranspose: Set<String> = ["depth_head.resize_layers.0.weight", "depth_head.resize_layers.1.weight"]
-        let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
+        return arrays.map { key, value -> (String, MLXArray) in
             let remapped = remap(key)
-            let array: MLXArray
-            if checkpoint.needsConvTranspose && value.ndim == 4 {
-                array = convTranspose.contains(remapped) ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
-            } else {
-                array = value
-            }
-            return (remapped, array)
+            guard needsConvTranspose && value.ndim == 4 else { return (remapped, value) }
+            return (remapped, convTranspose.contains(remapped) ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1))
         }
-        try NFKMLXWeights.apply(mapped, to: net)
     }
 }
 
-/// The full model: encoder (`pretrained`) + DPT head (`depth_head`).
-final class NFKMLXDepthAnythingNet: Module {
+/// Depth Anything V2: the DINOv2 encoder (`pretrained`) and the DPT head (`depth_head`). Build one with
+/// `NFKMLXDepthAnything.network(weightsURL:configuration:encoderOnly:)`. Introduced in InferKit 0.4.0.
+public final class NFKMLXDepthAnythingNet: Module {
     @ModuleInfo(key: "pretrained") var pretrained: NFKDinoEncoder
     @ModuleInfo(key: "depth_head") var depthHead: NFKDPTHead
 
-    let configuration: NFKMLXDepthConfiguration
+    /// The network's geometry, and its metric range when it has one.
+    public let configuration: NFKMLXDepthConfiguration
 
     init(_ configuration: NFKMLXDepthConfiguration) {
         self.configuration = configuration
         _pretrained.wrappedValue = NFKDinoEncoder(configuration)
         _depthHead.wrappedValue = NFKDPTHead(configuration)
+    }
+
+    /// The reference's `forward` on normalized images `[N, inputSize, inputSize, 3]`
+    /// (`NFKMLXDepthAnything.trainingInput(_:)`): the depth map `[N, inputSize, inputSize]`, in meters for a
+    /// metric network and in relative units otherwise.
+    public func callAsFunction(_ images: MLXArray) -> MLXArray {
+        depthHead(pretrained.hookedFeatures(images)).squeezed(axis: -1)
     }
 
     /// Maps a bridged image `[H, W, 3]` (`0...1`) to a grayscale depth image `[H, W, 3]` (`0...1`),
@@ -574,9 +599,9 @@ final class NFKMLXDepthAnythingNet: Module {
         let mean = MLXArray([Float(0.485), 0.456, 0.406])
         let standardDeviation = MLXArray([Float(0.229), 0.224, 0.225])
         let prepared = (resized - mean) / standardDeviation
-        let features = pretrained.hookedFeatures(prepared)
-        let map = depthHead(features)                          // [1, h, w, 1]
-        let full = NFKMLXResample.resizeBilinear(map, height: height, width: width)
+        let map = depthHead(pretrained.hookedFeatures(prepared))         // [1, inputSize, inputSize, 1]
+        // `infer_image` resizes the map to the image with corners aligned.
+        let full = NFKMLXResample.resizeBilinearAlignCorners(map, height: height, width: width)
 
         let minimum = full.min()
         let span = maximum(full.max() - minimum, MLXArray(1e-6))

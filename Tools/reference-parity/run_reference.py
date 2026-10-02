@@ -1621,6 +1621,101 @@ def run_retinaface_training(image, checkpoint):
     return torch.tensor([total.item()], dtype=torch.float32)
 
 
+def run_depth_anything_metric_training(image, checkpoint):
+    """Depth Anything V2's metric fine-tune and one optimizer step, from Depth-Anything-V2's own
+    `metric_depth` (IK_DEPTH_METRIC_TRAIN_SRC is that directory at the pinned commit; `--checkpoint` is
+    the released relative `depth_anything_v2_vits.pth`).
+
+    The network is `train.py`'s: `DepthAnythingV2(vits, max_depth=20)`, its encoder loaded from the
+    relative release (`--pretrained-from` keeps the keys holding "pretrained") and its head as
+    `torch.manual_seed(0)` initializes it. Records, on two 518-pixel images:
+    - the images, RGB in 0...1, their depth in meters with some pixels out of range, and the mask;
+    - the head's initial weights, so the port starts from the same head;
+    - the training-mode prediction and `SiLogLoss` over `train.py`'s mask;
+    - the gradient of seven tensors, encoder to head, and the global gradient norm;
+    - one step of `train.py`'s two-group AdamW (5e-6 encoder, 5e-5 head, decay 0.01) and the loss after;
+    - the prediction, the loss, the gradients, the norm, and the stepped loss again at float64.
+    """
+    import copy
+
+    source = os.environ["IK_DEPTH_METRIC_TRAIN_SRC"]
+    sys.path.insert(0, source)
+    from depth_anything_v2.dpt import DepthAnythingV2
+    from util.loss import SiLogLoss
+
+    torch.manual_seed(0)
+    model = DepthAnythingV2(encoder="vits", features=64, out_channels=[48, 96, 192, 384], max_depth=20.0)
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    missing, _ = model.load_state_dict({k: v for k, v in state.items() if "pretrained" in k}, strict=False)
+    assert all("pretrained" not in key for key in missing), missing
+    model.train()
+    extra = {f"head::{key}": value.detach().clone().contiguous()
+             for key, value in model.state_dict().items() if "pretrained" not in key}
+
+    size = 518
+    generator = np.random.default_rng(41)
+    y, x = np.mgrid[0:size, 0:size] / size
+    images = np.stack([np.stack([0.5 + 0.35 * np.sin(5 * x + 2 * c + b) * np.cos(3 * y - c) for c in range(3)], -1)
+                       + 0.03 * generator.standard_normal((size, size, 3)) for b in range(2)]).clip(0, 1).astype(np.float32)
+    depth = np.stack([1.0 + 14.0 * (0.5 + 0.5 * np.sin(2 * x + b) * np.cos(2.5 * y)) for b in range(2)]).astype(np.float32)
+    depth[0, :40, :] = 25.0                                    # beyond --max-depth
+    depth[1, :, :30] = 0.0                                     # below --min-depth
+    valid = np.ones_like(depth, dtype=np.float32)
+    valid[:, 200:260, 300:360] = 0.0
+    extra.update({"images": torch.from_numpy(images), "depth": torch.from_numpy(depth), "valid": torch.from_numpy(valid)})
+
+    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+    deviation = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+    inputs = (torch.from_numpy(images).permute(0, 3, 1, 2) - mean) / deviation
+    depth_t, valid_t = torch.from_numpy(depth), torch.from_numpy(valid)
+    criterion = SiLogLoss()
+    def loss_of(net, dtype):
+        pred = net(inputs.to(dtype))
+        target = depth_t.to(dtype)
+        mask = (valid_t == 1) & (target >= 0.001) & (target <= 20.0)
+        return pred, criterion(pred, target, mask)
+
+    names = ["pretrained.patch_embed.proj.weight", "pretrained.blocks.0.attn.qkv.weight",
+             "pretrained.blocks.11.mlp.fc2.weight", "depth_head.projects.0.weight",
+             "depth_head.resize_layers.0.weight", "depth_head.scratch.refinenet1.out_conv.weight",
+             "depth_head.scratch.output_conv2.2.weight"]
+    def groups(net):
+        return [{"params": [p for n, p in net.named_parameters() if "pretrained" in n], "lr": 5e-6},
+                {"params": [p for n, p in net.named_parameters() if "pretrained" not in n], "lr": 5e-5}]
+
+    model64 = copy.deepcopy(model).double()
+    pred64, loss64 = loss_of(model64, torch.float64)
+    extra["prediction64"] = pred64.detach().float().contiguous()
+    extra["loss64"] = torch.tensor([loss64.item()])
+    loss64.backward()
+    named64 = dict(model64.named_parameters())
+    for name in names:
+        extra[f"grad64::{name}"] = named64[name].grad.detach().float().clone()
+    extra["gradient_norm64"] = torch.tensor([float(torch.sqrt(sum((p.grad.double() ** 2).sum()
+                                                                  for p in model64.parameters() if p.grad is not None)))])
+    optimizer64 = torch.optim.AdamW(groups(model64), lr=5e-6, betas=(0.9, 0.999), weight_decay=0.01)
+    optimizer64.step()
+    with torch.no_grad():
+        extra["loss_after_step64"] = torch.tensor([loss_of(model64, torch.float64)[1].item()])
+    del model64
+
+    pred, loss = loss_of(model, torch.float32)
+    extra["prediction"] = pred.detach().contiguous()
+    optimizer = torch.optim.AdamW(groups(model), lr=5e-6, betas=(0.9, 0.999), weight_decay=0.01)
+    optimizer.zero_grad()
+    loss.backward()
+    named = dict(model.named_parameters())
+    for name in names:
+        extra[f"grad::{name}"] = named[name].grad.detach().clone()
+    extra["gradient_norm"] = torch.tensor([float(torch.sqrt(sum((p.grad.double() ** 2).sum()
+                                                                for p in model.parameters() if p.grad is not None)))])
+    optimizer.step()
+    with torch.no_grad():
+        extra["loss_after_step"] = torch.tensor([loss_of(model, torch.float32)[1].item()])
+    globals()["_extra"] = extra
+    return torch.tensor([loss.item()], dtype=torch.float32)
+
+
 def _reference_source():
     """The directory holding the single-file reference implementations, from IK_REF_SRC."""
     import os
@@ -18517,7 +18612,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_f
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

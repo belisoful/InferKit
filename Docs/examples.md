@@ -4042,6 +4042,25 @@ try NFKMLXWeights.save(net, to: tuned)
 let detector = try NFKMLXRetinaFace.detector(weightsURL: tuned)   // Objective-C: detectorWithWeightsURL:…
 ```
 
+### Fine-tuning Depth Anything V2 to metric depth
+
+Depth Anything V2's metric models start from the relative release's encoder with a new head that predicts
+meters, then train the way Depth-Anything-V2's `metric_depth/train.py` trains them. Each step takes RGB
+images `[N, 518, 518, 3]` in [0, 1], their measured depth in meters, and a mask of the pixels that carry a
+measurement.
+
+```swift
+var metric = NFKMLXDepthConfiguration.small
+metric.maxDepth = 20                                                    // meters; 80 for outdoor scenes
+let net = try NFKMLXDepthAnything.network(weightsURL: relativeWeights, configuration: metric, encoderOnly: true)
+try NFKMLXDepthAnything.fineTune(net, examples: { step in
+    (images: myBatches[step].images, depth: myBatches[step].depth, valid: myBatches[step].valid)
+}, steps: 2000, mirrors: true)
+
+try NFKMLXWeights.save(net, to: tuned)
+let reloaded = try NFKMLXDepthAnything.network(weightsURL: tuned, configuration: metric)
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the
