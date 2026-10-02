@@ -129,7 +129,9 @@ reference's float32 distance fails a correct port there. The parity test records
 float64 too, holds the release's comparisons to bounds that admit the noise, and repeats the gradient
 on a control with every BatchNorm epsilon at 1e-2, where the port must land within 1e-2 of float64. A
 port difference keeps its distance in the control; FRCRN's fell to 0.3%. MLX's CPU cannot run a
-convolution in float64, so the port's own float64 gradient is not available.
+convolution in float64, so the port's own float64 gradient is not available. The CPU's float32 gradient
+is no substitute: its reductions accumulate in order in float32, and through batch statistics it lands
+further from float64 than the GPU (`mlx-runtime-gotchas.md`, "MLX's CPU reductions accumulate in order").
 
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the

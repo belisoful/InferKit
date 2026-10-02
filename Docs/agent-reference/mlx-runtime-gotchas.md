@@ -658,6 +658,36 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     4e-4 to 6e-4 while the same backward on random weights lands at the float32 floor.
   - **Rule for training parity tests.** Localize a gradient gap with seam gradients before reading it
     as a port defect, and keep a control on random weights, which a real backward difference fails.
+- **MLX's CPU reductions accumulate in order in float32, so the CPU is not a precision reference for a
+  training-mode gradient (2026-10-02).** Measured in Python mlx 0.32.2 on a transcription of RetinaFace
+  mobile0.25 with random weights, two 160×160 inputs, BatchNorm on batch statistics, and a sum-of-squares
+  loss over the three heads, against the same graph at float64 on the CPU with a hand-written convolution.
+  - **The readings.** The GPU lands 1.5e-5 to 1.7e-5 from float64 in every layer. The CPU lands 1.6e-3 to
+    1.9e-3 in the backbone and 4e-5 in the heads. Both devices are bitwise reproducible run to run. The
+    Swift port reads the same split (stem 1.3e-2 on the CPU, 1.4e-5 on the GPU, against torch float64).
+  - **The cause is one activation on the wrong side of a kink.** Of 1,451,200 LeakyReLU inputs, exactly one
+    changes sign on the CPU; its float64 value is −4.5e-6. Forcing that element onto the float64 branch
+    brings the CPU to 5.6e-5. Behind a training-mode BatchNorm one flipped element moves every gradient
+    upstream of it by roughly one over the square root of the activation count. The GPU gradient jumps the
+    same way when its input is perturbed: 2e-5 at a relative perturbation of 1e-7, 1.1e-2 at 1e-6.
+  - **The CPU's forward is what puts it there.** `strided_reduce` in `mlx/backend/cpu/reduce.cpp` adds each
+    output's elements one after another into a single float32 accumulator. A channel-last BatchNorm reduces
+    over the leading axes and takes that path. The mean over 2×80×80 values per channel is 2.6e-6 from
+    float64 on the CPU and 1.1e-7 on the GPU, and the forward activations drift about four times further
+    from float64 on the CPU than on the GPU. Accumulating the BatchNorm statistics in float64 on the CPU,
+    with MLX's own convolution unchanged, brings every gradient to 1.3e-5 to 1.7e-5, the GPU's level.
+  - **Swapping a convolution can hide it.** A hand-written convolution in any one of several depthwise
+    layers also brought the CPU to the floor. It moves the forward's rounding, so the near-zero element
+    lands on the float64 side. No convolution and no backward kernel is wrong: each primitive agrees across
+    the devices to 1e-7 to 2e-6, and evaluation mode, which has no batch reduction, agrees to 2e-6.
+  - **FRCRN's output-side 1×1 convolution gradient, 25 times worse on the CPU than on the GPU,** is not
+    reproduced in this probe. It is consistent with the same reductions feeding its nearly dead BatchNorm
+    channels, which magnify a statistic's error by up to `1/√ε`.
+  - **Rule.** Hold a training-mode gradient to the reference's float64, or to the GPU. A CPU float32
+    gradient through batch statistics is a coarser sample, not an oracle. A CPU comparison stays valid
+    for a single operation or a graph without batch reductions, which is what the gradient-safe
+    convolution and denoiser tests compare. Any training parity test with kinked activations needs the
+    seam-gradient localization and random-weight control of the `leakyRelu` entry above.
 - **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
   loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
   forward, and that one evaluation carries every file read, every conversion, and the forward itself.
