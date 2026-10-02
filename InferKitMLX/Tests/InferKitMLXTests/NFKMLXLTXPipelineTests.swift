@@ -186,4 +186,43 @@ final class NFKMLXLTXPipelineTests: XCTestCase {
                            "staging does not change the clip")
         }
     }
+
+    // A diffusers release directory read through pipeline(directoryURL:): each stage at the geometry its
+    // config.json declares and its weights in the release's layout, denoising and decoding exactly as the
+    // stages it was saved from.
+    func testAReleaseDirectoryBuildsThePipelineItWasSavedFrom() throws {
+        try requireMLXRuntime()
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: release) }
+        for stage in ["transformer", "vae"] {
+            try FileManager.default.createDirectory(at: release.appendingPathComponent(stage),
+                                                    withIntermediateDirectories: true)
+        }
+        try JSONSerialization.data(withJSONObject: [
+            "in_channels": 16, "num_attention_heads": 2, "attention_head_dim": 8, "num_layers": 2,
+            "cross_attention_dim": 16, "caption_channels": 32, "patch_size": 1, "patch_size_t": 1,
+        ]).write(to: release.appendingPathComponent("transformer/config.json"))
+        try JSONSerialization.data(withJSONObject: [
+            "latent_channels": 16, "block_out_channels": [8, 16, 16, 16], "layers_per_block": [1, 1, 1, 1, 1],
+            "scaling_factor": 1.0,
+        ]).write(to: release.appendingPathComponent("vae/config.json"))
+        let net = NFKMLXLTXTransformer.makeNet(transformer)
+        let autoencoder = NFKMLXLTXVideoVAE.makeNet(vae)
+        try save(arrays: Dictionary(uniqueKeysWithValues: net.parameters().flattened()),
+                 url: release.appendingPathComponent("transformer/diffusion_pytorch_model.safetensors"))
+        try save(arrays: Dictionary(uniqueKeysWithValues: autoencoder.parameters().flattened().map { key, value in
+            (key, value.ndim == 5 ? value.transposed(0, 4, 1, 2, 3) : value)
+        }), url: release.appendingPathComponent("vae/diffusion_pytorch_model.safetensors"))
+
+        let loaded = try NFKMLXLTXPipeline.pipeline(directoryURL: release)
+        let original = NFKMLXLTXPipeline(transformer: net, vae: autoencoder)
+        let text = MLXRandom.normal([1, 6, 32])
+        func clip(_ pipeline: NFKMLXLTXPipeline) -> MLXArray {
+            let latents = pipeline.denoise(text: text, textMask: nil, negativeText: nil, negativeMask: nil,
+                                           frames: 2, height: 2, width: 2, steps: 2, seed: 3)
+            return pipeline.decode(latents, frames: 2, height: 2, width: 2)
+        }
+        XCTAssertEqual(abs(clip(loaded) - clip(original)).max().item(Float.self), 0,
+                       "the directory's pipeline is the one saved")
+    }
 }

@@ -2772,6 +2772,12 @@ NSArray *frames = [wan framesForPrompt:@"a red fox walking through fresh snow" n
 CGImageRef first = (__bridge CGImageRef)frames[0];
 ```
 
+A caller that runs its own text encoder builds the pipeline alone. `NFKMLXLTXPipeline.pipeline(directoryURL:)`
+and `NFKMLXWanPipeline.pipeline(directoryURL:)` read a release's `transformer/` and `vae/` (and Wan's
+`scheduler/`), and `denoise` and `decode` take the T5 or umT5 features. Each stage also builds on its own
+through its `configuration(fromHuggingFace:)` and `loadWeights`, and the pipelines' initializers chain
+stages built that way.
+
 A frame count rounds down to one more than a multiple of the autoencoder's temporal compression (8 for
 LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both negative prompts
 default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its

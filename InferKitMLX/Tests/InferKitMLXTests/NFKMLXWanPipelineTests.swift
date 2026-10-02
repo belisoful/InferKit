@@ -238,4 +238,48 @@ final class NFKMLXWanPipelineTests: XCTestCase {
         }
         print("VALIDATION PARITY umt5-tokenizer: \(exact) of \(prompts.count) prompts token-exact")
     }
+
+    // A diffusers release directory read through pipeline(directoryURL:): the DiT and the autoencoder at
+    // the geometry each config.json declares, their weights in the release's layout, and the scheduler's
+    // flow shift, generating exactly as the stages it was saved from.
+    func testAReleaseDirectoryBuildsThePipelineItWasSavedFrom() throws {
+        try requireMLXRuntime()
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: release) }
+        for stage in ["transformer", "vae", "scheduler"] {
+            try FileManager.default.createDirectory(at: release.appendingPathComponent(stage),
+                                                    withIntermediateDirectories: true)
+        }
+        try JSONSerialization.data(withJSONObject: [
+            "in_channels": 4, "num_attention_heads": 2, "attention_head_dim": 16, "num_layers": 2,
+            "ffn_dim": 48, "text_dim": 10, "patch_size": [1, 2, 2],
+        ]).write(to: release.appendingPathComponent("transformer/config.json"))
+        try JSONSerialization.data(withJSONObject: [
+            "base_dim": 8, "decoder_base_dim": 8, "z_dim": 4, "dim_mult": [1, 2], "num_res_blocks": 1,
+            "temperal_downsample": [true], "patch_size": 1, "in_channels": 3, "is_residual": false,
+        ]).write(to: release.appendingPathComponent("vae/config.json"))
+        try JSONSerialization.data(withJSONObject: ["flow_shift": 3.0, "solver_order": 2, "num_train_timesteps": 1000])
+            .write(to: release.appendingPathComponent("scheduler/scheduler_config.json"))
+        let net = NFKMLXWanTransformerNet(.tiny)
+        let autoencoder = NFKMLXWanVideoVAENet(.tiny21)
+        func released(_ module: Module) -> [String: MLXArray] {
+            Dictionary(uniqueKeysWithValues: module.parameters().flattened().map { key, value in
+                (key, value.ndim == 5 ? value.transposed(0, 4, 1, 2, 3)
+                    : value.ndim == 4 ? value.transposed(0, 3, 1, 2) : value)
+            })
+        }
+        try save(arrays: released(net), url: release.appendingPathComponent("transformer/diffusion_pytorch_model.safetensors"))
+        try save(arrays: released(autoencoder), url: release.appendingPathComponent("vae/diffusion_pytorch_model.safetensors"))
+
+        let loaded = try NFKMLXWanPipeline.pipeline(directoryURL: release)
+        let original = NFKMLXWanPipeline(transformer: net, vae: autoencoder,
+                                         schedule: NFKMLXUniPCConfiguration(flowShift: 3, solverOrder: 2, trainTimesteps: 1000))
+        let text = MLXRandom.normal([6, 10])
+        func video(_ pipeline: NFKMLXWanPipeline) -> MLXArray {
+            pipeline.generate(textEmbeds: text, negativeEmbeds: nil, frames: 2, height: 4, width: 4,
+                              steps: 2, guidance: 1, seed: 3)
+        }
+        XCTAssertEqual(abs(video(loaded) - video(original)).max().item(Float.self), 0,
+                       "the directory's pipeline is the one saved")
+    }
 }

@@ -49,11 +49,30 @@ public final class NFKMLXLTXPipeline {
 
     /// Builds the pipeline from the DiT and the autoencoder, whose stored latent statistics the decode
     /// reads. `scalingFactor` is the autoencoder config's `scaling_factor`, 1 in the released 0.9.0.
-    init(transformer: NFKMLXLTXTransformerNet, vae: NFKMLXLTXVideoVAENet, scalingFactor: Float = 1,
-         schedule: NFKMLXFlowMatchConfiguration = .ltxVideoPipeline) {
+    /// Introduced in InferKit 0.4.0.
+    public init(transformer: NFKMLXLTXTransformerNet, vae: NFKMLXLTXVideoVAENet, scalingFactor: Float = 1,
+                schedule: NFKMLXFlowMatchConfiguration = .ltxVideoPipeline) {
         holder = NFKLTXPipelineHolder(transformer, vae)
         self.scalingFactor = scalingFactor
         self.schedule = schedule
+    }
+
+    /// Builds the pipeline from a diffusers LTX-Video release directory: the DiT from `transformer/` and
+    /// the autoencoder from `vae/`, each at the geometry its `config.json` declares. The caller supplies
+    /// the T5 prompt features (``NFKMLXT5Encoder``); ``NFKMLXLTXVideoGenerator`` runs the whole release,
+    /// text encoder included. Blocking on the load; run it off the render thread. Introduced in
+    /// InferKit 0.4.0.
+    public static func pipeline(directoryURL: URL) throws -> NFKMLXLTXPipeline {
+        let transformerDirectory = directoryURL.appendingPathComponent("transformer")
+        let vaeDirectory = directoryURL.appendingPathComponent("vae")
+        let transformer = NFKMLXLTXTransformer.makeNet(try NFKMLXLTXTransformer.configuration(
+            fromHuggingFace: transformerDirectory.appendingPathComponent("config.json")))
+        try NFKMLXLTXTransformer.loadWeights(into: transformer, from: transformerDirectory)
+        let autoencoder = try NFKMLXLTXVideoVAE.configuration(
+            fromHuggingFace: vaeDirectory.appendingPathComponent("config.json"))
+        let vae = NFKMLXLTXVideoVAE.makeNet(autoencoder.configuration)
+        try NFKMLXLTXVideoVAE.loadWeights(into: vae, from: try NFKMLXReleaseWeights.files(inDirectory: vaeDirectory)[0])
+        return NFKMLXLTXPipeline(transformer: transformer, vae: vae, scalingFactor: autoencoder.scalingFactor)
     }
 
     private var latentChannels: Int { holder.transformer.configuration.inChannels }

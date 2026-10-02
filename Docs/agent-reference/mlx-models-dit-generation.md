@@ -167,7 +167,9 @@ arithmetic as before.
   the Music 3 pattern). Validated by a weight-free glue test on matching tiny configurations (the packing,
   the guided loop, unpacking, and decode produce a correct-shaped clip) plus the four stages' own parity —
   a sampled clip cannot be compared bitwise, as with Music 3. The VAE + DiT + T5 + flow are the complete
-  LTX text-to-video path.
+  LTX text-to-video path. `pipeline(directoryURL:)` reads `transformer/` and `vae/` through the public
+  `NFKMLXLTXTransformer` / `NFKMLXLTXVideoVAE` readers and loaders the generator uses, and a test holds a
+  saved directory to the stages it came from.
 - `NFKMLXZImageTransformerNet` — the Z-Image S3-DiT (`ZImageTransformer2DModel`, Alibaba Tongyi), the
   denoising transformer of a 6B text-to-image model and the third DiT family beside the SD UNet and LTX.
   **Single-stream**: the image latent tokens and the caption tokens are concatenated and every layer's
@@ -313,7 +315,10 @@ arithmetic as before.
   0.9999999999999261, with the 2.2 residual path still at parity.
   `NFKMLXWanPipeline` chains it end to end (DiT denoised over the flow schedule with classifier-free
   guidance → the 3D VAE decode, over the `[C,F,H,W]`↔`[1,F,H,W,C]` bridge and the release's per-channel
-  latent mean/std). The caller supplies the umT5 text embedding (a T5-family encoder). The sampler is
+  latent mean/std). The caller supplies the umT5 text embedding (a T5-family encoder).
+  `pipeline(directoryURL:)` reads `transformer/`, `vae/`, and the scheduler's flow shift through the
+  public `configuration(fromHuggingFace:)` and `loadWeights(into:fromDirectory:precision:)` on each stage,
+  the readers `NFKMLXWanVideoGenerator` uses. The sampler is
   Wan's released `UniPCMultistepScheduler` (`NFKMLXUniPCScheduler`, at reference parity — see the
   scheduler entry below), not a stand-in. Validated by a weight-free tiny-config glue test plus the
   DiT/VAE parities. Wan's text encoder is umT5, now verified: `NFKMLXT5Encoder` gained a

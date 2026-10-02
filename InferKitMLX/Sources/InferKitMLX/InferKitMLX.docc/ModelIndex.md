@@ -864,7 +864,7 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 | IP-Adapter | ``NFKMLXIPAdapterImageProjection``, ``NFKMLXIPAdapterAttention`` | — | `imageEmbedDim` 1024 → `crossAttentionDim` 768, 4 tokens | — | Swift API |
 | Z-Image / Z-Image-Turbo | ``NFKMLXZImageGenerator``, ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + Qwen3-4B | `NFKMLXZImageConfiguration`, the Flux VAE configuration, and `NFKMLXFlowMatchConfiguration.zImageTurbo` / `.zImage`, each read from the release | `let zImage = try NFKMLXZImageGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXZImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
 | SANA | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` | `NFKMLXSANAConfiguration.base`, or `configuration(fromHuggingFace:)`; `NFKMLXDCAEConfiguration.sana`; `NFKMLXDPMSolverConfiguration.sana`; caption from ``NFKMLXGemma2Net`` | `pipeline(directoryURL:)`, `init(transformer:vae:)`; Swift only | ``NFKMLXDPMSolverScheduler`` |
-| LTX-Video 0.9.0 | ``NFKMLXLTXVideoGenerator``, ``NFKMLXLTXPipeline`` | `NFKMLXLTXTransformerNet` + `NFKMLXLTXVideoVAENet` | `NFKMLXLTXTransformerConfiguration.base`; `NFKMLXLTXVAEConfiguration.base`; `NFKMLXFlowMatchConfiguration.ltxVideo`; `NFKMLXT5Configuration.xxl` | `let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXLTXVideoGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
+| LTX-Video 0.9.0 | ``NFKMLXLTXVideoGenerator``, ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformerNet`` + ``NFKMLXLTXVideoVAENet`` | `NFKMLXLTXTransformerConfiguration.base`; `NFKMLXLTXVAEConfiguration.base`; `NFKMLXFlowMatchConfiguration.ltxVideo`; `NFKMLXT5Configuration.xxl` | `let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXLTXVideoGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
 | LTX-2 (audio-video transformer) | — | ``NFKMLXLTX2TransformerNet`` | `NFKMLXLTX2Configuration.ltx23` / `.ltx25` | Swift API (the forward takes `MLXArray`) | — |
 | Wan 2.1 T2V / Wan 2.2 TI2V-5B | ``NFKMLXWanVideoGenerator``, ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` | `NFKMLXWanConfiguration.base`; `NFKMLXWanVAEConfiguration.wan22` / `.wan21`; `NFKMLXUniPCConfiguration.wan`; `NFKMLXT5Configuration.umt5XXL` | `let wan = try NFKMLXWanVideoGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXWanVideoGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXUniPCScheduler`` |
 | Qwen-Image 2.1 | ``NFKMLXQwenImageGenerator``, ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + ``NFKMLXWanVideoVAENet`` (`.qwenImage21`) | `NFKMLXQwenImageConfiguration.base`, `NFKMLXWanVAEConfiguration.qwenImage21`, and `NFKMLXFlowMatchConfiguration.qwenImage21`, each read from the release | `let qwen = try NFKMLXQwenImageGenerator.generator(directoryURL: dir, residency: .automatic)`<br>`[NFKMLXQwenImageGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic error:&error]` | ``NFKMLXFlowMatchScheduler`` |
@@ -917,7 +917,8 @@ let image = sana.generate(promptEmbeds: caption, negativeEmbeds: nil, latentHeig
 // Swift only
 // LTX-Video
 let vae = try NFKMLXLTXVideoVAE.vae(configuration: .base, weightsURL: vaeURL); let t5 = try NFKMLXT5Encoder.encoder(configuration: .xxl, directory: t5Dir)
-let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir)   // loads the whole release; the transformer and pipeline initializers are internal
+let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir)   // loads the whole release, text encoder included
+let pipeline = try NFKMLXLTXPipeline.pipeline(directoryURL: dir)     // the DiT and VAE alone; or NFKMLXLTXPipeline(transformer:vae:scalingFactor:) over NFKMLXLTXTransformer.makeNet / NFKMLXLTXVideoVAE.makeNet
 // LTX-2 (audio-video transformer)
 let dit = NFKMLXLTX2TransformerNet(.ltx25); try NFKMLXLTX2TransformerNet.loadWeights(into: dit, from: transformerDir)
 // Swift only — the forward denoises the video and audio latents together and returns both
@@ -933,7 +934,8 @@ let picture = try qwenImage.image(forPrompt: "a red fox in the snow", width: 102
 
 // Wan
 let dit = NFKMLXWanTransformerNet(.base); let vae = NFKMLXWanVideoVAENet(.wan22)
-let wan = try NFKMLXWanVideoGenerator.generator(directoryURL: dir)   // loads the whole release; the pipeline's initializers are internal
+let wan = try NFKMLXWanVideoGenerator.generator(directoryURL: dir)   // loads the whole release, text encoder included
+let pipeline = try NFKMLXWanPipeline.pipeline(directoryURL: dir)     // the DiT, VAE, and schedule alone; or NFKMLXWanPipeline(transformer:vae:latentsMean:latentsStd:schedule:)
 // Reference diffusion stand-ins
 NFKMLXReferenceModels.registerAll(); let backend = try NFKMLXModelRegistry.backend(named: "diffusion-controlnet", weightsURL: nil)
 ```

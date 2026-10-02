@@ -446,7 +446,9 @@ limits.
 - ``NFKMLXWanVideoGenerator``
 - ``NFKMLXLTXPipeline``
 - ``NFKMLXLTXVideoVAE``
+- ``NFKMLXLTXVideoVAENet``
 - ``NFKMLXLTXTransformer``
+- ``NFKMLXLTXTransformerNet``
 - ``NFKMLXLTX2TransformerNet``
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``

@@ -453,6 +453,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `init(identifier:isReady:configuration:forwardParameterKeys:requestForward:)`, and reports those keys
   as its `supportedParameterKeys`.
 
+#### The Wan and LTX-Video pipelines build from their stages or a release directory
+
+- `NFKMLXWanPipeline.pipeline(directoryURL:)` and `NFKMLXLTXPipeline.pipeline(directoryURL:)` read a
+  diffusers release's transformer and autoencoder (and Wan's scheduler) without its text encoder, which
+  the caller runs. `NFKMLXLTXPipeline(transformer:vae:scalingFactor:schedule:)` is public.
+- `NFKMLXWanTransformerNet` and `NFKMLXWanVideoVAENet` gain `configuration(fromHuggingFace:)` and
+  `loadWeights(into:fromDirectory:precision:)`. `NFKMLXLTXTransformerNet` and `NFKMLXLTXVideoVAENet` are
+  public, and `NFKMLXLTXTransformer` and `NFKMLXLTXVideoVAE` gain public `makeNet`, `loadWeights`, and
+  `configuration(fromHuggingFace:)`.
+
 #### Qwen4-Exp, the Qwen3.5 hybrid, SANA, SD3 conditioning, the FastSpeech2 voice, and Wan Animate are public
 
 - `NFKMLXQwen4Exp.backend(directoryURL:)` and `NFKMLXHybridLanguage.backend(directoryURL:)` (both

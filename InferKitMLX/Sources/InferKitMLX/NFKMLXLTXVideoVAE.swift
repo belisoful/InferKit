@@ -293,15 +293,20 @@ final class NFKLTXDecoder: Module {
 }
 
 /// The LTX-Video VAE.
-final class NFKMLXLTXVideoVAENet: Module {
+/// The LTX-Video causal 3-D autoencoder, with the per-channel latent statistics the release stores.
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXLTXVideoVAENet: Module {
     @ModuleInfo(key: "encoder") var encoder: NFKLTXEncoder
     @ModuleInfo(key: "decoder") var decoder: NFKLTXDecoder
     @ParameterInfo(key: "latents_mean") var latentsMean: MLXArray
     @ParameterInfo(key: "latents_std") var latentsStd: MLXArray
 
-    let configuration: NFKMLXLTXVAEConfiguration
+    /// The geometry the autoencoder was built at. Introduced in InferKit 0.4.0.
+    public let configuration: NFKMLXLTXVAEConfiguration
 
-    init(_ c: NFKMLXLTXVAEConfiguration) {
+    /// An autoencoder at `c`, with random weights until ``NFKMLXLTXVideoVAE/loadWeights(into:from:)`` fills
+    /// it. Introduced in InferKit 0.4.0.
+    public init(_ c: NFKMLXLTXVAEConfiguration) {
         configuration = c
         _encoder.wrappedValue = NFKLTXEncoder(c)
         _decoder.wrappedValue = NFKLTXDecoder(c)
@@ -309,11 +314,12 @@ final class NFKMLXLTXVideoVAENet: Module {
         _latentsStd.wrappedValue = MLXArray.ones([c.latentChannels])
     }
 
-    /// A video `[B, T, H, W, 3]` → the deterministic latent (the posterior mean).
-    func encode(_ video: MLXArray) -> MLXArray { encoder(video) }
+    /// A video `[B, T, H, W, 3]` → the deterministic latent (the posterior mean). Introduced in
+    /// InferKit 0.4.0.
+    public func encode(_ video: MLXArray) -> MLXArray { encoder(video) }
 
-    /// A latent → the reconstructed video `[B, T, H, W, 3]`.
-    func decode(_ latent: MLXArray) -> MLXArray { decoder(latent) }
+    /// A latent → the reconstructed video `[B, T, H, W, 3]`. Introduced in InferKit 0.4.0.
+    public func decode(_ latent: MLXArray) -> MLXArray { decoder(latent) }
 }
 
 /// Holds the network for capture across an isolation boundary.
@@ -356,19 +362,30 @@ public final class NFKMLXLTXVideoVAE: NSObject {
         return NFKMLXLTXVideoVAE(net: net)
     }
 
-    static func makeNet(_ configuration: NFKMLXLTXVAEConfiguration = .base) -> NFKMLXLTXVideoVAENet {
+    /// An autoencoder at `configuration`, the released 0.9.0 geometry by default. Introduced in
+    /// InferKit 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXLTXVAEConfiguration = .base) -> NFKMLXLTXVideoVAENet {
         NFKMLXLTXVideoVAENet(configuration)
     }
 
     /// Loads a checkpoint, transposing 5-D Conv3d weights `[out, in, kT, kH, kW]` → MLX's
     /// `[out, kT, kH, kW, in]`. The causal-conv wrapper keeps the reference's `.conv` key, so the names
-    /// match with no remap.
-    static func loadWeights(into net: NFKMLXLTXVideoVAENet, from url: URL) throws {
+    /// match with no remap. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXLTXVideoVAENet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             (transpose && value.ndim == 5) ? (key, value.transposed(0, 2, 3, 4, 1)) : (key, value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// The autoencoder geometry a diffusers `vae/config.json` describes, and its `scaling_factor`. A
+    /// release that conditions its decode on a timestep (0.9.1 and later) is refused. Introduced in
+    /// InferKit 0.4.0.
+    public static func configuration(fromHuggingFace url: URL) throws
+        -> (configuration: NFKMLXLTXVAEConfiguration, scalingFactor: Float) {
+        let (configuration, scalingFactor) = try NFKMLXLTXVideoGenerator.vaeConfiguration(fromHuggingFace: url)
+        return (configuration, scalingFactor)
     }
 }

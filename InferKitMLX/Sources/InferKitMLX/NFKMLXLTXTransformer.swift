@@ -280,7 +280,9 @@ final class NFKLTXIdentityNorm {
 }
 
 /// The LTX-Video DiT.
-final class NFKMLXLTXTransformerNet: Module {
+/// The LTX-Video 0.9.0 DiT: latent tokens and T5 caption states to a predicted velocity, over a
+/// three-axis rotary on the latent grid. Introduced in InferKit 0.4.0.
+public final class NFKMLXLTXTransformerNet: Module {
     @ModuleInfo(key: "proj_in") var projIn: Linear
     @ModuleInfo(key: "time_embed") var timeEmbed: NFKLTXTimeEmbed
     @ModuleInfo(key: "caption_projection") var captionProjection: NFKLTXCaptionProjection
@@ -288,10 +290,13 @@ final class NFKMLXLTXTransformerNet: Module {
     @ParameterInfo(key: "scale_shift_table") var scaleShiftTable: MLXArray
     @ModuleInfo(key: "proj_out") var projOut: Linear
 
-    let configuration: NFKMLXLTXTransformerConfiguration
+    /// The geometry the DiT was built at. Introduced in InferKit 0.4.0.
+    public let configuration: NFKMLXLTXTransformerConfiguration
     let rotary: NFKLTXRotary
 
-    init(_ c: NFKMLXLTXTransformerConfiguration) {
+    /// A DiT at `c`, with random weights until ``NFKMLXLTXTransformer/loadWeights(into:from:)`` fills it.
+    /// Introduced in InferKit 0.4.0.
+    public init(_ c: NFKMLXLTXTransformerConfiguration) {
         configuration = c
         rotary = NFKLTXRotary(dim: c.innerDim)
         _projIn.wrappedValue = Linear(c.inChannels, c.innerDim)
@@ -307,8 +312,8 @@ final class NFKMLXLTXTransformerNet: Module {
     ///
     /// `textMask` `[B, L]` is 1 for a caption token and 0 for padding. The reference turns it into an
     /// additive `(1 − mask) · −10000` bias on the cross-attention, and so does this; nil attends to every
-    /// caption position.
-    func callAsFunction(_ latent: MLXArray, text: MLXArray, timestep: MLXArray,
+    /// caption position. Introduced in InferKit 0.4.0.
+    public func callAsFunction(_ latent: MLXArray, text: MLXArray, timestep: MLXArray,
                         grid: (Int, Int, Int), ropeScale: (Float, Float, Float),
                         textMask: MLXArray? = nil) -> MLXArray {
         let rope = rotary.embedding(frames: grid.0, height: grid.1, width: grid.2, scale: ropeScale)
@@ -341,17 +346,25 @@ private func ltxLayerNorm(_ x: MLXArray) -> MLXArray {
 @objc(NFKMLXLTXTransformer)
 public final class NFKMLXLTXTransformer: NSObject {
 
-    static func makeNet(_ configuration: NFKMLXLTXTransformerConfiguration = .base) -> NFKMLXLTXTransformerNet {
+    /// A DiT at `configuration`, the released 0.9.0 geometry by default. Introduced in InferKit 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXLTXTransformerConfiguration = .base) -> NFKMLXLTXTransformerNet {
         NFKMLXLTXTransformerNet(configuration)
     }
 
     /// Loads a checkpoint (sharded diffusers safetensors). All weights are at most 2-D, so no transpose
-    /// applies; the module keys mirror the reference's `LTXVideoTransformer3DModel`.
-    static func loadWeights(into net: NFKMLXLTXTransformerNet, from directory: URL) throws {
+    /// applies; the module keys mirror the reference's `LTXVideoTransformer3DModel`. Introduced in
+    /// InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXLTXTransformerNet, from directory: URL) throws {
         let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, remap: remapReferenceKey)
         try NFKMLXWeights.apply(arrays, to: net)
     }
 
     /// The reference keys mirror the module names; finalized against the released checkpoint.
     static func remapReferenceKey(_ key: String) -> String? { key }
+
+    /// The DiT geometry a diffusers `transformer/config.json` describes. A release that patchifies its
+    /// latent is refused. Introduced in InferKit 0.4.0.
+    public static func configuration(fromHuggingFace url: URL) throws -> NFKMLXLTXTransformerConfiguration {
+        try NFKMLXLTXVideoGenerator.transformerConfiguration(fromHuggingFace: url)
+    }
 }
