@@ -319,6 +319,16 @@ attention and feed-forward.
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode
   ran, fixed by hoisting the literal.
+  **Customization ships** at 4B and under (`NFKMLXLanguageTraining.swift`): `NFKMLXLanguage.fineTune`
+  adapts `q_proj` and `v_proj` with LoRA, PEFT's default for `qwen2`, `qwen3`, `llama`, and `mistral`,
+  over `NFKMLXCausalLanguageObjective`, the `labels=` loss with a prompt's tokens unscored. Measured
+  against transformers 5.16's `Qwen3ForCausalLM` (`run_reference.py qwen3_loss`, tiny untied config):
+  4.8355494 vs 4.83555 with the prompt masked, 4.841082 vs 4.8410826 without, and the forward on the
+  reference's weights within 1.5e-8 of its logits. `makeNet`, both `loadWeights`,
+  `network(directoryURL:precision:)`, `network(weightsURL:configuration:)`, `tokenizer(directoryURL:)`,
+  and `backend(network:directoryURL:options:)` are public, so a consumer loads, adapts, saves, reloads,
+  and serves without `@testable`. A paged mixture of experts is refused; a resident one adapts its
+  attention only. Above 4B the float32 load does not fit beside its optimizer state.
 - `NFKMLXHybridLanguage` — the hybrid decoder Qwen3.5, Qwen3.6, and **Qwen3.8** are built from
   (`Qwen3_5ForConditionalGeneration`), at reference parity on the released Qwen3.5-4B (logit
   cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). 4B is the smallest
@@ -362,6 +372,16 @@ attention and feed-forward.
   at every id `generation_config.json` names, because an instruct release ends a turn on a marker only
   that file lists. `NFKMLXQwen4Exp.network(directoryURL:precision:residency:)` returns the bare decoder,
   which `backend(directoryURL:precision:residency:)` returned before it built the text backend.
+  **Customization ships** at 2B and 4B (`NFKMLXHybridLanguageTraining.swift`):
+  `NFKMLXHybridLanguage.fineTune` adapts every attention projection plus the recurrence's `in_proj_qkv`
+  and `out_proj` with LoRA, the target set of the adapter released for this decoder (Open-Jev on
+  Qwen3.5-2B), because PEFT names no default for `qwen3_5`; the decay, the convolution, and the gate
+  projections stay frozen. The objective is `NFKMLXCausalLanguageObjective`, measured against
+  transformers 5.16's `Qwen3_5ForCausalLM` (`run_reference.py qwen3_5_loss`, three recurrence layers and
+  one attention layer): 4.5920973 vs 4.5920973 with the prompt masked, 4.528306 vs 4.528306 without, the
+  forward on the reference's weights within 7.7e-7. A fine-tuned file reloads through
+  `network(weightsURL:configuration:)` (its convolution already in this module's layout), and
+  `backend(network:directoryURL:)` serves it. Qwen3.8-27B is ~54 GB and stays offline.
 - `NFKMLXQwen4Exp` — the Qwen4-Exp decoder (`Qwen4ExpForConditionalGeneration`), which
   **Qwen3.8-Flash-Next** is the released 180B instance of. It keeps the hybrid family's skeleton and
   adds four mechanisms nothing else in the package uses, so it is a port rather than a configuration

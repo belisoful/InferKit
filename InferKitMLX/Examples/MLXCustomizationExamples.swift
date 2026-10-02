@@ -648,6 +648,32 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertLessThan(abs(a - b).max().item(Float.self), 1e-4, "the merged checkpoint reloads")
     }
 
+    // Docs/examples.md: Adapting a Qwen, Qwen3.5, or Gemma 3 decoder to your own conversations
+    func testExampleAdaptingADecoderToYourOwnConversations() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("decoder-example-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // A release directory gives NFKMLXLanguage.network(directoryURL:) the real decoder and
+        // tokenizer(directoryURL:) its ids; a tiny random net stands in here. Each example is a prompt's
+        // ids followed by the reply's, with the prompt's length.
+        let config = NFKMLXLanguageConfiguration(hiddenSize: 64, layerCount: 2, headCount: 4, keyValueHeadCount: 2,
+                                                 headDimensions: 16, intermediateSize: 96, vocabularySize: 128)
+        let net = try NFKMLXLanguage.network(weightsURL: nil, configuration: config)
+        let prompt: [Int32] = [3, 17, 42], reply: [Int32] = [99, 7, 61]
+        let examples = [(tokens: MLXArray(prompt + reply), promptLength: prompt.count)]
+        let history = try NFKMLXLanguage.fineTune(net, examples: { examples[$0 % examples.count] }, rank: 4, steps: 4)
+        XCTAssertEqual(history.count, 4)
+
+        try NFKMLXLoRA.merge(into: net)
+        try NFKMLXWeights.save(net, to: url)
+        let reloaded = try NFKMLXLanguage.network(weightsURL: url, configuration: config)
+        let input = examples[0].tokens.reshaped([1, 6])
+        XCTAssertLessThan(abs(net(input) - reloaded(input)).max().item(Float.self), 1e-4, "the merged checkpoint reloads")
+    }
+
     // Docs/examples.md: Retargeting a segmentation model to your own classes
     func testExampleSegmentationDataAndSamplerFeedTheTrainer() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

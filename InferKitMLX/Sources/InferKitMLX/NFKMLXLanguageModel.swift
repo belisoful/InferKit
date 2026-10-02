@@ -1261,7 +1261,8 @@ public final class NFKMLXLanguageNet: Module {
     @ModuleInfo(key: "model") var model: NFKLMCore
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
-    let configuration: NFKMLXLanguageConfiguration
+    /// The geometry the decoder was built at. Introduced in InferKit 0.4.0.
+    public let configuration: NFKMLXLanguageConfiguration
 
     /// The routed experts of a paged load, which the mixture layers read in place of parameters; nil
     /// where every expert is resident. Introduced in InferKit 0.4.0.
@@ -1277,8 +1278,9 @@ public final class NFKMLXLanguageNet: Module {
         super.init()
     }
 
-    /// Runs the stack over `tokens` `[batch, length]` and returns logits `[batch, length, vocabulary]`.
-    func callAsFunction(_ tokens: MLXArray, cache: NFKMLXKeyValueCache? = nil) -> MLXArray {
+    /// Runs the stack over `tokens` `[batch, length]` and returns logits `[batch, length, vocabulary]`,
+    /// through the cache when one is given. Introduced in InferKit 0.4.0.
+    public func callAsFunction(_ tokens: MLXArray, cache: NFKMLXKeyValueCache? = nil) -> MLXArray {
         logits(fromHidden: hiddenStates(fromEmbeddings: model.embedTokens(tokens), cache: cache))
     }
 

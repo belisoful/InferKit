@@ -185,7 +185,7 @@ Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev) lists no
 | TimesFM 2.5 LoRA | google-research/timesfm `finetune_lora.py`: PEFT LoRA rank 4, alpha 8 on every linear layer; AdamW 1e-4, decay 0.01; `CosineAnnealingLR` over the run; clip 1.0; batches of 32 windows | none: the bfloat16 load (`precision: .bfloat16`), and LoRA dropout 0.05 (`loraDropout:`) are each off by default. The 32-window batch is what `windows` returns each step (`NFKMLXTimesFM.referenceWindowsPerStep`) |
 | open-jev-deberta | `train_encoder.py`: AdamW 3e-5 for the encoder and 1e-3 for the head, decay 0.01, clip 1; a linear warm-up over the first 6% of the run, then a linear decay to zero (`NFKMLXLearningRateSchedule.openJevDeBERTa(steps:)`) | the encoder's dropout (0.1) is off by default: `net.backbone.dropout`, set from `NFKMLXDeBERTaV2Dropout(configURL:)`, applies it; the batch of 16 (`--batch`, `NFKMLXOpenJevDeBERTa.referenceBatchSize`), where `batchSize` defaults to 1 |
 | Open-Jev | `jev/train.py`: AdamW for the adapter and the head (5e-5 and 1e-4 for 2B and 9B, 2e-5 and 5e-5 for 27B, from each release's `provenance.json`), decay 0.01, clip 1, a constant rate, gradient accumulation 4 (`batchSize`) | — |
-| Whisper, the translators, TranslateGemma, Granite 4.0-H, Nemotron-H | no script beyond the model's `labels=` loss: transformers' `Trainer` default, AdamW with no decay, clip 1.0 | the rate (1e-4 here, 5e-5 there) is this package's, and so is the constant schedule (the `Trainer` default decays linearly to zero). The release dropouts a `labels=` fine-tune runs (OPUS-MT 0.1, M2M-100 0.1 with attention dropout 0.1 and layer drop 0.05, MADLAD-400 0.1) are off by default: the network's `dropout`, set from `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`, applies them, the frozen encoder under LoRA included. TranslateGemma, Granite, and Nemotron-H set none; Whisper's release configs are not in the store. The `Trainer`'s batch of 8 (`per_device_train_batch_size`, `NFKMLXFineTune.transformersTrainerBatchSize`); each of these recipes steps on one example unless `accumulationSteps` says otherwise |
+| Whisper, the translators, TranslateGemma, Granite 4.0-H, Nemotron-H, the dense Qwen, Qwen3.5 hybrid, and Gemma 3 decoders | no script beyond the model's `labels=` loss: transformers' `Trainer` default, AdamW with no decay, clip 1.0 | the rate (1e-4 here, 5e-5 there) is this package's, and so is the constant schedule (the `Trainer` default decays linearly to zero). The release dropouts a `labels=` fine-tune runs (OPUS-MT 0.1, M2M-100 0.1 with attention dropout 0.1 and layer drop 0.05, MADLAD-400 0.1) are off by default: the network's `dropout`, set from `NFKMLXSeq2SeqDropout(releaseDirectoryURL:)`, applies them, the frozen encoder under LoRA included. TranslateGemma, Granite, Nemotron-H, and the dense Qwen, Qwen3.5, and Gemma 3 releases set none; Whisper's release configs are not in the store. The `Trainer`'s batch of 8 (`per_device_train_batch_size`, `NFKMLXFineTune.transformersTrainerBatchSize`); each of these recipes steps on one example unless `accumulationSteps` says otherwise |
 | Qwen3-VL retrieval and the text-embedder adapter | sentence-transformers' trainer default: AdamW with no decay, a bias-corrected Adam, clip 1 | the rate (1e-3 here, 5e-5 there), and the schedule: the trainer's default (`lr_scheduler_type` `linear`) decays to zero, where the recipe holds the rate |
 | CLIP and SigLIP 2 probes (`NFKMLXEmbeddingProbe`) | CLIP's own probe is an L-BFGS logistic regression; AdamW 1e-3 with decay 0.01 is this package's | — |
 | Laya | the release publishes no optimizer; a bias-corrected Adam with the global gradient norm clipped at 1, both this package's choice | none for dropout: the decision head's 0.1 (its two `TransformerEncoderLayer`s, `rl_common.py`) is off by default; `NFKMLXLayaNet.headDropout` applies it. The release's bfloat16 autocast (`amp_dtype`) is `precision: .bfloat16`, off by default |
@@ -219,15 +219,14 @@ counts below are the ledger's, over its 167 entries in 151 rows.
 
 **Gaps against this rule.** These are package-level rather than per-model:
 
-- No general text data adapter (tokenize, template, mask) exists. The one response-masked SFT
-  objective is TranslateGemma's (`NFKMLXTranslateGemmaObjective`, over
-  `promptTokens(text:sourceCode:targetCode:)`). Audio
+- No general text data adapter (tokenize, template, mask) exists. The response-masked SFT objectives
+  are TranslateGemma's (`NFKMLXTranslateGemmaObjective`, over
+  `promptTokens(text:sourceCode:targetCode:)`) and `NFKMLXCausalLanguageObjective`, whose example
+  carries its prompt's length. Audio
   adapters exist per recipe: GTCRN's noisy and clean pairs, NU-Wave 2's `trainingPair`, and Basic
   Pitch's `trainingExample(s)`, which cuts a recording and its notes into windows and targets.
-- The dense Qwen, hybrid, and Gemma 3 decoders are LoRA-feasible at 4B and under and have no public
-  builder, so no fine-tune of them is reachable. Feasibility and reachability are separate questions,
-  and a public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
-  builders and are offline on size.
+- A public builder is not evidence of a training path: Qwen4-Exp and Mamba-2 have fully public
+  builders and are offline on size. Feasibility and reachability are separate questions.
 - `NFKMLXTrainer` checkpoints optimizer state only for an `NFKMLXResumableOptimizer`: mlx-swift's own
   `Adam`, `AdamW`, and `SGD` keep theirs where a checkpoint cannot read it, so a checkpoint that names
   an optimizer-state file refuses them. Every recipe's reference optimizer is resumable. Half precision
@@ -279,8 +278,8 @@ counts below are the ledger's, over its 167 entries in 151 rows.
     Qwen-VL, and LLaVA overloads, over five or six arrays a step), `NFKMLXSAM2`, `NFKMLXSAM3`, the
     Cosmos Tokenizer, `NFKMLXZeroDCE`, `NFKMLXWhisper`, the CLIP probe, both Laya recipes, the two
     Open-Jev recipes, the translators (one internal recipe in `NFKMLXTranslationTraining` serving
-    Marian, M2M-100, and MADLAD-400), `NFKMLXTranslateGemma`, the Granite and Nemotron hybrids, and
-    the Qwen3-VL embedding adapter and reranker head. `run` has the trainer's three forms: `batch:` for an input and a target,
+    Marian, M2M-100, and MADLAD-400), `NFKMLXTranslateGemma`, the Granite and Nemotron hybrids, the dense Qwen, Qwen3.5 hybrid, and
+    Gemma 3 decoders, and the Qwen3-VL embedding adapter and reranker head. `run` has the trainer's three forms: `batch:` for an input and a target,
     `sample:` for an unlabeled step (SAM 3, whose targets travel beside the batch, the Cosmos
     Tokenizer's reconstruction, and the instance recipes that index their own encoded examples), and
     `arrays:` for any count. A recipe with no freezing policy passes an empty closure (Zero-DCE, the
@@ -471,6 +470,24 @@ counts below are the ledger's, over its 167 entries in 151 rows.
   sits under each block's `mixer` (not `self_attn`), so the LoRA target predicate matches the `q_proj` /
   `v_proj` suffix; only the attention blocks carry those, a sparse subset of the layer array that
   `NFKMLXLoRA` reaches through its per-owner fallback.
+- `NFKMLXLanguageTraining`, `NFKMLXHybridLanguageTraining`, `NFKMLXGemma3Training` — the dense decoder
+  (Qwen3, Qwen2.5, Llama, Mistral), the Qwen3.5 hybrid, and Gemma 3, each LoRA-adapted at 4B and under
+  through `fineTune` on its builder type. They share `NFKMLXCausalLanguageObjective`, the `labels=` loss
+  of transformers' `*ForCausalLM`; an example is `(tokens, promptLength)`, and the prompt's tokens are
+  not scored, the reference with those labels -100. The trainer carries the prompt length as an array
+  beside the tokens and the loss selects the scored tokens by weight, so the selection is one
+  computation whatever the length. Measured against transformers 5.16's `Qwen3ForCausalLM`,
+  `Qwen3_5ForCausalLM`, and `Gemma3ForCausalLM` (`run_reference.py qwen3_loss`, `qwen3_5_loss`,
+  `gemma3_loss`) masked and whole, on identical logits within 1e-5 and through this package's forward
+  on the reference's recorded weights within 1e-4 (logits within 1.5e-8, 7.7e-7, 1.5e-6). The LoRA
+  targets are PEFT's defaults (`q_proj`, `v_proj` for `qwen2`, `qwen3`, `llama`, `mistral`, and
+  `gemma3_text`); PEFT names none for `qwen3_5`, so the hybrid takes the target set of the adapter
+  released for it (Open-Jev on Qwen3.5-2B: every attention projection plus `in_proj_qkv` and
+  `out_proj`), which reaches the three layers in four that carry no attention. The dense recipe refuses
+  a paged mixture of experts, whose experts are read from disk. The round trip reloads the merged file
+  through `network(weightsURL:configuration:)`; `backend(network:directoryURL:)` (dense, hybrid) and
+  `NFKMLXGemma3.backend(model:)` over `model(decoder:directoryURL:)` serve the adapted decoder with its
+  release's tokenizer and template.
 - `NFKMLXLoRA` / `NFKMLXLoRALinear` — low-rank adaptation, for the models with no small head to train
   (CLIP, Whisper: adapting them means reaching into the attention blocks, and doing that fully needs
   optimizer state proportional to the whole model). `NFKMLXLoRALinear` **subclasses `Linear`**, which is

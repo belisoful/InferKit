@@ -412,7 +412,9 @@ public final class NFKMLXGemma3Net: Module {
 @objc(NFKMLXGemma3Language)
 public final class NFKMLXGemma3Language: NSObject {
 
-    static func makeNet(_ configuration: NFKMLXGemma3Configuration = .gemma3_270M) -> NFKMLXGemma3Net {
+    /// A decoder at `configuration`, with random weights until a load fills it. Introduced in InferKit
+    /// 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXGemma3Configuration = .gemma3_270M) -> NFKMLXGemma3Net {
         NFKMLXGemma3Net(configuration)
     }
 
@@ -539,9 +541,9 @@ public final class NFKMLXGemma3Language: NSObject {
 
     /// Loads the decoder from a released directory, single-file or sharded, taking only the language
     /// model's tensors; a multimodal release's vision tower and projector are skipped, and a strict
-    /// apply then proves the decoder's own set is complete.
-    static func loadWeights(into net: NFKMLXGemma3Net, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision = .float32) throws {
+    /// apply then proves the decoder's own set is complete. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXGemma3Net, fromDirectory directory: URL,
+                                   precision: NFKMLXWeightPrecision = .float32) throws {
         let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
                                                      remap: decoderName(of:))
         try NFKMLXWeights.apply(mapped, to: net)

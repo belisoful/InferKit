@@ -3535,6 +3535,83 @@ def run_nemotron_h_loss(image, checkpoint):
     return torch.tensor([out.loss.item()], dtype=torch.float32)
 
 
+def _causal_lm_loss(model, seed):
+    """The `labels=` loss a transformers `*ForCausalLM` computes for the decoder fine-tunes, with the
+    first `prompt_length` labels set to -100 (a prompt left unscored) and without. `model` is seeded by
+    `_randomized`; its weights are recorded as `w::` so the port also scores its own forward on them. The
+    masked loss is the reference output; the logits and tokens are recorded so the port scores the
+    objective on IDENTICAL logits, isolating the objective's arithmetic from the forward pass."""
+    import torch
+
+    model = _randomized(model, seed=seed)
+    tokens = torch.tensor([[3, 17, 42, 99, 7, 61, 5, 88]], dtype=torch.long)
+    prompt_length = 3
+    labels = tokens.clone()
+    labels[:, :prompt_length] = -100
+    with torch.no_grad():
+        masked = model(tokens, labels=labels)
+        whole = model(tokens, labels=tokens)
+    extra = {
+        "tokens": tokens[0].to(torch.int32).contiguous(),
+        "prompt_length": torch.tensor([prompt_length], dtype=torch.int32),
+        "logits": masked.logits[0].float().contiguous(),
+        "loss_unmasked": torch.tensor([whole.loss.item()], dtype=torch.float32),
+    }
+    # A tied model's state dict names one tensor twice, which safetensors refuses to save.
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).clone().contiguous()
+    globals()["_extra"] = extra
+    return torch.tensor([masked.loss.item()], dtype=torch.float32)
+
+
+def run_qwen3_loss(image, checkpoint):
+    """The dense decoder's fine-tune objective: `Qwen3ForCausalLM`'s `labels=` loss on a tiny untied
+    config (`_causal_lm_loss`). Runs under the gemma oracle interpreter. `checkpoint` unused."""
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+
+    config = Qwen3Config(
+        vocab_size=128, hidden_size=64, intermediate_size=96, num_hidden_layers=2,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=16, rms_norm_eps=1e-6,
+        rope_parameters={"rope_type": "default", "rope_theta": 10000.0}, tie_word_embeddings=False,
+        attn_implementation="eager")
+    return _causal_lm_loss(Qwen3ForCausalLM(config), seed=41)
+
+
+def run_qwen3_5_loss(image, checkpoint):
+    """The hybrid decoder's fine-tune objective: `Qwen3_5ForCausalLM`'s `labels=` loss on a tiny config
+    of three gated delta-rule layers then one gated attention layer (`_causal_lm_loss`). Runs under the
+    gemma oracle interpreter. `checkpoint` unused."""
+    from transformers import Qwen3_5ForCausalLM, Qwen3_5TextConfig
+
+    config = Qwen3_5TextConfig(
+        vocab_size=128, hidden_size=64, intermediate_size=96, num_hidden_layers=4,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=32, rms_norm_eps=1e-6,
+        linear_conv_kernel_dim=4, linear_key_head_dim=16, linear_value_head_dim=16,
+        linear_num_key_heads=2, linear_num_value_heads=4,
+        layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+        rope_parameters={"rope_type": "default", "rope_theta": 10000.0, "partial_rotary_factor": 0.25,
+                         "mrope_section": [2, 1, 1], "mrope_interleaved": True},
+        tie_word_embeddings=False, attn_implementation="eager")
+    return _causal_lm_loss(Qwen3_5ForCausalLM(config), seed=43)
+
+
+def run_gemma3_loss(image, checkpoint):
+    """The Gemma 3 decoder's fine-tune objective: `Gemma3ForCausalLM`'s `labels=` loss on a tiny tied
+    config whose sliding window (4) is shorter than the sequence (`_causal_lm_loss`). Runs under the
+    gemma oracle interpreter. `checkpoint` unused."""
+    from transformers import Gemma3ForCausalLM, Gemma3TextConfig
+
+    config = Gemma3TextConfig(
+        vocab_size=128, hidden_size=64, intermediate_size=96, num_hidden_layers=4,
+        num_attention_heads=4, num_key_value_heads=2, head_dim=16, rms_norm_eps=1e-6,
+        query_pre_attn_scalar=16, sliding_window=4,
+        layer_types=["sliding_attention", "sliding_attention", "sliding_attention", "full_attention"],
+        rope_parameters={"full_attention": {"rope_type": "default", "rope_theta": 1000000.0},
+                         "sliding_attention": {"rope_type": "default", "rope_theta": 10000.0}},
+        tie_word_embeddings=True, attn_implementation="eager")
+    return _causal_lm_loss(Gemma3ForCausalLM(config), seed=47)
+
+
 def run_nemotron_h_real(image, checkpoint):
     """Nemotron Nano 2 released decoder logits + greedy continuation from transformers.
 
@@ -17643,7 +17720,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_f
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

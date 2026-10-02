@@ -657,7 +657,9 @@ public final class NFKMLXLanguage: NSObject {
     static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja"]
     static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
-    static func makeNet(_ configuration: NFKMLXLanguageConfiguration = .qwen3_0_6B) -> NFKMLXLanguageNet {
+    /// A decoder at `configuration`, with random weights until a load fills it. Introduced in InferKit
+    /// 0.4.0.
+    public static func makeNet(_ configuration: NFKMLXLanguageConfiguration = .qwen3_0_6B) -> NFKMLXLanguageNet {
         NFKMLXLanguageNet(configuration)
     }
 
@@ -1044,8 +1046,9 @@ public final class NFKMLXLanguage: NSObject {
     /// beyond stacking a mixture's per-expert tensors.
     ///
     /// Every weight here is at most two-dimensional, so none of the convolution transposes the vision
-    /// models apply have any part in this path.
-    static func loadWeights(into net: NFKMLXLanguageNet, from url: URL,
+    /// models apply have any part in this path. A fine-tuned checkpoint `NFKMLXWeights` wrote carries
+    /// the same keys and loads here too. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXLanguageNet, from url: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         // A quantized checkpoint reshapes the module to match and loads at its stored dtypes: the
@@ -1089,9 +1092,9 @@ public final class NFKMLXLanguage: NSObject {
     /// @discussion A release past about a gigabyte is split into `model-0000N-of-0000M.safetensors`
     /// with a `model.safetensors.index.json` naming which shard holds each tensor. Every size above
     /// 0.6B ships that way, so a loader that only reads `model.safetensors` covers the smallest model
-    /// and nothing else.
-    static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision = .float32) throws {
+    /// and nothing else. Introduced in InferKit 0.4.0.
+    public static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                                   precision: NFKMLXWeightPrecision = .float32) throws {
         // Refuse a release whose weights alone exceed the memory budget, before materializing any,
         // so "the process died" becomes an error naming the shortfall.
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)

@@ -4610,7 +4610,10 @@
         "gemma3n_vision_real",
         "gemma3n_mel",
         "gemma3n_conditional_real",
-        "translategemma"
+        "translategemma",
+        "qwen3_loss",
+        "qwen3_5_loss",
+        "gemma3_loss"
       ]
     },
     "wananimate": {
@@ -5475,6 +5478,24 @@
       "record": "reference/bisenet-training.safetensors",
       "environment": "llm",
       "command": "IK_BISENET_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/bisenet\" bisenet_training --size 64 --checkpoint \"/Volumes/InferKit Models/inferkit-validation/converted/bisenet.safetensors\""
+    },
+    {
+      "key": "IK_PARITY_QWEN3_LOSS",
+      "record": "reference/qwen3-loss.safetensors",
+      "environment": "gemma",
+      "command": "qwen3_loss --checkpoint /tmp"
+    },
+    {
+      "key": "IK_PARITY_QWEN3_5_LOSS",
+      "record": "reference/qwen3-5-loss.safetensors",
+      "environment": "gemma",
+      "command": "qwen3_5_loss --checkpoint /tmp"
+    },
+    {
+      "key": "IK_PARITY_GEMMA3_LOSS",
+      "record": "reference/gemma3-loss.safetensors",
+      "environment": "gemma",
+      "command": "gemma3_loss --checkpoint /tmp"
     }
   ]
 }

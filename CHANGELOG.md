@@ -441,6 +441,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The dense Qwen, Qwen3.5 hybrid, and Gemma 3 decoders fine-tune with LoRA
+
+- `NFKMLXLanguage.fineTune`, `NFKMLXHybridLanguage.fineTune`, and `NFKMLXGemma3Language.fineTune` adapt
+  a decoder to a consumer's own text. Each example is a token sequence and the count of its leading
+  prompt tokens, which are not scored, as transformers' `labels=-100` leaves them.
+- `NFKMLXCausalLanguageObjective` is the `labels=` loss of transformers' `*ForCausalLM`, measured against
+  `Qwen3ForCausalLM`, `Qwen3_5ForCausalLM`, and `Gemma3ForCausalLM`.
+- LoRA adapts the attention query and value projections, PEFT's default for these architectures. The
+  hybrid also adapts its recurrence's input and output projections, the target set of the adapter
+  released for it.
+- `NFKMLXLanguage` gains public `makeNet`, `loadWeights`, `network(directoryURL:precision:)`,
+  `network(weightsURL:configuration:)`, `tokenizer(directoryURL:)`, and `backend(network:directoryURL:options:)`;
+  `NFKMLXLanguageNet` makes its forward and `configuration` public.
+- `NFKMLXHybridLanguage` gains `network(weightsURL:configuration:)`, a single-file `loadWeights`, and
+  `backend(network:directoryURL:)`.
+- `NFKMLXGemma3Language` gains public `makeNet` and `loadWeights`, `network(directoryURL:precision:)`, and
+  `network(weightsURL:configuration:)`. `NFKMLXGemma3.model(decoder:directoryURL:precision:)` and
+  `backend(model:)` serve an adapted decoder.
+
 #### The siggraph17 colorizer follows color hints, and RIFE v4 interpolates at any timestep
 
 - `NFKMLXSiggraphColorizer`'s backend reads a hint image under `hintKey` and a grayscale mask under

@@ -37,16 +37,15 @@ Levels are `probe`, `head-retarget`, `zero-reference`, `LoRA`, and `full`, as `m
 defines them.
 
 **A public builder is not evidence of a training path.** Qwen4-Exp and Mamba-2 have fully public
-builders and are offline on size. The dense Qwen and Gemma 3 decoders are LoRA-feasible at 4B and
-under and have no public builder at all; the hybrid decoder's builder is public and it has no recipe. Feasibility and reachability are separate questions,
+builders and are offline on size. Feasibility and reachability are separate questions,
 and a row answers the first. The `Reach` column answers the second.
 
 ## Summary
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 41 |
-| `trainable`, no recipe yet | 57 |
+| `ships` | 44 |
+| `trainable`, no recipe yet | 54 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -57,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-one recipes ship and 57 models are trainable with none written. That is the size of
+Forty-four recipes ship and 54 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -230,10 +229,10 @@ largest size this machine holds at float32.
 | --- | --- | --- | --- | --- |
 | `NFKMLXGraniteHybrid` | ships | LoRA | public | The reference's `labels=` loss within 1e-3. The 1B release fits float32. |
 | `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The only release is 9B at ~17.8 GB bfloat16, and the recipe takes no `precision:` argument. |
-| `NFKMLXLanguage` (dense) | trainable to 4B, offline above | LoRA | **internal** | `q_proj` and `v_proj` are `Linear` under `@ModuleInfo`, which LoRA requires. The builder, the loader, and the initializer are all internal. |
-| `NFKMLXHybridLanguage` | trainable at 2B and 4B, offline at 27B | LoRA | public | Open-Jev already LoRA-trains this decoder at Qwen3.5-2B. Qwen3.8-27B is ~54 GB. |
+| `NFKMLXLanguage` (dense) | ships to 4B, offline above | LoRA | public | The `labels=` loss of `Qwen3ForCausalLM` within 1e-5, prompt masked and not, and through the forward on the reference's weights. LoRA on `q_proj` and `v_proj`, PEFT's default. A 4B release is ~16 GB at float32. |
+| `NFKMLXHybridLanguage` | ships at 2B and 4B, offline at 27B | LoRA | public | The `labels=` loss of `Qwen3_5ForCausalLM` within 1e-5. LoRA on Open-Jev's released target set, attention and recurrence projections. Qwen3.8-27B is ~54 GB. |
 | `NFKMLXGemma2Net` | trainable at 2B, offline at 9B and 27B | LoRA | public | The 2B release runs at float32 in the entry's own layer probe. |
-| `NFKMLXLanguage` (mixture of experts) | offline | — | internal | LoRA adapts `Linear` only and never the expert switch layers. gpt-oss's experts stay MXFP4-packed at load. |
+| `NFKMLXLanguage` (mixture of experts) | offline | — | public | LoRA adapts `Linear` only and never the expert switch layers. gpt-oss's experts stay MXFP4-packed at load. |
 | `NFKMLXQwen4Exp` | offline | — | public | The smallest release is 180B. Its n-gram table alone is 51 billion parameters. |
 | `NFKMLXDeepSeek` | offline | — | internal | Four-bit routed experts and fp8 attention. A gradient needs 510 GB dequantized first. |
 | `NFKMLXMamba` | offline | — | public | The smallest release is Codestral-Mamba-7B, which does not fit float32 here. |
@@ -243,7 +242,7 @@ largest size this machine holds at float32.
 
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
-| `NFKMLXGemma3` | trainable at 270M, 1B, 4B; offline at 12B and 27B | LoRA | **internal** | `NFKMLXTranslateGemma.fineTune` already LoRA-adapts a Gemma 3 net from a float32 load. |
+| `NFKMLXGemma3` | ships at 270M, 1B, 4B; offline at 12B and 27B | LoRA | public | The `labels=` loss of `Gemma3ForCausalLM` within 1e-5, through `NFKMLXGemma3Language.fineTune`. LoRA on `q_proj` and `v_proj`, PEFT's default for `gemma3_text`. |
 | `NFKMLXGemma4VisionNet` | trainable | probe | internal | Its projections are `NFKGemmaClippableLinear`, which LoRA cannot adapt, so a head over the pooled soft tokens is the level. |
 | `NFKMLXGemma4AudioNet` | trainable | probe | internal | The same limit. Google publishes no training code, so the objective would be this package's, on the CLIP-probe precedent. |
 | `NFKMLXGemma3n` | offline | — | internal | E2B is 10 GB and E4B is 16 GB, and the per-layer embedding table dominates the working set. |
@@ -387,10 +386,9 @@ Ordered by what a session gets per unit of effort, and grounded in what the tria
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
    DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other
    segmenters remain.
-3. **Reachability for the language decoders.** The dense Qwen and Gemma 3 decoders are LoRA-feasible
-   at 4B and under and have no public builder. That is a visibility change plus a recipe, and it is the
-   largest single piece of demand. The hybrid decoder's builder (`makeNet`, `loadWeights`,
-   `network(directoryURL:)`) is public; its recipe remains.
+3. **Reachability for the language decoders.** The dense Qwen, Qwen3.5 hybrid, and Gemma 3 decoders
+   ship LoRA recipes at 4B and under. `NFKMLXGemma2Net` and the speech and vision-language decoders
+   that are trainable at LoRA remain.
 4. **Parakeet's transducer loss.** The only genuinely new numerical work in the whole ledger.
    `TDTLossPytorch` is pure PyTorch and portable, so it is a forward-probability recursion to write
    rather than a blocked path.

@@ -118,6 +118,15 @@ rests on two tokens.
   bf16 and are held to their released headers by shape through the 4B's configuration reader —
   decoder, vision tower, and projector together, 1065 / 1247 tensors, 0 missing, 0 mismatched,
   0 unaccounted. Gemma 3n is `gemma3n`, a separate family, and is refused here — `NFKMLXGemma3n` runs it.
+  **Customization ships** at 270M, 1B, and 4B (`NFKMLXGemma3Training.swift`):
+  `NFKMLXGemma3Language.fineTune` adapts `q_proj` and `v_proj` with LoRA, PEFT's default for
+  `gemma3_text`, over `NFKMLXCausalLanguageObjective`. Measured against transformers 5.16's
+  `Gemma3ForCausalLM` (`run_reference.py gemma3_loss`, tied, a 4-position window over 8 tokens):
+  4.7426586 vs 4.742659 with the prompt masked, 4.79832 vs 4.7983203 without, the forward on the
+  reference's weights within 1.5e-6. `makeNet`, `loadWeights(into:fromDirectory:precision:)`,
+  `network(directoryURL:precision:)`, and `network(weightsURL:configuration:)` are public;
+  `NFKMLXGemma3.model(decoder:directoryURL:precision:)` pairs an adapted decoder with its release's
+  tokenizer and vision tower, and `NFKMLXGemma3.backend(model:)` serves it. 12B and 27B stay offline.
 - `NFKMLXGemma3n` / `NFKMLXGemma3nNet` / `NFKMLXGemma3nAudioNet` / `NFKMLXGemma3nVisionNet` — Gemma 3n,
   tri-modal and end to end, at reference parity on the released E2B weights for every stage, each on
   its first numeric run. A distinct architecture from Gemma 3 and Gemma 4, sharing the family name and

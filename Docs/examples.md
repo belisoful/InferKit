@@ -4172,6 +4172,37 @@ Nemotron Nano 2 uses the identical recipe through `NFKMLXNemotronH` — `configu
 target (the attention query and value projections, its Mamba layers and feed-forwards frozen). Swap the
 type name and the same four calls apply.
 
+### Adapting a Qwen, Qwen3.5, or Gemma 3 decoder to your own conversations
+
+The dense decoder (`NFKMLXLanguage`: Qwen3, Qwen2.5, Llama, Mistral), the Qwen3.5 hybrid
+(`NFKMLXHybridLanguage`), and Gemma 3 (`NFKMLXGemma3Language`) take one recipe at 4B and under. Each
+example is a token sequence and the count of its leading prompt tokens. The prompt is context and is
+not scored, as transformers' `labels=-100` leaves it; a count of 0 scores the whole sequence. LoRA
+adapts the attention query and value projections, PEFT's default for these architectures; the hybrid
+also adapts its recurrence's input and output projections.
+
+```swift
+let net = try NFKMLXLanguage.network(directoryURL: releaseDirectory)       // float32, what LoRA adapts
+let tokenizer = NFKMLXLanguage.tokenizer(directoryURL: releaseDirectory)!
+let examples = myConversations.map { turn -> (tokens: MLXArray, promptLength: Int) in
+    let prompt = tokenizer.encode(turn.prompt).map(\.int32Value)       // rendered through the chat template
+    let reply = tokenizer.encode(turn.reply).map(\.int32Value)
+    return (MLXArray(prompt + reply), prompt.count)
+}
+try NFKMLXLanguage.fineTune(net, examples: { examples[$0 % examples.count] }, rank: 8, steps: 500)
+
+try NFKMLXLoRA.merge(into: net)
+let chat = try NFKMLXLanguage.backend(network: net, directoryURL: releaseDirectory)
+try NFKMLXWeights.save(net, to: tuned)                     // reloads through network(weightsURL:configuration:)
+```
+
+The hybrid takes the same calls on `NFKMLXHybridLanguage`, and reads its tokenizer through
+`NFKMLXLanguage.tokenizer(directoryURL:)`. Gemma 3 builds its tokens with
+`NFKMLXGemma3Model.chatTokens(messages:)`, trains through `NFKMLXGemma3Language.fineTune`, and serves
+the adapted decoder through `NFKMLXGemma3.backend(model:)` over
+`NFKMLXGemma3.model(decoder:directoryURL:)`. `precision: .bfloat16` computes the passes in bfloat16 and
+is off by default.
+
 ### Adapting a decision model to your own decisions
 
 Laya's own README says the base checkpoints are near chance on a new decision task and that the

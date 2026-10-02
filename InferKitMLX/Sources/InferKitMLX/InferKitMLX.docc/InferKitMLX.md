@@ -629,6 +629,10 @@ limits.
 - ``NFKMLXGraniteObjective``
 - ``NFKMLXNemotronHNet``
 - ``NFKMLXNemotronObjective``
+- ``NFKMLXLanguageNet``
+- ``NFKMLXHybridLanguageNet``
+- ``NFKMLXGemma3Net``
+- ``NFKMLXCausalLanguageObjective``
 
 ### Chat templates
 
