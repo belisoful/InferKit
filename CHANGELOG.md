@@ -468,6 +468,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   initialization. `referenceBatchSize` and `referenceAccumulationSteps` are the reference loader's batch.
 - `NFKMLXTrainingData.speechLevelNormalized(_:)` scales a recording as the reference loader does.
 
+#### MossFormer2 SE and FRCRN enhance a clip as ClearerVoice's inference does
+
+- The MossFormer2 SE backend decodes a clip longer than 20 s in 4 s windows at a 3 s stride and keeps
+  each window less 0.5 s at its inner edges, as ClearerVoice's `decode_one_audio_mossformer2_se_48k`
+  does. It previously ran the whole clip through the network, whose input normalization and global
+  attention read the whole sequence.
+- `NFKMLXMossFormer2Configuration.oneTimeDecodeSeconds` and `decodeWindowSeconds` are the reference's
+  decode settings. `decodeWindow` and `decodeStride` are the window and the stride in samples.
+- The MossFormer2 SE and FRCRN backends normalize a clip's level with `audio_norm` before decoding and
+  restore it after, as ClearerVoice's inference reader does. They previously decoded the clip at its
+  own level, which moved FRCRN's output 16% and MossFormer2 SE's 0.5% from the reference's.
+
 #### The Demucs denoiser trains on a consumer's own recordings
 
 - `NFKMLXDenoiser.fineTune` trains every parameter on noisy and clean batches, as facebookresearch/

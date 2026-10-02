@@ -20,6 +20,13 @@ public extension NFKMLXTrainingData {
     /// samples above the mean power is −25 dBFS. Noisy and clean recordings are each scaled on their
     /// own. Introduced in InferKit 0.4.0.
     static func speechLevelNormalized(_ samples: [Float]) -> [Float] {
+        speechLevelNormalization(samples).samples
+    }
+
+    /// `audio_norm` together with the factor it returns, `1 / (first · second + 1e-6)`. ClearerVoice's
+    /// inference reader normalizes each recording this way before decoding and multiplies the decoded
+    /// output by the factor, which restores the recording's level.
+    internal static func speechLevelNormalization(_ samples: [Float]) -> (samples: [Float], restoringScale: Double) {
         let target = pow(10, -25.0 / 20)
         var x = samples.map(Double.init)
         let rms = (x.reduce(0) { $0 + $1 * $1 } / Double(max(x.count, 1))).squareRoot()
@@ -30,7 +37,7 @@ public extension NFKMLXTrainingData {
         let loud = power.filter { $0 > mean }
         let active = (loud.reduce(0, +) / Double(max(loud.count, 1))).squareRoot()
         let second = target / (active + 1e-6)
-        return x.map { Float($0 * second) }
+        return (x.map { Float($0 * second) }, 1 / (first * second + 1e-6))
     }
 }
 

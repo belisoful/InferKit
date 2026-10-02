@@ -128,6 +128,42 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `~/.inferkit-validation/llmvenv` (needs `rotary_embedding_torch` + `torchinfo`); the parity test feeds
   the recorded feature to isolate the backbone from the fbank. The SR sibling is `NFKMLXMossFormer2SRNet`
   below. Registered under `mossformer2-se`.
+  **Long clips decode in windows**, as `decode_one_audio_mossformer2_se_48k` decodes them. The input
+  GroupNorm and FLASH's linear attention read the whole sequence they are given, so a one-pass decode
+  of a long clip differs from the windowed one.
+  - `NFKMLXMossFormer2Configuration` carries the decode values of ClearerVoice's
+    `config/inference/MossFormer2_SE_48K.yaml`: `oneTimeDecodeSeconds` 20 and `decodeWindowSeconds` 4.
+  - A clip up to 20 s decodes in one pass. A longer one is zero-padded onto the decoder's grid: a
+    192,000-sample window and an `int(0.75 · window)` = 144,000-sample stride. Each window is enhanced on
+    its own, and `NFKMLXMossFormer2Backend.stitched` keeps it less `give_up_length = (window − stride) / 2`
+    = 24,000 samples at each inner edge. The output is trimmed to the input length, as ClearerVoice's
+    caller trims it.
+  - A clip already on the grid (`(t − window) % stride == 0`) gets no padding. No window writes its last
+    24,000 samples, so they stay zero in the reference and in the port.
+  - The oracle's long-clip case runs the reference's own decoder (`utils/decode.py` of
+    `IK_MOSSFORMER2_TRAIN_SRC`, with its decode settings from that tree's inference yaml) with
+    `kaldi.fbank` wrapped to dither 0. The clip is 22.5 s, and its loudness and noise level step every
+    1.5 s and 2.5 s, so each window's statistics differ from the whole clip's. The decoder's one-pass
+    output on the same clip is recorded as the control. Measured on the M1 at float32: the windowed
+    decode **0.9999999999996** against the reference's, and 0.9951 against the one-pass control.
+  **The backend follows ClearerVoice's reader around the decoder** (`NFKMLXMossFormer2Backend.restore`).
+  The training tree's `inference.py` reads each recording through `dataloader.audioread`, and ClearerVoice's
+  package reader returns the same `scalars`.
+  - The reader normalizes the recording with `audio_norm` at its own rate
+    (`NFKMLXTrainingData.speechLevelNormalization`, the training loader's normalization with its returned
+    factor `1 / (first · second + 1e-6)`), then resamples it to 48 kHz.
+  - After decoding, the output is multiplied by that factor, which restores the recording's level.
+  - The fbank is level-dependent, and the input GroupNorm does not cancel a level change. Until
+    2026-10-02 the backend fed the clip at its own level, so the network read features unlike the ones
+    the reference's inference gives it.
+  - The reference resamples with `librosa.resample`; the backend uses `NFKMLXAudioRate`. Parity is
+    measured at 48 kHz, where neither resamples.
+  - The oracle's reader case runs `audio_norm` → the decoder → the factor on both clips (`reader_output`,
+    `long_reader_output`). It also records the decoder's output on the short clip at its own level
+    (`decoder_output`), which matches the hand-built `output` and is the control. Measured on the M1 at
+    float32, as relative L2 error: the one-second clip **1.6e-6** and the 22.5 s clip **1.4e-6** (cosines
+    0.9999999999997 and 0.9999999999995). The control, the decoder at the clip's own level, is 4.9e-3
+    from the reader's output.
   **Customization ships** at `full` (`NFKMLXMossFormer2Training.swift`), measured against
   ClearerVoice-Studio at 6b3774d, `train/speech_enhancement` (`run_reference.py mossformer2_training`,
   the `llm` env, `IK_MOSSFORMER2_TRAIN_SRC`), on the released checkpoint. The training tree's
@@ -370,6 +406,21 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXComplexSTFT` gained `centered: false` for it. The FSMN's `[C, 1, order, 1]` depthwise memory
   loads as a 1-D `[C, order, 1]` convolution; the transposed convolutions through `(1, 2, 3, 0)`.
   `+register` under `frcrn`; weights `alibabasglab/FRCRN_SE_16K/last_best_checkpoint.pt` (161 MB).
+  **The backend follows ClearerVoice's reader around the decoder** (`NFKMLXFRCRNBackend.restore`), as the
+  MossFormer2 SE backend does.
+  - The reader normalizes the recording with `audio_norm` at its own rate
+    (`NFKMLXTrainingData.speechLevelNormalization`), then resamples it to 16 kHz.
+  - After decoding, the output is multiplied by the factor `audio_norm` returned, which restores the
+    recording's level.
+  - Until 2026-10-02 the backend fed the clip at its own level. The network is not level-invariant, so
+    its output differed from the reference inference's.
+  - The oracle's reader case (`IK_FRCRN_TRAIN_SRC`) runs `audio_norm` → the tree's own
+    `decode_one_audio_frcrn_se_16k` → the factor (`reader_output`). It also records the decoder's output
+    at the clip's own level (`decoder_output`), which matches the hand-built `output` and is the
+    control. Measured on the M1 at float32, on the CMGAN noisy clip: relative L2 error **3.4e-6**
+    against the reader's output. The control, the decoder at the clip's own level, is 0.164 from it.
+  - Open: a clip longer than `one_time_decode_length` (120 s) decodes in 1 s windows in the reference.
+    The backend pads it and decodes it in one pass.
   **Customization ships** at `full` (`NFKMLXFRCRNTraining.swift`), measured against ClearerVoice-Studio
   at 6b3774d, `train/speech_enhancement` (`run_reference.py frcrn_training`, the `llm` env,
   `IK_FRCRN_TRAIN_SRC`), on the released checkpoint.

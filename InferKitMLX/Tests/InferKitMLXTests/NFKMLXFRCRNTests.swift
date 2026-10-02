@@ -108,4 +108,43 @@ final class NFKMLXFRCRNTests: XCTestCase {
         print("VALIDATION PARITY frcrn: " + seams.map { "\($0.0) \($0.1)" }.joined(separator: ", "))
         for (name, value) in seams { XCTAssertGreaterThan(value, 0.999, name) }
     }
+
+    /// `‖a − b‖ / ‖b‖` in double precision, which a level error moves and a cosine does not.
+    private static func relativeError(_ a: [Float], _ b: [Float]) -> Double {
+        var difference = 0.0, norm = 0.0
+        for i in 0 ..< min(a.count, b.count) {
+            difference += pow(Double(a[i]) - Double(b[i]), 2); norm += Double(b[i]) * Double(b[i])
+        }
+        return (difference / (norm + 1e-300)).squareRoot()
+    }
+
+    /// The backend's whole path against the reference's `inference.py`: the reader's `audio_norm`, the
+    /// decoder, and the output scaled back by the factor `audio_norm` returned. The reference decoder's
+    /// output on the clip at its own level is the control.
+    func testReaderLevelNormalizationMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let config = NFKMLXValidationConfig.environment
+        guard let recordPath = config["IK_PARITY_FRCRN"], let checkpoint = config["IK_VAL_FRCRN"] else {
+            throw XCTSkip("set IK_PARITY_FRCRN and IK_VAL_FRCRN (run_reference.py frcrn)")
+        }
+        let record = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        guard let decoderOutput = record["decoder_output"], let readerOutput = record["reader_output"] else {
+            throw XCTSkip("the record predates the reader case; re-record run_reference.py frcrn")
+        }
+        let waveform = try XCTUnwrap(record["waveform"]).asArray(Float.self)
+        let decoded = decoderOutput.asArray(Float.self), expected = readerOutput.asArray(Float.self)
+        // The hand-built pipeline and the reference's own decoder agree.
+        let handBuilt = try XCTUnwrap(record["output"]).asArray(Float.self)
+        XCTAssertLessThan(Self.relativeError(decoded, Array(handBuilt.prefix(waveform.count))), 1e-5)
+
+        let net = NFKMLXFRCRN.makeNet()
+        try NFKMLXFRCRN.loadWeights(into: net, from: URL(fileURLWithPath: checkpoint))
+        let restored = NFKMLXFRCRNBackend.restore(waveform, sampleRate: net.configuration.sampleRate, net: net)
+        XCTAssertEqual(restored.count, expected.count)
+        let error = Self.relativeError(restored, expected)
+        let control = Self.relativeError(decoded, expected)
+        print("VALIDATION PARITY frcrn: reader relative error \(error), control (decoder at the clip's own level) \(control)")
+        XCTAssertLessThan(error, 1e-3, "the clip matches the reference reader")
+        XCTAssertLessThan(error * 10, control, "the normalization changes the output beyond the port's error")
+    }
 }

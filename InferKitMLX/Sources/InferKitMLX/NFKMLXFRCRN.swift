@@ -374,10 +374,7 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let (samples, rate) = Self.audio(from: request) else { throw NFKMLXError.unsupportedInput }
         let configuration = holder.net.configuration
-        let matched = NFKMLXAudioRate.matched(samples, from: rate, to: configuration.sampleRate)
-        let enhanced = Self.enhance(matched, net: holder.net)
-        eval(enhanced)
-        let stream = enhanced.reshaped([enhanced.shape.last!]).asArray(Float.self)
+        let stream = Self.restore(samples, sampleRate: rate, net: holder.net)
         let url = outputDirectory.appendingPathComponent("frcrn-\(UUID().uuidString).wav")
         try NFKMLXWaveFile.write(samples: stream, sampleRate: configuration.sampleRate, to: url)
         let asset = NFKAudioAsset(fileURL: url, durationSeconds: Double(stream.count) / Double(configuration.sampleRate),
@@ -413,6 +410,18 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
         let signal = padded.withUnsafeBufferPointer { MLXArray($0, [1, padded.count]) }
         let (real, imaginary) = stft(configuration).transformComplex(signal)      // [1, bins, frames]
         return NFKFRCRNComplex(real: real.expandedDimensions(axis: 3), imaginary: imaginary.expandedDimensions(axis: 3))
+    }
+
+    /// ClearerVoice's inference path end to end. Its reader normalizes the recording with `audio_norm`
+    /// at the recording's own rate, then resamples it to 16 kHz. The decoder enhances it, and the reader
+    /// multiplies the output by the factor `audio_norm` returned. The network is not level-invariant,
+    /// so it reads the normalized clip. Exposed for the parity harness.
+    static func restore(_ samples: [Float], sampleRate: Int, net: NFKMLXFRCRNNet) -> [Float] {
+        let (normalized, restoringScale) = NFKMLXTrainingData.speechLevelNormalization(samples)
+        let matched = NFKMLXAudioRate.matched(normalized, from: sampleRate, to: net.configuration.sampleRate)
+        let enhanced = enhance(matched, net: net)
+        eval(enhanced)
+        return enhanced.reshaped([enhanced.shape.last!]).asArray(Float.self).map { Float(Double($0) * restoringScale) }
     }
 
     /// `inference` over the padded clip, trimmed back to the input length.

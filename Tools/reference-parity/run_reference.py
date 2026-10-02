@@ -10358,8 +10358,17 @@ def run_frcrn(image, checkpoint):
     stride), then `model.inference` runs it whole. Seams (batch dropped, `[C, D, T, 2]`): the conv-STFT
     spectrum, encoder 0 before and after its squeeze-excite, the bottleneck FSMN, decoder 0, the first
     UNet's output, the combined mask, the masked spectrum, and the waveform.
+
+    The reader case follows `inference.py` of IK_FRCRN_TRAIN_SRC (the `train/speech_enhancement` tree):
+    its `DataReader` normalizes the float64 recording with `dataloader.audio_norm` and casts it to
+    float32, the tree's own `decode_one_audio_frcrn_se_16k` (`utils/decode.py`, settings from
+    `config/inference/FRCRN_SE_16K.yaml`) enhances it, and the output, trimmed to the input length, is
+    multiplied by the factor `audio_norm` returned. The decoder's output on the clip at its own level
+    is the control, and matches the hand-built path.
     """
     import sys
+    import types
+    import yaml
     import torchaudio
     sys.path.insert(0, os.environ["IK_FRCRN_SRC"])
     from models.frcrn_se.frcrn import DCCRN
@@ -10405,7 +10414,28 @@ def run_frcrn(image, checkpoint):
     for h in handles:
         h.remove()
     assert torch.allclose(reference, est_wav[0]), "the staged path must reproduce inference()"
+
+    train_source = os.environ["IK_FRCRN_TRAIN_SRC"]
+    _stub_missing({"pesq": ["pesq"]})
+    package = types.ModuleType("utils")
+    package.__path__ = [os.path.join(train_source, "utils")]
+    sys.modules["utils"] = package
+    import utils.decode as reference_decode
+    sys.path.insert(0, train_source)
+    from dataloader.dataloader import audio_norm
+    with open(os.path.join(train_source, "config", "inference", "FRCRN_SE_16K.yaml")) as f:
+        decode_args = argparse.Namespace(**yaml.safe_load(f))
+    clip = noisy[0].numpy()
+    with torch.no_grad():
+        decoder_output = reference_decode.decode_one_audio_frcrn_se_16k(model, "cpu", clip[None, :], decode_args)[:t]
+        normalized, scalar = audio_norm(clip.astype(np.float64))
+        normalized = normalized.astype(np.float32)
+        reader_output = reference_decode.decode_one_audio_frcrn_se_16k(
+            model, "cpu", normalized[None, :], decode_args)[:t] * scalar
+
     extra = {"waveform": noisy[0].contiguous(), "padded": padded[0].contiguous(),
+             "decoder_output": torch.from_numpy(np.asarray(decoder_output, dtype=np.float32)).contiguous(),
+             "reader_output": torch.from_numpy(np.asarray(reader_output, dtype=np.float32)).contiguous(),
              "spec": cmp_spec[0].contiguous(), "unet1": unet1_out[0].contiguous(), "mask": mask[0].contiguous(),
              "est_spec": est_spec[0].contiguous()}
     for name, value in seams.items():
@@ -14250,8 +14280,27 @@ def run_mossformer2_se(image, checkpoint):
     parity impossible). The mask applies to the unscaled spectrum, which the decoder's final division by
     32768 makes equal. Records the 180-dim network feature, the masking STFT, the encoder output, the
     first and last block outputs, the 961-bin mask, and the waveform.
+
+    The long-clip case runs a 22.5 s clip through ClearerVoice's own `decode_one_audio_mossformer2_se_48k`
+    (`utils/decode.py` of IK_MOSSFORMER2_TRAIN_SRC, the `train/speech_enhancement` tree, which carries
+    the decoder and its `utils/misc.py`). The decode settings come from that tree's
+    `config/inference/MossFormer2_SE_48K.yaml`, so the clip exceeds `one_time_decode_length` and decodes
+    in `decode_window` windows. The decoder scales the clip by 32768 itself; `kaldi.fbank` is wrapped to
+    force dither=0. The model handed to the decoder is `TestNet.forward` of `mossformer2_se_wrapper.py`:
+    the feature transposed into the MaskNet, the mask returned in a list. The output is trimmed to the
+    input length, as ClearerVoice's caller trims it. The clip's loudness and noise level change every
+    1.5 s and 2.5 s, so per-window statistics differ from the whole clip's, and the decoder's one-pass
+    path on the same clip is recorded as the control.
+
+    The reader case follows that tree's `inference.py` around the decoder, on both clips: the
+    `DataReader` normalizes the float64 recording with `dataloader.audio_norm`, casts it to float32, the
+    decoder enhances it, and the output, trimmed to the input length, is multiplied by the factor
+    `audio_norm` returned. The decoder's output on the clip at its own level is the control.
     """
     import os
+    import copy
+    import types
+    import yaml
     import torchaudio
 
     sys.path.insert(0, os.environ.get("IK_MOSSFORMER2_SE_SRC", "."))
@@ -14303,7 +14352,65 @@ def run_mossformer2_se(image, checkpoint):
     complex_spec = torch.complex(masked[..., 0], masked[..., 1])
     wav = torch.istft(complex_spec, n_fft, hop, win, window, center=False, length=samples)
 
+    train_source = os.environ["IK_MOSSFORMER2_TRAIN_SRC"]
+    _stub_missing({"pesq": ["pesq"]})
+    package = types.ModuleType("utils")
+    package.__path__ = [os.path.join(train_source, "utils")]
+    sys.modules["utils"] = package
+    import utils.decode as reference_decode
+    sys.path.insert(0, train_source)
+    from dataloader.dataloader import audio_norm
+
+    with open(os.path.join(train_source, "config", "inference", "MossFormer2_SE_48K.yaml")) as f:
+        decode_args = argparse.Namespace(**yaml.safe_load(f))
+    one_pass_args = copy.copy(decode_args)
+    one_pass_args.one_time_decode_length = 10 ** 6
+
+    long_samples = int(22.5 * sr)
+    long_t = np.arange(long_samples, dtype=np.float64) / sr
+    long_gen = np.random.default_rng(11)
+    phase = 2 * np.pi * np.cumsum(120 + 40 * np.sin(2 * np.pi * 0.07 * long_t)) / sr
+    voiced = sum(0.3 / (k + 1) * np.sin((k + 1) * phase) for k in range(5))
+    syllables = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * long_t)
+    loudness = np.repeat(long_gen.uniform(0.1, 1.0, 16), int(1.5 * sr))[:long_samples]
+    noise_level = np.repeat(long_gen.uniform(0.01, 0.15, 10), int(2.5 * sr))[:long_samples]
+    long_wave = voiced * syllables * loudness + noise_level * long_gen.standard_normal(long_samples)
+    long_wave = (0.9 * long_wave / np.abs(long_wave).max()).astype(np.float32)
+
+    def test_net(fbanks):
+        return [net(fbanks.transpose(1, 2))]
+
+    original_fbank = torchaudio.compliance.kaldi.fbank
+    def fbank_without_dither(*args, **kwargs):
+        kwargs["dither"] = 0.0
+        return original_fbank(*args, **kwargs)
+    torchaudio.compliance.kaldi.fbank = fbank_without_dither
+    def read_and_decode(clip):
+        data, scalar = audio_norm(clip.astype(np.float64))
+        data = data.astype(np.float32)
+        decoded = reference_decode.decode_one_audio_mossformer2_se_48k(test_net, "cpu", data[None, :], decode_args)
+        return decoded[:data.shape[0]] * scalar
+
+    try:
+        with torch.no_grad():
+            long_windowed = reference_decode.decode_one_audio_mossformer2_se_48k(
+                test_net, "cpu", long_wave[None, :], decode_args)[:long_samples]
+            long_one_pass = reference_decode.decode_one_audio_mossformer2_se_48k(
+                test_net, "cpu", long_wave[None, :], one_pass_args)[:long_samples]
+            short_unnormalized = reference_decode.decode_one_audio_mossformer2_se_48k(
+                test_net, "cpu", wave[None, :], decode_args)[:samples]
+            short_reader = read_and_decode(wave)
+            long_reader = read_and_decode(long_wave)
+    finally:
+        torchaudio.compliance.kaldi.fbank = original_fbank
+
     globals()["_extra"] = {
+        "long_waveform": torch.from_numpy(long_wave).contiguous(),
+        "long_output": torch.from_numpy(np.asarray(long_windowed, dtype=np.float32)).contiguous(),
+        "long_one_pass_output": torch.from_numpy(np.asarray(long_one_pass, dtype=np.float32)).contiguous(),
+        "decoder_output": torch.from_numpy(np.asarray(short_unnormalized, dtype=np.float32)).contiguous(),
+        "reader_output": torch.from_numpy(np.asarray(short_reader, dtype=np.float32)).contiguous(),
+        "long_reader_output": torch.from_numpy(np.asarray(long_reader, dtype=np.float32)).contiguous(),
         "waveform": y[0].contiguous(),
         "feature": feat.contiguous(),                                # [S, 180] the net input
         "spectrum": spec.squeeze(0).contiguous(),                    # [F, T, 2]

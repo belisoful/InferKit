@@ -45,8 +45,20 @@ public struct NFKMLXMossFormer2Configuration: Sendable {
     /// The training dropout rate, applied to every `FFConvM` output and to the FLASH attention weights;
     /// the reference's 0.1. Introduced in InferKit 0.4.0.
     public var dropout: Float
+    /// `one_time_decode_length` of ClearerVoice's `config/inference/MossFormer2_SE_48K.yaml`: a clip
+    /// longer than this many seconds decodes in windows. Introduced in InferKit 0.4.0.
+    public var oneTimeDecodeSeconds: Double
+    /// `decode_window` of the same configuration: the length, in seconds, of each window a long clip
+    /// decodes in. Introduced in InferKit 0.4.0.
+    public var decodeWindowSeconds: Double
 
     public var bins: Int { fftLen / 2 + 1 }
+
+    /// The decode window in samples, `int(sampling_rate · decode_window)`. Introduced in InferKit 0.4.0.
+    public var decodeWindow: Int { Int(Double(sampleRate) * decodeWindowSeconds) }
+
+    /// The decode stride in samples, `int(window · 0.75)`. Introduced in InferKit 0.4.0.
+    public var decodeStride: Int { Int(Double(decodeWindow) * 0.75) }
 
     /// The MossFormer2 SR 48K backbone: the same MaskNet reading an 80-band log-mel and emitting an
     /// 80-band one, with a single speaker (`conv1d_out` stays `dModel` wide).
@@ -78,6 +90,8 @@ public struct NFKMLXMossFormer2Configuration: Sendable {
         self.outChannelsFinal = fftLen / 2 + 1
         self.numSpks = 2
         self.dropout = 0.1
+        self.oneTimeDecodeSeconds = 20
+        self.decodeWindowSeconds = 4
     }
 }
 
@@ -568,10 +582,7 @@ public final class NFKMLXMossFormer2Backend: NSObject, NFKInferenceBackend {
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let (samples, sampleRate) = Self.audio(from: request) else { throw NFKMLXError.unsupportedInput }
         let config = holder.config
-        // PARITY: the fbank, mask, and STFT are defined at 48 kHz; resample a clip at another rate first.
-        let input = sampleRate == config.sampleRate ? samples
-            : NFKMLXAudioRate.matched(samples, from: sampleRate, to: config.sampleRate)
-        let enhanced = Self.enhance(input, net: holder.net, config: config)
+        let enhanced = Self.restore(samples, sampleRate: sampleRate, net: holder.net, config: config)
         let url = outputDirectory.appendingPathComponent("mossformer2-\(UUID().uuidString).wav")
         try NFKMLXWaveFile.write(samples: enhanced, sampleRate: config.sampleRate, to: url)
         let asset = NFKAudioAsset(fileURL: url, durationSeconds: Double(enhanced.count) / Double(config.sampleRate),
@@ -583,9 +594,65 @@ public final class NFKMLXMossFormer2Backend: NSObject, NFKInferenceBackend {
     /// before the fbank, so the network reads features of 16-bit-range audio.
     static let waveScale: Float = 32768
 
-    /// The full path: Kaldi fbank → MaskNet → real mask applied to the hamming STFT (phase kept) →
-    /// iSTFT. Exposed for the parity harness (which can feed a recorded feature instead).
+    /// ClearerVoice's inference path end to end. Its reader normalizes the recording with `audio_norm`
+    /// at the recording's own rate, then resamples it to 48 kHz. The decoder enhances it, and the reader
+    /// multiplies the output by the factor `audio_norm` returned. The fbank is level-dependent, so the
+    /// network reads the normalized clip. Exposed for the parity harness.
+    static func restore(_ samples: [Float], sampleRate: Int, net: NFKMLXMossFormer2SENet,
+                        config: NFKMLXMossFormer2Configuration) -> [Float] {
+        let (normalized, restoringScale) = NFKMLXTrainingData.speechLevelNormalization(samples)
+        // PARITY: the fbank, mask, and STFT are defined at 48 kHz; resample a clip at another rate first.
+        let input = sampleRate == config.sampleRate ? normalized
+            : NFKMLXAudioRate.matched(normalized, from: sampleRate, to: config.sampleRate)
+        return enhance(input, net: net, config: config).map { Float(Double($0) * restoringScale) }
+    }
+
+    /// `decode_one_audio_mossformer2_se_48k`: a clip up to `oneTimeDecodeSeconds` long decodes in one
+    /// pass, and a longer one in `decodeWindow` windows (`stitched`). The input GroupNorm and FLASH's
+    /// linear attention read the whole sequence they are given, so the two paths differ on a long clip.
     static func enhance(_ samples: [Float], net: NFKMLXMossFormer2SENet, config: NFKMLXMossFormer2Configuration) -> [Float] {
+        guard Double(samples.count) > Double(config.sampleRate) * config.oneTimeDecodeSeconds else {
+            return enhanceSegment(samples, net: net, config: config)
+        }
+        return stitched(samples, config: config) { enhanceSegment($0, net: net, config: config) }
+    }
+
+    /// The decoder's zero padding onto its window grid: up to the window, up to window + stride, or
+    /// (past that) by `t − ⌊(t − window) / stride⌋ · stride` whenever the clip is off the stride grid.
+    static func decodePadding(count t: Int, window: Int, stride: Int) -> Int {
+        if t < window {
+            return window - t
+        }
+        if t < window + stride {
+            return window + stride - t
+        }
+        return (t - window) % stride != 0 ? t - (t - window) / stride * stride : 0
+    }
+
+    /// The decoder's windowed path. Zero-pads the clip onto the window grid, enhances each window at a
+    /// `decodeStride` hop, and keeps each window's output less `give_up_length = (window − stride) / 2`
+    /// samples at every inner edge. The first window keeps its leading edge. A clip already on the grid
+    /// keeps the decoder's zeros over its last `give_up_length` samples, which no window writes. The
+    /// result is trimmed to the input length, as ClearerVoice's caller trims it.
+    static func stitched(_ samples: [Float], config: NFKMLXMossFormer2Configuration,
+                         segment enhance: ([Float]) -> [Float]) -> [Float] {
+        let window = config.decodeWindow, stride = config.decodeStride
+        let giveUp = (window - stride) / 2
+        let padded = samples + [Float](repeating: 0, count: decodePadding(count: samples.count, window: window, stride: stride))
+        var output = [Float](repeating: 0, count: padded.count)
+        var start = 0
+        while start + window <= padded.count {
+            let enhanced = enhance(Array(padded[start ..< start + window]))
+            let kept = start == 0 ? 0 ..< window - giveUp : giveUp ..< window - giveUp
+            output.replaceSubrange(start + kept.lowerBound ..< start + kept.upperBound, with: enhanced[kept])
+            start += stride
+        }
+        return Array(output.prefix(samples.count))
+    }
+
+    /// One decoder pass: Kaldi fbank → MaskNet → real mask applied to the hamming STFT (phase kept) →
+    /// iSTFT. Exposed for the parity harness (which can feed a recorded feature instead).
+    static func enhanceSegment(_ samples: [Float], net: NFKMLXMossFormer2SENet, config: NFKMLXMossFormer2Configuration) -> [Float] {
         let feature = NFKMLXKaldiFbank.features(samples: samples.map { $0 * waveScale }, config: config)   // [1, S, 180]
         let mask = net(feature)                                                     // [1, S, 961]
         let stft = NFKMossSTFT(nFFT: config.fftLen, hop: config.winInc)
