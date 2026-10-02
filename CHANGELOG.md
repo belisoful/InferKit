@@ -491,6 +491,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The MossFormer2 SE and FRCRN backends normalize a clip's level with `audio_norm` before decoding and
   restore it after, as ClearerVoice's inference reader does. They previously decoded the clip at its
   own level, which moved FRCRN's output 16% and MossFormer2 SE's 0.5% from the reference's.
+- The FRCRN backend decodes a clip longer than 120 s in 1 s windows at a 0.75 s stride, as
+  `decode_one_audio_frcrn_se_16k` does. `NFKMLXFRCRNConfiguration.oneTimeDecodeSeconds` is the
+  reference's one-pass limit.
 
 #### The Demucs denoiser trains on a consumer's own recordings
 

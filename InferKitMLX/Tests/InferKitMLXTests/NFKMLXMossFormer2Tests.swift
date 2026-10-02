@@ -110,17 +110,16 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
         XCTAssertEqual(config.decodeStride, 144_000, "0.75 of the window")
     }
 
-    /// `decode_one_audio_mossformer2_se_48k`'s window plan through an identity window, on a grid of a
-    /// 400-sample window, a 300-sample stride, and a 50-sample give-up length.
+    /// ClearerVoice's window plan through an identity window, on a grid of a 400-sample window, a
+    /// 300-sample stride, and a 50-sample give-up length.
     func testWindowedDecodeStitchesLikeTheReference() {
-        let config = NFKMLXMossFormer2Configuration(sampleRate: 100)
-        XCTAssertEqual(NFKMLXMossFormer2Backend.decodePadding(count: 300, window: 400, stride: 300), 100)
-        XCTAssertEqual(NFKMLXMossFormer2Backend.decodePadding(count: 500, window: 400, stride: 300), 200)
-        XCTAssertEqual(NFKMLXMossFormer2Backend.decodePadding(count: 2550, window: 400, stride: 300), 450)
+        XCTAssertEqual(NFKMLXClearerVoiceDecoding.padding(count: 300, window: 400, stride: 300), 100)
+        XCTAssertEqual(NFKMLXClearerVoiceDecoding.padding(count: 500, window: 400, stride: 300), 200)
+        XCTAssertEqual(NFKMLXClearerVoiceDecoding.padding(count: 2550, window: 400, stride: 300), 450)
 
         let offGrid = (0 ..< 2550).map { Float($0 + 1) }
         var windows = 0
-        let whole = NFKMLXMossFormer2Backend.stitched(offGrid, config: config) { segment in
+        let whole = NFKMLXClearerVoiceDecoding.stitched(offGrid, window: 400, stride: 300) { segment in
             windows += 1
             XCTAssertEqual(segment.count, 400)
             return segment
@@ -131,7 +130,7 @@ final class NFKMLXMossFormer2Tests: XCTestCase {
         // (2500 − 400) is a multiple of the stride, so the decoder pads nothing and no window writes
         // the last give-up length.
         let onGrid = (0 ..< 2500).map { Float($0 + 1) }
-        let trimmed = NFKMLXMossFormer2Backend.stitched(onGrid, config: config) { $0 }
+        let trimmed = NFKMLXClearerVoiceDecoding.stitched(onGrid, window: 400, stride: 300) { $0 }
         XCTAssertEqual(Array(trimmed.prefix(2450)), Array(onGrid.prefix(2450)))
         XCTAssertEqual(Array(trimmed.suffix(50)), [Float](repeating: 0, count: 50))
     }

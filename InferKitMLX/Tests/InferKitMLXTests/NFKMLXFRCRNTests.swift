@@ -147,4 +147,45 @@ final class NFKMLXFRCRNTests: XCTestCase {
         XCTAssertLessThan(error, 1e-3, "the clip matches the reference reader")
         XCTAssertLessThan(error * 10, control, "the normalization changes the output beyond the port's error")
     }
+
+    /// The configuration carries `config/inference/FRCRN_SE_16K.yaml`'s decode values.
+    func testDecodeGridFollowsTheReferenceConfiguration() {
+        let configuration = NFKMLXFRCRNConfiguration()
+        XCTAssertEqual(configuration.oneTimeDecodeSeconds, 120)
+        XCTAssertEqual(configuration.decodeWindow, 16_000, "1 s at 16 kHz")
+        XCTAssertEqual(configuration.decodeStride, 12_000, "0.75 of the window")
+    }
+
+    /// A 12.3 s clip through `enhance` against the reference's own `decode_one_audio_frcrn_se_16k`, both
+    /// with the one-pass limit the record carries, which sends the clip down the windowed path. The
+    /// reference's one-pass decode of the same clip is the control.
+    func testLongClipDecodesInWindowsLikeTheReference() throws {
+        try requireMLXRuntime()
+        let config = NFKMLXValidationConfig.environment
+        guard let recordPath = config["IK_PARITY_FRCRN"], let checkpoint = config["IK_VAL_FRCRN"] else {
+            throw XCTSkip("set IK_PARITY_FRCRN and IK_VAL_FRCRN (run_reference.py frcrn)")
+        }
+        let record = try loadArrays(url: URL(fileURLWithPath: recordPath))
+        guard let waveform = record["long_waveform"], let windowed = record["long_output"],
+              let onePass = record["long_one_pass_output"], let threshold = record["long_one_time_decode_length"] else {
+            throw XCTSkip("the record predates the long-clip case; re-record run_reference.py frcrn")
+        }
+        var configuration = NFKMLXFRCRNConfiguration()
+        configuration.oneTimeDecodeSeconds = Double(threshold.item(Float.self))
+        let net = NFKMLXFRCRN.makeNet(configuration)
+        try NFKMLXFRCRN.loadWeights(into: net, from: URL(fileURLWithPath: checkpoint))
+        let samples = waveform.asArray(Float.self)
+        XCTAssertGreaterThan(Double(samples.count), Double(configuration.sampleRate) * configuration.oneTimeDecodeSeconds)
+
+        let enhanced = NFKMLXFRCRNBackend.enhance(samples, net: net)
+        eval(enhanced)
+        let mine = enhanced.reshaped([-1]).asArray(Float.self)
+        let expected = windowed.asArray(Float.self)
+        XCTAssertEqual(mine.count, expected.count)
+        let error = Self.relativeError(mine, expected)
+        let control = Self.relativeError(mine, onePass.asArray(Float.self))
+        print("VALIDATION PARITY frcrn: long clip windowed relative error \(error), against the one-pass reference \(control)")
+        XCTAssertLessThan(error, 1e-3, "the windowed decode matches the reference")
+        XCTAssertLessThan(error * 10, control, "the port follows the windowed decode, not the one-pass one")
+    }
 }

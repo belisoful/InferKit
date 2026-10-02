@@ -135,7 +135,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     `config/inference/MossFormer2_SE_48K.yaml`: `oneTimeDecodeSeconds` 20 and `decodeWindowSeconds` 4.
   - A clip up to 20 s decodes in one pass. A longer one is zero-padded onto the decoder's grid: a
     192,000-sample window and an `int(0.75 · window)` = 144,000-sample stride. Each window is enhanced on
-    its own, and `NFKMLXMossFormer2Backend.stitched` keeps it less `give_up_length = (window − stride) / 2`
+    its own, and `NFKMLXClearerVoiceDecoding.stitched` keeps it less `give_up_length = (window − stride) / 2`
     = 24,000 samples at each inner edge. The output is trimmed to the input length, as ClearerVoice's
     caller trims it.
   - A clip already on the grid (`(t − window) % stride == 0`) gets no padding. No window writes its last
@@ -419,8 +419,21 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     at the clip's own level (`decoder_output`), which matches the hand-built `output` and is the
     control. Measured on the M1 at float32, on the CMGAN noisy clip: relative L2 error **3.4e-6**
     against the reader's output. The control, the decoder at the clip's own level, is 0.164 from it.
-  - Open: a clip longer than `one_time_decode_length` (120 s) decodes in 1 s windows in the reference.
-    The backend pads it and decodes it in one pass.
+  **Long clips decode in windows**, as `decode_one_audio_frcrn_se_16k` decodes them. The FSMN memories and
+  the squeeze-excites' global pools read the whole input, so a one-pass decode of a long clip differs from
+  the windowed one.
+  - `NFKMLXFRCRNConfiguration.oneTimeDecodeSeconds` is 120, `one_time_decode_length` of
+    `config/inference/FRCRN_SE_16K.yaml`. `decodeWindow` (16,000) and `decodeStride` (12,000) are its
+    `decode_window` of 1 s and the decoder's `int(0.75 · window)`.
+  - A longer clip runs `inference` window by window over the padded clip through
+    `NFKMLXClearerVoiceDecoding.stitched`, the grid MossFormer2 SE shares, with a 2,000-sample give-up
+    length. A shorter clip runs `inference` once over the padded clip.
+  - The oracle's long-clip case runs the tree's own decoder on a 12.3 s clip with `one_time_decode_length`
+    lowered to 5 s (`long_one_time_decode_length`), so the clip takes the windowed path. The threshold
+    only chooses the path. At the released 120 s, the one-pass control would be a multi-gigabyte CPU run.
+    The clip's loudness and noise level step every 1.5 s and 2.5 s. The decoder's one-pass output under
+    the released limit is the control. Measured on the M1 at float32: relative L2 error **1.9e-6**
+    against the windowed reference, and 0.090 against the one-pass control.
   **Customization ships** at `full` (`NFKMLXFRCRNTraining.swift`), measured against ClearerVoice-Studio
   at 6b3774d, `train/speech_enhancement` (`run_reference.py frcrn_training`, the `llm` env,
   `IK_FRCRN_TRAIN_SRC`), on the released checkpoint.

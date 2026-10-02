@@ -10525,7 +10525,14 @@ def run_frcrn(image, checkpoint):
     `config/inference/FRCRN_SE_16K.yaml`) enhances it, and the output, trimmed to the input length, is
     multiplied by the factor `audio_norm` returned. The decoder's output on the clip at its own level
     is the control, and matches the hand-built path.
+
+    The long-clip case runs a 12.3 s clip through the same decoder with `one_time_decode_length` lowered
+    to 5 s, which sends it down the windowed path (1 s windows at a 0.75 s stride). The windowing reads
+    the threshold only to choose the path, and the released 120 s limit would make the one-pass control a
+    multi-gigabyte CPU run. The clip's loudness and noise level step every 1.5 s and 2.5 s, and the
+    decoder's one-pass output under the released limit is the control.
     """
+    import copy
     import sys
     import types
     import yaml
@@ -10593,9 +10600,32 @@ def run_frcrn(image, checkpoint):
         reader_output = reference_decode.decode_one_audio_frcrn_se_16k(
             model, "cpu", normalized[None, :], decode_args)[:t] * scalar
 
+    long_threshold = 5
+    long_samples = int(12.3 * rate)
+    long_t = np.arange(long_samples, dtype=np.float64) / rate
+    long_gen = np.random.default_rng(13)
+    phase = 2 * np.pi * np.cumsum(120 + 40 * np.sin(2 * np.pi * 0.07 * long_t)) / rate
+    voiced = sum(0.3 / (k + 1) * np.sin((k + 1) * phase) for k in range(5))
+    syllables = 0.5 + 0.5 * np.sin(2 * np.pi * 3 * long_t)
+    loudness = np.repeat(long_gen.uniform(0.1, 1.0, 9), int(1.5 * rate))[:long_samples]
+    noise_level = np.repeat(long_gen.uniform(0.01, 0.15, 5), int(2.5 * rate))[:long_samples]
+    long_wave = voiced * syllables * loudness + noise_level * long_gen.standard_normal(long_samples)
+    long_wave = (0.9 * long_wave / np.abs(long_wave).max()).astype(np.float32)
+    windowed_args = copy.copy(decode_args)
+    windowed_args.one_time_decode_length = long_threshold
+    with torch.no_grad():
+        long_windowed = reference_decode.decode_one_audio_frcrn_se_16k(
+            model, "cpu", long_wave[None, :], windowed_args)[:long_samples]
+        long_one_pass = reference_decode.decode_one_audio_frcrn_se_16k(
+            model, "cpu", long_wave[None, :], decode_args)[:long_samples]
+
     extra = {"waveform": noisy[0].contiguous(), "padded": padded[0].contiguous(),
              "decoder_output": torch.from_numpy(np.asarray(decoder_output, dtype=np.float32)).contiguous(),
              "reader_output": torch.from_numpy(np.asarray(reader_output, dtype=np.float32)).contiguous(),
+             "long_waveform": torch.from_numpy(long_wave).contiguous(),
+             "long_output": torch.from_numpy(np.asarray(long_windowed, dtype=np.float32)).contiguous(),
+             "long_one_pass_output": torch.from_numpy(np.asarray(long_one_pass, dtype=np.float32)).contiguous(),
+             "long_one_time_decode_length": torch.tensor([float(long_threshold)]),
              "spec": cmp_spec[0].contiguous(), "unet1": unet1_out[0].contiguous(), "mask": mask[0].contiguous(),
              "est_spec": est_spec[0].contiguous()}
     for name, value in seams.items():

@@ -26,9 +26,12 @@ public struct NFKMLXFRCRNConfiguration: Sendable {
     public var decoderKernels: [(Int, Int)] = [(2, 2), (5, 2), (5, 2), (5, 2), (6, 2), (5, 2), (5, 2)]
     /// The squeeze-excite bottleneck ratio.
     public var squeezeReduction = 8
-    /// `decode_one_audio_frcrn_se_16k`'s padding grid: a one-second window and a 0.75 s stride.
+    /// `decode_one_audio_frcrn_se_16k`'s window grid: a one-second window and a 0.75 s stride.
     public var decodeWindow = 16_000
     public var decodeStride = 12_000
+    /// `one_time_decode_length` of ClearerVoice's `config/inference/FRCRN_SE_16K.yaml`: a clip longer
+    /// than this many seconds decodes in `decodeWindow` windows. Introduced in InferKit 0.4.0.
+    public var oneTimeDecodeSeconds = 120.0
     public var bins: Int { fftSize / 2 + 1 }
     public var stages: Int { encoderKernels.count }
     public init() {}
@@ -393,15 +396,8 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
     /// The network's frequency memories and global pools read the padded clip, so the padding is part
     /// of the model's input rather than a convenience.
     static func padded(_ samples: [Float], configuration: NFKMLXFRCRNConfiguration) -> [Float] {
-        let t = samples.count, window = configuration.decodeWindow, stride = configuration.decodeStride
-        let pad: Int
-        if t < window {
-            pad = window - t
-        } else if t < window + stride {
-            pad = window + stride - t
-        } else {
-            pad = (t - window) % stride != 0 ? t - (t - window) / stride * stride : 0
-        }
+        let pad = NFKMLXClearerVoiceDecoding.padding(count: samples.count, window: configuration.decodeWindow,
+                                                     stride: configuration.decodeStride)
         return samples + [Float](repeating: 0, count: pad)
     }
 
@@ -424,12 +420,31 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
         return enhanced.reshaped([enhanced.shape.last!]).asArray(Float.self).map { Float(Double($0) * restoringScale) }
     }
 
-    /// `inference` over the padded clip, trimmed back to the input length.
+    /// `decode_one_audio_frcrn_se_16k`, trimmed back to the input length. A clip up to
+    /// `oneTimeDecodeSeconds` long runs through `inference` once, padded onto the window grid. A longer
+    /// one runs window by window (`NFKMLXClearerVoiceDecoding.stitched`). The FSMN memories and the
+    /// squeeze-excites' global pools read the whole input, so the two paths differ on a long clip.
     static func enhance(_ samples: [Float], net: NFKMLXFRCRNNet) -> MLXArray {
         let configuration = net.configuration
-        let masked = net.masked(spectrum(padded(samples, configuration: configuration), configuration: configuration))
-        let waveform = stft(configuration).inverseComplex(real: masked.real.squeezed(axis: 3), imaginary: masked.imaginary.squeezed(axis: 3))
-        return waveform[0..., 0 ..< min(samples.count, waveform.dim(1))]
+        guard Double(samples.count) > Double(configuration.sampleRate) * configuration.oneTimeDecodeSeconds else {
+            let waveform = inference(padded(samples, configuration: configuration), net: net)
+            return waveform[0..., 0 ..< min(samples.count, waveform.dim(1))]
+        }
+        let stitched = NFKMLXClearerVoiceDecoding.stitched(samples, window: configuration.decodeWindow,
+                                                           stride: configuration.decodeStride) { window in
+            let waveform = inference(window, net: net)
+            eval(waveform)
+            return waveform.reshaped([-1]).asArray(Float.self)
+        }
+        return MLXArray(stitched, [1, stitched.count])
+    }
+
+    /// The reference `inference` on a clip as given: conv-STFT, both UNets' mask, inverse conv-STFT,
+    /// `[1, samples]`.
+    static func inference(_ clip: [Float], net: NFKMLXFRCRNNet) -> MLXArray {
+        let configuration = net.configuration
+        let masked = net.masked(spectrum(clip, configuration: configuration))
+        return stft(configuration).inverseComplex(real: masked.real.squeezed(axis: 3), imaginary: masked.imaginary.squeezed(axis: 3))
     }
 
     @objc(submitInferenceJobForRequest:)

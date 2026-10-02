@@ -608,46 +608,16 @@ public final class NFKMLXMossFormer2Backend: NSObject, NFKInferenceBackend {
     }
 
     /// `decode_one_audio_mossformer2_se_48k`: a clip up to `oneTimeDecodeSeconds` long decodes in one
-    /// pass, and a longer one in `decodeWindow` windows (`stitched`). The input GroupNorm and FLASH's
-    /// linear attention read the whole sequence they are given, so the two paths differ on a long clip.
+    /// pass, and a longer one in `decodeWindow` windows (`NFKMLXClearerVoiceDecoding.stitched`). The input
+    /// GroupNorm and FLASH's linear attention read the whole sequence they are given, so the two paths
+    /// differ on a long clip.
     static func enhance(_ samples: [Float], net: NFKMLXMossFormer2SENet, config: NFKMLXMossFormer2Configuration) -> [Float] {
         guard Double(samples.count) > Double(config.sampleRate) * config.oneTimeDecodeSeconds else {
             return enhanceSegment(samples, net: net, config: config)
         }
-        return stitched(samples, config: config) { enhanceSegment($0, net: net, config: config) }
-    }
-
-    /// The decoder's zero padding onto its window grid: up to the window, up to window + stride, or
-    /// (past that) by `t − ⌊(t − window) / stride⌋ · stride` whenever the clip is off the stride grid.
-    static func decodePadding(count t: Int, window: Int, stride: Int) -> Int {
-        if t < window {
-            return window - t
+        return NFKMLXClearerVoiceDecoding.stitched(samples, window: config.decodeWindow, stride: config.decodeStride) {
+            enhanceSegment($0, net: net, config: config)
         }
-        if t < window + stride {
-            return window + stride - t
-        }
-        return (t - window) % stride != 0 ? t - (t - window) / stride * stride : 0
-    }
-
-    /// The decoder's windowed path. Zero-pads the clip onto the window grid, enhances each window at a
-    /// `decodeStride` hop, and keeps each window's output less `give_up_length = (window − stride) / 2`
-    /// samples at every inner edge. The first window keeps its leading edge. A clip already on the grid
-    /// keeps the decoder's zeros over its last `give_up_length` samples, which no window writes. The
-    /// result is trimmed to the input length, as ClearerVoice's caller trims it.
-    static func stitched(_ samples: [Float], config: NFKMLXMossFormer2Configuration,
-                         segment enhance: ([Float]) -> [Float]) -> [Float] {
-        let window = config.decodeWindow, stride = config.decodeStride
-        let giveUp = (window - stride) / 2
-        let padded = samples + [Float](repeating: 0, count: decodePadding(count: samples.count, window: window, stride: stride))
-        var output = [Float](repeating: 0, count: padded.count)
-        var start = 0
-        while start + window <= padded.count {
-            let enhanced = enhance(Array(padded[start ..< start + window]))
-            let kept = start == 0 ? 0 ..< window - giveUp : giveUp ..< window - giveUp
-            output.replaceSubrange(start + kept.lowerBound ..< start + kept.upperBound, with: enhanced[kept])
-            start += stride
-        }
-        return Array(output.prefix(samples.count))
     }
 
     /// One decoder pass: Kaldi fbank → MaskNet → real mask applied to the hamming STFT (phase kept) →
