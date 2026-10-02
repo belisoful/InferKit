@@ -3989,6 +3989,23 @@ let denoiser = try NFKMLXDenoiser.backend(weightsURL: tuned)   // Objective-C: b
 
 `NFKMLXDenoiserObjective.valentini` adds the multi-resolution STFT term the Valentini recipe uses.
 
+### Training FRCRN on your own recordings
+
+The released FRCRN speech enhancer trains every weight the way ClearerVoice-Studio trains it: the
+complex-mask error plus the negative SI-SNR, and Adam at 1e-3 with a small weight decay. Each step takes
+a batch of noisy clips and the clean speech under them, `[N, L]` mono at 16 kHz. The reference scales
+each recording with `NFKMLXTrainingData.speechLevelNormalized(_:)` before cutting one-second clips.
+
+```swift
+let net = try NFKMLXFRCRN.network(weightsURL: releasedWeights)       // last_best_checkpoint.pt
+try NFKMLXFRCRN.fineTune(net, examples: { step in
+    (noisy: myBatches[step].noisy, clean: myBatches[step].clean)
+}, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let enhancer = try NFKMLXFRCRN.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

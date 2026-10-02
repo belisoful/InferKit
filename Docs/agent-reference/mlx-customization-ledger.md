@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 45 |
-| `trainable`, no recipe yet | 53 |
+| `ships` | 46 |
+| `trainable`, no recipe yet | 52 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-five recipes ship and 53 models are trainable with none written. That is the size of
+Forty-six recipes ship and 52 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -65,10 +65,10 @@ onto Hungarian matchers this package already reproduces in `NFKMLXHungarian`. Th
 read on disk rather than assumed. Detection was previously set aside as too expensive to port, and
 that call was wrong.
 
-The second: **seven audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3,
-MossFormer2 SE, FRCRN, Demucs, and HT Demucs each publish a plain reconstruction or
+The second: **six audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3,
+MossFormer2 SE, Demucs, and HT Demucs each publish a plain reconstruction or
 score-matching objective with no adversary, verified in each repository's own loss module. GTCRN,
-NU-Wave 2, Conv-TasNet, and the Denoiser ship.
+NU-Wave 2, Conv-TasNet, the Denoiser, and FRCRN ship.
 
 ## Depth, segmentation, matting
 
@@ -159,7 +159,7 @@ NU-Wave 2, Conv-TasNet, and the Denoiser ship.
 | `NFKMLXMossFormer2SRNet` | offline | — | internal | The reference's generator ships three discriminators and a feature loss. |
 | `NFKMLXApollo` | offline | — | internal | `apollo.yaml` configures a frequency discriminator and a second optimizer. |
 | `NFKMLXMossFormer2SENet` | trainable | full | internal | ClearerVoice-Studio's `train/speech_enhancement`: an MSE on the phase-sensitive mask, Adam at 5e-4, no discriminator. |
-| `NFKMLXFRCRN` | trainable | full | internal | The same tree: a complex-mask MSE plus SI-SNR, Adam at 1e-3, no discriminator. |
+| `NFKMLXFRCRN` | ships | full | public | `loss_frcrn_se_16k` within 1.1e-6 relative on the release, with `train.py`'s L2 Adam at 1e-3 and clip 10. The release's gradients are float32-noise-limited by nearly dead BatchNorms; a control with epsilon 1e-2 holds them within 3.4e-3 of float64. No discriminator. |
 | `NFKMLXVoiceRestore` | untrainable | — | internal | skirdey/voicerestore publishes no training code, and the class defines no loss. |
 
 ## Source separation
@@ -376,11 +376,11 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
-   Pitch ship, and so does the Denoiser. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   Pitch ship, and so do the Denoiser and FRCRN. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
    variables. The 2026-09-25 triage adds
-   FRCRN, MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
+   MossFormer2 SE, RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
    metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,

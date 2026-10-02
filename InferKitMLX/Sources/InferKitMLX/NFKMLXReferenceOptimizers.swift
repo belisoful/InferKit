@@ -34,6 +34,15 @@ enum NFKMLXReferenceOptimizers {
         NFKMLXAdam(learningRate: learningRate, l2: weightDecay, biasCorrection: true)
     }
 
+    /// `torch.optim.Adam` with L2 weight decay over two parameter groups: `weightDecay` on every
+    /// parameter the predicate does not exempt, none on the ones it does.
+    static func l2Adam(learningRate: Float, weightDecay: Float,
+                       exempting exempt: @escaping (String) -> Bool) -> Optimizer {
+        MultiOptimizer(optimizers: [l2Adam(learningRate: learningRate, weightDecay: 0),
+                                    l2Adam(learningRate: learningRate, weightDecay: weightDecay)],
+                       filters: [{ key, _ in exempt(key) }])
+    }
+
     /// `torch.optim.AdamW` over two parameter groups: `weightDecay` on every parameter the predicate
     /// does not exempt, none on the ones it does.
     static func adamW(learningRate: Float, weightDecay: Float,

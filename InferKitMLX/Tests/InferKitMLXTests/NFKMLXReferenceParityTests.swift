@@ -11220,6 +11220,202 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertLessThan(cleanDifference, 1e-5)
     }
 
+    // FRCRN's training against ClearerVoice-Studio's own `train/speech_enhancement` (6b3774d): the
+    // loader's `audio_norm`, the released network's training-mode waveform and mask, `loss_frcrn_se_16k`'s
+    // two terms, the stage seams and their gradients, the gradients of four tensors and the global norm
+    // before the clip, and the loss after one step of `train.py`'s L2 Adam. Each is also recorded at
+    // float64, and the gradients again with every BatchNorm epsilon at 1e-2, the conditioning control.
+    //
+    // `IK_FRCRN_TRAIN_SRC=reference-sources/clearervoice-train/train/speech_enhancement
+    //  python run_reference.py frcrn_training out/frcrn-training.safetensors --checkpoint frcrn-se/last_best_checkpoint.pt`
+    func testFRCRNTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FRCRN_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_FRCRN_TRAINING to a record from run_reference.py frcrn_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        let rawNoisy = try array("raw_noisy"), noisy = try array("noisy"), clean = try array("clean")
+        let leveled = MLXArray((0 ..< 2).flatMap { NFKMLXTrainingData.speechLevelNormalized(rawNoisy[$0].asArray(Float.self)) }, [2, 16_000])
+        let levelDifference = abs(leveled - noisy).max().item(Float.self)
+
+        let net = try NFKMLXFRCRN.network(weightsURL: weights("IK_VAL_FRCRN"))
+        net.train(true)
+        let outputs = net.trainingOutputs(noisy)
+        let reference = try array("mask")
+        let bins = net.configuration.bins
+        let maskDifference = max(abs(outputs.maskReal - reference[0..., 0 ..< bins, 0...]).max().item(Float.self),
+                                 abs(outputs.maskImaginary - reference[0..., bins..., 0...]).max().item(Float.self))
+        // The waveform is divided by the overlap-added window, which falls toward zero within the first and
+        // last hop and magnifies rounding there, so waveforms are compared between those hops.
+        let hop = net.configuration.hopSize
+        func interior(_ wave: MLXArray) -> MLXArray { wave[0..., hop ..< (wave.dim(1) - hop)] }
+        let estimate = try array("estimate"), peak = abs(estimate).max().item(Float.self)
+        let estimateDifference = abs(interior(outputs.waveform) - interior(try array("estimate64"))).max().item(Float.self)
+        let terms = NFKMLXFRCRNObjective().loss(noisy: noisy, clean: clean, estimate: outputs.waveform,
+                                                maskReal: outputs.maskReal, maskImaginary: outputs.maskImaginary)
+        print("PARITY frcrn-training: level worst \(levelDifference); mask worst \(maskDifference), estimate from float64 \(estimateDifference) of peak \(peak); "
+              + "loss \(terms.total.item(Float.self)) vs \(try scalar("output")), mask \(terms.mask.item(Float.self)) vs \(try scalar("loss_mask")), "
+              + "SI-SNR \(terms.scaleInvariantSNR.item(Float.self)) vs \(try scalar("loss_snr"))")
+        // Many of the release's BatchNorm channels are nearly dead: their inputs vary less than the epsilon,
+        // so their normalized values are rounding noise magnified up to 316 times. Every float32 result on
+        // the released weights carries that noise. The release's comparisons are held to bounds that admit
+        // it, and the conditioning control below holds the port to float64 tightly.
+        let maskFloor = abs(reference - (try array("mask64"))).max().item(Float.self)
+        let estimateFloor = abs(interior(estimate) - interior(try array("estimate64"))).max().item(Float.self)
+        print("PARITY frcrn-training: float32 floor of the reference: mask \(maskFloor), estimate \(estimateFloor)")
+        XCTAssertLessThan(levelDifference, 1e-6)
+        XCTAssertLessThan(maskDifference, max(1e-3, 2 * maskFloor))
+        XCTAssertLessThan(estimateDifference, 1e-4 * peak)
+        for (ours, key) in [(terms.total, "output"), (terms.mask, "loss_mask"), (terms.scaleInvariantSNR, "loss_snr")] {
+            let theirs = try scalar(key)
+            XCTAssertEqual(ours.item(Float.self), theirs, accuracy: max(abs(theirs) * 1e-4, 1e-5), key)
+        }
+
+        // The forward in stages, each seam held to the reference's value and to the gradient the loss sends
+        // it, so a divergence in the backward is located to a stage.
+        let installation = try NFKMLXGradientSafeConvolution.install(in: net)
+        let configuration = net.configuration
+        let analysis = NFKMLXFRCRNObjective.spectrum(noisy, NFKMLXFRCRNBackend.stft(configuration))
+        let spectrum = NFKFRCRNComplex(real: analysis.real.expandedDimensions(axis: 3),
+                                       imaginary: analysis.imaginary.expandedDimensions(axis: 3))
+        func split(_ seam: MLXArray) -> NFKFRCRNComplex {           // [B, 1, F, T, 2] → [B, F, T, 1] pairs
+            NFKFRCRNComplex(real: seam[0..., 0, 0..., 0..., 0].expandedDimensions(axis: 3),
+                            imaginary: seam[0..., 0, 0..., 0..., 1].expandedDimensions(axis: 3))
+        }
+        func relative(_ ours: NFKFRCRNComplex, _ theirs: NFKFRCRNComplex) -> Float {
+            let error = square(ours.real - theirs.real).sum() + square(ours.imaginary - theirs.imaginary).sum()
+            let size = square(theirs.real).sum() + square(theirs.imaginary).sum()
+            return sqrt(error / size).item(Float.self)
+        }
+        func lossFromMask(_ mask: NFKFRCRNComplex) -> MLXArray {
+            let real = (spectrum.real * mask.real - spectrum.imaginary * mask.imaginary).squeezed(axis: 3)
+            let imaginary = (spectrum.real * mask.imaginary + spectrum.imaginary * mask.real).squeezed(axis: 3)
+            let wave = NFKFRCRNSynthesis(configuration).waveform(real: real, imaginary: imaginary)
+            return NFKMLXFRCRNObjective().loss(noisy: noisy, clean: clean, estimate: wave, maskReal: mask.real.squeezed(axis: 3),
+                                               maskImaginary: mask.imaginary.squeezed(axis: 3)).total
+        }
+        let unet1 = net.first(spectrum)
+        let unet2 = net.second(unet1)
+        let seamValues = [("unet1", relative(unet1, split(try array("seam::unet1")))),
+                          ("unet2", relative(unet2, split(try array("seam::unet2"))))]
+        // `valueAndGrad` over both parts: mlx-swift's `grad` of an `([MLXArray]) -> MLXArray` returns the
+        // first argument's gradient split along its first axis, whatever `argumentNumbers` says.
+        let maskGradient = valueAndGrad({ (arrays: [MLXArray]) -> [MLXArray] in
+            [lossFromMask(NFKFRCRNComplex(real: arrays[0], imaginary: arrays[1]))]
+        }, argumentNumbers: [0, 1])(NFKMLXFRCRNObjective.combine(unet1, unet2)).1
+        let unet2Gradient = valueAndGrad({ (arrays: [MLXArray]) -> [MLXArray] in
+            [lossFromMask(NFKFRCRNComplex(real: tanh(arrays[0]) + tanh(unet1.real), imaginary: tanh(arrays[1]) + tanh(unet1.imaginary)))]
+        }, argumentNumbers: [0, 1])([unet2.real, unet2.imaginary]).1
+        let unet1Gradient = valueAndGrad({ (arrays: [MLXArray]) -> [MLXArray] in
+            let u1 = NFKFRCRNComplex(real: arrays[0], imaginary: arrays[1])
+            let u2 = net.second(u1)
+            return [lossFromMask(NFKFRCRNComplex(real: tanh(u2.real) + tanh(u1.real), imaginary: tanh(u2.imaginary) + tanh(u1.imaginary)))]
+        }, argumentNumbers: [0, 1])([unet1.real, unet1.imaginary]).1
+        let seamGradients = [
+            ("cmask", relative(NFKFRCRNComplex(real: maskGradient[0], imaginary: maskGradient[1]), split(try array("seamgrad::cmask")))),
+            ("unet2", relative(NFKFRCRNComplex(real: unet2Gradient[0], imaginary: unet2Gradient[1]), split(try array("seamgrad::unet2")))),
+            ("unet1", relative(NFKFRCRNComplex(real: unet1Gradient[0], imaginary: unet1Gradient[1]), split(try array("seamgrad::unet1")))),
+        ]
+        print("PARITY frcrn-training: seam values \(seamValues); seam gradients \(seamGradients)")
+        // The gradient reaching the first UNet crosses the second's nearly dead BatchNorm channels; it is held
+        // through the parameter gradients below, against float64.
+        for (name, error) in seamValues + seamGradients.filter({ $0.0 != "unet1" }) {
+            XCTAssertLessThan(error, 1e-3, "seam \(name)")
+        }
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [NFKMLXFRCRNObjective()(net, arrays[0], arrays[1])]
+        }(net, [noisy, clean]).1.flattened())
+        installation.restore()
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        print("PARITY frcrn-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(try scalar("gradient_norm64")))")
+        XCTAssertEqual(norm, try scalar("gradient_norm64"), accuracy: try scalar("gradient_norm64") * 2e-2)
+        func layout(_ name: String, _ reference: MLXArray) -> MLXArray {
+            if name.hasSuffix("conv1.weight") {
+                return reference.reshaped([reference.dim(0), reference.dim(2)]).expandedDimensions(axis: 2)
+            }
+            if name.contains("tconv_") && reference.ndim == 4 {
+                return reference.transposed(1, 2, 3, 0)
+            }
+            return reference.ndim == 4 ? reference.transposed(0, 2, 3, 1) : reference
+        }
+        for name in ["unet.encoders.0.conv.conv_re.weight", "unet.fsmn.fsmn_re_L1.conv1.weight",
+                     "unet.encoders.3.bn.bn_re.weight", "unet2.linear.conv_re.weight"] {
+            let ours = try XCTUnwrap(gradients[name], name)
+            let theirs = layout(name, try array("grad::\(name)"))
+            let theirs64 = layout(name, try array("grad64::\(name)"))
+            print("PARITY frcrn-training: \(name) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), reference float32 \(distance(theirs, theirs64))")
+            // A float32 gradient on these weights is noise-limited: the reference's own lands up to a tenth
+            // from float64 in the control below.
+            XCTAssertLessThan(distance(ours, theirs64), 0.1, name)
+        }
+
+        // The conditioning control: the released weights with every BatchNorm epsilon at 1e-2, which bounds
+        // a nearly constant channel's amplification at 10, so the port's gradients are held to float64 tightly.
+        let control = try NFKMLXFRCRN.network(weightsURL: weights("IK_VAL_FRCRN"))
+        for norm in control.modules().compactMap({ $0 as? NFKFRCRNComplexBatchNorm }) {
+            func raised(_ old: BatchNorm) -> BatchNorm {
+                let fresh = BatchNorm(featureCount: old.weight!.dim(0), eps: 1e-2)
+                fresh.update(parameters: old.parameters())
+                return fresh
+            }
+            try norm.update(modules: ModuleChildren.unflattened([("bn_re", raised(norm.re)), ("bn_im", raised(norm.im))]),
+                            verify: .noUnusedKeys)
+        }
+        XCTAssertTrue(control.modules().compactMap { $0 as? BatchNorm }.allSatisfy { $0.eps == 1e-2 })
+        control.train(true)
+        let controlOutputs = control.trainingOutputs(noisy)
+        let controlMask = try array("eps2::mask64")
+        let controlMaskDifference = max(abs(controlOutputs.maskReal - controlMask[0..., 0 ..< bins, 0...]).max().item(Float.self),
+                                        abs(controlOutputs.maskImaginary - controlMask[0..., bins..., 0...]).max().item(Float.self))
+        let controlEstimateDifference = abs(interior(controlOutputs.waveform) - interior(try array("eps2::estimate64"))).max().item(Float.self)
+        let controlLoss = NFKMLXFRCRNObjective().loss(noisy: noisy, clean: clean, estimate: controlOutputs.waveform,
+                                                      maskReal: controlOutputs.maskReal, maskImaginary: controlOutputs.maskImaginary).total.item(Float.self)
+        let controlMaskFloor = abs(try array("eps2::mask") - controlMask).max().item(Float.self)
+        let controlLossFloor = abs(try scalar("eps2::loss") - (try scalar("eps2::loss64")))
+        print("PARITY frcrn-training: control from float64: mask \(controlMaskDifference), estimate \(controlEstimateDifference), "
+              + "loss \(controlLoss) vs \(try scalar("eps2::loss64")); reference float32 mask \(controlMaskFloor), loss \(try scalar("eps2::loss"))")
+        // The control's forward still carries float32 noise, so its mask and loss are held no farther from
+        // float64 than the reference's own float32.
+        XCTAssertLessThan(controlMaskDifference, max(1e-3, controlMaskFloor))
+        XCTAssertLessThan(controlEstimateDifference, 1e-4 * peak)
+        XCTAssertEqual(controlLoss, try scalar("eps2::loss64"), accuracy: max(abs(try scalar("eps2::loss64")) * 1e-4, controlLossFloor))
+        let controlInstallation = try NFKMLXGradientSafeConvolution.install(in: control)
+        let controlGradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: control) { net, arrays in
+            [NFKMLXFRCRNObjective()(net, arrays[0], arrays[1])]
+        }(control, [noisy, clean]).1.flattened())
+        controlInstallation.restore()
+        let controlNorm = sqrt(controlGradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        print("PARITY frcrn-training: control global gradient norm \(controlNorm) vs \(try scalar("eps2::gradient_norm")) "
+              + "(float64 \(try scalar("eps2::gradient_norm64")))")
+        XCTAssertEqual(controlNorm, try scalar("eps2::gradient_norm64"), accuracy: try scalar("eps2::gradient_norm64") * 1e-2)
+        for name in ["unet.encoders.0.conv.conv_re.weight", "unet.fsmn.fsmn_re_L1.conv1.weight",
+                     "unet.encoders.3.bn.bn_re.weight", "unet2.linear.conv_re.weight"] {
+            let ours = try XCTUnwrap(controlGradients[name], name)
+            let theirs = layout(name, try array("eps2::grad::\(name)"))
+            let theirs64 = layout(name, try array("eps2::grad64::\(name)"))
+            print("PARITY frcrn-training: control \(name) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), reference float32 \(distance(theirs, theirs64))")
+            XCTAssertLessThan(distance(ours, theirs64), 1e-2, "control \(name)")
+        }
+
+        net.train(false)
+        try NFKMLXFRCRN.fineTune(net, examples: { _ in (noisy, clean) }, steps: 1)
+        net.train(true)
+        let lossAfter = NFKMLXFRCRNObjective()(net, noisy, clean).item(Float.self)
+        print("PARITY frcrn-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(try scalar("loss_after_step64")))")
+        // Adam's first step moves each parameter by the sign of its gradient, so a component that is rounding
+        // noise steps a full learning rate either way; the step's fall in the loss is held to 2%.
+        let fall = try scalar("output") - (try scalar("loss_after_step64"))
+        XCTAssertEqual(lossAfter, try scalar("loss_after_step64"), accuracy: 0.02 * fall)
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

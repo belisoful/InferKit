@@ -4492,6 +4492,7 @@
         "bisenet_loss",
         "bisenet_training",
         "denoiser_training",
+        "frcrn_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5503,6 +5504,12 @@
       "record": "reference/denoiser-training.safetensors",
       "environment": "llm",
       "command": "IK_DENOISER_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/denoiser/denoiser\" denoiser_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/dns48.th\""
+    },
+    {
+      "key": "IK_PARITY_FRCRN_TRAINING",
+      "record": "reference/frcrn-training.safetensors",
+      "environment": "llm",
+      "command": "IK_FRCRN_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/clearervoice-train/train/speech_enhancement\" frcrn_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/frcrn-se/last_best_checkpoint.pt\""
     }
   ]
 }

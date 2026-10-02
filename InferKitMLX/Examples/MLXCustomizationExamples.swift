@@ -854,6 +854,29 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(denoiser.isReady)
     }
 
+    // Docs/examples.md: Training FRCRN on your own recordings
+    func testExampleTrainingFRCRNOnOwnRecordings() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("frcrn-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXFRCRN.network(weightsURL: releasedWeights).
+        let net = try NFKMLXFRCRN.network(weightsURL: nil)
+        let clean = (0 ..< 2).flatMap { row in
+            NFKMLXTrainingData.speechLevelNormalized((0 ..< 16_000).map { sinf(2 * .pi * Float(200 + 90 * row) * Float($0) / 16_000) * 0.3 })
+        }
+        let cleanArray = MLXArray(clean, [2, 16_000])
+        let noisy = cleanArray + MLXArray((0 ..< 2 * 16_000).map { 0.01 * sinf(Float($0) * 1.7) }, [2, 16_000])
+        let history = try NFKMLXFRCRN.fineTune(net, examples: { _ in (noisy: noisy, clean: cleanArray) }, steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let enhancer = try NFKMLXFRCRN.backend(weightsURL: tuned)          // also backendWithWeightsURL:error:
+        XCTAssertTrue(enhancer.isReady)
+    }
+
     // Docs/examples.md: Teaching note transcription your own instrument
     func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

@@ -441,6 +441,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### FRCRN trains on a consumer's own recordings
+
+- `NFKMLXFRCRN.fineTune` trains every parameter on noisy and clean batches, as ClearerVoice-Studio's
+  `train/speech_enhancement` does, with `train.py`'s Adam at 1e-3, an L2 decay of 1e-5 outside the
+  biases, and clipping at 10 by default.
+- `NFKMLXFRCRNObjective` is `loss_frcrn_se_16k`: the clamped complex-mask MSE plus the negative SI-SNR.
+- `NFKMLXFRCRN.network(weightsURL:)` builds the network from the release, a fine-tuned file, or a random
+  initialization. `referenceBatchSize` and `referenceAccumulationSteps` are the reference loader's batch.
+- `NFKMLXTrainingData.speechLevelNormalized(_:)` scales a recording as the reference loader does.
+
 #### The Demucs denoiser trains on a consumer's own recordings
 
 - `NFKMLXDenoiser.fineTune` trains every parameter on noisy and clean batches, as facebookresearch/

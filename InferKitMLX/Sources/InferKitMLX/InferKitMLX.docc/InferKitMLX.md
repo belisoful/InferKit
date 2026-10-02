@@ -636,6 +636,8 @@ limits.
 - ``NFKMLXDemucsNet``
 - ``NFKMLXDenoiserObjective``
 - ``NFKMLXDenoiserAugmentation``
+- ``NFKMLXFRCRNNet``
+- ``NFKMLXFRCRNObjective``
 
 ### Chat templates
 

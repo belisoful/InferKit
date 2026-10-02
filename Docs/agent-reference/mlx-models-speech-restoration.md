@@ -342,10 +342,43 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXComplexSTFT` gained `centered: false` for it. The FSMN's `[C, 1, order, 1]` depthwise memory
   loads as a 1-D `[C, order, 1]` convolution; the transposed convolutions through `(1, 2, 3, 0)`.
   `+register` under `frcrn`; weights `alibabasglab/FRCRN_SE_16K/last_best_checkpoint.pt` (161 MB).
-  Customization: trainable at `full`, with no recipe written yet. The same ClearerVoice-Studio tree
-  trains FRCRN with `loss_frcrn_se_16k`, a complex-mask MSE plus negative SI-SNR at equal weight, and no
-  discriminator; Adam at 1e-3 (1e-4 to fine-tune), weight decay 1e-5 on the weights only, clipping at
-  10. The loss `frcrn.py` defines itself is commented out.
+  **Customization ships** at `full` (`NFKMLXFRCRNTraining.swift`), measured against ClearerVoice-Studio
+  at 6b3774d, `train/speech_enhancement` (`run_reference.py frcrn_training`, the `llm` env,
+  `IK_FRCRN_TRAIN_SRC`), on the released checkpoint.
+  - `NFKMLXFRCRN.fineTune` trains every parameter on noisy and clean batches `[N, L]`, the batch
+    normalizations on batch statistics. A clip is cut to `640 + 320k` samples, the frames the
+    uncentered STFT covers exactly.
+  - `NFKMLXFRCRNObjective` is `loss_frcrn_se_16k`: the complex-mask MSE times the FFT size plus the
+    negative SI-SNR. The target mask is the clean spectrum over the noisy one under the loss's own STFT,
+    a symmetric Hann window. A target above 2 becomes 1 and one below −2 becomes −1, as the reference's
+    clamp writes them. The loss `frcrn.py` defines itself is commented out.
+  - The estimate is resynthesized through `NFKFRCRNSynthesis`, the `ConviSTFT` as an inverse-DFT matrix
+    and an overlap-add, so a gradient reaches the mask. It matches the inference path to 2.5e-7 between
+    the first and last hop.
+  - `NFKMLXTrainingData.speechLevelNormalized(_:)` is the loader's `audio_norm`, which scales each
+    recording to −25 dBFS before cutting one-second clips.
+  - The reference optimizer is `train.py`'s `torch.optim.Adam` at 1e-3 over `get_params`: an L2 decay of
+    1e-5 added to every gradient but the biases' (`NFKMLXReferenceOptimizers.l2Adam(…exempting:)`), and
+    clipping at 10. `FRCRN_SE_16K.yaml`'s `finetune_learning_rate` of 1e-4 is parsed and never read, so a
+    run from the release trains at 1e-3. The reference clips each accumulated batch's gradient; the
+    recipe clips the averaged gradient once per update.
+  - Measured on two one-second clips in training mode: the level helper within 7.5e-9, the estimate
+    within 4.2e-6 of float64 between the first and last hop, the loss 229.66992 vs 229.67018 (mask term
+    223.6987 vs 223.69844, SI-SNR 5.9712176 vs 5.971744).
+  - **The release's gradients are noise-limited at float32.** Many BatchNorm channels are nearly dead:
+    their inputs vary less than the 1e-5 epsilon, so their normalized values are rounding noise magnified
+    up to 316 times, and the backward carries that noise upstream. On the release the first UNet's
+    gradients land 4.3% from the reference's float64 ones, against 1.2% to 1.9% for the reference's own
+    float32, on the opposite side. The global norm is 14,361 against float64's 14,541 and float32's
+    14,645.
+  - **The conditioning control decides it.** The same weights with every BatchNorm epsilon at 1e-2 bound
+    the magnification at 10. There the port's first-UNet gradients land 0.29% to 0.34% from float64 and
+    its global norm 0.2%, while the reference's float32 lands 6.7% to 10% away. The port computes the
+    reference's function; the release's distance is float32 noise. The parity test holds both: the
+    release to bounds that admit the noise, the control to 1e-2 of float64.
+  - Adam's first step moves each parameter by the sign of its gradient, so noise-dominated components
+    step a full learning rate either way: the loss after one step is 61.374 against float64's 59.986,
+    and the reference's float32 reaches 59.032, from 229.67.
 - `NFKMLXMossFormer2SRNet` / `NFKMLXMossFormer2SRGenerator` / `NFKMLXMossFormer2SRFactory`
   (`@objc(NFKMLXMossFormer2SR_Factory)`) — **MossFormer2 SR 48K** (modelscope/ClearerVoice-Studio,
   `alibabasglab/MossFormer2_SR_48K`, Apache-2.0), speech super-resolution (bandwidth extension), the
