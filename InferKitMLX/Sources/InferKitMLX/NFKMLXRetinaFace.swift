@@ -51,7 +51,7 @@ final class NFKRetinaConvBN: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair(kernel == 3 ? 1 : 0), bias: false)
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn.wrappedValue = NFKStagedBatchNorm(featureCount: outChannels)
         self.slope = slope
         super.init()
     }
@@ -75,10 +75,10 @@ final class NFKRetinaDepthwise: Module {
         _dwconv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: inChannels,
                                       kernelSize: 3, stride: IntOrPair(stride), padding: 1,
                                       groups: inChannels, bias: false)
-        _dwbn.wrappedValue = BatchNorm(featureCount: inChannels)
+        _dwbn.wrappedValue = NFKStagedBatchNorm(featureCount: inChannels)
         _pwconv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                       kernelSize: 1, bias: false)
-        _pwbn.wrappedValue = BatchNorm(featureCount: outChannels)
+        _pwbn.wrappedValue = NFKStagedBatchNorm(featureCount: outChannels)
         self.slope = slope
         super.init()
     }

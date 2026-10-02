@@ -11594,13 +11594,17 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             print("PARITY retinaface-training: \(key) gradient relative error \(distance(mine, reference)); "
                   + "from float64: ours \(distance(mine, reference64)), over the reference's selection "
                   + "\(distance(pinned, reference64)), reference float32 \(floor)")
-            // Two rounding ties on the released weights move these gradients. One background prior trades
-            // places at the mining boundary, whose two losses differ by 2.4e-7. One element of stage 2.3's
-            // pointwise normalization lies a float32 step below zero here and above it in the reference, so
-            // its LeakyReLU takes the other slope, and the normalization's backward spreads that over its
-            // channel and everything upstream. The control below holds the backward itself to the floor.
-            XCTAssertLessThan(distance(mine, reference64), 1e-3, key)
-            XCTAssertLessThan(distance(pinned, reference64), 1e-3, key)
+            // Rounding ties on the released weights move these gradients. Hard negative mining has a near tie
+            // at its boundary, two background priors' losses 2.4e-7 apart, which the reference's selection
+            // takes out. One element of stage 1.3's depthwise normalization lies a float32 step above zero
+            // here and below it on the CPU, so its LeakyReLU takes the other slope, and the normalization's
+            // backward spreads that over its channel and everything upstream. The control below holds the
+            // backward itself to the floor. Each tie moves the gradients upstream of it by a fixed amount, up
+            // to 9e-4 at the stem; the stem and stage 1.1 sit upstream of every tie measured, so they are held
+            // to a bound two ties at once stay within.
+            let bound: Float = ["body.stage1.0.0.weight", "body.stage1.1.0.weight"].contains(name) ? 2e-3 : 1e-3
+            XCTAssertLessThan(distance(mine, reference64), bound, key)
+            XCTAssertLessThan(distance(pinned, reference64), bound, key)
         }
 
         // The control: random weights, the same loss and inputs, and the reference's selection on them. A

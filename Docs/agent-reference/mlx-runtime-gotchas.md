@@ -654,8 +654,9 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     opposite sides in two implementations, and its gradient then differs by the slope's factor. Behind a
     BatchNorm in training mode, the normalization's backward spreads that one element's difference over
     its channel through the mean terms. RetinaFace's released weights have one such element in
-    stage 2.3's pointwise normalization (input −1.19e-7 here): it moves every gradient upstream of it by
-    4e-4 to 6e-4 while the same backward on random weights lands at the float32 floor.
+    stage 1.3's depthwise normalization (input +1.8e-7 here, −7.7e-7 on the CPU): it moves every gradient
+    upstream of it by 4e-4 to 9e-4 while the same backward on random weights lands at the float32 floor.
+    Which element ties depends on the rounding: under MLXNN's batch statistics it was one in stage 2.3.
   - **Rule for training parity tests.** Localize a gradient gap with seam gradients before reading it
     as a port defect, and keep a control on random weights, which a real backward difference fails.
 - **MLX's CPU reductions accumulate in order in float32, so the CPU is not a precision reference for a
@@ -688,8 +689,9 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     staged too. On a channel of 64,000 values at 0.3 varying by 1e-4, its normalized output lands 4.7e-8
     from float64 on both devices, against 0.14 for MLXNN's `BatchNorm` on the CPU and 2.3e-4 on the GPU
     (`NFKMLXStagedBatchNormTests`). FRCRN builds it: its output-convolution gradient lands within 1.5e-6
-    of float64 on the CPU, and its first UNet's GPU gradients moved from 4.3% to 0.27%. Every other
-    BatchNorm network still builds MLXNN's.
+    of float64 on the CPU, and its first UNet's GPU gradients moved from 4.3% to 0.27%. RetinaFace builds
+    it too: its random-weight control's CPU backbone gradients moved from 4% to 5% to within 1.6e-5 of
+    float64. Every other BatchNorm network still builds MLXNN's.
   - **Rule.** Hold a training-mode gradient to the reference's float64. A float32 gradient through
     MLXNN's batch statistics is a coarser sample on either device, and the CPU's is the coarser of the two. A CPU comparison stays valid
     for a single operation or a graph without batch reductions, which is what the gradient-safe

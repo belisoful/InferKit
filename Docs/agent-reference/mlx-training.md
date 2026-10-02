@@ -127,14 +127,14 @@ lose those digits on both devices; on the CPU they add in order in float32 (`mlx
 "MLX's CPU reductions accumulate in order"). FRCRN's release is the measured case: with MLXNN's
 `BatchNorm` the first UNet's GPU gradients landed 4.3% from float64, against 1.2% to 1.9% for the
 reference's own float32. `NFKStagedBatchNorm` sums the statistics one axis at a time in the corrected
-two-pass form and lands them within 2.7e-3 on the GPU and 3.2e-3 on the CPU. A port whose release has
-nearly dead channels builds it; FRCRN does. The parity test records the reference at float64 too and
-holds the release's gradients to it. It keeps a control with every epsilon at 1e-2, and a control can
-hold a kink tie of its own: FRCRN's has one LeakyReLU input within 1.5e-4 of zero carrying a cotangent
-14 times the layer's RMS, where the port's GPU and the reference's float32 both land 5% to 10% from
-float64. The control's gradients are held no farther from float64 than 1.5 times the reference's
-float32. MLX's CPU cannot run a convolution in float64, so the port's own float64 gradient is not
-available.
+two-pass form and lands them within 2.7e-3 on the GPU and 3.2e-3 on the CPU. FRCRN and RetinaFace build
+it; RetinaFace's CPU gradients on random weights moved from 4% to 5% to within 1.6e-5 of float64. The
+parity test records the reference at float64 too and holds the release's gradients to it. It keeps a
+control with every epsilon at 1e-2, and a control can hold a kink tie of its own: FRCRN's has one
+LeakyReLU input within 1.5e-4 of zero carrying a cotangent 14 times the layer's RMS, where the port's GPU
+and the reference's float32 both land 5% to 10% from float64. The control's gradients are held no farther
+from float64 than 1.5 times the reference's float32. MLX's CPU cannot run a convolution in float64, so
+the port's own float64 gradient is not available.
 
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the

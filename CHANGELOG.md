@@ -452,6 +452,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXRetinaFace.network(weightsURL:)` builds it, and `trainingInput(_:)` prepares a batch.
 - `NFKMLXLearningRateSchedule.multiStep(milestones:gamma:)` is torch's `MultiStepLR`.
 - `NFKMLXRetinaFace.detector(weightsURL:)` and `backend(weightsURL:)` load a fine-tuned file.
+- RetinaFace's normalizations take their training statistics one axis at a time. On the CPU a training
+  step's gradients landed 4% to 5% from float64 on random weights, and now land within 1.6e-5 on either
+  device. Inference is unchanged.
 
 #### MossFormer2 SE trains on a consumer's own recordings
 

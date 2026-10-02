@@ -53,21 +53,25 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     first step. The random crop, color distortion, and mirror of `preproc` are the caller's.
   - Measured on two 160-pixel images holding five faces, one without landmarks and one no prior overlaps
     by 0.2: every prior's label equal to `match`'s (59 matched of 2,100), the training forward within
-    4.5e-6, the terms 5.030212 / 6.3719883 / 15.797312 vs 5.030211 / 6.3719873 / 15.797308, the global
-    gradient norm 228.35371 vs 228.3463, and the loss after one SGD step 22.78689 vs 22.787006.
-  - **Two rounding ties move the gradients on the released weights; the backward itself is exact.**
-    - Hard negative mining ranks by loss, so a near tie at its boundary can trade one prior. Here two
-      background priors' mining losses differ by 2.4e-7 and each side selects a different one; the loss
-      barely moves and the heads' and SSH's gradients move by 2e-4. Over the reference's own selection
-      they fall to the float32 floor (2e-6 to 4e-6).
-    - One element of stage 2.3's pointwise normalization lies a float32 step below zero here (−1.19e-7)
-      and above it in the reference, so its LeakyReLU takes the other slope. The normalization's backward
-      spreads that over channel 45, and every gradient upstream (stage 2.3 down to the stem) moves by 4e-4
-      to 6e-4. Seam gradients localized it: at the floor from stage 2.5 back to stage 2.3's output, 9.2e-4
-      at its pointwise output, the eight largest differences all in that channel.
+    4.0e-6, the terms 5.030209 / 6.3719883 / 15.797298 vs 5.030211 / 6.3719873 / 15.797308, the global
+    gradient norm 228.34566 vs float64's 228.34607, and the loss after one SGD step 22.786896 vs float64's
+    22.786985.
+  - **The normalizations take staged batch statistics (`NFKStagedBatchNorm`). One rounding tie moves the
+    gradients on the released weights; the backward itself is exact.**
+    - With MLXNN's `BatchNorm` two ties moved them. Hard negative mining traded one background prior at
+      its boundary, where two mining losses differ by 2.4e-7, and moved the heads' and SSH's gradients by
+      2e-4. One element of stage 2.3's pointwise normalization sat a float32 step below zero (−1.19e-7),
+      spreading over channel 45, and moved every gradient upstream of it by 4e-4 to 6e-4. The staged
+      statistics land both on the reference's side: the selection is the reference's, and every gradient
+      from stage 1.5 to the heads lands within 7e-6 of float64, at the reference's float32 floor.
+    - One element of stage 1.3's depthwise normalization, channel 21, lies at +1.8e-7 here and at −7.7e-7
+      under MLXNN's statistics and on the CPU. The stem's gradient moves by 9.0e-4 and stage 1.1's by
+      4.1e-4. A sign comparison of every stage 1 normalization across the three runs localized it.
     - A control on random weights (`torch.manual_seed(0)`, the same loss and inputs) holds all twelve
-      gradients from the stem to the heads within 1.9e-5 of float64, at the reference's own float32
-      floor. The landmark head, which neither tie reaches, is within 2.7e-6 on the release.
+      gradients within 1.7e-5 of float64, inside the reference's own float32 floor (up to 1.8e-5). On the
+      CPU, MLXNN's statistics put the control's backbone gradients 4% to 5% from float64, and the staged
+      statistics hold them within 1.6e-5. The CPU release lands within 7.5e-5 in the backbone, and 4.6e-4
+      and 5.5e-4 at the FPN's output1 and merge1, which the control does not show.
   - `loadWeights` reads a file `NFKMLXWeights` saved as written. The release's remap renumbers `stage1`,
     which would move a saved file's first depthwise block onto the stem.
 - `NFKMLXYOLO` (`@objc`) — real object detection: the reference **YOLOv8** (ultralytics) in `MLXNN` —
