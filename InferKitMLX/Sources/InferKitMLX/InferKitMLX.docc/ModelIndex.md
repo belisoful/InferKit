@@ -180,7 +180,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | SAM | ``NFKMLXSAM`` | `NFKMLXSAMNet` | ``NFKMLXSAMVariant`` `.vitB` / `.vitL` / `.vitH` (`NFKMLXSAMConfiguration.vitB` …); `.compact` for tests | `sam` | ``NFKMLXMattingBackend`` (point under `NFKSAMPointKey`) |
 | SAM 3 / SAM 3.1 | ``NFKMLXSAM3`` | ``NFKMLXSAM3ImageModel`` | `NFKMLXSAM3Configuration.base`, `NFKMLXSAM3TextConfiguration.base`, `NFKMLXSAM3DetectorConfiguration.base` | — | Swift API (`MLXArray`) |
 | SAM 2 / SAM 2.1 | ``NFKMLXSAM2`` | ``NFKMLXSAM2TrackerNet`` | `NFKMLXSAM2Variant.tiny` / `.small` / `.basePlus` / `.large`; `NFKMLXSAM2Release.sam2` / `.sam21` | `sam2` | ``NFKMLXMattingBackend`` |
-| RetinaFace | ``NFKMLXRetinaFace`` | `NFKMLXRetinaFaceNet` | `NFKMLXRetinaFaceConfiguration()` = mobile0.25 | `retinaface-mobile025` | detection backend; `detector(weightsURL:)` for landmarks |
+| RetinaFace | ``NFKMLXRetinaFace`` | ``NFKMLXRetinaFaceNet`` | `NFKMLXRetinaFaceConfiguration()` = mobile0.25; `network(weightsURL:)` for a fine-tuned file | `retinaface-mobile025` | detection backend; `detector(weightsURL:)` for landmarks |
 | Face alignment | ``NFKMLXFaceAlignment`` | — | ``NFKMLXRetinaFaceDetector`` (default) or ``NFKMLXVisionFaceDetector`` | — | used by ``NFKMLXPhotoFaceBackend`` |
 
 ```swift

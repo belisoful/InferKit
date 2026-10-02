@@ -4494,6 +4494,7 @@
         "denoiser_training",
         "frcrn_training",
         "mossformer2_training",
+        "retinaface_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5517,6 +5518,12 @@
       "record": "reference/mossformer2-training.safetensors",
       "environment": "llm",
       "command": "IK_MOSSFORMER2_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/clearervoice-train/train/speech_enhancement\" mossformer2_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/mossformer2-se/last_best_checkpoint.pt\""
+    },
+    {
+      "key": "IK_PARITY_RETINAFACE_TRAINING",
+      "record": "reference/retinaface-training.safetensors",
+      "environment": "llm",
+      "command": "IK_RETINAFACE_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/retinaface\" retinaface_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/detection_mobilenet0.25_Final.pth\""
     }
   ]
 }

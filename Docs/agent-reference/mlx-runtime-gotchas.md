@@ -645,6 +645,19 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **Rule for training parity tests.** Hold gradients to the reference's, not Adam's first update. That
     update is close to `sign(g)` for every element, so its cosine counts sign agreement and showed the
     45% error as a 0.94 cosine with a norm ratio of 1.
+- **`leakyRelu` passes the whole gradient at exactly zero, where torch passes the slope (2026-10-02).**
+  MLXNN's `leakyRelu(x, negativeSlope:)` differentiates to 1 at `x = 0`; torch's `leaky_relu` backward
+  takes `x > 0 ? 1 : slope`, so it gives the slope there. `relu` agrees with torch (0 at zero). The
+  forward is identical. Only an input that is exactly zero differs, which a normalized activation rarely
+  is; an unnormalized one fed by zeros can be.
+  - **A related tie that does occur.** An activation input within a float32 step of zero can land on
+    opposite sides in two implementations, and its gradient then differs by the slope's factor. Behind a
+    BatchNorm in training mode, the normalization's backward spreads that one element's difference over
+    its channel through the mean terms. RetinaFace's released weights have one such element in
+    stage 2.3's pointwise normalization (input −1.19e-7 here): it moves every gradient upstream of it by
+    4e-4 to 6e-4 while the same backward on random weights lands at the float32 floor.
+  - **Rule for training parity tests.** Localize a gradient gap with seam gradients before reading it
+    as a port defect, and keep a control on random weights, which a real backward difference fails.
 - **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
   loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
   forward, and that one evaluation carries every file read, every conversion, and the forward itself.

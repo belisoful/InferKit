@@ -11500,6 +11500,145 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-3, 2 * stepFloor))
     }
 
+    // RetinaFace's training against biubug6/Pytorch_Retinaface at b984b4b: the training forward on the
+    // released mobile0.25, `match`'s label for every prior, `MultiBoxLoss`'s three terms, the gradients
+    // of five tensors and the global norm, and the loss after one step of `train.py`'s SGD. Each is also
+    // recorded at float64.
+    //
+    // `IK_RETINAFACE_TRAIN_SRC=reference-sources/retinaface
+    //  python run_reference.py retinaface_training out/retinaface-training.safetensors --checkpoint raw/detection_mobilenet0.25_Final.pth`
+    func testRetinaFaceTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_RETINAFACE_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_RETINAFACE_TRAINING to a record from run_reference.py retinaface_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let images = try array("images")
+        let faces: [[NFKMLXRetinaFaceAnnotation]] = try (0 ..< 2).map { index in
+            let rows = try array("faces::\(index)").asArray(Float.self)
+            return stride(from: 0, to: rows.count, by: 15).map { row in
+                NFKMLXRetinaFaceAnnotation(x1: rows[row], y1: rows[row + 1], x2: rows[row + 2], y2: rows[row + 3],
+                                           landmarks: rows[row + 14] > 0 ? Array(rows[(row + 4) ..< (row + 14)]) : nil)
+            }
+        }
+
+        let net = try NFKMLXRetinaFace.network(weightsURL: weights("IK_VAL_RETINAFACE"))
+        net.train(true)
+        let input = NFKMLXRetinaFace.trainingInput(images)
+        let outputs = net.logits(input)
+        let priors = NFKMLXRetinaFace.anchors(height: images.dim(1), width: images.dim(2), configuration: net.configuration)
+        let objective = NFKMLXRetinaFaceObjective()
+        let labels = faces.flatMap { objective.match($0, priors: priors.asArray(Float.self), variance: net.configuration.variance).labels }
+        let referenceLabels = try array("labels").asArray(Int32.self)
+        XCTAssertEqual(labels, referenceLabels, "every prior's label is the reference's")
+        let forward = [("boxes", outputs.boxes), ("logits", outputs.logits), ("landmarks", outputs.landmarks)]
+            .map { ($0.0, distance($0.1, try! array($0.0))) }
+        let terms = objective.loss(boxes: outputs.boxes, logits: outputs.logits, landmarks: outputs.landmarks,
+                                   priors: priors, faces: faces, variance: net.configuration.variance)
+        let ours = [terms.location, terms.confidence, terms.landmark].map { $0.item(Float.self) }
+        let theirs = try array("terms").asArray(Float.self), theirs64 = try array("terms64").asArray(Float.self)
+        // The priors the classification term scores: a near tie at the mining boundary ranks differently
+        // under different rounding, which moves the gradient and barely moves the loss.
+        let matchedPriors = MLXArray(labels, [2, labels.count / 2]) .!= 0
+        let selected = objective.selection(NFKMLXRetinaFaceObjective.classificationLoss(outputs.logits, matched: matchedPriors),
+                                           matched: matchedPriors).asArray(Float.self)
+        let referenceSelected = try array("selected").asArray(Int32.self)
+        let differing = zip(selected, referenceSelected).enumerated().filter { Int32($0.element.0) != $0.element.1 }.map(\.offset)
+        let mining = try array("mining").reshaped([-1]).asArray(Float.self)
+        print("PARITY retinaface-training: forward \(forward); labels matched \(labels.filter { $0 != 0 }.count) of \(labels.count); "
+              + "terms \(ours) vs \(theirs) (float64 \(theirs64)); selected \(Int(selected.reduce(0, +))), "
+              + "differing priors \(differing) with reference mining losses \(differing.map { mining[$0] })")
+        for (name, error) in forward {
+            XCTAssertLessThan(error, 1e-4, name)
+        }
+        for index in 0 ..< 3 {
+            XCTAssertEqual(ours[index], theirs[index], accuracy: max(abs(theirs[index]) * 1e-4, 2 * abs(theirs[index] - theirs64[index])))
+        }
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], faces)]
+        }(net, [input]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try scalar("gradient_norm64")
+        print("PARITY retinaface-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-3, 2 * abs(try scalar("gradient_norm") - norm64)))
+        // The same gradient over the reference's own selection, which separates the mining's near tie from
+        // everything else.
+        let referenceSelection = MLXArray(referenceSelected.map(Float.init), [2, referenceSelected.count / 2])
+        let pinnedGradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            let outputs = net.logits(arrays[0])
+            let terms = objective.loss(boxes: outputs.boxes, logits: outputs.logits, landmarks: outputs.landmarks,
+                                       priors: priors, faces: faces, variance: net.configuration.variance,
+                                       selected: referenceSelection)
+            return [objective.locationWeight * terms.location + terms.confidence + terms.landmark]
+        }(net, [input]).1.flattened())
+        let names = ["body.stage1.0.0.weight", "body.stage1.1.0.weight", "body.stage1.5.3.weight", "body.stage2.0.3.weight",
+                     "body.stage3.0.0.weight", "fpn.output1.0.weight", "fpn.merge1.0.weight", "fpn.output2.0.weight",
+                     "ssh1.conv5X5_1.0.weight", "ssh1.conv3X3.0.weight", "ClassHead.0.conv1x1.weight",
+                     "LandmarkHead.0.conv1x1.weight"]
+        for name in names {
+            let key = try XCTUnwrap(NFKMLXRetinaFace.remapReferenceKey(name))
+            let mine = try XCTUnwrap(gradients[key], key), pinned = try XCTUnwrap(pinnedGradients[key], key)
+            let reference = try array("grad::\(name)").transposed(0, 2, 3, 1)
+            let reference64 = try array("grad64::\(name)").transposed(0, 2, 3, 1)
+            let floor = distance(reference, reference64)
+            print("PARITY retinaface-training: \(key) gradient relative error \(distance(mine, reference)); "
+                  + "from float64: ours \(distance(mine, reference64)), over the reference's selection "
+                  + "\(distance(pinned, reference64)), reference float32 \(floor)")
+            // Two rounding ties on the released weights move these gradients. One background prior trades
+            // places at the mining boundary, whose two losses differ by 2.4e-7. One element of stage 2.3's
+            // pointwise normalization lies a float32 step below zero here and above it in the reference, so
+            // its LeakyReLU takes the other slope, and the normalization's backward spreads that over its
+            // channel and everything upstream. The control below holds the backward itself to the floor.
+            XCTAssertLessThan(distance(mine, reference64), 1e-3, key)
+            XCTAssertLessThan(distance(pinned, reference64), 1e-3, key)
+        }
+
+        // The control: random weights, the same loss and inputs, and the reference's selection on them. A
+        // backward that differs from the reference's differs here too.
+        let control = NFKMLXRetinaFace.makeNet()
+        let controlWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("control::weight::"),
+                  let name = NFKMLXRetinaFace.remapReferenceKey(String(key.dropFirst("control::weight::".count))) else { return nil }
+            return (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(controlWeights, to: control)
+        control.train(true)
+        let controlSelected = try array("control::selected").asArray(Int32.self)
+        let controlSelection = MLXArray(controlSelected.map(Float.init), [2, controlSelected.count / 2])
+        let controlGradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: control) { net, arrays in
+            let outputs = net.logits(arrays[0])
+            let terms = objective.loss(boxes: outputs.boxes, logits: outputs.logits, landmarks: outputs.landmarks,
+                                       priors: priors, faces: faces, variance: net.configuration.variance,
+                                       selected: controlSelection)
+            return [objective.locationWeight * terms.location + terms.confidence + terms.landmark]
+        }(control, [input]).1.flattened())
+        for name in names {
+            let key = try XCTUnwrap(NFKMLXRetinaFace.remapReferenceKey(name))
+            let mine = try XCTUnwrap(controlGradients[key], key)
+            let reference = try array("control::grad::\(name)").transposed(0, 2, 3, 1)
+            let reference64 = try array("control::grad64::\(name)").transposed(0, 2, 3, 1)
+            let floor = distance(reference, reference64)
+            print("PARITY retinaface-training: control \(key) from float64: ours \(distance(mine, reference64)), "
+                  + "reference float32 \(floor)")
+            XCTAssertLessThan(distance(mine, reference64), max(1e-4, 2 * floor), "control \(key)")
+        }
+
+        net.train(false)
+        try NFKMLXRetinaFace.fineTune(net, examples: { _ in (images, faces) }, steps: 1)
+        net.train(true)
+        let lossAfter = objective(net, input, faces).item(Float.self)
+        let after64 = try scalar("loss_after_step64")
+        let stepFloor = abs(try scalar("loss_after_step") - after64)
+        print("PARITY retinaface-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-3, 2 * stepFloor))
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

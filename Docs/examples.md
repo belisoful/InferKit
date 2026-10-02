@@ -4022,6 +4022,26 @@ try NFKMLXWeights.save(net, to: tuned)
 let enhancer = try NFKMLXMossFormer2Factory.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Training RetinaFace on your own faces
+
+The released RetinaFace detector trains every weight the way biubug6/Pytorch_Retinaface trains it: prior
+matching, box and landmark regression, and mined cross-entropy, under SGD with its step schedule. Each
+step takes RGB images `[N, H, W, 3]` in [0, 1] and each image's faces, every coordinate a fraction of the
+image; a face without landmarks trains its box alone.
+
+```swift
+let net = try NFKMLXRetinaFace.network(weightsURL: releasedWeights)
+try NFKMLXRetinaFace.fineTune(net, examples: { step in
+    (images: myBatches[step].images,
+     faces: myBatches[step].faces.map { image in
+         image.map { NFKMLXRetinaFaceAnnotation(x1: $0.x1, y1: $0.y1, x2: $0.x2, y2: $0.y2, landmarks: $0.points) }
+     })
+}, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let detector = try NFKMLXRetinaFace.detector(weightsURL: tuned)   // Objective-C: detectorWithWeightsURL:…
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

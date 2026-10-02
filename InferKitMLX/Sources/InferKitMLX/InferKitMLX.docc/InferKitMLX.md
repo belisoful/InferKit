@@ -596,6 +596,9 @@ limits.
 - ``NFKMLXYOLOGenerationNet``
 - ``NFKMLXYOLOBox``
 - ``NFKMLXYOLOObjective``
+- ``NFKMLXRetinaFaceNet``
+- ``NFKMLXRetinaFaceAnnotation``
+- ``NFKMLXRetinaFaceObjective``
 - ``NFKMLXYOLOEndToEndObjective``
 - ``NFKMLXYOLOTrainable``
 - ``NFKMLXRTDetrObjective``

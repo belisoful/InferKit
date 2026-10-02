@@ -125,14 +125,16 @@ final class NFKRetinaHead: Module {
         super.init()
     }
 
-    /// `[1, H, W, anchors·width]` becomes `[predictions, width]`, which is the reference's reshape.
+    /// `[N, H, W, anchors·width]` becomes `[N, predictions, width]`, which is the reference's reshape.
     func callAsFunction(_ x: MLXArray, width: Int) -> MLXArray {
-        conv1x1(x).reshaped([-1, width])
+        conv1x1(x).reshaped([x.dim(0), -1, width])
     }
 }
 
 /// The MobileNetV1 backbone, FPN, SSH modules, and heads.
-final class NFKMLXRetinaFaceNet: Module {
+/// RetinaFace mobile0.25: the MobileNetV1 backbone, FPN, SSH modules, and heads. Build one with
+/// `NFKMLXRetinaFace.network(weightsURL:)`. Introduced in InferKit 0.4.0.
+public final class NFKMLXRetinaFaceNet: Module {
     // The reference's `stage1` opens with a plain convolution and continues with depthwise blocks.
     // Naming the stem separately keeps each array homogeneous; the remap accounts for the offset.
     @ModuleInfo(key: "stem") var stem: NFKRetinaConvBN
@@ -154,7 +156,8 @@ final class NFKMLXRetinaFaceNet: Module {
     @ModuleInfo(key: "BboxHead") var bboxHead: [NFKRetinaHead]
     @ModuleInfo(key: "LandmarkHead") var landmarkHead: [NFKRetinaHead]
 
-    let configuration: NFKMLXRetinaFaceConfiguration
+    /// The network's geometry and anchors.
+    public let configuration: NFKMLXRetinaFaceConfiguration
 
     init(_ c: NFKMLXRetinaFaceConfiguration) {
         configuration = c
@@ -193,6 +196,17 @@ final class NFKMLXRetinaFaceNet: Module {
     /// - Returns: box offsets `[predictions, 4]`, class scores `[predictions, 2]`, and landmark
     ///   offsets `[predictions, 10]`, all in the reference's prediction order.
     func callAsFunction(_ x: MLXArray) -> (boxes: MLXArray, scores: MLXArray, landmarks: MLXArray) {
+        let outputs = logits(x)
+        return (outputs.boxes[0], softmax(outputs.logits[0], axis: -1), outputs.landmarks[0])
+    }
+
+    /// The training forward, the reference's `phase='train'` output, on prepared images `[N, H, W, 3]`
+    /// (`NFKMLXRetinaFace.trainingInput(_:)`).
+    ///
+    /// - Returns: box offsets `[N, predictions, 4]`, class logits `[N, predictions, 2]` before the
+    ///   softmax, and landmark offsets `[N, predictions, 10]`, in the order of
+    ///   `NFKMLXRetinaFace.anchors`.
+    public func logits(_ x: MLXArray) -> (boxes: MLXArray, logits: MLXArray, landmarks: MLXArray) {
         var feature = stem(x)
         for block in stage1 { feature = block(feature) }
         let c1 = feature
@@ -210,10 +224,10 @@ final class NFKMLXRetinaFaceNet: Module {
         p1 = merge1(p1 + NFKMLXResample.resizeNearest(p2, height: p1.shape[1], width: p1.shape[2]))
 
         let features = [ssh1(p1), ssh2(p2), ssh3(p3)]
-        let boxes = concatenated(zip(bboxHead, features).map { $0($1, width: 4) }, axis: 0)
-        let scores = concatenated(zip(classHead, features).map { $0($1, width: 2) }, axis: 0)
-        let landmarks = concatenated(zip(landmarkHead, features).map { $0($1, width: 10) }, axis: 0)
-        return (boxes, softmax(scores, axis: -1), landmarks)
+        let boxes = concatenated(zip(bboxHead, features).map { $0($1, width: 4) }, axis: 1)
+        let scores = concatenated(zip(classHead, features).map { $0($1, width: 2) }, axis: 1)
+        let landmarks = concatenated(zip(landmarkHead, features).map { $0($1, width: 10) }, axis: 1)
+        return (boxes, scores, landmarks)
     }
 }
 
@@ -399,11 +413,13 @@ public final class NFKMLXRetinaFace: NSObject {
         return (bgr - MLXArray(channelMean)).reshaped([1, height, width, 3])
     }
 
-    /// Loads a converted safetensors checkpoint.
+    /// Loads the released checkpoint, converted or raw, or a file `NFKMLXWeights` saved, which carries
+    /// the module's own keys and loads as written.
     static func loadWeights(into net: NFKMLXRetinaFaceNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let released = checkpoint.arrays.keys.contains { $0.contains("body.") }
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
-            guard let name = remapReferenceKey(key) else { return nil }
+            guard let name = released ? remapReferenceKey(key) : key else { return nil }
             if checkpoint.needsConvTranspose, value.ndim == 4 {
                 return (name, value.transposed(0, 2, 3, 1))
             }

@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 47 |
-| `trainable`, no recipe yet | 51 |
+| `ships` | 48 |
+| `trainable`, no recipe yet | 50 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-seven recipes ship and 51 models are trainable with none written. That is the size of
+Forty-eight recipes ship and 50 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -102,7 +102,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXRFDetrSegmentationNet` | trainable | head-retarget | public | transformers `RfDetrForSegmentationLoss`. Its point-sampled mask terms reduce to gathers MLX has. |
 | `NFKMLXPose` | trainable | head-retarget | internal | Heatmap MSE. The objective is in mmpose's own losses. |
 | `NFKMLXVitPose` | trainable | head-retarget | internal | transformers states its loss is unsupported and points at `ViTAE-Transformer/ViTPose`. |
-| `NFKMLXRetinaFace` | trainable | full | internal | biubug6/Pytorch_Retinaface's `multibox_loss.py`: smooth-L1 boxes at 2.0, 7:1 hard-negative cross-entropy, smooth-L1 landmarks; SGD at 1e-3. facexlib ships the same network. |
+| `NFKMLXRetinaFace` | ships | full | public | biubug6/Pytorch_Retinaface's `MultiBoxLoss` over `match`, every prior's label equal and the terms within 3e-7, with `train.py`'s SGD at 1e-3 and its step schedule. facexlib ships the same network. |
 
 ## Image restoration
 
@@ -376,11 +376,11 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
-   Pitch ship, and so do the Denoiser, FRCRN, and MossFormer2 SE. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, and RetinaFace. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
    variables. The 2026-09-25 triage adds
-   RetinaFace, RIFE v4, both colorizers, and the Depth Anything V2
+   RIFE v4, both colorizers, and the Depth Anything V2
    metric fine-tune. Each has a published objective with no adversary, and each fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,

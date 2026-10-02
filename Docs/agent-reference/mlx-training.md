@@ -163,6 +163,9 @@ checked against their code at sample steps:
 - `warmupCosine(steps:warmupSteps:startScale:endScale:)` → V-JEPA 2's `WarmupCosineLRSchedule`, which
   steps before each update, so update `k` runs at step `k + 1`; equal to the reference at every step
   (`run_reference.py vjepa2_probe`).
+- `multiStep(milestones:gamma:)` → torch's `MultiStepLR`, the rate times `gamma` for every milestone at
+  or before the step; RetinaFace's `adjust_learning_rate` falls at the iteration that reaches each
+  milestone, which this matches.
 
 A recipe's nil `learningRateSchedule` is its reference's schedule when the recipe builds the reference
 optimizer, and a constant rate when the caller passes an optimizer, since the caller then chose the rate.
@@ -214,6 +217,7 @@ Cosmos, Zero-DCE, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev, the deno
 | MossFormer2 SE | ClearerVoice-Studio 6b3774d `train.py` and `MossFormer2_SE_48K.yaml`: `torch.optim.Adam` 5e-4, no decay, clip 10, a constant rate; batches of 4 four-second clips accumulated to 8; the fbank dithered at 1.0 | the halve-on-plateau schedule, which needs a validation set; the recipe holds the rate. The dither is `dither: NFKMLXMossFormer2Factory.referenceDither` and accumulation `accumulationSteps: NFKMLXMossFormer2Factory.referenceAccumulationSteps`, both off by default; the clip applies once per update, to the averaged gradient, where the reference clips each batch's |
 | Basic Pitch | `basic-pitch` `train.py`: Keras `Adam` 1e-3 (`NFKMLXKerasAdam`), no clip, the `UnitNorm` kernel constraint after each update | the halve-on-plateau schedule (`ReduceLROnPlateau`), which needs a validation set; the recipe holds the rate |
 | YOLO, every generation | ultralytics `optimizer=auto` for a run under 10,000 updates: AdamW at `round(0.002 · 5 / (4 + classes), 6)`, decay `0.0005 · batch · accumulate / 64` on convolution weights alone, clip 10; the per-epoch linear schedule with its warm-up (`NFKMLXLearningRateSchedule.ultralytics`); `ModelEMA` kept | the 64-image nominal batch is `nominalBatchSize: NFKMLXYOLO.referenceNominalBatchSize`, off by default, and `NFKMLXYOLOGenerations.fineTune` does not take it; mosaic and jitter augmentation are the caller's |
+| RetinaFace | biubug6/Pytorch_Retinaface b984b4b `train.py` and `cfg_mnet`: `torch.optim.SGD` 1e-3, momentum 0.9, weight decay 5e-4 on every parameter, no clip; ×0.1 at epochs 190 and 220 of 250 (`NFKMLXRetinaFace.referenceSchedule(steps:)`) | `preproc`'s random crop, color distortion, mirror, and 640-pixel resize, the caller's data choices; the batch of 32 (`NFKMLXRetinaFace.referenceBatchSize`) |
 | RT-DETR | lyuwenyu/RT-DETR, each release's configuration: its AdamW groups and freezing (`referenceRecipe(for:)`), clip 0.1, RT-DETRv2's 2,000-update linear warm-up, a constant rate otherwise; the weight average kept | photometric distortion, zoom-out, IoU crop, and flips, the caller's data choices |
 
 **Per-model status lives in the ledger.** [mlx-customization-ledger.md](mlx-customization-ledger.md)

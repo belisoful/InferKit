@@ -33,11 +33,43 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   decoding and suppression against its `detect_faces` (same face count, **box IoU 1.0**, landmarks
   within a pixel). Weights: `github.com/xinntao/facexlib/releases` `detection_mobilenet0.25_Final.pth`,
   1.7 MB — negligible beside CodeFormer's own checkpoint, which is why it is the recommended detector.
-  Customization: trainable at `full`, with no recipe written yet. biubug6/Pytorch_Retinaface at b984b4b
-  (`train.py`, `layers/modules/multibox_loss.py`) trains the network facexlib ships: smooth-L1 boxes at
-  weight 2.0, cross-entropy over the positives and 7:1 mined hard negatives, and smooth-L1 landmarks,
-  over priors matched at IoU 0.35; SGD at 1e-3, momentum 0.9, weight decay 5e-4, ×0.1 at epochs 190 and
-  220 of 250, batch 32 at 640 pixels.
+  **Customization ships** at `full` (`NFKMLXRetinaFaceTraining.swift`), measured against
+  biubug6/Pytorch_Retinaface at b984b4b (`run_reference.py retinaface_training`, the `llm` env,
+  `IK_RETINAFACE_TRAIN_SRC`), the training code of the network facexlib ships, on the released
+  mobile0.25.
+  - `NFKMLXRetinaFace.fineTune` trains every parameter on RGB batches `[N, H, W, 3]` and each image's
+    `NFKMLXRetinaFaceAnnotation`s, the batch normalizations on batch statistics.
+    `NFKMLXRetinaFaceNet.logits(_:)` is the batched `phase='train'` forward;
+    `NFKMLXRetinaFace.trainingInput(_:)` is `preproc`'s BGR less the mean.
+  - `NFKMLXRetinaFaceObjective` is `MultiBoxLoss(2, 0.35, True, 0, True, 7, 0.35, False)` over
+    `utils.box_utils.match`: each prior takes the face it overlaps most and is background under 0.35;
+    each face claims its best prior, and one whose best prior overlaps it under 0.2 is ignored while
+    still claiming it, as the reference's loop writes it. Smooth L1 on the encoded boxes at weight 2,
+    cross-entropy over the matched priors and 7:1 hard negatives, each divided by the matched count,
+    and smooth L1 on the landmarks of faces that carry them (the reference's label −1 marks one without).
+  - The reference optimizer is `train.py`'s `torch.optim.SGD` at 1e-3, momentum 0.9, weight decay 5e-4 on
+    every parameter, no clip. `referenceSchedule(steps:)` is its tenfold falls at epochs 190 and 220 of 250
+    as `NFKMLXLearningRateSchedule.multiStep`, placed at those fractions of the run and never at its
+    first step. The random crop, color distortion, and mirror of `preproc` are the caller's.
+  - Measured on two 160-pixel images holding five faces, one without landmarks and one no prior overlaps
+    by 0.2: every prior's label equal to `match`'s (59 matched of 2,100), the training forward within
+    4.5e-6, the terms 5.030212 / 6.3719883 / 15.797312 vs 5.030211 / 6.3719873 / 15.797308, the global
+    gradient norm 228.35371 vs 228.3463, and the loss after one SGD step 22.78689 vs 22.787006.
+  - **Two rounding ties move the gradients on the released weights; the backward itself is exact.**
+    - Hard negative mining ranks by loss, so a near tie at its boundary can trade one prior. Here two
+      background priors' mining losses differ by 2.4e-7 and each side selects a different one; the loss
+      barely moves and the heads' and SSH's gradients move by 2e-4. Over the reference's own selection
+      they fall to the float32 floor (2e-6 to 4e-6).
+    - One element of stage 2.3's pointwise normalization lies a float32 step below zero here (−1.19e-7)
+      and above it in the reference, so its LeakyReLU takes the other slope. The normalization's backward
+      spreads that over channel 45, and every gradient upstream (stage 2.3 down to the stem) moves by 4e-4
+      to 6e-4. Seam gradients localized it: at the floor from stage 2.5 back to stage 2.3's output, 9.2e-4
+      at its pointwise output, the eight largest differences all in that channel.
+    - A control on random weights (`torch.manual_seed(0)`, the same loss and inputs) holds all twelve
+      gradients from the stem to the heads within 1.9e-5 of float64, at the reference's own float32
+      floor. The landmark head, which neither tie reaches, is within 2.7e-6 on the release.
+  - `loadWeights` reads a file `NFKMLXWeights` saved as written. The release's remap renumbers `stage1`,
+    which would move a saved file's first depthwise block onto the stem.
 - `NFKMLXYOLO` (`@objc`) — real object detection: the reference **YOLOv8** (ultralytics) in `MLXNN` —
   a CSPDarknet backbone of `Conv` (convolution + **BatchNorm epsilon 1e-3** + SiLU) and `C2f` stages
   ending in SPPF (three chained 5×5 stride-1 max pools through `NFKMLXResample.maxPooled`), a PAN-FPN

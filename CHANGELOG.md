@@ -441,6 +441,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### RetinaFace trains on a consumer's own faces
+
+- `NFKMLXRetinaFace.fineTune` trains every parameter on images and the faces annotated in them, as
+  biubug6/Pytorch_Retinaface's `train.py` does, with its SGD at 1e-3 and its step schedule by default.
+- `NFKMLXRetinaFaceObjective` is `MultiBoxLoss`: prior matching, smooth-L1 boxes and landmarks, and
+  cross-entropy with hard negative mining. `NFKMLXRetinaFaceAnnotation` is one face, its landmarks
+  optional.
+- `NFKMLXRetinaFaceNet` is public, with a batched training forward, `logits(_:)`.
+  `NFKMLXRetinaFace.network(weightsURL:)` builds it, and `trainingInput(_:)` prepares a batch.
+- `NFKMLXLearningRateSchedule.multiStep(milestones:gamma:)` is torch's `MultiStepLR`.
+- `NFKMLXRetinaFace.detector(weightsURL:)` and `backend(weightsURL:)` load a fine-tuned file.
+
 #### MossFormer2 SE trains on a consumer's own recordings
 
 - `NFKMLXMossFormer2Factory.fineTune` trains every parameter on noisy and clean batches, as

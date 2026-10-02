@@ -898,6 +898,28 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(enhancer.isReady)
     }
 
+    // Docs/examples.md: Training RetinaFace on your own faces
+    func testExampleTrainingRetinaFaceOnOwnFaces() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("retinaface-tuned-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release: NFKMLXRetinaFace.network(weightsURL: releasedWeights).
+        let net = try NFKMLXRetinaFace.network(weightsURL: nil)
+        let images = MLXArray((0 ..< 2 * 96 * 96 * 3).map { Float($0 % 97) / 97 }, [2, 96, 96, 3])
+        let faces = [[NFKMLXRetinaFaceAnnotation(x1: 0.2, y1: 0.2, x2: 0.6, y2: 0.7,
+                                                 landmarks: [0.3, 0.35, 0.5, 0.35, 0.4, 0.45, 0.32, 0.55, 0.48, 0.55])],
+                     [NFKMLXRetinaFaceAnnotation(x1: 0.4, y1: 0.3, x2: 0.9, y2: 0.8)]]
+        let history = try NFKMLXRetinaFace.fineTune(net, examples: { _ in (images: images, faces: faces) }, steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let detector = try NFKMLXRetinaFace.detector(weightsURL: tuned)   // also detectorWithWeightsURL:…
+        XCTAssertNotNil(detector)
+    }
+
     // Docs/examples.md: Teaching note transcription your own instrument
     func testExampleFineTuningBasicPitchOnOwnRecordings() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

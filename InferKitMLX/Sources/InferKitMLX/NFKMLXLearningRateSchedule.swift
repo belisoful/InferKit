@@ -24,6 +24,16 @@ public struct NFKMLXLearningRateSchedule {
     /// The base rate at every step.
     public static var constant: NFKMLXLearningRateSchedule { NFKMLXLearningRateSchedule { _ in 1 } }
 
+    /// torch's `MultiStepLR`: the base rate times `gamma` once for every milestone at or before the
+    /// zero-based step.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func multiStep(milestones: [Int], gamma: Float) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in
+            powf(gamma, Float(milestones.filter { $0 <= step }.count))
+        }
+    }
+
     /// fvcore's `CosineParamScheduler` from 1 to `endScale` over a run of `steps`, as SAM 2's trainer
     /// drives it: step `k` sits at `k / steps` of the run.
     public static func cosine(steps: Int, endScale: Float) -> NFKMLXLearningRateSchedule {
