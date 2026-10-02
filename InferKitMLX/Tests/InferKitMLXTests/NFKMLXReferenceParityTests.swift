@@ -11362,7 +11362,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         // third encoder (real part, channel 38), lies within 1.5e-4 of zero and carries a cotangent 14 times
         // the layer's RMS, so a float32 forward lands on either side of the kink. The reference's float32
         // lands 5% to 10% from float64 on the first UNet's gradients, and so does the port's. The control's
-        // gradients are held no farther from float64 than 1.5 times the reference's float32, or 1e-2.
+        // gradients are held no farther from float64 than 1.5 times the reference's float32, or 1e-2, and to
+        // float64 tightly with its activations pinned below.
         let control = try NFKMLXFRCRN.network(weightsURL: weights("IK_VAL_FRCRN"))
         for norm in control.modules().compactMap({ $0 as? NFKFRCRNComplexBatchNorm }) {
             func raised(_ old: BatchNorm) -> BatchNorm {
@@ -11410,6 +11411,116 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             print("PARITY frcrn-training: control \(name) gradient relative error \(distance(ours, theirs)); "
                   + "from float64: ours \(distance(ours, theirs64)), reference float32 \(distance(theirs, theirs64))")
             XCTAssertLessThan(distance(ours, theirs64), max(1e-2, 1.5 * distance(theirs, theirs64)), "control \(name)")
+        }
+
+        // The release's and the control's gradients with every ReLU and LeakyReLU pinned to the side float64's
+        // forward takes. The record holds each input within 2e-2 of zero, every input a float32 forward can
+        // move across, so the comparison carries no rounding tie: what is left is the backward.
+        func pinnedGradients(_ model: NFKMLXFRCRNNet, prefix: String) throws -> [String: MLXArray]? {
+            var overrides: [(index: MLXArray, sign: MLXArray, size: Int)] = []
+            while let index = arrays["\(prefix)\(overrides.count)::index"] {
+                overrides.append((index, try array("\(prefix)\(overrides.count)::sign") .== 1,
+                                  try array("\(prefix)\(overrides.count)::size").item(Int.self)))
+            }
+            guard !overrides.isEmpty else { return nil }
+            var position = 0
+            // Pins one activation. `parts` are its real and imaginary halves `[B, F, T, C]`, which the reference
+            // stacks as one `[B, C, F, T, 2]` tensor, or a single array already in the reference's layout.
+            func pinned(_ parts: [MLXArray], slope: Float) -> [MLXArray] {
+                let record = overrides[position]
+                position += 1
+                let positive = parts.map { stopGradient($0) .> 0 }
+                var mask = parts.count == 2 ? stacked(positive, axis: 4).transposed(0, 3, 1, 2, 4) : positive[0]
+                let shape = mask.shape
+                let flat = mask.reshaped([-1])
+                precondition(flat.size == record.size, "activation \(position - 1) holds \(flat.size) inputs, the record \(record.size)")
+                flat[record.index] = record.sign
+                mask = flat.reshaped(shape)
+                let masks = parts.count == 2 ? [mask.transposed(0, 2, 3, 1, 4)[.ellipsis, 0], mask.transposed(0, 2, 3, 1, 4)[.ellipsis, 1]] : [mask]
+                return zip(parts, masks).map { which($1, $0, slope * $0) }
+            }
+            func complexPinned(_ h: NFKFRCRNComplex) -> NFKFRCRNComplex {
+                let p = pinned([h.real, h.imaginary], slope: 0.01)
+                return NFKFRCRNComplex(real: p[0], imaginary: p[1])
+            }
+            func fsmn(_ f: NFKFRCRNFSMN, _ x: MLXArray) -> MLXArray {
+                let projected = f.project(pinned([f.linear(x)], slope: 0)[0])
+                let padded = MLX.padded(projected, widths: [IntOrPair(0), IntOrPair((f.order - 1, 0)), IntOrPair(0)], mode: .constant)
+                return x + projected + f.memory(padded)
+            }
+            func complexFSMN(_ re: NFKFRCRNFSMN, _ im: NFKFRCRNFSMN, _ real: MLXArray, _ imaginary: MLXArray) -> (MLXArray, MLXArray) {
+                (fsmn(re, real) - fsmn(im, imaginary), fsmn(re, imaginary) + fsmn(im, real))
+            }
+            func frequencyFSMN(_ m: NFKFRCRNFrequencyFSMN, _ x: NFKFRCRNComplex) -> NFKFRCRNComplex {
+                let (b, d, t, c) = (x.real.dim(0), x.real.dim(1), x.real.dim(2), x.real.dim(3))
+                func sequences(_ a: MLXArray) -> MLXArray { a.transposed(0, 2, 1, 3).reshaped([b * t, d, c]) }
+                func restore(_ a: MLXArray) -> MLXArray { a.reshaped([b, t, d, c]).transposed(0, 2, 1, 3) }
+                let (real, imaginary) = complexFSMN(m.re, m.im, sequences(x.real), sequences(x.imaginary))
+                return NFKFRCRNComplex(real: restore(real), imaginary: restore(imaginary))
+            }
+            func timeFSMN(_ m: NFKFRCRNTimeFSMN, _ x: NFKFRCRNComplex) -> NFKFRCRNComplex {
+                let (b, d, t, c) = (x.real.dim(0), x.real.dim(1), x.real.dim(2), x.real.dim(3))
+                func sequences(_ a: MLXArray) -> MLXArray { a.transposed(0, 2, 1, 3).reshaped([b, t, d * c]) }
+                func restore(_ a: MLXArray) -> MLXArray { a.reshaped([b, t, d, c]).transposed(0, 2, 1, 3) }
+                let (r1, i1) = complexFSMN(m.re1, m.im1, sequences(x.real), sequences(x.imaginary))
+                let (r2, i2) = complexFSMN(m.re2, m.im2, r1, i1)
+                return NFKFRCRNComplex(real: restore(r2), imaginary: restore(i2))
+            }
+            func excite(_ s: NFKFRCRNSqueezeExcite, _ x: NFKFRCRNComplex) -> NFKFRCRNComplex {
+                let pooledRe = NFKMLXStagedReduction.mean(x.real, axes: [1, 2])
+                let pooledIm = NFKMLXStagedReduction.mean(x.imaginary, axes: [1, 2])
+                func gate(_ stack: [Module], _ v: MLXArray) -> MLXArray {
+                    sigmoid((stack[2] as! Linear)(pinned([(stack[0] as! Linear)(v)], slope: 0)[0]))
+                }
+                let gateRe = gate(s.real, pooledRe) - gate(s.imaginary, pooledIm)
+                let gateIm = gate(s.real, pooledIm) + gate(s.imaginary, pooledRe)
+                let c = x.real.dim(3)
+                return NFKFRCRNComplex(real: x.real * gateRe.reshaped([-1, 1, 1, c]), imaginary: x.imaginary * gateIm.reshaped([-1, 1, 1, c]))
+            }
+            func unet(_ u: NFKFRCRNUNet, _ input: NFKFRCRNComplex) -> NFKFRCRNComplex {
+                var x = input
+                var excited = [input]
+                for i in 0 ..< u.stages {
+                    if i > 0 { x = frequencyFSMN(u.encoderMemories[i], x) }
+                    x = complexPinned(u.encoders[i].norm(u.encoders[i].conv(x)))
+                    excited.append(excite(u.encoderExcites[i], x))
+                }
+                var p = timeFSMN(u.bottleneck, x)
+                for i in 0 ..< u.stages {
+                    p = complexPinned(u.decoders[i].norm(u.decoders[i].conv(p)))
+                    if i < u.stages - 1 { p = frequencyFSMN(u.decoderMemories[i], p) }
+                    if i == u.stages - 1 { break }
+                    if i < u.stages - 2 { p = excite(u.decoderExcites[i], p) }
+                    let skip = excited[u.stages - 1 - i]
+                    p = NFKFRCRNComplex(real: concatenated([p.real, skip.real], axis: 3), imaginary: concatenated([p.imaginary, skip.imaginary], axis: 3))
+                }
+                return u.linear(p)
+            }
+            let pinnedInstallation = try NFKMLXGradientSafeConvolution.install(in: model)
+            defer { pinnedInstallation.restore() }
+            return Dictionary(uniqueKeysWithValues: valueAndGrad(model: model) { model, _ in
+                position = 0
+                let first = unet(model.first, spectrum)
+                let second = unet(model.second, first)
+                precondition(position == overrides.count, "every recorded activation is pinned once")
+                return [lossFromMask(NFKFRCRNComplex(real: tanh(first.real) + tanh(second.real), imaginary: tanh(first.imaginary) + tanh(second.imaginary)))]
+            }(model, [noisy]).1.flattened())
+        }
+        for (model, prefix, gradientPrefix) in [(net, "kink64::", ""), (control, "eps2::kink64::", "eps2::")] {
+            guard let pinned = try pinnedGradients(model, prefix: prefix) else { continue }
+            let pinnedNorm = sqrt(pinned.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+            let norm64 = try scalar("\(gradientPrefix)gradient_norm64")
+            print("PARITY frcrn-training: \(gradientPrefix.isEmpty ? "release" : "control") with float64's kinks pinned: "
+                  + "global norm \(pinnedNorm) vs float64 \(norm64)")
+            XCTAssertEqual(pinnedNorm, norm64, accuracy: norm64 * 3e-4, "\(prefix) norm")
+            for name in ["unet.encoders.0.conv.conv_re.weight", "unet.fsmn.fsmn_re_L1.conv1.weight",
+                         "unet.encoders.3.bn.bn_re.weight", "unet2.linear.conv_re.weight"] {
+                let ours = try XCTUnwrap(pinned[name], name)
+                let theirs64 = layout(name, try array("\(gradientPrefix)grad64::\(name)"))
+                print("PARITY frcrn-training: \(gradientPrefix.isEmpty ? "release" : "control") \(name) with float64's kinks "
+                      + "pinned, from float64: \(distance(ours, theirs64))")
+                XCTAssertLessThan(distance(ours, theirs64), 3e-4, "\(prefix) \(name)")
+            }
         }
 
         net.train(false)
@@ -11608,6 +11719,71 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let bound: Float = ["body.stage1.0.0.weight", "body.stage1.1.0.weight"].contains(name) ? 2e-3 : 1e-3
             XCTAssertLessThan(distance(mine, reference64), bound, key)
             XCTAssertLessThan(distance(pinned, reference64), bound, key)
+        }
+
+        // The same gradient with every LeakyReLU and ReLU pinned to the side float64's forward takes and the
+        // selection pinned to float64's, which takes every rounding tie out: what is left is the backward.
+        var masks: [MLXArray] = []
+        while let mask = arrays["mask64::\(masks.count)"] {
+            masks.append(mask.transposed(0, 2, 3, 1) .== 1)
+        }
+        if !masks.isEmpty {
+            func pinnedLogits(_ net: NFKMLXRetinaFaceNet, _ x: MLXArray) -> (boxes: MLXArray, logits: MLXArray, landmarks: MLXArray) {
+                var index = 0
+                func kink(_ y: MLXArray, slope: Float) -> MLXArray {
+                    defer { index += 1 }
+                    return which(masks[index], y, slope * y)
+                }
+                func convBN(_ m: NFKRetinaConvBN, _ x: MLXArray) -> MLXArray {
+                    let y = m.bn(m.conv(x))
+                    guard let slope = m.slope else { return y }
+                    return kink(y, slope: slope)
+                }
+                func depthwise(_ b: NFKRetinaDepthwise, _ x: MLXArray) -> MLXArray {
+                    kink(b.pwbn(b.pwconv(kink(b.dwbn(b.dwconv(x)), slope: b.slope))), slope: b.slope)
+                }
+                func ssh(_ s: NFKRetinaSSH, _ x: MLXArray) -> MLXArray {
+                    let three = convBN(s.conv3x3, x), five1 = convBN(s.conv5x5a, x)
+                    let five = convBN(s.conv5x5b, five1), seven = convBN(s.conv7x7b, convBN(s.conv7x7a, five1))
+                    return kink(concatenated([three, five, seven], axis: -1), slope: 0)
+                }
+                var feature = convBN(net.stem, x)
+                for block in net.stage1 { feature = depthwise(block, feature) }
+                let c1 = feature
+                for block in net.stage2 { feature = depthwise(block, feature) }
+                let c2 = feature
+                for block in net.stage3 { feature = depthwise(block, feature) }
+                // The reference's FPN calls output1, output2, then output3.
+                var p1 = convBN(net.output1, c1)
+                var p2 = convBN(net.output2, c2)
+                let p3 = convBN(net.output3, feature)
+                p2 = convBN(net.merge2, p2 + NFKMLXResample.resizeNearest(p3, height: p2.shape[1], width: p2.shape[2]))
+                p1 = convBN(net.merge1, p1 + NFKMLXResample.resizeNearest(p2, height: p1.shape[1], width: p1.shape[2]))
+                let features = [ssh(net.ssh1, p1), ssh(net.ssh2, p2), ssh(net.ssh3, p3)]
+                XCTAssertEqual(index, masks.count, "every recorded activation is pinned once")
+                return (concatenated(zip(net.bboxHead, features).map { $0($1, width: 4) }, axis: 1),
+                        concatenated(zip(net.classHead, features).map { $0($1, width: 2) }, axis: 1),
+                        concatenated(zip(net.landmarkHead, features).map { $0($1, width: 10) }, axis: 1))
+            }
+            let selected64 = try array("selected64").asArray(Int32.self)
+            let selection64 = MLXArray(selected64.map(Float.init), [2, selected64.count / 2])
+            let kinkGradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+                let outputs = pinnedLogits(net, arrays[0])
+                let terms = objective.loss(boxes: outputs.boxes, logits: outputs.logits, landmarks: outputs.landmarks,
+                                           priors: priors, faces: faces, variance: net.configuration.variance,
+                                           selected: selection64)
+                return [objective.locationWeight * terms.location + terms.confidence + terms.landmark]
+            }(net, [input]).1.flattened())
+            for name in names {
+                let key = try XCTUnwrap(NFKMLXRetinaFace.remapReferenceKey(name))
+                let mine = try XCTUnwrap(kinkGradients[key], key)
+                let reference = try array("grad::\(name)").transposed(0, 2, 3, 1)
+                let reference64 = try array("grad64::\(name)").transposed(0, 2, 3, 1)
+                let floor = distance(reference, reference64)
+                print("PARITY retinaface-training: \(key) with float64's kinks and selection pinned, from float64: "
+                      + "ours \(distance(mine, reference64)), reference float32 \(floor)")
+                XCTAssertLessThan(distance(mine, reference64), max(2e-5, 2 * floor), "pinned \(key)")
+            }
         }
 
         // The control: random weights, the same loss and inputs, and the reference's selection on them. A

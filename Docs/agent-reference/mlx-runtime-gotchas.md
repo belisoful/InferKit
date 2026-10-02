@@ -661,6 +661,8 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     Which element ties depends on the rounding: under MLXNN's batch statistics it was one in stage 2.3.
   - **Rule for training parity tests.** Localize a gradient gap with seam gradients before reading it
     as a port defect, and keep a control on random weights, which a real backward difference fails.
+    Where the reference can record its float64 activation signs, pin them (`mlx-training.md`, "A
+    rounding tie at an activation is pinned").
 - **MLX's CPU reductions accumulate in order in float32, so the CPU is not a precision reference for a
   training-mode gradient (2026-10-02).** Measured in Python mlx 0.32.2 on a transcription of RetinaFace
   mobile0.25 with random weights, two 160×160 inputs, BatchNorm on batch statistics, and a sum-of-squares

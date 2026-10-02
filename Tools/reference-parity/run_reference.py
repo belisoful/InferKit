@@ -1111,6 +1111,53 @@ def run_denoiser_training(image, checkpoint):
     return torch.tensor([l1.item()], dtype=torch.float32)
 
 
+class KinkRecorder:
+    """Records the sign of every `F.relu` and `F.leaky_relu` input in call order, where `nn.ReLU`,
+    `nn.LeakyReLU`, and functional calls all reach the functional form, so a float32 port can pin each
+    activation to the side a float64 forward takes and separate a rounding tie at zero from its backward.
+
+    With no tolerance it records each input's whole mask. With one it records only the inputs within the
+    tolerance of zero, as flat indices and signs, since no input farther out can change sides at float32.
+    An input at exactly zero records 0, the slope's side, as torch's backward takes it.
+    """
+
+    def __init__(self, tolerance=None):
+        self.tolerance, self.records = tolerance, []
+
+    def _record(self, input):
+        positive = (input > 0).to(torch.uint8)
+        if self.tolerance is None:
+            self.records.append({"mask": positive.contiguous()})
+        else:
+            flat = input.detach().reshape(-1)
+            index = torch.nonzero(flat.abs() < self.tolerance).reshape(-1)
+            self.records.append({"index": index.to(torch.int32), "sign": positive.reshape(-1)[index].contiguous(),
+                                 "size": torch.tensor([flat.numel()], dtype=torch.int32)})
+
+    def __enter__(self):
+        import torch.nn.functional as F
+        self.functional, self.relu, self.leaky_relu = F, F.relu, F.leaky_relu
+        recorder = self
+        def relu(input, inplace=False):
+            recorder._record(input)
+            return recorder.relu(input, inplace)
+        def leaky_relu(input, negative_slope=0.01, inplace=False):
+            recorder._record(input)
+            return recorder.leaky_relu(input, negative_slope, inplace)
+        F.relu, F.leaky_relu = relu, leaky_relu
+        return self
+
+    def __exit__(self, *exception):
+        self.functional.relu, self.functional.leaky_relu = self.relu, self.leaky_relu
+        return False
+
+    def write(self, extra, prefix):
+        for position, record in enumerate(self.records):
+            for key, value in record.items():
+                extra[f"{prefix}{position}" if key == "mask" else f"{prefix}{position}::{key}"] = value
+        print(f"{prefix}: {len(self.records)} activations recorded")
+
+
 def run_frcrn_training(image, checkpoint):
     """FRCRN's training objective and one optimizer step, from ClearerVoice-Studio's own
     `train/speech_enhancement` (IK_FRCRN_TRAIN_SRC is that directory at the pinned commit; `--checkpoint`
@@ -1127,7 +1174,9 @@ def run_frcrn_training(image, checkpoint):
     - the waveform, mask, four gradients, global norm, and stepped loss again at float64, the floor a
       float32 result is measured against;
     - the waveform, mask, loss, four gradients, and global norm at float32 and float64 with every
-      BatchNorm epsilon at 1e-2, the conditioning control.
+      BatchNorm epsilon at 1e-2, the conditioning control;
+    - for both float64 forwards, the index and sign of every ReLU and LeakyReLU input within 2e-2 of zero
+      (`KinkRecorder`), so a float32 port can pin its activations to float64's sides.
 
     `utils.misc` imports `pesq`, which only its PESQ metric calls, so it is stubbed where it is absent.
     """
@@ -1205,7 +1254,9 @@ def run_frcrn_training(image, checkpoint):
         return torch.stft(x, args.fft_len, args.win_inc, args.win_len, center=center, window=window,
                           return_complex=False)
     loss_module.stft = stft64
-    out64 = model64(noisy_t.double())
+    with KinkRecorder(tolerance=2e-2) as kinks:
+        out64 = model64(noisy_t.double())
+    kinks.write(extra, "kink64::")
     extra["mask64"] = out64[2].detach().float().contiguous()
     extra["estimate64"] = out64[1].detach().float().contiguous()
     loss64 = loss_frcrn_se_16k(args, noisy_t.double(), clean_t.double(), out64, "cpu")[0]
@@ -1255,7 +1306,10 @@ def run_frcrn_training(image, checkpoint):
         control = control.to(precision)
         if precision == torch.float64:
             loss_module.stft = stft64
-        outputs = control(noisy_t.to(precision))
+        with KinkRecorder(tolerance=2e-2) as kinks:
+            outputs = control(noisy_t.to(precision))
+        if precision == torch.float64:
+            kinks.write(extra, "eps2::kink64::")
         extra[f"eps2::mask{suffix}"] = outputs[2].detach().float().contiguous()
         extra[f"eps2::estimate{suffix}"] = outputs[1].detach().float().contiguous()
         control_loss = loss_frcrn_se_16k(args, noisy_t.to(precision), clean_t.to(precision), outputs, "cpu")[0]
@@ -1416,7 +1470,9 @@ def run_retinaface_training(image, checkpoint):
     - the gradient of four tensors and the global gradient norm;
     - one step of `train.py`'s `torch.optim.SGD(lr=1e-3, momentum=0.9, weight_decay=5e-4)` and the loss
       after it;
-    - the outputs, the terms, the gradients, the norm, and the stepped loss again at float64.
+    - the outputs, the terms, the gradients, the norm, and the stepped loss again at float64;
+    - the float64 forward's mask of every LeakyReLU and ReLU input (`KinkRecorder`) and its mining
+      selection, so a float32 port can pin its activations and its selection to float64's.
 
     The reference calls `.cuda()` unconditionally, so it is an identity while the loss runs, and
     `data/__init__.py` imports OpenCV for its dataset, which is stubbed where it is absent.
@@ -1490,8 +1546,10 @@ def run_retinaface_training(image, checkpoint):
              "LandmarkHead.0.conv1x1.weight"]
 
     model64 = copy.deepcopy(model).double()
-    out64, location64, confidence64, landmark64 = terms(model64, inputs.double(), priors.double(),
-                                                       [rows.double() for rows in targets])
+    with KinkRecorder() as kinks:
+        out64, location64, confidence64, landmark64 = terms(model64, inputs.double(), priors.double(),
+                                                           [rows.double() for rows in targets])
+    kinks.write(extra, "mask64::")
     total64 = 2.0 * location64 + confidence64 + landmark64
     extra["terms64"] = torch.tensor([location64.item(), confidence64.item(), landmark64.item()])
     total64.backward()
@@ -1511,9 +1569,9 @@ def run_retinaface_training(image, checkpoint):
     for key, value in zip(["boxes", "logits", "landmarks"], out):
         extra[key] = value.detach().contiguous()
     # The priors `MultiBoxLoss` scores, recomputed as its hard negative mining selects them.
-    def selection(out):
+    def selection(out, dtype=torch.float32):
         positive = labels != 0
-        conf_data = out[1].detach().float()
+        conf_data = out[1].detach().to(dtype)
         batch_conf = conf_data.view(-1, 2)
         from utils.box_utils import log_sum_exp
         mining = log_sum_exp(batch_conf) - batch_conf.gather(1, positive.long().view(-1, 1))
@@ -1525,6 +1583,7 @@ def run_retinaface_training(image, checkpoint):
         return (positive | (rank < negatives.expand_as(rank))).to(torch.int32), mining.contiguous()
     with torch.no_grad():
         extra["selected"], extra["mining"] = selection(out)
+        extra["selected64"], _ = selection(out64, torch.float64)
     extra["terms"] = torch.tensor([location.item(), confidence.item(), landmark.item()])
     total = 2.0 * location + confidence + landmark
     optimizer = torch.optim.SGD(model.parameters(), lr=1e-3, momentum=0.9, weight_decay=5e-4)

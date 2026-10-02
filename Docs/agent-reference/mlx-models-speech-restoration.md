@@ -474,6 +474,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     from float64 and the global norm 5.5%, where the reference's float32 lands 6.7% to 10% and 5.3%. The
     port's CPU stays on float64's side, within 8e-4 and 1.4e-6. The test holds the control's gradients
     no farther from float64 than 1.5 times the reference's float32, or 1e-2.
+  - **Pinned to float64's activation sides, both land at the float32 floor.** The oracle records the
+    index and sign of every ReLU and LeakyReLU input within 2e-2 of zero in each float64 forward (236
+    activations a forward, `KinkRecorder`), and the test pins its own to them. The release's first-UNet
+    gradients then land 1.8e-5 to 2.4e-5 from float64 and its norm 1.7e-5; the control's 3.2e-5 to
+    3.4e-5 and 3.2e-5. Every gap above is rounding ties. The test holds both pinned comparisons to 3e-4.
   - Adam's first step moves each parameter by about the sign of its gradient: the loss after one step is
     60.072 against float64's 59.986, from 229.67, and the reference's float32 reaches 59.032.
 - `NFKMLXMossFormer2SRNet` / `NFKMLXMossFormer2SRGenerator` / `NFKMLXMossFormer2SRFactory`

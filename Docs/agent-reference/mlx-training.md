@@ -138,6 +138,15 @@ where the port's GPU and the reference's float32 both land 5% to 10% from float6
 gradients are held no farther from float64 than 1.5 times the reference's float32. MLX's CPU cannot run a
 convolution in float64, so the port's own float64 gradient is not available.
 
+**A rounding tie at an activation is pinned, not bounded.** A ReLU or LeakyReLU input within a few
+float32 steps of zero takes either side in two implementations, and behind a BatchNorm that one element
+moves every gradient upstream of it, by up to 1e-3 on RetinaFace and 10% on FRCRN's control. No float32
+port can land such an element on float64's side every time. The oracle records the float64 forward's
+activation signs (`KinkRecorder` in `run_reference.py`: whole masks, or the index and sign of each input
+within a tolerance of zero for a large network), and the parity test reruns its forward with them pinned.
+What is left is the backward: RetinaFace's twelve gradients and FRCRN's release and control then land at
+the float32 floor. The unpinned comparison keeps a bound that admits the measured ties.
+
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the
 run ends. A `MultiOptimizer`'s groups keep their ratios. The schedules are the references' own formulas,

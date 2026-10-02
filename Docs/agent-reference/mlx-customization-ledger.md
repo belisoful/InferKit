@@ -159,7 +159,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXMossFormer2SRNet` | offline | — | internal | The reference's generator ships three discriminators and a feature loss. |
 | `NFKMLXApollo` | offline | — | internal | `apollo.yaml` configures a frequency discriminator and a second optimizer. |
 | `NFKMLXMossFormer2SENet` | ships | full | public | `psm_loss` within 1.2e-6 relative on the release, gradients within 2.2e-5, with the loader's features and dither, the reference's dropout, and `train.py`'s Adam at 5e-4. No discriminator. |
-| `NFKMLXFRCRN` | ships | full | public | `loss_frcrn_se_16k` within 1.1e-6 relative on the release, with `train.py`'s L2 Adam at 1e-3 and clip 10. Staged batch statistics hold the release's gradients within 3.2e-3 of float64 on either device, where the reference's float32 lands 1.2% to 1.9% away. No discriminator. |
+| `NFKMLXFRCRN` | ships | full | public | `loss_frcrn_se_16k` within 1.1e-6 relative on the release, with `train.py`'s L2 Adam at 1e-3 and clip 10. Staged batch statistics hold the release's gradients within 3.2e-3 of float64 on either device, where the reference's float32 lands 1.2% to 1.9% away, and within 2.4e-5 with float64's activation sides pinned. No discriminator. |
 | `NFKMLXVoiceRestore` | untrainable | — | internal | skirdey/voicerestore publishes no training code, and the class defines no loss. |
 
 ## Source separation

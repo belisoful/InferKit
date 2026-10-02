@@ -71,7 +71,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
       gradients within 1.7e-5 of float64, inside the reference's own float32 floor (up to 1.8e-5). On the
       CPU, MLXNN's statistics put the control's backbone gradients 4% to 5% from float64, and the staged
       statistics hold them within 1.6e-5. The CPU release lands within 7.5e-5 in the backbone, and 4.6e-4
-      and 5.5e-4 at the FPN's output1 and merge1, which the control does not show.
+      and 5.5e-4 at the FPN's output1 and merge1 from a tie at `merge1`'s channel 42 (−2.8e-6 on the
+      CPU, +3.8e-7 on the GPU).
+    - With the float64 forward's 41 activation masks and its mining selection pinned (the oracle's
+      `KinkRecorder`), all twelve gradients land 1.9e-6 to 7.5e-6 from float64, the reference's own
+      float32 floor; the stem's 9.0e-4 falls to 4.3e-6. The test holds them to the larger of 2e-5 and
+      twice that floor.
   - `loadWeights` reads a file `NFKMLXWeights` saved as written. The release's remap renumbers `stage1`,
     which would move a saved file's first depthwise block onto the stem.
 - `NFKMLXYOLO` (`@objc`) — real object detection: the reference **YOLOv8** (ultralytics) in `MLXNN` —
