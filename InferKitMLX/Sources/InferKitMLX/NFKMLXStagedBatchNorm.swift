@@ -28,6 +28,27 @@ enum NFKMLXStagedReduction {
         return sum(x, axes: axes).squeezed(axes: axes) / Float(count)
     }
 
+    /// The batch statistics of `x` over every axis but the last, and `x` normalized by them without an
+    /// affine, in the corrected two-pass form: the mean is refined by the mean of the deviations from it,
+    /// and the variance subtracts that refinement's square. A channel whose values vary far less than
+    /// their mean keeps its variance's digits that way. `mean` and `variance` are `[C]`.
+    static func normalized(_ x: MLXArray, eps: Float) -> (normalized: MLXArray, mean: MLXArray, variance: MLXArray) {
+        let axes = Array(0 ..< x.ndim - 1)
+        let count = Float(x.size / x.dim(-1))
+        let estimate = sum(x, axes: axes) / count
+        let deviation = x - broadcast(estimate, like: x)
+        let shift = sum(deviation, axes: axes) / count
+        let variance = sum(square(deviation), axes: axes) / count - square(shift)
+        let normalized = (deviation - broadcast(shift, like: x)) * broadcast(rsqrt(variance + eps), like: x)
+        return (normalized, (estimate + shift).flattened(), variance.flattened())
+    }
+
+    /// `weight · x + bias` for per-channel `[C]` parameters, broadcast one axis at a time.
+    static func affine(_ x: MLXArray, weight: MLXArray, bias: MLXArray) -> MLXArray {
+        let shape = Array(repeating: 1, count: x.ndim - 1) + [x.dim(-1)]
+        return broadcast(weight.reshaped(shape), like: x) * x + broadcast(bias.reshaped(shape), like: x)
+    }
+
     /// Broadcasts `statistic` (`[1, …, 1, C]`) across every axis of `x` but the last two, first axis first.
     /// The arithmetic that consumes the result broadcasts the remaining axis.
     static func broadcast(_ statistic: MLXArray, like x: MLXArray) -> MLXArray {
@@ -38,39 +59,5 @@ enum NFKMLXStagedReduction {
             result = MLX.broadcast(result, to: shape)
         }
         return result
-    }
-}
-
-/// `BatchNorm` whose training statistics are staged reductions (`NFKMLXStagedReduction`).
-///
-/// The mean is refined by the mean of the deviations from it, and the variance subtracts that
-/// refinement's square, the corrected two-pass form, so a channel whose values vary far less than their
-/// mean keeps its variance's digits. In evaluation mode it computes exactly what `BatchNorm` does. The running statistics fold the population variance as `BatchNorm`'s do, and the
-/// type and keys are `BatchNorm`'s, so the trainer and the loaders treat it as one.
-final class NFKStagedBatchNorm: BatchNorm {
-
-    override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        guard training else {
-            return super.callAsFunction(x)
-        }
-        let axes = Array(0 ..< x.ndim - 1)
-        let count = Float(x.size / x.dim(-1))
-        let estimate = NFKMLXStagedReduction.sum(x, axes: axes) / count
-        let deviation = x - NFKMLXStagedReduction.broadcast(estimate, like: x)
-        let shift = NFKMLXStagedReduction.sum(deviation, axes: axes) / count
-        let variance = NFKMLXStagedReduction.sum(square(deviation), axes: axes) / count - square(shift)
-        let statistics = Dictionary(uniqueKeysWithValues: parameters().flattened())
-        if let runningMean = statistics["running_mean"], let runningVar = statistics["running_var"] {
-            runningMean._updateInternal((1 - momentum) * runningMean + momentum * (estimate + shift).flattened())
-            runningVar._updateInternal((1 - momentum) * runningVar + momentum * variance.flattened())
-        }
-        let scale = rsqrt(variance + eps)
-        let normalized = (deviation - NFKMLXStagedReduction.broadcast(shift, like: x)) * NFKMLXStagedReduction.broadcast(scale, like: x)
-        guard let weight, let bias else {
-            return normalized
-        }
-        let shape = Array(repeating: 1, count: x.ndim - 1) + [x.dim(-1)]
-        return NFKMLXStagedReduction.broadcast(weight.reshaped(shape), like: x) * normalized
-            + NFKMLXStagedReduction.broadcast(bias.reshaped(shape), like: x)
     }
 }

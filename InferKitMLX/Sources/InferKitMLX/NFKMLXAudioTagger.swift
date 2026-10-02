@@ -113,10 +113,10 @@ final class NFKPANNsConvBlock: Module {
         self.pools = pools
         _conv1.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                      kernelSize: 3, padding: 1, bias: false)
-        _bn1.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn1.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         _conv2.wrappedValue = Conv2d(inputChannels: outChannels, outputChannels: outChannels,
                                      kernelSize: 3, padding: 1, bias: false)
-        _bn2.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn2.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -143,7 +143,7 @@ public final class NFKMLXAudioTaggerNet: Module {
         frontEnd = NFKAudioTaggerFrontEnd(c)
         // The reference normalizes the spectrogram across its mel bands, so the count of bands is what
         // this layer is sized by.
-        _bn0.wrappedValue = BatchNorm(featureCount: c.mels)
+        _bn0.wrappedValue = NFKTorchBatchNorm(featureCount: c.mels)
         var channels = 1
         var stack: [NFKPANNsConvBlock] = []
         for block in 0 ..< c.blocks {

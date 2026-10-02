@@ -210,7 +210,7 @@ final class NFKVADSeparableConv: Module {
         // The reference normalizes with an epsilon of 1e-3, two orders above the framework default.
         // Its running variances are small enough that the default visibly rescales every block, and
         // eight of them compound into saturated logits.
-        _norm.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3)
+        _norm.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels, eps: 1e-3)
     }
 
     let kernel: Int

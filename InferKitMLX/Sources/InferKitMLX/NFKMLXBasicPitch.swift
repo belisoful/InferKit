@@ -227,14 +227,12 @@ final class NFKBasicPitchBatchNorm: Module {
         guard training else {
             return (x - runningMean) * rsqrt(runningVar + Self.epsilon) * weight + bias
         }
-        let axes = Array(0 ..< (x.ndim - 1))
-        let mean = x.mean(axes: axes)
-        let variance = x.variance(axes: axes)
+        let statistics = NFKMLXStagedReduction.normalized(x, eps: Self.epsilon)
         let count = Float(x.size / x.dim(-1))
-        let unbiased = stopGradient(variance) * (count / max(count - 1, 1))
-        runningMean._updateInternal(Self.momentum * runningMean + (1 - Self.momentum) * stopGradient(mean))
+        let unbiased = stopGradient(statistics.variance) * (count / max(count - 1, 1))
+        runningMean._updateInternal(Self.momentum * runningMean + (1 - Self.momentum) * stopGradient(statistics.mean))
         runningVar._updateInternal(Self.momentum * runningVar + (1 - Self.momentum) * unbiased)
-        return (x - mean) * rsqrt(variance + Self.epsilon) * weight + bias
+        return NFKMLXStagedReduction.affine(statistics.normalized, weight: weight, bias: bias)
     }
 }
 

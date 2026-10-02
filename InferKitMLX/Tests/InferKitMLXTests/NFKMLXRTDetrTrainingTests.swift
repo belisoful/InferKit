@@ -255,11 +255,14 @@ final class NFKMLXRTDetrTrainingTests: XCTestCase {
         try requireMLXRuntime()
         let net = tinyNetwork()
         let item = batch()
-        let history = try NFKMLXRTDetr.fineTune(net, variant: .r50vd, examples: { _ in item }, optimizer: AdamW(learningRate: 1e-3),
-                                                steps: 12, clipGradientNorm: nil, learningRateSchedule: .constant,
+        // At 1e-3 the tiny network's loss swings by a tenth from step to step, so a 12-step run ends on either
+        // side of where it began. At 3e-4 over 24 steps its last four losses sat 8% to 18% below its first
+        // four in ten repeats.
+        let history = try NFKMLXRTDetr.fineTune(net, variant: .r50vd, examples: { _ in item }, optimizer: AdamW(learningRate: 3e-4),
+                                                steps: 24, clipGradientNorm: nil, learningRateSchedule: .constant,
                                                 averagesWeights: false)
         XCTAssertTrue(history.allSatisfy(\.isFinite))
-        XCTAssertLessThan(history.suffix(3).reduce(0, +), history.prefix(3).reduce(0, +))
+        XCTAssertLessThan(history.suffix(4).reduce(0, +), history.prefix(4).reduce(0, +))
         XCTAssertFalse(net.training)
     }
 

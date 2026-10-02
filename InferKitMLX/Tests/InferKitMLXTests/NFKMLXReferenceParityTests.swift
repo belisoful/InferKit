@@ -11059,6 +11059,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let agreement = updateAgreement(before: try XCTUnwrap(before[name], name),
                                             after: try XCTUnwrap(after[name], name), referenceAfter: reference)
             print("PARITY deeplab-training: \(name) update cosine \(agreement.cosine), norm ratio \(agreement.ratio)")
+            // Four ReLU inputs, two in layer4 and two in the ASPP's 8×8 maps, lie within 1e-5 of zero, so a
+            // float32 forward lands them on either side. That alone moves the ASPP's and the backbone's updates
+            // by up to 1 − cos 3e-5 against the reference.
             XCTAssertGreaterThan(agreement.cosine, 0.999, name)
             XCTAssertEqual(agreement.ratio, 1, accuracy: 1e-2, name)
         }
@@ -11363,7 +11366,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let control = try NFKMLXFRCRN.network(weightsURL: weights("IK_VAL_FRCRN"))
         for norm in control.modules().compactMap({ $0 as? NFKFRCRNComplexBatchNorm }) {
             func raised(_ old: BatchNorm) -> BatchNorm {
-                let fresh = NFKStagedBatchNorm(featureCount: old.weight!.dim(0), eps: 1e-2)
+                let fresh = NFKTorchBatchNorm(featureCount: old.weight!.dim(0), eps: 1e-2)
                 fresh.update(parameters: old.parameters())
                 return fresh
             }

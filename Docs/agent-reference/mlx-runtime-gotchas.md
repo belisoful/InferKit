@@ -268,8 +268,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `BatchNorm` and TensorFlow's fused kernel fold the unbiased one. The difference is `n / (n − 1)` for
   `n` values per channel, which is below one part in ten thousand over any feature map the shipped
   recipes normalize and a factor of two over two values. A port that trains through a normalization
-  over a handful of values per channel needs its own. Basic Pitch's `NFKBasicPitchBatchNorm` follows
-  TensorFlow. Probe: `testABatchNormFoldsTheBiasedVarianceIntoItsRunningVariance`.
+  over a handful of values per channel needs its own. `NFKTorchBatchNorm` follows PyTorch, and every
+  normalization a recipe trains against a PyTorch reference builds it; Basic Pitch's
+  `NFKBasicPitchBatchNorm` follows TensorFlow. Probe:
+  `testABatchNormFoldsTheBiasedVarianceIntoItsRunningVariance`.
 
 - **`update(parameters:)` writes into the arrays a module already holds.** It calls `_updateInternal`
   on each existing array, so a dictionary of `parameters()` taken before a training run holds the same
@@ -684,19 +686,22 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **FRCRN's output-side 1×1 convolution gradient, 25 times worse on the CPU than on the GPU, is the
     same reductions.** On the release it read 4.0e-4 from float64 on the CPU and 1.6e-5 on the GPU,
     through nearly dead BatchNorm channels that magnify a statistic's error by up to `1/√ε`.
-  - **The fix for a BatchNorm is `NFKStagedBatchNorm`.** It sums the statistics one axis at a time in the
-    corrected two-pass form and broadcasts them back one axis at a time, so the backward's reductions are
-    staged too. On a channel of 64,000 values at 0.3 varying by 1e-4, its normalized output lands 4.7e-8
-    from float64 on both devices, against 0.14 for MLXNN's `BatchNorm` on the CPU and 2.3e-4 on the GPU
-    (`NFKMLXStagedBatchNormTests`). FRCRN builds it: its output-convolution gradient lands within 1.5e-6
-    of float64 on the CPU, and its first UNet's GPU gradients moved from 4.3% to 0.27%. RetinaFace builds
-    it too: its random-weight control's CPU backbone gradients moved from 4% to 5% to within 1.6e-5 of
-    float64. Every other BatchNorm network still builds MLXNN's.
+  - **The fix for a BatchNorm is `NFKTorchBatchNorm`'s staged statistics.** It sums the statistics one
+    axis at a time in the corrected two-pass form and broadcasts them back one axis at a time, so the
+    backward's reductions are staged too. On a channel of 64,000 values at 0.3 varying by 1e-4, its
+    normalized output lands 4.7e-8 from float64 on both devices, against 0.14 for MLXNN's `BatchNorm` on
+    the CPU and 2.3e-4 on the GPU (`NFKMLXStagedBatchNormTests`). FRCRN builds it: its
+    output-convolution gradient lands within 1.5e-6 of float64 on the CPU, and its first UNet's GPU
+    gradients moved from 4.3% to 0.27%. RetinaFace builds it too: its random-weight control's CPU
+    backbone gradients moved from 4% to 5% to within 1.6e-5 of float64. Every normalization a recipe
+    trains builds it (`mlx-training.md` lists them), and `NFKBasicPitchBatchNorm` takes the same
+    statistics with TensorFlow's running-statistics rule.
   - **Rule.** Hold a training-mode gradient to the reference's float64. A float32 gradient through
-    MLXNN's batch statistics is a coarser sample on either device, and the CPU's is the coarser of the two. A CPU comparison stays valid
-    for a single operation or a graph without batch reductions, which is what the gradient-safe
-    convolution and denoiser tests compare. Any training parity test with kinked activations needs the
-    seam-gradient localization and random-weight control of the `leakyRelu` entry above.
+    MLXNN's batch statistics is a coarser sample on either device, and the CPU's is the coarser of the
+    two. A CPU comparison stays valid for a single operation or a graph without batch reductions, which
+    is what the gradient-safe convolution and denoiser tests compare. Any training parity test with
+    kinked activations needs the seam-gradient localization and random-weight control of the
+    `leakyRelu` entry above.
 - **A lazily converted float32 load can pass the GPU watchdog under swap (2026-09-24).** A release
   loaded at `.float32` converts each stored array lazily, so nothing evaluates until the first
   forward, and that one evaluation carries every file read, every conversion, and the forward itself.

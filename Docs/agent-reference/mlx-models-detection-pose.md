@@ -56,7 +56,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     4.0e-6, the terms 5.030209 / 6.3719883 / 15.797298 vs 5.030211 / 6.3719873 / 15.797308, the global
     gradient norm 228.34566 vs float64's 228.34607, and the loss after one SGD step 22.786896 vs float64's
     22.786985.
-  - **The normalizations take staged batch statistics (`NFKStagedBatchNorm`). One rounding tie moves the
+  - **The normalizations take staged batch statistics (`NFKTorchBatchNorm`). One rounding tie moves the
     gradients on the released weights; the backward itself is exact.**
     - With MLXNN's `BatchNorm` two ties moved them. Hard negative mining traded one background prior at
       its boundary, where two mining losses differ by 2.4e-7, and moved the heads' and SSH's gradients by

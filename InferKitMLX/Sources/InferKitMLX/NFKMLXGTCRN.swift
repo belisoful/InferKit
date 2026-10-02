@@ -125,7 +125,7 @@ final class NFKGTCRNConvBlock: Module {
                                         kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                         padding: IntOrPair(padding), groups: groups)
         }
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         _act.wrappedValue = isLast ? nil : PReLU(count: 1)
     }
 
@@ -204,7 +204,7 @@ final class NFKGTCRNGTConvBlock: Module {
                    : Conv2d(inputChannels: inC, outputChannels: outC, kernelSize: 1)
         }
         _pointConv1.wrappedValue = point(half * 3, hidden)                 // sfe tripled the half-channels
-        _pointBN1.wrappedValue = BatchNorm(featureCount: hidden)
+        _pointBN1.wrappedValue = NFKTorchBatchNorm(featureCount: hidden)
         _pointAct.wrappedValue = PReLU(count: 1)
         // Depthwise (3,3), dilation (d,1), freq pad 1; the time axis is causally front-padded by
         // (kernel-1)·dilation in the forward. The transposed convolution then removes that padding
@@ -219,10 +219,10 @@ final class NFKGTCRNGTConvBlock: Module {
                                              kernelSize: IntOrPair((3, 3)), padding: IntOrPair((0, 1)),
                                              dilation: IntOrPair((dilation, 1)), groups: hidden)
         }
-        _depthBN.wrappedValue = BatchNorm(featureCount: hidden)
+        _depthBN.wrappedValue = NFKTorchBatchNorm(featureCount: hidden)
         _depthAct.wrappedValue = PReLU(count: 1)
         _pointConv2.wrappedValue = point(hidden, half)
-        _pointBN2.wrappedValue = BatchNorm(featureCount: half)
+        _pointBN2.wrappedValue = NFKTorchBatchNorm(featureCount: half)
         _tra.wrappedValue = NFKGTCRNTRA(channels: half)
     }
 

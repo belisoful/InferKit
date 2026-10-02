@@ -58,17 +58,17 @@ final class NFKResNetBottleneck: Module {
     init(inChannels: Int, width: Int, stride: Int, dilation: Int, downsample: Bool) {
         let outChannels = width * Self.expansion
         _conv1.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: width, kernelSize: 1, bias: false)
-        _bn1.wrappedValue = BatchNorm(featureCount: width)
+        _bn1.wrappedValue = NFKTorchBatchNorm(featureCount: width)
         _conv2.wrappedValue = Conv2d(inputChannels: width, outputChannels: width, kernelSize: 3,
                                      stride: IntOrPair(stride), padding: IntOrPair(dilation),
                                      dilation: IntOrPair(dilation), bias: false)
-        _bn2.wrappedValue = BatchNorm(featureCount: width)
+        _bn2.wrappedValue = NFKTorchBatchNorm(featureCount: width)
         _conv3.wrappedValue = Conv2d(inputChannels: width, outputChannels: outChannels, kernelSize: 1, bias: false)
-        _bn3.wrappedValue = BatchNorm(featureCount: outChannels)
+        _bn3.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         if downsample {
             _downsampleConv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                                   kernelSize: 1, stride: IntOrPair(stride), bias: false)
-            _downsampleBN.wrappedValue = BatchNorm(featureCount: outChannels)
+            _downsampleBN.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels)
         }
     }
 
@@ -97,7 +97,7 @@ final class NFKMLXResNetBackbone: Module {
     init(_ configuration: NFKMLXResNetConfiguration) {
         _conv1.wrappedValue = Conv2d(inputChannels: 3, outputChannels: configuration.width, kernelSize: 7,
                                      stride: 2, padding: 3, bias: false)
-        _bn1.wrappedValue = BatchNorm(featureCount: configuration.width)
+        _bn1.wrappedValue = NFKTorchBatchNorm(featureCount: configuration.width)
 
         var inChannels = configuration.width
         var dilation = 1

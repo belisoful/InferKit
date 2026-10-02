@@ -88,8 +88,8 @@ final class NFKFRCRNComplexBatchNorm: Module {
     @ModuleInfo(key: "bn_im") var im: BatchNorm
 
     init(_ channels: Int) {
-        _re.wrappedValue = NFKStagedBatchNorm(featureCount: channels)
-        _im.wrappedValue = NFKStagedBatchNorm(featureCount: channels)
+        _re.wrappedValue = NFKTorchBatchNorm(featureCount: channels)
+        _im.wrappedValue = NFKTorchBatchNorm(featureCount: channels)
     }
 
     func callAsFunction(_ x: NFKFRCRNComplex) -> NFKFRCRNComplex {

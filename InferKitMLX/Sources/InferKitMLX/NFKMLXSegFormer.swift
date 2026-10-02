@@ -266,7 +266,7 @@ public final class NFKMLXSegFormerNet: Module {
         // The reference fuses with a bias-free 1×1 convolution followed by BatchNorm and ReLU.
         _linearFuse.wrappedValue = Conv2d(inputChannels: c.decodeDimensions * 4, outputChannels: c.decodeDimensions,
                                           kernelSize: 1, bias: false)
-        _batchNorm.wrappedValue = BatchNorm(featureCount: c.decodeDimensions)
+        _batchNorm.wrappedValue = NFKTorchBatchNorm(featureCount: c.decodeDimensions)
         _classifier.wrappedValue = Conv2d(inputChannels: c.decodeDimensions, outputChannels: c.classCount, kernelSize: 1)
         super.init()
         // A module starts in training mode, which would normalize with each batch's statistics at

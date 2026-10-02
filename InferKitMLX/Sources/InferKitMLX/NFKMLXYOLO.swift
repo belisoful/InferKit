@@ -87,7 +87,7 @@ final class NFKYOLOConv: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair(kernel / 2), groups: groups, bias: bias)
-        _bn.wrappedValue = BatchNorm(featureCount: outChannels, eps: 1e-3, momentum: 0.03)
+        _bn.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels, eps: 1e-3, momentum: 0.03)
         self.activates = activates
     }
 

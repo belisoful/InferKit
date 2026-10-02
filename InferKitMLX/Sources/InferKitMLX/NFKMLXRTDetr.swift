@@ -196,7 +196,7 @@ final class NFKRTDetrResNetConvNorm: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair(kernel / 2), bias: false)
-        _norm.wrappedValue = BatchNorm(featureCount: outChannels, eps: eps)
+        _norm.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels, eps: eps)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -213,7 +213,7 @@ final class NFKRTDetrShortCut: Module {
     init(_ inChannels: Int, _ outChannels: Int, stride: Int, eps: Float) {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: 1, stride: IntOrPair(stride), bias: false)
-        _norm.wrappedValue = BatchNorm(featureCount: outChannels, eps: eps)
+        _norm.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels, eps: eps)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { norm(conv(x)) }
@@ -417,7 +417,7 @@ final class NFKRTDetrConvNorm: Module {
         _conv.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
                                     kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                     padding: IntOrPair((kernel - 1) / 2), bias: false)
-        _norm.wrappedValue = BatchNorm(featureCount: outChannels, eps: eps)
+        _norm.wrappedValue = NFKTorchBatchNorm(featureCount: outChannels, eps: eps)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -901,7 +901,7 @@ public final class NFKMLXRTDetrNet: Module {
         _backbone.wrappedValue = NFKRTDetrConvEncoder(config)
         _encoderInputProj.wrappedValue = config.encoderInChannels.map { channels in
             [Conv2d(inputChannels: channels, outputChannels: config.encoderHiddenDim, kernelSize: 1, bias: false),
-             BatchNorm(featureCount: config.encoderHiddenDim, eps: 1e-5)]
+             NFKTorchBatchNorm(featureCount: config.encoderHiddenDim, eps: 1e-5)]
         }
         _encoder.wrappedValue = NFKRTDetrHybridEncoder(config)
         _encOutput.wrappedValue = [Linear(config.dModel, config.dModel),
@@ -911,7 +911,7 @@ public final class NFKMLXRTDetrNet: Module {
                                                  outputDim: 4, numLayers: 3)
         _decoderInputProj.wrappedValue = (0 ..< config.numFeatureLevels).map { _ in
             [Conv2d(inputChannels: config.encoderHiddenDim, outputChannels: config.dModel, kernelSize: 1, bias: false),
-             BatchNorm(featureCount: config.dModel, eps: config.batchNormEps)]
+             NFKTorchBatchNorm(featureCount: config.dModel, eps: config.batchNormEps)]
         }
         _decoder.wrappedValue = NFKRTDetrDecoder(config)
         // The last row is the padding class, which the reference zeroes and never updates.

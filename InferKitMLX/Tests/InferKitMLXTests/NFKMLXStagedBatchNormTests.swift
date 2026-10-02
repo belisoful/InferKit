@@ -2,9 +2,10 @@
 //  NFKMLXStagedBatchNormTests.swift
 //  InferKitMLXTests
 //
-//  The staged BatchNorm against float64 statistics computed here: a nearly constant channel's
-//  variance, normalized output, and input gradient on both devices, against MLX's own reduction on the
-//  CPU, which loses them, and identity with `BatchNorm` in evaluation mode.
+//  `NFKTorchBatchNorm`'s staged statistics against float64 statistics computed here: a nearly constant
+//  channel's running variance (unbiased, as PyTorch folds it), normalized output, and input gradient on
+//  both devices, against MLX's own reduction on the CPU, which loses them, and identity with
+//  `BatchNorm` in evaluation mode.
 //
 
 import XCTest
@@ -73,7 +74,9 @@ final class NFKMLXStagedBatchNormTests: XCTestCase {
         }
         let gradient = values.indices.map { (Double(r[$0]) - meanR[$0 % 2] - normalized[$0] * meanRY[$0 % 2]) * scale[$0 % 2] }
 
-        func measure(_ norm: BatchNorm, on device: Device) -> (variance: Double, output: Double, gradient: Double) {
+        func measure(_ norm: BatchNorm, on device: Device, unbiased: Bool) -> (variance: Double, output: Double, gradient: Double) {
+            let count = Double(values.count / 2)
+            let folded = reference.variance[0] * (unbiased ? count / (count - 1) : 1)
             norm.train(true)
             return Device.withDefaultDevice(device) {
                 let output = norm(x)
@@ -81,15 +84,15 @@ final class NFKMLXStagedBatchNormTests: XCTestCase {
                 let ours = grad { (input: MLXArray) in (norm(input) * weights).sum() }(x)
                 eval(output, running, ours)
                 let variance = Double(running.asArray(Float.self)[0])
-                return (abs(variance - reference.variance[0]) / reference.variance[0],
+                return (abs(variance - folded) / folded,
                         relative(output.asArray(Float.self), normalized, channel: 0, channels: 2),
                         relative(ours.asArray(Float.self), gradient, channel: 0, channels: 2))
             }
         }
-        let plain = measure(BatchNorm(featureCount: 2, momentum: 1), on: .cpu)
+        let plain = measure(BatchNorm(featureCount: 2, momentum: 1), on: .cpu, unbiased: false)
         for device in [Device.cpu, Device.gpu] {
-            let staged = measure(NFKStagedBatchNorm(featureCount: 2, momentum: 1), on: device)
-            let mlx = measure(BatchNorm(featureCount: 2, momentum: 1), on: device)
+            let staged = measure(NFKTorchBatchNorm(featureCount: 2, momentum: 1), on: device, unbiased: true)
+            let mlx = measure(BatchNorm(featureCount: 2, momentum: 1), on: device, unbiased: false)
             print("STAGED-BN \(device) from float64: staged variance \(staged.variance), output \(staged.output), gradient \(staged.gradient); "
                   + "BatchNorm variance \(mlx.variance), output \(mlx.output), gradient \(mlx.gradient)")
             XCTAssertLessThan(staged.variance, 1e-5, "\(device)")
@@ -104,7 +107,7 @@ final class NFKMLXStagedBatchNormTests: XCTestCase {
     func testEvaluationComputesWhatBatchNormDoes() throws {
         try requireMLXRuntime()
         let x = batch()
-        let staged = NFKStagedBatchNorm(featureCount: 2)
+        let staged = NFKTorchBatchNorm(featureCount: 2)
         let plain = BatchNorm(featureCount: 2)
         let parameters = ModuleParameters.unflattened(["weight": MLXArray([Float(1.5), 0.5]), "bias": MLXArray([Float(0.1), -0.2]),
                                                        "running_mean": MLXArray([Float(0.3), 0.1]), "running_var": MLXArray([Float(1e-8), 0.9])])

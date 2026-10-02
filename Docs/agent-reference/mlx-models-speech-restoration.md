@@ -462,7 +462,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     to 316 times, and the backward carries it upstream. With MLXNN's `BatchNorm` the first UNet's
     gradients landed 4.3% from the reference's float64 ones on the GPU (global norm 14,361 against
     14,541) and up to 3.0% on the CPU, whose output-convolution gradient read 25 times its GPU distance.
-  - **The complex BatchNorms build `NFKStagedBatchNorm`, and the squeeze-excite pools use
+  - **The complex BatchNorms build `NFKTorchBatchNorm`, and the squeeze-excite pools use
     `NFKMLXStagedReduction.mean`.** The first UNet's gradients land 1.7e-4 to 2.7e-3 from float64 on the
     GPU and 1.1e-4 to 3.2e-3 on the CPU, the global norm within 3.3e-5 and 5.0e-5, the output convolution
     within 3.8e-6 and 1.5e-6. The reference's own float32 lands 1.2% to 1.9% away. Inference parity is

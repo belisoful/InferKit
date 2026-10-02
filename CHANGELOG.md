@@ -441,6 +441,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Every BatchNorm a recipe trains follows PyTorch's statistics
+
+- The normalizations of FRCRN, RetinaFace, GTCRN, PANNs, SegFormer's decode head, YOLO v8 and v10–26,
+  RT-DETR, MarbleNet, and DeepLab's ResNet backbone fold the unbiased batch variance into their running
+  variance, as PyTorch does. They folded the population variance, so a fine-tuned checkpoint carried
+  `(n − 1) / n` of the reference's statistics: 2% low over a 5×5 map at a batch of two.
+- Every normalization a recipe trains, BiSeNet's, DeepLab's head's, and Basic Pitch's included, sums
+  its batch statistics one axis at a time in the corrected two-pass form. MLX's own reductions lose
+  the digits of a channel that barely varies, the CPU's most. Inference is unchanged.
+
 #### RetinaFace trains on a consumer's own faces
 
 - `NFKMLXRetinaFace.fineTune` trains every parameter on images and the faces annotated in them, as
