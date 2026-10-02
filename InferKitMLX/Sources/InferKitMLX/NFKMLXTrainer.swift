@@ -708,13 +708,15 @@ public enum NFKMLXTrainer {
     /// the damage outlives the run.
     ///
     /// A module that keeps running statistics and has no trainable parameter is therefore returned
-    /// to evaluation mode. Every other module trains, so a dropout or drop path in a frozen encoder
+    /// to evaluation mode, except an `NFKCaffeBatchNorm`, which normalizes with the batch as Caffe's
+    /// frozen `BatchNorm` does. Every other module trains, so a dropout or drop path in a frozen encoder
     /// still drops, as it does in a PyTorch reference that calls `model.train()` and freezes by
     /// `requires_grad_(False)`.
     static func enterTrainingMode(_ model: Module) {
         model.train(true)
         for (_, module) in [("", model)] + model.namedModules()
-        where keepsRunningStatistics(module) && module.trainableParameters().flattened().isEmpty {
+        where keepsRunningStatistics(module) && !(module is NFKCaffeBatchNorm)
+            && module.trainableParameters().flattened().isEmpty {
             module.train(false)
         }
     }

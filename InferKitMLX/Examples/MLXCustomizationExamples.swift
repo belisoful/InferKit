@@ -920,6 +920,34 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertNotNil(detector)
     }
 
+    // Docs/examples.md: Fine-tuning the colorizers
+    func testExampleFineTuningTheColorizers() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tunedECCV16 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("eccv16-\(UUID().uuidString).safetensors")
+        let tunedSIGGRAPH17 = FileManager.default.temporaryDirectory
+            .appendingPathComponent("siggraph17-\(UUID().uuidString).safetensors")
+        defer {
+            try? FileManager.default.removeItem(at: tunedECCV16)
+            try? FileManager.default.removeItem(at: tunedSIGGRAPH17)
+        }
+
+        // A real run loads the releases at 176 pixels; randomly initialized networks on 32-pixel images stand in.
+        let pixels: [Float] = (0 ..< 2 * 32 * 32 * 3).map { index -> Float in Float(index % 89) / 89 }
+        let batch = MLXArray(pixels, [2, 32, 32, 3])
+        let eccv16 = try NFKMLXColorizer.network(weightsURL: nil)
+        XCTAssertEqual(try NFKMLXColorizer.fineTune(eccv16, examples: { _ in batch }, steps: 1).count, 1)
+        try NFKMLXWeights.save(eccv16, to: tunedECCV16)
+
+        let siggraph17 = try NFKMLXSiggraphColorizer.network(weightsURL: nil)
+        XCTAssertEqual(try NFKMLXSiggraphColorizer.fineTune(siggraph17, examples: { _ in batch }, steps: 1, hintSeed: 7).count, 1)
+        try NFKMLXWeights.save(siggraph17, to: tunedSIGGRAPH17)
+
+        XCTAssertNoThrow(try NFKMLXColorizer.backend(weightsURL: tunedECCV16))
+        XCTAssertNoThrow(try NFKMLXSiggraphColorizer.backend(weightsURL: tunedSIGGRAPH17))
+    }
+
     // Docs/examples.md: Fine-tuning Depth Anything V2 to metric depth
     func testExampleFineTuningDepthAnythingToMetricDepth() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

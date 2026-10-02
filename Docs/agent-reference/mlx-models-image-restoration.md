@@ -236,12 +236,55 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   the hint) and a grayscale mask under `hintMaskKey`; the hint is multiplied by the mask, a hint with
   no mask applies everywhere, and both resample to the photo by nearest neighbor so a single hinted
   pixel keeps its color. Forward, Lab math, bin softmax, hint gating, and round-trip tested.
-  Customization: trainable at `full`, with no recipe written yet. ECCV-16 trains in the `caffe` branch
-  of richzhang/colorization at a1642d6 (`train/`): a 313-bin cross-entropy on soft-encoded targets (the
-  ten nearest bins, σ 5), each pixel's gradient rebalanced by the published `prior_probs.npy` (γ 0.5)
-  and gray images masked out; Adam at 3.16e-5 (β 0.9, 0.99), weight decay 1e-3, ×0.316 every 215k of
-  500k iterations. SIGGRAPH-17 trains in richzhang/colorization-pytorch at 66a1cb2: a 529-class
-  cross-entropy plus 10× L1 regression, Adam at 1e-4, no adversarial term.
+  **Customization ships** at `full` for both (`NFKMLXColorizerTraining.swift`,
+  `NFKMLXSiggraphColorizerTraining.swift`).
+  - ECCV-16 trains as the `caffe` branch of richzhang/colorization at a1642d6 does (`train/`,
+    `colorization_train_val_v2.prototxt`, `solver.prototxt`), measured by `run_reference.py eccv16_training`,
+    which runs the reference's own Python training layers from `resources/caffe_traininglayers.py`.
+    - `NFKMLXColorizerObjective` is the 313-bin cross-entropy on soft-encoded targets (the ten nearest bins of
+      `pts_in_hull.npy`, σ 5), each pixel weighted by `PriorBoostLayer`'s factor (the ImageNet
+      `prior_probs.npy` mixed half with uniform, γ 0.5) at its target's most likely bin, and zero on images
+      whose ab never exceeds 5. Both tables are embedded.
+    - `NFKMLXColorizer.referenceOptimizer()` is Caffe's `AdamSolver` as `solver.prototxt` sets it:
+      `NFKMLXKerasAdam` at 3.16e-5, momenta 0.9 and 0.99, delta 1e-8 on the uncorrected root, and an L2 decay
+      of 1e-3 on every convolution blob, biases included. `referenceSchedule(steps:)` places the ×0.316 steps
+      at 215,000 and 430,000 of 500,000 iterations as fractions of the run.
+    - The normalizations and the `out_ab` readout hold (`lr_mult: 0`). Caffe's `BatchNorm` still normalizes
+      with each batch's statistics in training, and `NFKCaffeBatchNorm` is the type the trainer keeps on them.
+      Every other normalization that trains nothing runs on its running statistics in a run.
+    - The network reads lightness as `(L − 50)/100`, the parametrization of the PyTorch conversion the backend
+      loads, where the Caffe network reads `L − 50`. The first convolution's weights are therefore 100 times
+      Caffe's, and an Adam update moves that layer's output a hundredth as far as the Caffe solver's would.
+      The oracle trains the same conversion, so the measurement holds the recipe to this parametrization.
+    - A network built without weights seeds `out_ab` with the bin centers over 110, the readout the release
+      carries; the test asserts the release's readout equals the centers within 1e-3.
+    - Measured on the release, three 64-pixel images, the third gray: logits within 5.9e-7 of float64 (the
+      reference's float32 5.4e-7), the losses equal to float64 within float32 rounding, and the logits'
+      gradient within 2.5e-6. One of 196,608 `relu8_1` inputs lies 1.0e-6 from zero on the other side from
+      float64, which moves every gradient below it by 1.1e-3 to 2.3e-3. With that side pinned, every gradient
+      lands within 3.0e-6 of float64, the reference's float32 floor. The loss after one step is 1642.6655
+      against float64's 1642.6628.
+  - SIGGRAPH-17 trains as the regression phase of richzhang/colorization-pytorch at 66a1cb2 does, the last
+    phase `scripts/train_siggraph.sh` runs, measured by `run_reference.py siggraph17_training`.
+    - `NFKMLXSiggraphColorizer.trainingExample(_:hintProbability:seed:)` is `get_colorization_data`: the
+      reference's CIELAB (`NFKColorizerTrainingLab`), the drop of images whose ab spans less than 5, and hint
+      patches 1 to 9 pixels square at normally distributed positions holding the patch's mean ab, while a uniform
+      draw stays under `1 − p` (`p` 0.125). The mask is centered at −0.5 and +0.5.
+    - `NFKMLXSiggraphColorizerObjective` is 10× the L1 over a and b. The reference adds a cross-entropy on
+      `model_class`, which reads the trunk through a `detach` in this phase and which the port does not carry,
+      so every carried parameter's gradient is the L1's. The classification phases train that head and are
+      not shipped.
+    - The optimizer is `torch.optim.Adam` at 1e-5 with no decay, at a constant rate (`--niter_decay 0`).
+    - Measured on the release, three 96-pixel images, the third gray, with the reference's numpy draws
+      replayed: the input within 2.7e-7, the prediction within 7.6e-7 of float64 (the reference's float32
+      8.3e-7), the L1 equal, every gradient within twice the reference's float32 distance from float64 (the
+      first convolution's 1.0e-3 where the reference's float32 lands 6.9e-3 away), and the L1 after one step
+      4.536028 against float64's 4.536023.
+    - The training mask and the inference mask differ in the references themselves. colorization-pytorch
+      trains on a mask centered at ±0.5, so no hint is −0.5. The colorizers package's `siggraph17.py`, which
+      the backend matches at parity, feeds 0 for no hint and 1 for a hint. The released network was trained
+      on the centered mask. The backend keeps the colorizers package's convention, so a fine-tuned network
+      reads the same mask the release reads at inference.
 - `NFKMLXDDColor` (`@objc`) — the modern colorizer beside the 2016 and 2017 ports (`DDColor`, piddnad,
   Apache-2.0): automatic colorization, an image's lightness in and two chroma channels out. Three
   parts. A **ConvNeXt-L encoder** (depths [3, 3, 27, 3], widths [192, 384, 768, 1536]) whose four stage

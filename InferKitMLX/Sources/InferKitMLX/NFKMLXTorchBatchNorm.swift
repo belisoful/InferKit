@@ -19,7 +19,7 @@ import MLXNN
 /// values vary far less than their mean keeps its variance's digits that way, where MLX's own reductions
 /// lose them. In evaluation mode it computes exactly what `BatchNorm` does, and it keeps the type and the
 /// keys, so the trainer and the loaders treat it as one.
-final class NFKTorchBatchNorm: BatchNorm {
+class NFKTorchBatchNorm: BatchNorm {
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         guard training else {
@@ -39,3 +39,12 @@ final class NFKTorchBatchNorm: BatchNorm {
         return NFKMLXStagedReduction.affine(statistics.normalized, weight: weight, bias: bias)
     }
 }
+
+/// Caffe's `BatchNorm` under `lr_mult: 0`: it trains nothing, and a training run still normalizes with each
+/// batch's statistics and folds them into the running ones.
+///
+/// A Caffe network holds a normalization's blobs out of the solver with `lr_mult: 0`, and the layer computes
+/// batch statistics in the training phase whatever the solver does with its blobs. `NFKMLXTrainer` returns
+/// every other normalization that trains nothing to evaluation mode for a run, so this type is what marks the
+/// Caffe behavior.
+final class NFKCaffeBatchNorm: NFKTorchBatchNorm {}

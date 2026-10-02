@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 49 |
-| `trainable`, no recipe yet | 49 |
+| `ships` | 50 |
+| `trainable`, no recipe yet | 48 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Forty-nine recipes ship and 49 models are trainable with none written. That is the size of
+Fifty recipes ship and 48 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -118,7 +118,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXRealESRGAN` | offline | — | internal | The generator alone is ported. The published recipe adds a discriminator no file here holds. |
 | `NFKMLXLaMa` | offline | — | internal | big-lama pairs the FFC-ResNet generator with an adversarial discriminator and a perceptual network. |
 | `NFKMLXCodeFormer` | offline | — | internal | The staged reference recipe needs a discriminator and a codebook-learning stage. |
-| `NFKMLXColorizer` | trainable | full | internal | The `caffe` branch's `train/` recipe is a 313-bin cross-entropy rebalanced by the published `prior_probs.npy`. SIGGRAPH-17 trains in colorization-pytorch: cross-entropy plus 10× L1. |
+| `NFKMLXColorizer` | ships | full | public | ECCV-16: the `caffe` branch's 313-bin cross-entropy rebalanced by `prior_probs.npy` and its Adam, every gradient at its float32 floor with one ReLU tie pinned. SIGGRAPH-17 (`NFKMLXSiggraphColorizer`): colorization-pytorch's regression phase, 10× L1 over its random hints, gradients within twice the reference's float32 distance from float64. |
 | `NFKMLXDDColor` | offline | — | internal | `train_ddcolor.yml` trains against a `DynamicUNetDiscriminator` at GAN weight 1.0, and no release holds its weights. |
 
 ## Video
@@ -329,7 +329,7 @@ the recipe detail.
 | `NFKMLXDepthAnything` | trainable, full | DepthAnything/Depth-Anything-V2 at a561b84, `metric_depth/train.py`. |
 | `NFKMLXDepthAnything3` | untrainable | ByteDance-Seed/Depth-Anything-3 at 3d835ec, the whole tree. |
 | `NFKMLXRetinaFace` | trainable, full | biubug6/Pytorch_Retinaface at b984b4b, `train.py` and `multibox_loss.py`. |
-| `NFKMLXColorizer` | trainable, full | richzhang/colorization `caffe` at a1642d6, `train/`; colorization-pytorch at 66a1cb2. |
+| `NFKMLXColorizer` | ships, full | richzhang/colorization `caffe` at a1642d6, `train/`; colorization-pytorch at 66a1cb2. |
 | `NFKMLXDDColor` | offline | piddnad/DDColor at 2adb63f, `options/train/train_ddcolor.yml`. |
 | `NFKMLXRIFEv4` | trainable, full | Practical-RIFE's v4.12 and v4.15 training archives (Google Drive, linked at bbfd2ea). |
 | `NFKMLXMossFormer2SENet`, `NFKMLXFRCRN` | trainable, full | modelscope/ClearerVoice-Studio at 6b3774d, `train/speech_enhancement`. |
@@ -376,12 +376,12 @@ ruling at all, which is the failure the rule targets.
 Ordered by what a session gets per unit of effort, and grounded in what the triage read.
 
 1. **The small full fine-tunes.** GTCRN, NU-Wave 2, All-In-One, Conv-TasNet, MarbleNet, and Basic
-   Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, RetinaFace, and the Depth Anything V2
-   metric fine-tune. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
+   Pitch ship, and so do the Denoiser, FRCRN, MossFormer2 SE, RetinaFace, the Depth Anything V2
+   metric fine-tune, and both colorizers. Basic Pitch trains the network's `.separate` layout, which keeps the three batch
    normalizations the released ONNX graph folds; its oracle runs the Keras model under
    `basic_pitch_tf`, where `models.model()` at its defaults builds exactly the released SavedModel's
    variables. The 2026-09-25 triage adds
-   RIFE v4 and both colorizers. Each has a published objective with no adversary, and each fits a device.
+   RIFE v4. It has a published objective with no adversary, and it fits a device.
 2. **The head retargets whose loss is already published and portable.** YOLO ships, every
    generation, and RT-DETR ships, every release of both versions. Silero VAD, the PANNs tagger,
    DeepLabV3, and BiSeNet V1 ship. RF-DETR and its segmentation head, BiSeNet V2, and the other

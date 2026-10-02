@@ -147,7 +147,8 @@ enum NFKMLXReferenceOptimizers {
 /// against the gradient. The moments update in Keras's own form, `m += (g − m)(1 − β₁)`, and every
 /// per-step scalar is a single-precision value, as the reference computes them for a float32 variable.
 /// Epsilon defaults to Keras's 1e-7. A variable's constraint is not the optimizer's business here; the
-/// trainer applies it after the update, as `apply_gradients` does.
+/// trainer applies it after the update, as `apply_gradients` does. Caffe's `AdamSolver` takes the same
+/// form, its weight decay joining the gradient first (`l2`).
 ///
 /// It adopts `Optimizer` directly for the reason ``NFKMLXRAdam`` does.
 final class NFKMLXKerasAdam: Optimizer, NFKMLXRateScheduled {
@@ -155,22 +156,26 @@ final class NFKMLXKerasAdam: Optimizer, NFKMLXRateScheduled {
     let beta1: Float
     let beta2: Float
     let epsilon: Float
+    /// The L2 weight decay added to each gradient before the moments.
+    let l2: Float
 
     /// Each parameter's moments and step, keyed by its flattened path.
     var moments = [String: (m: MLXArray, v: MLXArray, step: Int)]()
 
-    init(learningRate: Float, beta1: Float = 0.9, beta2: Float = 0.999, epsilon: Float = 1e-7) {
+    init(learningRate: Float, beta1: Float = 0.9, beta2: Float = 0.999, epsilon: Float = 1e-7, l2: Float = 0) {
         self.learningRate = learningRate
         self.beta1 = beta1
         self.beta2 = beta2
         self.epsilon = epsilon
+        self.l2 = l2
     }
 
     func update(model: Module, gradients: ModuleParameters) {
         let parameters = Dictionary(uniqueKeysWithValues: model.parameters().flattened())
         var updated = [(String, MLXArray)]()
-        for (key, gradient) in gradients.flattened() {
+        for (key, raw) in gradients.flattened() {
             guard let parameter = parameters[key] else { continue }
+            let gradient = l2 == 0 ? raw : raw + l2 * parameter
             let previous = moments[key] ?? (MLXArray.zeros(like: parameter), MLXArray.zeros(like: parameter), 0)
             let step = previous.step + 1
             let m = previous.m + (gradient - previous.m) * (1 - beta1)

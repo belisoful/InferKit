@@ -107,8 +107,9 @@ public struct NFKMLXColorizerConfiguration: Sendable {
 }
 
 /// The eccv16 colorization network: eight convolution blocks over the L channel, a 313-bin chroma
-/// classifier, and the annealed-mean readout convolution.
-final class NFKMLXColorizerNet: Module {
+/// classifier, and the annealed-mean readout convolution. Build one with
+/// `NFKMLXColorizer.network(weightsURL:)`. Introduced in InferKit 0.4.0.
+public final class NFKMLXColorizerNet: Module {
 
     @ModuleInfo(key: "conv1_1") var conv1_1: Conv2d
     @ModuleInfo(key: "conv1_2") var conv1_2: Conv2d
@@ -150,7 +151,8 @@ final class NFKMLXColorizerNet: Module {
 
     @ModuleInfo(key: "out_ab") var outAb: Conv2d
 
-    let configuration: NFKMLXColorizerConfiguration
+    /// The network's widths and bin count.
+    public let configuration: NFKMLXColorizerConfiguration
 
     init(_ c: NFKMLXColorizerConfiguration) {
         configuration = c
@@ -158,36 +160,38 @@ final class NFKMLXColorizerNet: Module {
 
         _conv1_1.wrappedValue = Conv2d(inputChannels: 1, outputChannels: c1, kernelSize: 3, padding: 1)
         _conv1_2.wrappedValue = Conv2d(inputChannels: c1, outputChannels: c1, kernelSize: 3, stride: 2, padding: 1)
-        _norm1.wrappedValue = BatchNorm(featureCount: c1)
+        // Caffe's BatchNorm averages its statistics with `moving_average_fraction` 0.999, a momentum of
+        // 0.001 once its scale factor settles.
+        _norm1.wrappedValue = NFKCaffeBatchNorm(featureCount: c1, momentum: 0.001)
 
         _conv2_1.wrappedValue = Conv2d(inputChannels: c1, outputChannels: c2, kernelSize: 3, padding: 1)
         _conv2_2.wrappedValue = Conv2d(inputChannels: c2, outputChannels: c2, kernelSize: 3, stride: 2, padding: 1)
-        _norm2.wrappedValue = BatchNorm(featureCount: c2)
+        _norm2.wrappedValue = NFKCaffeBatchNorm(featureCount: c2, momentum: 0.001)
 
         _conv3_1.wrappedValue = Conv2d(inputChannels: c2, outputChannels: c3, kernelSize: 3, padding: 1)
         _conv3_2.wrappedValue = Conv2d(inputChannels: c3, outputChannels: c3, kernelSize: 3, padding: 1)
         _conv3_3.wrappedValue = Conv2d(inputChannels: c3, outputChannels: c3, kernelSize: 3, stride: 2, padding: 1)
-        _norm3.wrappedValue = BatchNorm(featureCount: c3)
+        _norm3.wrappedValue = NFKCaffeBatchNorm(featureCount: c3, momentum: 0.001)
 
         _conv4_1.wrappedValue = Conv2d(inputChannels: c3, outputChannels: c4, kernelSize: 3, padding: 1)
         _conv4_2.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: 1)
         _conv4_3.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: 1)
-        _norm4.wrappedValue = BatchNorm(featureCount: c4)
+        _norm4.wrappedValue = NFKCaffeBatchNorm(featureCount: c4, momentum: 0.001)
 
         _conv5_1.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
         _conv5_2.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
         _conv5_3.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
-        _norm5.wrappedValue = BatchNorm(featureCount: c4)
+        _norm5.wrappedValue = NFKCaffeBatchNorm(featureCount: c4, momentum: 0.001)
 
         _conv6_1.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
         _conv6_2.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
         _conv6_3.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: IntOrPair(2), dilation: IntOrPair(2))
-        _norm6.wrappedValue = BatchNorm(featureCount: c4)
+        _norm6.wrappedValue = NFKCaffeBatchNorm(featureCount: c4, momentum: 0.001)
 
         _conv7_1.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: 1)
         _conv7_2.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: 1)
         _conv7_3.wrappedValue = Conv2d(inputChannels: c4, outputChannels: c4, kernelSize: 3, padding: 1)
-        _norm7.wrappedValue = BatchNorm(featureCount: c4)
+        _norm7.wrappedValue = NFKCaffeBatchNorm(featureCount: c4, momentum: 0.001)
 
         _deconv8_1.wrappedValue = ConvTransposed2d(inputChannels: c4, outputChannels: c3, kernelSize: 4, stride: 2, padding: 1)
         _conv8_2.wrappedValue = Conv2d(inputChannels: c3, outputChannels: c3, kernelSize: 3, padding: 1)
@@ -197,18 +201,26 @@ final class NFKMLXColorizerNet: Module {
         _outAb.wrappedValue = Conv2d(inputChannels: c.binCount, outputChannels: 2, kernelSize: 1, bias: false)
     }
 
-    /// Runs the eight blocks over a normalized L map `[1, res, res, 1]`, returning chroma-bin logits
-    /// `[1, res/4, res/4, binCount]`.
-    func logits(_ l: MLXArray) -> MLXArray {
+    /// Runs the eight blocks over normalized lightness `[N, H, W, 1]`, `(L − 50) / 100`, returning the
+    /// chroma-bin logits `[N, H/4, W/4, binCount]` before the softmax.
+    public func logits(_ l: MLXArray) -> MLXArray {
+        decoder(trunk(l))
+    }
+
+    /// The encoder through `norm7`, at an eighth of the input's resolution.
+    func trunk(_ l: MLXArray) -> MLXArray {
         var x = norm1(relu(conv1_2(relu(conv1_1(l)))))
         x = norm2(relu(conv2_2(relu(conv2_1(x)))))
         x = norm3(relu(conv3_3(relu(conv3_2(relu(conv3_1(x)))))))
         x = norm4(relu(conv4_3(relu(conv4_2(relu(conv4_1(x)))))))
         x = norm5(relu(conv5_3(relu(conv5_2(relu(conv5_1(x)))))))
         x = norm6(relu(conv6_3(relu(conv6_2(relu(conv6_1(x)))))))
-        x = norm7(relu(conv7_3(relu(conv7_2(relu(conv7_1(x)))))))
-        x = relu(conv8_3(relu(conv8_2(relu(deconv8_1(x))))))
-        return conv8_313(x)
+        return norm7(relu(conv7_3(relu(conv7_2(relu(conv7_1(x)))))))
+    }
+
+    /// The transposed convolution back to a quarter of the input's resolution and the class head.
+    func decoder(_ x: MLXArray) -> MLXArray {
+        conv8_313(relu(conv8_3(relu(conv8_2(relu(deconv8_1(x)))))))
     }
 
     /// Colorizes a bridged image `[H, W, 3]` (`0...1`): the original L drives the network at the model
@@ -374,7 +386,7 @@ final class NFKSiggraphBlock: Module {
                    padding: IntOrPair(dilation), dilation: IntOrPair(dilation))
         }
         if normalized {
-            _norm.wrappedValue = BatchNorm(featureCount: channels.last!.1)
+            _norm.wrappedValue = NFKTorchBatchNorm(featureCount: channels.last!.1)
         }
         self.leadsWithReLU = leadsWithReLU
         self.endsWithLeakyReLU = endsWithLeakyReLU
@@ -396,8 +408,9 @@ final class NFKSiggraphBlock: Module {
 }
 
 /// The siggraph17 generator: seven encoder blocks, three upsampling stages each fused with a
-/// shortcut from the matching encoder depth, and the ab regression head.
-final class NFKMLXSiggraphNet: Module {
+/// shortcut from the matching encoder depth, and the ab regression head. Build one with
+/// `NFKMLXSiggraphColorizer.network(weightsURL:)`. Introduced in InferKit 0.4.0.
+public final class NFKMLXSiggraphNet: Module {
     @ModuleInfo(key: "model1") var model1: NFKSiggraphBlock
     @ModuleInfo(key: "model2") var model2: NFKSiggraphBlock
     @ModuleInfo(key: "model3") var model3: NFKSiggraphBlock
@@ -416,7 +429,7 @@ final class NFKMLXSiggraphNet: Module {
     @ModuleInfo(key: "model10") var model10: NFKSiggraphBlock
     @ModuleInfo(key: "model_out") var modelOut: Conv2d
 
-    override init() {
+    override public init() {
         _model1.wrappedValue = NFKSiggraphBlock(channels: [(4, 64), (64, 64)])
         _model2.wrappedValue = NFKSiggraphBlock(channels: [(64, 128), (128, 128)])
         _model3.wrappedValue = NFKSiggraphBlock(channels: [(128, 256), (256, 256), (256, 256)])
@@ -486,9 +499,14 @@ final class NFKMLXSiggraphNet: Module {
         let shape = lightness.shape
         let hintValue = hint ?? MLXArray.zeros([shape[0], shape[1], shape[2], 2])
         let maskValue = mask ?? MLXArray.zeros([shape[0], shape[1], shape[2], 1])
-        // The reference normalizes lightness by (L − 50)/100 and the ab hint by 110.
-        let input = concatenated([(lightness - 50) / 100, hintValue / 110, maskValue], axis: 3)
+        // The reference normalizes lightness by (L − 50)/100 and the ab hint by 110, and scales the
+        // head's output back by 110.
+        return self(concatenated([(lightness - 50) / 100, hintValue / 110, maskValue], axis: 3)) * 110
+    }
 
+    /// The generator's forward on its normalized input `[N, H, W, 4]`: lightness `(L − 50) / 100`, the ab
+    /// hint over 110, and the hint mask. Returns the tanh-bounded ab `[N, H, W, 2]` over 110.
+    public func callAsFunction(_ input: MLXArray) -> MLXArray {
         let conv1 = model1(input)
         let conv2 = model2(Self.subsampled(conv1))
         let conv3 = model3(Self.subsampled(conv2))
@@ -501,8 +519,7 @@ final class NFKMLXSiggraphNet: Module {
         let conv9 = model9(up9)
         let up10 = model10up(conv9) + model1short10(conv1)
         let conv10 = model10(up10)
-        // The head is a tanh, and the reference scales its output back by 110.
-        return tanh(modelOut(conv10)) * 110
+        return tanh(modelOut(conv10))
     }
 }
 

@@ -4495,6 +4495,8 @@
         "frcrn_training",
         "mossformer2_training",
         "retinaface_training",
+        "siggraph17_training",
+        "eccv16_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -5531,6 +5533,18 @@
       "record": "reference/depth-metric-training.safetensors",
       "environment": "deepfilternet",
       "command": "IK_DEPTH_METRIC_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/depth-anything-v2/metric_depth\" depth_anything_metric_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/depth_v2_small.pth\""
+    },
+    {
+      "key": "IK_PARITY_SIGGRAPH17_TRAINING",
+      "record": "reference/siggraph17-training-reference.safetensors",
+      "environment": "llm",
+      "command": "IK_SIGGRAPH17_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/colorization/colorization-pytorch\" siggraph17_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/converted/siggraph17.safetensors\""
+    },
+    {
+      "key": "IK_PARITY_ECCV16_TRAINING",
+      "record": "reference/eccv16-training-reference.safetensors",
+      "environment": "llm",
+      "command": "IK_ECCV16_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/colorization/colorization-caffe\" IK_REF_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc\" eccv16_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/colorizer_eccv16.pth\""
     }
   ]
 }

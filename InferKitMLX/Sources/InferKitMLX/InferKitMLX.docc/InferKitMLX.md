@@ -601,6 +601,10 @@ limits.
 - ``NFKMLXRetinaFaceObjective``
 - ``NFKMLXDepthAnythingNet``
 - ``NFKMLXDepthSiLogObjective``
+- ``NFKMLXColorizerNet``
+- ``NFKMLXColorizerObjective``
+- ``NFKMLXSiggraphNet``
+- ``NFKMLXSiggraphColorizerObjective``
 - ``NFKMLXYOLOEndToEndObjective``
 - ``NFKMLXYOLOTrainable``
 - ``NFKMLXRTDetrObjective``

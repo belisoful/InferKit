@@ -4061,6 +4061,24 @@ try NFKMLXWeights.save(net, to: tuned)
 let reloaded = try NFKMLXDepthAnything.network(weightsURL: tuned, configuration: metric)
 ```
 
+### Fine-tuning the colorizers
+
+Both colorizers fine-tune on color images alone: each recipe derives the lightness, the target colors, and
+(for SIGGRAPH-17) the random color hints from the batch, as the reference training code does. Each step takes
+RGB images `[N, 176, 176, 3]` in [0, 1].
+
+```swift
+let eccv16 = try NFKMLXColorizer.network(weightsURL: eccv16Weights)
+try NFKMLXColorizer.fineTune(eccv16, examples: { step in myBatches[step] }, steps: 2000)
+try NFKMLXWeights.save(eccv16, to: tunedECCV16)
+
+let siggraph17 = try NFKMLXSiggraphColorizer.network(weightsURL: siggraph17Weights)
+try NFKMLXSiggraphColorizer.fineTune(siggraph17, examples: { step in myBatches[step] }, steps: 2000, hintSeed: 7)
+try NFKMLXWeights.save(siggraph17, to: tunedSIGGRAPH17)
+
+let colorizer = try NFKMLXSiggraphColorizer.backend(weightsURL: tunedSIGGRAPH17)   // Objective-C: backendWithWeightsURL:…
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

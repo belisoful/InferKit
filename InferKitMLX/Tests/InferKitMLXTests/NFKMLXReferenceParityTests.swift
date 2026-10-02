@@ -11900,6 +11900,213 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-4, 2 * stepFloor))
     }
 
+    // The SIGGRAPH-17 colorizer's regression phase against richzhang/colorization-pytorch at 66a1cb2: the
+    // reference's CIELAB, its grayscale filter and hints replayed from its numpy draws, the released
+    // generator's training-mode regression, the 10× L1 term, the gradients of six tensors and the norm, and the
+    // L1 term after one step of the phase's Adam. Each is also recorded at float64.
+    //
+    // `IK_SIGGRAPH17_TRAIN_SRC=reference-sources/colorization/colorization-pytorch
+    //  python run_reference.py siggraph17_training out/siggraph17-training.safetensors --checkpoint converted/siggraph17.safetensors`
+    func testSiggraphColorizerTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SIGGRAPH17_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SIGGRAPH17_TRAINING to a record from run_reference.py siggraph17_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func scalar(_ key: String) throws -> Float { try array(key).asArray(Float.self)[0] }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let images = try array("images")
+        let labDifference = abs(NFKMLXSiggraphColorizer.referenceLab(images) - (try array("lab"))).max().item(Float.self)
+        // The float64 draws arrive as their bit patterns, since MLX loads no float64 on the GPU.
+        func doubles(_ key: String) throws -> [Double] {
+            try array(key).asArray(Int64.self).map { Double(bitPattern: UInt64(bitPattern: $0)) }
+        }
+        var draws = NFKSiggraphReplayedDraws(units: try doubles("draws::rand"),
+                                             choices: try array("draws::choice").asArray(Int32.self).map(Int.init),
+                                             normals: try doubles("draws::normal"))
+        let example = try XCTUnwrap(NFKMLXSiggraphColorizer.trainingExample(images, hintProbability: 0.125, draws: &draws))
+        let input = try array("input"), target = try array("target")
+        XCTAssertEqual(example.input.shape, input.shape, "the grayscale image is dropped")
+        let inputDifference = abs(example.input - input).max().item(Float.self)
+        print("PARITY siggraph17-training: lab worst \(labDifference); input worst \(inputDifference), "
+              + "target worst \(abs(example.target - target).max().item(Float.self))")
+        XCTAssertLessThan(labDifference, 1e-5)
+        XCTAssertLessThan(inputDifference, 1e-5)
+
+        let net = try NFKMLXSiggraphColorizer.network(weightsURL: weights("IK_VAL_SIGGRAPH17"))
+        net.train(true)
+        let objective = NFKMLXSiggraphColorizerObjective()
+        let prediction = net(input)
+        let loss = objective.loss(prediction: prediction, target: target).item(Float.self)
+        let predictionFloor = distance(try array("prediction"), try array("prediction64"))
+        print("PARITY siggraph17-training: prediction from float64 \(distance(prediction, try array("prediction64"))) "
+              + "(reference float32 \(predictionFloor)); L1 \(loss) vs \(try scalar("l1")) (float64 \(try scalar("l1_64")))")
+        XCTAssertLessThan(distance(prediction, try array("prediction64")), max(1e-5, 2 * predictionFloor))
+        XCTAssertEqual(loss, try scalar("l1_64"), accuracy: max(abs(try scalar("l1_64")) * 1e-5, 2 * abs(try scalar("l1") - (try scalar("l1_64")))))
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1])]
+        }(net, [input, target]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try scalar("gradient_norm64")
+        print("PARITY siggraph17-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(try scalar("gradient_norm") - norm64)))
+        for name in ["model1.0.weight", "model4.6.weight", "model8up.0.weight", "model3short8.0.weight", "model10.1.weight",
+                     "model_out.0.weight"] {
+            let key = NFKMLXSiggraphColorizer.remapReferenceKey(name)
+            func layout(_ value: MLXArray) -> MLXArray {
+                guard value.ndim == 4 else { return value }
+                return key.hasSuffix("up.weight") ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            }
+            let ours = try XCTUnwrap(gradients[key], key)
+            let theirs = layout(try array("grad::\(name)")), theirs64 = layout(try array("grad64::\(name)"))
+            let floor = distance(theirs, theirs64)
+            print("PARITY siggraph17-training: \(key) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-4, 2 * floor), key)
+        }
+
+        // One update of the reference optimizer on the recorded batch, through the trainer the recipe runs.
+        net.train(false)
+        try NFKMLXFineTune.run(net, freezing: {}, optimizer: nil, reference: { NFKMLXSiggraphColorizer.referenceOptimizer() },
+                               referenceSchedule: { .constant }, steps: 1, arrays: { _ in [input, target] },
+                               loss: { net, arrays in objective(net, arrays[0], arrays[1]) }, clipGradientNorm: nil)
+        net.train(true)
+        let lossAfter = objective(net, input, target).item(Float.self)
+        let after64 = try scalar("l1_after_step64")
+        print("PARITY siggraph17-training: L1 after one step \(lossAfter) vs \(try scalar("l1_after_step")) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-4, 2 * abs(try scalar("l1_after_step") - after64)))
+    }
+
+    // The ECCV-16 colorizer's training against richzhang/colorization's `caffe` branch at a1642d6: the
+    // reference's own `NNEncLayer`, `NonGrayMaskLayer`, and `PriorBoostLayer`, its `SoftmaxCrossEntropyLoss`
+    // and rebalanced backward, and one step of `solver.prototxt`'s Adam, on the released network's PyTorch
+    // conversion. Each is also recorded at float64.
+    //
+    // `IK_ECCV16_TRAIN_SRC=reference-sources/colorization/colorization-caffe IK_REF_SRC=sources/refsrc
+    //  python run_reference.py eccv16_training out/eccv16-training.safetensors --checkpoint raw/colorizer_eccv16.pth`
+    func testColorizerTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ECCV16_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_ECCV16_TRAINING to a record from run_reference.py eccv16_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let net = try NFKMLXColorizer.network(weightsURL: weights("IK_VAL_COLORIZER"))
+        let objective = NFKMLXColorizerObjective()
+        let images = try array("images")
+        let example = NFKMLXColorizer.trainingExample(images)
+        let lightness = try array("lightness"), ab = try array("ab")
+        let centers = NFKMLXColorizerObjective.binCenters
+        let readout = net.outAb.weight.reshaped([2, -1]).transposed(1, 0) * 110
+        let encoded = objective.encoding(ab.reshaped([-1, 2]), binCenters: centers).reshaped([ab.dim(0), ab.dim(1), ab.dim(2), -1])
+        print("PARITY eccv16-training: lightness worst \(abs(example.lightness - lightness).max().item(Float.self)), "
+              + "ab worst \(abs(example.ab - ab).max().item(Float.self)), centers worst \(abs(centers - (try array("centers"))).max().item(Float.self)), "
+              + "release readout worst \(abs(readout - centers).max().item(Float.self)), "
+              + "encoding worst \(abs(encoded - (try array("encoded"))).max().item(Float.self))")
+        XCTAssertLessThan(abs(example.lightness - lightness).max().item(Float.self), 1e-4)
+        XCTAssertLessThan(abs(example.ab - ab).max().item(Float.self), 1e-3)
+        XCTAssertEqual(abs(centers - (try array("centers"))).max().item(Float.self), 0)
+        XCTAssertLessThan(abs(readout - centers).max().item(Float.self), 1e-3, "the release's readout holds the centers")
+        XCTAssertLessThan(abs(encoded - (try array("encoded"))).max().item(Float.self), 1e-4)
+
+        net.train(true)
+        let logits = net.logits(lightness)
+        let terms = objective.loss(logits: logits, ab: ab, binCenters: centers)
+        let reference = try array("loss").asArray(Float.self), reference64 = try array("loss64").asArray(Float.self)
+        let floor = distance(try array("logits"), try array("logits64"))
+        print("PARITY eccv16-training: logits from float64 \(distance(logits, try array("logits64"))) (reference float32 \(floor)); "
+              + "loss \(terms.crossEntropy.item(Float.self)) / \(terms.rebalanced.item(Float.self)) vs \(reference) (float64 \(reference64))")
+        XCTAssertLessThan(distance(logits, try array("logits64")), max(1e-5, 2 * floor))
+        XCTAssertEqual(terms.crossEntropy.item(Float.self), reference64[0], accuracy: max(reference64[0] * 1e-5, 2 * abs(reference[0] - reference64[0])))
+        XCTAssertEqual(terms.rebalanced.item(Float.self), reference64[1], accuracy: max(reference64[1] * 1e-5, 2 * abs(reference[1] - reference64[1])))
+
+        let logitsGradient = grad { (logits: MLXArray) in
+            objective.loss(logits: logits, ab: ab, binCenters: centers).rebalanced
+        }(logits)
+        print("PARITY eccv16-training: logits gradient from float64 \(distance(logitsGradient, try array("logits_grad64"))) "
+              + "(reference float32 \(distance(try array("logits_grad"), try array("logits_grad64"))))")
+        XCTAssertLessThan(distance(logitsGradient, try array("logits_grad64")),
+                          max(1e-5, 2 * distance(try array("logits_grad"), try array("logits_grad64"))))
+
+        // The transposed convolution's seams: its input, its output and that output's ReLU, and the gradient at
+        // each, from our forward and from the recorded float64 tensors.
+        func seamFloor(_ key: String) throws -> Float { distance(try array(key), try array("\(key)64")) }
+        let trunk = net.trunk(lightness)
+        let deconvolved = net.deconv8_1(trunk)
+        func headLoss(_ rectified: MLXArray) -> MLXArray {
+            objective.loss(logits: net.conv8_313(relu(net.conv8_3(relu(net.conv8_2(rectified))))), ab: ab,
+                           binCenters: centers).rebalanced
+        }
+        let reluGradient = grad(headLoss)(relu(deconvolved))
+        let deconvGradient = grad { headLoss(relu($0)) }(deconvolved)
+        let recordedDeconvGradient = grad { headLoss(relu($0)) }(try array("deconv_output64"))
+        let inputGradient = grad { headLoss(relu(net.deconv8_1($0))) }(trunk)
+        print("PARITY eccv16-training: deconv input from float64 \(distance(trunk, try array("deconv_input64"))) "
+              + "(reference float32 \(try seamFloor("deconv_input"))); output \(distance(deconvolved, try array("deconv_output64"))) "
+              + "(\(try seamFloor("deconv_output"))); exact zeros in the output: ours \((deconvolved .== 0).sum().item(Int.self)), "
+              + "float64 \((try array("deconv_output64") .== 0).sum().item(Int.self)), of \(deconvolved.size)")
+        print("PARITY eccv16-training: gradient at the ReLU output from float64 \(distance(reluGradient, try array("relu_output_grad64"))) "
+              + "(\(try seamFloor("relu_output_grad"))); at the deconv output \(distance(deconvGradient, try array("deconv_output_grad64"))) "
+              + "(\(try seamFloor("deconv_output_grad"))), from the recorded output \(distance(recordedDeconvGradient, try array("deconv_output_grad64"))); "
+              + "at the deconv input \(distance(inputGradient, try array("deconv_input_grad64"))) (\(try seamFloor("deconv_input_grad")))")
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective.loss(logits: net.logits(arrays[0]), ab: arrays[1], binCenters: centers).rebalanced]
+        }(net, [lightness, ab]).1.flattened())
+
+        // A few of the transposed convolution's outputs sit within float32 rounding of zero, and relu8_1 passes
+        // them on the other side from float64. The gradient below it moves by about 5e-3 for that alone, so the
+        // gradients are also taken with relu8_1's side pinned to float64's, which takes the tie out.
+        let deconvolved64 = try array("deconv_output64")
+        let flipped = (deconvolved .> 0) .!= (deconvolved64 .> 0)
+        let flippedMagnitude = MLX.where(flipped, abs(deconvolved), MLXArray(Float(0))).max().item(Float.self)
+        print("PARITY eccv16-training: relu8_1 sides that differ from float64: \(flipped.sum().item(Int.self)) of "
+              + "\(deconvolved.size), the largest \(flippedMagnitude) from zero")
+        let side = (deconvolved64 .> 0).asType(.float32)
+        let pinnedGradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            let rectified = net.deconv8_1(net.trunk(arrays[0])) * side
+            let logits = net.conv8_313(relu(net.conv8_3(relu(net.conv8_2(rectified)))))
+            return [objective.loss(logits: logits, ab: arrays[1], binCenters: centers).rebalanced]
+        }(net, [lightness, ab]).1.flattened())
+        let trained = gradients.filter { !$0.key.hasPrefix("norm") && !$0.key.hasPrefix("out_ab") }
+        let norm = sqrt(trained.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm64 = try array("gradient_norm64").item(Float.self)
+        print("PARITY eccv16-training: global gradient norm \(norm) vs \(try array("gradient_norm").item(Float.self)) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(try array("gradient_norm").item(Float.self) - norm64)))
+        for name in ["model1.0.weight", "model4.4.weight", "model8.0.weight", "model8.2.weight", "model8.4.weight",
+                     "model8.6.weight", "model8.6.bias"] {
+            let key = NFKMLXColorizer.remapReferenceKey(name)
+            func layout(_ value: MLXArray) -> MLXArray {
+                guard value.ndim == 4 else { return value }
+                return key == "deconv8_1.weight" ? value.transposed(1, 2, 3, 0) : value.transposed(0, 2, 3, 1)
+            }
+            let ours = try XCTUnwrap(gradients[key], key), pinned = try XCTUnwrap(pinnedGradients[key], key)
+            let theirs = layout(try array("grad::\(name)")), theirs64 = layout(try array("grad64::\(name)"))
+            let gradientFloor = distance(theirs, theirs64)
+            print("PARITY eccv16-training: \(key) gradient relative error \(distance(ours, theirs)); "
+                  + "from float64: ours \(distance(ours, theirs64)), with relu8_1 pinned \(distance(pinned, theirs64)), "
+                  + "reference float32 \(gradientFloor)")
+            XCTAssertLessThan(distance(ours, theirs64), 1e-2, key)
+            XCTAssertLessThan(distance(pinned, theirs64), max(1e-4, 2 * gradientFloor), key)
+        }
+
+        net.train(false)
+        try NFKMLXColorizer.fineTune(net, examples: { _ in images }, steps: 1)
+        net.train(true)
+        let after = objective.loss(logits: net.logits(lightness), ab: ab, binCenters: centers)
+        let after32 = try array("loss_after_step").asArray(Float.self), after64 = try array("loss_after_step64").asArray(Float.self)
+        print("PARITY eccv16-training: loss after one step \(after.crossEntropy.item(Float.self)) / \(after.rebalanced.item(Float.self)) "
+              + "vs \(after32) (float64 \(after64))")
+        XCTAssertEqual(after.rebalanced.item(Float.self), after64[1], accuracy: max(after64[1] * 1e-4, 2 * abs(after32[1] - after64[1])))
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

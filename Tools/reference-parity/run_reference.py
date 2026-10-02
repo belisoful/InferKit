@@ -1716,6 +1716,273 @@ def run_depth_anything_metric_training(image, checkpoint):
     return torch.tensor([loss.item()], dtype=torch.float32)
 
 
+def run_siggraph17_training(image, checkpoint):
+    """The SIGGRAPH-17 colorizer's regression-phase fine-tune and one optimizer step, from
+    richzhang/colorization-pytorch (IK_SIGGRAPH17_TRAIN_SRC is the repository at the pinned commit;
+    `--checkpoint` is the released `siggraph17` state dict as safetensors).
+
+    Records, on three 96-pixel images, the third grayscale:
+    - the images, RGB in 0...1, and `util.rgb2lab`'s normalized lightness and ab for all three;
+    - `util.get_colorization_data(p=0.125)`'s kept lightness, hint, and centered mask, and the draws its hint
+      sampler took from numpy (`rand`, `choice`, `normal`, in order), the float64 ones as their int64 bit
+      patterns because MLX loads no float64 on the GPU;
+    - `SIGGRAPHGenerator(classification=False)` in training mode: the regression output, the L1 term
+      `pix2pix_model.py` weighs by 10, and the cross-entropy on `model_class`;
+    - the gradient of six tensors of `loss_G` (the cross-entropy reaches only `model_class`), and the norm over
+      every parameter but `model_class`;
+    - one step of the regression phase's `torch.optim.Adam(lr=1e-5, betas=(0.9, 0.999))` and the L1 term after;
+    - the regression output, the L1 term, the gradients, the norm, and the stepped term again at float64.
+
+    `util/util.py` imports IPython's `embed`, which nothing measured calls, so it is stubbed where it is absent.
+    """
+    import argparse
+    import copy
+    from safetensors.torch import load_file
+
+    source = os.environ["IK_SIGGRAPH17_TRAIN_SRC"]
+    _stub_missing({"IPython": ["embed"]})
+    sys.path.insert(0, source)
+    from models.networks import SIGGRAPHGenerator, L1Loss
+    from util import util as color_util
+
+    opt = argparse.Namespace(ab_norm=110., ab_max=110., ab_quant=10., l_norm=100., l_cent=50., mask_cent=.5,
+                             sample_Ps=[1, 2, 3, 4, 5, 6, 7, 8, 9])
+    opt.A = 2 * opt.ab_max / opt.ab_quant + 1
+    model = SIGGRAPHGenerator(4, 2, classification=False)
+    model.load_state_dict(load_file(checkpoint), strict=True)
+    model.train()
+
+    size = 96
+    generator = np.random.default_rng(53)
+    y, x = np.mgrid[0:size, 0:size] / size
+    colored = [np.stack([0.5 + 0.4 * np.sin(4 * x + 2.1 * c + b) * np.cos(3 * y + c) for c in range(3)], -1)
+               + 0.02 * generator.standard_normal((size, size, 3)) for b in range(2)]
+    gray = np.repeat((0.3 + 0.4 * x * y)[..., None], 3, axis=-1)
+    images = np.stack(colored + [gray]).clip(0, 1).astype(np.float32)
+    images_t = torch.from_numpy(images).permute(0, 3, 1, 2).contiguous()
+    lab = color_util.rgb2lab(images_t, opt)
+    extra = {"images": torch.from_numpy(images), "lab": lab.permute(0, 2, 3, 1).contiguous()}
+
+    # The hint sampler's numpy draws, recorded in the order it takes them.
+    draws = {"rand": [], "choice": [], "normal": []}
+    original = (np.random.rand, np.random.choice, np.random.normal)
+    def rand(*args):
+        value = original[0](*args)
+        draws["rand"].append(float(value))
+        return value
+    def choice(*args, **kwargs):
+        value = original[1](*args, **kwargs)
+        draws["choice"].append(int(value))
+        return value
+    def normal(*args, **kwargs):
+        value = original[2](*args, **kwargs)
+        draws["normal"].append(float(value))
+        return value
+    np.random.seed(5)
+    np.random.rand, np.random.choice, np.random.normal = rand, choice, normal
+    try:
+        data = color_util.get_colorization_data([images_t], opt, p=0.125)
+    finally:
+        np.random.rand, np.random.choice, np.random.normal = original
+    for name, values in draws.items():
+        extra[f"draws::{name}"] = (torch.tensor(values, dtype=torch.int32) if name == "choice"
+                                   else torch.tensor(values, dtype=torch.float64).view(torch.int64))
+    real_A, real_B, hint_B, mask_B = data["A"], data["B"], data["hint_B"], data["mask_B"]
+    extra["input"] = torch.cat((real_A, hint_B, mask_B), dim=1).permute(0, 2, 3, 1).contiguous()
+    extra["target"] = real_B.permute(0, 2, 3, 1).contiguous()
+
+    criterion_l1, criterion_ce = L1Loss(), torch.nn.CrossEntropyLoss()
+    real_B_enc = color_util.encode_ab_ind(real_B[:, :, ::4, ::4], opt)
+    def losses(net, dtype):
+        out_class, out_reg = net(real_A.to(dtype), hint_B.to(dtype), mask_B.to(dtype))
+        l1 = 10 * torch.mean(criterion_l1(out_reg, real_B.to(dtype)))
+        ce = criterion_ce(out_class, real_B_enc[:, 0, :, :].long())
+        return out_reg, l1, ce
+
+    names = ["model1.0.weight", "model4.6.weight", "model8up.0.weight", "model3short8.0.weight", "model10.1.weight",
+             "model_out.0.weight"]
+    def shared_norm(net):
+        return torch.tensor([float(torch.sqrt(sum((p.grad.double() ** 2).sum() for n, p in net.named_parameters()
+                                                  if p.grad is not None and not n.startswith("model_class"))))])
+
+    model64 = copy.deepcopy(model).double()
+    out64, l1_64, ce64 = losses(model64, torch.float64)
+    extra["prediction64"] = out64.detach().float().permute(0, 2, 3, 1).contiguous()
+    extra["l1_64"] = torch.tensor([l1_64.item()])
+    (ce64 + l1_64).backward()
+    named64 = dict(model64.named_parameters())
+    for name in names:
+        extra[f"grad64::{name}"] = named64[name].grad.detach().float().clone()
+    extra["gradient_norm64"] = shared_norm(model64)
+    optimizer64 = torch.optim.Adam(model64.parameters(), lr=1e-5, betas=(0.9, 0.999))
+    optimizer64.step()
+    with torch.no_grad():
+        extra["l1_after_step64"] = torch.tensor([losses(model64, torch.float64)[1].item()])
+    del model64
+
+    out, l1, ce = losses(model, torch.float32)
+    extra["prediction"] = out.detach().permute(0, 2, 3, 1).contiguous()
+    extra["l1"] = torch.tensor([l1.item()])
+    extra["cross_entropy"] = torch.tensor([ce.item()])
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5, betas=(0.9, 0.999))
+    optimizer.zero_grad()
+    (ce + l1).backward()
+    named = dict(model.named_parameters())
+    for name in names:
+        extra[f"grad::{name}"] = named[name].grad.detach().clone()
+    extra["gradient_norm"] = shared_norm(model)
+    optimizer.step()
+    with torch.no_grad():
+        extra["l1_after_step"] = torch.tensor([losses(model, torch.float32)[1].item()])
+    globals()["_extra"] = extra
+    return torch.tensor([l1.item()], dtype=torch.float32)
+
+
+def run_eccv16_training(image, checkpoint):
+    """The ECCV-16 colorizer's training objective and one solver step, from richzhang/colorization's `caffe`
+    branch (IK_ECCV16_TRAIN_SRC is its checkout with `resources/` and `models/`; IK_REF_SRC holds the
+    colorizers package's `eccv16.py`; `--checkpoint` is the released `colorization_release_v2` state dict).
+
+    Caffe does not run here, so the network is the colorizers package's PyTorch conversion, which reads
+    lightness as `(L − 50) / 100` where the Caffe network reads `L − 50`. The training layers are the
+    reference's own Python (`NNEncLayer`, `NonGrayMaskLayer`, `PriorBoostLayer`), loaded from
+    `resources/caffe_traininglayers.py`: it is Python 2, so its `print` statements become calls, and `caffe` is
+    stubbed with the layer base it subclasses. `SoftmaxCrossEntropyLoss` is the C++ in
+    `resources/softmax_cross_entropy_loss_layer.cpp`, written out: `Σ t·(log t − log p) / N` forward,
+    `(p − t) / N` backward, the backward scaled per pixel by `ClassRebalanceMultLayer`'s boost. The solver step
+    is Caffe's `AdamSolver` as `solver.prototxt` sets it: momenta 0.9 and 0.99, delta 1e-8 on the uncorrected
+    root, weight decay 1e-3 on every convolution.
+
+    Records, on three 64-pixel images, the third grayscale: the images, the normalized lightness, the
+    stride-4 ab, the soft encoding, each pixel's boost, the bin centers, the training-mode logits, the
+    loss and its rebalanced form, the rebalanced loss's gradient with respect to the logits, the input and
+    output of `model8`'s transposed convolution and of its ReLU with their gradients, the gradient of seven
+    tensors, the norm, and the loss after one step, at float32 and float64. The normalizations' scales and offsets and `model_out` hold, as `lr_mult: 0` holds
+    the Caffe ones.
+    """
+    import copy
+    import re
+    import types
+    from skimage import color
+
+    source = os.environ["IK_ECCV16_TRAIN_SRC"]
+    caffe = types.ModuleType("caffe")
+    caffe.Layer = type("Layer", (), {})
+    sys.modules["caffe"] = caffe
+    code = open(os.path.join(source, "resources", "caffe_traininglayers.py")).read()
+    code = re.sub(r"^(\s*)print (.*)$", r"\1print(\2)", code, flags=re.M)
+    layers = types.ModuleType("caffe_traininglayers")
+    exec(compile(code, "caffe_traininglayers.py", "exec"), layers.__dict__)
+
+    ipython = types.ModuleType("IPython")
+    ipython.embed = lambda *args, **kwargs: None
+    sys.modules["IPython"] = ipython
+    _import_reference(_reference_source(), "colorizer_ref", "base_color")
+    module = _import_reference(_reference_source(), "colorizer_ref", "eccv16")
+    model = module.ECCVGenerator()
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True), strict=True)
+    model.train()
+    for submodule in model.modules():
+        if isinstance(submodule, torch.nn.BatchNorm2d):
+            for parameter in submodule.parameters():
+                parameter.requires_grad_(False)
+    model.model_out.weight.requires_grad_(False)
+
+    size = 64
+    generator = np.random.default_rng(61)
+    y, x = np.mgrid[0:size, 0:size] / size
+    colored = [np.stack([0.5 + 0.4 * np.sin(5 * x + 2 * c + b) * np.cos(4 * y - c) for c in range(3)], -1)
+               + 0.02 * generator.standard_normal((size, size, 3)) for b in range(2)]
+    gray = np.repeat((0.25 + 0.5 * x * y)[..., None], 3, axis=-1)
+    images = (np.stack(colored + [gray]).clip(0, 1) * 255).round().astype(np.uint8)
+    lab = np.stack([color.rgb2lab(image) for image in images]).astype(np.float32)      # [N, H, W, 3]
+    lightness = torch.from_numpy((lab[..., :1] - 50) / 100).permute(0, 3, 1, 2).contiguous()
+    ab_ss = lab[:, ::4, ::4, 1:].transpose(0, 3, 1, 2).copy()                          # [N, 2, H/4, W/4]
+
+    class Blob:
+        def __init__(self, data=None):
+            self.data = data
+        def reshape(self, *shape):
+            self.data = np.zeros(shape, dtype=np.float64)
+    os.chdir(source)                                          # the layers read './resources/'
+    def run(layer, bottoms):
+        top = [Blob()]
+        layer.setup(bottoms, top)
+        layer.reshape(bottoms, top)
+        layer.forward(bottoms, top)
+        return top[0].data
+    count = ab_ss.shape[0]
+    encoded = run(layers.NNEncLayer(), [Blob(ab_ss.astype(np.float64))])
+    nongray = run(layers.NonGrayMaskLayer(), [Blob(ab_ss.astype(np.float64))])
+    boost = run(layers.PriorBoostLayer(), [Blob(encoded)])
+    weight = boost * nongray
+    centers = np.load(os.path.join(source, "resources", "pts_in_hull.npy"))
+    extra = {"images": torch.from_numpy(images.astype(np.float32) / 255), "lightness": lightness.permute(0, 2, 3, 1).contiguous(),
+             "ab": torch.from_numpy(ab_ss.transpose(0, 2, 3, 1).copy()),
+             "encoded": torch.from_numpy(encoded.astype(np.float32)).permute(0, 2, 3, 1).contiguous(),
+             "weight": torch.from_numpy(weight.astype(np.float32))[:, 0].contiguous(),
+             "centers": torch.from_numpy(centers.astype(np.float32))}
+
+    seams = {}
+    def logits_of(net, dtype):
+        x = lightness.to(dtype)
+        for index in range(1, 8):
+            x = getattr(net, f"model{index}")(x)
+        seams["deconv_input"] = x
+        x = net.model8[0](x)
+        seams["deconv_output"] = x
+        x = torch.relu(x)                                   # model8[1] is in place, which would overwrite the seam
+        seams["relu_output"] = x
+        for layer in list(net.model8)[2:]:
+            x = layer(x)
+        return x
+    def losses(net, dtype):
+        logits = logits_of(net, dtype)
+        target = torch.from_numpy(encoded).to(dtype)
+        log_p = torch.log_softmax(logits, dim=1)
+        kept = target > 0
+        terms = torch.where(kept, target * (torch.log(torch.where(kept, target, torch.ones_like(target))) - log_p),
+                            torch.zeros_like(target)).sum(dim=1)                    # [N, h, w]
+        w = torch.from_numpy(weight[:, 0]).to(dtype)
+        return logits, terms.sum() / count, (terms * w).sum() / count
+    names = ["model1.0.weight", "model4.4.weight", "model8.0.weight", "model8.2.weight", "model8.4.weight",
+             "model8.6.weight", "model8.6.bias"]
+    def caffe_adam(net):
+        for parameter in net.parameters():
+            if not parameter.requires_grad:
+                continue
+            gradient = parameter.grad + 1e-3 * parameter.detach()
+            m, v = 0.1 * gradient, 0.01 * gradient * gradient
+            correction = (1 - 0.99) ** 0.5 / (1 - 0.9)
+            with torch.no_grad():
+                parameter -= 3.16e-5 * correction * m / (torch.sqrt(v) + 1e-8)
+    def record(net, dtype, suffix):
+        logits, kl, rebalanced = losses(net, dtype)
+        logits.retain_grad()
+        for seam in seams.values():
+            seam.retain_grad()
+        extra[f"logits{suffix}"] = logits.detach().float().permute(0, 2, 3, 1).contiguous()
+        extra[f"loss{suffix}"] = torch.tensor([kl.item(), rebalanced.item()])
+        rebalanced.backward()
+        extra[f"logits_grad{suffix}"] = logits.grad.detach().float().permute(0, 2, 3, 1).contiguous()
+        for name, seam in seams.items():
+            extra[f"{name}{suffix}"] = seam.detach().float().permute(0, 2, 3, 1).contiguous()
+            extra[f"{name}_grad{suffix}"] = seam.grad.detach().float().permute(0, 2, 3, 1).contiguous()
+        named = dict(net.named_parameters())
+        for name in names:
+            extra[f"grad{suffix}::{name}"] = named[name].grad.detach().float().clone()
+        extra[f"gradient_norm{suffix}"] = torch.tensor([float(torch.sqrt(sum((p.grad.double() ** 2).sum()
+                                                                            for p in net.parameters() if p.grad is not None)))])
+        caffe_adam(net)
+        with torch.no_grad():
+            _, kl_after, rebalanced_after = losses(net, dtype)
+        extra[f"loss_after_step{suffix}"] = torch.tensor([kl_after.item(), rebalanced_after.item()])
+    record(copy.deepcopy(model).double(), torch.float64, "64")
+    record(model, torch.float32, "")
+    globals()["_extra"] = extra
+    return extra["loss"][:1].clone()
+
+
 def _reference_source():
     """The directory holding the single-file reference implementations, from IK_REF_SRC."""
     import os
@@ -18612,7 +18879,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_f
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

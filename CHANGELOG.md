@@ -441,6 +441,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Both colorizers fine-tune as their references train them
+
+- `NFKMLXColorizer.fineTune` trains ECCV-16 as richzhang/colorization's `caffe` branch does: the 313-bin
+  cross-entropy on soft-encoded targets, each pixel rebalanced by the ImageNet prior and gray images masked
+  out, and `solver.prototxt`'s Adam with its L2 decay and step schedule. The normalizations and the
+  annealed-mean readout hold, and the normalizations use each batch's statistics, as Caffe's do under
+  `lr_mult: 0`. `NFKMLXColorizerObjective` is the loss; `NFKMLXColorizerNet` is public and returns the logits.
+- `NFKMLXSiggraphColorizer.fineTune` trains SIGGRAPH-17's regression phase as colorization-pytorch does: its
+  CIELAB, its grayscale filter, its random hint patches, the 10× L1, and Adam at 1e-5.
+  `NFKMLXSiggraphColorizerObjective` is the loss; `NFKMLXSiggraphNet` is public and runs a batch.
+- `NFKMLXKerasAdam` takes an `l2` term, added to the gradient before the moments, as Caffe's `AdamSolver`
+  regularizes.
+- The trainer keeps an `NFKCaffeBatchNorm` that trains nothing on each batch's statistics. Every other
+  normalization that trains nothing still runs on its running statistics.
+
 #### Depth Anything V2 fine-tunes to metric depth, and its maps match the reference
 
 - `NFKMLXDepthAnything.fineTune` trains the metric fine-tune of Depth-Anything-V2's `metric_depth/train.py`:

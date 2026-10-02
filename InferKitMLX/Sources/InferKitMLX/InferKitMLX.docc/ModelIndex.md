@@ -32,8 +32,8 @@ The measured parity of every row is recorded in `Docs/model-parity.md` in the re
 | Zero-DCE++ | ``NFKMLXZeroDCEPlus`` | `NFKMLXZeroDCEPlusNet` | fixed geometry (seven depthwise-separable convolutions, one shared curve, scale factor 12) | `zero-dce-plus` | ``NFKMLXModuleBackend`` |
 | Fast style transfer | ``NFKMLXStyleTransfer`` | `NFKStyleTransferNet` | fixed geometry; one style per checkpoint | `fast-style-transfer` | ``NFKMLXModuleBackend`` |
 | AdaIN | ``NFKMLXAdaIN`` | `NFKMLXAdaINNet` | fixed geometry (VGG-19 through relu4_1 and its mirrored decoder); style image under `NFKInputControl` | `adain` | ``NFKMLXModuleBackend`` |
-| Colorizer ECCV-16 | ``NFKMLXColorizer`` | `NFKMLXColorizerNet` | `NFKMLXColorizerConfiguration.eccv16` | `colorizer-eccv16` | ``NFKMLXModuleBackend`` |
-| Colorizer SIGGRAPH-17 | ``NFKMLXSiggraphColorizer`` | `NFKMLXSiggraphNet` | fixed geometry (four-channel input, hints optional) | `colorizer-siggraph17` | ``NFKMLXModuleBackend`` |
+| Colorizer ECCV-16 | ``NFKMLXColorizer`` | ``NFKMLXColorizerNet`` | `NFKMLXColorizerConfiguration.eccv16` | `colorizer-eccv16` | ``NFKMLXModuleBackend`` |
+| Colorizer SIGGRAPH-17 | ``NFKMLXSiggraphColorizer`` | ``NFKMLXSiggraphNet`` | fixed geometry (four-channel input, hints optional) | `colorizer-siggraph17` | ``NFKMLXModuleBackend`` |
 | DDColor | ``NFKMLXDDColor`` | `NFKMLXDDColorNet` | ``NFKMLXDDColorVariant`` `.modelscope` / `.paper` / `.artistic` (`NFKMLXDDColorConfiguration.large`; `.tiny` is the small test geometry) | `ddcolor` · `ddcolor-paper` · `ddcolor-artistic` | ``NFKMLXModuleBackend`` |
 | LaMa | ``NFKMLXLaMa`` | `NFKMLXLaMaNet` | `NFKMLXLaMaConfiguration()` = big-lama (64 channels, 3 downsamples, 18 blocks) | `lama-inpaint` | ``NFKMLXMattingBackend`` |
 | CodeFormer | ``NFKMLXCodeFormer`` | `NFKMLXCodeFormerNet` | `NFKMLXCodeFormerConfiguration.base`; fidelity `w` per backend (`backend(fidelity:weightsURL:)`); ``NFKMLXPhotoFaceBackend`` for whole photographs | `codeformer` | ``NFKMLXModuleBackend`` |
