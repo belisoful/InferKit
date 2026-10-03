@@ -289,17 +289,22 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // fifteen sharing layers, since a wrong donor set fails loudly.
     //
     // The E2B at bf16 on both sides is the control: it is exact at float32, so whatever it loses here
-    // is the rounding floor, and the E4B is held to that floor rather than to float32 exactness.
+    // is the rounding floor, and the E4B is held to that floor rather than to float32 exactness. Each
+    // bf16 record runs eager attention, which a port reproduces; torch's CPU SDPA does not. A position
+    // whose top token differs from the bf16 reference's must carry the float32 reference's top token
+    // (`hf_layer_probe` with `IK_PROBE_STREAM_F32=1` for the E4B), so the reference's own bf16 is what
+    // moved there.
     func testGemma3nE4BMatchesTheReferenceLogits() throws {
         try requireMLXRuntime()
-        for (name, valKey, parityKey, layers) in [
-            ("gemma3n-e2b-bf16", "IK_VAL_GEMMA3N_E2B", "IK_PARITY_GEMMA3N_E2B_BF16", 30),
-            ("gemma3n-e4b", "IK_VAL_GEMMA3N_E4B", "IK_PARITY_GEMMA3N_E4B", 35),
+        for (name, valKey, parityKey, exactKey, layers) in [
+            ("gemma3n-e2b-bf16", "IK_VAL_GEMMA3N_E2B", "IK_PARITY_GEMMA3N_E2B_BF16", "IK_PARITY_GEMMA3N_E2B", 30),
+            ("gemma3n-e4b", "IK_VAL_GEMMA3N_E4B", "IK_PARITY_GEMMA3N_E4B", "IK_PARITY_GEMMA3N_E4B_F32", 35),
         ] {
-            guard let release = config[valKey], let record = config[parityKey] else {
-                print("SKIP \(name): set \(valKey) and \(parityKey) (IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n)")
+            guard let release = config[valKey], let record = config[parityKey], let exactRecord = config[exactKey] else {
+                print("SKIP \(name): set \(valKey), \(parityKey), and \(exactKey) (IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n)")
                 continue
             }
+            let exactLogits = try XCTUnwrap(try loadArrays(url: URL(fileURLWithPath: exactRecord))["output"])
             let arrays = try loadArrays(url: URL(fileURLWithPath: record))
             let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
             let referenceLogits = try XCTUnwrap(arrays["output"])
@@ -317,26 +322,31 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
 
             let ours = logits[0].reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init)
             let theirs = referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
+            let exact = exactLogits.reshaped([-1]).asArray(Float.self).map(Double.init)
             let similarity = cosine(ours, theirs)
             let vocabulary = referenceLogits.shape[1]
             var agreements = 0
             for position in 0 ..< referenceLogits.shape[0] {
                 let base = position * vocabulary
                 let mine = Array(ours[base ..< base + vocabulary]), reference = Array(theirs[base ..< base + vocabulary])
+                let float32 = Array(exact[base ..< base + vocabulary])
                 let ourBest = (0 ..< vocabulary).max { mine[$0] < mine[$1] }!
                 let theirBest = (0 ..< vocabulary).max { reference[$0] < reference[$1] }!
+                let exactBest = (0 ..< vocabulary).max { float32[$0] < float32[$1] }!
                 var note = ""
                 if ourBest == theirBest {
                     agreements += 1
                 } else {
-                    note = "; argmax \(ourBest) vs \(theirBest), reference margin \(reference[theirBest] - reference[ourBest]), ours \(mine[ourBest] - mine[theirBest])"
+                    note = "; argmax \(ourBest) vs \(theirBest), reference margin \(reference[theirBest] - reference[ourBest]), ours \(mine[ourBest] - mine[theirBest]), float32 argmax \(exactBest)"
+                    XCTAssertEqual(ourBest, exactBest,
+                                   "\(name) position \(position): a top token apart from the bf16 reference's is the float32 reference's")
                 }
                 print("VALIDATION PARITY \(name): position \(position) cosine \(cosine(mine, reference))\(note)")
             }
             print("VALIDATION PARITY \(name): logit cosine \(similarity), argmax \(agreements)/\(tokens.count)")
             XCTAssertGreaterThan(similarity, 0.999, "\(name): the decoder matches the reference at the released precision")
             XCTAssertGreaterThanOrEqual(agreements, tokens.count - 1,
-                                        "\(name): at most one bf16 near-tie flips the argmax")
+                                        "\(name): at most one position's top token departs from the bf16 reference's")
         }
     }
 

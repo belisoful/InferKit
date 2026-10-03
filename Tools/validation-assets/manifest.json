@@ -3514,7 +3514,7 @@
         "IK_VAL_GEMMA3N_E2B": "",
         "IK_PARITY_GEMMA3N_TINY": "records/gemma3n_tiny.safetensors",
         "IK_PARITY_GEMMA3N_E2B": "records/gemma3n_e2b.safetensors",
-        "IK_PARITY_GEMMA3N_E2B_BF16": "records/gemma3n_e2b_bf16.safetensors",
+        "IK_PARITY_GEMMA3N_E2B_BF16": "records/gemma3n_e2b_bf16_eager.safetensors",
         "IK_PARITY_GEMMA3N_AUDIO": "records/gemma3n_audio.safetensors",
         "IK_PARITY_GEMMA3N_AUDIO_REAL": "records/gemma3n_audio_real.safetensors",
         "IK_PARITY_GEMMA3N_VISION_REAL": "records/gemma3n_vision_real.safetensors",
@@ -3724,9 +3724,10 @@
       ],
       "config": {
         "IK_VAL_GEMMA3N_E4B": "",
-        "IK_PARITY_GEMMA3N_E4B": "records/gemma3n_e4b.safetensors"
+        "IK_PARITY_GEMMA3N_E4B": "records/gemma3n_e4b_bf16_rerecord.safetensors",
+        "IK_PARITY_GEMMA3N_E4B_F32": "records/gemma3n_e4b_f32.safetensors"
       },
-      "note": "Gemma 3n E4B (16 GB bf16): 35 layers, fifteen sharing keys and values, at the E2B's widths and towers; read by the E2B's configuration reader. Measured at bf16 on both sides (`IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n --checkpoint <this directory>`, gemma env), the Gemma 4 E4B treatment: logit cosine 0.99989, argmax 5/6, the one flip at a half-logit reference margin. The E2B recorded the same way (IK_PARITY_GEMMA3N_E2B_BF16, the same command on the E2B directory) is the control: exact at float32, it reads 0.99989 at bf16 too, so that is the rounding floor the E4B is held to."
+      "note": "Gemma 3n E4B (16 GB bf16): 35 layers, fifteen sharing keys and values, at the E2B's widths and towers; read by the E2B's configuration reader. Measured at bf16: IK_PARITY_GEMMA3N_E4B is `IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n --checkpoint <this directory>` (eager attention) and IK_PARITY_GEMMA3N_E4B_F32 the float32 run streamed from a bf16 load (`IK_PROBE_STREAM_F32=1 run_reference.py hf_layer_probe`), gemma env. The bf16 parity test reads records by name: gemma3n_e4b_bf16_probeall / gemma3n_e4b_f32_probeall (`hf_layer_probe`, IK_PROBE_LAYERS=0..34, the f32 one streamed) and gemma3n_e4b_spread (`run_reference.py hf_bf16_spread`, eight seeds of eight one-step nudges of the first layer's input), which sets the logits bar."
     },
     {
       "key": "VITPOSE",
@@ -5441,6 +5442,46 @@
       "config": "IK_VAL_SD35_LARGE_TURBO",
       "record": "records/sd35-large-turbo-cut4.safetensors",
       "note": "SD3.5-large-turbo's MMDiT cut to four blocks, the first three and the final `context_pre_only` block, by `truncate.py stabilityai/stable-diffusion-3.5-large-turbo <out> 4 --diffusers-transformer`. The cut holds the transformer only, so the record has no VAE seams. The repo is gated, so HF_TOKEN must be set to cut it. It lives in the InferKit tree on the InferKit Models volume. Record (qwenimage env): `run_reference.py sd35_release <validation root>/records/sd35-large-turbo-cut4.safetensors --checkpoint <cut>`, keyed IK_PARITY_SD35_LARGE_TURBO."
+    },
+    {
+      "repo": "ibm-granite/granite-4.0-h-tiny",
+      "layers": 6,
+      "directory": "granite-4.0-h-tiny-cut6",
+      "config": "IK_VAL_GRANITE_TINY_CUT6",
+      "record": "granite_tiny_cut6",
+      "note": "Granite 4.0-H Tiny (Apache-2.0): six layers reach its first attention layer (index 5); every layer routes 6 of 64 experts beside the shared MLP. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "Qwen/Qwen1.5-MoE-A2.7B",
+      "layers": 4,
+      "directory": "qwen1.5-moe-a2.7b-cut4",
+      "config": "IK_VAL_QWEN2_MOE_CUT4",
+      "record": "qwen2_moe_cut4",
+      "note": "Qwen1.5-MoE-A2.7B (Tongyi Qianwen license: commercial use, a separate grant above 100M monthly users): 60 experts, 4 kept, plus a gated shared expert. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "Qwen/Qwen3-30B-A3B",
+      "layers": 4,
+      "directory": "qwen3-30b-a3b-cut4",
+      "config": "IK_VAL_QWEN3_MOE_CUT4",
+      "record": "qwen3_moe_cut4",
+      "note": "Qwen3-30B-A3B (Apache-2.0): 128 experts, 8 kept, every layer sparse. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+      "layers": 2,
+      "directory": "mixtral-8x7b-cut2",
+      "config": "IK_VAL_MIXTRAL_CUT2",
+      "record": "mixtral_cut2",
+      "note": "Mixtral-8x7B-Instruct (Apache-2.0): 8 experts, 2 kept; two layers, since each holds 1.4B parameters. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "openai/gpt-oss-20b",
+      "layers": 2,
+      "directory": "gpt-oss-20b-cut2",
+      "config": "IK_VAL_GPT_OSS_CUT2",
+      "record": "gpt_oss_cut2",
+      "note": "gpt-oss-20b (Apache-2.0): 32 experts, 4 kept, stored MXFP4; two layers cover one sliding and one full attention layer. The float32 side loads the experts as stored and widens only the floating tensors. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
     }
   ],
   "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from <validation root>/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",

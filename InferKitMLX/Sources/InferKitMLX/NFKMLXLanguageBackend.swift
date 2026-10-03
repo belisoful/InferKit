@@ -754,6 +754,7 @@ public final class NFKMLXLanguage: NSObject {
             configuration.outputProjectionBias = configuration.attentionBias
             configuration.routerBias = true
             configuration.clampedSwiGLU = NFKMLXClampedSwiGLU(limit: real("swiglu_limit", 7))
+            configuration.normWeightInFloat32 = true
         }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.

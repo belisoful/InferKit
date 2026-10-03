@@ -25,7 +25,9 @@ enum NFKMLXReleaseWeights {
     /// - Parameters:
     ///   - directory: the downloaded release directory.
     ///   - precision: `.checkpoint` keeps the stored element type, which halves the memory a
-    ///     half-precision release needs and costs accuracy; anything else converts to float32.
+    ///     half-precision release needs and costs accuracy; anything else converts every floating
+    ///     tensor to float32. An integer tensor stays as stored at every precision: gpt-oss's MXFP4
+    ///     experts are packed bytes, and a byte cast to float is a different value.
     ///   - remap: the module key a checkpoint key maps to, or nil to skip that tensor. A multimodal
     ///     release carries towers this decoder does not implement, and skipping them is what lets the
     ///     apply stay strict.
@@ -37,7 +39,7 @@ enum NFKMLXReleaseWeights {
             let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
             for (key, value) in checkpoint.arrays {
                 guard let name = remap(key) else { continue }
-                merged.append((name, precision == .checkpoint ? value : value.asType(.float32)))
+                merged.append((name, precision == .checkpoint || !value.dtype.isFloatingPoint ? value : value.asType(.float32)))
             }
         }
         return merged

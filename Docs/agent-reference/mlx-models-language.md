@@ -237,7 +237,21 @@ attention and feed-forward.
   GptOssForCausalLM at a tiny configuration (`run_reference.py gpt_oss`, `IK_PARITY_GPT_OSS_TINY`,
   eager attention forced since the fused kernels take no sink, a window of 4 over 8 tokens so the
   sliding layers see less than the full ones): every hidden state exact, logit cosine
-  0.9999999999999721, first numeric run.
+  0.9999999999999721, first numeric run. Its RMSNorm multiplies by the weight in float32 and rounds
+  once, where the other families round first and then multiply (transformers marks it the main
+  difference from Llama); `normWeightInFloat32` builds that norm for gpt-oss, which took its first
+  layer at bf16 from 0.885 of the floor to 3.4e-12. A `.float32` load keeps the MXFP4 blocks and
+  scales as stored and widens the floating tensors alone.
+
+  The released mixtures are measured on cuts at both precisions
+  (`testMixtureCutPrefixesMatchTheReferenceAtBothPrecisionsRoutedAsTheReference`): Qwen1.5-MoE-A2.7B
+  and Qwen3-30B-A3B to four layers, Mixtral-8x7B and gpt-oss-20b to two. Each bf16 run routes as the
+  reference routed: `hf_layer_probe` with `IK_PROBE_ROUTES=1` records the experts each layer's `topk`
+  call keeps, and `NFKLMMixtureFeedForward.forcedChoice` keeps them while the router still computes
+  their weights. Every layer sits at 0.024 of its floor or less, and float32 matches to
+  0.9999999999963851 or closer. Granite-4.0-H-Tiny is measured the same way to six layers
+  (`testGraniteMixtureCutMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`, 0.099 of its floor
+  at worst).
   The released experts are MXFP4 and stay packed. `*_blocks` (`uint8 [E, out, in/32, 16]`) viewed
   as little-endian `uint32` Are MLX's `mxfp4` words in its own element order — measured two ways:
   `testMXFP4PackingIsTheOpenComputeLayout` hand-decodes MLX's packing (element i in bits 4·(i mod 8)

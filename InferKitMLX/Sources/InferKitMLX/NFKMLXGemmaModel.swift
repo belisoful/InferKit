@@ -533,9 +533,8 @@ final class NFKGemmaRouter: Module {
         return proj(NFKReferenceRounding.scaled(normed * scale, by: rootSize))
     }
 
-    /// The experts `[tokens][k]` kept in place of the router's own top `k`; nil keeps its own. A parity
-    /// test sets the reference's recorded choice, because `torch.topk` breaks a tie at the `k`-th score
-    /// without a fixed rule. The weights are still this router's, computed for the given experts.
+    /// The experts kept in place of the router's own choice; nil keeps its own. The weights are still
+    /// this router's, computed for the given experts. See ``NFKReferenceRounding/chosen(_:active:forced:)``.
     var forcedChoice: [[Int32]]?
 
     /// `x` `[tokens, hidden]` → the kept routing weights and expert indices, each `[tokens, k]`.
@@ -543,8 +542,7 @@ final class NFKGemmaRouter: Module {
         // The reference keeps the probabilities, their renormalization, and the per-expert scale in
         // float32, so the weights reach the experts unrounded.
         let probabilities = softmax(scores(x).asType(.float32), axis: -1, precise: true)
-        let chosen = forcedChoice.map { MLXArray($0.flatMap { $0 }, [$0.count, activeExperts]).asType(.uint32) }
-            ?? argPartition(-probabilities, kth: activeExperts - 1, axis: -1)[.ellipsis, 0 ..< activeExperts]
+        let chosen = NFKReferenceRounding.chosen(probabilities, active: activeExperts, forced: forcedChoice)
         var weights = takeAlong(probabilities, chosen, axis: -1)
         weights = weights / weights.sum(axis: -1, keepDims: true)
         weights = weights * take(perExpertScale, chosen, axis: 0).asType(.float32)

@@ -458,6 +458,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### gpt-oss at bfloat16 normalizes as its reference does
+
+- gpt-oss's RMSNorm multiplies by its weight in float32 and rounds once, as transformers' does; the
+  other families keep rounding first. `NFKMLXLanguageConfiguration.normWeightInFloat32` carries the
+  choice, and the gpt-oss reader sets it.
+- A release directory loaded at `.float32` keeps its integer tensors as stored, so gpt-oss loads at
+  float32 with its MXFP4 experts packed. Before, the packed bytes were cast to float and the load failed.
+
 #### RIFE v4 fine-tunes as its v4.15 training code trains it
 
 - `NFKMLXRIFEv4.fineTune` trains RIFE v4 as Practical-RIFE's v4.15 training code does: a VGG-19 perceptual term

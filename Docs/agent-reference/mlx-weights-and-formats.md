@@ -113,7 +113,10 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   `NFKMLXTorchCheckpoint` is the public `@objc` face: inspect `tensorNames`/`infoForTensor:`, read a
   tensor's bytes, or convert on device with `writeSafetensorsToURL:` (a hand-rolled pure-Swift
   safetensors writer — no Metal needed — whose output carries no `inferkit.layout` metadata, which is
-  the PyTorch-layout marker; float64 narrows to float32 as the converters do). Refused with errors
+  the PyTorch-layout marker; float64 narrows to float32 as the converters do). A release directory read
+  at `.float32` (`NFKMLXReleaseWeights.arrays`) widens its floating tensors and keeps every integer
+  one as stored, as `NFKMLXWeights.converted` does: gpt-oss's MXFP4 blocks are packed bytes, and a byte
+  cast to float is a different value. Refused with errors
   naming the offline converter: TorchScript archives (CLIP), an opaque module tree (YOLO), `.nemo`
   big-endian saves, sparse/quantized storages. There are no deferred models — YOLO, VAD, and CLIP
   all load. Three walks/unwraps, all non-executing (no class constructed, no serialized `code/`

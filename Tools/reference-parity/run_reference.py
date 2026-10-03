@@ -5621,13 +5621,19 @@ def _stream_loaded(loader, checkpoint):
             if getattr(current, key, None) is not None:
                 setattr(current, key, torch.float32)
         pending.extend(value for value in vars(current).values() if hasattr(value, "to_dict") and hasattr(value, "model_type"))
+    # The shell skips weight initialization: its parameters are on the meta device, and an
+    # initializer that assigns a real tensor to one (Granite's `A_log.data = ...`) cannot run there.
+    from transformers import PreTrainedModel
+    post_init = PreTrainedModel.post_init
     torch.nn.Module.register_parameter = register_on_meta
+    PreTrainedModel.post_init = lambda self: None
     set_default = torch.get_default_dtype()
     try:
         torch.set_default_dtype(torch.float32)
         shell = type(model)(config)
     finally:
         torch.nn.Module.register_parameter = register
+        PreTrainedModel.post_init = post_init
         torch.set_default_dtype(set_default)
     for name, buffer in shell.named_buffers():
         if name in persistent or not buffer.is_floating_point() or buffer.device.type == "meta":
@@ -5642,31 +5648,73 @@ def _stream_loaded(loader, checkpoint):
 
 
 def _stream_float32(model):
-    """Hooks every module so its own floating parameters and buffers are float32 while it runs and
-    return to their stored types after. A tensor shared by two modules (a tied head) is widened by
-    whichever runs, and restored when that module ends."""
+    """Hooks every module so its own floating parameters and buffers, and its direct children's, are
+    float32 while it runs, and return to their stored types once nothing running holds them. A child's
+    tensors are widened with the parent because a parent can read them through a method other than
+    `forward` (Gemma 3n's decoder layer calls `altup.correct` and `altup.scale_corrected_output`,
+    which read AltUp's own parameters). A count per tensor keeps a shared tensor (a tied head) or one
+    widened by both a module and its parent float32 until the last holder ends."""
     import torch
 
     def tensors(module):
         return [t for t in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False))
                 if t.is_floating_point()]
 
-    def widen(module, args):
-        stored = []
-        for t in tensors(module):
-            stored.append((t, t.data.dtype))
+    held = {}  # id(tensor) -> [tensor, stored dtype, holders]
+
+    def hold(t):
+        entry = held.get(id(t))
+        if entry is None:
+            entry = held[id(t)] = [t, t.data.dtype, 0]
             if t.data.dtype != torch.float32:
                 t.data = t.data.float()
-        module._ik_stored = stored
+        entry[2] += 1
+
+    def release(t):
+        entry = held[id(t)]
+        entry[2] -= 1
+        if entry[2] == 0:
+            del held[id(t)]
+            if t.data.dtype != entry[1]:
+                t.data = t.data.to(entry[1])
+
+    def owned(module):
+        # An embedding table is read only through its own `forward`, which widens the rows it reads.
+        children = [c for c in module.children() if not isinstance(c, torch.nn.Embedding)]
+        if isinstance(module, torch.nn.Embedding):
+            return [t for t in tensors(module) if t is not module.weight] + \
+                [t for c in children for t in tensors(c)]
+        return tensors(module) + [t for c in children for t in tensors(c)]
+
+    def widen(module, args):
+        # An embedding widens only the rows its ids read, through remapped ids: a gathered row is the
+        # same value either way, and a whole table (Gemma 3n's per-layer one is 2.35B entries) need not
+        # sit at float32 at once.
+        # `padding_idx` only shapes the gradient, and it indexes the whole table, so it is cleared while
+        # the gathered rows stand in.
+        if isinstance(module, torch.nn.Embedding) and args and torch.is_tensor(args[0]):
+            rows, remapped = torch.unique(args[0], return_inverse=True)
+            module._ik_table = module.weight.data
+            module._ik_padding = module.padding_idx
+            module.weight.data = module.weight.data[rows].float()
+            module.padding_idx = None
+            args = (remapped,) + tuple(args[1:])
+        module._ik_held = owned(module)
+        for t in module._ik_held:
+            hold(t)
+        return args
 
     def restore(module, args, output):
-        for t, original in getattr(module, "_ik_stored", []):
-            if t.data.dtype != original:
-                t.data = t.data.to(original)
-        module._ik_stored = []
+        for t in getattr(module, "_ik_held", []):
+            release(t)
+        module._ik_held = []
+        if getattr(module, "_ik_table", None) is not None:
+            module.weight.data = module._ik_table
+            module.padding_idx = module._ik_padding
+            module._ik_table = None
 
     for module in model.modules():
-        if tensors(module):
+        if owned(module) or isinstance(module, torch.nn.Embedding):
             module.register_forward_pre_hook(widen)
             module.register_forward_hook(restore)
 
@@ -5684,8 +5732,9 @@ def run_hf_layer_probe(image, checkpoint):
     `L.attn.q` / `L.attn.k`, the `L.attn.v`, the rounded probabilities `L.attn.weights`, and the
     weighted sum `L.attn.out`. Each seam's input is the reference's own, so a port runs a piece on it
     and counts the elements that differ. `IK_PROBE_ROUTES=1` also records every mixture layer's routing
-    as `route.L.index` (the kept experts, `[tokens, k]`) and `route.L.weights` (their float32 weights),
-    so a port can route as the reference did where `torch.topk` breaks a tie. `image` unused.
+    as `route.L.index` (the kept experts, `[tokens, k]`), with `route.L.weights` from a Gemma 4 router or
+    `route.L.values` from the layer's `topk` call otherwise (`_route_hooks`), so a port can route as the
+    reference did where `torch.topk` breaks a tie. `image` unused.
     """
     import json
     import torch
@@ -5707,13 +5756,14 @@ def run_hf_layer_probe(image, checkpoint):
 
     extra = {}
     restore = _probe_hooks(model, probed, extra)
-    if os.environ.get("IK_PROBE_ROUTES") == "1":
-        _route_hooks(model, extra)
+    restore_routes = _route_hooks(model, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
     with torch.no_grad():
         out = model(input_ids=ids, output_hidden_states=True)
     restore()
+    if restore_routes is not None:
+        restore_routes()
     extra["tokens"] = ids[0].to(torch.int32).contiguous()
     for index, state in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = state[0].detach().float().clone().contiguous()
@@ -5722,21 +5772,111 @@ def run_hf_layer_probe(image, checkpoint):
 
 
 def _route_hooks(model, extra):
-    """Records each decoder layer's router choice into `extra` as `route.L.index` / `route.L.weights`,
-    from a router that returns `(probabilities, weights, indices)` as transformers' Gemma 4 router does."""
+    """Records each mixture layer's kept experts into `extra` as `route.L.index` (`[tokens, k]`). A
+    router module that returns `(probabilities, weights, indices)`, as transformers' Gemma 4 router
+    does, also gives `route.L.weights`. Every other family is read from the `topk` call the layer
+    makes (inline in Qwen2-MoE, Qwen3-MoE, and Mixtral; in its router module in gpt-oss and Granite),
+    with that call's values as `route.L.values`. Returns a function that undoes the `topk` patch."""
     import torch
 
     decoder_layers = next(m for n, m in model.named_modules()
                           if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
                           and "vision" not in n and "audio" not in n)
+    running = []
+
+    def record(index, values, indices):
+        key = f"route.{index}.index"
+        if key in extra:
+            raise RuntimeError(f"layer {index} called topk twice; name which call routes")
+        extra[key] = indices.detach().to(torch.int32).clone().contiguous()
+        extra[f"route.{index}.values"] = values.detach().float().clone().contiguous()
+
     for index, layer in enumerate(decoder_layers):
         router = getattr(layer, "router", None)
-        if router is None:
+        if router is not None and type(router).__name__.startswith("Gemma"):
+            def hook(module, inputs, output, index=index):
+                extra[f"route.{index}.weights"] = output[1].detach().float().clone().contiguous()
+                extra[f"route.{index}.index"] = output[2].detach().to(torch.int32).clone().contiguous()
+            router.register_forward_hook(hook)
             continue
-        def hook(module, inputs, output, index=index):
-            extra[f"route.{index}.weights"] = output[1].detach().float().clone().contiguous()
-            extra[f"route.{index}.index"] = output[2].detach().to(torch.int32).clone().contiguous()
-        router.register_forward_hook(hook)
+        def enter(module, args, index=index):
+            running.append(index)
+
+        def leave(module, args, output):
+            running.pop()
+
+        layer.register_forward_pre_hook(enter)
+        layer.register_forward_hook(leave)
+
+    function, method = torch.topk, torch.Tensor.topk
+
+    def topk(*args, **kwargs):
+        result = function(*args, **kwargs)
+        if running:
+            record(running[-1], result.values, result.indices)
+        return result
+
+    def tensor_topk(self, *args, **kwargs):
+        result = method(self, *args, **kwargs)
+        if running:
+            record(running[-1], result.values, result.indices)
+        return result
+
+    torch.topk, torch.Tensor.topk = topk, tensor_topk
+
+    def restore():
+        torch.topk, torch.Tensor.topk = function, method
+    return restore
+
+
+def run_hf_bf16_spread(image, checkpoint):
+    """The reference's own bf16 logits under one-step perturbations of its first decoder layer's input.
+
+    For each of `IK_SPREAD_SEEDS` seeds (default 8), `IK_SPREAD_COUNT` random elements (default 8) of that
+    input are moved one bf16 step, the size of the difference a port's own rounding leaves there. Each
+    perturbed run's logits are recorded as `spread.S`; the returned logits are the unperturbed run's. A
+    deep network can carry a one-step difference at its input to the logits many times over, so its single
+    bf16 sample is one draw from this spread, and a port is held to the spread rather than to that draw.
+    `--checkpoint` and the prompt are `hf_layer_probe`'s, eager attention. `image` unused."""
+    import json
+    import torch
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+
+    seeds = int(os.environ.get("IK_SPREAD_SEEDS", "8"))
+    count = int(os.environ.get("IK_SPREAD_COUNT", "8"))
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    loader = AutoModelForImageTextToText if config.get("model_type") == "gemma3" else AutoModelForCausalLM
+    model = loader.from_pretrained(checkpoint, dtype=torch.bfloat16, attn_implementation="eager").eval()
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n)
+    seed = [None]
+
+    def nudge(module, args, kwargs):
+        if seed[0] is None:
+            return None
+        hidden = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
+        generator = torch.Generator().manual_seed(seed[0])
+        bits = hidden.reshape(-1).view(torch.int16).clone()
+        where = torch.randint(0, bits.numel(), (count,), generator=generator)
+        bits[where] += (torch.randint(0, 2, (count,), generator=generator) * 2 - 1).to(torch.int16)
+        moved = bits.view(torch.bfloat16).reshape(hidden.shape)
+        if "hidden_states" in kwargs:
+            kwargs["hidden_states"] = moved
+            return args, kwargs
+        return (moved,) + tuple(args[1:]), kwargs
+
+    decoder_layers[0].register_forward_pre_hook(nudge, with_kwargs=True)
+    extra = {"tokens": ids[0].to(torch.int32).contiguous()}
+    with torch.no_grad():
+        logits = model(input_ids=ids).logits[0].float().contiguous()
+        for index in range(seeds):
+            seed[0] = index
+            extra[f"spread.{index}"] = model(input_ids=ids).logits[0].float().contiguous()
+    globals()["_extra"] = extra
+    return logits
 
 
 # Strings the Swift tokenizer is held to the reference on: runs of spaces, multi-byte text, newlines
@@ -19250,7 +19390,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

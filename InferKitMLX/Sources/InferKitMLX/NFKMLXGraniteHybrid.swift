@@ -302,9 +302,13 @@ final class NFKMLXGraniteMoE: Module {
         return groups
     }
 
+    /// The experts kept in place of the router's own choice; nil keeps its own. See
+    /// ``NFKReferenceRounding/chosen(_:active:forced:)``.
+    var forcedChoice: [[Int32]]?
+
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let logits = router(x).asType(.float32)
-        let chosen = argPartition(-logits, kth: expertsPerToken - 1, axis: -1)[.ellipsis, 0 ..< expertsPerToken]
+        let chosen = NFKReferenceRounding.chosen(logits, active: expertsPerToken, forced: forcedChoice)
         let gates = softmax(takeAlong(logits, chosen, axis: -1), axis: -1, precise: true).asType(x.dtype)
         let expanded = x.expandedDimensions(axes: [-2, -3])
         let fused = inputLinear(expanded, experts: chosen)

@@ -175,12 +175,25 @@ enum NFKReferenceRounding {
         return (weighted / exponentials.sum(axis: -1, keepDims: true)).asType(queries.dtype)
     }
 
+    /// The `active` experts a router keeps from `scores` `[..., experts]`: the given `forced` choice
+    /// (`[tokens][active]`, the tokens flattened), or else the top `active` scores. A parity test forces
+    /// the reference's recorded choice, because `torch.topk` breaks a tie at the `active`-th score
+    /// without a fixed rule.
+    static func chosen(_ scores: MLXArray, active: Int, forced: [[Int32]]?) -> MLXArray {
+        guard let forced else {
+            return argPartition(-scores, kth: active - 1, axis: -1)[.ellipsis, 0 ..< active]
+        }
+        return MLXArray(forced.flatMap { $0 }, [forced.count, active]).asType(.uint32)
+            .reshaped(Array(scores.shape.dropLast()) + [active])
+    }
+
     /// A top-k router as transformers runs it: the softmax over every expert in float32, the kept
     /// weights renormalized in float32 when `normalize`, then rounded to the logits' type. Returns the
-    /// weights and the chosen expert indices, `[..., active]` each.
-    static func routed(_ logits: MLXArray, active: Int, normalize: Bool) -> (weights: MLXArray, chosen: MLXArray) {
+    /// weights and the chosen expert indices, `[..., active]` each; `forced` is as ``chosen(_:active:forced:)``.
+    static func routed(_ logits: MLXArray, active: Int, normalize: Bool,
+                       forced: [[Int32]]? = nil) -> (weights: MLXArray, chosen: MLXArray) {
         let scores = softmax(logits.asType(.float32), axis: -1, precise: true)
-        let chosen = argPartition(-scores, kth: active - 1, axis: -1)[.ellipsis, 0 ..< active]
+        let chosen = chosen(scores, active: active, forced: forced)
         var weights = takeAlong(scores, chosen, axis: -1)
         if normalize {
             weights = weights / weights.sum(axis: -1, keepDims: true)

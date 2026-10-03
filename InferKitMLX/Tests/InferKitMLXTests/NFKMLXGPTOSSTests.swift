@@ -75,6 +75,26 @@ final class NFKMLXGPTOSSTests: XCTestCase {
         XCTAssertEqual(actual.asArray(Float.self), expected.asArray(Float.self))
     }
 
+    // A float32 load widens a release's floating tensors and keeps its integer ones as stored, so the
+    // packed MXFP4 bytes reach the packed-expert path unchanged.
+    func testAFloat32ReleaseLoadKeepsIntegerTensorsAsStored() throws {
+        try requireMLXRuntime()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bytes = (0 ..< 128).map { UInt8(($0 * 37) % 256) }
+        let blocks = MLXArray(bytes, [2, 4, 16])
+        let weight = MLXArray((0 ..< 8).map { Float($0) / 8 }).asType(.bfloat16)
+        try save(arrays: ["model.layers.0.mlp.experts.down_proj_blocks": blocks, "model.norm.weight": weight],
+                 url: directory.appendingPathComponent("model.safetensors"))
+
+        let read = Dictionary(uniqueKeysWithValues: try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32))
+        let packed = try XCTUnwrap(read["model.layers.0.mlp.experts.down_proj_blocks"])
+        XCTAssertEqual(packed.dtype, .uint8, "packed bytes stay bytes")
+        XCTAssertEqual(packed.asArray(UInt8.self), bytes)
+        XCTAssertEqual(read["model.norm.weight"]?.dtype, .float32, "a bf16 weight widens")
+    }
+
     // MARK: The released gpt-oss-20b
 
     /// The `tokenizers` library's ids for these strings over the release's tokenizer.json.

@@ -67,6 +67,10 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// columns are the gate and odd columns the up projection, biases on both projections, the gate
     /// clamped above at `limit`, the up clamped to `±limit`, and `(up + 1) · gate · sigmoid(alpha · gate)`.
     public var clampedSwiGLU: NFKMLXClampedSwiGLU?
+    /// Whether each RMSNorm multiplies by its weight in float32 and rounds once to the input's type, as
+    /// gpt-oss's reference does. The other families round the normalized value first, as Llama's does;
+    /// the two differ only below float32. Introduced in InferKit 0.4.0.
+    public var normWeightInFloat32: Bool = false
 
     public init(hiddenSize: Int = 1024, layerCount: Int = 28, headCount: Int = 16,
                 keyValueHeadCount: Int = 8, headDimensions: Int = 128, intermediateSize: Int = 3072,
@@ -1189,22 +1193,44 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
         return routed
     }
 
+    /// The experts kept in place of the router's own choice; nil keeps its own. See
+    /// ``NFKReferenceRounding/chosen(_:active:forced:)``.
+    var forcedChoice: [[Int32]]?
+
     /// The routing weights and chosen experts, `[..., active]` each, as the reference's router forms them.
     func route(_ x: MLXArray) -> (weights: MLXArray, chosen: MLXArray) {
         let logits = router(x)
         let weights: MLXArray, chosen: MLXArray
         if softmaxesKeptLogits && NFKReferenceRounding.isReduced(logits) {
-            chosen = argPartition(-logits, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
+            chosen = NFKReferenceRounding.chosen(logits, active: activeExpertCount, forced: forcedChoice)
             weights = softmax(takeAlong(logits, chosen, axis: -1).asType(.float32), axis: -1).asType(logits.dtype)
         } else if NFKReferenceRounding.isReduced(logits) {
-            (weights, chosen) = NFKReferenceRounding.routed(logits, active: activeExpertCount, normalize: normalizesWeights)
+            (weights, chosen) = NFKReferenceRounding.routed(logits, active: activeExpertCount, normalize: normalizesWeights,
+                                                            forced: forcedChoice)
         } else {
             let scores = softmax(logits, axis: -1, precise: true)
-            chosen = argPartition(-scores, kth: activeExpertCount - 1, axis: -1)[.ellipsis, 0 ..< activeExpertCount]
+            chosen = NFKReferenceRounding.chosen(scores, active: activeExpertCount, forced: forcedChoice)
             let kept = takeAlong(scores, chosen, axis: -1)
             weights = normalizesWeights ? kept / kept.sum(axis: -1, keepDims: true) : kept
         }
         return (weights, chosen)
+    }
+}
+
+/// An RMSNorm that multiplies by its weight in float32 and rounds once to the input's type, as gpt-oss's
+/// reference does. MLX's `RMSNorm` rounds the normalized value first, as Llama's reference does.
+final class NFKLMFloat32WeightRMSNorm: RMSNorm {
+    /// The norm `c` asks for: this one where ``NFKMLXLanguageConfiguration/normWeightInFloat32``, else MLX's.
+    static func make(_ c: NFKMLXLanguageConfiguration) -> RMSNorm {
+        c.normWeightInFloat32
+            ? NFKLMFloat32WeightRMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
+            : RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let wide = x.asType(.float32)
+        let normalized = wide * rsqrt((wide * wide).mean(axis: -1, keepDims: true) + eps)
+        return (weight.asType(.float32) * normalized).asType(x.dtype)
     }
 }
 
@@ -1218,8 +1244,8 @@ final class NFKLMBlock: Module {
     init(_ c: NFKMLXLanguageConfiguration, layer: Int = 0) {
         _attention.wrappedValue = NFKLMAttention(c, layer: layer)
         _feedForward.wrappedValue = NFKLMMLP.make(c)
-        _attentionNorm.wrappedValue = RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
-        _feedForwardNorm.wrappedValue = RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
+        _attentionNorm.wrappedValue = NFKLMFloat32WeightRMSNorm.make(c)
+        _feedForwardNorm.wrappedValue = NFKLMFloat32WeightRMSNorm.make(c)
         super.init()
     }
 
@@ -1251,7 +1277,7 @@ final class NFKLMCore: Module {
     init(_ c: NFKMLXLanguageConfiguration) {
         _embedTokens.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.hiddenSize)
         _layers.wrappedValue = (0 ..< c.layerCount).map { NFKLMBlock(c, layer: $0) }
-        _norm.wrappedValue = RMSNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
+        _norm.wrappedValue = NFKLMFloat32WeightRMSNorm.make(c)
         super.init()
     }
 }

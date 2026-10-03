@@ -256,6 +256,10 @@ constructor computes (Gemma's `sqrt(hidden)` embedding scale, a rotary table) at
 cannot undo that rounding, so those buffers come from a float32 construction of the same model whose
 parameters live on the meta device. Holding torch's default type at float32 through `from_pretrained`
 instead builds every parameter at float32, which is the full float32 load the mode exists to avoid.
+A running module also widens its direct children's own tensors, because a module can read a child's
+parameters through a method other than `forward` (Gemma 3n's decoder layer calls `altup.correct`). An
+embedding widens only the rows its ids read, with `padding_idx` cleared while they stand in. The float32
+construction skips weight initialization, which cannot assign to a meta parameter (Granite's `A_log`).
 The streamed record must match a true float32 load of a smaller cut to 1e-9 before it stands in.
 
 A mixture-of-experts layer measured at bf16 carries two differences a dense layer does not. Each is
@@ -263,11 +267,18 @@ measured on the reference's own layer, not assumed:
 
 - A router score is a bf16 projection, so experts can tie at the top-`k` boundary. `torch.topk` breaks
   such a tie with no fixed rule. The reference's routing is recorded (`hf_layer_probe` with
-  `IK_PROBE_ROUTES=1`, keys `route.L.index` and `route.L.weights`) and the port's router keeps those
-  experts, computing their weights itself. The test reports how many tokens its own choice would
-  change.
+  `IK_PROBE_ROUTES=1`, keys `route.L.index` with `route.L.weights` from a Gemma 4 router or
+  `route.L.values` from the layer's own `topk` call) and the port's router keeps those experts
+  (`forcedChoice` on the Gemma, shared, and Granite routers), computing their weights itself.
 - Its eight or so expert matmuls let accumulation order alone reach 0.27 of the floor (Gemma 4
   26B-A4B), so a mixture layer's isolated bar is 0.5 of the floor rather than 0.25.
+
+A deep network can carry a one-step difference at its input to the logits many times over. Where every
+piece run alone sits far inside its bar and only the composed logits exceed twice the floor, the
+reference's own spread decides. `run_reference.py hf_bf16_spread` records its bf16 logits under one-step
+nudges of the first layer's input (eight seeds of eight elements, the size of the difference a port's
+own rounding leaves there), and the logits are held to the widest of those runs. Gemma 3n E4B is the
+case: its pieces sit at 2.1% of their floors, and its logits inside a spread of 5.3e-5 to 6.1e-4.
 
 The tiny diffusers configurations the float32 parity tests use serve the same check at bf16:
 `IK_DIT_DTYPE=bfloat16` runs `_randomized`'s model at bf16 with every floating input rounded, and

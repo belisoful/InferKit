@@ -290,8 +290,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     /// The two checks the file header states, over a report's rows.
     /// `isolatedBar` is the fraction of the floor a layer run alone on the reference's input may reach.
+    /// `spread`, where given, is the widest of the reference's own bf16 runs under one-step input nudges;
+    /// the logits may sit that far from float32 when it exceeds twice the floor.
     private func assertRoundingPlacement(_ name: String, endToEnd: [Seam], isolated: [Seam], isolatedBar: Double = 0.25,
-                                         file: StaticString = #filePath, line: UInt = #line) {
+                                         spread: Double? = nil, file: StaticString = #filePath, line: UInt = #line) {
         let worst = isolated.max { $0.ours / max($0.floor, 1e-30) < $1.ours / max($1.floor, 1e-30) }!
         let last = endToEnd[endToEnd.count - 1]
         print(String(format: "VALIDATION bf16 %@ summary: worst isolated %@ at %.4f of the floor; %@ ours-vs-f32 %.3e, floor %.3e",
@@ -302,8 +304,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                               file: file, line: line)
         }
         for row in endToEnd.suffix(2) {
-            XCTAssertLessThanOrEqual(row.exact, 2 * row.floor,
-                                     "\(name) \(row.label): farther from float32 than twice the reference's bf16",
+            let bar = row.label == "logits" ? max(2 * row.floor, spread ?? 0) : 2 * row.floor
+            XCTAssertLessThanOrEqual(row.exact, bar,
+                                     "\(name) \(row.label): farther from float32 than twice the reference's bf16 and its widest perturbed run",
                                      file: file, line: line)
         }
     }
@@ -394,8 +397,30 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     func testGemma3nE2BInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E2B"], "IK_VAL_GEMMA3N_E2B"))
-        let bf16 = try record("gemma3n_e2b_bf16_eager.safetensors")
-        let f32 = try loadArrays(url: URL(fileURLWithPath: try existing(config["IK_PARITY_GEMMA3N_E2B"], "IK_PARITY_GEMMA3N_E2B")))
+        try gemma3n("gemma3n-e2b", directory: directory, bf16: record("gemma3n_e2b_bf16_eager.safetensors"),
+                    f32: loadArrays(url: URL(fileURLWithPath: try existing(config["IK_PARITY_GEMMA3N_E2B"], "IK_PARITY_GEMMA3N_E2B"))))
+    }
+
+    // The E4B the same way, at 16 GB of bf16. Its float32 side does not fit this machine, so the
+    // reference's float32 run is streamed from a bf16 load (`hf_layer_probe` with `IK_PROBE_STREAM_F32=1`),
+    // and both runs probe every layer (`IK_PROBE_LAYERS=0,…,34`) so each block runs alone on the reference's
+    // four AltUp copies. A one-step difference at its first layer carries to the logits many times over:
+    // eight such steps move the reference's own bf16 logits from 5.3e-5 to 6.1e-4 from float32 against its
+    // unperturbed 1.1e-4 (`hf_bf16_spread`). So the logits are held to the widest of those runs, and every
+    // piece run alone to a quarter of its floor.
+    func testGemma3nE4BInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E4B"], "IK_VAL_GEMMA3N_E4B"))
+        try gemma3n("gemma3n-e4b", directory: directory, bf16: record("gemma3n_e4b_bf16_probeall.safetensors"),
+                    f32: record("gemma3n_e4b_f32_probeall.safetensors"), spread: record("gemma3n_e4b_spread.safetensors"))
+    }
+
+    /// A released Gemma 3n decoder at its bf16 against the reference's bf16 record, every state and the
+    /// logits, with `f32` the reference's float32 run on the same prompt. `spread` holds the reference's own
+    /// bf16 logits under one-step nudges of its first layer's input (`spread.S`); the logits may sit as far
+    /// from float32 as the widest of them.
+    private func gemma3n(_ name: String, directory: URL, bf16: [String: MLXArray], f32: [String: MLXArray],
+                         spread: [String: MLXArray]? = nil) throws {
         let tokens = try XCTUnwrap(bf16["tokens"]).asArray(Int32.self)
         XCTAssertEqual(tokens, try XCTUnwrap(f32["tokens"]).asArray(Int32.self), "one prompt, two precisions")
 
@@ -412,8 +437,62 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let labelled = states.enumerated().map { ($0.offset == 0 ? "embedding" : "layer \($0.offset - 1)", $0.element) }
             + [("logits", logits)]
         let rows = try seams(labelled, bf16: bf16, f32: f32, keys: states.indices.map { "hidden.\($0)" } + ["output"])
-        report("gemma3n-e2b", rows)
-        assertRoundingPlacement("gemma3n-e2b", endToEnd: rows, isolated: [rows[1]])
+        report(name, rows)
+        let pieces = try gemma3nPieces(net, configuration, tokens: tokens, bf16: bf16, f32: f32)
+        if let pieces {
+            report("\(name) isolated", pieces)
+        }
+        let exact = floats(try XCTUnwrap(f32["output"]))
+        let widest = try spread.map { runs in
+            try runs.keys.filter { $0.hasPrefix("spread.") }.map { distance(floats(try XCTUnwrap(runs[$0])), exact) }.max() ?? 0
+        }
+        if let widest {
+            print(String(format: "VALIDATION bf16 %@ widest perturbed reference run %.3e from float32", name, widest))
+        }
+        assertRoundingPlacement(name, endToEnd: rows, isolated: pieces ?? [rows[1]], spread: widest)
+    }
+
+    /// The pieces of a Gemma 3n stack run alone on the reference's own bf16 inputs, when both records probe
+    /// every layer (`IK_PROBE_LAYERS=0,…,last`); nil otherwise. The hidden-state record keeps only the active
+    /// AltUp copy while the logits read all four, so the blocks are measured on all four:
+    /// - the expansion of the embedding into the four copies, against the reference's layer-0 input;
+    /// - each block on the reference's four copies (`L.block.in.whole` → `L.block.out.whole`), a sharing
+    ///   layer reading the keys and values its donor block produced on the reference's input;
+    /// - the output path (the collapse of the copies, the final norm, the head, the softcap) on the
+    ///   reference's last four copies.
+    private func gemma3nPieces(_ net: NFKMLXGemma3nNet, _ configuration: NFKMLXGemma3nConfiguration, tokens: [Int32],
+                               bf16: [String: MLXArray], f32: [String: MLXArray]) throws -> [Seam]? {
+        let layers = 0 ..< configuration.layerCount
+        guard layers.allSatisfy({ bf16["\($0).block.in.whole"] != nil && f32["\($0).block.out.whole"] != nil }) else {
+            return nil
+        }
+        let input = MLXArray(tokens).reshaped([1, tokens.count])
+        let embeddings = net.embed(input)
+        let perLayer = net.projectedPerLayerInputs(embeddings: embeddings, perLayer: net.perLayerEmbeddings(input))
+        let masks = NFKMLXGemma3nMasks.make(length: tokens.count, offset: 0, window: configuration.slidingWindow)
+        var donated = [Int: (keys: MLXArray, values: MLXArray)]()
+        var pieces = [(String, MLXArray)]()
+        var keys = [String]()
+        pieces.append(("altup expansion", net.expanded(embeddings)))
+        keys.append("0.block.in.whole")
+        for index in layers {
+            let whole = try XCTUnwrap(bf16["\(index).block.in.whole"]).asType(.bfloat16)
+            let shared = configuration.keyValueDonor(forLayer: index).flatMap { donated[$0] }
+            let (output, layerKeys, layerValues) = net.layers[index](
+                whole, perLayerInput: perLayer[0..., 0..., index, 0...],
+                mask: configuration.layerTypes[index] == .full ? masks.full : masks.sliding,
+                offset: 0, shared: shared, cache: nil, layer: index)
+            if configuration.donatesKeyValues(layer: index) {
+                donated[index] = (layerKeys, layerValues)
+            }
+            pieces.append(("layer \(index)", output))
+            keys.append("\(index).block.out.whole")
+        }
+        let last = try XCTUnwrap(bf16["\(configuration.layerCount - 1).block.out.whole"]).asType(.bfloat16)
+        pieces.append(("output path", net.logits(fromHidden: net.collapsed(last))[0]))
+        keys.append("output")
+        eval(pieces.map(\.1))
+        return try seams(pieces, bf16: bf16, f32: f32, keys: keys)
     }
 
     // Each piece of a Gemma 3n block on the reference's own bf16 input (`hf_layer_probe`,
@@ -547,12 +626,18 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertGreaterThan(worst, 0.99999, "\(name) matches transformers at float32", file: file, line: line)
     }
 
-    /// The end-to-end and isolated report for a dense-decoder release against a record pair.
+    /// The end-to-end and isolated report for a decoder release against a record pair. `routes`
+    /// (`route.L.index` per mixture layer) fixes each mixture layer's experts to the reference's.
     private func languageDecoder(_ name: String, directory: URL, bf16: [String: MLXArray],
-                                 f32: [String: MLXArray]) throws {
+                                 f32: [String: MLXArray], routes: [String: MLXArray]? = nil) throws {
         let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
         let net = NFKMLXLanguage.makeNet(geometry)
         try NFKMLXLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+        if let routes {
+            for (index, layer) in net.model.layers.enumerated() {
+                (layer.feedForward as? NFKLMMixtureFeedForward)?.forcedChoice = try recordedChoice(routes, layer: index)
+            }
+        }
         let tokens = MLXArray(try XCTUnwrap(bf16["tokens"]).asArray(Int32.self)).reshaped([1, -1])
         let states = net.layerStates(tokens)
         let logits = net(tokens)[0]
@@ -573,7 +658,141 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("\(name) isolated", isolatedRows)
-        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routes == nil ? 0.25 : 0.5)
+    }
+
+    /// The experts the reference kept at `layer` (`route.L.index`, `[tokens, k]`) as `[tokens][k]`, or nil
+    /// where the record names none (a dense layer).
+    private func recordedChoice(_ routes: [String: MLXArray], layer: Int) throws -> [[Int32]]? {
+        guard let recorded = routes["route.\(layer).index"] else { return nil }
+        let k = recorded.dim(-1)
+        let flat = recorded.asArray(Int32.self)
+        return stride(from: 0, to: flat.count, by: k).map { Array(flat[$0 ..< $0 + k]) }
+    }
+
+    // MARK: Mixture cut releases
+
+    // The mixture families' releases cut to their first layers (`truncate.py`): Qwen3-30B-A3B and
+    // Qwen1.5-MoE-A2.7B to four, Mixtral-8x7B and gpt-oss-20b to two (`IK_VAL_QWEN3_MOE_CUT4`,
+    // `IK_VAL_QWEN2_MOE_CUT4`, `IK_VAL_MIXTRAL_CUT2`, `IK_VAL_GPT_OSS_CUT2`). Records come from
+    // `hf_layer_probe`: float32 streamed from a bf16 load (`IK_PROBE_STREAM_F32=1`), and bf16 with
+    // `IK_PROBE_ROUTES=1`, which records each layer's kept experts. Every state at float32, then bf16
+    // routed as the reference routed, since `torch.topk` breaks a tie at the `k`-th score without a
+    // fixed rule.
+    func testMixtureCutPrefixesMatchTheReferenceAtBothPrecisionsRoutedAsTheReference() throws {
+        try requireMLXRuntime()
+        var measured = 0
+        for (name, key) in [("qwen3_moe_cut4", "IK_VAL_QWEN3_MOE_CUT4"), ("qwen2_moe_cut4", "IK_VAL_QWEN2_MOE_CUT4"),
+                            ("mixtral_cut2", "IK_VAL_MIXTRAL_CUT2"), ("gpt_oss_cut2", "IK_VAL_GPT_OSS_CUT2")] {
+            guard let path = config[key], FileManager.default.fileExists(atPath: path),
+                  let bf16 = try? record("\(name)_bf16.safetensors"),
+                  let f32 = try? record("\(name)_f32.safetensors") else { continue }
+            let directory = URL(fileURLWithPath: path)
+            // The float32 net is released before the bf16 one loads; the two do not fit together.
+            try autoreleasepool {
+                let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+                // gpt-oss's experts stay MXFP4-packed at float32 and dequantize exactly, which is the
+                // arithmetic the float32 reference runs on them.
+                let exact = try loadedOnCPU(NFKMLXLanguage.makeNet(geometry)) {
+                    try NFKMLXLanguage.loadWeights(into: $0, fromDirectory: directory, precision: .float32)
+                }
+                let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+                try assertFloat32(name, states: exact.layerStates(tokens) + [exact(tokens)[0]], f32: f32)
+            }
+            Memory.clearCache()
+            try autoreleasepool { try languageDecoder(name, directory: directory, bf16: bf16, f32: f32, routes: bf16) }
+            Memory.clearCache()
+            measured += 1
+        }
+        if measured == 0 {
+            throw XCTSkip("set IK_VAL_QWEN3_MOE_CUT4, IK_VAL_QWEN2_MOE_CUT4, IK_VAL_MIXTRAL_CUT2 or IK_VAL_GPT_OSS_CUT2")
+        }
+    }
+
+    // gpt-oss-20b's first layer piece by piece on the reference's own bf16 inputs: the cut's bf16 record
+    // probes layer 0 (`hf_layer_probe`'s default), so a rounding placed differently counts at the one
+    // seam that places it. The mixture routes as the reference routed.
+    func testGPTOSSFirstLayerPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GPT_OSS_CUT2"], "IK_VAL_GPT_OSS_CUT2"))
+        let probe = try record("gpt_oss_cut2_bf16.safetensors")
+        let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXLanguage.makeNet(geometry)
+        try NFKMLXLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+        let block = net.model.layers[0]
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe["0." + key], "no 0.\(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let mask = NFKMLXLanguageNet.causalMask(try input("block.in").dim(1), offset: 0)
+        let mixture = try XCTUnwrap(block.feedForward as? NFKLMMixtureFeedForward)
+        mixture.forcedChoice = try recordedChoice(probe, layer: 0)
+        let (weights, chosen) = mixture.route(try input("mlp.in"))
+        var lines = [String]()
+        lines.append(try piece("input_layernorm", block.attentionNorm(input("input_layernorm.in")), probe, "0.input_layernorm.out"))
+        lines.append(try piece("q_proj", block.attention.queryProjection(input("self_attn.q_proj.in")), probe, "0.self_attn.q_proj.out"))
+        lines.append(try piece("k_proj", block.attention.keyProjection(input("self_attn.k_proj.in")), probe, "0.self_attn.k_proj.out"))
+        lines.append(try piece("v_proj", block.attention.valueProjection(input("self_attn.v_proj.in")), probe, "0.self_attn.v_proj.out"))
+        lines.append(try piece("o_proj", block.attention.outputProjection(input("self_attn.o_proj.in")), probe, "0.self_attn.o_proj.out"))
+        lines.append(try piece("self_attn", block.attention(input("input_layernorm.out"), mask: mask, cache: nil, layer: 0),
+                               probe, "0.self_attn.out"))
+        lines.append(try piece("post_attention_layernorm", block.feedForwardNorm(input("post_attention_layernorm.in")),
+                               probe, "0.post_attention_layernorm.out"))
+        lines.append(try piece("experts (routed as recorded)",
+                               NFKReferenceRounding.combined(mixture.experts(input("mlp.experts.in"), experts: chosen),
+                                                             weights: weights, chosen: chosen),
+                               probe, "0.mlp.experts.out"))
+        lines.append(try piece("mlp (routed as recorded)", mixture(input("mlp.in")), probe, "0.mlp.out"))
+        lines.append(try piece("block", block(input("block.in"), mask: mask, cache: nil, layer: 0), probe, "0.block.out"))
+        print("VALIDATION bf16 gpt-oss layer 0 pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    // Granite-4.0-H-Tiny cut to its first six layers (`IK_VAL_GRANITE_TINY_CUT6`), which end on its first
+    // attention layer, every layer routing 6 of 64 experts beside the shared MLP. The records are made as
+    // the mixture cuts' are; the bf16 run routes as the reference routed.
+    func testGraniteMixtureCutMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GRANITE_TINY_CUT6"], "IK_VAL_GRANITE_TINY_CUT6"))
+        let bf16 = try record("granite_tiny_cut6_bf16.safetensors"), f32 = try record("granite_tiny_cut6_f32.safetensors")
+        let configuration = try NFKMLXGraniteHybrid.configuration(fromDirectory: directory)
+        let tokens = try XCTUnwrap(f32["tokens"]).asType(.int32).reshaped([1, -1])
+        // The state entering each block, the last one normalized, then the logits.
+        func states(_ net: NFKMLXGraniteHybridNet) -> [MLXArray] {
+            var states = net.blockStates(tokens)
+            states[states.count - 1] = net.model.norm(states[states.count - 1])
+            return states + [net(tokens)[0]]
+        }
+        try autoreleasepool {
+            let exact = try loadedOnCPU(NFKMLXGraniteHybrid.makeNet(configuration)) {
+                try NFKMLXGraniteHybrid.loadWeights(into: $0, fromDirectory: directory, precision: .float32)
+            }
+            try assertFloat32("granite-tiny-cut6", states: states(exact), f32: f32)
+        }
+        Memory.clearCache()
+
+        let net = NFKMLXGraniteHybrid.makeNet(configuration)
+        try NFKMLXGraniteHybrid.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+        for (index, layer) in net.model.layers.enumerated() {
+            layer.moe?.forcedChoice = try recordedChoice(bf16, layer: index)
+        }
+        let reduced = states(net)
+        eval(reduced)
+        let labelled = reduced.enumerated().map {
+            ($0.offset == 0 ? "embedding" : $0.offset == reduced.count - 1 ? "logits" : "layer \($0.offset - 1)", $0.element)
+        }
+        let rows = try seams(labelled, bf16: bf16, f32: f32,
+                             keys: (0 ..< reduced.count - 1).map { "hidden.\($0)" } + ["output"])
+        report("granite-tiny-cut6", rows)
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in net.model.layers.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            var output = layer(input)
+            if index == net.model.layers.count - 1 { output = net.model.norm(output) }
+            isolated.append(("layer \(index) (\(configuration.layerTypes[index]))", output))
+        }
+        eval(isolated.map(\.1))
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
+        report("granite-tiny-cut6 isolated", isolatedRows)
+        assertRoundingPlacement("granite-tiny-cut6", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
     }
 
     // MARK: Codestral-Mamba

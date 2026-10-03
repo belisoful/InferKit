@@ -696,15 +696,20 @@ public final class NFKMLXGemma3nNet: Module {
             trace.append(hidden[c.altupActiveIndex])
         }
 
-        // The copies are projected back together, rescaled to the first one's magnitude, and averaged.
+        let merged = collapsed(hidden)
+        cache?.advance(by: length)
+        return merged
+    }
+
+    /// AltUp's parallel copies `[copies, batch, length, hidden]` collapsed into the post-norm hidden state:
+    /// each copy past the first projected back, rescaled to the first one's magnitude, then averaged.
+    func collapsed(_ hidden: MLXArray) -> MLXArray {
         var copies = [hidden[0]]
         let target = NFKReferenceRounding.wide(NFKReferenceRounding.mean(hidden[0] * hidden[0], axis: -1)) { pow($0, Float(0.5)) }
         for (index, projection) in altupUnembedProjections.enumerated() {
             copies.append(matched(projection(hidden[index + 1]), to: target, like: hidden[0]))
         }
-        let merged = norm(NFKReferenceRounding.mean(stacked(copies, axis: 0), axis: 0, keepDims: false))
-        cache?.advance(by: length)
-        return merged
+        return norm(NFKReferenceRounding.mean(stacked(copies, axis: 0), axis: 0, keepDims: false))
     }
 }
 

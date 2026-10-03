@@ -223,12 +223,22 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   `-1...1` frame is a plausible-looking mistake. Weights: `unsloth/gemma-3n-E2B-it` (10 GB, an ungated
   mirror of the gated `google/`). E4B is measured too, at the precision it ships in: 35 layers,
   fifteen of them sharing keys and values, read by the same configuration reader, and 16 GB of bf16
-  that doubles past this machine at float32, so both sides run bf16 (`IK_GEMMA_DTYPE=bfloat16`,
-  `.checkpoint` here) — logit cosine 0.99989 with the argmax matching at 5 of 6 positions, the one flip
-  at the prompt's flattest position where the reference's own margin is half a logit. Whether that is
-  rounding or a defect was measured, not argued: the E2B, exact at float32, recorded the same way at
-  bf16 reads the same 0.99989 (`IK_PARITY_GEMMA3N_E2B_BF16`), so that is the floor the E4B is held to
-  (`testGemma3nE4BMatchesTheReferenceLogits`: cosine above 0.999, at most one flip). Its decoder is
+  that doubles past this machine at float32. Its float32 reference is streamed from a bf16 load
+  (`hf_layer_probe`, `IK_PROBE_STREAM_F32=1`), and both records probe every layer: the hidden-state
+  record keeps only the active AltUp copy, while the logits collapse all four. Each piece run alone on
+  the reference's bf16 input sits at 2.1% of its floor or less: the expansion into four copies (4.2e-11),
+  every block on all four copies, and the output path, which is the collapse, the final norm, the head,
+  and the softcap (8.4e-10). Composed, the logits land 4.1e-4 from float32 against the reference's
+  1.1e-4. Eight one-step nudges of the reference's own first-layer input move its logits anywhere from
+  5.3e-5 to 6.1e-4 from float32 (`run_reference.py hf_bf16_spread`, eight seeds), so a one-step
+  difference at the input carries through 35 layers and four copies many times over. The logits are
+  held to the widest of those runs and every piece to a quarter of its floor
+  (`testGemma3nE4BInBFloat16MatchesTheBFloat16Reference`). The released-sizes check
+  (`testGemma3nE4BMatchesTheReferenceLogits`) reads the eager bf16 record: logit cosine 0.99925, argmax
+  5/6, and a position whose top token departs from the bf16 reference's must carry the float32
+  reference's, which this one does. Both Gemma 3n bf16 keys (`IK_PARITY_GEMMA3N_E2B_BF16`,
+  `IK_PARITY_GEMMA3N_E4B`) name eager records; the earlier ones ran torch's CPU SDPA at bf16, which no
+  port reproduces. Its decoder is
   also held to the released headers by shape: 806 tensors consumed, 870 named as dropped (the towers
   and the k/v projections the release still ships for its sharing layers), 0 unaccounted. Not ported:
   the MatFormer nesting that slices E2B out of E4B, which is a checkpoint operation rather than a
