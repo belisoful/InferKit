@@ -470,7 +470,20 @@ attention and feed-forward.
   the first record byte for byte): the selection matches exactly and the logits read
   0.9999999999999756. The oracle's hyper-connection shares differ by up to 0.36 across the three
   streams and the streams sit 73% apart after the first layer, so the record discriminates a share
-  written to the wrong stream, the defect DeepSeek's near-identical copies hid.
+  written to the wrong stream, the defect DeepSeek's near-identical copies hid. Its delta rule
+  normalizes the queries and keys in float32, after widening them, as transformers 5.17's chunked rule
+  does; normalizing in bf16 first put the released cut's first layer at 0.75 of its floor, and the
+  fix at 0.14. The released weights are measured on a cut to the first two layers
+  (`testQwen4ExpCutMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`), both linear attention
+  with 512 experts and ten kept, the float32 run paging the experts and the bf16 run routed as the
+  reference routed. `ple_layer_ids` counts from one, so the release's `[2]` names the cut's second
+  layer: the cut empties it and leaves the 102 GB n-gram table out, and both sides run that layer
+  without it. The sparse-attention indexer is not reached: it keeps 512 blocks of four tokens, so a
+  tie among blocks needs a prompt past 2,048 tokens, and a cut to its first full-attention layer is
+  23 GB at bf16. The oracle drives `Qwen4ExpForConditionalGeneration`, whose tensor names match the
+  release's (the text class matches 1 of 386), with no cache, since transformers refuses a cache with
+  no attention layer to measure. `testQwen4ExpCutLinearAttentionStepsMatchTheBFloat16Reference` holds
+  each step of the first linear attention on the reference's own inputs, from the function probe.
 - `NFKMLXDeepSeek` — the DeepSeek V4 decoder (`DeepseekV4ForCausalLM`): Multi-head Latent Attention
   over a mixture of experts, a third architecture family beside the dense stack and the hybrid.
   Its arithmetic is measured — at a tiny all-sliding configuration against transformers' own

@@ -261,6 +261,13 @@ parameters through a method other than `forward` (Gemma 3n's decoder layer calls
 embedding widens only the rows its ids read, with `padding_idx` cleared while they stand in. The float32
 construction skips weight initialization, which cannot assign to a meta parameter (Granite's `A_log`).
 The streamed record must match a true float32 load of a smaller cut to 1e-9 before it stands in.
+Every probe load asks transformers for its loading information and refuses one that leaves a parameter
+missing: transformers fills a missing parameter randomly and runs, so a class whose tensor names do not
+match the release's (Qwen4-Exp's text class) would otherwise record a model that is not the release.
+Where a block's pieces agree and only a module-level function differs, `IK_PROBE_FUNCTIONS` records that
+function's arguments and outputs (`fn.<name>.<call>.arg<i>` / `.out<i>`, keyword arguments numbered in
+sorted order), and the port's step runs on them. That is how Qwen4-Exp's delta rule was found to
+normalize its queries and keys in float32.
 
 A mixture-of-experts layer measured at bf16 carries two differences a dense layer does not. Each is
 measured on the reference's own layer, not assumed:

@@ -5482,6 +5482,14 @@
       "config": "IK_VAL_GPT_OSS_CUT2",
       "record": "gpt_oss_cut2",
       "note": "gpt-oss-20b (Apache-2.0): 32 experts, 4 kept, stored MXFP4; two layers cover one sliding and one full attention layer. The float32 side loads the experts as stored and widens only the floating tensors. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "Qwen/Qwen3.8-Flash-Next",
+      "layers": 2,
+      "directory": "qwen3.8-flash-next-cut2",
+      "config": "IK_VAL_QWEN4_EXP_CUT2",
+      "record": "qwen4_exp_cut2",
+      "note": "Qwen3.8-Flash-Next (Qwen4-Exp; license qwen-community-1.0): two linear-attention layers of 512 experts with ten kept. Cut by the IO kit's cut-qwen4exp.py, which applies truncate.py's functions with a stricter filter: the n-gram table (layers.1.ple.*, 128 shards, 102 GB) and the multi-token-prediction head (mtp.*) are left out, and the cut's config empties ple_layer_ids. That list counts from one, so the release's [2] names the cut's second layer, which both sides run without its n-gram embedding. Records: hf_layer_probe in the qwenimage oracle environment (transformers 5.17), which loads qwen4_exp as Qwen4ExpForConditionalGeneration with no cache: bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1, float32 streamed with IK_PROBE_STREAM_F32=1, and qwen4_exp_cut2_bf16_fn the bf16 run with IK_PROBE_FUNCTIONS=causal_conv1d_fn,torch_chunk_gated_delta_rule as well."
     }
   ],
   "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from <validation root>/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",

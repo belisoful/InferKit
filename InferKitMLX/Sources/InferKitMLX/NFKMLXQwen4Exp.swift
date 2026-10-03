@@ -762,14 +762,14 @@ final class NFKQwen4ExpLinearAttention: Module {
         let keyWidth = c.linearKeyHeadCount * c.linearKeyHeadDimensions
         let group = c.linearValueHeadCount / c.linearKeyHeadCount
         // Key heads are shared across a group of value heads, as grouped-query attention shares them.
-        // The delta rule reads and writes a unit-norm key space, normalized in the input's type and
-        // then widened: the recurrence runs in float32, as the reference's does.
+        // The delta rule reads and writes a unit-norm key space, widened to float32 and then normalized:
+        // the reference's chunked rule normalizes after its cast, and the recurrence runs in float32.
         let queries = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., 0 ..< keyWidth]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2))
-            .asType(.float32)
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
+            .asType(.float32))
         let keys = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2))
-            .asType(.float32)
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
+            .asType(.float32))
         let values = mixed[0..., 0..., (2 * keyWidth)...]
             .reshaped([batch, length, c.linearValueHeadCount, c.linearValueHeadDimensions]).asType(.float32)
 
@@ -778,19 +778,31 @@ final class NFKQwen4ExpLinearAttention: Module {
         let decay = exp(-exp(decayLog.asType(.float32))
                         * softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
+        let read = Self.recurrence(queries: queries, keys: keys, values: values, decay: decay, write: write)
+            .asType(x.dtype)
+        let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
+                                               c.linearValueHeadDimensions])
+        let gated = norm(read, gate: gate)
+        return outputProjection(gated.reshaped([batch, length, c.linearValueWidth]))
+    }
 
-        var state = MLXArray.zeros([batch, c.linearValueHeadCount,
-                                    c.linearKeyHeadDimensions, c.linearValueHeadDimensions])
+    /// The gated delta rule in float32 over unit-norm `queries` and `keys` `[batch, length, heads, key]`,
+    /// `values` `[batch, length, heads, value]`, and the per-head `decay` and `write` `[batch, length, heads]`,
+    /// from a zero state; returns the read `[batch, length, heads, value]`.
+    static func recurrence(queries: MLXArray, keys: MLXArray, values: MLXArray, decay: MLXArray,
+                           write: MLXArray) -> MLXArray {
+        let (batch, length, heads) = (queries.dim(0), queries.dim(1), queries.dim(2))
+        var state = MLXArray.zeros([batch, heads, queries.dim(3), values.dim(3)])
         var outputs = [MLXArray]()
         outputs.reserveCapacity(length)
-        let scale = 1 / sqrt(Float(c.linearKeyHeadDimensions))
+        let scale = 1 / sqrt(Float(queries.dim(3)))
 
         for step in 0 ..< length {
             let q = queries[0..., step] * scale
             let k = keys[0..., step]
             let v = values[0..., step]
-            let g = decay[0..., step].reshaped([batch, c.linearValueHeadCount, 1, 1])
-            let b = write[0..., step].reshaped([batch, c.linearValueHeadCount, 1])
+            let g = decay[0..., step].reshaped([batch, heads, 1, 1])
+            let b = write[0..., step].reshaped([batch, heads, 1])
 
             // Decay FIRST, then read what the decayed state holds for this key, then write the
             // correction toward v. Reading before decaying is a different recurrence entirely.
@@ -800,12 +812,7 @@ final class NFKQwen4ExpLinearAttention: Module {
             state = state + k.expandedDimensions(axis: -1) * correction.expandedDimensions(axis: 2)
             outputs.append((state * q.expandedDimensions(axis: -1)).sum(axis: 2))
         }
-
-        let read = stacked(outputs, axis: 1).asType(x.dtype)
-        let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
-                                               c.linearValueHeadDimensions])
-        let gated = norm(read, gate: gate)
-        return outputProjection(gated.reshaped([batch, length, c.linearValueWidth]))
+        return stacked(outputs, axis: 1)
     }
 }
 
@@ -881,8 +888,13 @@ final class NFKQwen4ExpMixture: Module {
         super.init()
     }
 
+    /// The experts kept in place of the router's own choice; nil keeps its own. See
+    /// ``NFKReferenceRounding/chosen(_:active:forced:)``.
+    var forcedChoice: [[Int32]]?
+
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let (weights, chosen) = NFKReferenceRounding.routed(router(x), active: activeExpertCount, normalize: normalizesWeights)
+        let (weights, chosen) = NFKReferenceRounding.routed(router(x), active: activeExpertCount, normalize: normalizesWeights,
+                                                            forced: forcedChoice)
         let routed = NFKReferenceRounding.combined(experts(x, experts: chosen), weights: weights, chosen: chosen)
         return routed + NFKReferenceRounding.sigmoid(sharedExpertGate(x)) * sharedExpert(x)
     }

@@ -871,6 +871,143 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("granite-tiny-cut6", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
     }
 
+    // Qwen3.8-Flash-Next (Qwen4-Exp) cut to its first two layers (`IK_VAL_QWEN4_EXP_CUT2`): linear attention
+    // and 512 experts with ten kept, under hyper-connections. `ple_layer_ids` counts from one, so the release's
+    // `[2]` names the cut's second layer; the cut sets it empty and leaves out the 102 GB n-gram table, and
+    // both sides run that layer without it. The records are made as the mixture cuts' are, the oracle
+    // driving the release's own image-text-to-text class with no cache; the float32 run pages the experts,
+    // and the bf16 run routes as the reference routed.
+    func testQwen4ExpCutMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN4_EXP_CUT2"], "IK_VAL_QWEN4_EXP_CUT2"))
+        let bf16 = try record("qwen4_exp_cut2_bf16.safetensors"), f32 = try record("qwen4_exp_cut2_f32.safetensors")
+        let geometry = try NFKMLXQwen4Exp.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+        try autoreleasepool {
+            let exact = try loadedOnCPU(NFKMLXQwen4Exp.makeNet(geometry)) {
+                try NFKMLXQwen4Exp.loadWeights(into: $0, fromDirectory: directory, precision: .float32, residency: .paged)
+            }
+            exact.expertStore?.cacheByteBudget = 4 << 30
+            try assertFloat32("qwen4-exp-cut2", states: exact.hiddenStates(tokens) + [exact(tokens)[0]], f32: f32)
+        }
+        Memory.clearCache()
+
+        let net = NFKMLXQwen4Exp.makeNet(geometry)
+        try NFKMLXQwen4Exp.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint, residency: .resident)
+        let layers = net.model.languageModel.layers
+        for (index, layer) in layers.enumerated() {
+            layer.feedForward.forcedChoice = try recordedChoice(bf16, layer: index)
+        }
+        let states = net.hiddenStates(tokens)
+        let logits = net(tokens)[0]
+        eval(states + [logits])
+        let labelled = states.enumerated().map { ($0.offset == 0 ? "streams" : "layer \($0.offset - 1)", $0.element) }
+            + [("logits", logits)]
+        let rows = try seams(labelled, bf16: bf16, f32: f32, keys: states.indices.map { "hidden.\($0)" } + ["output"])
+        report("qwen4-exp-cut2", rows)
+        let length = tokens.dim(1)
+        let positions = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, 1, length])
+        let (cosTable, sinTable) = net.rotaryTable(positions: broadcast(positions, to: [3, 1, length]))
+        let queryIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([length, 1])
+        let keyIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, length])
+        let causal = (keyIndex .<= queryIndex).reshaped([1, 1, length, length])
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in layers.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            var output = layer(input, cos: cosTable, sin: sinTable, mask: causal, ngramIndices: nil)
+            if index == layers.count - 1 { output = net.model.languageModel.mixer(output).read }
+            isolated.append(("layer \(index)", output))
+        }
+        eval(isolated.map(\.1))
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
+        report("qwen4-exp-cut2 isolated", isolatedRows)
+        assertRoundingPlacement("qwen4-exp-cut2", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
+    }
+
+    // The Qwen4-Exp cut's first layer piece by piece on the reference's own bf16 inputs (its bf16 record
+    // probes layer 0), the mixture routed as the reference routed.
+    func testQwen4ExpCutFirstLayerPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN4_EXP_CUT2"], "IK_VAL_QWEN4_EXP_CUT2"))
+        let probe = try record("qwen4_exp_cut2_bf16.safetensors")
+        let geometry = try NFKMLXQwen4Exp.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXQwen4Exp.makeNet(geometry)
+        try NFKMLXQwen4Exp.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint, residency: .resident)
+        let block = net.model.languageModel.layers[0]
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe["0." + key], "no 0.\(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        block.feedForward.forcedChoice = try recordedChoice(probe, layer: 0)
+        let attentionResidual = block.attentionResidual, feedForwardResidual = block.feedForwardResidual
+        var lines = [String]()
+        for (name, residual) in [("attn_hyper_connection", attentionResidual), ("mlp_hyper_connection", feedForwardResidual)] {
+            lines.append(try piece("\(name).hc_norm", residual.norm(input("\(name).hc_norm.in")), probe, "0.\(name).hc_norm.out"))
+            lines.append(try piece("\(name).mix_down", residual.mixDown(input("\(name).input_mix_weight_down.in")),
+                                   probe, "0.\(name).input_mix_weight_down.out"))
+            lines.append(try piece("\(name).mix_up", residual.mixUp(input("\(name).input_mix_weight_up.in")),
+                                   probe, "0.\(name).input_mix_weight_up.out"))
+            if let inject = residual.inject {
+                lines.append(try piece("\(name).inject", inject(input("\(name).block_inject_weight.in")),
+                                       probe, "0.\(name).block_inject_weight.out"))
+            }
+            lines.append(try piece("\(name) read", residual(input("\(name).in")).read, probe, "0.\(name).out"))
+        }
+        let linear = try XCTUnwrap(block.linearAttention)
+        lines.append(try piece("linear_attn", linear(input("linear_attn.in")), probe, "0.linear_attn.out"))
+        lines.append(try piece("mlp (routed as recorded)", block.feedForward(input("mlp.in")), probe, "0.mlp.out"))
+        let sharedIn = try XCTUnwrap(probe["0.mlp.shared_expert.in"]).asType(.bfloat16).reshaped([1, 1, -1])
+        lines.append(try piece("shared_expert (token 0)", block.feedForward.sharedExpert(sharedIn), probe, "0.mlp.shared_expert.out"))
+        lines.append(try piece("shared_expert_gate (token 0)", block.feedForward.sharedExpertGate(sharedIn), probe,
+                               "0.mlp.shared_expert_gate.out"))
+        let length = try input("block.in").dim(1)
+        let positions = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, 1, length])
+        let (cosTable, sinTable) = net.rotaryTable(positions: broadcast(positions, to: [3, 1, length]))
+        let queryIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([length, 1])
+        let keyIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, length])
+        let causal = (keyIndex .<= queryIndex).reshaped([1, 1, length, length])
+        lines.append(try piece("block", block(input("block.in"), cos: cosTable, sin: sinTable, mask: causal, ngramIndices: nil),
+                               probe, "0.block.out"))
+        print("VALIDATION bf16 qwen4-exp-cut2 layer 0 pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    // The Qwen4-Exp cut's first linear attention step by step on the reference's own bf16 inputs: the
+    // record's function probe (`IK_PROBE_FUNCTIONS=causal_conv1d_fn,torch_chunk_gated_delta_rule`) keeps
+    // the convolution's and the delta rule's arguments and outputs, the keyword arguments numbered in
+    // sorted order (arg3 beta, arg5 g). The delta rule normalizes its queries and keys in float32.
+    func testQwen4ExpCutLinearAttentionStepsMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN4_EXP_CUT2"], "IK_VAL_QWEN4_EXP_CUT2"))
+        let probe = try record("qwen4_exp_cut2_bf16_fn.safetensors")
+        let geometry = try NFKMLXQwen4Exp.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXQwen4Exp.makeNet(geometry)
+        try NFKMLXQwen4Exp.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint, residency: .resident)
+        let linear = try XCTUnwrap(net.model.languageModel.layers[0].linearAttention)
+        func tensor(_ key: String) throws -> MLXArray { try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16) }
+        var lines = [String]()
+        lines.append(try piece("in_proj_qkv", linear.qkvProjection(tensor("0.linear_attn.in_proj_qkv.in").expandedDimensions(axis: 0)),
+                               probe, "0.linear_attn.in_proj_qkv.out"))
+        let convIn = try tensor("fn.causal_conv1d_fn.0.arg0").transposed(0, 2, 1)
+        let padded = MLX.padded(convIn, widths: [IntOrPair((0, 0)), IntOrPair((geometry.linearConvolutionKernel - 1, 0)), IntOrPair((0, 0))])
+        lines.append(try piece("conv1d + silu", NFKReferenceRounding.silu(linear.convolution(padded)).transposed(0, 2, 1),
+                               probe, "fn.causal_conv1d_fn.0.out0"))
+        let queries = NFKHybridLinearAttention.unitNorm(try tensor("fn.torch_chunk_gated_delta_rule.0.arg0").asType(.float32))
+        let keys = NFKHybridLinearAttention.unitNorm(try tensor("fn.torch_chunk_gated_delta_rule.0.arg1").asType(.float32))
+        let values = try tensor("fn.torch_chunk_gated_delta_rule.0.arg2").asType(.float32)
+        let write = try tensor("fn.torch_chunk_gated_delta_rule.0.arg3").asType(.float32)
+        let decay = exp(try XCTUnwrap(probe["fn.torch_chunk_gated_delta_rule.0.arg5"]).asType(.float32))
+        let read = NFKQwen4ExpLinearAttention.recurrence(queries: queries, keys: keys, values: values, decay: decay, write: write)
+        lines.append(try piece("recurrence (sequential)", read.asType(.bfloat16), probe, "fn.torch_chunk_gated_delta_rule.0.out0"))
+        lines.append("  recurrence float32 vs the reference's rounded read: 1-cos " + String(format: "%.3e",
+            distance(floats(read), floats(try XCTUnwrap(probe["fn.torch_chunk_gated_delta_rule.0.out0"])))))
+        let gate = try tensor("0.linear_attn.in_proj_z.out").reshaped([1, -1, geometry.linearValueHeadCount, geometry.linearValueHeadDimensions])
+        let referenceRead = try tensor("fn.torch_chunk_gated_delta_rule.0.out0")
+        lines.append(try piece("gated norm", linear.norm(referenceRead, gate: gate).reshaped([1, -1, geometry.linearValueWidth]),
+                               probe, "0.linear_attn.out_proj.in"))
+        lines.append(try piece("out_proj", linear.outputProjection(tensor("0.linear_attn.out_proj.in").expandedDimensions(axis: 0)),
+                               probe, "0.linear_attn.out_proj.out"))
+        print("VALIDATION bf16 qwen4-exp-cut2 linear attention steps:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Codestral-Mamba
 
     // Codestral-Mamba-7B cut to its first four blocks (`Tools/validation-assets/truncate.py`,

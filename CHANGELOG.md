@@ -458,6 +458,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### Qwen4-Exp's delta rule normalizes in float32
+
+- The Qwen4-Exp linear attention widens its queries and keys to float32 before normalizing them, as
+  transformers' chunked delta rule does. At bfloat16 the normalized values round once fewer, which moves
+  every linear-attention layer's output toward the reference's.
+
 #### gpt-oss at bfloat16 normalizes as its reference does
 
 - gpt-oss's RMSNorm multiplies by its weight in float32 and rounds once, as transformers' does; the

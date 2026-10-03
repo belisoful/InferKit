@@ -5594,6 +5594,33 @@ def _probe_hooks(model, probed, extra):
     return restore
 
 
+def _release_loader(config):
+    """The transformers class a release directory loads as, driven text-only. A multimodal Gemma 3 release
+    only loads whole, and Qwen4-Exp's text classes name their tensors without the `model.language_model.`
+    prefix its release stores, so both load as their image-text-to-text class; Gemma 3n and 4 load their
+    text decoder alone."""
+    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
+    return AutoModelForImageTextToText if config.get("model_type") in ("gemma3", "qwen4_exp") else AutoModelForCausalLM
+
+
+def _prefill_options(config):
+    """Keyword arguments for a single prefill of a release driven text-only. A Qwen4-Exp cut whose layers are
+    all linear attention has no attention layer for transformers' cache to measure, and its forward
+    refuses such a cache; one prefill reads no cache, so it runs without one. Other families keep their
+    default, since some route a forward pass through the cache (Gemma 3n's sharing layers)."""
+    return {"use_cache": False} if config.get("model_type") == "qwen4_exp" else {}
+
+
+def _loaded(loader, checkpoint, dtype):
+    """`checkpoint` loaded by `loader` at `dtype`, eager attention, refusing a load that leaves any parameter
+    missing: transformers fills one randomly and runs, so a key prefix that does not match the class's
+    would otherwise record a model that is not the release."""
+    model, info = loader.from_pretrained(checkpoint, dtype=dtype, attn_implementation="eager", output_loading_info=True)
+    if info.get("missing_keys"):
+        raise RuntimeError(f"{len(info['missing_keys'])} parameters missing from {checkpoint}, e.g. {sorted(info['missing_keys'])[:3]}")
+    return model.eval()
+
+
 def _stream_loaded(loader, checkpoint):
     """`checkpoint` loaded at bf16 with every module streamed to float32 (`_stream_float32`). The
     buffers the constructor computes (an embedding scale, a rotary table) are made at bf16 by a bf16
@@ -5602,7 +5629,7 @@ def _stream_loaded(loader, checkpoint):
     import copy
     import torch
 
-    model = loader.from_pretrained(checkpoint, dtype=torch.bfloat16, attn_implementation="eager").eval()
+    model = _loaded(loader, checkpoint, torch.bfloat16)
     persistent = set(model.state_dict())
     register = torch.nn.Module.register_parameter
 
@@ -5738,7 +5765,7 @@ def run_hf_layer_probe(image, checkpoint):
     """
     import json
     import torch
-    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+    from transformers import AutoTokenizer
 
     dtype = torch.bfloat16 if os.environ.get("IK_PROBE_DTYPE") == "bfloat16" else torch.float32
     # `IK_PROBE_STREAM_F32=1` computes the float32 run from a bf16 load: each module's own weights are
@@ -5749,10 +5776,8 @@ def run_hf_layer_probe(image, checkpoint):
     probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", "0").split(",")]
     config = json.load(open(os.path.join(checkpoint, "config.json")))
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    # A multimodal Gemma 3 release only loads whole; Gemma 3n and 4 load their text decoder alone.
-    loader = AutoModelForImageTextToText if config.get("model_type") == "gemma3" else AutoModelForCausalLM
-    model = _stream_loaded(loader, checkpoint) if stream else loader.from_pretrained(
-        checkpoint, dtype=dtype, attn_implementation="eager").eval()
+    loader = _release_loader(config)
+    model = _stream_loaded(loader, checkpoint) if stream else _loaded(loader, checkpoint, dtype)
 
     extra = {}
     restore = _probe_hooks(model, probed, extra)
@@ -5760,7 +5785,7 @@ def run_hf_layer_probe(image, checkpoint):
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
     with torch.no_grad():
-        out = model(input_ids=ids, output_hidden_states=True)
+        out = model(input_ids=ids, output_hidden_states=True, **_prefill_options(config))
     restore()
     if restore_routes is not None:
         restore_routes()
@@ -5845,14 +5870,13 @@ def run_hf_bf16_spread(image, checkpoint):
     `hf_layer_probe`'s, eager attention. `image` unused."""
     import json
     import torch
-    from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
+    from transformers import AutoTokenizer
 
     seeds = int(os.environ.get("IK_SPREAD_SEEDS", "8"))
     count = int(os.environ.get("IK_SPREAD_COUNT", "8"))
     targets = [float(x) for x in os.environ["IK_SPREAD_TARGETS"].split(",")] if os.environ.get("IK_SPREAD_TARGETS") else None
     config = json.load(open(os.path.join(checkpoint, "config.json")))
-    loader = AutoModelForImageTextToText if config.get("model_type") == "gemma3" else AutoModelForCausalLM
-    model = loader.from_pretrained(checkpoint, dtype=torch.bfloat16, attn_implementation="eager").eval()
+    model = _loaded(_release_loader(config), checkpoint, torch.bfloat16)
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
     decoder_layers = next(m for n, m in model.named_modules()
@@ -5911,11 +5935,11 @@ def run_hf_bf16_spread(image, checkpoint):
         decoder_layers[layer].register_forward_pre_hook(nudger(layer), with_kwargs=True)
     extra = {"tokens": ids[0].to(torch.int32).contiguous()}
     with torch.no_grad():
-        logits = model(input_ids=ids).logits[0].float().contiguous()
+        logits = model(input_ids=ids, **_prefill_options(config)).logits[0].float().contiguous()
         for index in range(seeds):
             seed[0] = index
             reached.clear()
-            extra[f"spread.{index}"] = model(input_ids=ids).logits[0].float().contiguous()
+            extra[f"spread.{index}"] = model(input_ids=ids, **_prefill_options(config)).logits[0].float().contiguous()
             if targets is not None:
                 extra[f"spread.{index}.reached"] = torch.tensor([reached[l] for l in range(len(decoder_layers))],
                                                                 dtype=torch.float32)
