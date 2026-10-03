@@ -1370,6 +1370,7 @@
 {
 	// Each backend declares the keys it reads, so an Objective-C caller sets what the engine honors
 	// instead of guessing, and a router picks the engine a request needs.
+	[NFKMLXReferenceModels registerGreenScreenKeyer];
 	NSError *error = nil;
 	id<NFKInferenceBackend> keyer = [NFKMLXModelRegistry backendNamed:@"green-screen-keyer" weightsURL:nil error:&error];
 	XCTAssertNotNil(keyer, @"%@", error);
