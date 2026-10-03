@@ -1564,6 +1564,124 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("wan", endToEnd: rows, isolated: rows)
     }
 
+    // MARK: The T5 text encoders
+
+    // Wan's umT5-XXL (`IK_VAL_WAN21_T2V_1_3B`) at bf16, the precision its generator takes when float32
+    // does not fit, against transformers' `UMT5EncoderModel` at bf16 (`t5_layer_probe` under transformers
+    // 5.17, eager, blocks 0 and 23), over a prompt and four masked padding positions.
+    func testUMT5XXLInBFloat16MatchesTheBFloat16Reference() throws {
+        let release = try existing(config["IK_VAL_WAN21_T2V_1_3B"], "IK_VAL_WAN21_T2V_1_3B")
+        try t5Encoder("umt5_xxl", directory: URL(fileURLWithPath: release).appendingPathComponent("text_encoder"))
+    }
+
+    // SD3.5-medium's T5-XXL (`IK_VAL_SD35_MEDIUM`, stored float16) at bf16, as its generator takes it
+    // when float32 does not fit, against transformers' `T5EncoderModel` at bf16, as the umT5 test.
+    func testT5XXLInBFloat16MatchesTheBFloat16Reference() throws {
+        let release = try existing(config["IK_VAL_SD35_MEDIUM"], "IK_VAL_SD35_MEDIUM")
+        try t5Encoder("t5_xxl", directory: URL(fileURLWithPath: release).appendingPathComponent("text_encoder_3"))
+    }
+
+    func testUMT5XXLBlockPiecesMatchTheBFloat16Reference() throws {
+        let release = try existing(config["IK_VAL_WAN21_T2V_1_3B"], "IK_VAL_WAN21_T2V_1_3B")
+        try t5Pieces("umt5_xxl", directory: URL(fileURLWithPath: release).appendingPathComponent("text_encoder"))
+    }
+
+    func testT5XXLBlockPiecesMatchTheBFloat16Reference() throws {
+        let release = try existing(config["IK_VAL_SD35_MEDIUM"], "IK_VAL_SD35_MEDIUM")
+        try t5Pieces("t5_xxl", directory: URL(fileURLWithPath: release).appendingPathComponent("text_encoder_3"))
+    }
+
+    /// The encoder at `directory` loaded at bf16 as the generators load it, with the record's tokens and
+    /// the per-block bias, padding mask added.
+    private func t5Setup(_ directory: URL, probe: [String: MLXArray]) throws
+        -> (net: NFKMLXT5EncoderNet, tokens: MLXArray, mask: MLXArray, bias: (Int) -> MLXArray) {
+        let configuration = try NFKMLXT5Encoder.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXT5Encoder.makeNet(configuration)
+        try NFKMLXT5Encoder.loadWeights(into: net, from: directory, dtype: .bfloat16)
+        let tokens = MLXArray(try XCTUnwrap(probe["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+        let mask = MLXArray(try XCTUnwrap(probe["mask"]).asArray(Int32.self)).reshaped([1, -1])
+        let padding = NFKMLXT5EncoderNet.padding(mask, dtype: .bfloat16)
+        let blocks = net.encoder.block
+        let shared = configuration.perLayerBias ? nil : blocks[0].selfAttention.attention.computeBias(tokens.dim(1))
+        return (net, tokens, mask, { (shared ?? blocks[$0].selfAttention.attention.computeBias(tokens.dim(1))) + padding })
+    }
+
+    private func t5Encoder(_ name: String, directory: URL) throws {
+        try requireMLXRuntime()
+        let bf16 = try record("\(name)_bf16.safetensors"), f32 = try record("\(name)_f32.safetensors")
+        let (net, tokens, mask, bias) = try t5Setup(directory, probe: bf16)
+        let blocks = net.encoder.block
+        var hidden = net.shared(tokens)
+        var states = [("embedding", hidden)]
+        for (index, block) in blocks.enumerated() {
+            hidden = block(hidden, bias: bias(index))
+            states.append(("block \(index)", hidden))
+        }
+        let output = net(tokens, mask: mask)
+        states.append(("final norm", output))
+        eval(states.map(\.1))
+        XCTAssertTrue(arrayEqual(output, net.encoder.finalLayerNorm(hidden)).item(Bool.self),
+                      "the encoder's own pass is the block-by-block one")
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: (0 ... blocks.count).map { "hidden.\($0)" } + ["output"])
+        report(name, rows)
+
+        var isolated = [(String, MLXArray)]()
+        for (index, block) in blocks.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            isolated.append(("block \(index)", block(input, bias: bias(index))))
+        }
+        let last = try XCTUnwrap(bf16["hidden.\(blocks.count)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+        isolated.append(("final norm", net.encoder.finalLayerNorm(last)))
+        eval(isolated.map(\.1))
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32,
+                                     keys: (1 ... blocks.count).map { "hidden.\($0)" } + ["output"])
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // Each piece of blocks 0 and 23 on the reference's own bf16 input, so a rounding placed differently
+    // shows as a count at the one seam that places it.
+    private func t5Pieces(_ name: String, directory: URL) throws {
+        try requireMLXRuntime()
+        let probe = try record("\(name)_bf16.safetensors")
+        let (net, _, _, bias) = try t5Setup(directory, probe: probe)
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        var lines = [String]()
+        for index in [0, net.encoder.block.count - 1] {
+            let block = net.encoder.block[index]
+            let attention = block.selfAttention
+            let feedForward = block.layer[1] as! NFKT5FeedForwardLayer
+            let p = "\(index)."
+            lines.append("block \(index)")
+            lines.append(try piece("attention norm", attention.layerNorm(input(p + "layer.0.layer_norm.in")),
+                                   probe, p + "layer.0.layer_norm.out"))
+            lines.append(try piece("q", attention.attention.q(input(p + "layer.0.SelfAttention.q.in")),
+                                   probe, p + "layer.0.SelfAttention.q.out"))
+            func heads(_ key: String) throws -> MLXArray {
+                try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+            }
+            let attended = NFKReferenceRounding.attention(queries: try heads(p + "attn.q"), keys: try heads(p + "attn.k"),
+                                                          values: try heads(p + "attn.v"), scale: 1, mask: bias(index))
+            lines.append(try piece("attention", attended[0].transposed(1, 0, 2), probe, p + "attn.out"))
+            lines.append(try piece("o", attention.attention.o(input(p + "layer.0.SelfAttention.o.in")),
+                                   probe, p + "layer.0.SelfAttention.o.out"))
+            lines.append(try piece("SelfAttention", attention.attention(input(p + "layer.0.SelfAttention.in"), bias: bias(index)),
+                                   probe, p + "layer.0.SelfAttention.out"))
+            lines.append(try piece("feed-forward norm", feedForward.layerNorm(input(p + "layer.1.layer_norm.in")),
+                                   probe, p + "layer.1.layer_norm.out"))
+            lines.append(try piece("gelu_new", NFKReferenceRounding.geluNew(input(p + "layer.1.DenseReluDense.act.in")),
+                                   probe, p + "layer.1.DenseReluDense.act.out"))
+            lines.append(try piece("wo", feedForward.ff.wo(input(p + "layer.1.DenseReluDense.wo.in")),
+                                   probe, p + "layer.1.DenseReluDense.wo.out"))
+            lines.append(try piece("DenseReluDense", feedForward.ff(input(p + "layer.1.DenseReluDense.in")),
+                                   probe, p + "layer.1.DenseReluDense.out"))
+            lines.append(try piece("block", block(input(p + "block.in"), bias: bias(index)), probe, p + "block.out"))
+        }
+        print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Nemotron-H
 
     // Nemotron-Nano-9B-v2 cut to its first fifteen layers (`IK_VAL_NEMOTRON_CUT15`), which end on its

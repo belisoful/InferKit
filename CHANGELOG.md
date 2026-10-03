@@ -458,6 +458,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### T5 at bfloat16 rounds as transformers does
+
+- The T5 and umT5 text encoders, at bfloat16, normalize in float32 before scaling, round the attention
+  scores and the position bias as transformers' eager attention does, and compute `gelu_new` one torch
+  operation at a time. This changes the bfloat16 output of Wan's umT5 and SD3's T5-XXL where they load
+  at bfloat16, and of MADLAD-7B loaded `half`. Float32 output is unchanged.
+
 #### Qwen3.5 follows transformers 5.17's delta rule
 
 - The Qwen3.5 linear attention widens its queries and keys to float32 before normalizing them, as

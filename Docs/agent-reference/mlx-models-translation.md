@@ -124,7 +124,7 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   and float32 is what the parity is measured at. Registered as `madlad400-3b-mt`. The 7B (`google/madlad400-7b-mt`, 33 GB of
   float32 in 7 shards, `NFKMLXMADLADConfiguration.mt7B`: 48 + 48 at 2048) is measured bfloat16 against
   bfloat16 (`MADLAD_DTYPE=bfloat16`; the port's `half` converts shards in groups as they are read, about
-  15 GB resident, 18.4 GB peak): tokenizations id-exact, encoder cosine 0.99992454, logit cosine 0.9998914 with argmax 17/17, greedy and beam outputs token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), loss 0.16564521 against 0.16796875. At reference parity on
+  15 GB resident, 18.4 GB peak): tokenizations id-exact, encoder cosine 0.9999317, logit cosine 0.9999195 with argmax 17/17, greedy and beam outputs token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), loss 0.1675079 against 0.16796875; its T5 blocks and cached attention round as transformers' do at bfloat16 (`mlx-models-dit-generation.md`). At reference parity on
   `google/madlad400-3b-mt`: every probe tokenization id-exact, encoder cosine 1.0, teacher-forced logit
   cosine 1.0000001 with argmax 16/16, greedy and 4-beam outputs token-exact, and the training loss
   1.0395428 against 1.0395255.

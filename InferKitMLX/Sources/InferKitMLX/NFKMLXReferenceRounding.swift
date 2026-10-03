@@ -68,6 +68,21 @@ enum NFKReferenceRounding {
         return geluApproximate(x.asType(.float32)).asType(x.dtype)
     }
 
+    /// transformers' `gelu_new`, `0.5 · x · (1 + tanh(√(2/π) · (x + 0.044715 · x³)))`, written as separate
+    /// torch operations. On a half-precision input each operation forms in float32 against float32
+    /// constants and rounds to the input's type, and `pow(x, 3)` rounds `x²` before multiplying by `x`.
+    /// MLX's `geluApproximate` rounds its constants to the input's type first.
+    static func geluNew(_ x: MLXArray) -> MLXArray {
+        guard isReduced(x) else { return geluApproximate(x) }
+        let type = x.dtype
+        func rounded(_ value: MLXArray) -> MLXArray { value.asType(type).asType(.float32) }
+        let wide = x.asType(.float32)
+        let cube = rounded(rounded(wide * wide) * wide)
+        let inner = rounded(wide + rounded(cube * Float(0.044715)))
+        let gate = rounded(1 + rounded(tanh(rounded(inner * Float((2 / Double.pi).squareRoot())))))
+        return (rounded(wide * 0.5) * gate).asType(type)
+    }
+
     /// torch's `silu`, which widens a half-precision input and rounds `x · sigmoid(x)` once; MLX's
     /// composed `silu` rounds the sigmoid and then the product.
     static func silu(_ x: MLXArray) -> MLXArray {

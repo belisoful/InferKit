@@ -59,7 +59,8 @@ public struct NFKMLXT5Configuration: Sendable {
     var inner: Int { heads * keyDim }
 }
 
-/// T5LayerNorm: an RMS norm with a learned scale and no mean subtraction.
+/// T5LayerNorm: an RMS norm with a learned scale and no mean subtraction. In half precision it rounds
+/// as transformers' does: normalized in float32, rounded to the input's type, then scaled there.
 final class NFKT5LayerNorm: Module {
     @ParameterInfo(key: "weight") var weight: MLXArray
     let eps: Float
@@ -70,7 +71,11 @@ final class NFKT5LayerNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        weight * (x * rsqrt(x.square().mean(axis: -1, keepDims: true) + eps))
+        guard NFKReferenceRounding.isReduced(x) else {
+            return weight * (x * rsqrt(x.square().mean(axis: -1, keepDims: true) + eps))
+        }
+        let wide = x.asType(.float32)
+        return weight.asType(x.dtype) * (wide * rsqrt(wide.square().mean(axis: -1, keepDims: true) + eps)).asType(x.dtype)
     }
 }
 
@@ -110,9 +115,12 @@ final class NFKT5Attention: Module {
             t.reshaped([batch, length, heads, keyDim]).transposed(0, 2, 1, 3)
         }
         // T5 attention is UNSCALED; the relative-position bias enters as the additive mask.
-        let attended = NFKDropout.attention(
-            queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1, mask: bias,
-            rate: rates?.values.attentionDropout ?? 0, active: training)
+        let rate = rates?.values.attentionDropout ?? 0
+        let attended = training && rate > 0
+            ? NFKDropout.attention(queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1, mask: bias,
+                                   rate: rate, active: true)
+            : NFKReferenceRounding.attention(queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1,
+                                             mask: bias)
         return o(attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * keyDim]))
     }
 
@@ -146,7 +154,7 @@ final class NFKT5Attention: Module {
     }
 }
 
-/// The gated feed-forward: `wo(gelu(wi_0(x)) · wi_1(x))`.
+/// The gated feed-forward: `wo(gelu(wi_0(x)) · wi_1(x))`, with transformers' `gelu_new`.
 final class NFKT5FeedForward: Module {
     @ModuleInfo(key: "wi_0") var wi0: Linear
     @ModuleInfo(key: "wi_1") var wi1: Linear
@@ -161,7 +169,8 @@ final class NFKT5FeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        wo(NFKDropout.apply(geluApproximate(wi0(x)) * wi1(x), rate: rates?.values.activationDropout ?? 0, active: training))
+        wo(NFKDropout.apply(NFKReferenceRounding.geluNew(wi0(x)) * wi1(x), rate: rates?.values.activationDropout ?? 0,
+                            active: training))
     }
 }
 

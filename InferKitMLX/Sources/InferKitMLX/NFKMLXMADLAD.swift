@@ -126,10 +126,14 @@ final class NFKT5CachedAttention: Module {
 
     private func attend(_ queries: MLXArray, _ keys: MLXArray, _ values: MLXArray, mask: MLXArray?) -> MLXArray {
         // The bias is the position embedding plus a float32 causal term, so under a half load it
-        // promotes to float32; the fused attention needs it in the queries' type, which is also the
-        // type the reference computes its bias in.
-        NFKDropout.attention(queries: queries, keys: keys, values: values, scale: 1, mask: mask?.asType(queries.dtype),
-                             rate: rates.values.attentionDropout, active: training)
+        // promotes to float32; the attention takes it in the queries' type, which is also the type the
+        // reference computes its bias in.
+        let bias = mask?.asType(queries.dtype)
+        guard training, rates.values.attentionDropout > 0 else {
+            return NFKReferenceRounding.attention(queries: queries, keys: keys, values: values, scale: 1, mask: bias)
+        }
+        return NFKDropout.attention(queries: queries, keys: keys, values: values, scale: 1, mask: bias,
+                                    rate: rates.values.attentionDropout, active: true)
     }
 
     /// The causal bias `[1, heads, T, offset + T]` for queries at `offset ..< offset + T` over every

@@ -152,6 +152,17 @@ arithmetic as before.
   parity against transformers on the first numeric run (`run_reference.py ltx_t5`, the `ltx` oracle env):
   embedding seam exact, first block 0.9999999999996, full text embedding cosine 0.99999999998. ~19 GB fp32
   sharded — the memory crux of the LTX pipeline, which stages the encoders sequentially.
+  At bf16 (Wan's umT5 and SD3's T5-XXL when float32 does not fit, MADLAD-7B's `half`) it rounds as
+  transformers' eager path does: the norm normalizes in float32, rounds, and then scales in bf16; the
+  attention rounds the scores, rounds again after adding the bias, and takes the softmax in float32
+  (`NFKReferenceRounding.attention`); and `gelu_new` is eight torch operations, each rounding, with
+  `pow(x, 3)` rounding `x²` before multiplying by `x` (`NFKReferenceRounding.geluNew`, the torch
+  behavior measured, not read). transformers keeps `wo` float32 only for a float16 load, so at bf16 the
+  residual stays bf16. `t5_layer_probe` records a released encoder block by block: umT5-XXL isolated
+  worst 0.0023 of the floor, T5-XXL 0.017, every norm, attention, and activation piece exact
+  (`testUMT5XXLInBFloat16…`, `testT5XXLInBFloat16…`, and their `BlockPieces` tests). The oracle reads
+  each `tokenizer.json` as a fast tokenizer; Wan's `tokenizer/` ships only `spiece.model`, so its run
+  takes the store's `umt5-tokenizer`.
 - `NFKMLXFlowMatchScheduler` — the rectified-flow sampler (`FlowMatchEulerDiscreteScheduler`), the sampler
   LTX / Flux / SD3 / Wan / Z-Image use, a value type with no parameters. The schedule is a sigma ramp from
   1 to 0 with **dynamic resolution-dependent shifting** (a per-sequence-length `mu = base_shift + slope·
