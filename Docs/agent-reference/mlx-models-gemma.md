@@ -37,15 +37,19 @@ rest. Its bf16 check differs from the dense sizes' in two ways, each measured on
 - Routing ties. A router score is a bf16 projection, so two experts can score the same at the top-`k`
   boundary. At layer 5, token 0, experts 58 and 67 tie and `torch.topk` keeps 67. Its tie-break follows
   no rule (over 4,122 random boundary ties: the higher index 1,880 times, the lower 1,812, neither 430),
-  so no port reproduces it. A token whose `k`-th and `(k + 1)`-th scores lie within one bf16 step is
-  left out of that layer's isolated measurement, and the row names the count.
+  so no port reproduces it. The bf16 run therefore routes as the reference routed:
+  `hf_layer_probe` with `IK_PROBE_ROUTES=1` records each layer's kept experts, and
+  `NFKGemmaRouter.forcedChoice` keeps them, while the router still computes their weights. Every token
+  is measured. The test also reports, per layer, how many tokens the router's own choice would change
+  (1 of 5 at layer 5, none elsewhere) and how far its weights for the recorded experts sit from the
+  reference's (1-cos about 1e-15, and 1.3e-06 at layer 3).
 - Accumulation order. transformers' layer with each expert matmul accumulated once in float32, at the
   same roundings, reads 0.27 of the floor at layer 0. A mixture layer's isolated bar is 0.5 of the
   floor; a dense layer's stays 0.25.
 
-With those, the worst isolated layer reads 0.32 of the floor, and the logits sit at 1.705e-04 from float32
-against a floor of 8.321e-04. The prompt is five tokens, and layer 5 leaves three out, so that layer
-rests on two tokens.
+Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer 0), layer 5 reads
+0.003, and the logits sit at 8.118e-04 from float32 against a floor of 8.321e-04
+(`testGemma4MixturePrefixMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`).
 
 - `NFKMLXGemma3` / `NFKMLXGemma3Net` / `NFKMLXGemma3Model` / `NFKMLXGemma3Backend` — the Gemma 3 line,
   end to end (`gemma3_text` for the 270M and 1B, the multimodal `gemma3` for the 4B and up), at

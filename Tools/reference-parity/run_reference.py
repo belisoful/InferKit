@@ -5682,7 +5682,9 @@ def run_hf_layer_probe(image, checkpoint):
     `L.block.out.whole` (Gemma 3n's residual stream carries AltUp copies ahead of the batch axis), and from the eager attention function the post-rotary
     `L.attn.q` / `L.attn.k`, the `L.attn.v`, the rounded probabilities `L.attn.weights`, and the
     weighted sum `L.attn.out`. Each seam's input is the reference's own, so a port runs a piece on it
-    and counts the elements that differ. `image` unused.
+    and counts the elements that differ. `IK_PROBE_ROUTES=1` also records every mixture layer's routing
+    as `route.L.index` (the kept experts, `[tokens, k]`) and `route.L.weights` (their float32 weights),
+    so a port can route as the reference did where `torch.topk` breaks a tie. `image` unused.
     """
     import json
     import torch
@@ -5704,6 +5706,8 @@ def run_hf_layer_probe(image, checkpoint):
 
     extra = {}
     restore = _probe_hooks(model, probed, extra)
+    if os.environ.get("IK_PROBE_ROUTES") == "1":
+        _route_hooks(model, extra)
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
     with torch.no_grad():
@@ -5714,6 +5718,24 @@ def run_hf_layer_probe(image, checkpoint):
         extra[f"hidden.{index}"] = state[0].detach().float().clone().contiguous()
     globals()["_extra"] = extra
     return out.logits[0].float().contiguous()
+
+
+def _route_hooks(model, extra):
+    """Records each decoder layer's router choice into `extra` as `route.L.index` / `route.L.weights`,
+    from a router that returns `(probabilities, weights, indices)` as transformers' Gemma 4 router does."""
+    import torch
+
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n)
+    for index, layer in enumerate(decoder_layers):
+        router = getattr(layer, "router", None)
+        if router is None:
+            continue
+        def hook(module, inputs, output, index=index):
+            extra[f"route.{index}.weights"] = output[1].detach().float().clone().contiguous()
+            extra[f"route.{index}.index"] = output[2].detach().to(torch.int32).clone().contiguous()
+        router.register_forward_hook(hook)
 
 
 # Strings the Swift tokenizer is held to the reference on: runs of spaces, multi-byte text, newlines

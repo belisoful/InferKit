@@ -262,8 +262,10 @@ A mixture-of-experts layer measured at bf16 carries two differences a dense laye
 measured on the reference's own layer, not assumed:
 
 - A router score is a bf16 projection, so experts can tie at the top-`k` boundary. `torch.topk` breaks
-  such a tie with no fixed rule, so a token whose `k`-th and `(k + 1)`-th scores lie within one bf16
-  step is left out of the isolated measurement, with the count named on the row.
+  such a tie with no fixed rule. The reference's routing is recorded (`hf_layer_probe` with
+  `IK_PROBE_ROUTES=1`, keys `route.L.index` and `route.L.weights`) and the port's router keeps those
+  experts, computing their weights itself. The test reports how many tokens its own choice would
+  change.
 - Its eight or so expert matmuls let accumulation order alone reach 0.27 of the floor (Gemma 4
   26B-A4B), so a mixture layer's isolated bar is 0.5 of the floor rather than 0.25.
 

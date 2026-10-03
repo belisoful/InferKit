@@ -1303,113 +1303,132 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // MARK: Released sizes, cut to their first layers
 
-    // Gemma 4's large sizes cut to their first six layers, which end on the first full-attention layer
-    // (`truncate.py`, `IK_VAL_GEMMA4_31B_CUT6` / `IK_VAL_GEMMA4_26B_CUT6` / `IK_VAL_GEMMA4_12B_CUT6`,
-    // records from `hf_layer_probe` at float32 and at `IK_PROBE_DTYPE=bfloat16`): every state at float32,
-    // then each layer on the reference's own bf16 input. These are the releases that set
-    // `attention_k_eq_v`; the 26B-A4B carries the mixture block and the 12B the unified stack.
+    // Gemma 4's dense large sizes cut to their first six layers, which end on the first full-attention
+    // layer (`truncate.py`, `IK_VAL_GEMMA4_31B_CUT6` / `IK_VAL_GEMMA4_12B_CUT6`, records from
+    // `hf_layer_probe` at float32 and at `IK_PROBE_DTYPE=bfloat16`): every state at float32, then each
+    // layer on the reference's own bf16 input. These are releases that set `attention_k_eq_v`; the 12B
+    // is the unified stack.
     func testGemma4LargerSizePrefixesMatchTheReferenceAtBothPrecisions() throws {
         try requireMLXRuntime()
         var measured = 0
         for (name, key, unified) in [("gemma4_31b_cut6", "IK_VAL_GEMMA4_31B_CUT6", false),
-                                     ("gemma4_26b_cut6", "IK_VAL_GEMMA4_26B_CUT6", false),
                                      ("gemma4_12b_cut6", "IK_VAL_GEMMA4_12B_CUT6", true)] {
             guard let path = config[key], FileManager.default.fileExists(atPath: path),
                   let bf16 = try? record("\(name)_bf16.safetensors"),
                   let f32 = try? record("\(name)_f32.safetensors") else { continue }
-            let directory = URL(fileURLWithPath: path)
-            let configURL = directory.appendingPathComponent("config.json")
-            let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
-            // The states, the logits, and one layer run alone on `input` (index, input) → output; the
-            // last layer's output takes the final norm, as the reference's last hidden state does.
-            // `nearTies` names the tokens a mixture layer routes on a near-tie (see `nearTiedTokens`).
-            func run(_ precision: NFKMLXWeightPrecision)
-                throws -> (states: [MLXArray], logits: MLXArray, layer: (Int, MLXArray) -> MLXArray,
-                           nearTies: (Int, MLXArray) -> [Int]) {
-                let mask = NFKMLXLanguageNet.causalMask(tokens.dim(1), offset: 0)
-                if unified {
-                    let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeUnifiedNet(try NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace: configURL)),
-                                              if: precision == .float32) {
-                        try NFKMLXGemmaLanguage.loadUnifiedWeights(into: $0, fromDirectory: directory, precision: precision)
-                    }
-                    return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
-                        let output = net.layers[index](input, mask: mask, shared: nil).output
-                        return index == net.layers.count - 1 ? net.norm(output) : output
-                    }, { _, _ in [] })
-                }
-                // The 26B-A4B's routed experts are 22 GB at float32, so its float32 run pages them from
-                // the release; a paged load computes the resident one's values element for element.
-                let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeNet(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL)),
-                                          if: precision == .float32) {
-                    try NFKMLXGemmaLanguage.loadWeights(into: $0, fromDirectory: directory, precision: precision,
-                                                        residency: precision == .float32 ? .paged : .resident)
-                }
-                net.expertStore?.cacheByteBudget = 4 << 30
-                return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
-                    let output = net.layers[index](input, perLayerInput: nil, mask: mask, shared: nil).output
-                    return index == net.layers.count - 1 ? net.norm(output) : output
-                }, { index, input in self.nearTiedTokens(net.layers[index], input, mask: mask) })
-            }
-            // The float32 net is released before the bf16 one loads; the two do not fit together.
-            try autoreleasepool {
-                let exact = try run(.float32)
-                try assertFloat32(name, states: exact.states + [exact.logits], f32: f32)
-            }
-            Memory.clearCache()
-
-            // Each size's bf16 net and its cached buffers are released before the next size loads.
-            try autoreleasepool {
-                let reduced = try run(.checkpoint)
-                eval(reduced.states + [reduced.logits])
-                let labelled = reduced.states.enumerated().map { ($0.offset == 0 ? "embedding" : "layer \($0.offset - 1)", $0.element) }
-                    + [("logits", reduced.logits)]
-                let rows = try seams(labelled, bf16: bf16, f32: f32,
-                                     keys: reduced.states.indices.map { "hidden.\($0)" } + ["output"])
-                report(name, rows)
-                // A token routed on a near-tie is left out of its layer's isolated measurement: which
-                // expert it reaches is decided by rounding noise or by `torch.topk`'s arbitrary tie-break,
-                // not by where a rounding is placed.
-                var isolatedRows = [Seam]()
-                for index in 0 ..< reduced.states.count - 1 {
-                    let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
-                    let output = reduced.layer(index, input)
-                    let tied = Set(reduced.nearTies(index, input))
-                    let kept = MLXArray((0 ..< input.dim(1)).filter { !tied.contains($0) }.map(Int32.init))
-                    let key = "hidden.\(index + 1)"
-                    let label = tied.isEmpty ? "layer \(index)" : "layer \(index) (\(tied.count) near-tied left out)"
-                    isolatedRows += try seams([(label, output[0].take(kept, axis: 0))],
-                                              bf16: [key: try XCTUnwrap(bf16[key]).take(kept, axis: 0)],
-                                              f32: [key: try XCTUnwrap(f32[key]).take(kept, axis: 0)], keys: [key])
-                }
-                report("\(name) isolated", isolatedRows)
-                // Accumulation order alone moves a mixture layer farther than a dense one: transformers'
-                // own layer with its eight experts' matmuls summed in float32 at the same roundings reads
-                // 0.27 of the floor at the 26B-A4B's layer 0.
-                assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: isMixture(configURL) ? 0.5 : 0.25)
-            }
-            Memory.clearCache()
+            try gemma4Prefix(name, directory: URL(fileURLWithPath: path), unified: unified, bf16: bf16, f32: f32)
             measured += 1
         }
-        if measured == 0 { throw XCTSkip("set IK_VAL_GEMMA4_31B_CUT6, IK_VAL_GEMMA4_26B_CUT6 or IK_VAL_GEMMA4_12B_CUT6") }
+        if measured == 0 { throw XCTSkip("set IK_VAL_GEMMA4_31B_CUT6 or IK_VAL_GEMMA4_12B_CUT6") }
     }
 
-    private func isMixture(_ configURL: URL) -> Bool {
-        (try? NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL))?.isMixtureOfExperts ?? false
+    // The 26B-A4B mixture cut the same way (`IK_VAL_GEMMA4_26B_CUT6`), its bf16 run routed as the
+    // reference routed: `hf_layer_probe` with `IK_PROBE_ROUTES=1` records each layer's kept experts, since
+    // `torch.topk` breaks a tie at the `k`-th score without a fixed rule (at layer 5, token 0, experts 58
+    // and 67 tie and it keeps 67). The routing weights stay this port's, computed for those experts.
+    func testGemma4MixturePrefixMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA4_26B_CUT6"], "IK_VAL_GEMMA4_26B_CUT6"))
+        let routes = try record("gemma4_26b_cut6_bf16_routes.safetensors")
+        try gemma4Prefix("gemma4_26b_cut6", directory: directory, unified: false,
+                         bf16: record("gemma4_26b_cut6_bf16.safetensors"),
+                         f32: record("gemma4_26b_cut6_f32.safetensors"), routes: routes)
     }
 
-    /// The tokens of `input` `[1, tokens, hidden]` whose `k`-th and `(k + 1)`-th router scores in `block`
-    /// lie within one bf16 step of each other, so a one-step rounding difference or a tie-break decides
-    /// which expert is kept. Empty for a dense block.
-    private func nearTiedTokens(_ block: NFKGemmaBlock, _ input: MLXArray, mask: MLXArray?) -> [Int] {
-        guard let router = block.router else { return [] }
-        let attended = input + block.postAttentionNorm(block.attention(block.inputNorm(input), mask: mask, shared: nil).output)
-        let scores = sorted(router.scores(attended.reshaped([-1, attended.dim(-1)])).asType(.float32), axis: -1)
-        let count = scores.dim(-1), k = router.activeExperts
-        let kth = scores[0..., count - k].asArray(Float.self), next = scores[0..., count - k - 1].asArray(Float.self)
-        return kth.indices.filter { token in
-            let step = pow(2, (log2(abs(kth[token]))).rounded(.down) - 7)
-            return kth[token] - next[token] <= step
+    /// A Gemma 4 cut at float32 against the float32 record, then at bf16 end to end and layer by layer
+    /// against the bf16 record. `routes` (`route.L.index` per mixture layer) fixes the bf16 run's experts.
+    private func gemma4Prefix(_ name: String, directory: URL, unified: Bool, bf16: [String: MLXArray],
+                              f32: [String: MLXArray], routes: [String: MLXArray]? = nil) throws {
+        let configURL = directory.appendingPathComponent("config.json")
+        let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+        let mask = NFKMLXLanguageNet.causalMask(tokens.dim(1), offset: 0)
+        // The states, the logits, and one layer run alone on `input` (index, input) → output; the last
+        // layer's output takes the final norm, as the reference's last hidden state does.
+        func run(_ precision: NFKMLXWeightPrecision)
+            throws -> (states: [MLXArray], logits: MLXArray, layer: (Int, MLXArray) -> MLXArray) {
+            if unified {
+                let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeUnifiedNet(try NFKMLXGemmaLanguage.unifiedConfiguration(fromHuggingFace: configURL)),
+                                          if: precision == .float32) {
+                    try NFKMLXGemmaLanguage.loadUnifiedWeights(into: $0, fromDirectory: directory, precision: precision)
+                }
+                return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
+                    let output = net.layers[index](input, mask: mask, shared: nil).output
+                    return index == net.layers.count - 1 ? net.norm(output) : output
+                })
+            }
+            // The 26B-A4B's routed experts are 22 GB at float32, so its float32 run pages them from the
+            // release; a paged load computes the resident one's values element for element.
+            let net = try loadedOnCPU(NFKMLXGemmaLanguage.makeNet(try NFKMLXGemmaLanguage.configuration(fromHuggingFace: configURL)),
+                                      if: precision == .float32) {
+                try NFKMLXGemmaLanguage.loadWeights(into: $0, fromDirectory: directory, precision: precision,
+                                                    residency: precision == .float32 ? .paged : .resident)
+            }
+            net.expertStore?.cacheByteBudget = 4 << 30
+            if precision != .float32, let routes {
+                try route(net, as: routes)
+            }
+            return (net.hiddenStates(tokens), net(tokens)[0], { index, input in
+                let output = net.layers[index](input, perLayerInput: nil, mask: mask, shared: nil).output
+                return index == net.layers.count - 1 ? net.norm(output) : output
+            })
         }
+        // The float32 net is released before the bf16 one loads; the two do not fit together.
+        try autoreleasepool {
+            let exact = try run(.float32)
+            try assertFloat32(name, states: exact.states + [exact.logits], f32: f32)
+        }
+        Memory.clearCache()
+
+        try autoreleasepool {
+            let reduced = try run(.checkpoint)
+            eval(reduced.states + [reduced.logits])
+            let labelled = reduced.states.enumerated().map { ($0.offset == 0 ? "embedding" : "layer \($0.offset - 1)", $0.element) }
+                + [("logits", reduced.logits)]
+            let rows = try seams(labelled, bf16: bf16, f32: f32,
+                                 keys: reduced.states.indices.map { "hidden.\($0)" } + ["output"])
+            report(name, rows)
+            var isolated = [(String, MLXArray)]()
+            for index in 0 ..< reduced.states.count - 1 {
+                let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+                isolated.append(("layer \(index)", reduced.layer(index, input)))
+            }
+            eval(isolated.map(\.1))
+            let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
+            report("\(name) isolated", isolatedRows)
+            // Accumulation order alone moves a mixture layer farther than a dense one: transformers' own
+            // layer with its eight experts' matmuls summed in float32 at the same roundings reads 0.27 of
+            // the floor at the 26B-A4B's layer 0.
+            assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routes == nil ? 0.25 : 0.5)
+        }
+        Memory.clearCache()
+    }
+
+    /// Fixes every mixture layer of `net` to the experts `routes` recorded (`route.L.index`, `[tokens, k]`),
+    /// and reports how many tokens each layer's own router keeps differently and how far its weights for
+    /// the recorded experts sit from the reference's (`route.L.weights`).
+    private func route(_ net: NFKMLXGemmaNet, as routes: [String: MLXArray]) throws {
+        var lines = ["VALIDATION routes: layer  tokens-own-choice-differs  weights-1-cos"]
+        for (index, block) in net.layers.enumerated() {
+            guard let router = block.router else { continue }
+            let recorded = try XCTUnwrap(routes["route.\(index).index"], "no route.\(index).index")
+            let k = recorded.dim(-1)
+            let flat = recorded.asArray(Int32.self)
+            router.forcedChoice = stride(from: 0, to: flat.count, by: k).map { Array(flat[$0 ..< $0 + k]) }
+            let input = try XCTUnwrap(routes["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            let mask = NFKMLXLanguageNet.causalMask(input.dim(1), offset: 0)
+            let attended = input + block.postAttentionNorm(block.attention(block.inputNorm(input), mask: mask, shared: nil).output)
+            let flatInput = attended.reshaped([-1, attended.dim(-1)])
+            let forced = router(flatInput)
+            router.forcedChoice = nil
+            let own = router(flatInput).indices.asArray(UInt32.self).map(Int32.init)
+            router.forcedChoice = stride(from: 0, to: flat.count, by: k).map { Array(flat[$0 ..< $0 + k]) }
+            let differing = stride(from: 0, to: flat.count, by: k).filter {
+                Set(own[$0 ..< $0 + k]) != Set(flat[$0 ..< $0 + k])
+            }.count
+            let weights = distance(floats(forced.weights), floats(try XCTUnwrap(routes["route.\(index).weights"])))
+            lines.append(String(format: "  layer %d  %d of %d  %.3e", index, differing, flat.count / k, weights))
+        }
+        print(lines.joined(separator: "\n"))
     }
 
     // Gemma 2 9B cut to its first four layers (`IK_VAL_GEMMA2_9B_CUT4`).
