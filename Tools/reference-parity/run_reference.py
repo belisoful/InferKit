@@ -5830,20 +5830,26 @@ def _route_hooks(model, extra):
 
 
 def run_hf_bf16_spread(image, checkpoint):
-    """The reference's own bf16 logits under one-step perturbations of its first decoder layer's input.
+    """The reference's own bf16 logits under one-step perturbations of its decoder layers' inputs.
 
-    For each of `IK_SPREAD_SEEDS` seeds (default 8), `IK_SPREAD_COUNT` random elements (default 8) of that
-    input are moved one bf16 step, the size of the difference a port's own rounding leaves there. Each
-    perturbed run's logits are recorded as `spread.S`; the returned logits are the unperturbed run's. A
-    deep network can carry a one-step difference at its input to the logits many times over, so its single
-    bf16 sample is one draw from this spread, and a port is held to the spread rather than to that draw.
-    `--checkpoint` and the prompt are `hf_layer_probe`'s, eager attention. `image` unused."""
+    For each of `IK_SPREAD_SEEDS` seeds (default 8), random elements are moved one bf16 step. By default
+    `IK_SPREAD_COUNT` elements (default 8) of the first decoder layer's input move. `IK_SPREAD_TARGETS`, a
+    comma list of one `1 - cosine` per decoder layer, instead perturbs every layer's input: elements move
+    one step at a time, the count doubling until that input sits the target away from its unperturbed
+    value. A port's own rounding leaves a difference at every block, so targets taken from its per-block
+    differences give the reference noise of the port's size at each layer. Each perturbed run's logits
+    are recorded as `spread.S`, with the distance each layer's input reached as `spread.S.reached` under
+    targets; the returned logits are the unperturbed run's. A deep network can carry a one-step difference
+    at its input to the logits many times over, so its single bf16 sample is one draw from this spread,
+    and a port is held to the spread rather than to that draw. `--checkpoint` and the prompt are
+    `hf_layer_probe`'s, eager attention. `image` unused."""
     import json
     import torch
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer
 
     seeds = int(os.environ.get("IK_SPREAD_SEEDS", "8"))
     count = int(os.environ.get("IK_SPREAD_COUNT", "8"))
+    targets = [float(x) for x in os.environ["IK_SPREAD_TARGETS"].split(",")] if os.environ.get("IK_SPREAD_TARGETS") else None
     config = json.load(open(os.path.join(checkpoint, "config.json")))
     loader = AutoModelForImageTextToText if config.get("model_type") == "gemma3" else AutoModelForCausalLM
     model = loader.from_pretrained(checkpoint, dtype=torch.bfloat16, attn_implementation="eager").eval()
@@ -5852,29 +5858,67 @@ def run_hf_bf16_spread(image, checkpoint):
     decoder_layers = next(m for n, m in model.named_modules()
                           if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
                           and "vision" not in n and "audio" not in n)
+    if targets is not None and len(targets) != len(decoder_layers):
+        raise ValueError(f"IK_SPREAD_TARGETS names {len(targets)} layers; the model has {len(decoder_layers)}")
     seed = [None]
+    reached = {}
 
-    def nudge(module, args, kwargs):
-        if seed[0] is None:
-            return None
-        hidden = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
-        generator = torch.Generator().manual_seed(seed[0])
-        bits = hidden.reshape(-1).view(torch.int16).clone()
-        where = torch.randint(0, bits.numel(), (count,), generator=generator)
-        bits[where] += (torch.randint(0, 2, (count,), generator=generator) * 2 - 1).to(torch.int16)
-        moved = bits.view(torch.bfloat16).reshape(hidden.shape)
-        if "hidden_states" in kwargs:
-            kwargs["hidden_states"] = moved
-            return args, kwargs
-        return (moved,) + tuple(args[1:]), kwargs
+    def moved_by(hidden, where, steps):
+        # On a sign-magnitude bf16, +1 on the bits moves away from zero and -1 toward it. An exact zero
+        # has nothing toward it (-1 would wrap +0 to a NaN), so it moves away; a step that would reach
+        # infinity or a NaN is left out.
+        flat = hidden.reshape(-1)
+        bits = flat.view(torch.int16).clone()
+        zero = flat[where] == 0
+        steps = torch.where(zero, torch.ones_like(steps), steps)
+        bits[where] += steps
+        moved = bits.view(torch.bfloat16)
+        bad = ~torch.isfinite(moved)
+        moved[bad] = flat[bad]
+        return moved.reshape(hidden.shape)
 
-    decoder_layers[0].register_forward_pre_hook(nudge, with_kwargs=True)
+    def distance(a, b):
+        a, b = a.double().reshape(-1), b.double().reshape(-1)
+        return float(1 - (a @ b) / (a.norm() * b.norm()))
+
+    def nudger(layer):
+        def nudge(module, args, kwargs):
+            if seed[0] is None:
+                return None
+            hidden = kwargs["hidden_states"] if "hidden_states" in kwargs else args[0]
+            generator = torch.Generator().manual_seed(seed[0] if targets is None else seed[0] * 1000 + layer)
+            if targets is None:
+                where = torch.randint(0, hidden.numel(), (count,), generator=generator)
+                steps = (torch.randint(0, 2, (count,), generator=generator) * 2 - 1).to(torch.int16)
+                moved = moved_by(hidden, where, steps)
+            else:
+                order = torch.randperm(hidden.numel(), generator=generator)
+                signs = (torch.randint(0, 2, (hidden.numel(),), generator=generator) * 2 - 1).to(torch.int16)
+                taken = 1
+                while True:
+                    moved = moved_by(hidden, order[:taken], signs[:taken])
+                    if distance(moved, hidden) >= targets[layer] or taken >= hidden.numel():
+                        break
+                    taken = min(taken * 2, hidden.numel())
+                reached[layer] = distance(moved, hidden)
+            if "hidden_states" in kwargs:
+                kwargs["hidden_states"] = moved
+                return args, kwargs
+            return (moved,) + tuple(args[1:]), kwargs
+        return nudge
+
+    for layer in (range(len(decoder_layers)) if targets is not None else [0]):
+        decoder_layers[layer].register_forward_pre_hook(nudger(layer), with_kwargs=True)
     extra = {"tokens": ids[0].to(torch.int32).contiguous()}
     with torch.no_grad():
         logits = model(input_ids=ids).logits[0].float().contiguous()
         for index in range(seeds):
             seed[0] = index
+            reached.clear()
             extra[f"spread.{index}"] = model(input_ids=ids).logits[0].float().contiguous()
+            if targets is not None:
+                extra[f"spread.{index}.reached"] = torch.tensor([reached[l] for l in range(len(decoder_layers))],
+                                                                dtype=torch.float32)
     globals()["_extra"] = extra
     return logits
 

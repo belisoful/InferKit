@@ -290,10 +290,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     /// The two checks the file header states, over a report's rows.
     /// `isolatedBar` is the fraction of the floor a layer run alone on the reference's input may reach.
-    /// `spread`, where given, is the widest of the reference's own bf16 runs under one-step input nudges;
-    /// the logits may sit that far from float32 when it exceeds twice the floor.
     private func assertRoundingPlacement(_ name: String, endToEnd: [Seam], isolated: [Seam], isolatedBar: Double = 0.25,
-                                         spread: Double? = nil, file: StaticString = #filePath, line: UInt = #line) {
+                                         file: StaticString = #filePath, line: UInt = #line) {
         let worst = isolated.max { $0.ours / max($0.floor, 1e-30) < $1.ours / max($1.floor, 1e-30) }!
         let last = endToEnd[endToEnd.count - 1]
         print(String(format: "VALIDATION bf16 %@ summary: worst isolated %@ at %.4f of the floor; %@ ours-vs-f32 %.3e, floor %.3e",
@@ -304,9 +302,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                               file: file, line: line)
         }
         for row in endToEnd.suffix(2) {
-            let bar = row.label == "logits" ? max(2 * row.floor, spread ?? 0) : 2 * row.floor
-            XCTAssertLessThanOrEqual(row.exact, bar,
-                                     "\(name) \(row.label): farther from float32 than twice the reference's bf16 and its widest perturbed run",
+            XCTAssertLessThanOrEqual(row.exact, 2 * row.floor,
+                                     "\(name) \(row.label): farther from float32 than twice the reference's bf16",
                                      file: file, line: line)
         }
     }
@@ -404,21 +401,25 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // The E4B the same way, at 16 GB of bf16. Its float32 side does not fit this machine, so the
     // reference's float32 run is streamed from a bf16 load (`hf_layer_probe` with `IK_PROBE_STREAM_F32=1`),
     // and both runs probe every layer (`IK_PROBE_LAYERS=0,…,34`) so each block runs alone on the reference's
-    // four AltUp copies. A one-step difference at its first layer carries to the logits many times over:
-    // eight such steps move the reference's own bf16 logits from 5.3e-5 to 6.1e-4 from float32 against its
-    // unperturbed 1.1e-4 (`hf_bf16_spread`). So the logits are held to the widest of those runs, and every
-    // piece run alone to a quarter of its floor.
+    // four AltUp copies, each held to a quarter of its floor. A one-step difference anywhere in its 35
+    // layers and four copies reaches the logits many times over, so one run of either side is one draw:
+    // the reference's own bf16 under one-step nudges at every layer input (`hf_bf16_spread` with
+    // `IK_SPREAD_TARGETS`) lands anywhere from 5.6e-5 to 4.5e-4 from float32. So this port runs under the
+    // same nudges too, and its median distance from float32 is held to twice the reference's median.
     func testGemma3nE4BInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E4B"], "IK_VAL_GEMMA3N_E4B"))
         try gemma3n("gemma3n-e4b", directory: directory, bf16: record("gemma3n_e4b_bf16_probeall.safetensors"),
-                    f32: record("gemma3n_e4b_f32_probeall.safetensors"), spread: record("gemma3n_e4b_spread.safetensors"))
+                    f32: record("gemma3n_e4b_f32_probeall.safetensors"),
+                    spread: record("gemma3n_e4b_spread_every32b.safetensors"))
     }
 
     /// A released Gemma 3n decoder at its bf16 against the reference's bf16 record, every state and the
-    /// logits, with `f32` the reference's float32 run on the same prompt. `spread` holds the reference's own
-    /// bf16 logits under one-step nudges of its first layer's input (`spread.S`); the logits may sit as far
-    /// from float32 as the widest of them.
+    /// logits, with `f32` the reference's float32 run on the same prompt. `spread` holds the reference's
+    /// own bf16 logits under one-step nudges at every layer input (`spread.S`, with `spread.S.reached` the
+    /// distance each input was moved); where it is given, the logits are compared as distributions: this
+    /// port runs under nudges of those sizes, and its median distance from float32 is held to twice the
+    /// reference's median.
     private func gemma3n(_ name: String, directory: URL, bf16: [String: MLXArray], f32: [String: MLXArray],
                          spread: [String: MLXArray]? = nil) throws {
         let tokens = try XCTUnwrap(bf16["tokens"]).asArray(Int32.self)
@@ -442,14 +443,89 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         if let pieces {
             report("\(name) isolated", pieces)
         }
+        guard let spread else {
+            assertRoundingPlacement(name, endToEnd: rows, isolated: pieces ?? [rows[1]])
+            return
+        }
         let exact = floats(try XCTUnwrap(f32["output"]))
-        let widest = try spread.map { runs in
-            try runs.keys.filter { $0.hasPrefix("spread.") }.map { distance(floats(try XCTUnwrap(runs[$0])), exact) }.max() ?? 0
+        let runs = spread.keys.filter { $0.hasPrefix("spread.") && !$0.hasSuffix(".reached") }.count
+        let theirs = try (0 ..< runs).map { distance(floats(try XCTUnwrap(spread["spread.\($0)"])), exact) }.sorted()
+        let reached = try (0 ..< runs).map { try XCTUnwrap(spread["spread.\($0).reached"]).asArray(Float.self).map(Double.init) }
+        let targets = (0 ..< configuration.layerCount).map { layer in reached.map { $0[layer] }.sorted()[runs / 2] }
+        let ours = (0 ..< runs).map { seed in
+            distance(floats(gemma3nNudgedLogits(net, configuration, tokens: tokens, targets: targets, seed: UInt64(seed))), exact)
+        }.sorted()
+        func summary(_ values: [Double]) -> String {
+            String(format: "min %.3e median %.3e 95th %.3e max %.3e", values[0], values[values.count / 2],
+                   values[Int((0.95 * Double(values.count)).rounded(.up)) - 1], values[values.count - 1])
         }
-        if let widest {
-            print(String(format: "VALIDATION bf16 %@ widest perturbed reference run %.3e from float32", name, widest))
+        print("VALIDATION bf16 \(name) logits from float32 under one-step nudges at every layer, \(runs) runs each: "
+              + "reference \(summary(theirs)); this port \(summary(ours))")
+        XCTAssertLessThanOrEqual(ours[runs / 2], 2 * theirs[runs / 2],
+                                 "\(name) logits: the median nudged run sits farther from float32 than twice the reference's")
+        assertRoundingPlacement(name, endToEnd: Array(rows.dropLast()), isolated: pieces ?? [rows[1]])
+    }
+
+    /// The logits of `net` composed from its own expansion of `tokens`, each layer's input first nudged by
+    /// one bf16 step at random elements until it sits `targets[layer]` (`1 - cosine`) from where it was,
+    /// as `hf_bf16_spread` nudges the reference: on the sign-magnitude bits +1 moves away from zero and -1
+    /// toward it, a zero moves away, and a step that would leave the finite range is left out. `seed`
+    /// fixes the elements and the signs.
+    private func gemma3nNudgedLogits(_ net: NFKMLXGemma3nNet, _ configuration: NFKMLXGemma3nConfiguration,
+                                     tokens: [Int32], targets: [Double], seed: UInt64) -> MLXArray {
+        var state = seed &+ 0x9E37_79B9_7F4A_7C15
+        func random() -> UInt64 {
+            state = state &+ 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
         }
-        assertRoundingPlacement(name, endToEnd: rows, isolated: pieces ?? [rows[1]], spread: widest)
+        func value(_ bits: UInt16) -> Double { Double(Float(bitPattern: UInt32(bits) << 16)) }
+        func nudged(_ hidden: MLXArray, target: Double) -> MLXArray {
+            let original = hidden.view(dtype: .uint16).asArray(UInt16.self)
+            let values = original.map(value)
+            var order = Array(original.indices)
+            for i in stride(from: order.count - 1, to: 0, by: -1) {
+                order.swapAt(i, Int(random() % UInt64(i + 1)))
+            }
+            let away = order.map { _ in random() & 1 == 1 }
+            var bits = original
+            var taken = 0, goal = 1
+            while true {
+                for slot in taken ..< goal {
+                    let index = order[slot], current = original[index]
+                    let step: UInt16 = current & 0x7FFF == 0 || away[slot] ? current &+ 1 : current &- 1
+                    if step & 0x7F80 != 0x7F80 { bits[index] = step }
+                }
+                taken = goal
+                if distance(bits.map(value), values) >= target || taken == bits.count { break }
+                goal = min(goal * 2, bits.count)
+            }
+            return MLXArray(bits, hidden.shape).view(dtype: .bfloat16)
+        }
+        let input = MLXArray(tokens).reshaped([1, tokens.count])
+        let embeddings = net.embed(input)
+        let perLayer = net.projectedPerLayerInputs(embeddings: embeddings, perLayer: net.perLayerEmbeddings(input))
+        let masks = NFKMLXGemma3nMasks.make(length: tokens.count, offset: 0, window: configuration.slidingWindow)
+        var hidden = net.expanded(embeddings)
+        var donated = [Int: (keys: MLXArray, values: MLXArray)]()
+        for index in 0 ..< configuration.layerCount {
+            eval(hidden)
+            hidden = nudged(hidden, target: targets[index])
+            let shared = configuration.keyValueDonor(forLayer: index).flatMap { donated[$0] }
+            let (next, keys, values) = net.layers[index](
+                hidden, perLayerInput: perLayer[0..., 0..., index, 0...],
+                mask: configuration.layerTypes[index] == .full ? masks.full : masks.sliding,
+                offset: 0, shared: shared, cache: nil, layer: index)
+            if configuration.donatesKeyValues(layer: index) {
+                donated[index] = (keys, values)
+            }
+            hidden = next
+        }
+        let logits = net.logits(fromHidden: net.collapsed(hidden))[0]
+        eval(logits)
+        return logits
     }
 
     /// The pieces of a Gemma 3n stack run alone on the reference's own bf16 inputs, when both records probe

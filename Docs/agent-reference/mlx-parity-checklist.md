@@ -273,12 +273,16 @@ measured on the reference's own layer, not assumed:
 - Its eight or so expert matmuls let accumulation order alone reach 0.27 of the floor (Gemma 4
   26B-A4B), so a mixture layer's isolated bar is 0.5 of the floor rather than 0.25.
 
-A deep network can carry a one-step difference at its input to the logits many times over. Where every
-piece run alone sits far inside its bar and only the composed logits exceed twice the floor, the
-reference's own spread decides. `run_reference.py hf_bf16_spread` records its bf16 logits under one-step
-nudges of the first layer's input (eight seeds of eight elements, the size of the difference a port's
-own rounding leaves there), and the logits are held to the widest of those runs. Gemma 3n E4B is the
-case: its pieces sit at 2.1% of their floors, and its logits inside a spread of 5.3e-5 to 6.1e-4.
+A deep network can carry a one-step difference anywhere in it to the logits many times over, so a run
+of either side is one draw. Where every piece run alone sits far inside its bar and only the composed
+logits exceed twice the floor, the two distributions decide. `run_reference.py hf_bf16_spread` with
+`IK_SPREAD_TARGETS` records the reference's bf16 logits under one-step nudges of every layer's input,
+each nudge the size of the port's own per-block difference from it, and the port runs under nudges of
+the sizes those runs reached. Its median distance from float32 is held to twice the reference's. A
+nudge on a sign-magnitude bf16 moves a zero away from zero; subtracting from +0's bits makes a NaN.
+Gemma 3n E4B is the case: its pieces sit at 2.1% of their floors, and its median nudged run at 1.2
+times the reference's. One run against the reference's single sample, or against nudges of the first
+layer alone, misleads: the first put it at 3.75 times the floor and the second at the 97th percentile.
 
 The tiny diffusers configurations the float32 parity tests use serve the same check at bf16:
 `IK_DIT_DTYPE=bfloat16` runs `_randomized`'s model at bf16 with every floating input rounded, and

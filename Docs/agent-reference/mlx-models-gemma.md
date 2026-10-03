@@ -229,11 +229,16 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   the reference's bf16 input sits at 2.1% of its floor or less: the expansion into four copies (4.2e-11),
   every block on all four copies, and the output path, which is the collapse, the final norm, the head,
   and the softcap (8.4e-10). Composed, the logits land 4.1e-4 from float32 against the reference's
-  1.1e-4. Eight one-step nudges of the reference's own first-layer input move its logits anywhere from
-  5.3e-5 to 6.1e-4 from float32 (`run_reference.py hf_bf16_spread`, eight seeds), so a one-step
-  difference at the input carries through 35 layers and four copies many times over. The logits are
-  held to the widest of those runs and every piece to a quarter of its floor
-  (`testGemma3nE4BInBFloat16MatchesTheBFloat16Reference`). The released-sizes check
+  1.1e-4, and a one-step difference anywhere in 35 layers and four copies reaches the logits many times
+  over, so each run is one draw. The reference's own bf16 runs under one-step nudges of every layer's
+  input, each nudge the size of this port's difference from it at that block (`run_reference.py
+  hf_bf16_spread` with `IK_SPREAD_TARGETS`, 32 seeds), land from 5.6e-5 to 4.5e-4 from float32, median
+  1.08e-4. The test runs this port under the same nudges and holds its median to twice the reference's:
+  1.29e-4, with the same minimum and a heavier upper tail (95th percentile 5.2e-4 against 3.4e-4). Every
+  piece run alone is held to a quarter of its floor (`testGemma3nE4BInBFloat16MatchesTheBFloat16Reference`).
+  The per-block differences carry the reference's own drift plus an unbiased residual: their scale is
+  within 1e-5 of the reference's per copy, and their per-channel mean does not repeat from one block to
+  the next, where the reference's bf16 error does. The released-sizes check
   (`testGemma3nE4BMatchesTheReferenceLogits`) reads the eager bf16 record: logit cosine 0.99925, argmax
   5/6, and a position whose top token departs from the bf16 reference's must carry the float32
   reference's, which this one does. Both Gemma 3n bf16 keys (`IK_PARITY_GEMMA3N_E2B_BF16`,
