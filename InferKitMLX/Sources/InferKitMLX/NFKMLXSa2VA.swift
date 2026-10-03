@@ -146,12 +146,12 @@ public struct NFKMLXSa2VAConfiguration: Sendable {
 /// input; the position table is added unchanged because the tile size is fixed at the native grid, so
 /// the reference's bicubic resize to that same grid is the identity.
 final class NFKSa2VAVisionEmbeddings: Module {
-    @ModuleInfo(key: "patch_embedding") var patchEmbedding: Conv2d
+    @ModuleInfo(key: "patch_embedding") var patchEmbedding: NFKConv2d
     @ParameterInfo(key: "class_embedding") var classEmbedding: MLXArray
     @ParameterInfo(key: "position_embedding") var positionEmbedding: MLXArray
 
     init(_ c: NFKMLXSa2VAConfiguration) {
-        _patchEmbedding.wrappedValue = Conv2d(
+        _patchEmbedding.wrappedValue = NFKConv2d(
             inputChannels: 3, outputChannels: c.visionHiddenSize,
             kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize))
         let grid = c.imageSize / c.patchSize
@@ -206,8 +206,11 @@ final class NFKSa2VAAttention: Module {
         }
         func split(_ t: MLXArray) -> MLXArray { t.reshaped([batch, length, heads, headDim]).transposed(0, 2, 1, 3) }
         let q = split(queries), k = split(keys), v = split(projected[0..., 0..., 2])
-        let out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale,
-                                                    mask: .none)
+        // In half precision the reference scales the queries, rounds, and then forms the scores.
+        let out = NFKReferenceRounding.isReduced(q)
+            ? NFKReferenceRounding.attention(queries: NFKReferenceRounding.scaled(q, by: scale), keys: k, values: v,
+                                             scale: 1, mask: nil)
+            : MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none)
         return proj(out.transposed(0, 2, 1, 3).reshaped([batch, length, width]))
     }
 }
@@ -223,7 +226,7 @@ final class NFKSa2VAMLP: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.wide(fc1(x)) { gelu($0) }) }
 }
 
 /// A pre-norm block with per-channel LayerScale on each residual. LayerScale multiplies the sub-block
@@ -246,7 +249,7 @@ final class NFKSa2VAEncoderLayer: Module {
         self.depth = depth
         func norm() -> UnaryLayer {
             c.visionRMSNorm ? RMSNorm(dimensions: c.visionHiddenSize, eps: c.visionLayerNormEps)
-                : LayerNorm(dimensions: c.visionHiddenSize, eps: c.visionLayerNormEps)
+                : NFKLayerNorm(dimensions: c.visionHiddenSize, eps: c.visionLayerNormEps)
         }
         _norm1.wrappedValue = norm()
         _norm2.wrappedValue = norm()
@@ -334,7 +337,7 @@ final class NFKSa2VAVisionEncoder: Module {
 /// checkpoint stores the stack as a numeric `nn.Sequential` (slots 0/1/3); the loader renames those to
 /// `norm`/`fc1`/`fc2` because MLX reads an all-integer-keyed module as an array.
 final class NFKSa2VAProjector: Module {
-    @ModuleInfo(key: "norm") var norm: LayerNorm
+    @ModuleInfo(key: "norm") var norm: NFKLayerNorm
     @ModuleInfo(key: "fc1") var fc1: Linear
     @ModuleInfo(key: "fc2") var fc2: Linear
 
@@ -343,7 +346,7 @@ final class NFKSa2VAProjector: Module {
     init(_ c: NFKMLXSa2VAConfiguration) {
         scaleFactor = c.downsampleRatio
         let shuffledWidth = Int(Double(c.visionHiddenSize) / (c.downsampleRatio * c.downsampleRatio))
-        _norm.wrappedValue = LayerNorm(dimensions: shuffledWidth)
+        _norm.wrappedValue = NFKLayerNorm(dimensions: shuffledWidth)
         _fc1.wrappedValue = Linear(shuffledWidth, c.decoderHiddenSize)
         _fc2.wrappedValue = Linear(c.decoderHiddenSize, c.decoderHiddenSize)
         super.init()
@@ -352,7 +355,7 @@ final class NFKSa2VAProjector: Module {
     /// `x` is the vision features with the class token already dropped, `[tiles, patches, hidden]`.
     /// Returns `[tiles, patches · scale², decoderHidden]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        fc2(gelu(fc1(norm(pixelShuffle(x)))))
+        fc2(NFKReferenceRounding.wide(fc1(norm(pixelShuffle(x)))) { gelu($0) })
     }
 
     /// InternVL's pixel shuffle (ps_version v2), ported step for step. It folds a `scale` factor of the
@@ -433,9 +436,11 @@ public final class NFKMLXSa2VANet: Module {
     }
 
     /// The projected vision tokens for a batch of tiles, `[tiles, tokensPerTile, decoderHidden]`.
-    /// `pixelValues` is the reference's channels-first `[tiles, 3, imageSize, imageSize]`.
+    /// `pixelValues` is the reference's channels-first `[tiles, 3, imageSize, imageSize]`, cast to the
+    /// tower's weight type as the reference casts it, so a bfloat16 load computes in bfloat16.
     public func imageFeatures(pixelValues: MLXArray) -> MLXArray {
-        let features = vision(pixelValues.transposed(0, 2, 3, 1))       // [tiles, 1+patches, hidden]
+        let typed = pixelValues.asType(NFKReferenceRounding.parameterType(of: vision))
+        let features = vision(typed.transposed(0, 2, 3, 1))             // [tiles, 1+patches, hidden]
         let dropped = features[0..., 1...]                             // drop the class token
         return projector(dropped)                                      // [tiles, tokensPerTile, hidden]
     }

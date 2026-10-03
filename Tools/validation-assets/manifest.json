@@ -5548,6 +5548,16 @@
       "records": "umt5_xxl_bf16 / umt5_xxl_f32, t5_xxl_bf16 / t5_xxl_f32",
       "environment": "qwenimage",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_STREAM_F32=1 t5_layer_probe --checkpoint <Wan2.1-T2V-1.3B-Diffusers>/text_encoder with IK_PROBE_TOKENIZER=<validation root>/umt5-tokenizer | <stable-diffusion-3.5-medium>/text_encoder_3 with IK_PROBE_TOKENIZER=<stable-diffusion-3.5-medium>/tokenizer_3 (transformers 5.17)"
+    },
+    {
+      "records": "sa2va_1b_bf16 / sa2va_1b_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_LAYERS=0,23 sa2va_probe --checkpoint $IK_VAL_SA2VA_1B (the float32 run rounds every parameter to bf16 and back)"
+    },
+    {
+      "records": "sa2va_4b_generate_{bf16,f32}, sa2va_1b_generate_{bf16,f32}, sa2va_internvl3_2b_generate_{bf16,f32}",
+      "environment": "llm",
+      "command": "IK_SA2VA_DTYPE=bfloat16 | (float32) sa2va --checkpoint $IK_VAL_SA2VA | $IK_VAL_SA2VA_1B | $IK_VAL_SA2VA_INTERNVL3_2B (each generated step's top five ids and scores)"
     }
   ],
   "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",

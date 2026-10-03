@@ -313,10 +313,12 @@ public enum NFKMLXSa2VALLaVA {
     static let clipMean: [Float] = [0.48145466, 0.4578275, 0.40821073]
     static let clipStd: [Float] = [0.26862954, 0.26130258, 0.27577711]
 
-    /// The Vicuna instruction with `<image>` expanded to `imageTokens` image tokens and a newline.
+    /// The Vicuna instruction with `<image>` expanded to `imageTokens` image tokens, as the release's
+    /// `predict_forward` expands it: in place with no newline after it (it strips the last frame's), or,
+    /// where the text has no `<image>`, ahead of the text with a newline between.
     public static func promptText(_ text: String, imageTokens: Int) -> String {
-        let images = String(repeating: "<image>", count: imageTokens) + "\n"
-        let body = text.contains("<image>") ? text.replacingOccurrences(of: "<image>", with: images) : images + text
+        let images = String(repeating: "<image>", count: imageTokens)
+        let body = text.contains("<image>") ? text.replacingOccurrences(of: "<image>", with: images) : images + "\n" + text
         return "USER: " + body + " ASSISTANT:"
     }
 

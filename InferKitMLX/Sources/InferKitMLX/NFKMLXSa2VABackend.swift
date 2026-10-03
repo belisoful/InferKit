@@ -268,9 +268,11 @@ public enum NFKMLXSa2VAProcessor {
     }
 
     /// The prompt text with the image placeholder expanded and wrapped in the release's instruction
-    /// template. `<image>` in the user text is replaced by `<img>` + `<IMG_CONTEXT>`×n + `</img>`.
+    /// template. `<image>` in the user text is replaced by `<img>` + `<IMG_CONTEXT>`×n + `</img>`, with
+    /// no newline after it: the release's `predict_forward` ends each frame with one and strips the last.
+    /// Text without `<image>` takes the placeholder first.
     public static func promptText(_ text: String, imageTokens: Int, template: NFKMLXSa2VATemplate = .phi3) -> String {
-        let placeholder = "<img>" + String(repeating: "<IMG_CONTEXT>", count: imageTokens) + "</img>\n"
+        let placeholder = "<img>" + String(repeating: "<IMG_CONTEXT>", count: imageTokens) + "</img>"
         let body = text.contains("<image>")
             ? text.replacingOccurrences(of: "<image>", with: placeholder)
             : placeholder + text

@@ -299,7 +299,10 @@ final class NFKMLXSa2VATests: XCTestCase {
                 XCTAssertEqual(generated.tokens, expected, "\(name) greedy generation")
             }
             NFKMLXGPU.clearCache()
-            try Self.checkBackend(directory: directory, recordPath: recordPath, name: name)
+            // The default backend computes at bf16 and is held to the float32 reference's own near-ties.
+            let generation = Self.generationRecord("sa2va_\(name.lowercased())_generate_f32")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: generation), "no \(generation)")
+            try Self.checkBFloat16Generation(directory: directory, float32Generation: generation, name: name)
             measured.append(name)
         }
         try XCTSkipIf(measured.isEmpty, "set IK_VAL_SA2VA_<RELEASE> and IK_PARITY_SA2VA_<RELEASE>")
@@ -450,7 +453,21 @@ final class NFKMLXSa2VATests: XCTestCase {
                        provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
     }
 
-    /// End to end through the public factory on the oracle's plate and request: the answer is the
+    /// The image placeholder as the releases' `predict_forward` expands it: no newline after the image in
+    /// place of `<image>` (each frame's newline is stripped after the last), and LLaVA's newline between
+    /// prepended image tokens and text that names no `<image>`.
+    func testThePromptPlacesTheImageAsTheReleasesDo() {
+        let internVL = NFKMLXSa2VAProcessor.promptText("<image>Please segment it.", imageTokens: 2, template: .phi3)
+        XCTAssertTrue(internVL.contains("<img><IMG_CONTEXT><IMG_CONTEXT></img>Please segment it."), internVL)
+        XCTAssertTrue(NFKMLXSa2VAProcessor.promptText("Please segment it.", imageTokens: 1, template: .phi3)
+            .contains("<img><IMG_CONTEXT></img>Please segment it."))
+        XCTAssertEqual(NFKMLXSa2VALLaVA.promptText("<image>Please segment it.", imageTokens: 2),
+                       "USER: <image><image>Please segment it. ASSISTANT:")
+        XCTAssertEqual(NFKMLXSa2VALLaVA.promptText("Please segment it.", imageTokens: 2),
+                       "USER: <image><image>\nPlease segment it. ASSISTANT:")
+    }
+
+    /// The backend over a float32 net on the oracle's plate and request: the answer is the float32
     /// reference's generated text alone, trimmed, and its `[SEG]` produces a mask.
     func testTheBackendAnswersWithTheReferenceTextAndAMask() throws {
         try requireMLXRuntime()
@@ -459,7 +476,8 @@ final class NFKMLXSa2VATests: XCTestCase {
             throw XCTSkip("set IK_VAL_SA2VA and IK_PARITY_SA2VA")
         }
         let url = URL(fileURLWithPath: directory)
-        let backend = try NFKMLXSa2VA.backend(directoryURL: url)
+        let backend = NFKMLXSa2VABackend(net: try loadedNet(directory),
+                                         tokenizer: try XCTUnwrap(NFKMLXSa2VA.tokenizer(inDirectory: url)))
         let result = try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: Self.plate(), NFKInputPrompt: "<image>Please segment the bright object."]))
         let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: url))
@@ -467,6 +485,86 @@ final class NFKMLXSa2VATests: XCTestCase {
         let expected = tokenizer.decode(reference.map { NSNumber(value: $0) }).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(result.output(forKey: NFKOutputText) as? String, expected)
         XCTAssertNotNil(result.output(forKey: NFKOutputMask), "the [SEG] answer produces a mask")
+    }
+
+    /// The public factory's 4B at bf16, held to the float32 reference by
+    /// ``checkBFloat16Generation(directory:float32Generation:name:)``.
+    func testTheBFloat16BackendDivergesOnlyAtATieBelowItsPrecision() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_SA2VA"] else { throw XCTSkip("set IK_VAL_SA2VA") }
+        let path = Self.generationRecord("sa2va_4b_generate_f32")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: path), "no sa2va_4b_generate_f32 record")
+        try Self.checkBFloat16Generation(directory: directory, float32Generation: path, name: "4B")
+    }
+
+    /// `<validation records>/<name>.safetensors`.
+    static func generationRecord(_ name: String) -> String {
+        let records = NFKMLXValidationConfig.environment["IK_VALIDATION_RECORDS"]
+            ?? NFKMLXValidationConfig.root.appendingPathComponent("records").path
+        return URL(fileURLWithPath: records).appendingPathComponent("\(name).safetensors").path
+    }
+
+    /// The public factory's bf16 net generates as the float32 reference (`run_reference.py sa2va`, with
+    /// each step's top scores) does up to the first step where its choice differs, and there it takes a
+    /// token the reference scores within one bf16 step of its best: a tie bf16 cannot resolve, which the
+    /// reference at bf16 also breaks its own way (`IK_SA2VA_DTYPE=bfloat16`). Measured from the record's
+    /// pixels and from the backend's own preprocessing and prompt, which must give the record's pixels at
+    /// bf16 and its ids. Each answer reaches `[SEG]`, and the backend answers with the tokens its own
+    /// inputs generate, and a mask.
+    static func checkBFloat16Generation(directory: String, float32Generation path: String, name: String) throws {
+        let rec = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
+        let url = URL(fileURLWithPath: directory)
+        let net = NFKMLXSa2VANet(try NFKMLXSa2VANet.configuration(fromDirectory: url))
+        try net.loadWeights(fromDirectory: url)
+        let c = net.configuration
+        let tokenizer = try XCTUnwrap(NFKMLXSa2VA.tokenizer(inDirectory: url))
+        let inputIds = rec["input_ids"]!.reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let reference = rec["sequence"]!.reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let prompt = "<image>Please segment the bright object."
+
+        let tiles = try NFKMLXSa2VAProcessor.dynamicTiles(plate(), side: c.imageSize)
+        let backendPixels = NFKMLXSa2VAProcessor.tilePixels(tiles, side: c.imageSize)
+        let backendIds = tokenizer.encode(NFKMLXSa2VAProcessor.promptText(
+            prompt, imageTokens: tiles.count * c.tokensPerTile, template: c.template)).map { Int(truncating: $0) }
+        XCTAssertEqual(backendIds, inputIds, "\(name): the backend's prompt is the reference's")
+        let recordPixels = rec["pixel_values"]!
+        let differing = (backendPixels.asType(.bfloat16) .!= recordPixels.asType(.bfloat16)).sum().item(Int.self)
+        print("VALIDATION BF16 sa2va \(name) pixels: \(differing) of \(recordPixels.size) differ from the reference's after the bf16 cast")
+
+        var backendRun: (tokens: [Int], ending: Int?) = ([], nil)
+        for (label, pixels) in [("record", recordPixels), ("backend", backendPixels)] {
+            let features = net.imageFeatures(pixelValues: pixels)
+            XCTAssertEqual(features.dtype, .bfloat16)
+            let run = net.generate(inputIds: label == "record" ? inputIds : backendIds, imageFeatures: features,
+                                   maximumTokens: reference.count + 8, endToken: c.endTokenId, stopsAfter: { tokens in
+                                       c.template.stops(after: tokens) { tokenizer.decode($0.map { NSNumber(value: $0) }) }
+                                   })
+            // The reference's sequence ends with the stop id; generate reports it apart from the tokens.
+            let generated = run.tokens + [run.ending].compactMap { $0 }
+            let step = zip(generated, reference).prefix { $0 == $1 }.count
+            print("VALIDATION BF16 sa2va \(name) \(label) generation: \(generated) against the float32 \(reference), first differing step \(step)")
+            if label == "backend" { backendRun = (run.tokens, run.ending) }
+            XCTAssertTrue(generated.contains(c.segmentationTokenId), "\(name) \(label): the bf16 answer reaches [SEG]")
+            guard step < min(generated.count, reference.count) else { continue }
+            let ids = rec["step_top_ids"]![step].asArray(Int32.self).map(Int.init)
+            let scores = rec["step_top_scores"]![step].asArray(Float.self)
+            let spacing = Float(pow(2.0, floor(log2(Double(abs(scores[0])))) - 7))
+            let index = try XCTUnwrap(ids.firstIndex(of: generated[step]),
+                                      "\(name) \(label) step \(step): \(generated[step]) is not among the reference's top five")
+            print("VALIDATION BF16 sa2va \(name) \(label) step \(step): chose \(generated[step]) at \(scores[index]), "
+                  + "the reference's best \(scores[0]), bf16 spacing \(spacing)")
+            XCTAssertLessThanOrEqual(scores[0] - scores[index], spacing,
+                                     "\(name) \(label): the bf16 choice departs from the reference beyond a bf16 tie")
+        }
+        let result = try NFKMLXSa2VABackend(net: net, tokenizer: tokenizer).runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputImage: plate(), NFKInputPrompt: prompt]))
+        print("VALIDATION BF16 sa2va \(name) backend answer: \(result.output(forKey: NFKOutputText) ?? "none")")
+        XCTAssertEqual(result.output(forKey: NFKOutputText) as? String,
+                       NFKMLXSa2VABackend.answer(backendRun.tokens, ending: backendRun.ending, tokenizer: tokenizer),
+                       "\(name): the backend answers with the tokens its own inputs generate")
+        XCTAssertNotNil(result.output(forKey: NFKOutputMask), "\(name): the bf16 [SEG] answer produces a mask")
+        NFKMLXGPU.clearCache()
     }
 
     /// The decoder's greedy generation reproduces the reference's generated ids token for token.

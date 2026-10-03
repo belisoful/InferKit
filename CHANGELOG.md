@@ -458,6 +458,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### Sa2VA computes in bfloat16 at its bfloat16 load
+
+- An InternVL-family Sa2VA net loaded at bfloat16, the backend's default, now computes its image path
+  and decoder in bfloat16 as the release does: the pixels are cast to the tower's weight type, and the
+  tower and projector round their norms, patch convolution, attention, and GELU as the release's code
+  does. Before, float32 pixels promoted the tower and the whole decoder to float32 on bfloat16
+  weights. A float32 load is unchanged.
+- The prompt places the image as the releases do: no newline after `</img>` (InternVL family) or
+  after the image tokens that replace `<image>` (LLaVA family). The extra newline changed some
+  answers.
+
 #### T5 at bfloat16 rounds as transformers does
 
 - The T5 and umT5 text encoders, at bfloat16, normalize in float32 before scaling, round the attention

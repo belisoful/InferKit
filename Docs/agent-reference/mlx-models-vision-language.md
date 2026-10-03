@@ -336,9 +336,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   hidden state at each `[SEG]` position to a SAM sparse-prompt token. Cosines at float32: InternViT
   1.0000001, projector 0.99999994, image/text fusion 1.0, `[SEG]` bridge 1.0, and the **mask** 0.9999997
   (IoU 1.0 on the thresholded masks); greedy generation matches the reference token for token
-  (*"Sure, it is [SEG]"*). The bf16 load the backend runs by default measured InternViT 0.99959,
-  projector 0.99973, `[SEG]` 0.99995, and mask IoU 0.99981 against the float32 oracle; the float32
-  figures rule out a defect behind that gap.
+  (*"Sure, it is [SEG]"*). The bf16 load the backend runs by default computes in bf16 (see
+  **Precision**) and generates those tokens exactly.
 - **The single-image mask path** is SAM 2's conditioning-frame path. The reference's
   `language_embd_inference` runs `init_state → add_language_embd → propagate_in_video`, but for one image
   that reduces to the first-frame branch: `directly_add_no_mem_embed` adds the tracker's `no_mem_embed`
@@ -438,8 +437,28 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   exact erf form the port uses.
 - **Precision.** `NFKMLXSa2VANet.loadWeights(fromDirectory:dtype:)` loads at bfloat16 by default, the
   dtype the releases declare (they store float32), or at float32. Parity is measured at float32 on
-  both sides. The bf16 gaps the 4B first showed (InternViT 0.99959, mask IoU 0.99981) close to within
-  3e-7 of 1 at float32, which rules out a defect behind them. The Qwen-VL releases' backend loads
+  both sides, and at bf16 against the release's own code at bf16. `imageFeatures(pixelValues:)` casts
+  the pixels to the tower's weight type, as the release's `predict_forward` casts them; float32 pixels
+  on bf16 weights had promoted the tower and, through the fused embeddings, the whole decoder to
+  float32 (user decision 2026-10-03: compute as the reference does). At bf16 the tower's and the
+  projector's layer norms and patch convolution round once (`NFKLayerNorm`, `NFKConv2d`), the
+  attention scales the queries and rounds before forming the scores, as the release's naive attention
+  does, and GELU is formed wide. Sa2VA-1B (`sa2va_probe`, `testSa2VA1BInBFloat16…` and its pieces
+  test): every tower block, the projector, and every decoder layer on the reference's input at worst
+  0.023 of the floor, logits 5.613e-04 against a floor of 5.873e-04. Generation at bf16 is held to the
+  float32 reference by `checkBFloat16Generation`: the backend's own preprocessing and prompt must give
+  the record's pixels at bf16 and its ids, its tokens must follow the reference's, and where they
+  differ the chosen token must score within one bf16 spacing of the reference's best (records
+  `sa2va_<release>_generate_{f32,bf16}`, `run_reference.py sa2va` with `IK_SA2VA_DTYPE`, each step's
+  top five). The 4B and 1B generate the float32 tokens exactly; InternVL3-2B takes the space at the
+  float32 reference's step-2 three-way near-tie (56.6718 / 56.6706 / 56.657 against a spacing of
+  0.25), the answer the reference itself gives at bf16. The first bf16 run exposed a prompt defect the
+  float32 net had absorbed: `NFKMLXSa2VAProcessor.promptText` put a newline after `</img>`, where the
+  release appends one per frame and then strips the last, and `NFKMLXSa2VALLaVA.promptText` did the
+  same in place of `<image>`; both now place the image as the releases do
+  (`testThePromptPlacesTheImageAsTheReleasesDo`). Run a diverging bf16 generation on the record's own
+  inputs before blaming precision. The grounding encoder still reads float32 pixels on its bf16
+  weights, and the Qwen-VL towers keep float32 activations; both are next. The Qwen-VL releases' backend loads
   bfloat16 too (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`; their `text_config` declares it), each
   tensor converted as it is read (`NFKMLXReleaseWeights.arrays(inDirectory:converting:)`), since a
   converted list bound beside the stored one held both through `apply` and peaked above float32. The
@@ -525,8 +544,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     test's.
   - `Sa2VA-InternVL3-2B` (Qwen2.5-1.5B, qwen template): InternViT 1.0000005, projector 1.0000002,
     fusion 1.0000002, `[SEG]` 0.9999998, mask 0.9999999 (IoU 1.0), greedy token for token, and the
-    backend answers `Sure, the segmentation result is [SEG].<|im_end|>`, the reference's text, with a
-    mask.
+    backend, at its default bf16, answers `Sure, [SEG].<|im_end|>`, the reference's own bf16 answer
+    (its float32 answer, `Sure, the segmentation result is [SEG].<|im_end|>`, differs at a near-tie),
+    with a mask.
 
   The releases too large for a float32 oracle on this machine (`-8B`, `-26B`,
   `Sa2VA-InternVL3-8B`/`-14B`, `Sa2VA-Qwen2_5-VL-7B`, `Sa2VA-LLaVA-1.5-7B`) are cut to their first

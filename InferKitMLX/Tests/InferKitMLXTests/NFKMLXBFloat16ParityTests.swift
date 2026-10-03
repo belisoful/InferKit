@@ -1682,6 +1682,121 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // MARK: Sa2VA
+
+    // Sa2VA-1B (`IK_VAL_SA2VA_1B`) loaded at bf16 as its backend loads it: the InternViT tower, the
+    // `mlp1` projector, and the Qwen2 decoder over the fused prompt and teacher-forced answer, against the
+    // release's own code at bf16 (`sa2va_probe`, transformers 4.57, tower blocks 0 and 23 probed).
+    func testSa2VA1BInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (net, bf16, f32) = try sa2va1B()
+        let pixels = try XCTUnwrap(bf16["pixel_values"])
+        let inputIds = try XCTUnwrap(bf16["input_ids"]).reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let blocks = net.vision.encoder.layers
+
+        var hidden = net.vision.embeddings(pixels.asType(.bfloat16).transposed(0, 2, 3, 1))
+        var states = [("tower embeddings", hidden)]
+        for (index, block) in blocks.enumerated() {
+            hidden = block(hidden)
+            states.append(("tower block \(index)", hidden))
+        }
+        let features = net.imageFeatures(pixelValues: pixels)
+        XCTAssertEqual(features.dtype, .bfloat16, "a bf16 load computes the image path in bf16")
+        let fused = net.fusedEmbeddings(inputIds: inputIds, imageFeatures: features)
+        XCTAssertEqual(fused.dtype, .bfloat16, "the fused embeddings stay bf16")
+        states += [("projector", features), ("fused", fused[0])]
+        let decoder = decoderStates(net.language, fused)
+        states += decoder.enumerated().map { ("decoder \($0.offset == 0 ? "input" : "layer \($0.offset - 1)")", $0.element[0]) }
+        let answer = try XCTUnwrap(bf16["output"]).dim(0)
+        states.append(("logits", net.language.logits(fromHidden: decoder.last!)[0, (inputIds.count - answer)...]))
+        eval(states.map(\.1))
+        let keys = (0 ... blocks.count).map { "vit.hidden.\($0)" } + ["vit_embeds", "fused"]
+            + decoder.indices.map { "dec.hidden.\($0)" } + ["output"]
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("sa2va-1b", rows)
+
+        func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        var isolated = [(String, MLXArray)]()
+        for (index, block) in blocks.enumerated() {
+            isolated.append(("tower block \(index)", block(try recorded("vit.hidden.\(index)"))))
+        }
+        isolated.append(("projector", net.projector(try recorded("vit.hidden.\(blocks.count)")[0..., 1...])))
+        let mask = NFKMLXLanguageNet.causalMask(inputIds.count, offset: 0)
+        let layers = net.language.model.layers
+        for (index, layer) in layers.enumerated() {
+            var output = layer(try recorded("dec.hidden.\(index)").expandedDimensions(axis: 0), mask: mask, cache: nil, layer: index)
+            if index == layers.count - 1 { output = net.language.model.norm(output) }
+            isolated.append(("decoder layer \(index)", output[0]))
+        }
+        let last = try recorded("dec.hidden.\(layers.count)").expandedDimensions(axis: 0)
+        isolated.append(("logits", net.language.logits(fromHidden: last)[0, (inputIds.count - answer)...]))
+        eval(isolated.map(\.1))
+        let isolatedKeys = (1 ... blocks.count).map { "vit.hidden.\($0)" } + ["vit_embeds"]
+            + (1 ... layers.count).map { "dec.hidden.\($0)" } + ["output"]
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("sa2va-1b isolated", isolatedRows)
+        assertRoundingPlacement("sa2va-1b", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // Each piece of Sa2VA-1B's tower blocks 0 and 23 and of its projector on the reference's own bf16
+    // input, so a rounding placed differently shows as a count at the one seam that places it.
+    func testSa2VA1BTowerPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (net, probe, _) = try sa2va1B()
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        var lines = [String]()
+        let pixels = try XCTUnwrap(probe["pixel_values"]).asType(.bfloat16)
+        lines.append(try piece("embeddings", net.vision.embeddings(pixels.transposed(0, 2, 3, 1)), probe, "vit.hidden.0"))
+        let blocks = net.vision.encoder.layers
+        for index in [0, blocks.count - 1] {
+            let block = blocks[index]
+            let p = "\(index)."
+            lines.append("tower block \(index)")
+            lines.append(try piece("norm1", block.norm1(input(p + "norm1.in")), probe, p + "norm1.out"))
+            lines.append(try piece("qkv", block.attention.qkv(input(p + "attn.qkv.in")), probe, p + "attn.qkv.out"))
+            lines.append(try piece("attn", block.attention(input(p + "attn.in")), probe, p + "attn.out"))
+            lines.append(try piece("proj", block.attention.proj(input(p + "attn.proj.in")), probe, p + "attn.proj.out"))
+            lines.append(try piece("norm2", block.norm2(input(p + "norm2.in")), probe, p + "norm2.out"))
+            lines.append(try piece("fc1", block.mlp.fc1(input(p + "mlp.fc1.in")), probe, p + "mlp.fc1.out"))
+            lines.append(try piece("gelu", NFKReferenceRounding.wide(input(p + "mlp.act.in")) { gelu($0) }, probe, p + "mlp.act.out"))
+            lines.append(try piece("fc2", block.mlp.fc2(input(p + "mlp.fc2.in")), probe, p + "mlp.fc2.out"))
+            lines.append(try piece("mlp", block.mlp(input(p + "mlp.in")), probe, p + "mlp.out"))
+            lines.append(try piece("block", block(input(p + "block.in")), probe, p + "block.out"))
+        }
+        let projector = net.projector
+        lines.append("projector")
+        lines.append(try piece("norm", projector.norm(input("mlp1.0.in")), probe, "mlp1.0.out"))
+        lines.append(try piece("fc1", projector.fc1(input("mlp1.1.in")), probe, "mlp1.1.out"))
+        lines.append(try piece("gelu", NFKReferenceRounding.wide(input("mlp1.2.in")) { gelu($0) }, probe, "mlp1.2.out"))
+        lines.append(try piece("fc2", projector.fc2(input("mlp1.3.in")), probe, "mlp1.3.out"))
+        print("VALIDATION bf16 sa2va-1b pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    /// Sa2VA-1B at bf16, as ``NFKMLXSa2VA/backend(directoryURL:)`` loads it, with both records.
+    private func sa2va1B() throws -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_1B"], "IK_VAL_SA2VA_1B"))
+        let bf16 = try record("sa2va_1b_bf16.safetensors"), f32 = try record("sa2va_1b_f32.safetensors")
+        let net = NFKMLXSa2VANet(try NFKMLXSa2VANet.configuration(fromDirectory: directory))
+        try net.loadWeights(fromDirectory: directory, dtype: .bfloat16)
+        return (net, bf16, f32)
+    }
+
+    /// The decoder's input and each layer's output over `embeddings`, the last after the final norm: the
+    /// reference's `output_hidden_states` convention.
+    private func decoderStates(_ net: NFKMLXLanguageNet, _ embeddings: MLXArray) -> [MLXArray] {
+        let mask = NFKMLXLanguageNet.causalMask(embeddings.dim(1), offset: 0)
+        var hidden = embeddings
+        var states = [hidden]
+        for (index, layer) in net.model.layers.enumerated() {
+            hidden = layer(hidden, mask: mask, cache: nil, layer: index)
+            states.append(hidden)
+        }
+        states[states.count - 1] = net.model.norm(hidden)
+        return states
+    }
+
     // MARK: Nemotron-H
 
     // Nemotron-Nano-9B-v2 cut to its first fifteen layers (`IK_VAL_NEMOTRON_CUT15`), which end on its
