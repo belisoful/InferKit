@@ -183,6 +183,20 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
         canonical(tag).split(separator: "-").dropFirst().map(String.init).first { $0.count == 4 }
     }
 
+    /// The script a tag names or implies: its script subtag when it has one; for Chinese without one,
+    /// `Hant` where the region writes traditional characters (TW, HK, MO) and `Hans` otherwise; nil
+    /// for any other language without a script subtag.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(impliedScriptForLanguageTag:)
+    public static func impliedScript(_ tag: String) -> String? {
+        if let script = script(tag) { return script }
+        guard primary(tag) == "zh" else { return nil }
+        let region = canonical(tag).split(separator: "-").dropFirst().map(String.init)
+            .first { $0.count == 2 }?.uppercased()
+        return ["TW", "HK", "MO"].contains(region ?? "") ? "Hant" : "Hans"
+    }
+
     enum Segment {
         case text(String)
         case separator(String)
@@ -258,5 +272,12 @@ enum NFKMLXLanguageCodes {
         "so": "som", "sq": "sqi", "sr": "srp", "sv": "swe", "sw": "swa", "ta": "tam", "te": "tel", "th": "tha",
         "tl": "tgl", "tr": "tur", "uk": "ukr", "ur": "urd", "uz": "uzb", "vi": "vie", "xh": "xho", "yi": "yid",
         "yo": "yor", "zh": "zho", "zu": "zul",
+    ]
+
+    /// The individual language an OPUS group release names where BCP-47 uses a macrolanguage code:
+    /// Mandarin for Chinese, Norwegian Bokmål for Norwegian, Standard Malay for Malay, Standard
+    /// Arabic for Arabic.
+    public static let individualLanguage: [String: String] = [
+        "zh": "cmn", "no": "nob", "ms": "zsm", "ar": "arb",
     ]
 }

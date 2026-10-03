@@ -723,3 +723,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   which evaluates in groups of about 256 MB; at float32 the conversion is the identity, so the groups
   carry file reads and no GPU work, and the chunk passed (473 tests, 20.5 GB peak). A converting
   bfloat16 load still casts on the GPU, group by group.
+- **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
+  orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
+  tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?
+  [String: Int]` looks up literally while a native Dictionary looks up canonically, so the same code
+  behaves differently by how the table was built. Key tokenizer tables by `[UInt32]` scalar sequences
+  and read JSON vocabularies through `NSDictionary` into pairs. A dictionary literal with both
+  spellings is a duplicate-key fatal error. Found by the 2026-10-02 translation language probes.

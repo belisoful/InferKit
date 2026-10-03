@@ -33,6 +33,7 @@ import json
 import math
 import os
 import sys
+import unicodedata
 
 import numpy as np
 import torch
@@ -17472,12 +17473,99 @@ TRANSLATION_SENTENCES = [
 ]
 TRANSLATION_TARGET = "Der schnelle braune Fuchs springt über den faulen Hund."
 
+# One probe set per source language; index 1 is the sentence the encoder, the generations, and the
+# loss use. The others exercise the tokenizer: width folding and the ideographic space (ja),
+# traditional characters (zh), diacritics and presentation forms (ar), canonical decomposition (vi,
+# ko), script digits and a zero-width joiner (hi), Thai without sentence punctuation, and an emoji
+# for byte fallback. TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG select the pair a runner
+# records; the Swift tests hold the same table.
+TRANSLATION_PROBES = {
+    "en": TRANSLATION_SENTENCES,
+    "ja": [
+        "\u3053\u3093\u306b\u3061\u306f\u3001\u4e16\u754c\uff01\u304a\u5143\u6c17\u3067\u3059\u304b\uff1f",  # こんにちは、世界！お元気ですか？
+        "\u7d20\u65e9\u3044\u8336\u8272\u306e\u72d0\u304c\u6020\u3051\u8005\u306e\u72ac\u3092\u98db\u3073\u8d8a\u3048\u308b\u3002",  # 素早い茶色の狐が怠け者の犬を飛び越える。
+        "\uff21\uff22\uff23\uff11\uff12\uff13\u3000\u5168\u89d2\u3068\u534a\u89d2\uff76\uff9e\uff77\uff9e",  # ＡＢＣ１２３<ideographic space>全角と半角ｶﾞｷﾞ
+        "\u6771\u4eac\uff08\u3068\u3046\u304d\u3087\u3046\uff09\u306f\u65e5\u672c\u306e\u9996\u90fd\u3067\u3059\u3002\u3231\u30c6\u30b9\u30c8",  # 東京（とうきょう）は日本の首都です。㈱テスト
+        "\u4eca\u65e5\u306f\u6674\u308c\u3067\u3059\U0001f600 \u2460\u2461\u2462",  # 今日は晴れです😀 ①②③
+    ],
+    "zh": [
+        "\u4f60\u597d\uff0c\u4e16\u754c\uff01\u4f60\u597d\u5417\uff1f",  # 你好，世界！你好吗？
+        "\u654f\u6377\u7684\u68d5\u8272\u72d0\u72f8\u8df3\u8fc7\u4e86\u61d2\u72d7\u3002",  # 敏捷的棕色狐狸跳过了懒狗。
+        "\u4eca\u5929\u5929\u6c14\u5f88\u597d\uff0c\u6211\u4eec\u53bb\u516c\u56ed\u5427\uff01",  # 今天天气很好，我们去公园吧！
+        "\u9577\u6c5f\u662f\u4e2d\u570b\u6700\u9577\u7684\u6cb3\u6d41\u3002",  # 長江是中國最長的河流。
+        "\u4ef7\u683c\u662f\uff11\uff12\uff13\u5143\U0001f600 \u3299",  # 价格是１２３元😀 ㊙
+    ],
+    "ar": [
+        "\u0645\u0631\u062d\u0628\u0627 \u0628\u0627\u0644\u0639\u0627\u0644\u0645! \u0643\u064a\u0641 \u062d\u0627\u0644\u0643\u061f",  # مرحبا بالعالم! كيف حالك؟
+        "\u0627\u0644\u062b\u0639\u0644\u0628 \u0627\u0644\u0628\u0646\u064a \u0627\u0644\u0633\u0631\u064a\u0639 \u064a\u0642\u0641\u0632 \u0641\u0648\u0642 \u0627\u0644\u0643\u0644\u0628 \u0627\u0644\u0643\u0633\u0648\u0644.",  # الثعلب البني السريع يقفز فوق الكلب الكسول.
+        "\u0671\u0644\u0633\u064e\u0651\u0644\u064e\u0627\u0645\u064f \u0639\u064e\u0644\u064e\u064a\u0652\u0643\u064f\u0645\u0652 \u0648\u064e\u0631\u064e\u062d\u0652\u0645\u064e\u0629\u064f \u0671\u0644\u0644\u064e\u0651\u0670\u0647\u0650",  # ٱلسَّلَامُ عَلَيْكُمْ وَرَحْمَةُ ٱللَّٰهِ
+        "\ufefb \u0628\u0623\u0633\u060c \u0634\u0643\u0631\u0627\u064b \ufedf\ufee0",  # <U+FEFB> بأس، شكراً <U+FEDF><U+FEE0>
+        "\u0627\u0644\u0642\u0627\u0647\u0631\u0629 \u0647\u064a \u0639\u0627\u0635\u0645\u0629 \u0645\u0635\u0631 \U0001f600 \u0661\u0662\u0663",  # القاهرة هي عاصمة مصر 😀 ١٢٣
+    ],
+    "vi": [
+        "Xin ch\u00e0o th\u1ebf gi\u1edbi! B\u1ea1n c\u00f3 kh\u1ecfe kh\u00f4ng?",  # Xin chào thế giới! Bạn có khỏe không?
+        "Con c\u00e1o n\u00e2u nhanh nh\u1eb9n nh\u1ea3y qua con ch\u00f3 l\u01b0\u1eddi.",  # Con cáo nâu nhanh nhẹn nhảy qua con chó lười.
+        None,
+        "T\u00f4i y\u00eau Vi\u1ec7t Nam v\u00e0 ti\u1ebfng Vi\u1ec7t.",  # Tôi yêu Việt Nam và tiếng Việt.
+        "Gi\u00e1 l\u00e0 123.456 \u0111\u1ed3ng \U0001f600",  # Giá là 123.456 đồng 😀
+    ],
+    "th": [
+        "\u0e2a\u0e27\u0e31\u0e2a\u0e14\u0e35\u0e04\u0e23\u0e31\u0e1a \u0e1c\u0e21\u0e0a\u0e37\u0e48\u0e2d\u0e2a\u0e21\u0e0a\u0e32\u0e22",  # สวัสดีครับ ผมชื่อสมชาย
+        "\u0e2a\u0e38\u0e19\u0e31\u0e02\u0e08\u0e34\u0e49\u0e07\u0e08\u0e2d\u0e01\u0e2a\u0e35\u0e19\u0e49\u0e33\u0e15\u0e32\u0e25\u0e01\u0e23\u0e30\u0e42\u0e14\u0e14\u0e02\u0e49\u0e32\u0e21\u0e2a\u0e38\u0e19\u0e31\u0e02\u0e02\u0e35\u0e49\u0e40\u0e01\u0e35\u0e22\u0e08",  # สุนัขจิ้งจอกสีน้ำตาลกระโดดข้ามสุนัขขี้เกียจ
+        "\u0e1b\u0e23\u0e30\u0e40\u0e17\u0e28\u0e44\u0e17\u0e22\u0e21\u0e35\u0e1b\u0e23\u0e30\u0e0a\u0e32\u0e01\u0e23\u0e1b\u0e23\u0e30\u0e21\u0e32\u0e13\u0e40\u0e08\u0e47\u0e14\u0e2a\u0e34\u0e1a\u0e25\u0e49\u0e32\u0e19\u0e04\u0e19",  # ประเทศไทยมีประชากรประมาณเจ็ดสิบล้านคน
+        "\u0e27\u0e31\u0e19\u0e19\u0e35\u0e49\u0e2d\u0e32\u0e01\u0e32\u0e28\u0e14\u0e35\u0e21\u0e32\u0e01 \u0e40\u0e23\u0e32\u0e44\u0e1b\u0e2a\u0e27\u0e19\u0e2a\u0e32\u0e18\u0e32\u0e23\u0e13\u0e30\u0e01\u0e31\u0e19\u0e40\u0e16\u0e2d\u0e30",  # วันนี้อากาศดีมาก เราไปสวนสาธารณะกันเถอะ
+        "\u0e23\u0e32\u0e04\u0e32 \u0e51\u0e52\u0e53 \u0e1a\u0e32\u0e17 \U0001f600",  # ราคา ๑๒๓ บาท 😀
+    ],
+    "hi": [
+        "\u0928\u092e\u0938\u094d\u0924\u0947 \u0926\u0941\u0928\u093f\u092f\u093e! \u0906\u092a \u0915\u0948\u0938\u0947 \u0939\u0948\u0902?",  # नमस्ते दुनिया! आप कैसे हैं?
+        "\u0924\u0947\u091c\u093c \u092d\u0942\u0930\u0940 \u0932\u094b\u092e\u0921\u093c\u0940 \u0906\u0932\u0938\u0940 \u0915\u0941\u0924\u094d\u0924\u0947 \u0915\u0947 \u090a\u092a\u0930 \u0938\u0947 \u0915\u0942\u0926 \u091c\u093e\u0924\u0940 \u0939\u0948\u0964",  # तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर से कूद जाती है।
+        "\u092d\u093e\u0930\u0924 \u090f\u0915 \u0935\u093f\u0936\u093e\u0932 \u0926\u0947\u0936 \u0939\u0948\u0964",  # भारत एक विशाल देश है।
+        "\u092e\u0948\u0902 \u0939\u093f\u0928\u094d\u0926\u0940 \u0938\u0940\u0916 \u0930\u0939\u093e \u0939\u0942\u0901\u0964 \u0915\u094d\u200d\u0937",  # मैं हिन्दी सीख रहा हूँ। क्<ZWJ>ष
+        "\u0915\u0940\u092e\u0924 \u0967\u0968\u0969 \u0930\u0941\u092a\u092f\u0947 \u0939\u0948 \U0001f600",  # कीमत १२३ रुपये है 😀
+    ],
+    "ko": [
+        "\uc548\ub155\ud558\uc138\uc694, \uc138\uacc4! \uc798 \uc9c0\ub0b4\uc138\uc694?",  # 안녕하세요, 세계! 잘 지내세요?
+        "\ube60\ub978 \uac08\uc0c9 \uc5ec\uc6b0\uac00 \uac8c\uc73c\ub978 \uac1c\ub97c \ub6f0\uc5b4\ub118\uc2b5\ub2c8\ub2e4.",  # 빠른 갈색 여우가 게으른 개를 뛰어넘습니다.
+        "\ud55c\uad6d\uc758 \uc218\ub3c4\ub294 \uc11c\uc6b8\uc785\ub2c8\ub2e4.",  # 한국의 수도는 서울입니다.
+        None,
+        "\uac00\uaca9\uc740 123\uc6d0\uc785\ub2c8\ub2e4 \U0001f600 \u3131\u3134\u3137",  # 가격은 123원입니다 😀 ㄱㄴㄷ
+    ],
+}
+TRANSLATION_PROBES["vi"][2] = unicodedata.normalize("NFD", TRANSLATION_PROBES["vi"][1])
+TRANSLATION_PROBES["ko"][3] = unicodedata.normalize("NFD", TRANSLATION_PROBES["ko"][2])
+TRANSLATION_TARGETS = {
+    "de": TRANSLATION_TARGET,
+    "en": "The quick brown fox jumps over the lazy dog.",  # The quick brown fox jumps over the lazy dog.
+    "zh": "\u654f\u6377\u7684\u68d5\u8272\u72d0\u72f8\u8df3\u8fc7\u4e86\u61d2\u72d7\u3002",  # 敏捷的棕色狐狸跳过了懒狗。
+    "zh-Hant": "\u654f\u6377\u7684\u68d5\u8272\u72d0\u72f8\u8df3\u904e\u4e86\u61f6\u72d7\u3002",  # 敏捷的棕色狐狸跳過了懶狗。
+    "ja": "\u7d20\u65e9\u3044\u8336\u8272\u306e\u72d0\u304c\u6020\u3051\u8005\u306e\u72ac\u3092\u98db\u3073\u8d8a\u3048\u308b\u3002",  # 素早い茶色の狐が怠け者の犬を飛び越える。
+    "ar": "\u0627\u0644\u062b\u0639\u0644\u0628 \u0627\u0644\u0628\u0646\u064a \u0627\u0644\u0633\u0631\u064a\u0639 \u064a\u0642\u0641\u0632 \u0641\u0648\u0642 \u0627\u0644\u0643\u0644\u0628 \u0627\u0644\u0643\u0633\u0648\u0644.",  # الثعلب البني السريع يقفز فوق الكلب الكسول.
+    "vi": "Con c\u00e1o n\u00e2u nhanh nh\u1eb9n nh\u1ea3y qua con ch\u00f3 l\u01b0\u1eddi.",  # Con cáo nâu nhanh nhẹn nhảy qua con chó lười.
+    "th": "\u0e2a\u0e38\u0e19\u0e31\u0e02\u0e08\u0e34\u0e49\u0e07\u0e08\u0e2d\u0e01\u0e2a\u0e35\u0e19\u0e49\u0e33\u0e15\u0e32\u0e25\u0e01\u0e23\u0e30\u0e42\u0e14\u0e14\u0e02\u0e49\u0e32\u0e21\u0e2a\u0e38\u0e19\u0e31\u0e02\u0e02\u0e35\u0e49\u0e40\u0e01\u0e35\u0e22\u0e08",  # สุนัขจิ้งจอกสีน้ำตาลกระโดดข้ามสุนัขขี้เกียจ
+    "hi": "\u0924\u0947\u091c\u093c \u092d\u0942\u0930\u0940 \u0932\u094b\u092e\u0921\u093c\u0940 \u0906\u0932\u0938\u0940 \u0915\u0941\u0924\u094d\u0924\u0947 \u0915\u0947 \u090a\u092a\u0930 \u0938\u0947 \u0915\u0942\u0926 \u091c\u093e\u0924\u0940 \u0939\u0948\u0964",  # तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर से कूद जाती है।
+    "ko": "\ube60\ub978 \uac08\uc0c9 \uc5ec\uc6b0\uac00 \uac8c\uc73c\ub978 \uac1c\ub97c \ub6f0\uc5b4\ub118\uc2b5\ub2c8\ub2e4.",  # 빠른 갈색 여우가 게으른 개를 뛰어넘습니다.
+}
 
-def _translation_record(model, tokenizer, encode_source, encode_target, beams, generate_kwargs):
-    """The seams a translation port is measured on: the tokenizer's ids for TRANSLATION_SENTENCES,
-    the encoder output for sentence 1, the reference's greedy and beam outputs, the teacher-forced
-    logits over the greedy output, and the training loss against TRANSLATION_TARGET."""
-    source = encode_source(TRANSLATION_SENTENCES[1])
+
+def _translation_languages(source="en", target="de"):
+    source = os.environ.get("TRANSLATION_SOURCE_LANG", source)
+    target = os.environ.get("TRANSLATION_TARGET_LANG", target)
+    return source, target
+
+
+def _utf8(text):
+    return torch.tensor(list(text.encode("utf-8")), dtype=torch.int32)
+
+
+def _translation_record(model, tokenizer, encode_source, encode_target, beams, generate_kwargs,
+                        source_lang="en", target_lang="de"):
+    """The seams a translation port is measured on: the tokenizer's ids for the source language's
+    TRANSLATION_PROBES, the encoder output for sentence 1, the reference's greedy and beam outputs
+    (ids, and their decoded text as UTF-8), the teacher-forced logits over the greedy output, and
+    the training loss against the target language's TRANSLATION_TARGETS sentence."""
+    sentences = TRANSLATION_PROBES[source_lang.split("-")[0]]
+    target_text = TRANSLATION_TARGETS[target_lang]
+    source = encode_source(sentences[1])
     input_ids = torch.tensor([source])
     attention = torch.ones_like(input_ids)
     with torch.no_grad():
@@ -17488,7 +17576,7 @@ def _translation_record(model, tokenizer, encode_source, encode_target, beams, g
                               max_new_tokens=64, **generate_kwargs)
         decoder_input = greedy[:, :-1]
         logits = model(input_ids=input_ids, attention_mask=attention, decoder_input_ids=decoder_input).logits
-        target = torch.tensor([encode_target(TRANSLATION_TARGET)])
+        target = torch.tensor([encode_target(target_text)])
         loss = model(input_ids=input_ids, attention_mask=attention, labels=target).loss
     extra = {
         "source_ids": input_ids[0].to(torch.int32).contiguous(),
@@ -17500,23 +17588,48 @@ def _translation_record(model, tokenizer, encode_source, encode_target, beams, g
         "target_ids": target[0].to(torch.int32).contiguous(),
         "loss": loss.reshape(1).contiguous(),
     }
-    for index, sentence in enumerate(TRANSLATION_SENTENCES):
+    for index, sentence in enumerate(sentences):
         extra[f"tokens_{index}"] = torch.tensor(encode_source(sentence), dtype=torch.int32)
-    print("greedy:", tokenizer.decode(greedy[0], skip_special_tokens=True))
-    print("beam:", tokenizer.decode(beam[0], skip_special_tokens=True))
+    greedy_text = tokenizer.decode(greedy[0], skip_special_tokens=True)
+    beam_text = tokenizer.decode(beam[0], skip_special_tokens=True)
+    extra["greedy_text"] = _utf8(greedy_text)
+    extra["beam_text"] = _utf8(beam_text)
+    print("greedy:", greedy_text)
+    print("beam:", beam_text)
     globals()["_extra"] = extra
     return logits[0].contiguous()
 
 
+MARIAN_ISO3 = {"eng": "en", "deu": "de", "zho": "zh", "jpn": "ja", "kor": "ko", "ara": "ar",
+               "vie": "vi", "tha": "th", "hin": "hi"}
+
+
 def run_marian(image, checkpoint):
-    """OPUS-MT (Helsinki-NLP/opus-mt-en-de, `MarianMTModel`) on a release directory: the seams of
-    `_translation_record`, beams from the release's generation config (4)."""
+    """OPUS-MT (Helsinki-NLP/opus-mt-*, `MarianMTModel`) on a release directory: the seams of
+    `_translation_record`, beams from the release's generation config (4). The pair comes from the
+    release's tokenizer_config (TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG override it). A
+    group release (`>>xxx<<` targets in its vocabulary) needs MARIAN_TARGET_CODE, the code inside the
+    brackets, which leads the source as the release's own tokenizer places it."""
+    import json
     from transformers import MarianMTModel, MarianTokenizer
     tokenizer = MarianTokenizer.from_pretrained(checkpoint)
+    with open(os.path.join(checkpoint, "tokenizer_config.json")) as handle:
+        config = json.load(handle)
+    source_lang, target_lang = _translation_languages(
+        MARIAN_ISO3.get(config.get("source_lang"), config.get("source_lang", "en")),
+        MARIAN_ISO3.get(config.get("target_lang"), config.get("target_lang", "de")))
+    codes = [c for c in tokenizer.get_vocab() if c.startswith(">>") and c.endswith("<<")]
+    prefix = ""
+    if codes:
+        code = os.environ.get("MARIAN_TARGET_CODE")
+        if f">>{code}<<" not in codes:
+            raise SystemExit(f"a group release needs MARIAN_TARGET_CODE, one of {sorted(codes)}")
+        prefix = f">>{code}<< "
     model = MarianMTModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
     beams = model.generation_config.num_beams or 4
-    return _translation_record(model, tokenizer, lambda s: tokenizer(s).input_ids,
-                               lambda s: tokenizer(text_target=s).input_ids, beams, {})
+    return _translation_record(model, tokenizer, lambda s: tokenizer(prefix + s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, beams, {},
+                               source_lang, target_lang)
 
 
 def run_m2m100(image, checkpoint):
@@ -17524,12 +17637,33 @@ def run_m2m100(image, checkpoint):
     English to German: the seams of `_translation_record` with the target marker forced first, beams
     from the release's generation config (5)."""
     from transformers import M2M100ForConditionalGeneration, M2M100Tokenizer
-    tokenizer = M2M100Tokenizer.from_pretrained(checkpoint, src_lang="en", tgt_lang="de")
+    source_lang, target_lang = _translation_languages()
+    tokenizer = M2M100Tokenizer.from_pretrained(checkpoint, src_lang=source_lang, tgt_lang=target_lang)
     model = M2M100ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
     beams = model.generation_config.num_beams or 5
     return _translation_record(model, tokenizer, lambda s: tokenizer(s).input_ids,
                                lambda s: tokenizer(text_target=s).input_ids, beams,
-                               {"forced_bos_token_id": tokenizer.get_lang_id("de")})
+                               {"forced_bos_token_id": tokenizer.get_lang_id(target_lang)},
+                               source_lang, target_lang)
+
+
+def run_small100(image, checkpoint):
+    """SMaLL-100 (alirezamsh/small100, `M2M100ForConditionalGeneration` with the release's own
+    `SMALL100Tokenizer`, imported from the directory): the target marker leads the source and the
+    decoder starts plain, so no token is forced. Beams from the release's config (5)."""
+    import importlib.util
+    from transformers import M2M100ForConditionalGeneration
+    spec = importlib.util.spec_from_file_location("tokenization_small100",
+                                                  os.path.join(checkpoint, "tokenization_small100.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source_lang, target_lang = _translation_languages()
+    tokenizer = module.SMALL100Tokenizer.from_pretrained(checkpoint, tgt_lang=target_lang)
+    model = M2M100ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    beams = model.generation_config.num_beams or 5
+    return _translation_record(model, tokenizer, lambda s: tokenizer(s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, beams, {},
+                               source_lang, target_lang)
 
 
 def run_madlad(image, checkpoint):
@@ -17537,10 +17671,15 @@ def run_madlad(image, checkpoint):
     into German through the `<2de>` marker and the release's fast tokenizer: the seams of
     `_translation_record`, beams 4."""
     from transformers import AutoTokenizer, T5ForConditionalGeneration
+    source_lang, target_lang = _translation_languages()
+    marker = "<2" + target_lang.replace("-", "_") + "> "
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, use_fast=True)
-    model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
-    return _translation_record(model, tokenizer, lambda s: tokenizer("<2de> " + s).input_ids,
-                               lambda s: tokenizer(text_target=s).input_ids, 4, {})
+    # The 7B is 33 GB of float32; MADLAD_DTYPE=bfloat16 runs it at the release's own precision.
+    dtype = getattr(torch, os.environ.get("MADLAD_DTYPE", "float32"))
+    model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=dtype).eval()
+    return _translation_record(model, tokenizer, lambda s: tokenizer(marker + s).input_ids,
+                               lambda s: tokenizer(text_target=s).input_ids, 4, {},
+                               source_lang, target_lang)
 
 
 def run_florence2_loss(image, checkpoint):
@@ -17722,8 +17861,10 @@ def run_translategemma(image, checkpoint):
     # runs the reference at the release's own precision; the port is then compared at .checkpoint.
     dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "float32"))
     model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=dtype).eval()
-    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": "en",
-                                              "target_lang_code": "de", "text": TRANSLATION_SENTENCES[1]}]}]
+    source_lang, target_lang = _translation_languages()
+    sentence = TRANSLATION_PROBES[source_lang.split("-")[0]][1]
+    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
+                                              "target_lang_code": target_lang, "text": sentence}]}]
     # The rendered template already spells `<bos>`, so it is tokenized without a second one.
     text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     ids = torch.tensor([tokenizer(text, add_special_tokens=False).input_ids])
@@ -17731,14 +17872,16 @@ def run_translategemma(image, checkpoint):
         out = model(input_ids=ids, output_hidden_states=True)
         logits = out.logits[0]
         generated = model.generate(input_ids=ids, max_new_tokens=48, do_sample=False)
-        target_ids = tokenizer(TRANSLATION_TARGET + "<end_of_turn>", add_special_tokens=False).input_ids
+        target_ids = tokenizer(TRANSLATION_TARGETS[target_lang] + "<end_of_turn>", add_special_tokens=False).input_ids
         full = torch.tensor([ids[0].tolist() + target_ids])
         labels = full.clone()
         labels[0, : ids.shape[1]] = -100
         loss = model(input_ids=full, labels=labels).loss
     continuation = generated[0, ids.shape[1]:]
-    print("greedy:", tokenizer.decode(continuation, skip_special_tokens=True))
+    greedy_text = tokenizer.decode(continuation, skip_special_tokens=True)
+    print("greedy:", greedy_text)
     globals()["_extra"] = {
+        "greedy_text": _utf8(greedy_text),
         "tokens": ids[0].to(torch.int32).contiguous(),
         "continuation": continuation.to(torch.int32).contiguous(),
         "target_ids": torch.tensor(target_ids, dtype=torch.int32),
@@ -17749,6 +17892,79 @@ def run_translategemma(image, checkpoint):
     for index, state in enumerate(out.hidden_states):
         globals()["_extra"][f"hidden_last.{index}"] = state[0, -1].float().contiguous()
     return logits[-16:].float().contiguous()
+
+
+def run_translategemma_streamed(image, checkpoint):
+    """TranslateGemma's first TRANSLATEGEMMA_LAYERS decoder layers (default 16) run one layer at a time,
+    for a release too large to hold whole (the 27B is 55 GB of bfloat16): the template ids and the last
+    prompt position's state entering the stack and after each layer, `hidden_last.<index>` as
+    `run_translategemma` records them, built from transformers' own `Gemma3DecoderLayer`, rotary
+    embedding, scaled embedding, and mask functions. Each layer's weights load from the shard index,
+    run, and are freed. Precision from TRANSLATEGEMMA_DTYPE (default bfloat16, the release's);
+    TRANSLATEGEMMA_ATTENTION picks the attention implementation (default sdpa, what from_pretrained
+    uses on this machine). The pair follows TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG. The
+    output is the last recorded state; no logits, greedy text, or loss, which need the whole stack."""
+    import gc
+    from safetensors import safe_open
+    from transformers import AutoConfig, AutoTokenizer
+    from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
+    from transformers.models.gemma3.modeling_gemma3 import (Gemma3DecoderLayer, Gemma3RotaryEmbedding,
+                                                            Gemma3TextScaledWordEmbedding)
+
+    layers = int(os.environ.get("TRANSLATEGEMMA_LAYERS", "16"))
+    dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "bfloat16"))
+    config = AutoConfig.from_pretrained(checkpoint)
+    config = getattr(config, "text_config", config)
+    config._attn_implementation = os.environ.get("TRANSLATEGEMMA_ATTENTION", "sdpa")
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    source_lang, target_lang = _translation_languages()
+    sentence = TRANSLATION_PROBES[source_lang.split("-")[0]][1]
+    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
+                                              "target_lang_code": target_lang, "text": sentence}]}]
+    text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    ids = torch.tensor([tokenizer(text, add_special_tokens=False).input_ids])
+
+    with open(os.path.join(checkpoint, "model.safetensors.index.json")) as handle:
+        weight_map = json.load(handle)["weight_map"]
+    embed_key = next(k for k in weight_map if k.endswith("embed_tokens.weight") and "vision" not in k)
+    prefix = embed_key[: -len("embed_tokens.weight")]
+
+    def tensor(name):
+        with safe_open(os.path.join(checkpoint, weight_map[name]), framework="pt") as shard:
+            return shard.get_tensor(name)
+
+    embed = Gemma3TextScaledWordEmbedding(config.vocab_size, config.hidden_size, config.pad_token_id,
+                                          embed_scale=config.hidden_size**0.5)
+    embed.weight.data = tensor(embed_key).to(dtype)
+    with torch.no_grad():
+        hidden = embed(ids)
+        position_ids = torch.arange(ids.shape[1]).unsqueeze(0)
+        mask_kwargs = {"config": config, "inputs_embeds": hidden, "attention_mask": None,
+                       "past_key_values": None, "position_ids": position_ids}
+        masks = {"full_attention": create_causal_mask(**mask_kwargs),
+                 "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs)}
+        rotary = Gemma3RotaryEmbedding(config)
+        position_embeddings = {kind: rotary(hidden, position_ids, kind) for kind in set(config.layer_types)}
+        extra = {"tokens": ids[0].to(torch.int32).contiguous(),
+                 "layers": torch.tensor([layers], dtype=torch.int32),
+                 "hidden_last.0": hidden[0, -1].float().contiguous()}
+        del embed
+        for index in range(layers):
+            kind = config.layer_types[index]
+            layer = Gemma3DecoderLayer(config, index)
+            layer_prefix = f"{prefix}layers.{index}."
+            state = {k[len(layer_prefix):]: tensor(k) for k in weight_map if k.startswith(layer_prefix)}
+            layer.load_state_dict(state)
+            layer.to(dtype).eval()
+            out = layer(hidden, attention_mask=masks[kind], position_embeddings=position_embeddings[kind],
+                        position_ids=position_ids)
+            hidden = out[0] if isinstance(out, tuple) else out
+            extra[f"hidden_last.{index + 1}"] = hidden[0, -1].float().contiguous()
+            del layer, state, out
+            gc.collect()
+            print(f"layer {index} ({kind}) done", flush=True)
+    globals()["_extra"] = extra
+    return hidden[0, -1].float().contiguous()
 
 
 def run_trocr_loss(image, checkpoint):
@@ -19034,7 +19250,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

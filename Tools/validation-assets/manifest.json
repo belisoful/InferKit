@@ -3867,6 +3867,246 @@
       "note": "MADLAD-400 3B-MT (Google, Apache-2.0), 11.8 GB float32. NFKMLXMADLAD.translator(directoryURL:) reads config.json, spiece.model, and model.safetensors; tokenizer.json is for the oracle's fast tokenizer only. Parity record: `run_reference.py madlad <out> --checkpoint <this directory>` under llmvenv (the fast tokenizer; the slow one needs a protobuf build llmvenv lacks) → IK_PARITY_MADLAD (records/madlad.safetensors)."
     },
     {
+      "key": "OPUS_MT_JA_EN",
+      "directory": "opus-mt-ja-en",
+      "repo": "Helsinki-NLP/opus-mt-ja-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_JA_EN": ""
+      },
+      "note": "OPUS-MT ja-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Japanese to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_JA_EN."
+    },
+    {
+      "key": "OPUS_MT_ZH_EN",
+      "directory": "opus-mt-zh-en",
+      "repo": "Helsinki-NLP/opus-mt-zh-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_ZH_EN": ""
+      },
+      "note": "OPUS-MT zh-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Chinese to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_ZH_EN."
+    },
+    {
+      "key": "OPUS_MT_EN_ZH",
+      "directory": "opus-mt-en-zh",
+      "repo": "Helsinki-NLP/opus-mt-en-zh",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_EN_ZH": ""
+      },
+      "note": "OPUS-MT en-zh (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: English to Chinese. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv with MARIAN_TARGET_CODE=cmn_Hans (and cmn_Hant with TRANSLATION_TARGET_LANG=zh-Hant for a second record), since the release is a target group; the test reads IK_PARITY_MARIAN_EN_ZH and IK_PARITY_MARIAN_EN_ZH_HANT."
+    },
+    {
+      "key": "OPUS_MT_AR_EN",
+      "directory": "opus-mt-ar-en",
+      "repo": "Helsinki-NLP/opus-mt-ar-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_AR_EN": ""
+      },
+      "note": "OPUS-MT ar-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Arabic to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_AR_EN."
+    },
+    {
+      "key": "OPUS_MT_VI_EN",
+      "directory": "opus-mt-vi-en",
+      "repo": "Helsinki-NLP/opus-mt-vi-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_VI_EN": ""
+      },
+      "note": "OPUS-MT vi-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Vietnamese to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_VI_EN."
+    },
+    {
+      "key": "OPUS_MT_TH_EN",
+      "directory": "opus-mt-th-en",
+      "repo": "Helsinki-NLP/opus-mt-th-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_TH_EN": ""
+      },
+      "note": "OPUS-MT th-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Thai to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_TH_EN."
+    },
+    {
+      "key": "OPUS_MT_HI_EN",
+      "directory": "opus-mt-hi-en",
+      "repo": "Helsinki-NLP/opus-mt-hi-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_HI_EN": ""
+      },
+      "note": "OPUS-MT hi-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Hindi to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_HI_EN."
+    },
+    {
+      "key": "OPUS_MT_KO_EN",
+      "directory": "opus-mt-ko-en",
+      "repo": "Helsinki-NLP/opus-mt-ko-en",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "source.spm",
+        "target.spm",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_MARIAN_KO_EN": ""
+      },
+      "note": "OPUS-MT ko-en (Marian, CC-BY-4.0), a language-probe release for NFKMLXMarian: Korean to English. Parity record: `run_reference.py marian <out> --checkpoint <this directory>` under llmvenv; the test reads IK_PARITY_MARIAN_KO_EN."
+    },
+    {
+      "key": "SMALL100",
+      "directory": "small100",
+      "repo": "alirezamsh/small100",
+      "files": [
+        "config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "sentencepiece.bpe.model",
+        "tokenization_small100.py",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_SMALL100": ""
+      },
+      "note": "SMaLL-100 (MIT), the 12 + 3 M2M-100 distillation whose target marker leads the source. NFKMLXM2M100.translator(directoryURL:variant: .small100) reads the directory; tokenization_small100.py is the release's own tokenizer, which the oracle imports (`run_reference.py small100 <out> --checkpoint <this directory>`, llmvenv); the test reads IK_PARITY_SMALL100."
+    },
+    {
+      "key": "M2M100_1_2B",
+      "directory": "m2m100-1.2b",
+      "repo": "facebook/m2m100_1.2B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "vocab.json",
+        "sentencepiece.bpe.model",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_M2M100_1_2B": ""
+      },
+      "note": "M2M-100 1.2B (Meta, MIT), 5 GB as pytorch_model.bin. NFKMLXM2M100.translator(directoryURL:variant: .m1_2B); `run_reference.py m2m100 <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_M2M100_1_2B."
+    },
+    {
+      "key": "MADLAD400_7B_MT",
+      "directory": "madlad400-7b-mt",
+      "repo": "google/madlad400-7b-mt",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "spiece.model",
+        "tokenizer.json",
+        "model.safetensors.index.json",
+        "model-00001-of-00007.safetensors",
+        "model-00002-of-00007.safetensors",
+        "model-00003-of-00007.safetensors",
+        "model-00004-of-00007.safetensors",
+        "model-00005-of-00007.safetensors",
+        "model-00006-of-00007.safetensors",
+        "model-00007-of-00007.safetensors"
+      ],
+      "config": {
+        "IK_VAL_MADLAD_7B": ""
+      },
+      "note": "MADLAD-400 7B-MT (Google, Apache-2.0), 33 GB of float32 in 7 shards. NFKMLXMADLAD.translator(directoryURL:half: true) converts the shards to bfloat16 as they are read (about 15 GB resident). The reference runs at bfloat16: `MADLAD_DTYPE=bfloat16 run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_MADLAD_7B and holds bfloat16 tolerances."
+    },
+    {
+      "key": "TRANSLATEGEMMA_27B",
+      "directory": "translategemma-27b-it",
+      "repo": "google/translategemma-27b-it",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "special_tokens_map.json",
+        "added_tokens.json",
+        "chat_template.jinja",
+        "preprocessor_config.json",
+        "processor_config.json",
+        "tokenizer.model",
+        "model.safetensors.index.json",
+        "model-00001-of-00012.safetensors",
+        "model-00002-of-00012.safetensors",
+        "model-00003-of-00012.safetensors",
+        "model-00004-of-00012.safetensors",
+        "model-00005-of-00012.safetensors",
+        "model-00006-of-00012.safetensors",
+        "model-00007-of-00012.safetensors",
+        "model-00008-of-00012.safetensors",
+        "model-00009-of-00012.safetensors",
+        "model-00010-of-00012.safetensors",
+        "model-00011-of-00012.safetensors",
+        "model-00012-of-00012.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRANSLATEGEMMA_27B": ""
+      },
+      "note": "TranslateGemma 27B (Google, Gemma terms; gated, the Gemma acceptance covers it), 55 GB of bfloat16 that fits this machine on neither side. The reference streams the first 14 decoder layers one at a time: `TRANSLATEGEMMA_LAYERS=14 run_reference.py translategemma_streamed <out> --checkpoint <this directory>` (gemmavenv, 6 GB); the test loads the same 14 layers at .checkpoint and reads IK_PARITY_TRANSLATEGEMMA_27B."
+    },
+    {
       "key": "TRANSLATEGEMMA_4B",
       "directory": "translategemma-4b-it",
       "repo": "google/translategemma-4b-it",

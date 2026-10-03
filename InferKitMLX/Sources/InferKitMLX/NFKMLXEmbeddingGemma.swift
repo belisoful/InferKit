@@ -351,11 +351,17 @@ public final class NFKMLXEmbeddingGemma: NSObject {
 /// merge, as the reference matches them, so a rendered chat template or an image placeholder run
 /// encodes to its ids rather than being spelled out in pieces.
 final class NFKMLXGemmaTokenizer {
-    private let vocabulary: [String: Int]
+    // The vocabulary and the merges are keyed by exact scalar sequences: a `String` key compares by
+    // canonical equivalence and merges a precomposed piece with its decomposed spelling, which the
+    // release keeps as two pieces (Devanagari nukta letters, Latin with stacked marks).
+    private let vocabulary: [[UInt32]: Int]
     /// The id-to-piece reverse table, for decoding; the added tokens are in it too.
     private let pieces: [Int: String]
-    /// A merge `"left\u{0}right"` mapped to its rank; a lower rank is a higher merge priority.
-    private let ranks: [String: Int]
+    /// A merge `left + separator + right` mapped to its rank; a lower rank is a higher merge priority.
+    private let ranks: [[UInt32]: Int]
+    /// Separates the two sides of a merge key; no scalar takes this value.
+    private static let mergeSeparator: UInt32 = 0x11_0000
+    private static func key(_ text: String) -> [UInt32] { text.unicodeScalars.map(\.value) }
     private let unknownId: Int
     /// The added tokens, matched as literals in the text before the merge.
     private let addedTokens: [String: Int]
@@ -367,7 +373,7 @@ final class NFKMLXGemmaTokenizer {
 
     /// The id of a special token literal (`<bos>`, `<start_of_turn>`, `<image_soft_token>`), or nil
     /// when neither the vocabulary nor the added tokens carry it.
-    func id(forToken content: String) -> Int? { addedTokens[content] ?? vocabulary[content] }
+    func id(forToken content: String) -> Int? { addedTokens[content] ?? vocabulary[Self.key(content)] }
 
     /// The text a token-id sequence decodes to: each id's piece, with the metaspace turned back into a
     /// space and byte-fallback pieces (`<0xHH>`) reassembled into their bytes. `skipSpecial` leaves the
@@ -395,11 +401,17 @@ final class NFKMLXGemmaTokenizer {
         guard let data = try? Data(contentsOf: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let model = json["model"] as? [String: Any],
-              let vocabulary = model["vocab"] as? [String: Int],
+              let table = model["vocab"] as? NSDictionary,
               let merges = model["merges"] as? [Any] else { return nil }
+        // Read through NSDictionary, whose keys compare literally, so both spellings of a piece survive.
+        var vocabulary = [[UInt32]: Int](minimumCapacity: table.count)
+        var pieces = [Int: String](minimumCapacity: table.count)
+        for (key, value) in table {
+            guard let piece = key as? String, let id = (value as? NSNumber)?.intValue else { return nil }
+            vocabulary[Self.key(piece)] = id
+            pieces[id] = piece
+        }
         self.vocabulary = vocabulary
-        var pieces = [Int: String](minimumCapacity: vocabulary.count)
-        for (piece, id) in vocabulary { pieces[id] = piece }
         var added = [String: Int]()
         var specials = Set<Int>()
         for entry in (json["added_tokens"] as? [[String: Any]]) ?? [] {
@@ -411,17 +423,17 @@ final class NFKMLXGemmaTokenizer {
         self.pieces = pieces
         addedTokens = added
         specialIds = specials
-        var ranks = [String: Int](minimumCapacity: merges.count)
+        var ranks = [[UInt32]: Int](minimumCapacity: merges.count)
         for (index, entry) in merges.enumerated() {
             // A merge is `["left", "right"]` in a recent tokenizer.json and `"left right"` in an older one.
             if let pair = entry as? [String], pair.count == 2 {
-                ranks[pair[0] + "\u{0}" + pair[1]] = index
+                ranks[Self.key(pair[0]) + [Self.mergeSeparator] + Self.key(pair[1])] = index
             } else if let text = entry as? String, let space = text.firstIndex(of: " ") {
-                ranks[String(text[..<space]) + "\u{0}" + String(text[text.index(after: space)...])] = index
+                ranks[Self.key(String(text[..<space])) + [Self.mergeSeparator] + Self.key(String(text[text.index(after: space)...]))] = index
             }
         }
         self.ranks = ranks
-        unknownId = (model["unk_token"] as? String).flatMap { vocabulary[$0] } ?? 3
+        unknownId = (model["unk_token"] as? String).flatMap { vocabulary[Self.key($0)] } ?? 3
     }
 
     /// The token ids for `text`, with no markers added (the embedder wraps them in BOS and EOS, the
@@ -468,13 +480,13 @@ final class NFKMLXGemmaTokenizer {
         let normalized = text.replacingOccurrences(of: " ", with: Self.metaspace)
         // The space split the pre-tokenizer would do is a no-op after normalization, so the whole
         // string is one pre-token. Each character stands alone, or falls back to its UTF-8 bytes.
-        var symbols = [String]()
+        var symbols = [[UInt32]]()
         for scalar in normalized.unicodeScalars {
-            let piece = String(scalar)
+            let piece = [scalar.value]
             if vocabulary[piece] != nil {
                 symbols.append(piece)
             } else {
-                for byte in Array(piece.utf8) { symbols.append(String(format: "<0x%02X>", byte)) }
+                for byte in Array(String(scalar).utf8) { symbols.append(Self.key(String(format: "<0x%02X>", byte))) }
             }
         }
         merge(&symbols)
@@ -483,12 +495,12 @@ final class NFKMLXGemmaTokenizer {
 
     /// The BPE merge loop: repeatedly merge the adjacent pair of highest priority (lowest rank) until
     /// none remains. A merged symbol is the concatenation of its parts, which the vocabulary carries.
-    private func merge(_ symbols: inout [String]) {
+    private func merge(_ symbols: inout [[UInt32]]) {
         while symbols.count > 1 {
             var bestRank = Int.max
             var bestIndex = -1
             for index in 0 ..< (symbols.count - 1) {
-                if let rank = ranks[symbols[index] + "\u{0}" + symbols[index + 1]], rank < bestRank {
+                if let rank = ranks[symbols[index] + [Self.mergeSeparator] + symbols[index + 1]], rank < bestRank {
                     bestRank = rank
                     bestIndex = index
                 }

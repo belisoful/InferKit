@@ -59,16 +59,27 @@ public final class NFKMLXMarianTranslator: NFKMLXTranslator {
 
     /// The `>>xxx<<` marker id for a BCP-47 tag, or nil when the group has no such target.
     public func targetCode(for language: String) -> Int? {
+        Self.markerCandidates(for: language).lazy.compactMap { self.targetCodes[$0] }.first
+    }
+
+    /// The OPUS codes a BCP-47 tag may be marked as, most specific first: the ISO 639-3 code with
+    /// the tag's script, the ISO 639-3 code, the individual language of a macrolanguage with its
+    /// script and alone (`zh` → `cmn_Hans`, `cmn`), then the primary subtag with its script and alone.
+    /// Chinese without a script subtag takes the script its region implies (`zh-TW` → `cmn_Hant`).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func markerCandidates(for language: String) -> [String] {
         let primary = NFKMLXTranslationBackend.primary(language)
-        let script = NFKMLXTranslationBackend.script(language)
+        let script = NFKMLXTranslationBackend.impliedScript(language)
         var candidates = [String]()
-        if let three = NFKMLXLanguageCodes.iso639_3[primary] {
-            if let script { candidates.append("\(three)_\(script)") }
-            candidates.append(three)
+        func add(_ code: String) {
+            if let script { candidates.append("\(code)_\(script)") }
+            candidates.append(code)
         }
-        if let script { candidates.append("\(primary)_\(script)") }
-        candidates.append(primary)
-        return candidates.lazy.compactMap { self.targetCodes[$0] }.first
+        if let three = NFKMLXLanguageCodes.iso639_3[primary] { add(three) }
+        if let individual = NFKMLXLanguageCodes.individualLanguage[primary] { add(individual) }
+        add(primary)
+        return candidates
     }
 
     /// The source ids the model reads for `text`: an optional target marker, the pieces, and the end token.

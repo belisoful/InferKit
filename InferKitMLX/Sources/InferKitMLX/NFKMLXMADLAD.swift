@@ -125,7 +125,10 @@ final class NFKT5CachedAttention: Module {
     }
 
     private func attend(_ queries: MLXArray, _ keys: MLXArray, _ values: MLXArray, mask: MLXArray?) -> MLXArray {
-        NFKDropout.attention(queries: queries, keys: keys, values: values, scale: 1, mask: mask,
+        // The bias is the position embedding plus a float32 causal term, so under a half load it
+        // promotes to float32; the fused attention needs it in the queries' type, which is also the
+        // type the reference computes its bias in.
+        NFKDropout.attention(queries: queries, keys: keys, values: values, scale: 1, mask: mask?.asType(queries.dtype),
                              rate: rates.values.attentionDropout, active: training)
     }
 
@@ -296,11 +299,15 @@ public final class NFKMLXT5Seq2SeqNet: Module {
 
     public func makeCache() -> NFKMLXSeq2SeqCache { NFKMLXSeq2SeqCache(layers: configuration.decoderLayers) }
 
-    /// Loads a release directory (`model.safetensors` or shards). `half` casts the weights to
-    /// `bfloat16` once loaded, which halves what the 3B release holds resident; the reference runs
-    /// float32, which is what a parity measurement uses.
+    /// Loads a release directory (`model.safetensors` or shards). `half` converts the weights to
+    /// `bfloat16` as they are read, in groups, so the stored float32 never sits whole beside the
+    /// converted copy (the 7B is 33 GB on disk); the 3B reference runs float32, which is what its
+    /// parity measurement uses.
     public func loadWeights(fromDirectory directory: URL, half: Bool = false) throws {
-        try load(try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint), half: half)
+        let arrays = half
+            ? try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .bfloat16)
+            : try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint)
+        try load(arrays, half: half)
     }
 
     /// Loads one checkpoint file, such as one ``NFKMLXWeights/save(_:extraArrays:to:)`` wrote after a fine-tune.
@@ -367,12 +374,13 @@ public final class NFKMLXMADLADTranslator: NFKMLXTranslator {
     public var fixedTargetLanguage: String? { nil }
 
     /// The marker id for a BCP-47 tag: the primary subtag with its script where the release
-    /// distinguishes one (`zh-Hant` → `<2zh_Hant>`), or nil when the release has no such target.
+    /// distinguishes one (`zh-Hant` and `zh-TW` → `<2zh_Hant>`), or nil when the release has no such
+    /// target.
     public func targetCode(for language: String) -> Int? {
         let primary = NFKMLXTranslationBackend.primary(language)
         let aliases = ["nb": "no", "nn": "no", "tl": "fil", "iw": "he", "jw": "jv"]
         var candidates = [String]()
-        if let script = NFKMLXTranslationBackend.script(language) {
+        if let script = NFKMLXTranslationBackend.impliedScript(language) {
             candidates.append("\(primary)_\(script)")
         }
         candidates.append(primary)
@@ -424,7 +432,9 @@ public final class NFKMLXMADLAD: NSObject {
     public static func translator(net: NFKMLXT5Seq2SeqNet, directoryURL directory: URL) throws -> NFKMLXMADLADTranslator {
         var model = try NFKMLXSentencePieceModel(contentsOf: directory.appendingPathComponent("spiece.model"))
         model.byteFallback = false
-        return NFKMLXMADLADTranslator(net: net, segmenter: NFKMLXSentencePieceSegmenter(model: model), identifier: modelName)
+        // The release's reference tokenizer is the fast one, whose unigram Viterbi sums in double.
+        return NFKMLXMADLADTranslator(net: net, segmenter: NFKMLXSentencePieceSegmenter(model: model, accumulatesInDoublePrecision: true),
+                                     identifier: modelName)
     }
 
     /// Builds the network alone, ready to adapt. A release directory supplies its own geometry from its

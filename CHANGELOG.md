@@ -441,6 +441,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Translation at parity in eight more languages and three more sizes
+
+- The SentencePiece reader runs each model's own precompiled character map as its normalizer
+  (`NFKMLXSentencePieceNormalizer`) and keys every piece table by the exact scalar sequence, as
+  SentencePiece does. Before, Foundation's NFKC stood in for the map and Swift `String` keys merged
+  canonically equivalent pieces, so Arabic diacritics in the other order, a decomposed Devanagari
+  letter, NFD Vietnamese and Korean, and a zero-width joiner tokenized differently from the reference.
+  The Gemma tokenizer's vocabulary and merge tables take the same keys. An unknown run is looked up
+  by its text in a release's `vocab.json`, as MarianTokenizer does over OPUS-MT's union vocabulary.
+- `NFKMLXM2M100` is measured on the 1.2B and SMaLL-100, `NFKMLXMADLAD` on the 7B at bfloat16 (loaded
+  `half` by converting shards as they are read), and `NFKMLXTranslateGemma` on the 27B's first 14 layers
+  against a reference that streams one layer at a time. Nine OPUS-MT pairs and the three multilingual
+  families are held id-exact and text-exact on Japanese, Chinese in both scripts, Arabic, Vietnamese,
+  Thai, Hindi, and Korean probes.
+- `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
+  and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
+
 #### RIFE v4 fine-tunes as its v4.15 training code trains it
 
 - `NFKMLXRIFEv4.fineTune` trains RIFE v4 as Practical-RIFE's v4.15 training code does: a VGG-19 perceptual term

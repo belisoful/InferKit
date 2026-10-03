@@ -40,11 +40,21 @@ final class NFKMLXTranslationTests: XCTestCase {
     ]
     private static let target = "Der schnelle braune Fuchs springt \u{fc}ber den faulen Hund."
 
+    override func tearDown() {
+        // The parity tests load one release after another; clearing reaches MLX's runtime, which
+        // needs a Metal library it can find.
+        if NFKMLXGPU.metalLibraryURL != nil {
+            NFKMLXGPU.clearCache()
+        }
+        super.tearDown()
+    }
+
     // MARK: SentencePiece (no MLX)
 
     /// A protobuf `ModelProto` assembled by hand: two normal pieces, the unknown marker, and a
     /// trainer spec naming the algorithm.
-    private func syntheticModel(kind: UInt8, pieces: [(String, Float)]) throws -> NFKMLXSentencePieceModel {
+    private func syntheticModel(kind: UInt8, pieces: [(String, Float)], addsDummyPrefix: Bool = true,
+                                removesExtraWhitespace: Bool = true) throws -> NFKMLXSentencePieceModel {
         func varint(_ value: Int) -> [UInt8] {
             var v = value, out = [UInt8]()
             repeat {
@@ -66,7 +76,10 @@ final class NFKMLXTranslationTests: XCTestCase {
             body += lengthDelimited(field: 1, piece)
         }
         body += lengthDelimited(field: 2, varint(3 << 3 | 0) + varint(Int(kind)))
-        body += lengthDelimited(field: 3, lengthDelimited(field: 1, Array("nmt_nfkc".utf8)))
+        var spec = lengthDelimited(field: 1, Array("nmt_nfkc".utf8))
+        spec += varint(3 << 3 | 0) + varint(addsDummyPrefix ? 1 : 0)
+        spec += varint(4 << 3 | 0) + varint(removesExtraWhitespace ? 1 : 0)
+        body += lengthDelimited(field: 3, spec)
         return try NFKMLXSentencePieceModel(data: Data(body))
     }
 
@@ -98,10 +111,80 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(segmenter.pieces(for: "bc"), ["\u{2581}", "bc"])
     }
 
-    func testNormalizationFollowsNMTNFKC() {
+    func testNormalizationFollowsNMTNFKC() throws {
         XCTAssertEqual(NFKMLXSentencePieceSegmenter.nmtNFKC("\u{fb01}ne \u{bd}"), "fine 1\u{2044}2")
-        XCTAssertEqual(NFKMLXSentencePieceSegmenter.collapseWhitespace("  spaced   out  text  "), "spaced out text")
         XCTAssertEqual(NFKMLXSentencePieceSegmenter.nmtNFKC("a\u{a0}b\u{200b}c"), "a bc")
+        // A proto without a character map falls back to NFKC and still applies the spec's whitespace rules.
+        let segmenter = NFKMLXSentencePieceSegmenter(model: try syntheticModel(kind: 1, pieces: [("a", -1)]))
+        XCTAssertFalse(segmenter.normalizer.hasCharacterMap)
+        XCTAssertEqual(segmenter.normalize("  spaced   out  text  "), "\u{2581}spaced\u{2581}out\u{2581}text")
+        XCTAssertEqual(segmenter.normalize("   "), "")
+        XCTAssertEqual(segmenter.normalize("x", dummyPrefix: false), "x")
+        // A model that keeps whitespace (InternLM2's spec) keeps every space of a run.
+        let keeping = NFKMLXSentencePieceSegmenter(model: try syntheticModel(kind: 2, pieces: [("a", -1)], addsDummyPrefix: false,
+                                                                            removesExtraWhitespace: false))
+        XCTAssertEqual(keeping.normalize("  leading  x "), "\u{2581}\u{2581}leading\u{2581}\u{2581}x\u{2581}")
+        XCTAssertEqual(keeping.normalize("  x", dummyPrefix: true), "\u{2581}\u{2581}\u{2581}x")
+    }
+
+    /// OPUS-MT's `vocab.json` is the union of the source and target vocabularies, so a character the
+    /// source model does not know can still have a release id; MarianTokenizer finds it by the
+    /// unknown run's text, and decodes such a piece as itself.
+    func testAnUnknownRunMapsThroughTheReleaseTableByItsText() throws {
+        let model = try syntheticModel(kind: 1, pieces: [("\u{2581}na", -1), ("ve", -1), ("\u{2581}", -2)])
+        let segmenter = NFKMLXSentencePieceSegmenter(model: model)
+        let segments = segmenter.segments(of: "na\u{ef}ve")
+        XCTAssertEqual(segments.map(\.id), [1, 0, 2])
+        XCTAssertEqual(segments.map(\.surface), ["\u{2581}na", "\u{ef}", "ve"])
+        XCTAssertEqual(segmenter.segments(of: "na\u{ef}\u{ef}ve").map(\.surface), ["\u{2581}na", "\u{ef}\u{ef}", "ve"], "a fused run keeps its whole text")
+        let tokenizer = NFKMLXSentencePieceTokenizer(
+            segmenter: segmenter, vocabularyEntries: [("\u{2581}na", 10), ("ve", 11), ("\u{ef}", 12), ("<unk>", 1)], eosTokenId: 0)
+        XCTAssertEqual(tokenizer.encode("na\u{ef}ve", dummyPrefix: nil), [10, 12, 11])
+        XCTAssertEqual(tokenizer.encode("na\u{ef}\u{ef}ve", dummyPrefix: nil), [10, 1, 11], "a run the table does not name is unknown")
+        XCTAssertEqual(tokenizer.decode(ids: [10, 12, 11]), "na\u{ef}ve")
+    }
+
+    /// SentencePiece matches pieces byte for byte, and a vocabulary carries both a composed and a
+    /// decomposed spelling, or both orders of two combining marks, as distinct pieces; a Swift `String`
+    /// key would merge them.
+    func testCanonicallyEquivalentPiecesStayDistinct() throws {
+        let composed = "\u{e9}", decomposed = "e\u{301}"
+        let fathaShadda = "\u{64e}\u{651}", shaddaFatha = "\u{651}\u{64e}"
+        let model = try syntheticModel(kind: 1, pieces: [(composed, -1), (decomposed, -2), (fathaShadda, -1), (shaddaFatha, -2), ("\u{2581}", -3)])
+        let segmenter = NFKMLXSentencePieceSegmenter(model: model)
+        XCTAssertEqual(segmenter.id(of: composed), 1)
+        XCTAssertEqual(segmenter.id(of: decomposed), 2)
+        XCTAssertEqual(segmenter.id(of: fathaShadda), 3)
+        XCTAssertEqual(segmenter.id(of: shaddaFatha), 4)
+        XCTAssertEqual(segmenter.encodeNormalized(shaddaFatha), [4], "the text's own mark order picks its own piece")
+        XCTAssertEqual(segmenter.encodeNormalized(fathaShadda), [3])
+        let tokenizer = NFKMLXSentencePieceTokenizer(segmenter: segmenter,
+                                                     vocabularyEntries: [(composed, 10), (decomposed, 11), ("<unk>", 1)], eosTokenId: 0)
+        XCTAssertEqual(tokenizer.id(ofPiece: composed), 10)
+        XCTAssertEqual(tokenizer.id(ofPiece: decomposed), 11)
+        XCTAssertEqual(tokenizer.piece(ofId: 11), decomposed)
+    }
+
+    /// The character map of a released model, against values SentencePiece 0.2.2 gives for the same
+    /// strings: zero-width joiner to a space, combining marks left in their order, compatibility
+    /// characters folded, decomposed sequences composed.
+    func testTheNormalizerRunsTheModelsCharacterMap() throws {
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_M2M100"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_M2M100 to an M2M-100 release directory")
+        }
+        let segmenter = try NFKMLXSentencePieceSegmenter(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("sentencepiece.bpe.model"))
+        XCTAssertTrue(segmenter.normalizer.hasCharacterMap)
+        XCTAssertEqual(segmenter.normalize("a\u{200d}b"), "\u{2581}a\u{2581}b")
+        XCTAssertEqual(segmenter.normalize("\u{633}\u{651}\u{64e}"), "\u{2581}\u{633}\u{651}\u{64e}")
+        XCTAssertEqual(segmenter.normalize("\u{fb01}ne \u{bd}"), "\u{2581}fine\u{2581}1\u{2044}2")
+        XCTAssertEqual(segmenter.normalize("e\u{301}"), "\u{2581}\u{e9}")
+        XCTAssertEqual(segmenter.normalize("Vie\u{302}\u{323}t"), "\u{2581}Vi\u{1ec7}t")
+        XCTAssertEqual(segmenter.normalize("\u{1112}\u{1161}\u{11ab}"), "\u{2581}\u{d55c}")
+        XCTAssertEqual(segmenter.normalize("  spaced   out  text  "), "\u{2581}spaced\u{2581}out\u{2581}text")
+        XCTAssertEqual(segmenter.normalize("\u{ff21}\u{ff22}\u{3000}\u{ff76}\u{ff9e}"), "\u{2581}AB\u{2581}\u{30ac}")
+        XCTAssertEqual(segmenter.normalize("x\t\ny"), "\u{2581}x\u{2581}y")
+        XCTAssertEqual(segmenter.normalize("   "), "")
     }
 
     // MARK: Configuration and backend contract (no MLX)
@@ -320,16 +403,16 @@ final class NFKMLXTranslationTests: XCTestCase {
     private func checkSeams<Model: NFKMLXSeq2SeqDecodable>(_ model: Model, encode: (MLXArray) -> MLXArray,
                                                           decode: (MLXArray, MLXArray) -> MLXArray,
                                                           record: [String: MLXArray], decoding: NFKMLXSeq2SeqDecoding,
-                                                          sourceIds: [Int], name: String) {
+                                                          sourceIds: [Int], name: String, tolerance: Float = 0.999) {
         XCTAssertEqual(sourceIds, ints(record["source_ids"]!), "\(name) source ids")
         let source = MLXArray(sourceIds.map { Int32($0) }).reshaped([1, sourceIds.count])
         let memory = encode(source)
         let encoderCosine = cosine(memory[0], record["encoder_hidden"]!)
-        XCTAssertGreaterThan(encoderCosine, 0.999, "\(name) encoder")
+        XCTAssertGreaterThan(encoderCosine, tolerance, "\(name) encoder")
         let decoderInput = record["decoder_input"]!
         let logits = decode(decoderInput.reshaped([1, decoderInput.dim(0)]), memory)
         let logitCosine = cosine(logits[0], record["output"]!)
-        XCTAssertGreaterThan(logitCosine, 0.999, "\(name) teacher-forced logits")
+        XCTAssertGreaterThan(logitCosine, tolerance, "\(name) teacher-forced logits")
         let argmax = logits[0].argMax(axis: -1).asArray(Int32.self)
         let referenceArgmax = record["output"]!.argMax(axis: -1).asArray(Int32.self)
         let agreeing = zip(argmax, referenceArgmax).filter { $0 == $1 }.count
@@ -368,22 +451,38 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     func testM2M100MatchesTheReference() throws {
+        try checkM2M100(weightsKey: "IK_VAL_M2M100", recordKey: "IK_PARITY_M2M100", variant: .m418M, name: "m2m100")
+    }
+
+    func testM2M100_1_2BMatchesTheReference() throws {
+        try checkM2M100(weightsKey: "IK_VAL_M2M100_1_2B", recordKey: "IK_PARITY_M2M100_1_2B", variant: .m1_2B, name: "m2m100-1.2b")
+    }
+
+    /// SMaLL-100 carries the target marker on the source and starts its decoder plain.
+    func testSMaLL100MatchesTheReference() throws {
+        try checkM2M100(weightsKey: "IK_VAL_SMALL100", recordKey: "IK_PARITY_SMALL100", variant: .small100, name: "small100")
+    }
+
+    private func checkM2M100(weightsKey: String, recordKey: String, variant: NFKMLXM2M100Variant, name: String) throws {
         try requireMLXRuntime()
-        let (directory, record) = try release("IK_VAL_M2M100", "IK_PARITY_M2M100")
-        let translator = try NFKMLXM2M100.translator(directoryURL: directory)
+        let (directory, record) = try release(weightsKey, recordKey)
+        let translator = try NFKMLXM2M100.translator(directoryURL: directory, variant: variant)
         XCTAssertEqual(translator.languageIds["en"], 128022)
         for (index, sentence) in Self.sentences.enumerated() {
             XCTAssertEqual(translator.sourceIds(for: sentence, source: "en", target: "de"), ints(record["tokens_\(index)"]!), "tokens of \(sentence)")
         }
         var decoding = translator.defaultDecoding
         decoding.maxTokens = 64
-        decoding.forcedFirstToken = translator.languageIds["de"]
+        if variant != .small100 {
+            decoding.forcedFirstToken = translator.languageIds["de"]
+        }
         checkSeams(translator.net, encode: { translator.net.encode($0) }, decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
-                   record: record, decoding: decoding, sourceIds: translator.sourceIds(for: Self.sentences[1], source: "en", target: "de"), name: "m2m100")
+                   record: record, decoding: decoding, sourceIds: translator.sourceIds(for: Self.sentences[1], source: "en", target: "de"), name: name)
         let text = try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: decoding)
-        print("m2m100:", text)
+        print("\(name):", text)
         XCTAssertFalse(text.isEmpty)
-        XCTAssertEqual([translator.languageIds["de"]!] + translator.tokenizer.encode(Self.target, dummyPrefix: nil) + [2],
+        let marker: [Int] = variant == .small100 ? [] : [translator.languageIds["de"]!]
+        XCTAssertEqual(marker + translator.tokenizer.encode(Self.target, dummyPrefix: nil) + [2],
                        ints(record["target_ids"]!), "target tokenization")
         let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
         XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "training loss")
@@ -391,22 +490,33 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     func testMADLADMatchesTheReference() throws {
+        try checkMADLAD(weightsKey: "IK_VAL_MADLAD", recordKey: "IK_PARITY_MADLAD", half: false, name: "madlad")
+    }
+
+    /// The 7B is 33 GB of float32, so the reference records at bfloat16 (`MADLAD_DTYPE=bfloat16`) and
+    /// the port loads `half`: two bfloat16 stacks, held to the tolerances the TranslateGemma 12B set.
+    func testMADLAD7BMatchesTheReference() throws {
+        try checkMADLAD(weightsKey: "IK_VAL_MADLAD_7B", recordKey: "IK_PARITY_MADLAD_7B", half: true, name: "madlad-7b")
+    }
+
+    private func checkMADLAD(weightsKey: String, recordKey: String, half: Bool, name: String) throws {
         try requireMLXRuntime()
-        let (directory, record) = try release("IK_VAL_MADLAD", "IK_PARITY_MADLAD")
-        let translator = try NFKMLXMADLAD.translator(directoryURL: directory)
+        let (directory, record) = try release(weightsKey, recordKey)
+        let translator = try NFKMLXMADLAD.translator(directoryURL: directory, half: half)
         for (index, sentence) in Self.sentences.enumerated() {
             XCTAssertEqual(translator.sourceIds(for: sentence, target: "de"), ints(record["tokens_\(index)"]!), "tokens of \(sentence)")
         }
         var decoding = translator.defaultDecoding
         decoding.maxTokens = 64
         checkSeams(translator.net, encode: { translator.net.encode($0) }, decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
-                   record: record, decoding: decoding, sourceIds: translator.sourceIds(for: Self.sentences[1], target: "de")!, name: "madlad")
+                   record: record, decoding: decoding, sourceIds: translator.sourceIds(for: Self.sentences[1], target: "de")!, name: name,
+                   tolerance: half ? 0.995 : 0.999)
         let text = try translator.translate(Self.sentences[1], from: nil, to: "de", decoding: decoding)
-        print("madlad:", text)
+        print("\(name):", text)
         XCTAssertFalse(text.isEmpty)
         XCTAssertEqual(translator.segmenter.encode(Self.target) + [2], ints(record["target_ids"]!), "target tokenization")
         let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
-        XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "training loss")
+        XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: half ? 0.1 : 1e-2, "training loss")
         print("loss mine \(loss.item(Float.self)) reference \(record["loss"]!.asArray(Float.self)[0])")
     }
 
@@ -510,13 +620,28 @@ final class NFKMLXTranslationTests: XCTestCase {
     // layer, which depends on no layer after it. The 4B runs the whole translator path (logits, greedy
     // continuation, fine-tuning loss) through the same code.
     func testTranslateGemma12BMatchesTheReference() throws {
+        try checkTranslateGemmaPrefix(weightsKey: "IK_VAL_TRANSLATEGEMMA_12B", recordKey: "IK_PARITY_TRANSLATEGEMMA_12B",
+                                      layerCount: 48, kept: 24, name: "translategemma-12b")
+    }
+
+    /// The 27B is 55 GB of bfloat16, so neither side holds it whole: the reference streams its first
+    /// layers one at a time (`run_reference.py translategemma_streamed`, `TRANSLATEGEMMA_LAYERS`), and the
+    /// port keeps as many as the record holds, about 14 GB for 14 layers with the embeddings.
+    func testTranslateGemma27BMatchesTheReference() throws {
+        try checkTranslateGemmaPrefix(weightsKey: "IK_VAL_TRANSLATEGEMMA_27B", recordKey: "IK_PARITY_TRANSLATEGEMMA_27B",
+                                      layerCount: 62, kept: nil, name: "translategemma-27b")
+    }
+
+    /// Loads the first `kept` decoder layers at `.checkpoint` (the record's own `layers` count when nil)
+    /// and holds each layer's last-position state against the reference's.
+    private func checkTranslateGemmaPrefix(weightsKey: String, recordKey: String, layerCount: Int, kept: Int?, name: String) throws {
         try requireMLXRuntime()
-        let (directory, record) = try release("IK_VAL_TRANSLATEGEMMA_12B", "IK_PARITY_TRANSLATEGEMMA_12B")
-        let kept = 24
+        let (directory, record) = try release(weightsKey, recordKey)
+        let kept = try kept ?? ints(XCTUnwrap(record["layers"]))[0]
         let json = try XCTUnwrap(JSONSerialization.jsonObject(
             with: Data(contentsOf: directory.appendingPathComponent("config.json"))) as? [String: Any])
         var configuration = try NFKMLXGemma3Language.configuration(fromJSON: json)
-        XCTAssertEqual(configuration.layerCount, 48)
+        XCTAssertEqual(configuration.layerCount, layerCount)
         configuration.layerTypes = Array(configuration.layerTypes.prefix(kept))
         configuration.layerCount = kept
         let decoder = NFKMLXGemma3Net(configuration)
@@ -533,15 +658,15 @@ final class NFKMLXTranslationTests: XCTestCase {
         let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
         XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
 
-        // The trace holds the embeddings, then each layer's output; its final entry is normed, so the
-        // comparison stops one short of it.
+        // The trace holds the embeddings, then each layer's output; a whole-model record's final entry
+        // is normed, so the comparison covers the kept layers only.
         let states = decoder.layerStates(MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count]))
         var worst: (layer: Int, cosine: Float) = (-1, 1)
         for index in 0 ..< kept {
             let layerCosine = cosine(states[index][0, ids.count - 1], try XCTUnwrap(record["hidden_last.\(index)"]))
             if layerCosine < worst.cosine { worst = (index, layerCosine) }
         }
-        print("translategemma-12b: worst layer state cosine \(worst.cosine) at layer \(worst.layer) of the first \(kept)")
+        print("\(name): worst layer state cosine \(worst.cosine) at layer \(worst.layer) of the first \(kept)")
         // Two bfloat16 stacks differ in accumulation order, which drifts over the layers.
         XCTAssertGreaterThan(worst.cosine, 0.99, "a layer diverges beyond bfloat16 drift")
     }
@@ -584,6 +709,298 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0],
                        accuracy: precision == .float32 ? 1e-2 : 0.1, "fine-tuning loss")
         print("loss mine \(loss.item(Float.self)) reference \(record["loss"]!.asArray(Float.self)[0])")
+    }
+
+    // MARK: Language probes
+
+    /// One probe set per source language, the table `run_reference.py` records (`TRANSLATION_PROBES`);
+    /// index 1 is the sentence the seams, the generations, and the loss use.
+    private static let probes: [String: [String]] = {
+        var table: [String: [String]] = [
+            "en": sentences,
+            "ja": [
+                "\u{3053}\u{3093}\u{306b}\u{3061}\u{306f}\u{3001}\u{4e16}\u{754c}\u{ff01}\u{304a}\u{5143}\u{6c17}\u{3067}\u{3059}\u{304b}\u{ff1f}",  // こんにちは、世界！お元気ですか？
+                "\u{7d20}\u{65e9}\u{3044}\u{8336}\u{8272}\u{306e}\u{72d0}\u{304c}\u{6020}\u{3051}\u{8005}\u{306e}\u{72ac}\u{3092}\u{98db}\u{3073}\u{8d8a}\u{3048}\u{308b}\u{3002}",  // 素早い茶色の狐が怠け者の犬を飛び越える。
+                "\u{ff21}\u{ff22}\u{ff23}\u{ff11}\u{ff12}\u{ff13}\u{3000}\u{5168}\u{89d2}\u{3068}\u{534a}\u{89d2}\u{ff76}\u{ff9e}\u{ff77}\u{ff9e}",  // ＡＢＣ１２３<ideographic space>全角と半角ｶﾞｷﾞ
+                "\u{6771}\u{4eac}\u{ff08}\u{3068}\u{3046}\u{304d}\u{3087}\u{3046}\u{ff09}\u{306f}\u{65e5}\u{672c}\u{306e}\u{9996}\u{90fd}\u{3067}\u{3059}\u{3002}\u{3231}\u{30c6}\u{30b9}\u{30c8}",  // 東京（とうきょう）は日本の首都です。㈱テスト
+                "\u{4eca}\u{65e5}\u{306f}\u{6674}\u{308c}\u{3067}\u{3059}\u{1f600} \u{2460}\u{2461}\u{2462}",  // 今日は晴れです😀 ①②③
+            ],
+            "zh": [
+                "\u{4f60}\u{597d}\u{ff0c}\u{4e16}\u{754c}\u{ff01}\u{4f60}\u{597d}\u{5417}\u{ff1f}",  // 你好，世界！你好吗？
+                "\u{654f}\u{6377}\u{7684}\u{68d5}\u{8272}\u{72d0}\u{72f8}\u{8df3}\u{8fc7}\u{4e86}\u{61d2}\u{72d7}\u{3002}",  // 敏捷的棕色狐狸跳过了懒狗。
+                "\u{4eca}\u{5929}\u{5929}\u{6c14}\u{5f88}\u{597d}\u{ff0c}\u{6211}\u{4eec}\u{53bb}\u{516c}\u{56ed}\u{5427}\u{ff01}",  // 今天天气很好，我们去公园吧！
+                "\u{9577}\u{6c5f}\u{662f}\u{4e2d}\u{570b}\u{6700}\u{9577}\u{7684}\u{6cb3}\u{6d41}\u{3002}",  // 長江是中國最長的河流。
+                "\u{4ef7}\u{683c}\u{662f}\u{ff11}\u{ff12}\u{ff13}\u{5143}\u{1f600} \u{3299}",  // 价格是１２３元😀 ㊙
+            ],
+            "ar": [
+                "\u{645}\u{631}\u{62d}\u{628}\u{627} \u{628}\u{627}\u{644}\u{639}\u{627}\u{644}\u{645}! \u{643}\u{64a}\u{641} \u{62d}\u{627}\u{644}\u{643}\u{61f}",  // مرحبا بالعالم! كيف حالك؟
+                "\u{627}\u{644}\u{62b}\u{639}\u{644}\u{628} \u{627}\u{644}\u{628}\u{646}\u{64a} \u{627}\u{644}\u{633}\u{631}\u{64a}\u{639} \u{64a}\u{642}\u{641}\u{632} \u{641}\u{648}\u{642} \u{627}\u{644}\u{643}\u{644}\u{628} \u{627}\u{644}\u{643}\u{633}\u{648}\u{644}.",  // الثعلب البني السريع يقفز فوق الكلب الكسول.
+                "\u{671}\u{644}\u{633}\u{64e}\u{651}\u{644}\u{64e}\u{627}\u{645}\u{64f} \u{639}\u{64e}\u{644}\u{64e}\u{64a}\u{652}\u{643}\u{64f}\u{645}\u{652} \u{648}\u{64e}\u{631}\u{64e}\u{62d}\u{652}\u{645}\u{64e}\u{629}\u{64f} \u{671}\u{644}\u{644}\u{64e}\u{651}\u{670}\u{647}\u{650}",  // ٱلسَّلَامُ عَلَيْكُمْ وَرَحْمَةُ ٱللَّٰهِ
+                "\u{fefb} \u{628}\u{623}\u{633}\u{60c} \u{634}\u{643}\u{631}\u{627}\u{64b} \u{fedf}\u{fee0}",  // <U+FEFB> بأس، شكراً <U+FEDF><U+FEE0>
+                "\u{627}\u{644}\u{642}\u{627}\u{647}\u{631}\u{629} \u{647}\u{64a} \u{639}\u{627}\u{635}\u{645}\u{629} \u{645}\u{635}\u{631} \u{1f600} \u{661}\u{662}\u{663}",  // القاهرة هي عاصمة مصر 😀 ١٢٣
+            ],
+            "vi": [
+                "Xin ch\u{e0}o th\u{1ebf} gi\u{1edb}i! B\u{1ea1}n c\u{f3} kh\u{1ecf}e kh\u{f4}ng?",  // Xin chào thế giới! Bạn có khỏe không?
+                "Con c\u{e1}o n\u{e2}u nhanh nh\u{1eb9}n nh\u{1ea3}y qua con ch\u{f3} l\u{1b0}\u{1edd}i.",  // Con cáo nâu nhanh nhẹn nhảy qua con chó lười.
+                "",
+                "T\u{f4}i y\u{ea}u Vi\u{1ec7}t Nam v\u{e0} ti\u{1ebf}ng Vi\u{1ec7}t.",  // Tôi yêu Việt Nam và tiếng Việt.
+                "Gi\u{e1} l\u{e0} 123.456 \u{111}\u{1ed3}ng \u{1f600}",  // Giá là 123.456 đồng 😀
+            ],
+            "th": [
+                "\u{e2a}\u{e27}\u{e31}\u{e2a}\u{e14}\u{e35}\u{e04}\u{e23}\u{e31}\u{e1a} \u{e1c}\u{e21}\u{e0a}\u{e37}\u{e48}\u{e2d}\u{e2a}\u{e21}\u{e0a}\u{e32}\u{e22}",  // สวัสดีครับ ผมชื่อสมชาย
+                "\u{e2a}\u{e38}\u{e19}\u{e31}\u{e02}\u{e08}\u{e34}\u{e49}\u{e07}\u{e08}\u{e2d}\u{e01}\u{e2a}\u{e35}\u{e19}\u{e49}\u{e33}\u{e15}\u{e32}\u{e25}\u{e01}\u{e23}\u{e30}\u{e42}\u{e14}\u{e14}\u{e02}\u{e49}\u{e32}\u{e21}\u{e2a}\u{e38}\u{e19}\u{e31}\u{e02}\u{e02}\u{e35}\u{e49}\u{e40}\u{e01}\u{e35}\u{e22}\u{e08}",  // สุนัขจิ้งจอกสีน้ำตาลกระโดดข้ามสุนัขขี้เกียจ
+                "\u{e1b}\u{e23}\u{e30}\u{e40}\u{e17}\u{e28}\u{e44}\u{e17}\u{e22}\u{e21}\u{e35}\u{e1b}\u{e23}\u{e30}\u{e0a}\u{e32}\u{e01}\u{e23}\u{e1b}\u{e23}\u{e30}\u{e21}\u{e32}\u{e13}\u{e40}\u{e08}\u{e47}\u{e14}\u{e2a}\u{e34}\u{e1a}\u{e25}\u{e49}\u{e32}\u{e19}\u{e04}\u{e19}",  // ประเทศไทยมีประชากรประมาณเจ็ดสิบล้านคน
+                "\u{e27}\u{e31}\u{e19}\u{e19}\u{e35}\u{e49}\u{e2d}\u{e32}\u{e01}\u{e32}\u{e28}\u{e14}\u{e35}\u{e21}\u{e32}\u{e01} \u{e40}\u{e23}\u{e32}\u{e44}\u{e1b}\u{e2a}\u{e27}\u{e19}\u{e2a}\u{e32}\u{e18}\u{e32}\u{e23}\u{e13}\u{e30}\u{e01}\u{e31}\u{e19}\u{e40}\u{e16}\u{e2d}\u{e30}",  // วันนี้อากาศดีมาก เราไปสวนสาธารณะกันเถอะ
+                "\u{e23}\u{e32}\u{e04}\u{e32} \u{e51}\u{e52}\u{e53} \u{e1a}\u{e32}\u{e17} \u{1f600}",  // ราคา ๑๒๓ บาท 😀
+            ],
+            "hi": [
+                "\u{928}\u{92e}\u{938}\u{94d}\u{924}\u{947} \u{926}\u{941}\u{928}\u{93f}\u{92f}\u{93e}! \u{906}\u{92a} \u{915}\u{948}\u{938}\u{947} \u{939}\u{948}\u{902}?",  // नमस्ते दुनिया! आप कैसे हैं?
+                "\u{924}\u{947}\u{91c}\u{93c} \u{92d}\u{942}\u{930}\u{940} \u{932}\u{94b}\u{92e}\u{921}\u{93c}\u{940} \u{906}\u{932}\u{938}\u{940} \u{915}\u{941}\u{924}\u{94d}\u{924}\u{947} \u{915}\u{947} \u{90a}\u{92a}\u{930} \u{938}\u{947} \u{915}\u{942}\u{926} \u{91c}\u{93e}\u{924}\u{940} \u{939}\u{948}\u{964}",  // तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर से कूद जाती है।
+                "\u{92d}\u{93e}\u{930}\u{924} \u{90f}\u{915} \u{935}\u{93f}\u{936}\u{93e}\u{932} \u{926}\u{947}\u{936} \u{939}\u{948}\u{964}",  // भारत एक विशाल देश है।
+                "\u{92e}\u{948}\u{902} \u{939}\u{93f}\u{928}\u{94d}\u{926}\u{940} \u{938}\u{940}\u{916} \u{930}\u{939}\u{93e} \u{939}\u{942}\u{901}\u{964} \u{915}\u{94d}\u{200d}\u{937}",  // मैं हिन्दी सीख रहा हूँ। क्<ZWJ>ष
+                "\u{915}\u{940}\u{92e}\u{924} \u{967}\u{968}\u{969} \u{930}\u{941}\u{92a}\u{92f}\u{947} \u{939}\u{948} \u{1f600}",  // कीमत १२३ रुपये है 😀
+            ],
+            "ko": [
+                "\u{c548}\u{b155}\u{d558}\u{c138}\u{c694}, \u{c138}\u{acc4}! \u{c798} \u{c9c0}\u{b0b4}\u{c138}\u{c694}?",  // 안녕하세요, 세계! 잘 지내세요?
+                "\u{be60}\u{b978} \u{ac08}\u{c0c9} \u{c5ec}\u{c6b0}\u{ac00} \u{ac8c}\u{c73c}\u{b978} \u{ac1c}\u{b97c} \u{b6f0}\u{c5b4}\u{b118}\u{c2b5}\u{b2c8}\u{b2e4}.",  // 빠른 갈색 여우가 게으른 개를 뛰어넘습니다.
+                "\u{d55c}\u{ad6d}\u{c758} \u{c218}\u{b3c4}\u{b294} \u{c11c}\u{c6b8}\u{c785}\u{b2c8}\u{b2e4}.",  // 한국의 수도는 서울입니다.
+                "",
+                "\u{ac00}\u{aca9}\u{c740} 123\u{c6d0}\u{c785}\u{b2c8}\u{b2e4} \u{1f600} \u{3131}\u{3134}\u{3137}",  // 가격은 123원입니다 😀 ㄱㄴㄷ
+            ],
+        ]
+        table["vi"]![2] = table["vi"]![1].decomposedStringWithCanonicalMapping
+        table["ko"]![3] = table["ko"]![2].decomposedStringWithCanonicalMapping
+        return table
+    }()
+
+    private static let targets: [String: String] = [
+        "de": target,
+        "en": "The quick brown fox jumps over the lazy dog.",  // The quick brown fox jumps over the lazy dog.
+        "zh": "\u{654f}\u{6377}\u{7684}\u{68d5}\u{8272}\u{72d0}\u{72f8}\u{8df3}\u{8fc7}\u{4e86}\u{61d2}\u{72d7}\u{3002}",  // 敏捷的棕色狐狸跳过了懒狗。
+        "zh-Hant": "\u{654f}\u{6377}\u{7684}\u{68d5}\u{8272}\u{72d0}\u{72f8}\u{8df3}\u{904e}\u{4e86}\u{61f6}\u{72d7}\u{3002}",  // 敏捷的棕色狐狸跳過了懶狗。
+        "ja": "\u{7d20}\u{65e9}\u{3044}\u{8336}\u{8272}\u{306e}\u{72d0}\u{304c}\u{6020}\u{3051}\u{8005}\u{306e}\u{72ac}\u{3092}\u{98db}\u{3073}\u{8d8a}\u{3048}\u{308b}\u{3002}",  // 素早い茶色の狐が怠け者の犬を飛び越える。
+        "ar": "\u{627}\u{644}\u{62b}\u{639}\u{644}\u{628} \u{627}\u{644}\u{628}\u{646}\u{64a} \u{627}\u{644}\u{633}\u{631}\u{64a}\u{639} \u{64a}\u{642}\u{641}\u{632} \u{641}\u{648}\u{642} \u{627}\u{644}\u{643}\u{644}\u{628} \u{627}\u{644}\u{643}\u{633}\u{648}\u{644}.",  // الثعلب البني السريع يقفز فوق الكلب الكسول.
+        "vi": "Con c\u{e1}o n\u{e2}u nhanh nh\u{1eb9}n nh\u{1ea3}y qua con ch\u{f3} l\u{1b0}\u{1edd}i.",  // Con cáo nâu nhanh nhẹn nhảy qua con chó lười.
+        "th": "\u{e2a}\u{e38}\u{e19}\u{e31}\u{e02}\u{e08}\u{e34}\u{e49}\u{e07}\u{e08}\u{e2d}\u{e01}\u{e2a}\u{e35}\u{e19}\u{e49}\u{e33}\u{e15}\u{e32}\u{e25}\u{e01}\u{e23}\u{e30}\u{e42}\u{e14}\u{e14}\u{e02}\u{e49}\u{e32}\u{e21}\u{e2a}\u{e38}\u{e19}\u{e31}\u{e02}\u{e02}\u{e35}\u{e49}\u{e40}\u{e01}\u{e35}\u{e22}\u{e08}",  // สุนัขจิ้งจอกสีน้ำตาลกระโดดข้ามสุนัขขี้เกียจ
+        "hi": "\u{924}\u{947}\u{91c}\u{93c} \u{92d}\u{942}\u{930}\u{940} \u{932}\u{94b}\u{92e}\u{921}\u{93c}\u{940} \u{906}\u{932}\u{938}\u{940} \u{915}\u{941}\u{924}\u{94d}\u{924}\u{947} \u{915}\u{947} \u{90a}\u{92a}\u{930} \u{938}\u{947} \u{915}\u{942}\u{926} \u{91c}\u{93e}\u{924}\u{940} \u{939}\u{948}\u{964}",  // तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर से कूद जाती है।
+        "ko": "\u{be60}\u{b978} \u{ac08}\u{c0c9} \u{c5ec}\u{c6b0}\u{ac00} \u{ac8c}\u{c73c}\u{b978} \u{ac1c}\u{b97c} \u{b6f0}\u{c5b4}\u{b118}\u{c2b5}\u{b2c8}\u{b2e4}.",  // 빠른 갈색 여우가 게으른 개를 뛰어넘습니다.
+    ]
+
+    private struct ProbePair {
+        let weightsKey: String
+        let recordKey: String
+        let source: String
+        let target: String
+    }
+
+    private static let marianProbePairs = [
+        ProbePair(weightsKey: "IK_VAL_MARIAN_JA_EN", recordKey: "IK_PARITY_MARIAN_JA_EN", source: "ja", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_ZH_EN", recordKey: "IK_PARITY_MARIAN_ZH_EN", source: "zh", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_EN_ZH", recordKey: "IK_PARITY_MARIAN_EN_ZH", source: "en", target: "zh"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_EN_ZH", recordKey: "IK_PARITY_MARIAN_EN_ZH_HANT", source: "en", target: "zh-Hant"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_AR_EN", recordKey: "IK_PARITY_MARIAN_AR_EN", source: "ar", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_VI_EN", recordKey: "IK_PARITY_MARIAN_VI_EN", source: "vi", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_TH_EN", recordKey: "IK_PARITY_MARIAN_TH_EN", source: "th", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_HI_EN", recordKey: "IK_PARITY_MARIAN_HI_EN", source: "hi", target: "en"),
+        ProbePair(weightsKey: "IK_VAL_MARIAN_KO_EN", recordKey: "IK_PARITY_MARIAN_KO_EN", source: "ko", target: "en"),
+    ]
+
+    /// The pairs a multilingual release is probed on: every probe language into English, and English
+    /// into both Chinese scripts and Japanese.
+    private static func multilingualProbePairs(_ family: String, weightsKey: String, hant: Bool = true) -> [ProbePair] {
+        var pairs = ["ja", "zh", "ar", "vi", "th", "hi", "ko"].map {
+            ProbePair(weightsKey: weightsKey, recordKey: "IK_PARITY_\(family)_\($0.uppercased())_EN", source: $0, target: "en")
+        }
+        pairs.append(ProbePair(weightsKey: weightsKey, recordKey: "IK_PARITY_\(family)_EN_ZH", source: "en", target: "zh"))
+        if hant {
+            pairs.append(ProbePair(weightsKey: weightsKey, recordKey: "IK_PARITY_\(family)_EN_ZH_HANT", source: "en", target: "zh-Hant"))
+        }
+        pairs.append(ProbePair(weightsKey: weightsKey, recordKey: "IK_PARITY_\(family)_EN_JA", source: "en", target: "ja"))
+        return pairs
+    }
+
+    private func utf8(_ array: MLXArray) -> String {
+        String(decoding: array.asArray(Int32.self).map { UInt8(truncatingIfNeeded: $0) }, as: UTF8.self)
+    }
+
+    /// The oracle record for `key`, or nil when the key or its file is absent.
+    private func record(_ key: String) throws -> [String: MLXArray]? {
+        guard let path = NFKMLXValidationConfig.environment[key], FileManager.default.fileExists(atPath: path) else { return nil }
+        return try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
+    }
+
+    /// Gemma's vocabulary keeps a nukta letter in both its precomposed and decomposed spellings.
+    func testTheGemmaTokenizerKeepsCanonicallyEquivalentPiecesApart() throws {
+        let precomposed = "\u{95c}", decomposed = "\u{921}\u{93c}"
+        // Written as text: a Swift dictionary literal with both spellings traps on duplicate keys, the
+        // same equivalence the tokenizer must not apply.
+        let json = """
+        {"model": {"type": "BPE", "unk_token": "<unk>", "merges": [["\u{921}", "\u{93c}"]],
+                   "vocab": {"<unk>": 0, "\u{2581}": 1, "\u{921}": 2, "\u{93c}": 3, "\(precomposed)": 4, "\(decomposed)": 5}},
+         "added_tokens": []}
+        """
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("gemma-tokenizer-\(UUID().uuidString).json")
+        try Data(json.utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let tokenizer = try XCTUnwrap(NFKMLXGemmaTokenizer(tokenizerJSON: url))
+        XCTAssertEqual(tokenizer.encode(precomposed), [4])
+        XCTAssertEqual(tokenizer.encode(decomposed), [5], "the merge of the decomposed pair is its own piece")
+        XCTAssertEqual(tokenizer.decode([5]), decomposed)
+    }
+
+    func testMarianResolvesChineseMarkersOfAGroupRelease() {
+        XCTAssertEqual(Array(NFKMLXMarianTranslator.markerCandidates(for: "zh").prefix(4)), ["zho_Hans", "zho", "cmn_Hans", "cmn"])
+        XCTAssertEqual(NFKMLXMarianTranslator.markerCandidates(for: "zh-TW").first, "zho_Hant")
+        XCTAssertTrue(NFKMLXMarianTranslator.markerCandidates(for: "zh-TW").contains("cmn_Hant"))
+        XCTAssertTrue(NFKMLXMarianTranslator.markerCandidates(for: "zh-Hant-HK").contains("cmn_Hant"))
+        XCTAssertEqual(NFKMLXMarianTranslator.markerCandidates(for: "yue"), ["yue"])
+        XCTAssertEqual(NFKMLXMarianTranslator.markerCandidates(for: "de-AT"), ["deu", "de"])
+    }
+
+    func testTheBackendImpliesTheChineseScriptFromTheRegion() {
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh"), "Hans")
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh-CN"), "Hans")
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh-TW"), "Hant")
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh-HK"), "Hant")
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh-Hans-HK"), "Hans", "a script subtag wins over the region")
+        XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("sr-Latn"), "Latn")
+        XCTAssertNil(NFKMLXTranslationBackend.impliedScript("ja"))
+    }
+
+    func testMarianProbePairsMatchTheReference() throws {
+        try requireMLXRuntime()
+        var ran = 0
+        for pair in Self.marianProbePairs {
+            guard let loaded = try? release(pair.weightsKey, pair.recordKey) else { continue }
+            let (directory, record) = loaded
+            ran += 1
+            let translator = try NFKMLXMarian.translator(directoryURL: directory)
+            let sentences = Self.probes[pair.source]!
+            for (index, sentence) in sentences.enumerated() {
+                XCTAssertEqual(translator.sourceIds(for: sentence, target: pair.target), ints(record["tokens_\(index)"]!),
+                               "\(pair.recordKey) tokens of \(sentence)")
+            }
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 64
+            checkSeams(translator.net, encode: { translator.net.encode($0) },
+                       decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
+                       record: record, decoding: decoding, sourceIds: translator.sourceIds(for: sentences[1], target: pair.target),
+                       name: pair.recordKey)
+            var greedy = decoding
+            greedy.beams = 1
+            let greedyText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: greedy)
+            XCTAssertEqual(greedyText, utf8(record["greedy_text"]!), "\(pair.recordKey) greedy text")
+            let beamText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: decoding)
+            XCTAssertEqual(beamText, utf8(record["beam_text"]!), "\(pair.recordKey) beam text")
+            print("\(pair.recordKey):", greedyText)
+            let targetIds = translator.targetTokenizer.encode(Self.targets[pair.target]!, dummyPrefix: nil) + [translator.net.configuration.eosTokenId]
+            XCTAssertEqual(targetIds, ints(record["target_ids"]!), "\(pair.recordKey) target tokenization")
+            let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
+            XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) training loss")
+        }
+        if ran == 0 { throw XCTSkip("no IK_VAL_MARIAN_<pair> release with its IK_PARITY_MARIAN_<pair> record is present") }
+    }
+
+    func testM2M100ProbePairsMatchTheReference() throws {
+        try requireMLXRuntime()
+        let pairs = Self.multilingualProbePairs("M2M100", weightsKey: "IK_VAL_M2M100", hant: false)
+        let records = try pairs.compactMap { pair in try record(pair.recordKey).map { (pair, $0) } }
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_M2M100"], !records.isEmpty else {
+            throw XCTSkip("set IK_VAL_M2M100 and at least one IK_PARITY_M2M100_<pair> record")
+        }
+        let translator = try NFKMLXM2M100.translator(directoryURL: URL(fileURLWithPath: directory))
+        for (pair, record) in records {
+            let sentences = Self.probes[pair.source]!
+            let sourceCode = translator.code(for: pair.source)!
+            let targetCode = translator.code(for: pair.target)!
+            for (index, sentence) in sentences.enumerated() {
+                XCTAssertEqual(translator.sourceIds(for: sentence, source: sourceCode, target: targetCode), ints(record["tokens_\(index)"]!),
+                               "\(pair.recordKey) tokens of \(sentence)")
+            }
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 64
+            decoding.forcedFirstToken = translator.languageIds[targetCode]
+            checkSeams(translator.net, encode: { translator.net.encode($0) },
+                       decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
+                       record: record, decoding: decoding,
+                       sourceIds: translator.sourceIds(for: sentences[1], source: sourceCode, target: targetCode), name: pair.recordKey)
+            var greedy = decoding
+            greedy.beams = 1
+            let greedyText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: greedy)
+            XCTAssertEqual(greedyText, utf8(record["greedy_text"]!), "\(pair.recordKey) greedy text")
+            let beamText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: decoding)
+            XCTAssertEqual(beamText, utf8(record["beam_text"]!), "\(pair.recordKey) beam text")
+            print("\(pair.recordKey):", greedyText)
+            XCTAssertEqual([translator.languageIds[targetCode]!] + translator.tokenizer.encode(Self.targets[pair.target]!, dummyPrefix: nil) + [2],
+                           ints(record["target_ids"]!), "\(pair.recordKey) target tokenization")
+            let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
+            XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) training loss")
+        }
+    }
+
+    func testMADLADProbePairsMatchTheReference() throws {
+        try requireMLXRuntime()
+        let pairs = Self.multilingualProbePairs("MADLAD", weightsKey: "IK_VAL_MADLAD")
+        let records = try pairs.compactMap { pair in try record(pair.recordKey).map { (pair, $0) } }
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_MADLAD"], !records.isEmpty else {
+            throw XCTSkip("set IK_VAL_MADLAD and at least one IK_PARITY_MADLAD_<pair> record")
+        }
+        let translator = try NFKMLXMADLAD.translator(directoryURL: URL(fileURLWithPath: directory))
+        for (pair, record) in records {
+            let sentences = Self.probes[pair.source]!
+            for (index, sentence) in sentences.enumerated() {
+                XCTAssertEqual(translator.sourceIds(for: sentence, target: pair.target), ints(record["tokens_\(index)"]!),
+                               "\(pair.recordKey) tokens of \(sentence)")
+            }
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 64
+            checkSeams(translator.net, encode: { translator.net.encode($0) },
+                       decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
+                       record: record, decoding: decoding,
+                       sourceIds: translator.sourceIds(for: sentences[1], target: pair.target)!, name: pair.recordKey)
+            var greedy = decoding
+            greedy.beams = 1
+            let greedyText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: greedy)
+            XCTAssertEqual(greedyText, utf8(record["greedy_text"]!), "\(pair.recordKey) greedy text")
+            var beam = decoding
+            beam.beams = ints(record["beams"]!)[0]
+            let beamText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: beam)
+            XCTAssertEqual(beamText, utf8(record["beam_text"]!), "\(pair.recordKey) beam text")
+            print("\(pair.recordKey):", greedyText)
+            XCTAssertEqual(translator.segmenter.encode(Self.targets[pair.target]!) + [2], ints(record["target_ids"]!),
+                           "\(pair.recordKey) target tokenization")
+            let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
+            XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) training loss")
+        }
+    }
+
+    func testTranslateGemmaProbePairsMatchTheReference() throws {
+        try requireMLXRuntime()
+        let pairs = Self.multilingualProbePairs("TRANSLATEGEMMA", weightsKey: "IK_VAL_TRANSLATEGEMMA")
+        let records = try pairs.compactMap { pair in try record(pair.recordKey).map { (pair, $0) } }
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_TRANSLATEGEMMA"], !records.isEmpty else {
+            throw XCTSkip("set IK_VAL_TRANSLATEGEMMA and at least one IK_PARITY_TRANSLATEGEMMA_<pair> record")
+        }
+        let translator = try NFKMLXTranslateGemma.translator(directoryURL: URL(fileURLWithPath: directory), precision: .float32)
+        for (pair, record) in records {
+            let sentence = Self.probes[pair.source]![1]
+            let ids = translator.promptTokens(text: sentence, sourceCode: translator.code(for: pair.source)!, targetCode: translator.code(for: pair.target)!)
+            XCTAssertEqual(ids, ints(record["tokens"]!), "\(pair.recordKey) template ids")
+            let logits = translator.model.logits(tokens: ids, softTokens: nil)
+            let tail = logits[0, (ids.count - 16)..., 0...]
+            let logitCosine = cosine(tail, record["output"]!)
+            XCTAssertGreaterThan(logitCosine, 0.999, "\(pair.recordKey) logits")
+            let produced = try translator.generate(promptTokens: ids, maxTokens: 48)
+            let reference = ints(record["continuation"]!).filter { $0 != 1 && $0 != 106 }
+            XCTAssertEqual(produced, reference, "\(pair.recordKey) greedy continuation")
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 48
+            let text = try translator.translate(sentence, from: pair.source, to: pair.target, decoding: decoding)
+            XCTAssertEqual(text, utf8(record["greedy_text"]!).trimmingCharacters(in: .whitespacesAndNewlines), "\(pair.recordKey) greedy text")
+            print("\(pair.recordKey):", text, "| logit cosine \(logitCosine)")
+            let loss = NFKMLXTranslateGemmaObjective()(translator.model.decoder, record["tokens"]!, record["target_ids"]!)
+            XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) fine-tuning loss")
+        }
     }
 
     // MARK: Customization

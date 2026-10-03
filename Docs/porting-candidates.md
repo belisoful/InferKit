@@ -33,7 +33,9 @@ A candidate is scored on four axes:
 - **Novelty** — distance from an architecture InferKit already ports. A model that reduces to a covered
   decoder or encoder scores low, whatever its headline capability.
 - **License** — whether the weights are redistributable and commercially usable. Code license and weight
-  license differ often, and the weight license is the one that gates a redistributable toolkit.
+  license differ often. The toolkit is license agnostic: it downloads nothing it redistributes, and
+  compliance with a weight license is the consumer's. A restrictive license lowers a candidate's
+  priority and never blocks its port; the entry records the license so the consumer can read it.
 - **Reference** — whether a third-party implementation exists to measure parity against. The toolkit
   ports at exact reference parity, so a runnable oracle (HF `transformers`, HF `diffusers`, or the
   official repository) is a prerequisite, not a nicety.
