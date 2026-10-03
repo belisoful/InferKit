@@ -458,6 +458,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### Qwen3.5 follows transformers 5.17's delta rule
+
+- The Qwen3.5 linear attention widens its queries and keys to float32 before normalizing them, as
+  transformers 5.17's chunked delta rule does, so bfloat16 output moves to the 5.17 reference's.
+  Float32 output is unchanged.
+- `NFKMLXHybridConfiguration.normalizesKeysInFloat32` selects the order. False normalizes at the input's
+  type and then widens, as transformers 5.16 and earlier do; Open-Jev sets it, because its adapters
+  pin transformers 5.10.2.
+
 #### Qwen4-Exp's delta rule normalizes in float32
 
 - The Qwen4-Exp linear attention widens its queries and keys to float32 before normalizing them, as

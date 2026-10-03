@@ -765,11 +765,11 @@ final class NFKQwen4ExpLinearAttention: Module {
         // The delta rule reads and writes a unit-norm key space, widened to float32 and then normalized:
         // the reference's chunked rule normalizes after its cast, and the recurrence runs in float32.
         let queries = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., 0 ..< keyWidth]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
-            .asType(.float32))
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2),
+            widenedFirst: true)
         let keys = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
-            .asType(.float32))
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2),
+            widenedFirst: true)
         let values = mixed[0..., 0..., (2 * keyWidth)...]
             .reshaped([batch, length, c.linearValueHeadCount, c.linearValueHeadDimensions]).asType(.float32)
 

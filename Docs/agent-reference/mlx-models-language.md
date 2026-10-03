@@ -375,6 +375,13 @@ attention and feed-forward.
   recurrence is checked to be causal (appending tokens cannot change an earlier token's output).
   The one layout difference is the depthwise convolution: PyTorch stores `[channels, 1, kernel]` and
   MLX `[channels, kernel, 1]`, which the structural test compares as a loader would.
+  The delta rule widens its queries and keys to float32 before normalizing them, as transformers 5.17's
+  chunked rule does; 5.16 and earlier normalize at the input's type and then widen. The orders agree in
+  float32 and differ at bf16, where the 5.17 floor is 2.30e-05 against 5.16's 3.06e-05.
+  `normalizesKeysInFloat32` selects the order, and Open-Jev sets it false because its adapters pin
+  5.10.2. The bf16 records are `qwen35_4b_bf16_v517` / `qwen35_4b_f32_v517`; the float32 parity tests
+  keep their 5.16 records, which agree with 5.17's float32 to 2.4e-07 (5.17 also rewrote the chunked
+  solve).
   Qwen3.5-2B and -9B run under this decoder as Open-Jev's base (`NFKMLXOpenJev`, in
   `mlx-models-embeddings-retrieval.md`), which measured the 2B release through a LoRA adapter at
   float32: all 25 hidden states at worst cosine 0.9999999999956228. Those releases tokenize with the

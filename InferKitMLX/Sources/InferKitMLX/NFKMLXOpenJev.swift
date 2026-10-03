@@ -123,7 +123,10 @@ public struct NFKMLXOpenJevConfiguration: Sendable {
         let baseModel = model["model_id"] as? String ?? ""
         let size = baseModel.split(separator: "/").last?.split(separator: "-").dropFirst().joined(separator: "-") ?? ""
         let rank = (adapter["r"] as? NSNumber)?.intValue ?? (model["lora_rank"] as? NSNumber)?.intValue ?? 8
-        self.init(decoder: try NFKMLXHybridLanguage.configuration(fromHuggingFace: base.appendingPathComponent("config.json")),
+        var decoder = try NFKMLXHybridLanguage.configuration(fromHuggingFace: base.appendingPathComponent("config.json"))
+        // Open-Jev pins transformers 5.10.2, whose delta rule normalizes the queries and keys before widening them.
+        decoder.normalizesKeysInFloat32 = false
+        self.init(decoder: decoder,
                   temperature: (calibration["temperature"] as? NSNumber)?.floatValue ?? 1,
                   maxLength: (model["max_length"] as? NSNumber)?.intValue ?? 4096,
                   loraRank: rank,

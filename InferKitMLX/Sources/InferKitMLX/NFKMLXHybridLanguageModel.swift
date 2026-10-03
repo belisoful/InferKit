@@ -65,6 +65,11 @@ public struct NFKMLXHybridConfiguration: Sendable {
     /// One entry per layer. The releases place a full-attention layer every fourth.
     public var layerTypes: [NFKMLXHybridLayerKind]
 
+    /// Whether the delta rule widens its queries and keys to float32 before normalizing them, as
+    /// transformers' chunked rule does from 5.17. False normalizes them at the input's type and then
+    /// widens, as 5.16 and earlier do. The two differ only below float32. Introduced in InferKit 0.4.0.
+    public var normalizesKeysInFloat32: Bool = true
+
     public init(hiddenSize: Int = 5120, layerCount: Int = 64, intermediateSize: Int = 17408,
                 vocabularySize: Int = 248_320, rmsEpsilon: Float = 1e-6,
                 headCount: Int = 24, keyValueHeadCount: Int = 4, headDimensions: Int = 256,
@@ -278,6 +283,12 @@ final class NFKHybridLinearAttention: Module {
 
     /// The delta rule reads and writes a unit-norm key space: `x · rsqrt(Σx² + ε)` in the input's type,
     /// as the reference normalizes before widening, with torch's half-precision `rsqrt`.
+    /// `x` unit-normalized and widened to float32: normalized in float32 when `widenedFirst`, else at its
+    /// own type and then widened.
+    static func unitNorm(_ x: MLXArray, widenedFirst: Bool) -> MLXArray {
+        widenedFirst ? unitNorm(x.asType(.float32)) : unitNorm(x).asType(.float32)
+    }
+
     static func unitNorm(_ x: MLXArray) -> MLXArray {
         guard NFKReferenceRounding.isReduced(x) else {
             return x * rsqrt((x * x).sum(axis: -1, keepDims: true) + 1e-6)
@@ -340,9 +351,10 @@ final class NFKHybridLinearAttention: Module {
 
         // Key heads are shared across a group of value heads, as grouped-query attention shares them.
         let group = c.linearValueHeadCount / c.linearKeyHeadCount
+        let wide = c.normalizesKeysInFloat32
         let read = recurrence(
-            queries: Self.unitNorm(repeated(queries, count: group, axis: 2)).asType(.float32),
-            keys: Self.unitNorm(repeated(keys, count: group, axis: 2)).asType(.float32),
+            queries: Self.unitNorm(repeated(queries, count: group, axis: 2), widenedFirst: wide),
+            keys: Self.unitNorm(repeated(keys, count: group, axis: 2), widenedFirst: wide),
             values: values.asType(.float32), decay: decay, write: write).asType(x.dtype)
 
         let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,

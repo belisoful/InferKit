@@ -1060,11 +1060,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // MARK: The hybrid decoder
 
     // Qwen3.5-4B (`IK_VAL_QWEN3_5`): gated delta-rule layers, whose recurrence the reference runs in
-    // float32, and gated full attention, at bf16 against bf16 (`hf_layer_probe`, layers 0 and 3).
+    // float32, and gated full attention, at bf16 against bf16 (`hf_layer_probe` under transformers 5.17,
+    // layers 0 and 3), whose delta rule normalizes its queries and keys in float32.
     func testQwen35_4BInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN3_5"], "IK_VAL_QWEN3_5"))
-        let bf16 = try record("qwen35_4b_bf16.safetensors"), f32 = try record("qwen35_4b_f32.safetensors")
+        let bf16 = try record("qwen35_4b_bf16_v517.safetensors"), f32 = try record("qwen35_4b_f32_v517.safetensors")
         let geometry = try NFKMLXHybridLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
         let net = NFKMLXHybridLanguage.makeNet(geometry)
         try NFKMLXHybridLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
@@ -1096,7 +1097,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     func testQwen35_4BBlockPiecesMatchTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN3_5"], "IK_VAL_QWEN3_5"))
-        let probe = try record("qwen35_4b_bf16.safetensors")
+        let probe = try record("qwen35_4b_bf16_v517.safetensors")
         let geometry = try NFKMLXHybridLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
         let net = NFKMLXHybridLanguage.makeNet(geometry)
         try NFKMLXHybridLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
@@ -1116,11 +1117,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16) }
         let convolved = delta.convolved(try recorded("fn.causal_conv1d_fn.0.arg0").transposed(0, 2, 1))
         lines.append(try piece("conv1d + silu", convolved.transposed(0, 2, 1), probe, "fn.causal_conv1d_fn.0.out0"))
-        lines.append(try piece("unit norm", NFKHybridLinearAttention.unitNorm(try recorded("fn.l2norm.0.arg0")),
+        // The reference's `l2norm` runs inside its delta rule on float32 values, so its input is read unrounded.
+        lines.append(try piece("unit norm", NFKHybridLinearAttention.unitNorm(try XCTUnwrap(probe["fn.l2norm.0.arg0"])),
                                probe, "fn.l2norm.0.out0"))
         let read = delta.recurrence(
-            queries: NFKHybridLinearAttention.unitNorm(try recorded("fn.torch_chunk_gated_delta_rule.0.arg0")).asType(.float32),
-            keys: NFKHybridLinearAttention.unitNorm(try recorded("fn.torch_chunk_gated_delta_rule.0.arg1")).asType(.float32),
+            queries: NFKHybridLinearAttention.unitNorm(try recorded("fn.torch_chunk_gated_delta_rule.0.arg0"), widenedFirst: true),
+            keys: NFKHybridLinearAttention.unitNorm(try recorded("fn.torch_chunk_gated_delta_rule.0.arg1"), widenedFirst: true),
             values: try recorded("fn.torch_chunk_gated_delta_rule.0.arg2").asType(.float32),
             decay: exp(try XCTUnwrap(probe["fn.torch_chunk_gated_delta_rule.0.arg5"])),
             write: try XCTUnwrap(probe["fn.torch_chunk_gated_delta_rule.0.arg3"]))
