@@ -195,7 +195,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   levels as they come off the neck. Two traps: the query positional term is the original token embedding
   at every layer and again at the final attention (the running queries drift the masks without breaking
   anything visibly), and the reference shifts a click by half a pixel to the pixel's centre before
-  normalizing.
+  normalizing. The IoU head ends in a sigmoid (`iouUsesSigmoid`), as every released SAM 2 and SAM 2.1
+  configuration sets `iou_prediction_use_sigmoid`; the decoder oracle builds `MaskDecoder` with that
+  flag at its False default, so it records logits and the test compares their sigmoid. The port had
+  returned the logits until 2026-10-03, which the fine-tune's IoU term then scored against IoUs in 0…1.
   The video memory path is ported too, which completes the checkpoint: `NFKMLXSAM2MemoryEncoderNet`
   folds a frame's features and its predicted mask into a 64-channel memory, and
   `NFKMLXSAM2MemoryAttentionNet` conditions the next frame on that memory. Both are at reference parity

@@ -305,6 +305,7 @@ public enum NFKMLXWeights {
             try verifyCoverage(of: mapped, for: module, verifyShapes: verifyShapes)
         }
         module.update(parameters: ModuleParameters.unflattened(mapped))
+        NFKLinear.adopt(in: module)
         eval(module)
     }
 

@@ -77,10 +77,18 @@ final class NFKSAMPositionEncoding: Module {
         _gaussian.wrappedValue = MLXArray.zeros([2, dim / 2])
     }
 
-    /// `coords` `[..., 2]` in `0...1` → `[..., dim]`.
+    /// `coords` `[..., 2]` in `0...1` → `[..., dim]`. With a half-precision table the coordinates round
+    /// to its type first, as Sa2VA's SAM 2 casts them, and the product, the `2π` scaling, and each sine
+    /// and cosine round in turn.
     func callAsFunction(_ coords: MLXArray) -> MLXArray {
-        let scaled = (2 * coords - 1).matmul(gaussian) * (2 * Float.pi)
-        return concatenated([sin(scaled), cos(scaled)], axis: -1)
+        guard NFKReferenceRounding.isReduced(gaussian) else {
+            let scaled = (2 * coords - 1).matmul(gaussian) * (2 * Float.pi)
+            return concatenated([sin(scaled), cos(scaled)], axis: -1)
+        }
+        let projected = (2 * coords.asType(.float32) - 1).asType(gaussian.dtype).matmul(gaussian)
+        let scaled = NFKReferenceRounding.scaled(projected, by: 2 * Float.pi)
+        return concatenated([NFKReferenceRounding.wide(scaled) { sin($0) },
+                             NFKReferenceRounding.wide(scaled) { cos($0) }], axis: -1)
     }
 
     /// The positional encoding of the `h × w` grid, flattened to `[1, h*w, dim]`.
@@ -374,9 +382,14 @@ final class NFKSAMAttention: Module {
             proj(x).reshaped([batch, x.shape[1], heads, headDim]).transposed(0, 2, 1, 3)
         }
         let qh = split(q, qProj), kh = split(k, kProj), vh = split(v, vProj)
-        let scores = softmax(qh.matmul(kh.transposed(0, 1, 3, 2)) / sqrtf(Float(headDim)), axis: -1)
-        let context = scores.matmul(vh).transposed(0, 2, 1, 3).reshaped([batch, q.shape[1], inner])
-        return outProj(context)
+        let attended: MLXArray
+        if NFKReferenceRounding.isReduced(qh) {
+            attended = NFKReferenceRounding.flashAttention(queries: qh, keys: kh, values: vh,
+                                                           scale: 1 / sqrtf(Float(headDim)), mask: nil)
+        } else {
+            attended = softmax(qh.matmul(kh.transposed(0, 1, 3, 2)) / sqrtf(Float(headDim)), axis: -1).matmul(vh)
+        }
+        return outProj(attended.transposed(0, 2, 1, 3).reshaped([batch, q.shape[1], inner]))
     }
 }
 
@@ -396,13 +409,13 @@ final class NFKSAMTwoWayBlock: Module {
     init(dim: Int, heads: Int, skipFirstLayerPE: Bool = false) {
         self.skipFirstLayerPE = skipFirstLayerPE
         _selfAttn.wrappedValue = NFKSAMAttention(dim: dim, heads: heads)
-        _norm1.wrappedValue = LayerNorm(dimensions: dim)
+        _norm1.wrappedValue = NFKLayerNorm(dimensions: dim)
         _crossTokenImage.wrappedValue = NFKSAMAttention(dim: dim, heads: heads, downsample: 2)
-        _norm2.wrappedValue = LayerNorm(dimensions: dim)
+        _norm2.wrappedValue = NFKLayerNorm(dimensions: dim)
         // The reference block's MLP widens to 2048 (`mlp_dim`), eight times the embedding.
         _mlp.wrappedValue = NFKSAMMLP(dim: dim, hidden: dim * 8, out: dim, layers: 2)
-        _norm3.wrappedValue = LayerNorm(dimensions: dim)
-        _norm4.wrappedValue = LayerNorm(dimensions: dim)
+        _norm3.wrappedValue = NFKLayerNorm(dimensions: dim)
+        _norm4.wrappedValue = NFKLayerNorm(dimensions: dim)
         _crossImageToken.wrappedValue = NFKSAMAttention(dim: dim, heads: heads, downsample: 2)
     }
 

@@ -126,6 +126,20 @@ does this for every run by swapping each affected MLXNN convolution for
 own built on `valueAndGrad` calls `NFKMLXGradientSafeConvolution.install(in:)` around its steps and
 `restore()` after.
 
+### A biased `Linear` on one bfloat16 row rounds twice
+
+In mlx 0.32.2, `addmm` at bfloat16 rounds once, as torch's `linear` does, when the input has two or
+more rows. On a single row it takes a matrix-vector kernel that rounds the product and then the bias,
+so MLXNN's biased `Linear` on one row differs from one rounding in 64 to 80 of 256 outputs. torch 2.8
+and 2.14 round once at every row count from 1 to 64. The bfloat16 `matmul` alone rounds once at one row.
+
+Every single-row call is affected: a decode step's projections and small heads, such as SAM 2's
+hypernetworks and IoU head.
+
+**Rule:** a single bfloat16 row with a bias goes through the two-row path. `NFKLinear` doubles the row
+and keeps the first copy, which reads the weight once, and `NFKMLXWeights.apply` puts it in place of
+every plain biased `Linear` it loads. The probe is `testASingleRowBiasedLinearRoundsOnceInBFloat16`.
+
 ### A parent's `unfreeze()` makes a `BatchNorm`'s statistics trainable
 
 `BatchNorm` keeps `running_mean` and `running_var` frozen, and re-freezes them in its own `unfreeze`

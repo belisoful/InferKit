@@ -127,6 +127,52 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertEqual(againstOnce, 0, "a biased Linear rounds once, as torch's does")
     }
 
+    // MLX's `addmm` on one bf16 row rounds the product and then the bias, while torch's `linear` rounds
+    // once at every row count (measured: torch 2.8 and 2.14 agree with one rounding at 1 to 64 rows; MLX
+    // 0.32.2 differs in 86 of 256 at one row). `NFKLinear`, which every loaded biased Linear becomes,
+    // rounds once on one row, in any leading shape.
+    func testASingleRowBiasedLinearRoundsOnceInBFloat16() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(11)
+        let w = (MLXRandom.normal([256, 256]) * 0.05).asType(.bfloat16)
+        let b = (MLXRandom.normal([256]) * 0.1).asType(.bfloat16)
+        for shape in [[1, 256], [1, 1, 256], [256]] {
+            let x = MLXRandom.normal(shape).asType(.bfloat16)
+            let once = (matmul(x.asType(.float32).reshaped([1, -1]), w.asType(.float32).T) + b.asType(.float32))
+                .asType(.bfloat16).reshaped(Array(shape.dropLast()) + [256])
+            let mine = NFKLinear(weight: w, bias: b)(x)
+            let plain = Linear(weight: w, bias: b)(x)
+            eval(once, mine, plain)
+            XCTAssertEqual(mine.shape, once.shape)
+            let againstOnce = (mine .!= once).sum().item(Int.self), plainAgainstOnce = (plain .!= once).sum().item(Int.self)
+            print("VALIDATION bf16 primitives: single-row Linear \(shape) differs from one rounding in \(againstOnce) of 256 "
+                  + "(MLXNN's Linear: \(plainAgainstOnce))")
+            XCTAssertEqual(againstOnce, 0, "a single-row biased Linear rounds once, as torch's does")
+        }
+        final class Holder: Module {
+            @ModuleInfo(key: "projection") var projection: Linear
+            @ModuleInfo(key: "unbiased") var unbiased: Linear
+            @ModuleInfo(key: "stack") var stack: [Module]
+            override init() {
+                _projection.wrappedValue = Linear(256, 256)
+                _unbiased.wrappedValue = Linear(256, 256, bias: false)
+                _stack.wrappedValue = [Linear(256, 256), GELU(), Linear(256, 256)]
+            }
+        }
+        let holder = Holder()
+        holder.projection.freeze(keys: ["weight"])
+        XCTAssertFalse(holder.trainableParameters().flattened().map(\.0).contains("projection.weight"))
+        try NFKMLXWeights.apply([("projection.weight", w), ("projection.bias", b), ("unbiased.weight", w),
+                                 ("stack.0.weight", w), ("stack.0.bias", b), ("stack.2.weight", w), ("stack.2.bias", b)],
+                                to: holder)
+        XCTAssertTrue(holder.projection is NFKLinear, "a loaded biased Linear becomes NFKLinear")
+        XCTAssertFalse(holder.unbiased is NFKLinear, "an unbiased Linear has no bias to round apart")
+        XCTAssertTrue(holder.stack[0] is NFKLinear && holder.stack[1] is GELU && holder.stack[2] is NFKLinear,
+                      "a mixed array keeps its order")
+        XCTAssertFalse(holder.trainableParameters().flattened().map(\.0).contains("projection.weight"),
+                       "the replacement keeps what was frozen frozen")
+    }
+
     // An expert product through `gatherMM` at bf16, against the float32 product rounded once, which is
     // what torch's bf16 matmul returns.
     func testGatherMMRoundsOnceInBFloat16() throws {
@@ -1772,6 +1818,151 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         lines.append(try piece("gelu", NFKReferenceRounding.wide(input("mlp1.2.in")) { gelu($0) }, probe, "mlp1.2.out"))
         lines.append(try piece("fc2", projector.fc2(input("mlp1.3.in")), probe, "mlp1.3.out"))
         print("VALIDATION bf16 sa2va-1b pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    // Sa2VA-1B's SAM 2 grounding branch at bf16 against the release's own code at bf16
+    // (`sa2va_grounding_probe`, Hiera blocks 43 and 44 probed), from the reference's own grounding
+    // image and `[SEG]` embedding. The reference keeps the top-down neck level and the conditioned feature
+    // in float32 and rounds them once where the decoder casts its inputs to the positional encoding's type.
+    func testSa2VA1BGroundingInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (net, bf16, f32) = try sa2va1BGrounding()
+        let tracker = net.grounding.tracker
+        let encoder = tracker.imageEncoder
+        func nchw(_ x: MLXArray) -> MLXArray { x.transposed(0, 3, 1, 2) }
+        func nhwc(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).transposed(0, 2, 3, 1)
+        }
+        let image = try XCTUnwrap(bf16["g_pixel_values"]).transposed(0, 2, 3, 1)
+        let embedding = try XCTUnwrap(bf16["seg_embedding"]).asType(.bfloat16).reshaped([1, 1, -1])
+        let ends = encoder.trunk.configuration.stageEnds
+
+        let stages = encoder.trunk(image.asType(.bfloat16))
+        let levels = Array(encoder.neck(stages).dropLast(encoder.scalp))
+        XCTAssertTrue(arrayEqual(levels[2], net.grounding.imageLevels(image)[2]).item(Bool.self),
+                      "the grounding entry point casts and encodes alike")
+        let decoder = tracker.maskDecoder
+        let conditioned = levels[2] + tracker.noMemoryEmbedding.reshaped([1, 1, 1, -1])
+        let decoded = net.grounding.decode(levels: levels, languageEmbedding: embedding)
+        var states = zip(ends, stages).map { ("trunk stage end \($0.0)", $0.1) }
+        states += [("level 0, conv_s0", nchw(decoder.convS0(levels[0]))), ("level 1, conv_s1", nchw(decoder.convS1(levels[1]))),
+                   ("level 2", nchw(levels[2])), ("conditioned", nchw(conditioned)),
+                   ("ious", decoded.iou[0..., 1...]), ("masks", decoded.masks[0..., 1...]),
+                   ("best mask", net.grounding.segment(image: image, languageEmbedding: embedding).lowResolution)]
+        eval(states.map(\.1))
+        let keys = ends.map { "sam.trunk.\($0).out" }
+            + ["sam.backbone_fpn.0", "sam.backbone_fpn.1", "sam.backbone_fpn.2", "sam.conditioned", "ious", "low_res_multi", "low_res_best"]
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("sa2va-1b grounding", rows)
+
+        var isolated = [(String, MLXArray)]()
+        let boundaries = Set(ends + ends.dropLast().map { $0 + 1 } + [0]).sorted()
+        for index in boundaries {
+            isolated.append(("trunk block \(index)", encoder.trunk.blocks[index](try XCTUnwrap(bf16["sam.trunk.\(index).in"]).asType(.bfloat16))))
+        }
+        let recordedStages = try ends.map { try XCTUnwrap(bf16["sam.trunk.\($0).out"]).asType(.bfloat16) }
+        let neck = Array(encoder.neck(recordedStages).dropLast(encoder.scalp))
+        isolated += [("neck level 0, conv_s0", nchw(decoder.convS0(neck[0]))), ("neck level 1, conv_s1", nchw(decoder.convS1(neck[1]))),
+                     ("neck level 2", nchw(neck[2]))]
+        let recordedLevels = [try nhwc("sam.sam_mask_decoder.conv_s0.in"), try nhwc("sam.sam_mask_decoder.conv_s1.in"),
+                              try XCTUnwrap(bf16["sam.conditioned"]).transposed(0, 2, 3, 1)]
+        let isolatedDecode = net.grounding.decode(levels: recordedLevels, conditioned: recordedLevels[2],
+                                                  languageEmbedding: embedding)
+        isolated.append(("decoder masks", isolatedDecode.masks[0..., 1...]))
+        eval(isolated.map(\.1))
+        let isolatedKeys = boundaries.map { "sam.trunk.\($0).out" }
+            + ["sam.backbone_fpn.0", "sam.backbone_fpn.1", "sam.backbone_fpn.2", "low_res_multi"]
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("sa2va-1b grounding isolated", isolatedRows)
+        assertRoundingPlacement("sa2va-1b grounding", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // Each piece of Sa2VA-1B's grounding branch on the reference's own bf16 input: Hiera blocks 43 (global
+    // attention over 4,096 keys, in 512-key blocks) and 44 (query pooling into stage 4), the dense
+    // positional encoding, both two-way layers, the final attention, and the upscaling path.
+    func testSa2VA1BGroundingPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (net, probe, _) = try sa2va1BGrounding()
+        let tracker = net.grounding.tracker
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16) }
+        func nhwc(_ key: String) throws -> MLXArray { try input(key).transposed(0, 2, 3, 1) }
+        func nchw(_ x: MLXArray) -> MLXArray { x.transposed(0, 3, 1, 2) }
+        var lines = [String]()
+        for index in [43, 44] {
+            let block = tracker.imageEncoder.trunk.blocks[index]
+            let p = "\(index)."
+            lines.append("trunk block \(index)")
+            lines.append(try piece("norm1", block.norm1(input(p + "norm1.in")), probe, p + "norm1.out"))
+            lines.append(try piece("qkv", block.attn.qkv(input(p + "attn.qkv.in")), probe, p + "attn.qkv.out"))
+            let qkv = try input(p + "attn.qkv.out")
+            let (n, h, w) = (qkv.dim(0), qkv.dim(1), qkv.dim(2))
+            let projected = qkv.reshaped([n, h * w, 3, block.attn.heads, -1])
+            var queries = projected[0..., 0..., 0]
+            var (qh, qw) = (h, w)
+            if block.attn.poolsQueries {
+                let pooled = NFKMLXResample.maxPooled(queries.reshaped([n, h, w, -1]), kernel: 2, stride: 2)
+                (qh, qw) = (pooled.dim(1), pooled.dim(2))
+                queries = pooled.reshaped([n, qh * qw, block.attn.heads, -1])
+            }
+            let attended = NFKReferenceRounding.flashAttention(
+                queries: queries.transposed(0, 2, 1, 3), keys: projected[0..., 0..., 1].transposed(0, 2, 1, 3),
+                values: projected[0..., 0..., 2].transposed(0, 2, 1, 3), scale: pow(Float(queries.dim(3)), -0.5), mask: nil)
+            lines.append(try piece("attention (\(h * w) keys)", attended.transposed(0, 2, 1, 3).reshaped([n, qh, qw, -1]),
+                                   probe, p + "attn.proj.in"))
+            lines.append(try piece("proj", block.attn.proj(input(p + "attn.proj.in")), probe, p + "attn.proj.out"))
+            lines.append(try piece("attn", block.attn(input(p + "attn.in")), probe, p + "attn.out"))
+            lines.append(try piece("norm2", block.norm2(input(p + "norm2.in")), probe, p + "norm2.out"))
+            lines.append(try piece("gelu", NFKReferenceRounding.wide(input(p + "mlp.act.in")) { gelu($0) }, probe, p + "mlp.act.out"))
+            lines.append(try piece("mlp", block.mlp(input(p + "mlp.in")), probe, p + "mlp.out"))
+            lines.append(try piece("block", block(input(p + "block.in")), probe, p + "block.out"))
+        }
+        let grid = tracker.configuration.featureGrid
+        lines.append(try piece("dense positional", tracker.promptEncoder.positionEncoding.grid(grid, grid)[0].transposed(1, 0),
+                               probe, "sam.sam_prompt_encoder.pe_layer.out"))
+        let decoder = tracker.maskDecoder
+        let d = "sam.sam_mask_decoder."
+        for (index, layer) in decoder.layers.enumerated() {
+            let l = d + "transformer.layers.\(index)."
+            lines.append("two-way layer \(index)")
+            for (name, attention) in [("self_attn", layer.selfAttn), ("cross_attn_token_to_image", layer.crossTokenImage),
+                                      ("cross_attn_image_to_token", layer.crossImageToken)] {
+                lines.append(try piece(name, attention(input(l + name + ".q_proj.in"), input(l + name + ".k_proj.in"),
+                                                       input(l + name + ".v_proj.in")), probe, l + name + ".out"))
+            }
+            for (name, norm) in [("norm1", layer.norm1), ("norm2", layer.norm2), ("norm3", layer.norm3), ("norm4", layer.norm4)] {
+                lines.append(try piece(name, norm(input(l + name + ".in")), probe, l + name + ".out"))
+            }
+            lines.append(try piece("mlp", layer.mlp(input(l + "mlp.in")), probe, l + "mlp.out"))
+        }
+        let f = d + "transformer.final_attn_token_to_image."
+        lines.append(try piece("final attention", decoder.finalAttention(input(f + "q_proj.in"), input(f + "k_proj.in"),
+                                                                        input(f + "v_proj.in")), probe, f + "out"))
+        lines.append(try piece("norm_final_attn", decoder.normFinalAttention(input(d + "transformer.norm_final_attn.in")),
+                               probe, d + "transformer.norm_final_attn.out"))
+        let u = d + "output_upscaling."
+        lines.append(try piece("upscale1", nchw(decoder.upscale1(nhwc(u + "0.in"))), probe, u + "0.out"))
+        lines.append(try piece("LayerNorm2d", nchw(decoder.upscaleNorm(nhwc(u + "1.in"))), probe, u + "1.out"))
+        lines.append(try piece("gelu", NFKReferenceRounding.wide(input(u + "2.in")) { gelu($0) }, probe, u + "2.out"))
+        lines.append(try piece("upscale2", nchw(decoder.upscale2(nhwc(u + "3.in"))), probe, u + "3.out"))
+        for index in 0 ..< decoder.maskCount {
+            let key = d + "output_hypernetworks_mlps.\(index)."
+            lines.append(try piece("hypernetwork \(index)", decoder.hyper[index](input(key + "in")), probe, key + "out"))
+        }
+        let iouInput = try input(d + "iou_prediction_head.in")
+        lines.append(try piece("iou head", decoder.iouUsesSigmoid ? NFKReferenceRounding.sigmoid(decoder.iouHead(iouInput))
+                                                                   : decoder.iouHead(iouInput),
+                               probe, d + "iou_prediction_head.out"))
+        print("VALIDATION bf16 sa2va-1b grounding pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    /// Sa2VA-1B at bf16 with both grounding records.
+    private func sa2va1BGrounding() throws -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_1B"], "IK_VAL_SA2VA_1B"))
+        let bf16 = try record("sa2va_1b_sam2_bf16.safetensors")
+        let f32 = try record("sa2va_1b_sam2_f32.safetensors")
+        let net = NFKMLXSa2VANet(try NFKMLXSa2VANet.configuration(fromDirectory: directory))
+        try net.loadWeights(fromDirectory: directory, dtype: .bfloat16)
+        return (net, bf16, f32)
     }
 
     /// Sa2VA-1B at bf16, as ``NFKMLXSa2VA/backend(directoryURL:)`` loads it, with both records.

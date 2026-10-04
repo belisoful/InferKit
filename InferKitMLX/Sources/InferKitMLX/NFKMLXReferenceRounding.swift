@@ -172,22 +172,44 @@ enum NFKReferenceRounding {
         return matmul(softmax(scores, axis: -1), values.asType(.float32)).asType(queries.dtype)
     }
 
-    /// torch's CPU flash `scaled_dot_product_attention` on half-precision operands over one key block
-    /// (up to 512 keys): the scores formed and scaled in float32, the mask added, the row max subtracted
-    /// and exponentiated in float32, the exponentials rounded to the operands' type for the product with
-    /// the values while their float32 sum normalizes, and the output rounded once. A float32 input takes
-    /// the fused kernel.
+    /// torch's CPU flash `scaled_dot_product_attention` on half-precision operands, which walks the keys
+    /// in blocks of `keyBlock` (512): each block's scores formed and scaled in float32 with the mask
+    /// added, the running row max and the float32 sum of the exponentials updated, the exponentials
+    /// rounded to the operands' type for the product with the values, and the float32 accumulator
+    /// rescaled when the max moves; the output divides by the sum and rounds once. A float32 input
+    /// takes the fused kernel.
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
-                               mask: MLXArray?) -> MLXArray {
+                               mask: MLXArray?, keyBlock: Int = 512) -> MLXArray {
         guard isReduced(queries) else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values,
                                                      scale: scale, mask: mask)
         }
-        var scores = matmul(queries.asType(.float32), keys.asType(.float32).swappedAxes(-1, -2)) * scale
-        if let mask { scores = scores + mask.asType(.float32) }
-        let exponentials = exp(scores - scores.max(axis: -1, keepDims: true))
-        let weighted = matmul(exponentials.asType(queries.dtype).asType(.float32), values.asType(.float32))
-        return (weighted / exponentials.sum(axis: -1, keepDims: true)).asType(queries.dtype)
+        let wideQueries = queries.asType(.float32)
+        let wideKeys = keys.asType(.float32), wideValues = values.asType(.float32)
+        let wideMask = mask?.asType(.float32)
+        let length = keys.dim(-2)
+        var maximum: MLXArray?, total: MLXArray?, accumulated: MLXArray?
+        for start in stride(from: 0, to: length, by: keyBlock) {
+            let block = start ..< min(start + keyBlock, length)
+            var scores = matmul(wideQueries, wideKeys[.ellipsis, block, 0...].swappedAxes(-1, -2)) * scale
+            if let wideMask {
+                scores = scores + (wideMask.dim(-1) == length ? wideMask[.ellipsis, block] : wideMask)
+            }
+            let blockMaximum = scores.max(axis: -1, keepDims: true)
+            let updated = maximum.map { MLX.maximum($0, blockMaximum) } ?? blockMaximum
+            let exponentials = exp(scores - updated)
+            let product = matmul(exponentials.asType(queries.dtype).asType(.float32), wideValues[.ellipsis, block, 0...])
+            if let previous = maximum, let sum = total, let running = accumulated {
+                let correction = exp(previous - updated)
+                total = sum * correction + exponentials.sum(axis: -1, keepDims: true)
+                accumulated = running * correction + product
+            } else {
+                total = exponentials.sum(axis: -1, keepDims: true)
+                accumulated = product
+            }
+            maximum = updated
+        }
+        return (accumulated! / total!).asType(queries.dtype)
     }
 
     /// The `active` experts a router keeps from `scores` `[..., experts]`: the given `forced` choice
@@ -338,6 +360,60 @@ final class NFKConv1d: Conv1d {
                        dilation: dilation, groups: groups)
         if let bias { y = y + bias.asType(.float32) }
         return y.asType(x.dtype)
+    }
+}
+
+/// MLXNN's biased `Linear`, rounding once on a half-precision single row as torch's `linear` does.
+/// MLX's `addmm` on one row takes a matrix-vector kernel that rounds the product and then the bias;
+/// from two rows it rounds once. A single row is therefore doubled and the first copy kept, which
+/// reads the weight once. Every other input takes MLXNN's path unchanged. ``NFKMLXWeights/apply(_:to:strict:verifyShapes:)``
+/// puts this in place of every plain biased `Linear` it loads.
+final class NFKLinear: Linear {
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard let bias, NFKReferenceRounding.isReduced(x), x.ndim >= 1, x.size == x.dim(-1) else {
+            return super.callAsFunction(x)
+        }
+        let row = x.reshaped([1, -1])
+        let doubled = addMM(bias, concatenated([row, row], axis: 0), weight.T)
+        return doubled[0 ..< 1].reshaped(Array(x.shape.dropLast()) + [weight.dim(0)])
+    }
+
+    /// `module` with each plain biased `Linear` under it replaced by one of these on the same arrays,
+    /// keeping its training mode and its frozen parameters frozen. Each is placed through the module
+    /// that owns it, since MLX rebuilds a mixed module array wrongly from a whole-tree update. A layer
+    /// reached by two paths gets one replacement, so a shared layer stays shared.
+    static func adopt(in module: Module) {
+        var replaced = [ObjectIdentifier: NFKLinear]()
+        for (path, child) in module.leafModules().flattened() {
+            guard type(of: child) == Linear.self, let linear = child as? Linear, linear.bias != nil else { continue }
+            let replacement = replaced[ObjectIdentifier(linear)] ?? {
+                let made = NFKLinear(weight: linear.weight, bias: linear.bias)
+                made.train(linear.training)
+                let trainable = Set(linear.trainableParameters().flattened().map(\.0))
+                let frozen = linear.parameters().flattened().map(\.0).filter { !trainable.contains($0) }
+                if !frozen.isEmpty { made.freeze(recursive: false, keys: frozen) }
+                return made
+            }()
+            replaced[ObjectIdentifier(linear)] = replacement
+            // A layer inside an array nested in another cannot be placed; it keeps MLXNN's rounding.
+            try? NFKMLXModuleReplacement.place(replacement, at: path, in: module)
+        }
+    }
+}
+
+/// A channel layer norm written out as the detectron2 `LayerNorm2d` SAM uses: mean, centered square,
+/// mean, `sqrt(s + eps)`, divide, scale, shift, each a separate torch operation that rounds on a
+/// half-precision input. Channels are last here. A float32 input takes MLXNN's fused norm.
+final class NFKLayerNorm2d: LayerNorm {
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else { return super.callAsFunction(x) }
+        let type = x.dtype
+        let centered = x - NFKReferenceRounding.mean(x, axis: -1)
+        let variance = NFKReferenceRounding.mean(centered * centered, axis: -1)
+        let deviation = NFKReferenceRounding.wide((variance.asType(.float32) + eps).asType(type)) { sqrt($0) }
+        let normalized = centered / deviation
+        guard let weight, let bias else { return normalized }
+        return weight.asType(type) * normalized + bias.asType(type)
     }
 }
 

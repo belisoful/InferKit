@@ -218,7 +218,10 @@ byte-identical.
   default CPU backend for a half-precision input is its flash kernel, which diffusers and the MiniMax
   Music 3 depth decoder reach: `flashAttention` forms the scores, the row max and the exponentials in
   float32, rounds the exponentials to the operands' type for the product with the values, divides by
-  their float32 sum, and rounds once. That form is one key block, up to 512 keys.
+  their float32 sum, and rounds once. Past 512 keys the kernel walks the keys in 512-key blocks,
+  keeping a float32 running max and sum and rescaling its float32 accumulator, and `flashAttention`
+  does the same (measured exact on SAM 2 Hiera's 4,096-key global block, 890 of 2.4M elements
+  differing at the float32 noise of `exp`).
 - A Swish written as `x * torch.sigmoid(x)` rounds the sigmoid and then the product (`swish`, Phi-4's
   Conformer). `F.silu` rounds once.
 - diffusers rotates queries and keys in float32 and rounds once (FLUX, FLUX.2, Z-Image, Wan). Wan's

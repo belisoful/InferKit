@@ -540,19 +540,40 @@ public final class NFKSa2VAGroundingEncoder: Module {
 
     func segment(image: MLXArray, languageEmbedding: MLXArray)
         -> (highResolution: MLXArray, lowResolution: MLXArray) {
-        segment(levels: tracker.imageEncoder.features(image), languageEmbedding: languageEmbedding)
+        segment(levels: imageLevels(image), languageEmbedding: languageEmbedding)
     }
 
-    /// The image's feature levels, computed once for every object a step segments.
-    func imageLevels(_ image: MLXArray) -> [MLXArray] { tracker.imageEncoder.features(image) }
+    /// The image's feature levels, computed once for every object a step segments. The image is cast to
+    /// the encoder's weight type, as the release casts the grounding pixels.
+    func imageLevels(_ image: MLXArray) -> [MLXArray] {
+        tracker.imageEncoder.features(image.asType(NFKReferenceRounding.parameterType(of: tracker.imageEncoder)))
+    }
 
     /// ``segment(image:languageEmbedding:)`` from already-computed feature levels.
     func segment(levels: [MLXArray], languageEmbedding: MLXArray)
         -> (highResolution: MLXArray, lowResolution: MLXArray) {
+        let decoded = decode(levels: levels, languageEmbedding: languageEmbedding)
+
+        // Multimask: three candidate masks in slots 1…3, choose the one the decoder scores highest.
+        // No object-score suppression — Sa2VA leaves the mask untouched.
+        let candidateIoU = decoded.iou[0..., 1...]
+        let best = argMax(candidateIoU, axis: -1).item(Int.self)
+        // The reference widens the masks before it upsamples them.
+        let low = decoded.masks[0..., 1 + best].asType(.float32)       // [1, grid, grid]
+        let high = NFKMLXResample.resizeBilinear(
+            low.expandedDimensions(axis: 3),
+            height: configuration.imageSize, width: configuration.imageSize)
+        return (high.squeezed(axis: 3), low)
+    }
+
+    /// The decoder's every mask `[1, slots, grid, grid]` and IoU `[1, slots]` for the feature levels,
+    /// finest first. `conditioned` is the top level with `no_mem_embed` added, computed from the levels
+    /// when nil.
+    func decode(levels: [MLXArray], conditioned: MLXArray? = nil, languageEmbedding: MLXArray)
+        -> (masks: MLXArray, iou: MLXArray) {
         let hidden = configuration.hiddenDimensions
         let grid = configuration.featureGrid
-        let conditioned = levels[levels.count - 1]
-            + tracker.noMemoryEmbedding.reshaped([1, 1, 1, hidden])
+        let top = conditioned ?? levels[levels.count - 1] + tracker.noMemoryEmbedding.reshaped([1, 1, 1, hidden])
 
         // The empty point the reference pads with, then the `[SEG]` token concatenated onto the sparse
         // prompt exactly as `_forward_sam_heads` does.
@@ -560,17 +581,8 @@ public final class NFKSa2VAGroundingEncoder: Module {
         let sparse = concatenated([emptyPoint, languageEmbedding], axis: 1)
         let dense = tracker.promptEncoder.dense(grid: grid)
         let positional = tracker.promptEncoder.positionEncoding.grid(grid, grid)
-        let decoded = tracker.maskDecoder(features: conditioned, positional: positional, sparse: sparse,
+        let decoded = tracker.maskDecoder(features: top, positional: positional, sparse: sparse,
                                           dense: dense, highResolution: Array(levels.dropLast()))
-
-        // Multimask: three candidate masks in slots 1…3, choose the one the decoder scores highest.
-        // No object-score suppression — Sa2VA leaves the mask untouched.
-        let candidateIoU = decoded.iou[0..., 1...]
-        let best = argMax(candidateIoU, axis: -1).item(Int.self)
-        let low = decoded.masks[0..., 1 + best]                        // [1, grid, grid]
-        let high = NFKMLXResample.resizeBilinear(
-            low.expandedDimensions(axis: 3),
-            height: configuration.imageSize, width: configuration.imageSize)
-        return (high.squeezed(axis: 3), low)
+        return (decoded.masks, decoded.iou)
     }
 }

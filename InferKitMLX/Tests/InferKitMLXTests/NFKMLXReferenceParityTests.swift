@@ -5447,6 +5447,14 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             print("VALIDATION PARITY sam2-decoder: object score \(mine) vs \(theirs)")
             XCTAssertEqual(Double(mine), Double(theirs), accuracy: 0.01, "the object score matches")
         }
+        // The oracle's MaskDecoder leaves `iou_prediction_use_sigmoid` at its False default, so it
+        // records logits; every released configuration sets it True, as the port does.
+        if let referenceIoU = arrays["iou"] {
+            let mine = iou[0, 1...].reshaped([-1]).asArray(Float.self).map(Double.init)
+            let theirs = sigmoid(referenceIoU).reshaped([-1]).asArray(Float.self).map(Double.init)
+            print("VALIDATION PARITY sam2-decoder: IoU \(mine) vs \(theirs)")
+            for (a, b) in zip(mine, theirs) { XCTAssertEqual(a, b, accuracy: 1e-4, "the IoU estimate matches") }
+        }
     }
 
     // SAM 2's video memory path: the encoder that folds a frame and its mask into a memory, and the

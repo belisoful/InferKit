@@ -12522,6 +12522,122 @@ def run_sa2va_probe(image, checkpoint):
     return out.logits[0, -len(answer_ids) - 1:].float().contiguous()
 
 
+def run_sa2va_grounding_probe(image, checkpoint):
+    """Sa2VA's SAM 2 grounding branch at bf16 or on its float32 floor, seam by seam, with each recorded
+    tensor's dtype, because the release's SAM 2 mixes them (its FPN neck upsamples in float32). The load,
+    the plate, and the teacher-forced answer are `sa2va_probe`'s (`IK_PROBE_DTYPE`, the float32 run on
+    bf16-rounded parameters); the grounding image is cast to the run's dtype as `predict_forward` casts
+    it, and the `[SEG]` embedding comes from the run's own decoder. Records `g_pixel_values`,
+    `seg_embedding`, `sam.trunk.<i>.in` / `.out` (whole tensors) for each Hiera block that starts or ends
+    a stage, every submodule of the `IK_PROBE_LAYERS` blocks (default the stage starts) under
+    `hf_layer_probe`'s keys (`<i>.<name>`), every mask-decoder submodule and the dense positional encoding
+    as `sam.<name>.in` / `.out`, `sam.backbone_fpn.<l>` after `forward_image`, `sam.conditioned`, and the
+    decoder's `low_res_multi`,
+    `ious`, and `low_res_best`; `<key>.dtype` is 1 where the tensor was bf16. Returns `low_res_best`.
+    Runs under the `llm` oracle env. `image` unused."""
+    import sys
+    from PIL import Image
+    from transformers import AutoModel
+
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    dtype = torch.bfloat16 if bf16 else torch.float32
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=dtype, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    if not bf16:
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.data = parameter.data.to(torch.bfloat16).float()
+    tok = _release_tokenizer(checkpoint, use_fast=True)
+    model.preparing_for_generation(tokenizer=tok, torch_dtype=dtype)
+    IMG_CTX, SEG = model.img_context_token_id, model.seg_token_idx
+    mod = sys.modules[type(model).__module__]
+
+    images = mod.dynamic_preprocess(plate, 1, model.max_dynamic_patch, model.image_size, model.use_thumbnail)
+    pixel_values = torch.stack([model.transformer(im) for im in images]).to(torch.bfloat16).to(dtype)
+    num_image_tokens = pixel_values.shape[0] * model.patch_token
+    g_np = model.extra_image_processor.apply_image(np.array(plate))
+    g_pixel = torch.from_numpy(g_np).permute(2, 0, 1).contiguous()
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g_pixel)]).to(torch.bfloat16).to(dtype)
+    text = "<image>Please segment the bright object.".replace(
+        "<image>", f"{model.IMG_START_TOKEN}{model.IMG_CONTEXT_TOKEN * num_image_tokens}{model.IMG_END_TOKEN}")
+    prompt_text = model.template["INSTRUCTION"].format(input=text, round=1, bot_name=model.bot_name)
+    ids = torch.tensor(tok.encode(prompt_text) + tok.encode("Sure, it is [SEG].", add_special_tokens=False)).unsqueeze(0)
+
+    extra = {}
+    def keep(key, value):
+        extra[key] = value.detach().float().clone().contiguous()
+        extra[f"{key}.dtype"] = torch.tensor([1 if value.dtype == torch.bfloat16 else 0], dtype=torch.int32)
+
+    sam = model.grounding_encoder.sam2_model
+    trunk = sam.image_encoder.trunk
+    ends = list(trunk.stage_ends)
+    starts = [0] + [e + 1 for e in ends[:-1]]
+    for index in sorted(set(starts + ends)):
+        block = trunk.blocks[index]
+        block.register_forward_pre_hook(lambda m, args, index=index: keep(f"sam.trunk.{index}.in", args[0]) and None)
+        block.register_forward_hook(lambda m, args, output, index=index: keep(f"sam.trunk.{index}.out", output) and None)
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", ",".join(map(str, starts))).split(",")]
+    for index in probed:
+        for name, module in trunk.blocks[index].named_modules():
+            label = f"{index}.{name}" if name else f"{index}.block"
+            def hook(m, args, output, label=label):
+                if args and torch.is_tensor(args[0]):
+                    keep(f"{label}.in", args[0])
+                out = output[0] if isinstance(output, tuple) else output
+                if torch.is_tensor(out):
+                    keep(f"{label}.out", out)
+            module.register_forward_hook(hook)
+    for name, module in sam.named_modules():
+        if not (name.startswith("sam_mask_decoder") or name == "sam_prompt_encoder.pe_layer"):
+            continue
+        def hook(m, args, output, name=name):
+            if args and torch.is_tensor(args[0]):
+                keep(f"sam.{name}.in", args[0])
+            out = output[0] if isinstance(output, tuple) else output
+            if torch.is_tensor(out):
+                keep(f"sam.{name}.out", out)
+        module.register_forward_hook(hook)
+
+    with torch.no_grad():
+        vit_embeds = model.extract_feature(pixel_values)
+        embeds = model.language_model.get_input_embeddings()(ids).clone()
+        B, N, Cn = embeds.shape
+        flat = embeds.reshape(B * N, Cn)
+        flat[(ids.reshape(B * N) == IMG_CTX)] = vit_embeds.reshape(-1, Cn).to(flat.dtype)
+        out = model.language_model(inputs_embeds=flat.reshape(B, N, Cn), output_hidden_states=True, return_dict=True)
+        position = int((ids[0] == SEG).nonzero()[0])
+        seg_embedding = model.text_hidden_fcs(out.hidden_states[-1][0][position].unsqueeze(0))
+
+        backbone_out = sam.forward_image(g_pixel)
+        for level, feature in enumerate(backbone_out["backbone_fpn"]):
+            keep(f"sam.backbone_fpn.{level}", feature)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s) for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        sam_out = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                         high_res_features=high_res, multimask_output=True,
+                                         language_embd=seg_embedding.unsqueeze(0))
+    keep("g_pixel_values", g_pixel)
+    keep("seg_embedding", seg_embedding)
+    keep("sam.conditioned", conditioned)
+    keep("low_res_multi", sam_out[0])
+    keep("ious", sam_out[2])
+    keep("low_res_best", sam_out[3])
+    globals()["_extra"] = extra
+    return sam_out[3].float().contiguous()
+
+
 def run_sa2va_teacher(image, checkpoint):
     """Sa2VA with the answer teacher-forced rather than generated, for a release cut to its first
     decoder layers (`truncate.py`), whose shortened decoder cannot be expected to answer with `[SEG]`.
@@ -19615,7 +19731,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

@@ -70,7 +70,7 @@ final class NFKSAM2MLP: Module {
         _layers.wrappedValue = [Linear(dimensions, hidden), Linear(hidden, dimensions)]
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { layers[1](gelu(layers[0](x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { layers[1](NFKReferenceRounding.wide(layers[0](x)) { gelu($0) }) }
 }
 
 /// Multi-scale attention: one fused projection for queries, keys, and values, with the queries
@@ -106,9 +106,17 @@ final class NFKSAM2Attention: Module {
 
         let headDimensions = queries.shape[3]
         let scale = pow(Float(headDimensions), -0.5)
-        let attention = softmax(matmul(queries.transposed(0, 2, 1, 3),
-                                       keys.transposed(0, 2, 3, 1)) * scale, axis: -1)
-        let attended = matmul(attention, values.transposed(0, 2, 1, 3))
+        let attended: MLXArray
+        if NFKReferenceRounding.isReduced(queries) {
+            // The reference calls torch's default attention, the CPU flash kernel at half precision.
+            attended = NFKReferenceRounding.flashAttention(
+                queries: queries.transposed(0, 2, 1, 3), keys: keys.transposed(0, 2, 1, 3),
+                values: values.transposed(0, 2, 1, 3), scale: scale, mask: nil)
+        } else {
+            let attention = softmax(matmul(queries.transposed(0, 2, 1, 3),
+                                           keys.transposed(0, 2, 3, 1)) * scale, axis: -1)
+            attended = matmul(attention, values.transposed(0, 2, 1, 3))
+        }
         return proj(attended.transposed(0, 2, 1, 3).reshaped([batch, qh, qw, -1]))
     }
 }
@@ -125,10 +133,10 @@ final class NFKSAM2Block: Module {
     let poolsQueries: Bool
 
     init(dimensions: Int, outDimensions: Int, heads: Int, windowSize: Int, poolsQueries: Bool) {
-        _norm1.wrappedValue = LayerNorm(dimensions: dimensions, eps: 1e-6)
+        _norm1.wrappedValue = NFKLayerNorm(dimensions: dimensions, eps: 1e-6)
         _attn.wrappedValue = NFKSAM2Attention(dimensions: dimensions, outDimensions: outDimensions,
                                               heads: heads, poolsQueries: poolsQueries)
-        _norm2.wrappedValue = LayerNorm(dimensions: outDimensions, eps: 1e-6)
+        _norm2.wrappedValue = NFKLayerNorm(dimensions: outDimensions, eps: 1e-6)
         _mlp.wrappedValue = NFKSAM2MLP(dimensions: outDimensions, hidden: outDimensions * 4)
         if dimensions != outDimensions {
             _proj.wrappedValue = Linear(dimensions, outDimensions)
@@ -271,7 +279,7 @@ public struct NFKMLXSAM2Configuration: Sendable {
 /// The Hiera trunk: a patch embedding, a resampled position grid, and the block stack, returning the
 /// feature map at the end of each stage.
 final class NFKMLXSAM2Trunk: Module {
-    @ModuleInfo(key: "patch_embed") var patchEmbed: Conv2d
+    @ModuleInfo(key: "patch_embed") var patchEmbed: NFKConv2d
     @ParameterInfo(key: "pos_embed") var posEmbed: MLXArray
     @ParameterInfo(key: "pos_embed_window") var posEmbedWindow: MLXArray
     @ModuleInfo(key: "blocks") var blocks: [NFKSAM2Block]
@@ -280,7 +288,7 @@ final class NFKMLXSAM2Trunk: Module {
 
     init(_ c: NFKMLXSAM2Configuration) {
         configuration = c
-        _patchEmbed.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.embedDimensions,
+        _patchEmbed.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.embedDimensions,
                                           kernelSize: 7, stride: 4, padding: 3)
         _posEmbed.wrappedValue = MLXArray.zeros([1, c.backgroundWindow, c.backgroundWindow, c.embedDimensions])
         _posEmbedWindow.wrappedValue = MLXArray.zeros([1, c.windowSpec[0], c.windowSpec[0], c.embedDimensions])
@@ -312,9 +320,10 @@ final class NFKMLXSAM2Trunk: Module {
         _blocks.wrappedValue = built
     }
 
-    /// The learned grid resampled to the patch grid, plus the window grid tiled over it.
+    /// The learned grid resampled to the patch grid, plus the window grid tiled over it. A
+    /// half-precision table resamples in float32 and rounds once, as torch's bicubic does.
     func positionEmbedding(height: Int, width: Int) -> MLXArray {
-        let resampled = NFKMLXBicubic.resize(posEmbed, height: height, width: width)
+        let resampled = NFKMLXBicubic.resize(posEmbed, height: height, width: width).asType(posEmbed.dtype)
         let window = posEmbedWindow
         return resampled + tiled(window, repetitions: [1, height / window.shape[1],
                                                        width / window.shape[2], 1])
@@ -338,13 +347,13 @@ final class NFKMLXSAM2Trunk: Module {
 
 /// The FPN neck: a 1×1 projection per captured stage, fused top-down on the deeper levels only.
 final class NFKMLXSAM2Neck: Module {
-    @ModuleInfo(key: "convs") var convs: [Conv2d]
+    @ModuleInfo(key: "convs") var convs: [NFKConv2d]
     /// Levels that receive the coarser level's features; the finer ones stay lateral-only.
     let topDownLevels: Set<Int>
 
     init(channels: [Int], outChannels: Int, topDownLevels: Set<Int> = [2, 3]) {
         _convs.wrappedValue = channels.map {
-            Conv2d(inputChannels: $0, outputChannels: outChannels, kernelSize: 1)
+            NFKConv2d(inputChannels: $0, outputChannels: outChannels, kernelSize: 1)
         }
         self.topDownLevels = topDownLevels
     }
@@ -358,7 +367,8 @@ final class NFKMLXSAM2Neck: Module {
             // The convolutions are stored coarse-to-fine while the features arrive fine-to-coarse.
             let lateral = convs[last - level](features[level])
             if topDownLevels.contains(level), let prior = previous {
-                previous = lateral + NFKMLXResample.upsampleNearest(prior, scale: 2)
+                // The reference upsamples in float32, and the sum stays float32 even at half precision.
+                previous = lateral + NFKMLXResample.upsampleNearest(prior.asType(.float32), scale: 2)
             } else {
                 previous = lateral
             }
@@ -581,20 +591,25 @@ final class NFKMLXSAM2Decoder: Module {
     @ParameterInfo(key: "mask_tokens") var maskTokens: MLXArray
     @ModuleInfo(key: "transformer_layers") var layers: [NFKSAMTwoWayBlock]
     @ModuleInfo(key: "final_attn_token_to_image") var finalAttention: NFKSAMAttention
-    @ModuleInfo(key: "norm_final_attn") var normFinalAttention: LayerNorm
+    @ModuleInfo(key: "norm_final_attn") var normFinalAttention: NFKLayerNorm
+    // torch's `conv_transpose2d` rounds the bias apart at half precision, as MLX's does.
     @ModuleInfo(key: "upscale1") var upscale1: ConvTransposed2d
-    @ModuleInfo(key: "upscale_norm") var upscaleNorm: LayerNorm
+    @ModuleInfo(key: "upscale_norm") var upscaleNorm: NFKLayerNorm2d
     @ModuleInfo(key: "upscale2") var upscale2: ConvTransposed2d
-    @ModuleInfo(key: "conv_s0") var convS0: Conv2d
-    @ModuleInfo(key: "conv_s1") var convS1: Conv2d
+    @ModuleInfo(key: "conv_s0") var convS0: NFKConv2d
+    @ModuleInfo(key: "conv_s1") var convS1: NFKConv2d
     @ModuleInfo(key: "hyper") var hyper: [NFKSAMMLP]
     @ModuleInfo(key: "iou_head") var iouHead: NFKSAMMLP
     @ModuleInfo(key: "obj_score_head") var objScoreHead: NFKSAMMLP
 
     let maskCount: Int
+    /// Whether the IoU head ends in a sigmoid (`iou_prediction_use_sigmoid`), as every released SAM 2
+    /// and SAM 2.1 configuration sets it, so the quality estimate is a probability.
+    let iouUsesSigmoid: Bool
 
-    init(dimensions: Int = 256, heads: Int = 8, maskCount: Int = 4, depth: Int = 2) {
+    init(dimensions: Int = 256, heads: Int = 8, maskCount: Int = 4, depth: Int = 2, iouUsesSigmoid: Bool = true) {
         self.maskCount = maskCount
+        self.iouUsesSigmoid = iouUsesSigmoid
         _objScoreToken.wrappedValue = MLXArray.zeros([1, dimensions])
         _iouToken.wrappedValue = MLXArray.zeros([1, dimensions])
         _maskTokens.wrappedValue = MLXArray.zeros([maskCount, dimensions])
@@ -602,14 +617,14 @@ final class NFKMLXSAM2Decoder: Module {
             NFKSAMTwoWayBlock(dim: dimensions, heads: heads, skipFirstLayerPE: $0 == 0)
         }
         _finalAttention.wrappedValue = NFKSAMAttention(dim: dimensions, heads: heads, downsample: 2)
-        _normFinalAttention.wrappedValue = LayerNorm(dimensions: dimensions)
+        _normFinalAttention.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         _upscale1.wrappedValue = ConvTransposed2d(inputChannels: dimensions, outputChannels: dimensions / 4,
                                                   kernelSize: 2, stride: 2)
-        _upscaleNorm.wrappedValue = LayerNorm(dimensions: dimensions / 4)
+        _upscaleNorm.wrappedValue = NFKLayerNorm2d(dimensions: dimensions / 4)
         _upscale2.wrappedValue = ConvTransposed2d(inputChannels: dimensions / 4, outputChannels: dimensions / 8,
                                                   kernelSize: 2, stride: 2)
-        _convS0.wrappedValue = Conv2d(inputChannels: dimensions, outputChannels: dimensions / 8, kernelSize: 1)
-        _convS1.wrappedValue = Conv2d(inputChannels: dimensions, outputChannels: dimensions / 4, kernelSize: 1)
+        _convS0.wrappedValue = NFKConv2d(inputChannels: dimensions, outputChannels: dimensions / 8, kernelSize: 1)
+        _convS1.wrappedValue = NFKConv2d(inputChannels: dimensions, outputChannels: dimensions / 4, kernelSize: 1)
         _hyper.wrappedValue = (0 ..< maskCount).map { _ in
             NFKSAMMLP(dim: dimensions, hidden: dimensions, out: dimensions / 8, layers: 3)
         }
@@ -630,12 +645,16 @@ final class NFKMLXSAM2Decoder: Module {
                         highResolution: [MLXArray])
         -> (masks: MLXArray, iou: MLXArray, objectScore: MLXArray, maskTokens: MLXArray) {
         // The object-score token leads, then the IoU token, then the mask tokens, then the prompt.
+        // The image and the tokens take the positional encoding's type, as Sa2VA's SAM 2 casts them: a
+        // float32 feature level meets half-precision weights here.
+        let type = positional.dtype
         let output = concatenated([objScoreToken, iouToken, maskTokens], axis: 0)
         var tokens = concatenated([output.reshaped([1, output.shape[0], output.shape[1]]), sparse], axis: 1)
+            .asType(type)
 
         let (height, width) = (features.shape[1], features.shape[2])
         let channels = features.shape[3]
-        var image = (features + dense).reshaped([1, height * width, channels])
+        var image = (features + dense).asType(type).reshaped([1, height * width, channels])
         let imagePE = positional
 
         // The query positional term is the ORIGINAL token embedding at every layer and again at the
@@ -655,8 +674,8 @@ final class NFKMLXSAM2Decoder: Module {
         // 1×1 projections live here even though the reference applies them in its base model before
         // calling the decoder, so this takes the FPN levels as they come off the neck.
         var upscaled = upscale1(image.reshaped([1, height, width, channels])) + convS1(highResolution[1])
-        upscaled = gelu(upscaleNorm(upscaled))
-        upscaled = gelu(upscale2(upscaled) + convS0(highResolution[0]))
+        upscaled = NFKReferenceRounding.wide(upscaleNorm(upscaled)) { gelu($0) }
+        upscaled = NFKReferenceRounding.wide(upscale2(upscaled) + convS0(highResolution[0])) { gelu($0) }
 
         let hyperIn = concatenated((0 ..< maskCount).map { index in
             hyper[index](maskOut[0..., index]).reshaped([1, 1, -1])
@@ -666,7 +685,8 @@ final class NFKMLXSAM2Decoder: Module {
         let masks = matmul(hyperIn, flat).reshaped([1, maskCount, uh, uw])
         // The mask tokens leave with the masks: the tracker carries the selected one forward as the
         // frame's object pointer.
-        return (masks, iouHead(iouOut), objScoreHead(tokens[0..., 0]), maskOut)
+        let iou = iouHead(iouOut)
+        return (masks, iouUsesSigmoid ? NFKReferenceRounding.sigmoid(iou) : iou, objScoreHead(tokens[0..., 0]), maskOut)
     }
 }
 

@@ -5555,6 +5555,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_LAYERS=0,23 sa2va_probe --checkpoint $IK_VAL_SA2VA_1B (the float32 run rounds every parameter to bf16 and back)"
     },
     {
+      "records": "sa2va_1b_sam2_bf16 / sa2va_1b_sam2_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=43,44 | IK_PROBE_LAYERS=43,44 sa2va_grounding_probe --checkpoint $IK_VAL_SA2VA_1B (each tensor's dtype recorded beside it; the float32 run rounds every parameter to bf16 and back)"
+    },
+    {
       "records": "sa2va_4b_generate_{bf16,f32}, sa2va_1b_generate_{bf16,f32}, sa2va_internvl3_2b_generate_{bf16,f32}",
       "environment": "llm",
       "command": "IK_SA2VA_DTYPE=bfloat16 | (float32) sa2va --checkpoint $IK_VAL_SA2VA | $IK_VAL_SA2VA_1B | $IK_VAL_SA2VA_INTERNVL3_2B (each generated step's top five ids and scores)"

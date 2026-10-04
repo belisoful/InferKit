@@ -458,6 +458,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
+#### SAM 2 returns IoU estimates as probabilities
+
+- The SAM 2 mask decoder applies the sigmoid every released SAM 2 and SAM 2.1 configuration sets
+  (`iou_prediction_use_sigmoid`), so the quality estimate it returns is in 0…1, and the fine-tune's
+  IoU term scores a probability against the measured IoU. The mask choice is unchanged.
+
+#### A single bfloat16 row through a biased Linear rounds once
+
+- MLX's `addmm` on one bfloat16 row rounds the product and then the bias; torch rounds once. Every
+  biased `Linear` a loader fills now rounds once on one row, which moves decode steps and small heads
+  at bfloat16 to the reference's arithmetic. Other inputs, and float32, are unchanged.
+
+#### Sa2VA's grounding at bfloat16
+
+- The SAM 2 grounding branch computes as the release does at its bfloat16 load: the grounding image is
+  cast to the encoder's type, the neck keeps its float32 top-down level, the decoder casts its inputs
+  once, and attention walks its keys in torch's 512-key blocks.
+- That blocked attention also serves FLUX, FLUX.2, Qwen-Image, Wan, and the MiniMax Music 3 depth
+  decoder at bfloat16: an attention over more than 512 keys now follows torch's blocks.
+
 #### Sa2VA computes in bfloat16 at its bfloat16 load
 
 - An InternVL-family Sa2VA net loaded at bfloat16, the backend's default, now computes its image path

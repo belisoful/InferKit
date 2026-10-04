@@ -457,8 +457,17 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   release appends one per frame and then strips the last, and `NFKMLXSa2VALLaVA.promptText` did the
   same in place of `<image>`; both now place the image as the releases do
   (`testThePromptPlacesTheImageAsTheReleasesDo`). Run a diverging bf16 generation on the record's own
-  inputs before blaming precision. The grounding encoder still reads float32 pixels on its bf16
-  weights, and the Qwen-VL towers keep float32 activations; both are next. The Qwen-VL releases' backend loads
+  inputs before blaming precision. The grounding encoder casts its pixels to its weight type too, and
+  follows the release's SAM 2, which mixes precisions (`sa2va_grounding_probe` records each tensor's
+  dtype): the top-down neck level stays float32 (it upsamples in float32), as does the conditioned
+  feature; the mask decoder casts the image and the tokens to the dense positional encoding's type,
+  Sa2VA's own patch, whose encoding rounds the coordinates, the product, `2π`, and each sine at bf16; the
+  masks widen before they upsample. Hiera's attention is torch's CPU flash kernel, which walks the keys
+  in 512-key blocks (`flashAttention`, exact at a 4,096-key global block); the decoder's `LayerNorm2d` is
+  written out op by op (`NFKLayerNorm2d`); its transposed convolutions round the bias apart, as MLX's
+  do. Sa2VA-1B (`testSa2VA1BGroundingInBFloat16…` and its pieces test): worst isolated stage 0.076 of
+  the floor, every decoder piece exact, best mask 9.882e-05 against a floor of 9.256e-05. The Qwen-VL
+  towers keep float32 activations; they are next. The Qwen-VL releases' backend loads
   bfloat16 too (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`; their `text_config` declares it), each
   tensor converted as it is read (`NFKMLXReleaseWeights.arrays(inDirectory:converting:)`), since a
   converted list bound beside the stored one held both through `apply` and peaked above float32. The
