@@ -244,17 +244,19 @@ final class NFKQwen3VLVisionAttention: Module {
         queries = applyRotary(queries, cos: cos, sin: sin)
         keys = applyRotary(keys, cos: cos, sin: sin)
 
-        let attention = MLXFast.scaledDotProductAttention(
+        let attention = NFKReferenceRounding.attention(
             queries: queries.expandedDimensions(axis: 0), keys: keys.expandedDimensions(axis: 0),
             values: values.expandedDimensions(axis: 0), scale: scale, mask: nil)[0]
         return proj(attention.transposed(1, 0, 2).reshaped([length, heads * headDimensions]))
     }
 
-    /// The 2D rotary embedding: `x·cos + rotateHalf(x)·sin`, `cos`/`sin` shared across heads.
+    /// The 2D rotary embedding: `x·cos + rotateHalf(x)·sin`, `cos`/`sin` shared across heads. The
+    /// reference rotates in float32 and rounds once to the input's type.
     private func applyRotary(_ x: MLXArray, cos: MLXArray, sin: MLXArray) -> MLXArray {
+        let wide = x.asType(.float32)
         let half = x.dim(2) / 2
-        let rotated = concatenated([-x[0..., 0..., half...], x[0..., 0..., 0 ..< half]], axis: -1)
-        return x * cos + rotated * sin
+        let rotated = concatenated([-wide[0..., 0..., half...], wide[0..., 0..., 0 ..< half]], axis: -1)
+        return (wide * cos + rotated * sin).asType(x.dtype)
     }
 }
 
@@ -269,7 +271,7 @@ final class NFKQwen3VLVisionMLP: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(geluApproximate(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.geluTanh(fc1(x))) }
 }
 
 /// One Qwen3-VL vision block: pre-normalized attention and feed-forward, each added back.
@@ -280,9 +282,9 @@ final class NFKQwen3VLVisionBlock: Module {
     @ModuleInfo(key: "mlp") var mlp: NFKQwen3VLVisionMLP
 
     init(_ c: NFKMLXQwen3VLVisionConfiguration) {
-        _norm1.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _norm1.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _attention.wrappedValue = NFKQwen3VLVisionAttention(c)
-        _norm2.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _norm2.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _mlp.wrappedValue = NFKQwen3VLVisionMLP(c)
         super.init()
     }
@@ -307,8 +309,8 @@ final class NFKQwen3VLMerger: Module {
     init(_ c: NFKMLXQwen3VLVisionConfiguration, postShuffle: Bool) {
         mergedSize = c.mergedSize
         self.postShuffle = postShuffle
-        _norm.wrappedValue = LayerNorm(dimensions: postShuffle ? c.mergedSize : c.hiddenSize,
-                                       eps: c.layerNormEpsilon)
+        _norm.wrappedValue = NFKLayerNorm(dimensions: postShuffle ? c.mergedSize : c.hiddenSize,
+                                          eps: c.layerNormEpsilon)
         _fc1.wrappedValue = Linear(c.mergedSize, c.mergedSize, bias: true)
         _fc2.wrappedValue = Linear(c.mergedSize, c.outHiddenSize, bias: true)
         super.init()
@@ -316,7 +318,7 @@ final class NFKQwen3VLMerger: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let folded = postShuffle ? norm(x.reshaped([-1, mergedSize])) : norm(x).reshaped([-1, mergedSize])
-        return fc2(gelu(fc1(folded)))
+        return fc2(NFKReferenceRounding.wide(fc1(folded)) { gelu($0) })
     }
 }
 
@@ -344,10 +346,12 @@ public final class NFKMLXQwen3VLVisionNet: Module {
 
     /// `pixelValues` is `[patches, patchInputSize]` in the processor's 2×2-merge-block order, `grid` a
     /// `[temporal, height, width]` patch grid. Returns the merged features `[patches / 4, outHidden]` and
-    /// the three deepstack feature maps.
+    /// the three deepstack feature maps. The pixels take the tower's parameter type, as the reference's
+    /// `get_image_features` casts them, so a bfloat16 load computes the image path in bfloat16.
     public func callAsFunction(_ pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int))
         -> (output: MLXArray, deepstack: [MLXArray]) {
-        var hidden = patchEmbed(pixelValues) + interpolatedPositionEmbedding(grid: grid)
+        let pixels = pixelValues.asType(NFKReferenceRounding.parameterType(of: patchEmbed))
+        var hidden = patchEmbed(pixels) + interpolatedPositionEmbedding(grid: grid)
         let (cos, sin) = rotaryEmbedding(grid: grid)
 
         var deepstack = [MLXArray]()
@@ -398,11 +402,13 @@ public final class NFKMLXQwen3VLVisionNet: Module {
                 }
             }
         }
+        // The corner weights take the table's type and each corner rounds as it adds, as the reference's do.
         let count = h * w
-        var result = MLXArray.zeros([count, configuration.hiddenSize])
+        let type = NFKReferenceRounding.parameterType(of: positionEmbedding)
+        var result = MLXArray.zeros([count, configuration.hiddenSize]).asType(type)
         for corner in 0 ..< 4 {
             let gathered = positionEmbedding(MLXArray(indices[corner]))
-            result = result + gathered * MLXArray(weights[corner]).reshaped([count, 1])
+            result = result + gathered * MLXArray(weights[corner]).asType(type).reshaped([count, 1])
         }
         return grid.t == 1 ? result : concatenated(Array(repeating: result, count: grid.t), axis: 0)
     }
@@ -809,6 +815,17 @@ public final class NFKMLXQwen3VL: NSObject {
                                     deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
                                     applyFinalNorm: Bool = true,
                                     layout: NFKMLXMRoPELayout = .interleaved) -> MLXArray {
+        let input = decoderInput(decoder: decoder, inputIds: inputIds, visionFeatures: visionFeatures,
+                                 deepstack: deepstack, gridT: gridT, gridH: gridH, gridW: gridW, layout: layout)
+        return decoder.hiddenStates(fromEmbeddings: input.embeddings, multimodal: input.multimodal,
+                                    applyFinalNorm: applyFinalNorm)
+    }
+
+    /// The decoder's fused input embeddings `[1, sequence, hidden]`, in the decoder's type, and the M-RoPE
+    /// tables and deepstack the decoder reads beside them.
+    static func decoderInput(decoder: NFKMLXLanguageNet, inputIds: [Int], visionFeatures: MLXArray?,
+                             deepstack: [MLXArray], gridT: Int, gridH: Int, gridW: Int,
+                             layout: NFKMLXMRoPELayout) -> (embeddings: MLXArray, multimodal: NFKLMMultimodal) {
         let sequence = inputIds.count
         let width = decoder.configuration.hiddenSize
         var embeddings = decoder.embed(MLXArray(inputIds.map(Int32.init)).reshaped([1, sequence]))[0]
@@ -824,10 +841,9 @@ public final class NFKMLXQwen3VL: NSObject {
         let indexArray = MLXArray(featureIndex)
         let flatMask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
         if let visionFeatures, counter > 0 {
-            let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
+            let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0).asType(embeddings.dtype)
             embeddings = MLX.where(flatMask, gathered, embeddings)
         }
-        embeddings = embeddings.reshaped([1, sequence, width])
 
         let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)
         let rope = mropeCosSin(positionIds: positions,
@@ -836,8 +852,7 @@ public final class NFKMLXQwen3VL: NSObject {
         let multimodal = NFKLMMultimodal(rope: rope, features: counter > 0 ? deepstack : [],
                                          featureIndex: indexArray,
                                          mask: flatMask.reshaped([1, sequence, 1]))
-        return decoder.hiddenStates(fromEmbeddings: embeddings, multimodal: multimodal,
-                                    applyFinalNorm: applyFinalNorm)
+        return (embeddings.reshaped([1, sequence, width]), multimodal)
     }
 
     /// Greedy continuation from a fused image-and-text prompt, cached: an M-RoPE prefill with the
@@ -875,7 +890,7 @@ public final class NFKMLXQwen3VL: NSObject {
         }
         let indexArray = MLXArray(featureIndex)
         let flatMask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
-        let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0)
+        let gathered = visionFeatures.reshaped([-1, width]).take(indexArray, axis: 0).asType(embeddings.dtype)
         embeddings = MLX.where(flatMask, gathered, embeddings).reshaped([1, sequence, width])
 
         let positions = ropePositionIds(inputIds: inputIds, gridT: gridT, gridH: gridH, gridW: gridW)

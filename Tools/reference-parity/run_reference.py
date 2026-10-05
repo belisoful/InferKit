@@ -5348,6 +5348,71 @@ def run_gemma3n(image, checkpoint):
     return logits.float().contiguous()
 
 
+def run_gemma3n_vision_probe(image, checkpoint):
+    """`gemma3n_vision_real`'s timm MobileNetV5 tower and the vision embedder at bf16 or on its float32
+    floor (`IK_PROBE_DTYPE`, see `_probe_precision`), block by block, on its seeded random frame in 0…1,
+    cast to the tower's type as transformers' timm wrapper casts it. Records `pixels` (`[H, W, 3]`),
+    `stem`, `block.<s>.<b>.in` / `.out` for every block (channels last), every submodule of stage 2's
+    first attention block as `attn.<name>.in` / `.out` (channels last where 4-D), `fused` (the fusion
+    adapter), `tokens` (the soft tokens scaled by `√hidden`), and returns the embedder's projection. Runs
+    under `gemmavenv`."""
+    import glob
+    import timm
+    from safetensors.torch import load_file
+    from transformers import AutoConfig
+    from transformers.models.gemma3n.modeling_gemma3n import Gemma3nMultimodalEmbedder
+
+    config = AutoConfig.from_pretrained(checkpoint)
+    tower = timm.create_model("mobilenetv5_300m_enc", pretrained=False, num_classes=0).eval().float()
+    embedder = Gemma3nMultimodalEmbedder(config.vision_config, config.text_config).eval().float()
+    tower_prefix, embed_prefix = "model.vision_tower.timm_model.", "model.embed_vision."
+    tower_state, embed_state = {}, {}
+    for shard in sorted(glob.glob(os.path.join(checkpoint, "*.safetensors"))):
+        for key, value in load_file(shard).items():
+            if key.startswith(tower_prefix):
+                tower_state[key[len(tower_prefix):]] = value.float()
+            elif key.startswith(embed_prefix):
+                embed_state[key[len(embed_prefix):]] = value.float()
+    tower.load_state_dict(tower_state, strict=True)
+    embedder.load_state_dict(embed_state, strict=False)
+    bf16 = _probe_precision([tower, embedder])
+    dtype = torch.bfloat16 if bf16 else torch.float32
+
+    torch.manual_seed(19)
+    size = config.vision_config.image_size if hasattr(config.vision_config, "image_size") else 768
+    pixels = torch.rand(1, 3, size, size)
+    def channels_last(value):
+        value = value[0] if isinstance(value, tuple) else value
+        value = value[0].detach().float()
+        return (value.permute(1, 2, 0) if value.dim() == 3 else value).clone().contiguous()
+    extra = {}
+    for s, stage in enumerate(tower.blocks):
+        for b, block in enumerate(stage):
+            def hook(module, args, output, label=f"block.{s}.{b}"):
+                extra[f"{label}.in"] = channels_last(args[0])
+                extra[f"{label}.out"] = channels_last(output)
+            block.register_forward_hook(hook)
+    attention = next(m for m in tower.blocks[2] if hasattr(m, "attn"))
+    for name, module in attention.named_modules():
+        def hook(module, args, output, label=f"attn.{name or 'block'}"):
+            if args and torch.is_tensor(args[0]):
+                extra[f"{label}.in"] = channels_last(args[0])
+            if torch.is_tensor(output):
+                extra[f"{label}.out"] = channels_last(output)
+        module.register_forward_hook(hook)
+    with torch.no_grad():
+        stem = tower.conv_stem(pixels.to(dtype))
+        fused = tower.forward_features(pixels.to(dtype))
+        tokens = fused.reshape(1, config.vision_config.hidden_size,
+                               config.vision_soft_tokens_per_image).permute(0, 2, 1)
+        tokens = tokens * (config.vision_config.hidden_size ** 0.5)
+        projected = embedder(inputs_embeds=tokens)
+    extra.update({"pixels": pixels[0].permute(1, 2, 0).float().contiguous(), "stem": channels_last(stem),
+                  "fused": channels_last(fused), "tokens": tokens[0].float().contiguous()})
+    globals()["_extra"] = extra
+    return projected[0].float().contiguous()
+
+
 def run_gemma3n_vision_real(image, checkpoint):
     """The Gemma 3n vision tower on the RELEASED weights: timm's own MobileNetV5-300M encoder, loaded
     out of the tri-modal checkpoint, plus the multimodal embedder that turns its grid into soft tokens.
@@ -6219,6 +6284,99 @@ def run_gemma3_vision_real(image, checkpoint):
     return projected[0].float().contiguous()                        # [256, text hidden]
 
 
+def _probe_precision(modules):
+    """Puts `modules` at `IK_PROBE_DTYPE`: bf16 (`.to`), or float32 with every parameter rounded to bf16 and
+    back, so the float32 run is the floor on the same bf16 weights. Returns whether the run is bf16."""
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    with torch.no_grad():
+        for module in modules:
+            if bf16:
+                module.to(torch.bfloat16)
+            else:
+                for parameter in module.parameters():
+                    parameter.data = parameter.data.to(torch.bfloat16).float()
+    return bf16
+
+
+def _probe_layer_states(layers, extra, prefix, probed, batched=True):
+    """Hooks `layers` so each layer's input is kept as `<prefix>.hidden.i` and the last layer's output as
+    `<prefix>.hidden.L`, and every submodule of the layers `probed` names as `<prefix>.<i>.<name>.in` /
+    `.out` (the whole layer as `block`). `batched` drops a leading batch of one."""
+    def keep(value):
+        value = value[0] if batched else value
+        return value.detach().float().clone().contiguous()
+    def first(output):
+        return output[0] if isinstance(output, tuple) else output
+    for index, layer in enumerate(layers):
+        layer.register_forward_pre_hook(lambda module, args, kwargs, index=index: extra.__setitem__(
+            f"{prefix}.hidden.{index}", keep(args[0] if args else kwargs["hidden_states"])) and None,
+            with_kwargs=True)
+    layers[-1].register_forward_hook(lambda module, args, output: extra.__setitem__(
+        f"{prefix}.hidden.{len(layers)}", keep(first(output))) and None)
+    for index in probed:
+        for name, module in layers[index].named_modules():
+            label = f"{prefix}.{index}.{name}" if name else f"{prefix}.{index}.block"
+            def hook(module, args, output, label=label):
+                if args and torch.is_tensor(args[0]):
+                    extra[f"{label}.in"] = keep(args[0])
+                if torch.is_tensor(first(output)):
+                    extra[f"{label}.out"] = keep(first(output))
+            module.register_forward_hook(hook)
+
+
+def run_gemma3_vision_probe(image, checkpoint):
+    """`gemma3_vision_real`'s tower and projector at bf16 or on its float32 floor (`IK_PROBE_DTYPE`, see
+    `_probe_precision`), layer by layer, on the release's own pixel values, which the patch embedding
+    casts to its type. Records `pixel_values`, `vit.embeddings`, `vit.hidden.i` (layer `i`'s input,
+    `vit.hidden.L` the last layer's output), every submodule of the layers `IK_PROBE_LAYERS` names
+    (default the first and last) as `vit.<i>.<name>.in` / `.out`, `vit.post` (the post layer norm),
+    `proj.pooled` (the 4×4 average pool, as tokens), `proj.norm` (the soft-embedding norm); returns the
+    projected soft tokens. The attention runs eager. Runs under `gemmavenv`."""
+    import json
+    from safetensors import safe_open
+    from transformers import Gemma3Config, SiglipVisionConfig, SiglipVisionModel
+    from transformers.models.gemma3.modeling_gemma3 import Gemma3MultiModalProjector
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    vision = SiglipVisionModel(SiglipVisionConfig(**config["vision_config"])).eval()
+    projector = Gemma3MultiModalProjector(Gemma3Config(**config)).eval()
+    vision_state, projector_state = {}, {}
+    index = json.load(open(os.path.join(checkpoint, "model.safetensors.index.json")))["weight_map"]
+    for shard in sorted(set(index.values())):
+        with safe_open(os.path.join(checkpoint, shard), framework="pt") as handle:
+            for key in handle.keys():
+                name = key[len("model."):] if key.startswith("model.") else key
+                if name.startswith("vision_tower.vision_model."):
+                    vision_state[name[len("vision_tower.vision_model."):]] = handle.get_tensor(key).float()
+                elif name.startswith("multi_modal_projector."):
+                    projector_state[name[len("multi_modal_projector."):]] = handle.get_tensor(key).float()
+    vision.load_state_dict(vision_state, strict=True)
+    projector.load_state_dict(projector_state, strict=True)
+    _probe_precision([vision, projector])
+    vision.set_attn_implementation("eager")
+    print("attention:", vision.config._attn_implementation)
+
+    pixel_values = _gemma3_pixel_values(image, checkpoint)
+    tower = getattr(vision, "vision_model", vision)
+    layers = tower.encoder.layers
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{len(layers) - 1}").split(",")]
+    extra = {}
+    def keep(value):
+        return value[0].detach().float().clone().contiguous()
+    _probe_layer_states(layers, extra, "vit", probed)
+    tower.embeddings.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.embeddings", keep(o)) and None)
+    tower.post_layernorm.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.post", keep(o)) and None)
+    projector.avg_pool.register_forward_hook(lambda m, a, o: extra.__setitem__(
+        "proj.pooled", keep(o.flatten(2).transpose(1, 2))) and None)
+    projector.mm_soft_emb_norm.register_forward_hook(lambda m, a, o: extra.__setitem__("proj.norm", keep(o)) and None)
+    with torch.no_grad():
+        hidden = vision(pixel_values=pixel_values).last_hidden_state
+        projected = projector(hidden)
+    extra["pixel_values"] = pixel_values[0].float().contiguous()
+    globals()["_extra"] = extra
+    return projected[0].float().contiguous()
+
+
 def run_gemma3_conditional_real(image, checkpoint):
     """The FULL Gemma3ForConditionalGeneration on the released multimodal weights: the plate and a
     question through the processor (the chat template with an image item, expanded to the
@@ -6413,6 +6571,60 @@ def run_gemma4_vision(image, checkpoint):
         extra[f"w::{key}"] = (value.float() if value.is_floating_point() else value).contiguous()
     globals()["_extra"] = extra
     return encoded.last_hidden_state[0].float().contiguous()
+
+
+def run_gemma4_vision_probe(image, checkpoint):
+    """`gemma4_vision_real`'s tower and embedder at bf16 or on its float32 floor (`IK_PROBE_DTYPE`, see
+    `_probe_precision`), layer by layer, with eager attention, over a `IK_PROBE_SIDE`² patch grid (default
+    12, pooled 3×3 to 16 soft tokens) of seeded random pixels in 0…1. The rotary's inverse frequencies stay
+    float32, as `from_pretrained` keeps the non-persistent buffer. Records `pixel_values`, `position_ids`,
+    `vit.patch` (the patch embedder), `vit.hidden.i`, every submodule of the first and last layers as
+    `vit.<i>.<name>.in` / `.out`, `pooled` (the tower's soft tokens), and returns the embedder's
+    projection. Runs under `gemmavenv`."""
+    import json
+    from safetensors import safe_open
+    from transformers.models.gemma4.modeling_gemma4 import Gemma4VisionModel, Gemma4MultimodalEmbedder
+    from transformers.models.gemma4.configuration_gemma4 import Gemma4VisionConfig, Gemma4TextConfig
+
+    config = json.load(open(os.path.join(checkpoint, "config.json")))
+    vision_config = Gemma4VisionConfig(**config["vision_config"])
+    vision_config._attn_implementation = "eager"
+    text_config = Gemma4TextConfig(**config["text_config"])
+    vision = Gemma4VisionModel(vision_config).eval()
+    embedder = Gemma4MultimodalEmbedder(vision_config, text_config).eval()
+    vision_state, embed_state = {}, {}
+    with safe_open(os.path.join(checkpoint, "model.safetensors"), framework="pt") as handle:
+        for key in handle.keys():
+            if key.startswith("model.vision_tower."):
+                vision_state[key[len("model.vision_tower."):]] = handle.get_tensor(key).float()
+            elif key.startswith("model.embed_vision."):
+                embed_state[key[len("model.embed_vision."):]] = handle.get_tensor(key).float()
+    vision.load_state_dict(vision_state, strict=True)
+    embedder.load_state_dict(embed_state, strict=True)
+    rotary = vision.encoder.rotary_emb
+    frequencies = {name: getattr(rotary, name).clone() for name in ("inv_freq", "original_inv_freq")}
+    _probe_precision([vision, embedder])
+    for name, value in frequencies.items():
+        setattr(rotary, name, value)
+    print("attention:", vision.config._attn_implementation, "dtype:", next(vision.parameters()).dtype)
+
+    side = int(os.environ.get("IK_PROBE_SIDE", "12"))
+    torch.manual_seed(3)
+    pixel_values = torch.rand(1, side * side, 3 * vision_config.patch_size ** 2)
+    position_ids = torch.tensor([[x, y] for y in range(side) for x in range(side)], dtype=torch.long).unsqueeze(0)
+    layers = vision.encoder.layers
+    extra = {}
+    _probe_layer_states(layers, extra, "vit", [0, len(layers) - 1])
+    vision.patch_embedder.register_forward_hook(lambda m, a, o: extra.__setitem__(
+        "vit.patch", o[0].detach().float().clone().contiguous()) and None)
+    with torch.no_grad():
+        pooled = vision(pixel_values, pixel_position_ids=position_ids).last_hidden_state
+        projected = embedder(pooled)
+    extra.update({"pixel_values": pixel_values[0].contiguous(),
+                  "position_ids": position_ids[0].to(torch.int32).contiguous(),
+                  "pooled": pooled.float().reshape(-1, pooled.shape[-1]).contiguous()})
+    globals()["_extra"] = extra
+    return projected.float().reshape(-1, projected.shape[-1]).contiguous()
 
 
 def run_gemma4_vision_real(image, checkpoint):
@@ -8981,6 +9193,111 @@ def run_siglip2(image):
                            "patch_embeds": patch_embeds[0].contiguous(),
                            "vision_last": vision_last[0].contiguous()}
     return image_embeds[0].contiguous()                                    # [embed], L2-normalized
+
+
+def run_siglip2_probe(image):
+    """`siglip2`'s model (google/siglip2-base-patch16-224) at a half precision or on its float32 floor,
+    layer by layer, with eager attention. `IK_PROBE_DTYPE` names the half type (`bfloat16`, `float16`)
+    for a half run; without it the run is float32 with every parameter rounded to `IK_PROBE_FLOOR`
+    (default bfloat16) and back, the floor on the same half weights. The plate's pixels go in as float32
+    and the patch embedding casts them. Records `pixel_values`, `tokens`, `vit.embeddings`, `vit.hidden.i`,
+    every submodule of the first and last vision layers as `vit.<i>.<name>.in` / `.out`, `vit.post`, the
+    pooling head's `head.<name>.in` / `.out`, `text.hidden.i`, `text.final`, `text_embeds` (normalized),
+    and `logits`; returns the normalized image embedding. Requires `--size 224`."""
+    from transformers import AutoModel, AutoProcessor
+
+    model = AutoModel.from_pretrained("google/siglip2-base-patch16-224").eval()
+    processor = AutoProcessor.from_pretrained("google/siglip2-base-patch16-224")
+    _probe_half(model)
+    model.set_attn_implementation("eager")
+    pixel_values = torch.from_numpy((image * 2 - 1).transpose(2, 0, 1))[None].float()
+    texts = ["a photo of a cat", "a photo of two cats", "a city street at night"]
+    tokens = processor(text=texts, return_tensors="pt", padding="max_length", max_length=64).input_ids
+
+    extra = {}
+    vision, text = model.vision_model, model.text_model
+    layers = vision.encoder.layers
+    _probe_layer_states(layers, extra, "vit", [0, len(layers) - 1])
+    _probe_layer_states(text.encoder.layers, extra, "text", [])
+    def keep(value):
+        return (value[0] if isinstance(value, tuple) else value)[0].detach().float().clone().contiguous()
+    vision.embeddings.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.embeddings", keep(o)) and None)
+    vision.post_layernorm.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.post", keep(o)) and None)
+    text.final_layer_norm.register_forward_hook(lambda m, a, o: extra.__setitem__("text.final", keep(o)) and None)
+    for name, module in vision.head.named_modules():
+        label = f"head.{name}" if name else "head.block"
+        def hook(module, args, output, label=label):
+            if args and torch.is_tensor(args[0]):
+                extra[f"{label}.in"] = keep(args[0])
+            extra[f"{label}.out"] = keep(output)
+        module.register_forward_hook(hook)
+    with torch.no_grad():
+        image_features = model.get_image_features(pixel_values=pixel_values)
+        text_features = model.get_text_features(input_ids=tokens)
+    image_embeds = image_features / image_features.norm(dim=-1, keepdim=True)
+    text_embeds = text_features / text_features.norm(dim=-1, keepdim=True)
+    logits = text_embeds @ image_embeds.t() * model.logit_scale.exp() + model.logit_bias
+    extra.update({"pixel_values": pixel_values[0].contiguous(), "tokens": tokens.to(torch.int32).contiguous(),
+                  "text_embeds": text_embeds.float().contiguous(), "logits": logits.reshape(-1).float().contiguous()})
+    globals()["_extra"] = extra
+    return image_embeds[0].float().contiguous()
+
+
+def run_clip_probe(image):
+    """`clip`'s model (`IK_CLIP_REPO`, default openai/clip-vit-base-patch32) at a half precision or on its
+    float32 floor (`IK_PROBE_DTYPE` / `IK_PROBE_FLOOR`, as `siglip2_probe` reads them), layer by layer,
+    with eager attention, on the release processor's pixels and the unpadded tokens of one caption.
+    Records `pixel_values`, `tokens`, `w.patch` (the patch weight as the run holds it), `vit.embeddings`,
+    `vit.pre` (the pre-layer norm), `vit.hidden.i`, every submodule of the first and last vision layers as
+    `vit.<i>.<name>.in` / `.out`, `vit.pooled` (the post-layer norm on the class token), `image_features`,
+    `text.hidden.i`, `text.final`, `text_features`, and `text_embeds`; returns the normalized image
+    embedding."""
+    from transformers import CLIPModel, CLIPImageProcessor, CLIPTokenizer
+
+    repo = os.environ.get("IK_CLIP_REPO", "openai/clip-vit-base-patch32")
+    model = CLIPModel.from_pretrained(repo).eval()
+    processor = CLIPImageProcessor.from_pretrained(repo)
+    tokenizer = CLIPTokenizer.from_pretrained(repo)
+    _probe_half(model)
+    model.set_attn_implementation("eager")
+    pixel_values = processor(images=(image * 255).astype(np.uint8), return_tensors="pt")["pixel_values"]
+    tokens = tokenizer(["a photo of a cat"], return_tensors="pt").input_ids
+
+    extra = {}
+    vision, text = model.vision_model, model.text_model
+    layers = vision.encoder.layers
+    _probe_layer_states(layers, extra, "vit", [0, len(layers) - 1])
+    _probe_layer_states(text.encoder.layers, extra, "text", [])
+    def keep(value):
+        return (value[0] if isinstance(value, tuple) else value)[0].detach().float().clone().contiguous()
+    vision.embeddings.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.embeddings", keep(o)) and None)
+    vision.pre_layrnorm.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.pre", keep(o)) and None)
+    vision.post_layernorm.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.pooled", keep(o)) and None)
+    text.final_layer_norm.register_forward_hook(lambda m, a, o: extra.__setitem__("text.final", keep(o)) and None)
+    with torch.no_grad():
+        image_features = model.get_image_features(pixel_values=pixel_values)
+        text_features = model.get_text_features(input_ids=tokens)
+    extra.update({"pixel_values": pixel_values[0].contiguous(), "tokens": tokens[0].to(torch.int32).contiguous(),
+                  "w.patch": vision.embeddings.patch_embedding.weight.detach().float().contiguous(),
+                  "image_features": image_features[0].float().contiguous(),
+                  "text_features": text_features[0].float().contiguous(),
+                  "text_embeds": (text_features / text_features.norm(dim=-1, keepdim=True))[0].float().contiguous()})
+    globals()["_extra"] = extra
+    return (image_features / image_features.norm(dim=-1, keepdim=True))[0].float().contiguous()
+
+
+def _probe_half(model):
+    """Puts `model` at `IK_PROBE_DTYPE` (a half type), or keeps it float32 with every parameter rounded to
+    `IK_PROBE_FLOOR` (default bfloat16) and back."""
+    half = os.environ.get("IK_PROBE_DTYPE")
+    with torch.no_grad():
+        if half:
+            model.to(getattr(torch, half))
+        else:
+            floor = getattr(torch, os.environ.get("IK_PROBE_FLOOR", "bfloat16"))
+            for parameter in model.parameters():
+                parameter.data = parameter.data.to(floor).float()
+    print("precision:", half or "float32 floor", next(model.parameters()).dtype)
 
 
 def run_taesd(image):
@@ -12636,6 +12953,162 @@ def run_sa2va_grounding_probe(image, checkpoint):
     keep("low_res_best", sam_out[3])
     globals()["_extra"] = extra
     return sam_out[3].float().contiguous()
+
+
+def run_sa2va_qwen_probe(image, checkpoint):
+    """Sa2VA on Qwen3-VL or Qwen2.5-VL at bf16 or on its float32 floor, block by block: the vision tower,
+    its mergers, and the decoder over `run_sa2va_qwen`'s plate and prompt with the answer "Sure, it is
+    [SEG]." teacher-forced, from the release's own code. `IK_PROBE_DTYPE=bfloat16` loads the release at
+    bf16, as its `text_config` declares; otherwise it loads at float32 with every parameter rounded to bf16
+    and back, so the float32 run is the floor on the same bf16 weights. Both take the processor's float32
+    pixels, which `get_image_features` casts to the tower's type. Every attention runs eager. The tower's
+    states are 2-D, so they are kept whole: `vit.patch` (the patch embedding), `vit.pos` (Qwen3-VL's
+    interpolated position embedding), `vit.hidden.i` (block `i`'s input, `vit.hidden.L` the last block's
+    output); for each block `IK_PROBE_LAYERS` names, `vit.<i>.<submodule>.in` / `.out` and the first eager
+    attention call's `vit.<i>.eager.q` / `.k` / `.v` / `.weights` / `.out`; `merger.<submodule>.in` / `.out`
+    (Qwen2.5-VL's in window order), `deepstack.<j>.<submodule>.in` / `.out`, `vision_merged` (the tower's
+    output, raster order), `fused` (the decoder's input embeddings), `dec.layer.i.in` / `.out` (each
+    decoder layer's own input and output, before the deepstack adds to it), and `dec.norm.out`. Records
+    `pixel_values`, `image_grid_thw`, and `input_ids` (prompt and answer); returns the logits over the
+    answer and the position before it. A checkpoint without Sa2VA's remote code is a plain Qwen-VL
+    release (or a cut of one), run as `AutoModelForImageTextToText` at its processor's own pixel bounds.
+    `IK_PROBE_ROUTES=1` also records each mixture layer's routing (`_route_hooks`). A release that ships no
+    output head (Qwen3-VL-Embedding) returns the final norm's states over those positions instead, and
+    records `no_head`.
+    Runs under the `llm` oracle env. `image` unused."""
+    import importlib
+    import json
+    import sys
+    import types
+    from PIL import Image
+    from transformers import AutoModel, AutoProcessor
+
+    sa2va = os.path.exists(os.path.join(checkpoint, "modeling_sa2va_qwen.py"))
+    if sa2va:
+        sys.modules.setdefault("qwen_vl_utils", types.SimpleNamespace(process_vision_info=None))
+        _stage_remote_code(checkpoint)
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    dtype = torch.bfloat16 if bf16 else torch.float32
+    if sa2va:
+        model = AutoModel.from_pretrained(checkpoint, torch_dtype=dtype, trust_remote_code=True,
+                                          low_cpu_mem_usage=True).eval()
+    else:
+        from transformers import AutoModelForImageTextToText
+        model = AutoModelForImageTextToText.from_pretrained(checkpoint, torch_dtype=dtype,
+                                                            low_cpu_mem_usage=True).eval()
+    if not bf16:
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.data = parameter.data.to(torch.bfloat16).float()
+    for module in model.modules():
+        config = getattr(module, "config", None)
+        if config is not None and hasattr(config, "_attn_implementation_internal"):
+            config._attn_implementation_internal = "eager"
+    qwen = model.model if sa2va else model
+    visual = qwen.model.visual
+    print("attention:", qwen.config.text_config._attn_implementation, visual.config._attn_implementation,
+          "dtype:", visual.dtype)
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=sa2va)
+    messages = [{"role": "user", "content": [{"type": "image", "image": plate},
+                                             {"type": "text", "text": "Please segment the bright object."}]}]
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    bounds = {"min_pixels": model.min_pixels, "max_pixels": model.max_pixels} if sa2va else {}
+    inputs = processor(text=[text], images=[plate], padding=True, return_tensors="pt", **bounds)
+    answer = processor.tokenizer.encode("Sure, it is [SEG].", add_special_tokens=False)
+    ids = torch.cat([inputs["input_ids"][0], torch.tensor(answer)]).unsqueeze(0)
+
+    extra = {}
+    def keep(value):
+        return value.detach().float().clone().contiguous()
+    blocks = visual.blocks
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{len(blocks) - 1}").split(",")]
+    for index, block in enumerate(blocks):
+        block.register_forward_pre_hook(lambda module, args, index=index: extra.__setitem__(
+            f"vit.hidden.{index}", keep(args[0])) and None)
+    blocks[-1].register_forward_hook(lambda module, args, output: extra.__setitem__(
+        f"vit.hidden.{len(blocks)}", keep(output)) and None)
+    def record_tree(root, prefix):
+        for name, module in root.named_modules():
+            label = f"{prefix}.{name}" if name else f"{prefix}.block"
+            def hook(module, args, output, label=label):
+                if args and torch.is_tensor(args[0]):
+                    extra[f"{label}.in"] = keep(args[0])
+                if torch.is_tensor(output):
+                    extra[f"{label}.out"] = keep(output)
+            module.register_forward_hook(hook)
+    for index in probed:
+        record_tree(blocks[index], f"vit.{index}")
+    record_tree(visual.merger, "merger")
+    for index, merger in enumerate(getattr(visual, "deepstack_merger_list", [])):
+        record_tree(merger, f"deepstack.{index}")
+    visual.patch_embed.register_forward_hook(lambda module, args, output: extra.__setitem__(
+        "vit.patch", keep(output)) and None)
+    if hasattr(visual, "fast_pos_embed_interpolate"):
+        interpolate = visual.fast_pos_embed_interpolate
+        def recorded_pos(grid_thw):
+            result = interpolate(grid_thw)
+            extra["vit.pos"] = keep(result)
+            return result
+        visual.fast_pos_embed_interpolate = recorded_pos
+
+    modeling = importlib.import_module(type(blocks[0]).__module__)
+    original = modeling.eager_attention_forward
+    attention_of = {id(blocks[i].attn): i for i in probed}
+    def recording(module, query, key, value, attention_mask, **kwargs):
+        output, weights = original(module, query, key, value, attention_mask, **kwargs)
+        index = attention_of.get(id(module))
+        if index is not None and f"vit.{index}.eager.q" not in extra:
+            extra[f"vit.{index}.eager.q"] = keep(query[0])
+            extra[f"vit.{index}.eager.k"] = keep(key[0])
+            extra[f"vit.{index}.eager.v"] = keep(value[0])
+            extra[f"vit.{index}.eager.weights"] = keep(weights[0])
+            extra[f"vit.{index}.eager.out"] = keep(output[0])
+        return output, weights
+    modeling.eager_attention_forward = recording
+    visual.register_forward_hook(lambda module, args, output: extra.__setitem__(
+        "vision_merged", keep(output[0] if isinstance(output, tuple) else output)) and None)
+    language = qwen.model.language_model
+    language.register_forward_pre_hook(lambda module, args, kwargs: extra.__setitem__(
+        "fused", keep(kwargs["inputs_embeds"][0])) and None, with_kwargs=True)
+    for index, layer in enumerate(language.layers):
+        def layer_hook(module, args, kwargs, output, index=index):
+            state = args[0] if args else kwargs["hidden_states"]
+            extra[f"dec.layer.{index}.in"] = keep(state[0])
+            extra[f"dec.layer.{index}.out"] = keep((output[0] if isinstance(output, tuple) else output)[0])
+        layer.register_forward_hook(layer_hook, with_kwargs=True)
+    language.norm.register_forward_hook(lambda module, args, output: extra.__setitem__(
+        "dec.norm.out", keep(output[0])) and None)
+
+    restore_routes = _route_hooks(qwen, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
+    with torch.no_grad():
+        # The processor's all-ones mask, as a release's own call passes it. Without a mask and without a
+        # cache (Qwen3-VL-Embedding's `use_cache: false`), transformers reads M-RoPE's position jumps as
+        # packed sequences and splits the attention at the image.
+        out = qwen(input_ids=ids, attention_mask=torch.ones_like(ids), pixel_values=inputs["pixel_values"],
+                   image_grid_thw=inputs["image_grid_thw"], return_dict=True)
+    modeling.eager_attention_forward = original
+    if restore_routes is not None:
+        restore_routes()
+    extra["pixel_values"] = inputs["pixel_values"].float().contiguous()
+    extra["image_grid_thw"] = inputs["image_grid_thw"].to(torch.int32).contiguous()
+    extra["input_ids"] = ids[0].to(torch.int32).contiguous()
+    index_path = os.path.join(checkpoint, "model.safetensors.index.json")
+    names = json.load(open(index_path))["weight_map"] if os.path.exists(index_path) else {}
+    globals()["_extra"] = extra
+    if names and not any(name.endswith("lm_head.weight") for name in names) and not qwen.config.tie_word_embeddings:
+        extra["no_head"] = torch.tensor([1], dtype=torch.int32)
+        return extra["dec.norm.out"][-len(answer) - 1:].clone().contiguous()
+    return out.logits[0, -len(answer) - 1:].float().contiguous()
 
 
 def run_sa2va_teacher(image, checkpoint):
@@ -19729,9 +20202,9 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
+          "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

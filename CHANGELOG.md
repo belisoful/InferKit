@@ -441,6 +441,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Vision towers compute in their half-precision load's type
+
+- The Qwen3-VL and Qwen2.5-VL towers (Sa2VA's Qwen releases, Qwen3-VL, and its retrieval models),
+  Gemma 3's SigLIP, Gemma 3n's MobileNetV5, Gemma 4's tower, SigLIP 2, and CLIP cast their pixels to the
+  tower's weight type and round as their references do at bfloat16 and float16: norms, patch
+  convolutions, rotary, attention, activations, and pooling. Before, float32 pixels promoted a tower on
+  half-precision weights to float32, and through the fused embeddings the decoder after it. Float32
+  loads are unchanged.
+- Each VLM's fused embeddings take the decoder's type, and Qwen3-VL's deepstack adds in the decoder's
+  type. A float32 zero in the deepstack promoted a bfloat16 decoder to float32 from its first layer.
+- Qwen2.5-VL's tower attends each window on its own in half precision, as the reference splits them.
+
+#### Sa2VA-Qwen3-VL-4B-SAM3 keeps its grounding in float32
+
+- The SAM 3 grounding encoder loads at float32 under any load of the net, the precision the release
+  defines on this hardware: the release computes it in bfloat16 only under CUDA autocast, and at
+  bfloat16 on the CPU its own positional encoding stops on mixed types. The bfloat16 backend holds the
+  rest of the net at bfloat16.
+
 #### Translation at parity in eight more languages and three more sizes
 
 - The SentencePiece reader runs each model's own precompiled character map as its normalizer

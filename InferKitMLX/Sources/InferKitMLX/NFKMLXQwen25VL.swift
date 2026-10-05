@@ -65,7 +65,7 @@ final class NFKQwen25VLVisionBlock: Module {
             _up.wrappedValue = Linear(width, inner)
             _down.wrappedValue = Linear(inner, width)
         }
-        func callAsFunction(_ x: MLXArray) -> MLXArray { down(silu(gate(x)) * up(x)) }
+        func callAsFunction(_ x: MLXArray) -> MLXArray { down(NFKReferenceRounding.silu(gate(x)) * up(x)) }
     }
     @ModuleInfo(key: "norm1") var norm1: RMSNorm
     @ModuleInfo(key: "norm2") var norm2: RMSNorm
@@ -82,21 +82,37 @@ final class NFKQwen25VLVisionBlock: Module {
     }
 
     /// `x` is `[tokens, hidden]`; `mask` is an additive `[tokens, tokens]` block mask or nil for full
-    /// attention.
-    func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray, mask: MLXArray?) -> MLXArray {
+    /// attention, and `segments` the lengths of the contiguous runs it lets attend within themselves.
+    /// In half precision each run is attended on its own, as the reference splits them, so no masked
+    /// score enters a sum.
+    func callAsFunction(_ x: MLXArray, cos: MLXArray, sin: MLXArray, mask: MLXArray?,
+                        segments: [Int]) -> MLXArray {
         let tokens = x.dim(0), width = x.dim(1), headDim = width / heads
         let fused = attention.qkv(norm1(x)).reshaped([tokens, 3, heads, headDim])
+        // The reference rotates in float32 and rounds once to the input's type.
         func rotated(_ t: MLXArray) -> MLXArray {
             let half = headDim / 2
-            let rotatedHalf = concatenated([-t[0..., 0..., half...], t[0..., 0..., ..<half]], axis: -1)
-            return t * cos + rotatedHalf * sin
+            let wide = t.asType(.float32)
+            let rotatedHalf = concatenated([-wide[0..., 0..., half...], wide[0..., 0..., ..<half]], axis: -1)
+            return (wide * cos + rotatedHalf * sin).asType(t.dtype)
         }
         let q = rotated(fused[0..., 0]).transposed(1, 0, 2).expandedDimensions(axis: 0)
         let k = rotated(fused[0..., 1]).transposed(1, 0, 2).expandedDimensions(axis: 0)
         let v = fused[0..., 2].transposed(1, 0, 2).expandedDimensions(axis: 0)
-        let attended = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v,
-                                                         scale: 1 / sqrt(Float(headDim)),
+        let scale = 1 / sqrt(Float(headDim))
+        let attended: MLXArray
+        if NFKReferenceRounding.isReduced(x) {
+            var start = 0
+            attended = concatenated(segments.map { length in
+                defer { start += length }
+                let run = start ..< start + length
+                return NFKReferenceRounding.attention(queries: q[0..., 0..., run], keys: k[0..., 0..., run],
+                                                      values: v[0..., 0..., run], scale: scale, mask: nil)
+            }, axis: 2)
+        } else {
+            attended = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale,
                                                          mask: mask.map { .array($0) } ?? .none)
+        }
         let h = x + attention.proj(attended[0].transposed(1, 0, 2).reshaped([tokens, width]))
         return h + mlp(norm2(h))
     }
@@ -115,7 +131,7 @@ final class NFKQwen25VLMerger: Module {
 
     func callAsFunction(_ x: MLXArray, mergeUnit: Int) -> MLXArray {
         let grouped = norm(x).reshaped([-1, x.dim(1) * mergeUnit])
-        return mlp[1](gelu(mlp[0](grouped)))
+        return mlp[1](NFKReferenceRounding.wide(mlp[0](grouped)) { gelu($0) })
     }
 }
 
@@ -135,30 +151,58 @@ public final class NFKMLXQwen25VLVisionNet: Module {
         _merger.wrappedValue = NFKQwen25VLMerger(c)
     }
 
-    public func callAsFunction(_ pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int)) -> MLXArray {
+    /// The window permutation, the rotary tables, and the attention runs every block of one image reads,
+    /// all in window order.
+    struct Layout {
+        let order: MLXArray
+        let restore: MLXArray
+        let cos: MLXArray
+        let sin: MLXArray
+        let windowMask: MLXArray
+        let imageMask: MLXArray
+        let windowSegments: [Int]
+        let imageSegments: [Int]
+    }
+
+    func layout(grid: (t: Int, h: Int, w: Int)) -> Layout {
         let c = configuration
         let unit = c.spatialMergeSize * c.spatialMergeSize
+        let patches = grid.t * grid.h * grid.w
         let (windowOrder, windowLengths) = Self.windows(grid: grid, configuration: c)
         let order = MLXArray(windowOrder.map(Int32.init))
-
-        // Tokens in 2×2 merge-block groups, the groups permuted into window order.
-        var hidden = patchEmbed(pixelValues)
-        let patches = hidden.dim(0)
-        hidden = hidden.reshaped([patches / unit, unit, -1]).take(order, axis: 0).reshaped([patches, -1])
         let angles = Self.rotaryAngles(grid: grid, configuration: c)
             .reshaped([patches / unit, unit, -1]).take(order, axis: 0).reshaped([patches, -1])
         let doubled = concatenated([angles, angles], axis: -1)                    // [patches, headDim]
-        let cosTable = cos(doubled).expandedDimensions(axis: 1), sinTable = sin(doubled).expandedDimensions(axis: 1)
+        let windowSegments = windowLengths.map { $0 * unit }
+        let imageSegments = Array(repeating: grid.h * grid.w, count: grid.t)
+        return Layout(order: order, restore: MLXArray(Self.inverse(windowOrder).map(Int32.init)),
+                      cos: cos(doubled).expandedDimensions(axis: 1), sin: sin(doubled).expandedDimensions(axis: 1),
+                      windowMask: Self.blockMask(lengths: windowSegments, total: patches),
+                      imageMask: Self.blockMask(lengths: imageSegments, total: patches),
+                      windowSegments: windowSegments, imageSegments: imageSegments)
+    }
 
-        let windowMask = Self.blockMask(lengths: windowLengths.map { $0 * unit }, total: patches)
-        let imageMask = Self.blockMask(lengths: Array(repeating: grid.h * grid.w, count: grid.t), total: patches)
-        for (index, block) in blocks.enumerated() {
-            let mask = c.fullAttentionBlocks.contains(index) ? imageMask : windowMask
-            hidden = block(hidden, cos: cosTable, sin: sinTable, mask: mask)
+    /// Block `index` over window-ordered tokens: windowed attention, or full attention at the
+    /// configuration's full-attention blocks.
+    func block(_ index: Int, _ hidden: MLXArray, layout: Layout) -> MLXArray {
+        let full = configuration.fullAttentionBlocks.contains(index)
+        return blocks[index](hidden, cos: layout.cos, sin: layout.sin, mask: full ? layout.imageMask : layout.windowMask,
+                             segments: full ? layout.imageSegments : layout.windowSegments)
+    }
+
+    /// The pixels take the tower's parameter type, as the reference's `get_image_features` casts them.
+    public func callAsFunction(_ pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int)) -> MLXArray {
+        let unit = configuration.spatialMergeSize * configuration.spatialMergeSize
+        let layout = layout(grid: grid)
+
+        // Tokens in 2×2 merge-block groups, the groups permuted into window order.
+        var hidden = patchEmbed(pixelValues.asType(NFKReferenceRounding.parameterType(of: patchEmbed)))
+        let patches = hidden.dim(0)
+        hidden = hidden.reshaped([patches / unit, unit, -1]).take(layout.order, axis: 0).reshaped([patches, -1])
+        for index in blocks.indices {
+            hidden = block(index, hidden, layout: layout)
         }
-        let merged = merger(hidden, mergeUnit: unit)
-        let restore = MLXArray(Self.inverse(windowOrder).map(Int32.init))
-        return merged.take(restore, axis: 0)
+        return merger(hidden, mergeUnit: unit).take(layout.restore, axis: 0)
     }
 
     /// The rotary angles `[patches, headDim / 2]`: each patch's height and width positions (in merge-block

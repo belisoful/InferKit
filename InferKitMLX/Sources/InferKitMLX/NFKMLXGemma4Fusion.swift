@@ -31,8 +31,7 @@ public final class NFKMLXGemma4MultimodalEmbedder: Module {
     }
 
     public func callAsFunction(_ softTokens: MLXArray) -> MLXArray {
-        let normalized = softTokens * rsqrt((softTokens * softTokens).mean(axis: -1, keepDims: true) + epsilon)
-        return projection(normalized)
+        projection(NFKReferenceRounding.scaledNorm(softTokens, weight: nil, eps: epsilon))
     }
 }
 
@@ -41,7 +40,8 @@ public enum NFKMLXGemma4Fusion {
     /// Replaces the embeddings at the placeholder positions with the projected soft tokens, in order.
     /// `textEmbeddings` is `[1, sequence, hidden]`, `softTokens` is `[count, hidden]`, and
     /// `isPlaceholder` marks the sequence positions that carry a soft token (their count must equal
-    /// `softTokens`'s). This is the same `where`-over-a-gathered-index splice the SmolVLM fusion uses.
+    /// `softTokens`'s). This is the same `where`-over-a-gathered-index splice the SmolVLM fusion uses. The
+    /// soft tokens take the text embeddings' type, as the reference casts them.
     public static func fuse(textEmbeddings: MLXArray, softTokens: MLXArray,
                             isPlaceholder: [Bool]) -> MLXArray {
         let sequence = isPlaceholder.count
@@ -56,7 +56,7 @@ public enum NFKMLXGemma4Fusion {
             counter += 1
             placeholder[position] = 1
         }
-        let gathered = flatSoft.take(MLXArray(featureIndex), axis: 0)          // [sequence, hidden]
+        let gathered = flatSoft.take(MLXArray(featureIndex), axis: 0).asType(textEmbeddings.dtype)  // [sequence, hidden]
         let mask = MLXArray(placeholder).reshaped([sequence, 1]) .> 0
         let text = textEmbeddings.reshaped([sequence, hidden])
         return MLX.where(mask, gathered, text).reshaped([1, sequence, hidden])

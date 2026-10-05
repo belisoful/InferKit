@@ -335,7 +335,7 @@ public final class NFKMLXSmolVLMNet {
             counter += 1
             isImage[position] = 1
         }
-        let gathered = flat.take(MLXArray(featureIndex), axis: 0)                 // [sequence, width]
+        let gathered = flat.take(MLXArray(featureIndex), axis: 0).asType(textEmbeddings.dtype)   // [sequence, width]
         let mask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
         return MLX.where(mask, gathered, textEmbeddings).reshaped([1, sequence, width])
     }

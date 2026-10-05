@@ -135,19 +135,19 @@ final class NFKGemma4VisionAttention: Module {
         queries = NFKGemma4VisionAttention.applyRope(queries, cosine: cosine, sine: sine).transposed(0, 2, 1, 3)
         var keys = keyNorm(keyProjection(x).reshaped([batch, length, keyValueHeadCount, width]))
         keys = NFKGemma4VisionAttention.applyRope(keys, cosine: cosine, sine: sine).transposed(0, 2, 1, 3)
-        var v = valueProjection(x).reshaped([batch, length, keyValueHeadCount, width])
-        v = v * rsqrt((v * v).mean(axis: -1, keepDims: true) + valueEpsilon)
-        let values = v.transposed(0, 2, 1, 3)
+        let v = valueProjection(x).reshaped([batch, length, keyValueHeadCount, width])
+        let values = NFKReferenceRounding.scaledNorm(v, weight: nil, eps: valueEpsilon).transposed(0, 2, 1, 3)
         // Bidirectional (no mask), and the queries are already per-head normalized, so scale is 1.
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: 1, mask: nil)
+        let attended = NFKReferenceRounding.attention(queries: queries, keys: keys, values: values, scale: 1, mask: nil)
         return outputProjection(attended.transposed(0, 2, 1, 3).reshaped([batch, length, headCount * width]))
     }
 
     /// Applies the 2-D rope to `x` `[batch, length, heads, headDim]`: the head is split into two blocks,
     /// each rotated (rotate-half) by the cosine and sine for its own spatial axis. `cosine`/`sine` are
-    /// `[batch, length, headDim]`, the x-axis block followed by the y-axis block.
+    /// `[batch, length, headDim]`, the x-axis block followed by the y-axis block. The tables take `x`'s
+    /// type, as the reference rounds them, and each product and the sum round in that type.
     static func applyRope(_ x: MLXArray, cosine: MLXArray, sine: MLXArray) -> MLXArray {
+        let cosine = cosine.asType(x.dtype), sine = sine.asType(x.dtype)
         let width = x.shape[x.ndim - 1]
         let block = width / 2
         var parts = [MLXArray]()
@@ -181,7 +181,7 @@ final class NFKGemma4VisionMLP: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        down(geluApproximate(gate(x)) * up(x))
+        down(NFKReferenceRounding.geluTanh(gate(x)) * up(x))
     }
 }
 
@@ -223,16 +223,18 @@ final class NFKGemma4VisionPatchEmbedder: Module {
     }
 
     /// - Parameters:
-    ///   - pixelValues: the flattened patches `[batch, patches, 3·patch²]` in `0 … 1`.
+    ///   - pixelValues: the flattened patches `[batch, patches, 3·patch²]` in `0 … 1`, scaled to `-1 … 1`
+    ///     and then cast to the projection's type, as the reference casts them.
     ///   - positionIds: the `(x, y)` grid `[batch, patches, 2]`; a padding patch is `(-1, -1)`.
     func callAsFunction(_ pixelValues: MLXArray, positionIds: MLXArray) -> MLXArray {
-        let hidden = inputProjection(2 * (pixelValues - 0.5))
+        let scaled = (2 * (pixelValues - 0.5)).asType(NFKReferenceRounding.parameterType(of: inputProjection))
+        let hidden = inputProjection(scaled)
         // A padding position is negative; it is clamped for the lookup and its embedding zeroed.
         let clamped = maximum(positionIds, MLXArray(Int32(0)))
         let xEmbedding = take(positionTable[0], clamped[.ellipsis, 0], axis: 0)
         let yEmbedding = take(positionTable[1], clamped[.ellipsis, 1], axis: 0)
         let padding = (positionIds[.ellipsis, 0] .< 0).expandedDimensions(axis: -1)
-        let positions = MLX.where(padding, MLXArray(Float(0)), xEmbedding + yEmbedding)
+        let positions = MLX.where(padding, MLXArray(Float(0)).asType(xEmbedding.dtype), xEmbedding + yEmbedding)
         return hidden + positions
     }
 }
@@ -270,7 +272,7 @@ public final class NFKMLXGemma4VisionNet: Module {
     /// The 2-D rope tables `[batch, patches, headDim]`: the head is split per spatial axis, and each
     /// axis's positions drive a rotate-half rotary over its block, matching the reference's
     /// `Gemma4VisionRotaryEmbedding`.
-    private func rope(positionIds: MLXArray) -> (cosine: MLXArray, sine: MLXArray) {
+    func rope(positionIds: MLXArray) -> (cosine: MLXArray, sine: MLXArray) {
         let c = configuration
         let spatialDimension = c.headDimensions / 2
         let count = spatialDimension / 2
@@ -295,15 +297,14 @@ public final class NFKMLXGemma4VisionNet: Module {
         let encoded = self(pixelValues, positionIds: positionIds)
         let outputLength = pixelValues.shape[1] / (configuration.poolingKernelSize * configuration.poolingKernelSize)
         let pooled = pool(encoded, positionIds: positionIds, outputLength: outputLength)
-        if let standardizeBias, let standardizeScale {
-            return (pooled - standardizeBias) * standardizeScale
-        }
-        return pooled
+        guard let standardizeBias, let standardizeScale else { return pooled.asType(encoded.dtype) }
+        return ((pooled - standardizeBias.asType(.float32)) * standardizeScale.asType(.float32)).asType(encoded.dtype)
     }
 
     /// Averages the patches falling into each `k × k` grid cell — where `k` is the ratio of the input
     /// patch count to the output token count — and scales by `√hidden`. The cell a patch belongs to is
-    /// read from its `(x, y)` position, so a padded grid pools correctly.
+    /// read from its `(x, y)` position, so a padded grid pools correctly. As in the reference, the
+    /// average forms in float32 and rounds to the hidden state's type, and the scaling returns float32.
     private func pool(_ hidden: MLXArray, positionIds: MLXArray, outputLength: Int) -> MLXArray {
         let (batch, sequence, width) = (hidden.shape[0], hidden.shape[1], hidden.shape[2])
         let k = Int((Double(sequence / outputLength)).squareRoot())
@@ -312,10 +313,10 @@ public final class NFKMLXGemma4VisionNet: Module {
         let columnsPerRow = floor((xs.max(axis: -1, keepDims: true) + 1) / Float(k))
         let cell = floor(xs / Float(k)) + columnsPerRow * floor(ys / Float(k))     // [batch, sequence]
         let range = MLXArray((0 ..< outputLength).map(Float.init)).reshaped([1, 1, outputLength])
-        let oneHot = (cell.expandedDimensions(axis: -1) .== range).asType(hidden.dtype) / Float(k * k)
-        let pooled = matmul(oneHot.transposed(0, 2, 1), hidden)                    // [batch, length, width]
+        let oneHot = (cell.expandedDimensions(axis: -1) .== range).asType(.float32) / Float(k * k)
+        let pooled = matmul(oneHot.transposed(0, 2, 1), hidden.asType(.float32)).asType(hidden.dtype)
         _ = batch
-        return pooled * sqrt(Float(width))
+        return pooled.asType(.float32) * Float(Double(width).squareRoot())
     }
 }
 

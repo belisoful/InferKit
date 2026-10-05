@@ -35,6 +35,19 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   1e-3) is this package's choice. `probeBackend(net:probe:labels:)` answers under
   `NFKOutputClassifications`, and `NFKMLXCLIPProbeTests.testATrainedProbeSavesAndReloads` reloads it.
   A contrastive fine-tune of the towers is offline: it needs large batches for its negatives.
+  **Half precision.** OpenAI's `.pt` files store float16, and the loader keeps a file's type, so a `.pt`
+  load computes in float16. The image path casts its pixels to the tower's type, as transformers'
+  `CLIPVisionEmbeddings` does, and each piece rounds as transformers' `CLIPModel` does at float16: the
+  patch convolution and the layer norms once (`NFKConv2d`, `NFKLayerNorm`), each query, key, and value
+  projection once, the eager attention's scores, scale, and float32 softmax, QuickGELU's three operations
+  with its 1.702 held float32, and the embedding's norm accumulated in float32. Against `CLIPModel` at
+  float16 (`clip_probe`), its floor float32 on the same float16 weights, on four images
+  (`testCLIPInFloat16MatchesTheFloat16Reference`): every layer of every image on the reference's input
+  reads 0.092 of the floor or less; the image embedding over the four images reads 2.248e-06 from
+  float32 against a floor of 1.352e-06, the text embedding 2.170e-07 against 2.451e-07. One image's
+  embedding is a single 512-wide vector whose ratio to its floor varies by image (the plate alone read
+  2.05×), so the end-to-end bar reads the four together. `clip_probe` hangs at interpreter exit after
+  writing its record; stop it after its "wrote" line. The SD text encoder shares these blocks.
 - `NFKMLXSigLIP2` (`@objc`) — real image+text embeddings (SigLIP 2, base-patch16-224), the CLIP upgrade
   and the vision tower a VLM reads. The vision and text towers are the same transformer the SmolVLM
   SigLIP encoder uses (`NFKSigLIPLayer`/`NFKSigLIPAttention`/`NFKSigLIPMLP`/`NFKSigLIPEncoder` are reused
@@ -77,6 +90,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   unloaded tower pools every image to the same embedding, because `in_proj_weight` is built as zeros for
   a checkpoint to fill, so a weight-free test randomizes it first. The sigmoid contrastive fine-tune of
   the towers is offline: it needs large batches of image-text pairs.
+  **Half precision.** The releases store float32, and a 16-bit file computes in its type. The pixels
+  take the tower's type, the patch convolution and every layer norm round once, and the pooling head's
+  attention is `nn.MultiheadAttention`'s weight-returning path: each projection rounds once, the
+  queries are scaled and rounded before the scores, and the softmax forms in float32. The embeddings'
+  norm accumulates in float32. The release rounded to bf16, against `SiglipModel` at bf16
+  (`siglip2_probe`, `testSigLIP2InBFloat16MatchesTheBFloat16Reference`): every layer of both towers on
+  the reference's input at 0.17 of the floor or less and the pooling head at 0.22; the image embedding
+  reads 1.559e-05 from float32 against a floor of 1.498e-05.
 - `NFKMLXTextEmbedder` / `NFKMLXQwen3Embedding` / `NFKMLXTextEmbeddingBackend` — on-device **text
   embeddings**, the capability the package lacked: it embedded images (CLIP) with no path for text, so
   no semantic search, retrieval, clustering, or reranking over a consumer's corpus. A text embedder is

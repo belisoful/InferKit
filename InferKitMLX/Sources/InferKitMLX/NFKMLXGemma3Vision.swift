@@ -42,13 +42,14 @@ public final class NFKMLXGemma3VisionNet: Module {
         configuration = c
         _embeddings.wrappedValue = NFKSigLIP2VisionEmbeddings(c)
         _encoder.wrappedValue = NFKSigLIPEncoder(c)
-        _postLayerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _postLayerNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         super.init()
     }
 
-    /// `pixelValues` is `[images, height, width, 3]` (channels last) in `-1 … 1`.
+    /// `pixelValues` is `[images, height, width, 3]` (channels last) in `-1 … 1`. The pixels take the
+    /// tower's parameter type, as the reference's patch embedding casts them.
     public func callAsFunction(_ pixelValues: MLXArray) -> MLXArray {
-        var hidden = embeddings(pixelValues)
+        var hidden = embeddings(pixelValues.asType(NFKReferenceRounding.parameterType(of: embeddings)))
         for layer in encoder.layers { hidden = layer(hidden) }
         return postLayerNorm(hidden)
     }
@@ -80,10 +81,11 @@ public final class NFKMLXGemma3MultimodalProjector: Module {
     public func callAsFunction(_ features: MLXArray) -> MLXArray {
         let (images, hidden) = (features.shape[0], features.shape[2])
         let kernel = patchesPerSide / tokensPerSide
-        // The reference reshapes to a `[side, side]` grid and average-pools in `kernel × kernel` cells;
-        // the pooled grid then flattens row-major into the token order.
+        // The reference reshapes to a `[side, side]` grid and average-pools in `kernel × kernel` cells,
+        // accumulating in float32; the pooled grid then flattens row-major into the token order.
         let grid = features.reshaped([images, tokensPerSide, kernel, tokensPerSide, kernel, hidden])
-        let pooled = grid.mean(axes: [2, 4]).reshaped([images, tokensPerSide * tokensPerSide, hidden])
+        let pooled = NFKReferenceRounding.wide(grid) { $0.mean(axes: [2, 4]) }
+            .reshaped([images, tokensPerSide * tokensPerSide, hidden])
         return matmul(norm(pooled), weight)
     }
 }

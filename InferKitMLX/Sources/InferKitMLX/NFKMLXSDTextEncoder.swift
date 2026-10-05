@@ -123,7 +123,7 @@ public final class NFKMLXSDTextEncoderNet: Module {
                                                        heads: configuration.heads,
                                                        intermediate: configuration.intermediate,
                                                        activation: configuration.activation)
-        _lnFinal.wrappedValue = LayerNorm(dimensions: configuration.width)
+        _lnFinal.wrappedValue = NFKLayerNorm(dimensions: configuration.width)
         _textProjection.wrappedValue = configuration.projectionDimensions.map {
             NFKCLIPInit.parameter([configuration.width, $0])
         }

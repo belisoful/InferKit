@@ -354,6 +354,218 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
     }
 
+    // MARK: Gemma 3 vision
+
+    // The Gemma 3 4B vision tower and projector at the released bf16 (`.checkpoint`) against transformers
+    // at bf16 with eager attention (`gemma3_vision_probe`, layers 0 and 26 probed), on the release's own
+    // pixel values, every layer's state and the soft tokens.
+    func testGemma3VisionInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3_4B"], "IK_VAL_GEMMA3_4B"))
+        let bf16 = try record("gemma3_4b_vision_bf16.safetensors"), f32 = try record("gemma3_4b_vision_f32.safetensors")
+        let (vision, projector) = try NFKMLXGemma3.visionParts(directoryURL: directory, precision: .checkpoint)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let pixels = try XCTUnwrap(bf16["pixel_values"]).expandedDimensions(axis: 0).transposed(0, 2, 3, 1)
+        let layers = vision.encoder.layers
+
+        var hidden = vision.embeddings(pixels.asType(.bfloat16))
+        var states = [("embeddings", hidden[0])]
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in layers.enumerated() {
+            hidden = layer(hidden)
+            states.append(("layer \(index)", hidden[0]))
+            isolated.append(("layer \(index)", layer(try recorded("vit.hidden.\(index)"))[0]))
+        }
+        let post = vision.postLayerNorm(hidden)
+        let tokens = projector(vision(pixels))
+        XCTAssertEqual(tokens.dtype, .bfloat16, "a bf16 load computes the image path in bf16")
+        states += [("post norm", post[0]), ("soft tokens", tokens[0])]
+        isolated += [("post norm", vision.postLayerNorm(try recorded("vit.hidden.\(layers.count)"))[0]),
+                     ("soft-token norm", projector.norm(try recorded("proj.pooled"))[0]),
+                     ("projector", projector(try recorded("vit.post"))[0])]
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32,
+                             keys: ["vit.embeddings"] + (1 ... layers.count).map { "vit.hidden.\($0)" } + ["vit.post", "output"])
+        report("gemma3-4b-vision", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32,
+                                     keys: (1 ... layers.count).map { "vit.hidden.\($0)" } + ["vit.post", "proj.norm", "output"])
+        report("gemma3-4b-vision isolated", isolatedRows)
+        assertRoundingPlacement("gemma3-4b-vision", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // MARK: SigLIP 2 and CLIP at half precision
+
+    // SigLIP 2 base (`IK_VAL_SIGLIP2`) with its float32 release rounded to bf16, as a 16-bit file loads, against
+    // transformers at bf16 with eager attention (`siglip2_probe`): every vision and text layer, the pooling
+    // head, and the normalized embeddings and logits.
+    func testSigLIP2InBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let weights = try existing(config["IK_VAL_SIGLIP2"], "IK_VAL_SIGLIP2")
+        let bf16 = try record("siglip2_bf16.safetensors"), f32 = try record("siglip2_f32.safetensors")
+        let net = NFKMLXSigLIP2.makeNet(.base)
+        try NFKMLXSigLIP2.loadWeights(into: net, from: URL(fileURLWithPath: weights))
+        net.update(parameters: net.parameters().mapValues { $0.asType(.bfloat16) })
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let pixels = try XCTUnwrap(bf16["pixel_values"]).expandedDimensions(axis: 0).transposed(0, 2, 3, 1)
+        let tokens = try XCTUnwrap(bf16["tokens"]).asType(.int32)
+        let vision = net.vision, text = net.text
+
+        var hidden = vision.embeddings(pixels.asType(.bfloat16))
+        var states = [("embeddings", hidden[0])], keys = ["vit.embeddings"]
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        for (index, layer) in vision.encoder.layers.enumerated() {
+            hidden = layer(hidden)
+            states.append(("vision layer \(index)", hidden[0]))
+            keys.append("vit.hidden.\(index + 1)")
+            isolated.append(("vision layer \(index)", layer(try recorded("vit.hidden.\(index)"))[0]))
+            isolatedKeys.append("vit.hidden.\(index + 1)")
+        }
+        let post = vision.postLayerNorm(hidden)
+        let pooled = vision.head(post)
+        states += [("post norm", post[0]), ("head", pooled[0])]
+        keys += ["vit.post", "head.block.out"]
+        let layerCount = vision.encoder.layers.count
+        isolated += [("post norm", vision.postLayerNorm(try recorded("vit.hidden.\(layerCount)"))[0]),
+                     ("head", vision.head(try recorded("vit.post"))[0])]
+        isolatedKeys += ["vit.post", "head.block.out"]
+
+        var words = text.embeddings(tokens)
+        for (index, layer) in text.encoder.layers.enumerated() {
+            words = layer(words)
+            states.append(("text layer \(index)", words[0]))
+            keys.append("text.hidden.\(index + 1)")
+            isolated.append(("text layer \(index)", layer(try recorded("text.hidden.\(index)"))[0]))
+            isolatedKeys.append("text.hidden.\(index + 1)")
+        }
+        let textCount = text.encoder.layers.count
+        states.append(("text final norm", text.finalLayerNorm(words)[0]))
+        keys.append("text.final")
+        isolated.append(("text final norm", text.finalLayerNorm(try recorded("text.hidden.\(textCount)"))[0]))
+        isolatedKeys.append("text.final")
+        let imageEmbedding = net.imageEmbedding(pixels)
+        let textEmbedding = net.textEmbedding(tokens)
+        XCTAssertEqual(imageEmbedding.dtype, .bfloat16, "a bf16 load computes the image path in bf16")
+        states += [("logits", net.logits(image: pixels, text: tokens).reshaped([-1])), ("text embeddings", textEmbedding),
+                   ("image embedding", imageEmbedding[0])]
+        keys += ["logits", "text_embeds", "output"]
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("siglip2", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("siglip2 isolated", isolatedRows)
+        assertRoundingPlacement("siglip2", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // CLIP ViT-B/32 (`IK_VAL_CLIP`) with its weights rounded to float16, the type OpenAI's own `.pt` stores,
+    // against transformers' `CLIPModel` at float16 with eager attention (`clip_probe`, `IK_PROBE_FLOOR=float16`
+    // for the floor), on four images: every vision and text layer, the pooled class token, and both
+    // embeddings. Each image's layers are held alone; the end-to-end bar reads the four images together,
+    // since one image's embedding is a single 512-wide vector.
+    func testCLIPInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let weights = try existing(config["IK_VAL_CLIP"], "IK_VAL_CLIP")
+        let net = NFKMLXCLIPNet(.base)
+        try NFKMLXCLIP.loadWeights(into: net, from: URL(fileURLWithPath: weights))
+        net.update(parameters: net.parameters().mapValues { $0.asType(.float16) })
+        var plates = [(states: [(String, MLXArray)], keys: [String], half: [String: MLXArray], f32: [String: MLXArray])]()
+        for plate in ["", "_photo", "_face", "_subject"] {
+            let half: [String: MLXArray], f32: [String: MLXArray]
+            do {
+                half = try record("clip_b32\(plate)_f16.safetensors")
+                f32 = try record("clip_b32\(plate)_f32.safetensors")
+            } catch is XCTSkip {
+                continue
+            }
+            let (states, keys, isolated, isolatedKeys) = try clipHalf(net, half)
+            let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: isolatedKeys)
+            report("clip-b32\(plate) f16 isolated", isolatedRows)
+            for row in isolatedRows {
+                XCTAssertLessThan(row.ours, 0.25 * row.floor, "clip-b32\(plate) \(row.label) on the reference's input")
+            }
+            plates.append((states, keys, half, f32))
+        }
+        let first = try XCTUnwrap(plates.first, "no clip_b32 record")
+        func joined(_ arrays: [MLXArray]) -> MLXArray { concatenated(arrays.map { $0.asType(.float32).reshaped([-1]) }) }
+        let states = first.states.indices.map { index in (first.states[index].0, joined(plates.map { $0.states[index].1 })) }
+        var half = [String: MLXArray](), f32 = [String: MLXArray]()
+        for key in first.keys {
+            half[key] = joined(try plates.map { try XCTUnwrap($0.half[key], "no \(key)") })
+            f32[key] = joined(try plates.map { try XCTUnwrap($0.f32[key], "no \(key)") })
+        }
+        let rows = try seams(states, bf16: half, f32: f32, keys: first.keys)
+        report("clip-b32 f16, \(plates.count) images", rows)
+        for row in rows.suffix(2) {
+            XCTAssertLessThanOrEqual(row.exact, 2 * row.floor, "clip-b32 f16 \(row.label): farther from float32 than twice the floor")
+        }
+    }
+
+    /// One CLIP record's end-to-end states and its layers on the reference's own input, with their keys.
+    private func clipHalf(_ net: NFKMLXCLIPNet, _ half: [String: MLXArray]) throws
+        -> ([(String, MLXArray)], [String], [(String, MLXArray)], [String]) {
+        let visual = net.visual
+        let patchWeight = visual.conv1.weight.transposed(0, 3, 1, 2).asType(.float32)
+        let recordedPatch = try XCTUnwrap(half["w.patch"])
+        XCTAssertEqual((patchWeight .!= recordedPatch).sum().item(Int.self), 0,
+                       "the release's weights, rounded as the reference rounds them")
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(half[key], "no \(key)").asType(.float16).expandedDimensions(axis: 0)
+        }
+        let pixels = try XCTUnwrap(half["pixel_values"]).expandedDimensions(axis: 0).transposed(0, 2, 3, 1)
+        let tokenIds = try XCTUnwrap(half["tokens"]).asArray(Int32.self).map(Int.init)
+
+        let patches = visual.conv1(pixels.asType(.float16))
+        let width = patches.dim(3)
+        var hidden = concatenated([visual.classEmbedding.reshaped([1, 1, width]), patches.reshaped([1, -1, width])], axis: 1)
+            + visual.positionalEmbedding
+        var states = [("embeddings", hidden[0])], keys = ["vit.embeddings"]
+        hidden = visual.lnPre(hidden)
+        states.append(("pre norm", hidden[0]))
+        keys.append("vit.pre")
+        var isolated = [("pre norm", visual.lnPre(try recorded("vit.embeddings"))[0])], isolatedKeys = ["vit.pre"]
+        for (index, block) in visual.transformer.resblocks.enumerated() {
+            hidden = block(hidden, mask: nil)
+            states.append(("vision layer \(index)", hidden[0]))
+            keys.append("vit.hidden.\(index + 1)")
+            isolated.append(("vision layer \(index)", block(try recorded("vit.hidden.\(index)"), mask: nil)[0]))
+            isolatedKeys.append("vit.hidden.\(index + 1)")
+        }
+        let blocks = visual.transformer.resblocks.count
+        let pooled = visual.lnPost(hidden[0..., 0])
+        states += [("pooled", pooled[0]), ("image features", pooled.matmul(visual.proj)[0])]
+        keys += ["vit.pooled", "image_features"]
+        isolated += [("pooled", visual.lnPost(try recorded("vit.hidden.\(blocks)")[0..., 0])[0]),
+                     ("image features", try recorded("vit.pooled").matmul(visual.proj)[0])]
+        isolatedKeys += ["vit.pooled", "image_features"]
+
+        let length = tokenIds.count
+        let mask = NFKCLIPInit.causalMask(length)
+        var words = net.tokenEmbedding(MLXArray(tokenIds.map(Int32.init)).reshaped([1, length]))
+            + net.positionalEmbedding[0 ..< length]
+        for (index, block) in net.transformer.resblocks.enumerated() {
+            words = block(words, mask: mask)
+            states.append(("text layer \(index)", words[0]))
+            keys.append("text.hidden.\(index + 1)")
+            isolated.append(("text layer \(index)", block(try recorded("text.hidden.\(index)"), mask: mask)[0]))
+            isolatedKeys.append("text.hidden.\(index + 1)")
+        }
+        let end = tokenIds.firstIndex(of: tokenIds.max() ?? 0) ?? (length - 1)
+        let final = net.lnFinal(words)
+        states += [("text final norm", final[0]), ("text features", final[0, end].reshaped([1, -1]).matmul(net.textProjection)[0])]
+        keys += ["text.final", "text_features"]
+        isolated += [("text final norm", net.lnFinal(try recorded("text.hidden.\(net.transformer.resblocks.count)"))[0]),
+                     ("text features", try recorded("text.final")[0, end].reshaped([1, -1]).matmul(net.textProjection)[0])]
+        isolatedKeys += ["text.final", "text_features"]
+        states += [("text embedding", net.encodeText(tokenIds)), ("image embedding", NFKCLIPInit.l2Normalize(pooled.matmul(visual.proj))[0])]
+        keys += ["text_embeds", "output"]
+        XCTAssertEqual(states.last!.1.dtype, .float16, "a float16 load computes the image path in float16")
+        eval(states.map(\.1) + isolated.map(\.1))
+        return (states, keys, isolated, isolatedKeys)
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,
@@ -431,7 +643,112 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("gemma4-e2b", endToEnd: rows, isolated: isolatedRows)
     }
 
+    // The Gemma 4 E2B vision tower and its embedder at the released bf16 against transformers at bf16 with
+    // eager attention (`gemma4_vision_probe`, a 12×12 patch grid pooled to 16 soft tokens): every layer's
+    // state, the pooled soft tokens, and their projection.
+    func testGemma4VisionInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let release = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA4"], "IK_VAL_GEMMA4"))
+        let bf16 = try record("gemma4_e2b_vision_bf16.safetensors"), f32 = try record("gemma4_e2b_vision_f32.safetensors")
+        let vision = NFKMLXGemmaLanguage.makeVisionNet(
+            NFKMLXGemma4VisionConfiguration(hiddenSize: 768, layerCount: 16, headCount: 12,
+                                            keyValueHeadCount: 12, headDimensions: 64, intermediateSize: 3072,
+                                            patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
+                                            useClippedLinears: true))
+        let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+            guard key.hasPrefix("model.vision_tower.") else { return nil }
+            return String(key.dropFirst("model.vision_tower.".count))
+                .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
+        }, to: vision)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+            key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
+        }, to: embedder)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let pixels = try XCTUnwrap(bf16["pixel_values"]).expandedDimensions(axis: 0)
+        let positions = try XCTUnwrap(bf16["position_ids"]).expandedDimensions(axis: 0).asType(.int32)
+        let (cosine, sine) = vision.rope(positionIds: positions)
+
+        var hidden = vision.patchEmbedder(pixels, positionIds: positions)
+        var states = [("patch embedding", hidden[0])]
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in vision.layers.enumerated() {
+            hidden = layer(hidden, cosine: cosine, sine: sine)
+            states.append(("layer \(index)", hidden[0]))
+            isolated.append(("layer \(index)", layer(try recorded("vit.hidden.\(index)"), cosine: cosine, sine: sine)[0]))
+        }
+        let soft = vision.softTokens(pixels, positionIds: positions)
+        XCTAssertEqual(soft.dtype, .bfloat16, "a bf16 load computes the image path in bf16")
+        states += [("pooled", soft[0]), ("projected", embedder(soft)[0])]
+        isolated.append(("projected", embedder(try recorded("pooled"))[0]))
+        eval(states.map(\.1) + isolated.map(\.1))
+        let count = vision.layers.count
+        let rows = try seams(states, bf16: bf16, f32: f32,
+                             keys: ["vit.patch"] + (1 ... count).map { "vit.hidden.\($0)" } + ["pooled", "output"])
+        report("gemma4-e2b-vision", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32,
+                                     keys: (1 ... count).map { "vit.hidden.\($0)" } + ["output"])
+        report("gemma4-e2b-vision isolated", isolatedRows)
+        assertRoundingPlacement("gemma4-e2b-vision", endToEnd: rows, isolated: isolatedRows)
+    }
+
     // MARK: Gemma 3n
+
+    // The Gemma 3n E2B vision tower (timm's MobileNetV5) and its embedder at the released bf16
+    // (`.checkpoint`) against timm and transformers at bf16 (`gemma3n_vision_probe`), on a seeded frame:
+    // every block, the fusion adapter, the scaled soft tokens, and their projection.
+    func testGemma3nVisionInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let release = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E2B"], "IK_VAL_GEMMA3N_E2B"))
+        let bf16 = try record("gemma3n_e2b_vision_bf16.safetensors"), f32 = try record("gemma3n_e2b_vision_f32.safetensors")
+        let net = NFKMLXGemma3nVisionNet()
+        try NFKMLXGemma3nVision.loadWeights(into: net, fromDirectory: release, precision: .checkpoint)
+        let embedder = NFKGemma3nMultimodalEmbedder(hiddenSize: 2048, textHiddenSize: 2048, vocabularySize: 128,
+                                                    vocabularyOffset: 262_144)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+            key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
+        }, to: embedder)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let pixels = try XCTUnwrap(bf16["pixels"]).expandedDimensions(axis: 0)
+
+        var hidden = net.stem(pixels.asType(.bfloat16))
+        var states = [("stem", hidden[0])], keys = ["stem"]
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        var captured = [MLXArray](), recordedStages = [MLXArray]()
+        for (s, stage) in net.blocks.enumerated() {
+            for (b, block) in stage.enumerated() {
+                hidden = block(hidden)
+                let key = "block.\(s).\(b).out"
+                states.append(("block \(s).\(b)", hidden[0]))
+                keys.append(key)
+                isolated.append(("block \(s).\(b)", block(try recorded("block.\(s).\(b).in"))[0]))
+                isolatedKeys.append(key)
+            }
+            if s >= net.blocks.count - 2 {
+                captured.append(hidden)
+                recordedStages.append(try recorded("block.\(s).\(stage.count - 1).out"))
+            }
+        }
+        let fused = net.fusion(captured)
+        let width = fused.dim(3)
+        let tokens = NFKReferenceRounding.scaled(fused.reshaped([1, -1, width]), by: Float(Double(width).squareRoot()))
+        XCTAssertEqual(tokens.dtype, .bfloat16, "a bf16 load computes the image path in bf16")
+        states += [("fused", fused[0]), ("tokens", tokens[0]), ("projected", embedder(soft: tokens)[0])]
+        keys += ["fused", "tokens", "output"]
+        isolated += [("fused", net.fusion(recordedStages)[0]), ("projected", embedder(soft: try recorded("tokens"))[0])]
+        isolatedKeys += ["fused", "output"]
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("gemma3n-e2b-vision", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("gemma3n-e2b-vision isolated", isolatedRows)
+        assertRoundingPlacement("gemma3n-e2b-vision", endToEnd: rows, isolated: isolatedRows)
+    }
+
 
     // The E2B decoder at the released bf16 against transformers at bf16 with eager attention
     // (`IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n`), `IK_PARITY_GEMMA3N_E2B` the float32 side.
@@ -1217,7 +1534,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // Qwen4-Exp's tiny configuration with the eight-head indexer at bf16 (`IK_TINY_DTYPE=bfloat16
     // IK_QWEN4_INDEXER_HEADS=8 run_reference.py qwen4_exp`), against float32 arithmetic on the same
-    // bf16-rounded weights (`IK_TINY_DTYPE=bfloat16-weights`) as the floor.
+    // bf16-rounded weights (`IK_TINY_DTYPE=bfloat16-weights`) as the floor. Twelve tokens over the indexer's
+    // compression ratio of 2 against a budget of 4 make the indexer discard blocks at layer 3, and each
+    // layer also runs alone on the reference's own input.
     func testQwen4ExpInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let bf16 = try record("qwen4_exp_heads8_bf16.safetensors"), f32 = try record("qwen4_exp_heads8_bf16w.safetensors")
@@ -1243,7 +1562,27 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         for (index, state) in states.enumerated() {
             XCTAssertEqual(state.dtype, .bfloat16, "state \(index) stays in the released precision")
         }
-        XCTAssertLessThanOrEqual(rows.last!.exact, 2 * rows.last!.floor, "the logits sit within twice the floor")
+
+        let length = tokens.dim(1)
+        let positions = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, 1, length])
+        let (cosTable, sinTable) = net.rotaryTable(positions: broadcast(positions, to: [3, 1, length]))
+        let queryIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([length, 1])
+        let keyIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, length])
+        let causal = (keyIndex .<= queryIndex).reshaped([1, 1, length, length])
+        let ids = [tokens.asArray(Int32.self).map(Int.init)]
+        let layers = net.model.languageModel.layers
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in layers.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            var output = layer(input, cos: cosTable, sin: sinTable, mask: causal,
+                               ngramIndices: layer.ple.map { $0.embedding.indices(tokens: ids) })
+            if index == layers.count - 1 { output = net.model.languageModel.mixer(output).read }
+            isolated.append(("layer \(index)", output))
+        }
+        eval(isolated.map(\.1))
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
+        report("qwen4-exp isolated", isolatedRows)
+        assertRoundingPlacement("qwen4-exp", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
     }
 
     // MARK: Granite Speech
@@ -1966,6 +2305,260 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     }
 
     /// Sa2VA-1B at bf16, as ``NFKMLXSa2VA/backend(directoryURL:)`` loads it, with both records.
+    /// The releases the Qwen-VL bf16 tests read: Sa2VA's (records `sa2va_<name>_*`) and plain Qwen3-VL
+    /// cuts (records `<name>_*`).
+    private static let qwenVLReleases = [
+        ("sa2va_qwen3_vl_2b", "IK_VAL_SA2VA_QWEN3_VL_2B"), ("sa2va_qwen2_5_vl_3b", "IK_VAL_SA2VA_QWEN2_5_VL_3B"),
+        ("sa2va_qwen3_vl_4b", "IK_VAL_SA2VA_QWEN3_VL_4B"), ("sa2va_qwen3_vl_4b_sam3", "IK_VAL_SA2VA_QWEN3_VL_4B_SAM3"),
+        ("qwen3_vl_8b_cut4", "IK_VAL_QWEN3_VL_8B_CUT4"), ("qwen3_vl_32b_cut4", "IK_VAL_QWEN3_VL_32B_CUT4"),
+        ("qwen3_vl_30b_a3b_cut2", "IK_VAL_QWEN3_VL_30B_A3B_CUT2"),
+        ("qwen3_vl_embedding_8b_cut4", "IK_VAL_QWEN3_VL_EMBEDDING_8B_CUT4"),
+    ]
+
+    // Qwen-VL loaded at bf16 as its backends load it: Sa2VA on Qwen3-VL (`IK_VAL_SA2VA_QWEN3_VL_2B`, `_4B`,
+    // `_4B_SAM3`) and on Qwen2.5-VL (`IK_VAL_SA2VA_QWEN2_5_VL_3B`), and the larger Qwen3-VL releases cut to their first decoder
+    // layers (`truncate.py`, the tower whole). The vision tower, its mergers, and the decoder over the fused
+    // prompt and the teacher-forced answer, against the release's own code at bf16 with eager attention
+    // (`sa2va_qwen_probe`, transformers 4.57). Qwen2.5-VL's tower states are in window order. A mixture cut's
+    // record carries the reference's routing (`IK_PROBE_ROUTES=1`), which the decoder is forced to.
+    func testSa2VAQwenInBFloat16MatchesTheBFloat16Reference() throws {
+        var measured = 0
+        // `IK_QWEN_VL_ONLY=<record name>` measures one release.
+        let only = ProcessInfo.processInfo.environment["IK_QWEN_VL_ONLY"]
+        for (name, key) in Self.qwenVLReleases where only == nil || only == name {
+            do {
+                try autoreleasepool { try sa2vaQwen(name, directoryKey: key) }
+            } catch is XCTSkip {
+                continue
+            }
+            Memory.clearCache()
+            measured += 1
+        }
+        if measured == 0 { throw XCTSkip("set IK_VAL_SA2VA_QWEN3_VL_2B, IK_VAL_SA2VA_QWEN2_5_VL_3B, or a Qwen3-VL cut") }
+    }
+
+    private func sa2vaQwen(_ name: String, directoryKey: String) throws {
+        try requireMLXRuntime()
+        let (net, bf16, f32) = try sa2vaQwenRelease(name, directoryKey: directoryKey)
+        let routed = bf16["route.0.index"] != nil
+        if routed {
+            for (index, layer) in net.decoder.model.layers.enumerated() {
+                (layer.feedForward as? NFKLMMixtureFeedForward)?.forcedChoice = try recordedChoice(bf16, layer: index)
+            }
+        }
+        func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let pixels = try XCTUnwrap(bf16["pixel_values"])
+        let gridValues = try XCTUnwrap(bf16["image_grid_thw"]).reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let grid = (t: gridValues[0], h: gridValues[1], w: gridValues[2])
+        let inputIds = try XCTUnwrap(bf16["input_ids"]).asArray(Int32.self).map(Int.init)
+
+        var states = [(String, MLXArray)](), keys = [String]()
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        func measure(_ label: String, _ ours: MLXArray, _ key: String, alone: MLXArray? = nil) {
+            states.append((label, ours))
+            keys.append(key)
+            isolated.append((label, alone ?? ours))
+            isolatedKeys.append(key)
+        }
+        switch net.tower {
+        case .qwen3(let vision):
+            let patch = vision.patchEmbed(pixels.asType(.bfloat16))
+            let position = vision.interpolatedPositionEmbedding(grid: grid)
+            measure("patch embedding", patch, "vit.patch")
+            measure("position", position, "vit.pos")
+            var hidden = patch + position
+            measure("tower input", hidden, "vit.hidden.0", alone: try recorded("vit.patch") + recorded("vit.pos"))
+            let (cos, sin) = vision.rotaryEmbedding(grid: grid)
+            for (index, block) in vision.blocks.enumerated() {
+                hidden = block(hidden, cos: cos, sin: sin)
+                measure("tower block \(index)", hidden, "vit.hidden.\(index + 1)",
+                        alone: block(try recorded("vit.hidden.\(index)"), cos: cos, sin: sin))
+            }
+            for (index, merger) in vision.deepstackMergers.enumerated() {
+                let layer = vision.configuration.deepstackLayers[index]
+                isolated.append(("deepstack \(index)", merger(try recorded("vit.hidden.\(layer + 1)"))))
+                isolatedKeys.append("deepstack.\(index).block.out")
+            }
+            isolated.append(("merger", vision.merger(try recorded("vit.hidden.\(vision.blocks.count)"))))
+            isolatedKeys.append("merger.block.out")
+        case .qwen25(let vision):
+            let unit = vision.configuration.spatialMergeSize * vision.configuration.spatialMergeSize
+            let layout = vision.layout(grid: grid)
+            let patch = vision.patchEmbed(pixels.asType(.bfloat16))
+            measure("patch embedding", patch, "vit.patch")
+            var hidden = patch.reshaped([patch.dim(0) / unit, unit, -1]).take(layout.order, axis: 0)
+                .reshaped([patch.dim(0), -1])
+            for index in vision.blocks.indices {
+                hidden = vision.block(index, hidden, layout: layout)
+                measure("tower block \(index)", hidden, "vit.hidden.\(index + 1)",
+                        alone: vision.block(index, try recorded("vit.hidden.\(index)"), layout: layout))
+            }
+            isolated.append(("merger", vision.merger(try recorded("vit.hidden.\(vision.blocks.count)"), mergeUnit: unit)))
+            isolatedKeys.append("merger.block.out")
+        }
+        let features = net.imageFeatures(pixelValues: pixels, grid: grid)
+        XCTAssertEqual(features.output.dtype, .bfloat16, "\(name): a bf16 load computes the image path in bf16")
+        states.append(("vision output", features.output))
+        keys.append("vision_merged")
+        for (index, stack) in features.deepstack.enumerated() {
+            states.append(("deepstack \(index)", stack))
+            keys.append("deepstack.\(index).block.out")
+        }
+
+        let decoder = net.decoder
+        let input = NFKMLXQwen3VL.decoderInput(decoder: decoder, inputIds: inputIds, visionFeatures: features.output,
+                                               deepstack: features.deepstack, gridT: grid.t, gridH: grid.h,
+                                               gridW: grid.w, layout: net.layout)
+        XCTAssertEqual(input.embeddings.dtype, .bfloat16, "\(name): the fused embeddings stay bf16")
+        states.append(("fused", input.embeddings[0]))
+        keys.append("fused")
+        let multimodal = input.multimodal
+        let mask = NFKMLXLanguageNet.causalMask(inputIds.count, offset: 0)
+        let layers = decoder.model.layers
+        var hidden = input.embeddings
+        for (index, layer) in layers.enumerated() {
+            hidden = layer(hidden, mask: mask, cache: nil, layer: index, rope: multimodal.rope)
+            let alone = layer(try recorded("dec.layer.\(index).in").expandedDimensions(axis: 0), mask: mask, cache: nil,
+                              layer: index, rope: multimodal.rope)
+            measure("decoder layer \(index)", hidden[0], "dec.layer.\(index).out", alone: alone[0])
+            if index < multimodal.features.count {
+                let gathered = multimodal.features[index].take(multimodal.featureIndex, axis: 0)
+                    .reshaped([1, inputIds.count, -1]).asType(hidden.dtype)
+                hidden = hidden + MLX.where(multimodal.mask, gathered, MLXArray(Float(0)).asType(hidden.dtype))
+            }
+        }
+        let normed = decoder.model.norm(hidden)
+        // A cut whose last layer still takes a deepstack map adds the reference's map before the norm.
+        var lastState = try recorded("dec.layer.\(layers.count - 1).out").expandedDimensions(axis: 0)
+        if layers.count - 1 < multimodal.features.count {
+            let gathered = try recorded("deepstack.\(layers.count - 1).block.out")
+                .take(multimodal.featureIndex, axis: 0).reshaped([1, inputIds.count, -1])
+            lastState = lastState + MLX.where(multimodal.mask, gathered, MLXArray(Float(0)).asType(lastState.dtype))
+        }
+        let normAlone = decoder.model.norm(lastState)[0]
+        measure("final norm", normed[0], "dec.norm.out", alone: normAlone)
+        let answer = try XCTUnwrap(bf16["output"]).dim(0)
+        let tail = inputIds.count - answer
+        // A release without an output head (the embedding model) records its final states there.
+        if bf16["no_head"] != nil {
+            measure("final states", normed[0, tail...], "output", alone: normAlone[tail...])
+        } else {
+            measure("logits", decoder.logits(fromHidden: normed)[0, tail...], "output",
+                    alone: decoder.logits(fromHidden: try recorded("dec.norm.out").expandedDimensions(axis: 0))[0, tail...])
+        }
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report(name, rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routed ? 0.5 : 0.25)
+    }
+
+    // Each piece of the probed Qwen-VL tower blocks and of the merger on the reference's own bf16 input,
+    // so a rounding placed differently shows as a count at the one seam that places it.
+    func testSa2VAQwenTowerPiecesMatchTheBFloat16Reference() throws {
+        var measured = 0
+        for (name, key) in Self.qwenVLReleases {
+            do {
+                try autoreleasepool { try sa2vaQwenPieces(name, directoryKey: key) }
+            } catch is XCTSkip {
+                continue
+            }
+            Memory.clearCache()
+            measured += 1
+        }
+        if measured == 0 { throw XCTSkip("set IK_VAL_SA2VA_QWEN3_VL_2B, IK_VAL_SA2VA_QWEN2_5_VL_3B, or a Qwen3-VL cut") }
+    }
+
+    private func sa2vaQwenPieces(_ name: String, directoryKey: String) throws {
+        try requireMLXRuntime()
+        let (net, probe, _) = try sa2vaQwenRelease(name, directoryKey: directoryKey)
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16) }
+        let gridValues = try XCTUnwrap(probe["image_grid_thw"]).reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let grid = (t: gridValues[0], h: gridValues[1], w: gridValues[2])
+        let probed = Set(probe.keys.compactMap { key -> Int? in
+            let parts = key.split(separator: ".")
+            return parts.count > 2 && parts[0] == "vit" && parts[2] == "block" ? Int(parts[1]) : nil
+        }).sorted()
+        var lines = [String]()
+        switch net.tower {
+        case .qwen3(let vision):
+            let (cos, sin) = vision.rotaryEmbedding(grid: grid)
+            for index in probed {
+                let block = vision.blocks[index]
+                let p = "vit.\(index)."
+                lines.append("tower block \(index)")
+                lines.append(try piece("norm1", block.norm1(input(p + "norm1.in")), probe, p + "norm1.out"))
+                lines.append(try piece("qkv", block.attention.qkv(input(p + "attn.qkv.in")), probe, p + "attn.qkv.out"))
+                lines.append(try piece("attn", block.attention(input(p + "attn.in"), cos: cos, sin: sin), probe, p + "attn.out"))
+                lines.append(try piece("proj", block.attention.proj(input(p + "attn.proj.in")), probe, p + "attn.proj.out"))
+                lines.append(try piece("norm2", block.norm2(input(p + "norm2.in")), probe, p + "norm2.out"))
+                lines.append(try piece("fc1", block.mlp.fc1(input(p + "mlp.linear_fc1.in")), probe, p + "mlp.linear_fc1.out"))
+                lines.append(try piece("gelu", NFKReferenceRounding.geluTanh(input(p + "mlp.act_fn.in")), probe, p + "mlp.act_fn.out"))
+                lines.append(try piece("fc2", block.mlp.fc2(input(p + "mlp.linear_fc2.in")), probe, p + "mlp.linear_fc2.out"))
+                lines.append(try piece("block", block(input(p + "block.in"), cos: cos, sin: sin), probe, p + "block.out"))
+            }
+            let merger = vision.merger
+            lines.append("merger")
+            lines.append(try piece("norm", merger.norm(input("merger.norm.in")), probe, "merger.norm.out"))
+            lines.append(try piece("fc1", merger.fc1(input("merger.linear_fc1.in")), probe, "merger.linear_fc1.out"))
+            lines.append(try piece("gelu", NFKReferenceRounding.wide(input("merger.act_fn.in")) { gelu($0) }, probe, "merger.act_fn.out"))
+            lines.append(try piece("fc2", merger.fc2(input("merger.linear_fc2.in")), probe, "merger.linear_fc2.out"))
+        case .qwen25(let vision):
+            let layout = vision.layout(grid: grid)
+            for index in probed {
+                let block = vision.blocks[index]
+                let p = "vit.\(index)."
+                lines.append("tower block \(index)")
+                lines.append(try piece("norm1", block.norm1(input(p + "norm1.in")), probe, p + "norm1.out"))
+                lines.append(try piece("qkv", block.attention.qkv(input(p + "attn.qkv.in")), probe, p + "attn.qkv.out"))
+                lines.append(try piece("proj", block.attention.proj(input(p + "attn.proj.in")), probe, p + "attn.proj.out"))
+                lines.append(try piece("norm2", block.norm2(input(p + "norm2.in")), probe, p + "norm2.out"))
+                lines.append(try piece("gate", block.mlp.gate(input(p + "mlp.gate_proj.in")), probe, p + "mlp.gate_proj.out"))
+                lines.append(try piece("silu", NFKReferenceRounding.silu(input(p + "mlp.act_fn.in")), probe, p + "mlp.act_fn.out"))
+                lines.append(try piece("down", block.mlp.down(input(p + "mlp.down_proj.in")), probe, p + "mlp.down_proj.out"))
+                lines.append(try piece("mlp", block.mlp(input(p + "mlp.in")), probe, p + "mlp.out"))
+                lines.append(try piece("block", vision.block(index, input(p + "block.in"), layout: layout), probe, p + "block.out"))
+            }
+            let merger = vision.merger
+            lines.append("merger")
+            lines.append(try piece("norm", merger.norm(input("merger.ln_q.in")), probe, "merger.ln_q.out"))
+            lines.append(try piece("fc1", merger.mlp[0](input("merger.mlp.0.in")), probe, "merger.mlp.0.out"))
+            lines.append(try piece("gelu", NFKReferenceRounding.wide(input("merger.mlp.1.in")) { gelu($0) }, probe, "merger.mlp.1.out"))
+            lines.append(try piece("fc2", merger.mlp[1](input("merger.mlp.2.in")), probe, "merger.mlp.2.out"))
+        }
+        print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    /// A Qwen-VL tower, decoder, and M-RoPE layout at bf16, from a Sa2VA release or a plain Qwen3-VL one.
+    private struct QwenVLParts {
+        let tower: NFKMLXSa2VAQwenNet.Tower
+        let decoder: NFKMLXLanguageNet
+        let layout: NFKMLXMRoPELayout
+
+        func imageFeatures(pixelValues: MLXArray, grid: (t: Int, h: Int, w: Int)) -> (output: MLXArray, deepstack: [MLXArray]) {
+            switch tower {
+            case .qwen3(let vision): return vision(pixelValues, grid: grid)
+            case .qwen25(let vision): return (vision(pixelValues, grid: grid), [])
+            }
+        }
+    }
+
+    private func sa2vaQwenRelease(_ name: String, directoryKey: String) throws
+        -> (net: QwenVLParts, bf16: [String: MLXArray], f32: [String: MLXArray]) {
+        let directory = URL(fileURLWithPath: try existing(config[directoryKey], directoryKey))
+        let bf16 = try record("\(name)_bf16.safetensors"), f32 = try record("\(name)_f32.safetensors")
+        guard !FileManager.default.fileExists(atPath: directory.appendingPathComponent("modeling_sa2va_qwen.py").path) else {
+            let net = try NFKMLXSa2VAQwenNet.load(directoryURL: directory, parts: .language, dtype: .bfloat16)
+            return (QwenVLParts(tower: net.tower, decoder: net.decoder, layout: net.layout), bf16, f32)
+        }
+        let vision = NFKMLXQwen3VLVisionNet(try NFKMLXQwen3VLVisionConfiguration.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXQwen3VL.loadVisionWeights(into: vision, directoryURL: directory, dtype: .bfloat16)
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: directory, precision: .checkpoint, residency: .resident)
+        return (QwenVLParts(tower: .qwen3(vision), decoder: decoder, layout: .interleaved), bf16, f32)
+    }
+
     private func sa2va1B() throws -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_1B"], "IK_VAL_SA2VA_1B"))
         let bf16 = try record("sa2va_1b_bf16.safetensors"), f32 = try record("sa2va_1b_f32.safetensors")

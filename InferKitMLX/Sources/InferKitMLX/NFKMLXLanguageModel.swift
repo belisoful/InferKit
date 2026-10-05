@@ -1336,12 +1336,13 @@ public final class NFKMLXLanguageNet: Module {
         for (index, layer) in model.layers.enumerated() {
             hidden = layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope)
             // The deepstack adds a vision feature map to the image-token positions of the first several
-            // layers, the reference's `_deepstack_process`.
+            // layers, the reference's `_deepstack_process`, in the hidden state's type.
             if let multimodal, index < multimodal.features.count {
                 let gathered = multimodal.features[index]
                     .take(multimodal.featureIndex, axis: 0)
                     .reshaped([1, length, -1])
-                hidden = hidden + MLX.where(multimodal.mask, gathered, MLXArray(Float(0)))
+                    .asType(hidden.dtype)
+                hidden = hidden + MLX.where(multimodal.mask, gathered, MLXArray(Float(0)).asType(hidden.dtype))
             }
         }
         cache?.advance(by: length)

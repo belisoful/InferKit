@@ -96,7 +96,11 @@ final class NFKCLIPAttention: Module {
         let headDim = dimensions / heads
         let scale = 1.0 / sqrtf(Float(headDim))
 
-        let projected = x.matmul(inProjWeight.transposed(1, 0)) + inProjBias   // [B, L, 3D]
+        // In half precision each projection rounds once, as transformers' `q_proj`, `k_proj`, and `v_proj` do.
+        let projected = NFKReferenceRounding.isReduced(x)
+            ? (x.asType(.float32).matmul(inProjWeight.asType(.float32).transposed(1, 0))
+                + inProjBias.asType(.float32)).asType(x.dtype)
+            : x.matmul(inProjWeight.transposed(1, 0)) + inProjBias               // [B, L, 3D]
         let parts = split(projected, parts: 3, axis: -1)
         let shaped = { (t: MLXArray) in
             t.reshaped([batch, tokens, self.heads, headDim]).transposed(0, 2, 1, 3)
@@ -106,10 +110,18 @@ final class NFKCLIPAttention: Module {
         let k = shaped(parts[1])
         let v = shaped(parts[2])
 
-        var scores = q.matmul(k.transposed(0, 2, 1)) * scale
-        if let mask { scores = scores + mask }
-        let attended = softmax(scores, axis: -1).matmul(v)
-            .reshaped([batch, heads, tokens, headDim]).transposed(0, 2, 1, 3).reshaped([batch, tokens, dimensions])
+        let attention: MLXArray
+        if NFKReferenceRounding.isReduced(x) {
+            func heads(_ t: MLXArray) -> MLXArray { t.reshaped([batch, self.heads, tokens, headDim]) }
+            attention = NFKReferenceRounding.attention(queries: heads(q), keys: heads(k), values: heads(v),
+                                                       scale: scale, mask: mask)
+        } else {
+            var scores = q.matmul(k.transposed(0, 2, 1)) * scale
+            if let mask { scores = scores + mask }
+            attention = softmax(scores, axis: -1).matmul(v)
+        }
+        let attended = attention.reshaped([batch, heads, tokens, headDim]).transposed(0, 2, 1, 3)
+            .reshaped([batch, tokens, dimensions])
         return outProj(attended)
     }
 }
@@ -125,7 +137,7 @@ public enum NFKCLIPActivation: Sendable {
         case .quickGELU: return NFKCLIPInit.quickGELU(x)
         // The reference's `gelu` is the exact error-function form, not the tanh approximation its
         // neighbour `gelu_new` selects.
-        case .gelu: return MLXNN.gelu(x)
+        case .gelu: return NFKReferenceRounding.wide(x) { MLXNN.gelu($0) }
         }
     }
 }
@@ -156,9 +168,9 @@ final class NFKCLIPResidualAttentionBlock: Module {
 
     init(dimensions: Int, heads: Int, intermediate: Int? = nil,
          activation: NFKCLIPActivation = .quickGELU) {
-        _ln1.wrappedValue = LayerNorm(dimensions: dimensions)
+        _ln1.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         _attn.wrappedValue = NFKCLIPAttention(dimensions: dimensions, heads: heads)
-        _ln2.wrappedValue = LayerNorm(dimensions: dimensions)
+        _ln2.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         _mlp.wrappedValue = NFKCLIPMLP(dimensions: dimensions, intermediate: intermediate, activation: activation)
     }
 
@@ -205,13 +217,13 @@ final class NFKCLIPVisionTransformer: Module {
     init(_ c: NFKMLXCLIPConfiguration) {
         resolution = c.imageResolution
         let grid = c.imageResolution / c.patchSize
-        _conv1.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.visionWidth,
-                                     kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize), bias: false)
+        _conv1.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.visionWidth,
+                                        kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize), bias: false)
         _classEmbedding.wrappedValue = NFKCLIPInit.parameter([c.visionWidth])
         _positionalEmbedding.wrappedValue = NFKCLIPInit.parameter([grid * grid + 1, c.visionWidth])
-        _lnPre.wrappedValue = LayerNorm(dimensions: c.visionWidth)
+        _lnPre.wrappedValue = NFKLayerNorm(dimensions: c.visionWidth)
         _transformer.wrappedValue = NFKCLIPTransformer(width: c.visionWidth, layers: c.visionLayers, heads: c.visionHeads)
-        _lnPost.wrappedValue = LayerNorm(dimensions: c.visionWidth)
+        _lnPost.wrappedValue = NFKLayerNorm(dimensions: c.visionWidth)
         _proj.wrappedValue = NFKCLIPInit.parameter([c.visionWidth, c.embedDimensions])
     }
 
@@ -219,7 +231,9 @@ final class NFKCLIPVisionTransformer: Module {
     func encode(_ image: MLXArray) -> MLXArray {
         let batched = image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]])
         let resized = NFKMLXResample.resizeNearest(batched, height: resolution, width: resolution)
-        let normalized = (resized - NFKCLIPInit.imageMean) / NFKCLIPInit.imageStd
+        // The pixels take the tower's parameter type, as the reference's patch embedding casts them.
+        let normalized = ((resized - NFKCLIPInit.imageMean) / NFKCLIPInit.imageStd)
+            .asType(NFKReferenceRounding.parameterType(of: conv1))
 
         let patches = conv1(normalized)                                     // [1, grid, grid, width]
         let width = patches.shape[3]
@@ -256,7 +270,7 @@ public final class NFKMLXCLIPNet: Module {
         _tokenEmbedding.wrappedValue = Embedding(embeddingCount: configuration.vocabularySize, dimensions: configuration.textWidth)
         _positionalEmbedding.wrappedValue = NFKCLIPInit.parameter([configuration.contextLength, configuration.textWidth])
         _transformer.wrappedValue = NFKCLIPTransformer(width: configuration.textWidth, layers: configuration.textLayers, heads: configuration.textHeads)
-        _lnFinal.wrappedValue = LayerNorm(dimensions: configuration.textWidth)
+        _lnFinal.wrappedValue = NFKLayerNorm(dimensions: configuration.textWidth)
         _textProjection.wrappedValue = NFKCLIPInit.parameter([configuration.textWidth, configuration.embedDimensions])
         _logitScale.wrappedValue = MLXArray(logf(1.0 / 0.07))
     }
@@ -301,12 +315,16 @@ enum NFKCLIPInit {
         return values.withUnsafeBufferPointer { MLXArray($0, shape) }
     }
 
+    /// `x · sigmoid(1.702 · x)`. In half precision the constant stays float32 and each of the three
+    /// operations rounds, as transformers' `QuickGELUActivation` does.
     static func quickGELU(_ x: MLXArray) -> MLXArray {
-        x * sigmoid(x * 1.702)
+        guard NFKReferenceRounding.isReduced(x) else { return x * sigmoid(x * 1.702) }
+        return x * NFKReferenceRounding.sigmoid(NFKReferenceRounding.scaled(x, by: 1.702))
     }
 
+    /// `x / ‖x‖`, the norm accumulated in float32 and rounded once in half precision, as torch's `norm` is.
     static func l2Normalize(_ x: MLXArray) -> MLXArray {
-        x / sqrt(sum(x * x, axis: -1, keepDims: true))
+        x / NFKReferenceRounding.wide(x) { sqrt(sum($0 * $0, axis: -1, keepDims: true)) }
     }
 
     static func causalMask(_ length: Int) -> MLXArray {

@@ -114,7 +114,7 @@ public final class NFKMLXGemma3nModel: Module {
             throw NFKMLXError.unsupportedConfiguration("this Gemma 3n carries no vision tower")
         }
         let grid = vision.softTokens(pixels)
-        return visionEmbedder(soft: grid * sqrt(Float(grid.shape[2])))
+        return visionEmbedder(soft: NFKReferenceRounding.scaled(grid, by: Float(Double(grid.shape[2]).squareRoot())))
     }
 
     /// A clip's soft tokens in the decoder's space, padded to `audioSoftTokens` with the modality's
@@ -208,7 +208,7 @@ public final class NFKMLXGemma3nModel: Module {
         let starts = MLXArray((0 ..< batch).map { Int32($0 * perBatch) }).reshaped([batch, 1])
         let rank = cumsum(mask.asType(.int32), axis: 1) - 1 + starts
         let bounded = clip(rank, min: MLXArray(Int32(0)), max: MLXArray(Int32(flat.shape[0] - 1)))
-        let gathered = flat.take(bounded.reshaped([-1]), axis: 0).reshaped(embeddings.shape)
+        let gathered = flat.take(bounded.reshaped([-1]), axis: 0).reshaped(embeddings.shape).asType(embeddings.dtype)
         return MLX.where(mask.expandedDimensions(axis: -1), gathered, embeddings)
     }
 }

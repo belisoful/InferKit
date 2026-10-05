@@ -39,7 +39,8 @@ import MLXNN
 /// The tower's normalization: an RMS norm over the channel axis with a weight and no bias.
 ///
 /// @discussion The checkpoint calls these `bn`, which is a legacy name; there are no running
-/// statistics anywhere in the tower. The reference does NOT widen to float32, so this does not either.
+/// statistics anywhere in the tower. The reference does NOT widen to float32: in half precision timm's
+/// `rms_norm2d` rounds each of its operations, and its tanh GELU rounds once.
 final class NFKGemma3nVisionNorm: Module {
     @ParameterInfo(key: "weight") var weight: MLXArray
     let epsilon: Float
@@ -54,8 +55,14 @@ final class NFKGemma3nVisionNorm: Module {
 
     /// `x` is `[batch, height, width, channels]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon) * weight
-        return activated ? geluApproximate(normalized) : normalized
+        guard NFKReferenceRounding.isReduced(x) else {
+            let normalized = x * rsqrt((x * x).mean(axis: -1, keepDims: true) + epsilon) * weight
+            return activated ? geluApproximate(normalized) : normalized
+        }
+        let meanSquare = NFKReferenceRounding.mean(x * x, axis: -1)
+        let shifted = (meanSquare.asType(.float32) + epsilon).asType(x.dtype)
+        let normalized = x * NFKReferenceRounding.rsqrt(shifted) * weight
+        return activated ? NFKReferenceRounding.geluTanh(normalized) : normalized
     }
 }
 
@@ -70,7 +77,7 @@ final class NFKGemma3nVisionConv: Module {
          bias: Bool = false) {
         self.kernel = kernel
         self.stride = stride
-        _convolution.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
+        _convolution.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: outChannels,
                                            kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                            padding: IntOrPair(0), groups: groups, bias: bias)
         super.init()
@@ -92,7 +99,7 @@ final class NFKGemma3nVisionConvNorm: Module {
          bias: Bool = false, activated: Bool) {
         self.kernel = kernel
         self.stride = stride
-        _convolution.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
+        _convolution.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: outChannels,
                                            kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                            padding: IntOrPair(0), groups: groups, bias: bias)
         _norm.wrappedValue = NFKGemma3nVisionNorm(channels: outChannels, activated: activated)
@@ -163,11 +170,11 @@ final class NFKGemma3nVisionEdgeResidual: NFKGemma3nVisionBlock {
         self.kernel = kernel
         self.stride = stride
         self.skip = skip
-        _expand.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: midChannels,
+        _expand.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: midChannels,
                                       kernelSize: IntOrPair(kernel), stride: IntOrPair(stride),
                                       padding: IntOrPair(0), bias: false)
         _expandNorm.wrappedValue = NFKGemma3nVisionNorm(channels: midChannels, activated: true)
-        _project.wrappedValue = Conv2d(inputChannels: midChannels, outputChannels: outChannels,
+        _project.wrappedValue = NFKConv2d(inputChannels: midChannels, outputChannels: outChannels,
                                        kernelSize: IntOrPair(1), bias: false)
         _projectNorm.wrappedValue = NFKGemma3nVisionNorm(channels: outChannels, activated: false)
         super.init()
@@ -287,9 +294,11 @@ final class NFKGemma3nVisionMultiQuery: Module {
         let valueMap = value(x)
         let values = valueMap.reshaped([batch, 1, valueMap.shape[1] * valueMap.shape[2], keyDimensions])
 
-        // One key head serves every query head, so the fused call broadcasts it.
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: queries, keys: keys, values: values, scale: scale, mask: nil)
+        // One key head serves every query head, so the call broadcasts it. In half precision a broadcast
+        // key head takes torch's MATH kernel.
+        let attended = NFKReferenceRounding.isReduced(queries)
+            ? NFKReferenceRounding.mathAttention(queries: queries, keys: keys, values: values, scale: scale, mask: nil)
+            : MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: nil)
         return output(attended.transposed(0, 2, 1, 3).reshaped([batch, height, width, heads * keyDimensions]))
     }
 }
@@ -308,12 +317,12 @@ final class NFKGemma3nVisionProjection: Module {
     init(_ inChannels: Int, _ outChannels: Int, stride: Int) {
         downsampleStride = stride
         if stride > 1 {
-            _downsample.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: inChannels,
+            _downsample.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: inChannels,
                                               kernelSize: IntOrPair(3), stride: IntOrPair(stride),
                                               padding: IntOrPair(0), groups: inChannels, bias: false)
             _norm.wrappedValue = NFKGemma3nVisionNorm(channels: inChannels, activated: false)
         }
-        _projection.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: outChannels,
+        _projection.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: outChannels,
                                           kernelSize: IntOrPair(1), bias: false)
         super.init()
     }
@@ -373,8 +382,9 @@ enum NFKGemma3nVisionResample {
             return NFKGemma3nVisionResample.nearest(x, height: resolution, width: resolution)
         }
         let (rows, columns) = (height / resolution, width / resolution)
-        return x.reshaped([batch, resolution, rows, resolution, columns, channels])
-            .mean(axes: [2, 4])
+        return NFKReferenceRounding.wide(x.reshaped([batch, resolution, rows, resolution, columns, channels])) {
+            $0.mean(axes: [2, 4])
+        }
     }
 }
 
@@ -456,9 +466,10 @@ public final class NFKMLXGemma3nVisionNet: Module {
     }
 
     /// The token grid for a frame `[batch, height, width, 3]` in `0...1`, as
-    /// `[batch, tokenGrid, tokenGrid, outputChannels]`.
+    /// `[batch, tokenGrid, tokenGrid, outputChannels]`. The pixels take the tower's parameter type, as
+    /// the reference's timm wrapper casts them.
     public func callAsFunction(_ pixels: MLXArray) -> MLXArray {
-        var hidden = stem(pixels)
+        var hidden = stem(pixels.asType(NFKReferenceRounding.parameterType(of: stem)))
         var captured = [MLXArray]()
         for (index, stage) in blocks.enumerated() {
             for block in stage {

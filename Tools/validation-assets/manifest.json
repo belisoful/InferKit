@@ -5490,6 +5490,38 @@
       "config": "IK_VAL_QWEN4_EXP_CUT2",
       "record": "qwen4_exp_cut2",
       "note": "Qwen3.8-Flash-Next (Qwen4-Exp; license qwen-community-1.0): two linear-attention layers of 512 experts with ten kept. Cut by the IO kit's cut-qwen4exp.py, which applies truncate.py's functions with a stricter filter: the n-gram table (layers.1.ple.*, 128 shards, 102 GB) and the multi-token-prediction head (mtp.*) are left out, and the cut's config empties ple_layer_ids. That list counts from one, so the release's [2] names the cut's second layer, which both sides run without its n-gram embedding. Records: hf_layer_probe in the qwenimage oracle environment (transformers 5.17), which loads qwen4_exp as Qwen4ExpForConditionalGeneration with no cache: bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1, float32 streamed with IK_PROBE_STREAM_F32=1, and qwen4_exp_cut2_bf16_fn the bf16 run with IK_PROBE_FUNCTIONS=causal_conv1d_fn,torch_chunk_gated_delta_rule as well."
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-8B-Instruct",
+      "layers": 4,
+      "directory": "qwen3-vl-8b-cut4",
+      "config": "IK_VAL_QWEN3_VL_8B_CUT4",
+      "record": "qwen3_vl_8b_cut4",
+      "note": "Qwen3-VL-8B (Apache-2.0): the text decoder cut to 4 layers, the 27-block vision tower whole (truncate.py keeps `blocks.N`). Records: sa2va_qwen_probe in the llm oracle environment, bf16 and float32 on bf16-rounded weights."
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-32B-Instruct",
+      "layers": 4,
+      "directory": "qwen3-vl-32b-cut4",
+      "config": "IK_VAL_QWEN3_VL_32B_CUT4",
+      "record": "qwen3_vl_32b_cut4",
+      "note": "Qwen3-VL-32B (Apache-2.0): the text decoder cut to 4 layers, the vision tower whole. Records: sa2va_qwen_probe in the llm oracle environment."
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-30B-A3B-Instruct",
+      "layers": 2,
+      "directory": "qwen3-vl-30b-a3b-cut2",
+      "config": "IK_VAL_QWEN3_VL_30B_A3B_CUT2",
+      "record": "qwen3_vl_30b_a3b_cut2",
+      "note": "Qwen3-VL-30B-A3B (Apache-2.0): two mixture layers of 128 experts, the vision tower whole; both kept layers also take a deepstack map. Records: sa2va_qwen_probe in the llm oracle environment with IK_PROBE_ROUTES=1, so the port routes as the reference routed."
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-Embedding-8B",
+      "layers": 4,
+      "directory": "qwen3-vl-embedding-8b-cut4",
+      "config": "IK_VAL_QWEN3_VL_EMBEDDING_8B_CUT4",
+      "record": "qwen3_vl_embedding_8b_cut4",
+      "note": "Qwen3-VL-Embedding-8B (Apache-2.0): the text decoder cut to 4 layers, the vision tower whole; the release ships no output head. Records: sa2va_qwen_probe in the llm oracle environment, whose output is the final norm's states."
     }
   ],
   "bf16_records_comment": "The half-precision records NFKMLXBFloat16ParityTests reads from <validation root>/records by file name: each pair is the reference at bf16 and its float32 floor on the same bf16 inputs. Each regenerates with `python3 run_reference.py` under the named oracle environment; the first mode names the bf16 record, the second its floor.",
@@ -5563,6 +5595,31 @@
       "records": "sa2va_4b_generate_{bf16,f32}, sa2va_1b_generate_{bf16,f32}, sa2va_internvl3_2b_generate_{bf16,f32}",
       "environment": "llm",
       "command": "IK_SA2VA_DTYPE=bfloat16 | (float32) sa2va --checkpoint $IK_VAL_SA2VA | $IK_VAL_SA2VA_1B | $IK_VAL_SA2VA_INTERNVL3_2B (each generated step's top five ids and scores)"
+    },
+    {
+      "records": "sa2va_qwen3_vl_2b_bf16 / _f32, sa2va_qwen3_vl_4b_bf16 / _f32, sa2va_qwen3_vl_4b_sam3_bf16 / _f32, sa2va_qwen2_5_vl_3b_bf16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 | (float32) sa2va_qwen_probe --checkpoint $IK_VAL_SA2VA_QWEN3_VL_2B | $IK_VAL_SA2VA_QWEN3_VL_4B | $IK_VAL_SA2VA_QWEN3_VL_4B_SAM3 | $IK_VAL_SA2VA_QWEN2_5_VL_3B (transformers 4.57, eager, the all-ones attention mask passed; NFKMLXSa2VAQwenTests reads its bf16-load floors from these pairs; the float32 run rounds every parameter to bf16 and back; the first and last tower blocks probed)"
+    },
+    {
+      "records": "qwen3_vl_8b_cut4_bf16 / _f32, qwen3_vl_32b_cut4_bf16 / _f32, qwen3_vl_30b_a3b_cut2_bf16 / _f32, qwen3_vl_embedding_8b_cut4_bf16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 | (float32) sa2va_qwen_probe --checkpoint <the cut> (a plain Qwen3-VL release runs as AutoModelForImageTextToText; the 30B-A3B cut with IK_PROBE_ROUTES=1 on both runs; the Embedding release, which ships no head, records its final states as the output; the probe passes the all-ones attention mask, without which transformers 4.57 reads M-RoPE's position jumps as packed sequences when there is no cache, as under the Embedding release's use_cache false)"
+    },
+    {
+      "records": "gemma3_4b_vision_bf16 / _f32, gemma4_e2b_vision_bf16 / _f32, gemma3n_e2b_vision_bf16 / _f32",
+      "environment": "gemma",
+      "command": "IK_PROBE_DTYPE=bfloat16 | (float32) gemma3_vision_probe --checkpoint $IK_VAL_GEMMA3_4B --image <validation root>/inputs/subject384.jpg --size 384 | gemma4_vision_probe --checkpoint $IK_VAL_GEMMA4 | gemma3n_vision_probe --checkpoint $IK_VAL_GEMMA3N_E2B"
+    },
+    {
+      "records": "siglip2_bf16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 | (float32) siglip2_probe --size 224 (google/siglip2-base-patch16-224 from the hub cache)"
+    },
+    {
+      "records": "clip_b32{,_photo,_face,_subject}_f16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=float16 | IK_PROBE_FLOOR=float16 clip_probe [--image <validation root>/inputs/photo.jpg | face960.jpg | subject384.jpg --size 224] (openai/clip-vit-base-patch32; the process hangs at exit after writing its record)"
     }
   ],
   "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",

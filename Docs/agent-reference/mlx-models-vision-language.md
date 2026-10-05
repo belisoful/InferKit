@@ -467,15 +467,41 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   written out op by op (`NFKLayerNorm2d`); its transposed convolutions round the bias apart, as MLX's
   do. Sa2VA-1B (`testSa2VA1BGroundingInBFloat16…` and its pieces test): worst isolated stage 0.076 of
   the floor, every decoder piece exact, best mask 9.882e-05 against a floor of 9.256e-05. The Qwen-VL
-  towers keep float32 activations; they are next. The Qwen-VL releases' backend loads
-  bfloat16 too (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`; their `text_config` declares it), each
-  tensor converted as it is read (`NFKMLXReleaseWeights.arrays(inDirectory:converting:)`), since a
-  converted list bound beside the stored one held both through `apply` and peaked above float32. The
-  backend peaks at 7.8 GB (Qwen3-VL-2B), 10.5 GB (Qwen2.5-VL-3B), 12.6 GB (Qwen3-VL-4B), and 13.0 GB
-  (-4B-SAM3), where float32 reached 24.5 GB, and answers each release's float32 reference text exactly.
-  Its floor against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`): decoder
-  0.99996 / 0.99989 / 0.99994 / 0.99991 (2B, 3B, 4B, SAM3), `[SEG]` 0.99999 or closer, mask 0.99999 or
-  closer, IoU 0.99981 on the 2B and 1.0 on the rest, generation token for token on all four. The LLaVA
+  releases' backend loads bfloat16 too (`NFKMLXSa2VAQwenNet.load(directoryURL:dtype:)`; their
+  `text_config` declares it), each tensor converted as it is read
+  (`NFKMLXReleaseWeights.arrays(inDirectory:converting:)`), since a converted list bound beside the
+  stored one held both through `apply` and peaked above float32. Their towers compute in bfloat16 as
+  transformers does: the pixels take the tower's type as `get_image_features` casts them; the rotary
+  forms in float32 and rounds once, as `apply_rotary_pos_emb_vision` does; Qwen3-VL's interpolated
+  position embedding rounds its corner weights to the table's type and adds the corners one at a time;
+  the layer norms round once and the attention is the eager path; Qwen2.5-VL attends each window on its
+  own, as the reference splits them, where a masked full attention would sum over the masked keys. The
+  fused embeddings and the deepstack take the decoder's type; a float32 zero in the deepstack had
+  promoted the decoder to float32 at its first layer. `sa2va_qwen_probe` records the release's tower,
+  mergers, and decoder layer by layer (every attention eager; it also runs a plain Qwen3-VL release or
+  cut, and with `IK_PROBE_ROUTES=1` routes a mixture cut), and `testSa2VAQwenInBFloat16…` holds each
+  layer on the reference's input: Sa2VA-Qwen3-VL-2B 0.016 of the floor at worst, logits 1.172e-04
+  against 1.115e-04; Sa2VA-Qwen2.5-VL-3B 0.012, 5.381e-04 against 5.490e-04; the larger Qwen3-VL
+  releases cut to their first decoder layers with the tower whole, the 8B 0.042 (3.554e-05 against
+  3.512e-05), the 32B 0.066 (2.557e-05 against 2.317e-05), the 30B-A3B routed as the reference routed
+  0.019 (4.565e-04 against 4.784e-04), and the Embedding-8B 0.042 (its final states, the release shipping no
+  head, 2.958e-05 against 3.071e-05); Sa2VA-Qwen3-VL-4B and -4B-SAM3 0.016, logits 2.830e-04 against
+  2.342e-04 and 3.208e-04 against 2.446e-04. The probe passes the processor's all-ones attention mask:
+  with no mask and no cache (the Embedding release's `use_cache: false`), transformers 4.57's
+  `create_causal_mask` reads M-RoPE's position jumps at the image as packed sequences and splits the
+  attention there, which the first Embedding record carried. A cut whose last layer still takes a deepstack map adds
+  it before the final norm, which the isolated row must too. SAM 3's grounding stays float32 at any
+  load (user decision 2026-10-05): the release computes it in bfloat16 only under CUDA autocast, and
+  loaded at bfloat16 on the CPU its prompt encoder multiplies a float32 grid by a bfloat16 matrix and
+  stops. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
+  12.3 GB (-4B-SAM3), where float32 reached 24.5 GB, and answers each release's float32 reference text
+  exactly. Against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`), each seam is
+  held to twice its release's own bfloat16 distance there, read at run time from the release's probe
+  pair: vision 0.98996 / 0.99503 / 0.99503 / 0.99658 against the releases' own 0.99075 / 0.99522 /
+  0.99522 / 0.99620 (2B, 4B, SAM3, 3B), and the state the bridge reads 0.94660 / 0.93928 / 0.93486 /
+  0.93231 against 0.94505 / 0.94491 / 0.93191 / 0.93148; `[SEG]` 0.9990 or closer, mask 0.9999 or
+  closer, IoU 0.9991 or better, generation token for token on all four. Its earlier 0.99 bars
+  described the float32-promoted path. The LLaVA
   net loads at float32. A test class that loads several float32 releases clears MLX's cache in `tearDown`; without
   it the fourth 4B load starved the next forward into a Metal command-buffer timeout.
 - **Four architectures behind one factory.** `NFKMLXSa2VA.backend(directoryURL:)` reads `config.json`

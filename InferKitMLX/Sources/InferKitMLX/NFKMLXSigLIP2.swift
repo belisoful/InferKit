@@ -132,9 +132,9 @@ final class NFKSigLIP2VisionEmbeddings: Module {
 
     init(_ c: NFKMLXSigLIPConfiguration) {
         positionCount = c.positionCount
-        _patchEmbedding.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.hiddenSize,
-                                              kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize),
-                                              bias: true)
+        _patchEmbedding.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.hiddenSize,
+                                                 kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize),
+                                                 bias: true)
         _positionEmbedding.wrappedValue = Embedding(embeddingCount: c.positionCount, dimensions: c.hiddenSize)
     }
 
@@ -167,18 +167,34 @@ final class NFKSigLIP2ProbeAttention: Module {
     }
 
     /// Query `[B, 1, hidden]`, key/value `[B, N, hidden]` → `[B, 1, hidden]`.
+    ///
+    /// @discussion In half precision this is torch's `multi_head_attention_forward` with its weights
+    /// returned, as `nn.MultiheadAttention` runs by default: each projection rounds once, the queries are
+    /// scaled and rounded before the scores, the scores round, the softmax forms in float32 and rounds,
+    /// and the weighted sum rounds.
     func callAsFunction(_ query: MLXArray, _ keyValue: MLXArray) -> MLXArray {
         let (batch, length, hidden) = (keyValue.shape[0], keyValue.shape[1], keyValue.shape[2])
-        let q = matmul(query, inProjWeight[0 ..< hidden, 0...].transposed(1, 0)) + inProjBias[0 ..< hidden]
-        let k = matmul(keyValue, inProjWeight[hidden ..< 2 * hidden, 0...].transposed(1, 0)) + inProjBias[hidden ..< 2 * hidden]
-        let v = matmul(keyValue, inProjWeight[2 * hidden ..< 3 * hidden, 0...].transposed(1, 0)) + inProjBias[2 * hidden ..< 3 * hidden]
+        func project(_ x: MLXArray, _ rows: Range<Int>) -> MLXArray {
+            let weight = inProjWeight[rows, 0...].transposed(1, 0), bias = inProjBias[rows]
+            guard NFKReferenceRounding.isReduced(x) else { return matmul(x, weight) + bias }
+            return (matmul(x.asType(.float32), weight.asType(.float32)) + bias.asType(.float32)).asType(x.dtype)
+        }
+        let q = project(query, 0 ..< hidden)
+        let k = project(keyValue, hidden ..< 2 * hidden)
+        let v = project(keyValue, 2 * hidden ..< 3 * hidden)
 
         func split(_ t: MLXArray, _ len: Int) -> MLXArray {
             t.reshaped([batch, len, self.heads, headDimensions]).transposed(0, 2, 1, 3)
         }
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: split(q, 1), keys: split(k, length), values: split(v, length),
-            scale: 1 / sqrt(Float(headDimensions)), mask: nil)
+        let scale = 1 / sqrt(Float(headDimensions))
+        let attended: MLXArray
+        if NFKReferenceRounding.isReduced(q) {
+            let scores = matmul(NFKReferenceRounding.scaled(split(q, 1), by: scale), split(k, length).transposed(0, 1, 3, 2))
+            attended = matmul(softmax(scores, axis: -1, precise: true), split(v, length))
+        } else {
+            attended = MLXFast.scaledDotProductAttention(
+                queries: split(q, 1), keys: split(k, length), values: split(v, length), scale: scale, mask: nil)
+        }
         return outProj(attended.transposed(0, 2, 1, 3).reshaped([batch, 1, hidden]))
     }
 }
@@ -194,7 +210,7 @@ final class NFKSigLIP2PoolingHead: Module {
     init(_ c: NFKMLXSigLIPConfiguration) {
         _probe.wrappedValue = MLXArray.zeros([1, 1, c.hiddenSize])
         _attention.wrappedValue = NFKSigLIP2ProbeAttention(c)
-        _layerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _layerNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _mlp.wrappedValue = NFKSigLIPMLP(c)
     }
 
@@ -216,12 +232,13 @@ final class NFKSigLIP2VisionNet: Module {
     init(_ c: NFKMLXSigLIPConfiguration) {
         _embeddings.wrappedValue = NFKSigLIP2VisionEmbeddings(c)
         _encoder.wrappedValue = NFKSigLIPEncoder(c)
-        _postLayerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _postLayerNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _head.wrappedValue = NFKSigLIP2PoolingHead(c)
     }
 
+    /// The pixels take the tower's parameter type, as the reference's patch embedding casts them.
     func callAsFunction(_ pixelValues: MLXArray) -> MLXArray {
-        var hidden = embeddings(pixelValues)
+        var hidden = embeddings(pixelValues.asType(NFKReferenceRounding.parameterType(of: embeddings)))
         for layer in encoder.layers { hidden = layer(hidden) }
         return head(postLayerNorm(hidden))
     }
@@ -238,7 +255,7 @@ final class NFKSigLIP2TextNet: Module {
     init(_ c: NFKMLXSigLIP2TextConfiguration) {
         _embeddings.wrappedValue = NFKSigLIP2TextEmbeddings(c)
         _encoder.wrappedValue = NFKSigLIPEncoder(c.encoderConfiguration)
-        _finalLayerNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
+        _finalLayerNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEpsilon)
         _head.wrappedValue = Linear(c.hiddenSize, c.projectionSize, bias: true)
     }
 
@@ -285,14 +302,17 @@ final class NFKMLXSigLIP2Net: Module {
 
     /// The L2-normalized image embedding for `[tiles, H, W, 3]` pixel values.
     func imageEmbedding(_ pixelValues: MLXArray) -> MLXArray {
-        let embedding = vision(pixelValues)
-        return embedding / sqrt(embedding.square().sum(axis: -1, keepDims: true))
+        Self.normalized(vision(pixelValues))
     }
 
     /// The L2-normalized text embedding for token ids `[B, T]`.
     func textEmbedding(_ tokens: MLXArray) -> MLXArray {
-        let embedding = text(tokens)
-        return embedding / sqrt(embedding.square().sum(axis: -1, keepDims: true))
+        Self.normalized(text(tokens))
+    }
+
+    /// `x / ‖x‖`, the norm accumulated in float32 and rounded once in half precision, as torch's `norm` is.
+    static func normalized(_ x: MLXArray) -> MLXArray {
+        x / NFKReferenceRounding.wide(x) { sqrt($0.square().sum(axis: -1, keepDims: true)) }
     }
 
     /// The sigmoid-similarity logits per text: `scale·(text · image) + bias`.

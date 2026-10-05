@@ -47,6 +47,28 @@ rest. Its bf16 check differs from the dense sizes' in two ways, each measured on
   same roundings, reads 0.27 of the floor at layer 0. A mixture layer's isolated bar is 0.5 of the
   floor; a dense layer's stays 0.25.
 
+The vision towers compute in their load's type too (user decision 2026-10-03): the pixels take the
+tower's type, as transformers and timm cast them.
+- Gemma 3's SigLIP reuses the shared SigLIP encoder; its patch convolution and post layer norm round
+  once, and the projector's 4×4 average pool accumulates in float32.
+- Gemma 3n's MobileNetV5 follows timm's `rms_norm2d`, which rounds each of its operations in half
+  precision (`x²`, the mean, `+ eps`, torch's `rsqrt` as the reciprocal of a rounded square root, and
+  both products), and its tanh GELU once. Its multi-query attention broadcasts one key head, which
+  torch's CPU dispatch sends to the MATH kernel (`mathAttention`). The fusion's average pool accumulates
+  in float32, and the soft tokens' `√hidden` scale multiplies in float32.
+- Gemma 4's tower forms `2(x − 0.5)` in float32 and then casts it; a padding position's zero takes the
+  table's type (a float32 zero had promoted the tower). The rotary tables round to bf16 and the three
+  rotary operations round in turn, the values normalize in float32 (`scaledNorm` without a weight), and
+  the pooler averages in float32, rounds, and scales by `√hidden` in float32, as `Gemma4VisionPooler`
+  does. The embedders' scale-free norm is `scaledNorm`.
+
+Measured at the stored bf16 against the references at bf16 (`gemma3_vision_probe`,
+`gemma3n_vision_probe`, `gemma4_vision_probe`): Gemma 3 4B's worst layer reads 0.020 of the floor, its
+soft tokens 3.365e-03 against 3.480e-03; Gemma 3n E2B's worst block 0.029, its projected soft tokens
+6.388e-04 against 1.002e-03; Gemma 4 E2B's worst layer 0.027, its projected tokens 2.126e-04 against
+2.530e-04. `NFKMLXReleaseWeights.arrays(inDirectory:)` defaults to `.float32`, so a test of a stored bf16
+tower passes `precision: .checkpoint`; without it the first Gemma 4 run measured float32.
+
 Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer 0), layer 5 reads
 0.003, and the logits sit at 8.118e-04 from float32 against a floor of 8.321e-04
 (`testGemma4MixturePrefixMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`).

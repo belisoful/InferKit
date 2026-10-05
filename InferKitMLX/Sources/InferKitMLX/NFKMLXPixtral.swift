@@ -466,7 +466,7 @@ public final class NFKMLXPixtral: NSObject {
             isImage[position] = 1
         }
         if counter > 0 {
-            let gathered = features.reshaped([-1, width]).take(MLXArray(featureIndex), axis: 0)
+            let gathered = features.reshaped([-1, width]).take(MLXArray(featureIndex), axis: 0).asType(embeddings.dtype)
             let mask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
             embeddings = MLX.where(mask, gathered, embeddings)
         }

@@ -61,15 +61,17 @@ final class NFKSa2VASAM3GroundingEncoder: Module, NFKSa2VAGrounding {
         segment(levels: imageLevels(image), languageEmbedding: languageEmbedding)
     }
 
-    /// The neck's first three levels, 288, 144, and 72 across.
-    func imageLevels(_ image: MLXArray) -> [MLXArray] { Array(neck(backbone(image)).prefix(3)) }
+    /// The neck's first three levels, 288, 144, and 72 across, from the image in the encoder's type.
+    func imageLevels(_ image: MLXArray) -> [MLXArray] {
+        Array(neck(backbone(image.asType(NFKReferenceRounding.parameterType(of: backbone)))).prefix(3))
+    }
 
     func segment(levels: [MLXArray], languageEmbedding: MLXArray) -> (highResolution: MLXArray, lowResolution: MLXArray) {
         let grid = configuration.grid
         let hidden = configuration.fpnHiddenSize
         let conditioned = levels[2] + noMemoryEmbedding.reshaped([1, 1, 1, hidden])
         let emptyPoint = promptEncoder.sparse(points: [(x: Float(0), y: Float(0), label: -1)])
-        let sparse = concatenated([emptyPoint, languageEmbedding], axis: 1)
+        let sparse = concatenated([emptyPoint, languageEmbedding.asType(emptyPoint.dtype)], axis: 1)
         let decoded = maskDecoder(features: conditioned, positional: promptEncoder.positionEncoding.grid(grid, grid),
                                   sparse: sparse, dense: promptEncoder.dense(grid: grid),
                                   highResolution: [levels[0], levels[1]])

@@ -199,7 +199,7 @@ def main(argv):
         header = json.loads(curl(repo, "model.safetensors", (8, 8 + length - 1)))
         index = {"weight_map": {name: "model.safetensors" for name in header if name != "__metadata__"}}
     for extra in ("tokenizer.json", "tokenizer_config.json", "generation_config.json",
-                  "special_tokens_map.json", "tokenizer.model", "chat_template.jinja",
+                  "special_tokens_map.json", "tokenizer.model", "chat_template.jinja", "chat_template.json",
                   "preprocessor_config.json", "video_preprocessor_config.json"):
         try:
             fetch(repo, extra, os.path.join(out, extra))
@@ -207,6 +207,7 @@ def main(argv):
             pass
     # A release run through `trust_remote_code` needs its own code and tokenizer tables beside the cut.
     for extra in remote_code_files(repo):
+        os.makedirs(os.path.dirname(os.path.join(out, extra)), exist_ok=True)
         fetch(repo, extra, os.path.join(out, extra))
 
     # A vision tower has its own `layers.N`; it is kept whole rather than cut with the decoder, as is

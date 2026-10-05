@@ -843,6 +843,12 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
 
     /// The bfloat16 load the backend runs, against the same float32 records: the precision floor each
     /// release's backend answers at. `IK_SA2VA_ONLY=<name>` selects one release.
+    ///
+    /// @discussion The load computes in bfloat16 as the release does, so the merged vision tokens, the
+    /// deepstack, and the decoder state the bridge reads are each held to twice the release's own
+    /// bfloat16 distance from float32 at that seam, read from its `sa2va_qwen_probe` pair (same image,
+    /// same prompt). The decoder state is the last layer before the final norm on Qwen3-VL and the
+    /// normalized state on Qwen2.5-VL. The generation and the mask decision are the backend's answer.
     func testTheBFloat16LoadStaysNearTheFloat32Reference() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX; run Tools/mlx-metallib.sh")
         let env = NFKMLXValidationConfig.environment
@@ -851,15 +857,50 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
         for name in ["QWEN3_VL_2B", "QWEN3_VL_4B", "QWEN3_VL_4B_SAM3", "QWEN2_5_VL_3B"] where only == nil || only == name {
             guard let directory = env["IK_VAL_SA2VA_\(name)"], let recordPath = env["IK_PARITY_SA2VA_\(name)"],
                   FileManager.default.fileExists(atPath: recordPath) else { continue }
+            let floors = try referenceFloors(name)
             let (seams, iou, generation) = try measure(name, directory: directory, recordPath: recordPath, dtype: .bfloat16)
             print("VALIDATION BF16 sa2va \(name): " + seams.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
-                  + ", IoU \(iou), generation \(generation)")
-            for (seam, similarity) in seams { XCTAssertGreaterThan(similarity, 0.99, "\(name) \(seam) at bfloat16") }
+                  + ", IoU \(iou), generation \(generation); the release's own bf16: "
+                  + floors.sorted { $0.key < $1.key }.map { "\($0.key) \(1 - $0.value)" }.joined(separator: ", "))
+            for (seam, similarity) in seams {
+                if let floor = floors[seam] {
+                    XCTAssertLessThanOrEqual(1 - similarity, 2 * floor,
+                                             "\(name) \(seam) at bfloat16: farther than twice the release's own bfloat16")
+                } else {
+                    XCTAssertGreaterThan(similarity, 0.998, "\(name) \(seam) at bfloat16")
+                }
+            }
+            XCTAssertEqual(generation, "token-exact", "\(name) greedy generation at bfloat16")
             XCTAssertGreaterThan(iou, 0.98, "\(name) mask decision at bfloat16")
             NFKMLXGPU.clearCache()
             measured.append(name)
         }
         try XCTSkipIf(measured.isEmpty, "set IK_VAL_SA2VA_QWEN3_VL_<2B|4B> and IK_PARITY_SA2VA_QWEN3_VL_<2B|4B>")
+    }
+
+    /// The release's own bfloat16 distance from float32 (`1 - cosine`) at the seams `measure` reports,
+    /// from its `sa2va_qwen_probe` pair under `IK_VALIDATION_RECORDS` (default `records` under the
+    /// validation root).
+    private func referenceFloors(_ name: String) throws -> [String: Float] {
+        let root = NFKMLXValidationConfig.environment["IK_VALIDATION_RECORDS"]
+            ?? NFKMLXValidationConfig.root.appendingPathComponent("records").path
+        let stem = URL(fileURLWithPath: root).appendingPathComponent("sa2va_\(name.lowercased())").path
+        guard FileManager.default.fileExists(atPath: stem + "_bf16.safetensors") else {
+            throw XCTSkip("no sa2va_\(name.lowercased())_bf16 probe record")
+        }
+        let bf16 = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: stem + "_bf16.safetensors")).arrays
+        let f32 = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: stem + "_f32.safetensors")).arrays
+        let layers = bf16.keys.filter { $0.hasPrefix("dec.layer.") && $0.hasSuffix(".out") }.count
+        var keys = ["vision": "vision_merged",
+                    "decoder": name.hasPrefix("QWEN2_5") ? "dec.norm.out" : "dec.layer.\(layers - 1).out"]
+        for index in 0 ..< 3 where bf16["deepstack.\(index).block.out"] != nil {
+            keys["deepstack\(index)"] = "deepstack.\(index).block.out"
+        }
+        var floors = [String: Float]()
+        for (seam, key) in keys {
+            floors[seam] = 1 - cosine(try XCTUnwrap(bf16[key], "no \(key)"), try XCTUnwrap(f32[key], "no \(key)"))
+        }
+        return floors
     }
 
     /// End to end through the public factory on every recorded full Qwen-VL release: the reference's

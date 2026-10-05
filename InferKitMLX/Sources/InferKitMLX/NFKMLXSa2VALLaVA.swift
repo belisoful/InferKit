@@ -269,7 +269,7 @@ public final class NFKMLXSa2VALLaVANet: Module {
             counter += 1
             isImage[position] = 1
         }
-        let gathered = flat.take(MLXArray(index), axis: 0)
+        let gathered = flat.take(MLXArray(index), axis: 0).asType(text.dtype)
         let mask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
         return MLX.where(mask, gathered, text).reshaped([1, sequence, width])
     }
