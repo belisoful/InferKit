@@ -36,6 +36,11 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
 - A lazy decode pins its sources and intermediates. `NFKMLXDeepSeek.dequantized` evaluates each
   entry as it is produced; returning lazy graphs would hold the whole shard's decode live at once, and
   for a block-scaled format the expanded scale array alone is the weight's full size.
+- Splitting a lazy computation into blocks bounds no memory unless each block is evaluated before the
+  next: MLX schedules the graph as a whole. SAM 3's reference flash attention over 5,184 keys held
+  +1.97 GB of float32 scores unsplit and +2.87 GB split into 512-row query blocks; evaluating each block
+  in turn (`flashAttention(…, queryBlock:)`) took it to +0.88 GB, and splitting a layer's graph by
+  evaluating after each layer moved nothing, since the peak sits inside one.
 - Never pass `padding:` to an mlx-swift pooling layer. `Pool.callAsFunction` (mlx-swift 0.31.6)
   builds its pad widths as `[0, 0] + padding + [0, 0]`, two entries too many: a four-axis input gets the
   first four, so a 2-D pool pads width and channels instead of height and width. It raises nothing —

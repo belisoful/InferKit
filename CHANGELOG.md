@@ -516,9 +516,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   does under CUDA's bfloat16 autocast, which its tracker enters for the whole process: projections and
   convolutions in bfloat16, layer norms in float32 with float32 outputs, so the ViT's residual stream
   stays float32, and the ViT MLP's first projection with its tanh GELU rounded once, as cuBLASLt fuses
-  them. The grounding's weights take 0.95 GB in place of 1.89 GB. The backend's peak while it loads
-  falls from 11.1 GB to 10.4 GB, and while it answers from 12.3 GB to 12.2 GB. Float32 loads are
-  unchanged.
+  them. Its ViT attends 512 query rows at a time and evaluates each block before the next, which holds
+  its float32 scores to one block's. The grounding's weights take 0.95 GB in place of 1.89 GB, and the
+  backend's peak falls from 11.1 GB to 10.4 GB while it loads and from 12.3 GB to 11.6 GB while it
+  answers. Float32 loads are unchanged.
 - The SAM 3 grounding returns no mask where its decoder finds no object: the release replaces the masks
   with -1024 when the object score is not positive. Sa2VA's SAM 2 releases leave that rule out.
 - The SAM and SAM 2 mask decoders' upscaling `LayerNorm2d` uses ε = 1e-6, the references' value. It used

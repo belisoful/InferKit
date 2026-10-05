@@ -177,12 +177,26 @@ enum NFKReferenceRounding {
     /// added, the running row max and the float32 sum of the exponentials updated, the exponentials
     /// rounded to the operands' type for the product with the values, and the float32 accumulator
     /// rescaled when the max moves; the output divides by the sum and rounds once. A float32 input
-    /// takes the fused kernel.
+    /// takes the fused kernel. `queryBlock` attends that many query rows at a time, each row computed as
+    /// before, and evaluates each block before the next: MLX schedules one lazy graph as a whole and holds
+    /// every block's float32 scores at once, which over a long sequence is the whole score matrix.
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
-                               mask: MLXArray?, keyBlock: Int = 512) -> MLXArray {
+                               mask: MLXArray?, keyBlock: Int = 512, queryBlock: Int? = nil) -> MLXArray {
         guard isReduced(queries) else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values,
                                                      scale: scale, mask: mask)
+        }
+        let rows = queries.dim(-2)
+        if let queryBlock, rows > queryBlock {
+            let chunks = stride(from: 0, to: rows, by: queryBlock).map { start -> MLXArray in
+                let block = start ..< min(start + queryBlock, rows)
+                let blockMask = mask.map { $0.ndim >= 2 && $0.dim(-2) == rows ? $0[.ellipsis, block, 0...] : $0 }
+                let attended = flashAttention(queries: queries[.ellipsis, block, 0...], keys: keys, values: values,
+                                              scale: scale, mask: blockMask, keyBlock: keyBlock)
+                eval(attended)
+                return attended
+            }
+            return concatenated(chunks, axis: -2)
         }
         let wideQueries = queries.asType(.float32)
         let wideKeys = keys.asType(.float32), wideValues = values.asType(.float32)

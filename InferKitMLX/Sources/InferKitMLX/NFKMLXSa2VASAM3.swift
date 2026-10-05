@@ -244,6 +244,10 @@ enum NFKSAM3Autocast {
         return residual + mlp(layer.mlp, layerNorm(layer.norm2, residual))
     }
 
+    /// The query rows the ViT attends at a time. A global layer's float32 scores over all 5,184 keys
+    /// would otherwise take 1.7 GB at once.
+    static let queryBlock = 512
+
     /// The ViT's rotary self-attention. The rotation runs in float32 on the projected queries and keys and
     /// rounds back to their type.
     static func attention(_ attention: NFKSAM3Attention, _ x: MLXArray, rotary: NFKSAM3Rotary) -> MLXArray {
@@ -256,7 +260,7 @@ enum NFKSAM3Autocast {
         let attended = NFKReferenceRounding.flashAttention(
             queries: rotary(queries.asType(.float32)).asType(queries.dtype),
             keys: rotary(keys.asType(.float32)).asType(keys.dtype), values: split(attention.vProj),
-            scale: 1 / sqrt(Float(attention.headDim)), mask: nil)
+            scale: 1 / sqrt(Float(attention.headDim)), mask: nil, queryBlock: queryBlock)
         return linear(attention.oProj, attended.transposed(0, 2, 1, 3)
             .reshaped([batch, height, width, attention.heads * attention.headDim]))
     }

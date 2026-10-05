@@ -508,8 +508,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   bfloat16 run at the logits; the shipped half held against that record passes as it does against the
   plain one (worst isolated 0.015, logits 3.208e-04 against 3.189e-04), so it is unchanged. The
   release's SAM 3 head sets the masks to -1024 when the object score is not positive
-  (`present(_:objectScore:)`); every SAM 2 Sa2VA release comments that rule out. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
-  12.2 GB (-4B-SAM3; 12.3 GB with its grounding at float32, which loaded at 11.1 GB against 10.4 GB now),
+  (`present(_:objectScore:)`); every SAM 2 Sa2VA release comments that rule out. The ViT's reference
+  flash attention takes `queryBlock` 512, each block evaluated in turn: over a global layer's 5,184 keys
+  the unsplit graph held +1.97 GB of float32 scores, the fused kernel +0.23 GB, and 512-row blocks +0.88
+  GB, numerics identical. The tracker neck (+1.3 GB, its 3×3 convolutions in float32) is now the
+  grounding's largest stage. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
+  11.6 GB (-4B-SAM3; 12.3 GB with its grounding at float32, which loaded at 11.1 GB against 10.4 GB now),
   where float32 reached 24.5 GB, and answers each release's float32 reference text
   exactly. Against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`), each seam is
   held to twice its release's own bfloat16 distance there, read at run time from the release's probe
