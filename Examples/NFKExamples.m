@@ -179,7 +179,8 @@
 
 - (void)testExampleHuggingFaceHubCachePolicy
 {
-	NSURL *cache = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"NFKExamplesHubCache"]];
+	NSString *name = [@"NFKExamplesHubCache-" stringByAppendingString:NSUUID.UUID.UUIDString];
+	NSURL *cache = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
 	[NSFileManager.defaultManager createDirectoryAtURL:cache withIntermediateDirectories:YES attributes:nil error:NULL];
 	long long savedLimit = NFKHFHub.defaultCacheSizeLimit;
 

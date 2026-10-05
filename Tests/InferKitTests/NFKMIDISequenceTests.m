@@ -343,7 +343,8 @@
 - (void)testTheSequenceWritesToAURL
 {
 	NFKMIDISequence *sequence = [NFKMIDISequence sequenceWithNotes:@[ [self noteWithPitch:60 start:0.0 end:0.5] ]];
-	NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"inferkit-test.mid"]];
+	NSString *name = [NSString stringWithFormat:@"inferkit-test-%@.mid", NSUUID.UUID.UUIDString];
+	NSURL *url = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
 
 	NSError *error = nil;
 	XCTAssertTrue([sequence writeToURL:url error:&error]);

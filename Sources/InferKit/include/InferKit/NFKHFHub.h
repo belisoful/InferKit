@@ -140,7 +140,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@method     setExcludedFromBackup:forURL:error:
 	@abstract   Excludes a file or folder from backup, or includes it again; YES on success.
 	@discussion Sets NSURLIsExcludedFromBackupKey. The setting travels with the item when it moves.
-				Works on any location, including folders the hub does not manage.
+				Works on any location, including folders the hub does not manage. An exclusion reads
+				back at once. Clearing one set moments earlier is applied asynchronously on macOS, so
+				for up to a few hundred milliseconds isExcludedFromBackup: can still answer YES.
 				Introduced in InferKit 0.4.0.
 */
 + (BOOL)setExcludedFromBackup:(BOOL)excluded forURL:(NSURL *)url error:(NSError * _Nullable *)outError;

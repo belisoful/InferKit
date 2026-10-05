@@ -42,8 +42,10 @@
 	self.savedDefaultLimit = NFKHFHub.defaultCacheSizeLimit;
 	self.savedDefaultExclusion = NFKHFHub.defaultExcludesCacheFromBackup;
 	self.savedDefaultToken = NFKHFHub.defaultAccessToken;
-	self.cacheDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"NFKHFHubTests"]];
-	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
+	// Unique per test: every test process this user runs shares NSTemporaryDirectory(), so a fixed
+	// name lets a concurrent run's backup exclusion land on the directory this test reads.
+	NSString *name = [@"NFKHFHubTests-" stringByAppendingString:NSUUID.UUID.UUIDString];
+	self.cacheDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
 	[NSFileManager.defaultManager createDirectoryAtURL:self.cacheDir withIntermediateDirectories:YES attributes:nil error:NULL];
 
 	self.hub = [[FxHFHubStub alloc] init];
@@ -58,6 +60,26 @@
 	NFKHFHub.defaultExcludesCacheFromBackup = self.savedDefaultExclusion;
 	NFKHFHub.defaultAccessToken = self.savedDefaultToken;
 	[super tearDown];
+}
+
+/*! Whether the cache folder's exclusion reads `expected` without a change for half a second, within
+	five seconds. Clearing an exclusion set moments earlier is applied asynchronously: for up to a few
+	hundred milliseconds the attribute can still read as set, or return once before it settles. */
+- (BOOL)cacheDirSettlesToExcluded:(BOOL)expected
+{
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+	NSDate *heldSince = nil;
+	while (deadline.timeIntervalSinceNow > 0) {
+		if ([NFKHFHub isExcludedFromBackup:self.cacheDir] != expected) {
+			heldSince = nil;
+		} else if (heldSince == nil) {
+			heldSince = [NSDate date];
+		} else if (-heldSince.timeIntervalSinceNow >= 0.5) {
+			return YES;
+		}
+		[NSThread sleepForTimeInterval:0.01];
+	}
+	return NO;
 }
 
 - (void)testTheProcessDefaultTokenAppliesUntilAHubSetsItsOwn
@@ -214,7 +236,7 @@
 	XCTAssertNil(error);
 	XCTAssertTrue([NFKHFHub isExcludedFromBackup:self.cacheDir]);
 	XCTAssertTrue([NFKHFHub setExcludedFromBackup:NO forURL:self.cacheDir error:&error]);
-	XCTAssertFalse([NFKHFHub isExcludedFromBackup:self.cacheDir]);
+	XCTAssertTrue([self cacheDirSettlesToExcluded:NO], @"the cleared exclusion settles");
 }
 
 - (void)testTheCacheSizeCountsDownloadedFiles

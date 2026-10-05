@@ -138,7 +138,7 @@ final class InferKitSwiftExamples: XCTestCase {
     }
 
     func testExampleHuggingFaceHubCachePolicy() throws {
-        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("NFKSwiftExamplesHubCache")
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("NFKSwiftExamplesHubCache-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let savedLimit = NFKHFHub.defaultCacheSizeLimit
         defer {

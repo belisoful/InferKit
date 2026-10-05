@@ -209,5 +209,15 @@ brought by the consumer and discovered at runtime.
   reasoning holds for Time Machine. `NO` means the hub leaves the attribute alone; it never clears it.
   `isExcludedFromBackup:` drops the URL's cached resource value first, or a change made through
   another `NSURL` instance reads stale.
+- The exclusion is eventually consistent when cleared (measured 2026-10-05, macOS 26, APFS, outside
+  XCTest). Setting YES reads back at once: 1000 NO→YES folders showed no later change. Clearing an
+  exclusion set moments earlier does not: across 3000 YES→NO round trips on fresh folders, the xattr
+  was still present right after the clear in 88 and cleared later, and in 434 it cleared and then
+  came back within 100 ms. The last change seen was 0.265 s after the clear, and every folder read
+  correctly after 3 s. Something applies the earlier YES asynchronously against the PATH: a folder
+  set excluded, deleted, and recreated at once at the same path came up excluded within 300 ms in
+  86 of 400 trials. That is how
+  `NFKHFHubTests` failed with a fixed `NSTemporaryDirectory()/NFKHFHubTests`: each test now gets a
+  UUID folder, and the round-trip test waits for the cleared state to hold for 0.5 s.
 - `Tools/validation-assets/fetch.py` sets the same exclusion on its asset root and on the
   huggingface_hub cache the reference oracles fill (`--keep-in-backup` skips it).
