@@ -490,11 +490,27 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   with no mask and no cache (the Embedding release's `use_cache: false`), transformers 4.57's
   `create_causal_mask` reads M-RoPE's position jumps at the image as packed sequences and splits the
   attention there, which the first Embedding record carried. A cut whose last layer still takes a deepstack map adds
-  it before the final norm, which the isolated row must too. SAM 3's grounding stays float32 at any
-  load (user decision 2026-10-05): the release computes it in bfloat16 only under CUDA autocast, and
-  loaded at bfloat16 on the CPU its prompt encoder multiplies a float32 grid by a bfloat16 matrix and
-  stops. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
-  12.3 GB (-4B-SAM3), where float32 reached 24.5 GB, and answers each release's float32 reference text
+  it before the final norm, which the isolated row must too. SAM 3's grounding computes as the release
+  does on CUDA (`NFKSAM3Autocast`). The release stores float32, its model card loads it at bfloat16 on
+  CUDA, and `Sam3TrackerPredictor.__init__` enters `torch.autocast("cuda", bfloat16)` for the whole
+  process, so on a GPU the tower and the decoder run under autocast too. torch's CPU autocast lists
+  differ from CUDA's (they keep the norms, softmax, and `exp` in bfloat16), so `sa2va_sam3_probe`
+  applies PyTorch 2.8's CUDA lists (`autocast_mode.h`) on the CPU through a dispatch mode
+  (`_emulate_cuda_autocast`). Two traps there: SDPA and a biased `conv2d` check their operands' types
+  inside the composite op, before a dispatch mode sees them, so those functions are wrapped; and CUDA's
+  `_addmm_activation` GELU is cuBLASLt's tanh epilogue on the float32 accumulator rounded once, where
+  the CPU kernel rounds the product and applies the exact form. Under autocast every LayerNorm returns
+  float32, so the ViT's residual stream stays float32 from `ln_pre` on, as do the two-way tokens and,
+  after the first layer, the image keys; the sparse prompt starts as an empty float32 tensor. The
+  grounding (`testSa2VAQwenSAM3Grounding…` and its pieces test): worst isolated stage the decoder's
+  masks at 0.18 of the floor, every ViT, neck, and decoder piece within 1-cos 1e-6, best mask 2.135e-05
+  against 2.193e-05. Under the emulated autocast the language half sits about one floor from the plain
+  bfloat16 run at the logits; the shipped half held against that record passes as it does against the
+  plain one (worst isolated 0.015, logits 3.208e-04 against 3.189e-04), so it is unchanged. The
+  release's SAM 3 head sets the masks to -1024 when the object score is not positive
+  (`present(_:objectScore:)`); every SAM 2 Sa2VA release comments that rule out. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
+  12.2 GB (-4B-SAM3; 12.3 GB with its grounding at float32, which loaded at 11.1 GB against 10.4 GB now),
+  where float32 reached 24.5 GB, and answers each release's float32 reference text
   exactly. Against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`), each seam is
   held to twice its release's own bfloat16 distance there, read at run time from the release's probe
   pair: vision 0.98996 / 0.99503 / 0.99503 / 0.99658 against the releases' own 0.99075 / 0.99522 /

@@ -468,12 +468,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   type. A float32 zero in the deepstack promoted a bfloat16 decoder to float32 from its first layer.
 - Qwen2.5-VL's tower attends each window on its own in half precision, as the reference splits them.
 
-#### Sa2VA-Qwen3-VL-4B-SAM3 keeps its grounding in float32
+#### Sa2VA-Qwen3-VL-4B-SAM3 grounds in bfloat16 as its release does on CUDA
 
-- The SAM 3 grounding encoder loads at float32 under any load of the net, the precision the release
-  defines on this hardware: the release computes it in bfloat16 only under CUDA autocast, and at
-  bfloat16 on the CPU its own positional encoding stops on mixed types. The bfloat16 backend holds the
-  rest of the net at bfloat16.
+- At a bfloat16 load the SAM 3 grounding encoder holds bfloat16 weights and computes as the release
+  does under CUDA's bfloat16 autocast, which its tracker enters for the whole process: projections and
+  convolutions in bfloat16, layer norms in float32 with float32 outputs, so the ViT's residual stream
+  stays float32, and the ViT MLP's first projection with its tanh GELU rounded once, as cuBLASLt fuses
+  them. The grounding's weights take 0.95 GB in place of 1.89 GB. The backend's peak while it loads
+  falls from 11.1 GB to 10.4 GB, and while it answers from 12.3 GB to 12.2 GB. Float32 loads are
+  unchanged.
+- The SAM 3 grounding returns no mask where its decoder finds no object: the release replaces the masks
+  with -1024 when the object score is not positive. Sa2VA's SAM 2 releases leave that rule out.
+- The SAM and SAM 2 mask decoders' upscaling `LayerNorm2d` uses ε = 1e-6, the references' value. It used
+  MLXNN's default of 1e-5.
 
 #### Translation at parity in eight more languages and three more sizes
 

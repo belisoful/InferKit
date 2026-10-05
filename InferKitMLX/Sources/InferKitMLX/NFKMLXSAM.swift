@@ -363,7 +363,7 @@ final class NFKSAMAttention: Module {
     @ModuleInfo(key: "k_proj") var kProj: Linear
     @ModuleInfo(key: "v_proj") var vProj: Linear
     @ModuleInfo(key: "out_proj") var outProj: Linear
-    private let heads: Int
+    let heads: Int
 
     init(dim: Int, heads: Int, downsample: Int = 1) {
         self.heads = heads
@@ -404,7 +404,7 @@ final class NFKSAMTwoWayBlock: Module {
     @ModuleInfo(key: "norm4") var norm4: LayerNorm
     @ModuleInfo(key: "cross_image_token") var crossImageToken: NFKSAMAttention
 
-    private let skipFirstLayerPE: Bool
+    let skipFirstLayerPE: Bool
 
     init(dim: Int, heads: Int, skipFirstLayerPE: Bool = false) {
         self.skipFirstLayerPE = skipFirstLayerPE
@@ -492,7 +492,7 @@ final class NFKSAMMaskDecoder: Module {
         _finalAttn.wrappedValue = NFKSAMAttention(dim: c.embedDim, heads: c.decoderHeads, downsample: 2)
         _normFinal.wrappedValue = LayerNorm(dimensions: c.embedDim)
         _up1.wrappedValue = ConvTransposed2d(inputChannels: c.embedDim, outputChannels: c.embedDim / 4, kernelSize: 2, stride: 2)
-        _upLN.wrappedValue = LayerNorm(dimensions: c.embedDim / 4)
+        _upLN.wrappedValue = LayerNorm(dimensions: c.embedDim / 4, eps: 1e-6)
         _up2.wrappedValue = ConvTransposed2d(inputChannels: c.embedDim / 4, outputChannels: c.embedDim / 8, kernelSize: 2, stride: 2)
         _hyper.wrappedValue = (0 ..< c.numMaskTokens).map { _ in NFKSAMMLP(dim: c.embedDim, hidden: c.embedDim, out: c.embedDim / 8, layers: 3) }
         _iouHead.wrappedValue = NFKSAMMLP(dim: c.embedDim, hidden: c.embedDim, out: c.numMaskTokens, layers: 3)

@@ -71,9 +71,9 @@ public final class NFKMLXSa2VAQwenNet: Module {
 
     /// Builds the network with its weights at `dtype`. The releases store float32 and their `text_config`
     /// declares bfloat16; ``NFKMLXSa2VA/backend(directoryURL:)`` loads bfloat16, which halves a 4B release's
-    /// resident weights. At bfloat16 the tower and the decoder compute in bfloat16 as the release does;
-    /// SAM 3's grounding loads at float32 under any `dtype`. Parity is measured at float32, and at bfloat16
-    /// against the release's own code at bfloat16.
+    /// resident weights. At bfloat16 the tower and the decoder compute in bfloat16 as the release does, and
+    /// SAM 3's grounding as the release does on CUDA under bfloat16 autocast. Parity is measured at float32,
+    /// and at bfloat16 against the release's own code at bfloat16.
     public static func load(directoryURL: URL, dtype: DType) throws -> NFKMLXSa2VAQwenNet {
         try load(directoryURL: directoryURL, parts: .all, dtype: dtype)
     }
@@ -138,10 +138,7 @@ public final class NFKMLXSa2VAQwenNet: Module {
             layout: layout, groundsWithSAM3: groundsWithSAM3)
         if saved != nil {
             // The checkpoint is dropped before the converted tensors evaluate, so it is not held beside them.
-            // SAM 3's grounding stays float32 at any load (see `loadBridgeAndGrounding`).
-            let typed = saved!.arrays.map { key, value in
-                (key, value.asType(groundsWithSAM3 && key.hasPrefix("grounding_encoder.") ? .float32 : dtype))
-            }
+            let typed = saved!.arrays.map { ($0.key, $0.value.asType(dtype)) }
             saved = nil
             try NFKMLXWeights.apply(typed, to: net)
         } else if parts.contains(.grounding) {
@@ -152,17 +149,11 @@ public final class NFKMLXSa2VAQwenNet: Module {
 
     /// Loads `text_hidden_fcs.*` and `grounding_encoder.sam2_model.*`: SAM 2 through Sa2VA-4B's remaps,
     /// SAM 3 through its own.
-    ///
-    /// @discussion SAM 3's grounding loads at float32 whatever `dtype` is. The release computes it in
-    /// bfloat16 only under CUDA autocast; loaded at bfloat16 on the CPU its own positional encoding stops
-    /// on mixed types, so float32, where it is measured at parity, is the precision the release defines
-    /// here. The release stores float32.
     func loadBridgeAndGrounding(fromDirectory directory: URL, dtype: DType = .float32) throws {
         let prefix = "grounding_encoder.sam2_model."
-        let groundingType = grounding is NFKSa2VASAM3GroundingEncoder ? DType.float32 : dtype
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .float32) { key in
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype) { key in
             key.hasPrefix("text_hidden_fcs.") || key.hasPrefix(prefix) ? key : nil
-        }.map { key, value in (key, value.asType(key.hasPrefix(prefix) ? groundingType : dtype)) }
+        }
         // Each part loads into its own module with its own coverage check: the network also holds the
         // tower and the decoder, which their own loaders fill.
         let bridge = arrays.filter { $0.0.hasPrefix("text_hidden_fcs.") }.map {
@@ -170,7 +161,7 @@ public final class NFKMLXSa2VAQwenNet: Module {
         }
         try NFKMLXWeights.apply(bridge, to: textHiddenFCS)
         if let sam3 = grounding as? NFKSa2VASAM3GroundingEncoder {
-            try sam3.load(arrays, dtype: groundingType)
+            try sam3.load(arrays, dtype: dtype)
             return
         }
         var mapped = [(String, MLXArray)]()

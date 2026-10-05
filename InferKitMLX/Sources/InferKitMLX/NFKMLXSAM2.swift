@@ -620,7 +620,7 @@ final class NFKMLXSAM2Decoder: Module {
         _normFinalAttention.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         _upscale1.wrappedValue = ConvTransposed2d(inputChannels: dimensions, outputChannels: dimensions / 4,
                                                   kernelSize: 2, stride: 2)
-        _upscaleNorm.wrappedValue = NFKLayerNorm2d(dimensions: dimensions / 4)
+        _upscaleNorm.wrappedValue = NFKLayerNorm2d(dimensions: dimensions / 4, eps: 1e-6)
         _upscale2.wrappedValue = ConvTransposed2d(inputChannels: dimensions / 4, outputChannels: dimensions / 8,
                                                   kernelSize: 2, stride: 2)
         _convS0.wrappedValue = NFKConv2d(inputChannels: dimensions, outputChannels: dimensions / 8, kernelSize: 1)

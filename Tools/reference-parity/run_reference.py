@@ -12974,7 +12974,8 @@ def run_sa2va_qwen_probe(image, checkpoint):
     release (or a cut of one), run as `AutoModelForImageTextToText` at its processor's own pixel bounds.
     `IK_PROBE_ROUTES=1` also records each mixture layer's routing (`_route_hooks`). A release that ships no
     output head (Qwen3-VL-Embedding) returns the final norm's states over those positions instead, and
-    records `no_head`.
+    records `no_head`. `IK_PROBE_AUTOCAST=cuda` runs the bf16 load under `_emulate_cuda_autocast`, as
+    CUDA runs a release whose grounding enters autocast for the whole process (Sa2VA-Qwen3-VL-4B-SAM3).
     Runs under the `llm` oracle env. `image` unused."""
     import importlib
     import json
@@ -12984,10 +12985,12 @@ def run_sa2va_qwen_probe(image, checkpoint):
     from transformers import AutoModel, AutoProcessor
 
     sa2va = os.path.exists(os.path.join(checkpoint, "modeling_sa2va_qwen.py"))
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
     if sa2va:
         sys.modules.setdefault("qwen_vl_utils", types.SimpleNamespace(process_vision_info=None))
         _stage_remote_code(checkpoint)
-    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    if bf16 and os.environ.get("IK_PROBE_AUTOCAST") == "cuda":
+        _emulate_cuda_autocast()
     size = 448
     a = np.zeros((size, size, 3), dtype=np.uint8)
     a[: size // 2, : size // 2] = (40, 60, 90)
@@ -13016,6 +13019,7 @@ def run_sa2va_qwen_probe(image, checkpoint):
             config._attn_implementation_internal = "eager"
     qwen = model.model if sa2va else model
     visual = qwen.model.visual
+    print("autocast entered:", _AUTOCAST_STATE[-1])
     print("attention:", qwen.config.text_config._attn_implementation, visual.config._attn_implementation,
           "dtype:", visual.dtype)
     processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=sa2va)
@@ -13202,7 +13206,7 @@ def run_sa2va_teacher(image, checkpoint):
 
 
 
-def _stage_remote_code(checkpoint):
+def _stage_remote_code(checkpoint, release_casts=False):
     """Copies every `.py` of a local release into the dynamic-module folder transformers imports it from.
     transformers copies the entry file and the modules it imports directly, and a release whose imports
     nest deeper (Sa2VA-Qwen3-VL-4B-SAM3: `sam3.py` imports `sam3pkg_*`, which import each other) fails at
@@ -13211,7 +13215,8 @@ def _stage_remote_code(checkpoint):
     a device placement changes no arithmetic, and the release directory is left untouched. SAM 3's fused
     `addmm_act` casts the ViT MLP's first projection to bfloat16, as the CUDA runtime's bfloat16 autocast
     around the whole grounding call would; the staged copy keeps the input's dtype, so the float32 oracle
-    holds the same float32 bar as every other seam (on the CPU its GELU is the exact erf form). transformers
+    holds the same float32 bar as every other seam (on the CPU its GELU is the exact erf form);
+    `release_casts` keeps the release's cast for a run under `_emulate_cuda_autocast`. transformers
     re-copies only the entry file and its direct imports, which none of this touches."""
     from transformers.dynamic_module_utils import (HF_MODULES_CACHE, TRANSFORMERS_DYNAMIC_MODULE_NAME,
                                                    _sanitize_module_name, create_dynamic_module)
@@ -13224,10 +13229,243 @@ def _stage_remote_code(checkpoint):
             with open(os.path.join(checkpoint, name), encoding="utf-8") as source:
                 code = source.read()
             code = code.replace('device="cuda"', 'device="cpu"').replace('torch.device("cuda")', 'torch.device("cpu")')
-            if name == "sam3pkg_perflib_fused.py":
+            if name == "sam3pkg_perflib_fused.py" and not release_casts:
                 code = code.replace(".to(torch.bfloat16)", ".to(mat1.dtype)")
             with open(os.path.join(target, name), "w", encoding="utf-8") as staged:
                 staged.write(code)
+
+
+# CUDA's autocast lists (PyTorch 2.8, `aten/src/ATen/autocast_mode.h`) as a dispatch mode sees them: a
+# listed composite op (`linear`, `layer_norm`, `softmax`, `conv2d`, SDPA) arrives as the op it lowers to.
+_AUTOCAST_LOWER = {"addmm", "addmv", "addr", "mm", "mv", "bmm", "baddbmm", "addbmm", "convolution", "_convolution",
+                   "_prelu_kernel", "linalg_vecdot", "_scaled_dot_product_flash_attention",
+                   "_scaled_dot_product_flash_attention_for_cpu"}
+_AUTOCAST_FP32 = {"acos", "asin", "cosh", "erfinv", "exp", "expm1", "log", "log10", "log2", "log1p", "reciprocal",
+                  "rsqrt", "sinh", "tan", "softplus", "native_layer_norm", "native_group_norm", "frobenius_norm",
+                  "nuclear_norm", "cosine_similarity", "dist", "_pdist_forward", "_cdist_forward", "renorm",
+                  "logsumexp", "upsample_nearest1d", "_upsample_nearest_exact1d", "upsample_nearest2d",
+                  "_upsample_nearest_exact2d", "upsample_nearest3d", "_upsample_nearest_exact3d", "upsample_linear1d",
+                  "upsample_bilinear2d", "_upsample_bilinear2d_aa", "upsample_trilinear3d", "upsample_bicubic2d",
+                  "_upsample_bicubic2d_aa"}
+_AUTOCAST_FP32_POW = {"Tensor_Scalar", "Tensor_Tensor", "Scalar"}
+_AUTOCAST_FP32_SET_OPT = {("prod", "default"), ("prod", "dim_int"), ("cumprod", "default"), ("cumsum", "default"),
+                          ("linalg_vector_norm", "default"), ("linalg_matrix_norm", "default"),
+                          ("linalg_matrix_norm", "str_ord"), ("sum", "default"), ("sum", "dim_IntList")}
+_AUTOCAST_PROMOTE = {"addcdiv", "addcmul", "atan2", "linalg_cross", "dot", "vdot", "grid_sampler_2d",
+                     "grid_sampler_3d", "index_put", "scatter_add"}
+_AUTOCAST_STATE = [False]
+
+
+def _emulate_cuda_autocast():
+    """Runs the rest of the process as CUDA runs a release that enters `torch.autocast("cuda", bfloat16)`,
+    on the CPU: every `torch.autocast` (and `torch.amp.autocast`) context becomes an emulated CUDA one,
+    and a dispatch mode applies CUDA's lists while one is entered: the lower-precision ops cast their
+    floating inputs to bf16, the float32 ops (`native_layer_norm`, `exp`, `rsqrt`, `pow`, the upsamplers)
+    cast them to float32, `softmax`, `sum`, and the norms take a float32 output when given no dtype, and
+    the promote ops cast to their widest input. `enabled=False` suspends it whatever device it names,
+    which on CUDA is the device every tensor is on. CUDA's `_addmm_activation` GELU is cuBLASLt's epilogue
+    (`aten/src/ATen/native/cuda/Blas.cpp`), the tanh form on the float32 accumulator rounded once, where
+    the CPU kernel rounds the product and applies the exact form; it is emulated whether or not
+    autocast is entered. SDPA runs the CPU's flash kernel, the stand-in for CUDA's."""
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    class EmulatedAutocast:
+        def __init__(self, device_type="cuda", dtype=None, enabled=True, cache_enabled=None):
+            if enabled and dtype != torch.bfloat16:
+                raise ValueError(f"autocast to {dtype} is not emulated")
+            self.enabled = bool(enabled)
+
+        def __enter__(self):
+            _AUTOCAST_STATE.append(self.enabled)
+            return self
+
+        def __exit__(self, *exc):
+            _AUTOCAST_STATE.pop()
+            return False
+
+        def __call__(self, function):
+            def wrapped(*args, **kwargs):
+                with self:
+                    return function(*args, **kwargs)
+            return wrapped
+
+    def eligible(value):
+        return torch.is_tensor(value) and value.is_floating_point() and value.dtype != torch.float64
+
+    def cast(value, dtype):
+        if isinstance(value, (list, tuple)):
+            return type(value)(cast(item, dtype) for item in value)
+        return value.to(dtype) if eligible(value) and value.dtype != dtype else value
+
+    class CudaAutocast(TorchDispatchMode):
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            kwargs = dict(kwargs or {})
+            name, overload = func._schema.name.split("::")[-1], func._overloadname
+            if name == "_addmm_activation" and args[2].dtype == torch.bfloat16 and kwargs.get("use_gelu", False):
+                bias, mat1, mat2 = args[:3]
+                accumulated = torch.addmm(bias.float(), mat1.float(), mat2.float())
+                return torch.nn.functional.gelu(accumulated, approximate="tanh").to(torch.bfloat16)
+            if not _AUTOCAST_STATE[-1]:
+                return func(*args, **kwargs)
+            if name in _AUTOCAST_LOWER:
+                return func(*cast(args, torch.bfloat16), **{k: cast(v, torch.bfloat16) for k, v in kwargs.items()})
+            if name in _AUTOCAST_FP32 or (name == "pow" and overload in _AUTOCAST_FP32_POW):
+                return func(*cast(args, torch.float32), **{k: cast(v, torch.float32) for k, v in kwargs.items()})
+            if name in ("_softmax", "_log_softmax") and eligible(args[0]):
+                return func(args[0].float(), args[1], False)
+            if (name, overload) in _AUTOCAST_FP32_SET_OPT and eligible(args[0]):
+                position = [argument.name for argument in func._schema.arguments].index("dtype")
+                if len(args) <= position and kwargs.get("dtype") is None:
+                    kwargs["dtype"] = torch.float32
+                return func(*args, **kwargs)
+            if name in _AUTOCAST_PROMOTE:
+                floating = [value for value in list(args) + list(kwargs.values()) if eligible(value)]
+                widest = torch.float32 if any(value.dtype == torch.float32 for value in floating) else torch.bfloat16
+                return func(*cast(args, widest), **{k: cast(v, widest) for k, v in kwargs.items()})
+            return func(*args, **kwargs)
+
+    # SDPA and a biased convolution check their inputs' types before they reach the op a dispatch mode
+    # sees; autocast casts them first.
+    def lowered(function):
+        def autocast_function(*args, **kwargs):
+            if _AUTOCAST_STATE[-1]:
+                args, kwargs = cast(args, torch.bfloat16), {k: cast(v, torch.bfloat16) for k, v in kwargs.items()}
+            return function(*args, **kwargs)
+        return autocast_function
+
+    for name in ("scaled_dot_product_attention", "conv1d", "conv2d", "conv3d"):
+        setattr(torch.nn.functional, name, lowered(getattr(torch.nn.functional, name)))
+    torch.autocast = EmulatedAutocast
+    torch.amp.autocast = EmulatedAutocast
+    torch.amp.autocast_mode.autocast = EmulatedAutocast
+    CudaAutocast().__enter__()
+
+
+def run_sa2va_sam3_probe(image, checkpoint):
+    """Sa2VA-Qwen3-VL-4B-SAM3's SAM 3 grounding at bf16 as CUDA computes it, or on its float32 floor, seam
+    by seam, with each recorded tensor's dtype. `IK_PROBE_DTYPE=bfloat16` loads the release at bf16, as
+    its model card does, under `_emulate_cuda_autocast` from before the load: the tracker enters CUDA's
+    bf16 autocast in its constructor and never leaves it, so on CUDA the language model runs under it
+    too. Otherwise the release loads at float32 with every parameter rounded to bf16 and back, without
+    autocast, and the ViT MLP's fused projection keeps its input's type (`_stage_remote_code`). The
+    plate, the prompt, and the teacher-forced answer are `sa2va_qwen_probe`'s; the `[SEG]` embedding is
+    the run's own (the decoder's last hidden state at `[SEG]` through `text_hidden_fcs`), and the
+    grounding image is `predict_forward`'s, which the tracker casts to float32. Records
+    `g_pixel_values`, `seg_embedding`, `sam.trunk.ln_pre.in` / `.out`, `sam.trunk.<i>.in` / `.out` for
+    blocks 0, 1, each global block, and the one after it, every submodule of the `IK_PROBE_LAYERS`
+    blocks (default 0 and 7) as `<i>.<name>.in` / `.out` with `<i>.mlp.fc2.in` the fused projection's
+    output, each tracker neck level's submodules as `sam.neck.<l>.<name>.in` / `.out`,
+    `sam.backbone_fpn.<l>` after `forward_image`, `sam.conditioned`, every mask-decoder submodule and
+    the dense positional encoding as `sam.<name>.in` / `.out`, and `low_res_multi`, `ious`, and
+    `low_res_best`; `<key>.dtype` is 1 where the tensor was bf16. Returns `low_res_best`. Runs under the
+    `llm` oracle env. `image` unused."""
+    import sys
+    import types
+    from PIL import Image
+    from transformers import AutoModel, AutoProcessor
+
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    dtype = torch.bfloat16 if bf16 else torch.float32
+    sys.modules.setdefault("qwen_vl_utils", types.SimpleNamespace(process_vision_info=None))
+    _stage_remote_code(checkpoint, release_casts=bf16)
+    if bf16:
+        _emulate_cuda_autocast()
+    size = 448
+    a = np.zeros((size, size, 3), dtype=np.uint8)
+    a[: size // 2, : size // 2] = (40, 60, 90)
+    a[: size // 2, size // 2:] = (90, 40, 60)
+    a[size // 2:, : size // 2] = (60, 90, 40)
+    a[size // 2:, size // 2:] = (30, 30, 30)
+    yy, xx = np.mgrid[0:size, 0:size]
+    a[((xx - size * 0.62) ** 2 + (yy - size * 0.40) ** 2) < (size * 0.16) ** 2] = (230, 210, 120)
+    plate = Image.fromarray(a, "RGB")
+
+    model = AutoModel.from_pretrained(checkpoint, torch_dtype=dtype, trust_remote_code=True,
+                                      low_cpu_mem_usage=True).eval()
+    if not bf16:
+        with torch.no_grad():
+            for parameter in model.parameters():
+                parameter.data = parameter.data.to(torch.bfloat16).float()
+    print("autocast entered:", _AUTOCAST_STATE[-1])
+    processor = AutoProcessor.from_pretrained(checkpoint, trust_remote_code=True)
+    seg = processor.tokenizer.convert_tokens_to_ids("[SEG]")
+    messages = [{"role": "user", "content": [{"type": "image", "image": plate},
+                                             {"type": "text", "text": "Please segment the bright object."}]}]
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = processor(text=[text], images=[plate], padding=True, return_tensors="pt",
+                       min_pixels=model.min_pixels, max_pixels=model.max_pixels)
+    answer = processor.tokenizer.encode("Sure, it is [SEG].", add_special_tokens=False)
+    ids = torch.cat([inputs["input_ids"][0], torch.tensor(answer)]).unsqueeze(0)
+    g = torch.from_numpy(model.extra_image_processor.apply_image(np.array(plate))).permute(2, 0, 1).contiguous()
+    g_pixel = torch.stack([model.grounding_encoder.preprocess_image(g.to(dtype))]).to(dtype).float()
+
+    extra = {}
+    def keep(key, value):
+        extra[key] = value.detach().float().clone().contiguous()
+        extra[f"{key}.dtype"] = torch.tensor([1 if value.dtype == torch.bfloat16 else 0], dtype=torch.int32)
+
+    def record_tree(root, prefix):
+        for name, module in root.named_modules():
+            label = f"{prefix}.{name}" if name else f"{prefix}.block"
+            def hook(module, args, output, label=label):
+                if args and torch.is_tensor(args[0]):
+                    keep(f"{label}.in", args[0])
+                out = output[0] if isinstance(output, tuple) else output
+                if torch.is_tensor(out):
+                    keep(f"{label}.out", out)
+            module.register_forward_hook(hook)
+
+    sam = model.grounding_encoder.sam2_model
+    vision = sam.backbone.vision_backbone
+    trunk = vision.trunk
+    blocks = trunk.blocks
+    full = list(trunk.full_attn_ids)
+    recorded = sorted({0, 1} | set(full) | {i + 1 for i in full if i + 1 < len(blocks)})
+    for index in recorded:
+        blocks[index].register_forward_pre_hook(lambda m, args, index=index: keep(f"sam.trunk.{index}.in", args[0]) and None)
+        blocks[index].register_forward_hook(lambda m, args, output, index=index: keep(f"sam.trunk.{index}.out", output) and None)
+    trunk.ln_pre.register_forward_pre_hook(lambda m, args: keep("sam.trunk.ln_pre.in", args[0]) and None)
+    trunk.ln_pre.register_forward_hook(lambda m, args, output: keep("sam.trunk.ln_pre.out", output) and None)
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{full[0]}").split(",")]
+    for index in probed:
+        record_tree(blocks[index], str(index))
+    for level, convs in enumerate(vision.sam2_convs):
+        record_tree(convs, f"sam.neck.{level}")
+    for name, module in sam.named_modules():
+        if name.startswith("sam_mask_decoder") or name == "sam_prompt_encoder.pe_layer":
+            def hook(m, args, output, name=name):
+                if args and torch.is_tensor(args[0]):
+                    keep(f"sam.{name}.in", args[0])
+                out = output[0] if isinstance(output, tuple) else output
+                if torch.is_tensor(out):
+                    keep(f"sam.{name}.out", out)
+            module.register_forward_hook(hook)
+
+    with torch.no_grad():
+        qwen = model.model
+        out = qwen(input_ids=ids, attention_mask=torch.ones_like(ids), pixel_values=inputs["pixel_values"],
+                   image_grid_thw=inputs["image_grid_thw"], output_hidden_states=True, return_dict=True)
+        position = int((ids[0] == seg).nonzero()[0])
+        seg_embedding = model.text_hidden_fcs(out.hidden_states[-1][0][position].unsqueeze(0))
+        backbone_out = sam.forward_image(g_pixel)
+        for level, feature in enumerate(backbone_out["backbone_fpn"]):
+            keep(f"sam.backbone_fpn.{level}", feature)
+        _, vision_feats, _, feat_sizes = sam._prepare_backbone_features(backbone_out)
+        Hf, Wf = feat_sizes[-1]
+        conditioned = (vision_feats[-1] + sam.no_mem_embed).permute(1, 2, 0).view(1, sam.hidden_dim, Hf, Wf)
+        high_res = [x.permute(1, 2, 0).view(1, x.size(2), *s) for x, s in zip(vision_feats[:-1], feat_sizes[:-1])]
+        sam_out = sam._forward_sam_heads(backbone_features=conditioned, point_inputs=None, mask_inputs=None,
+                                         high_res_features=high_res, multimask_output=True,
+                                         language_embd=seg_embedding.unsqueeze(0))
+    keep("g_pixel_values", g_pixel)
+    keep("seg_embedding", seg_embedding)
+    keep("sam.conditioned", conditioned)
+    keep("low_res_multi", sam_out[0])
+    keep("ious", sam_out[2])
+    keep("low_res_best", sam_out[3])
+    extra["input_ids"] = ids[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return sam_out[3].float().contiguous()
 
 
 def run_sa2va_qwen(image, checkpoint):
@@ -20204,7 +20442,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

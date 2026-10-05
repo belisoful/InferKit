@@ -699,6 +699,20 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
         super.tearDown()
     }
 
+    // Sa2VA-Qwen3-VL-4B-SAM3's release replaces the masks with -1024 where its object score is not
+    // positive, which `predict_forward` reads as an empty mask.
+    func testTheSAM3GroundingReturnsNoMaskWhereItSeesNoObject() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX")
+        let masks = MLXArray([Float(2), -3, 0.5, 7], [1, 2, 2]).asType(.bfloat16)
+        let kept = NFKSa2VASAM3GroundingEncoder.present(masks, objectScore: MLXArray([Float(0.25)], [1, 1]))
+        XCTAssertTrue(arrayEqual(kept, masks).item(Bool.self))
+        for score: Float in [0, -1.5] {
+            let dropped = NFKSa2VASAM3GroundingEncoder.present(masks, objectScore: MLXArray([score], [1, 1]))
+            XCTAssertEqual(dropped.dtype, .bfloat16)
+            XCTAssertEqual(dropped.asType(.float32).asArray(Float.self), [-1024, -1024, -1024, -1024])
+        }
+    }
+
     /// STRUCTURE: the SAM 3 grounding against `Sa2VA-Qwen3-VL-4B-SAM3`'s own safetensors headers
     /// (`shapes.py` under `IK_SHAPES_ROOT`): every parameter is supplied, every tensor the map keeps lands
     /// on a parameter of its shape, and the map drops only the detector's own neck and the memory path.

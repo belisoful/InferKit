@@ -2294,6 +2294,205 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 sa2va-1b grounding pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // Sa2VA-Qwen3-VL-4B-SAM3's SAM 3 grounding at bf16 against the release's own code at bf16 as CUDA runs
+    // it (`sa2va_sam3_probe`: the tracker's process-wide bf16 autocast, emulated on the CPU), from the
+    // reference's own grounding image and `[SEG]` embedding. Under autocast the ViT's residual stream, the
+    // two-way tokens, and the keys after the first two-way layer stay float32; each record carries its
+    // tensors' types, and an isolated input takes its recorded type.
+    func testSa2VAQwenSAM3GroundingInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (grounding, bf16, f32) = try sa2vaSAM3Grounding()
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(bf16["\(key).dtype"]?.item(Int32.self) == 1 ? .bfloat16 : .float32)
+        }
+        func nchw(_ x: MLXArray) -> MLXArray { x.transposed(0, 3, 1, 2) }
+        func nhwc(_ key: String) throws -> MLXArray { try recorded(key).transposed(0, 2, 3, 1) }
+        let backbone = grounding.backbone, decoder = grounding.maskDecoder
+        let image = try recorded("g_pixel_values").transposed(0, 2, 3, 1)
+        let embedding = try recorded("seg_embedding").reshaped([1, 1, -1])
+        let global = backbone.layers.indices.filter { backbone.layers[$0].windowSize == 0 }
+        let blocks = Set([0, 1] + global + global.map { $0 + 1 }).filter { $0 < backbone.layers.count }.sorted()
+
+        let patches = NFKSAM3Autocast.conv(backbone.embeddings.patchEmbeddings.projection, image)
+        var hidden = NFKSAM3Autocast.layerNorm(
+            backbone.layerNorm, patches + backbone.embeddings.tiled(height: patches.dim(1), width: patches.dim(2)))
+        var states = [("ln_pre", hidden)]
+        for (index, layer) in backbone.layers.enumerated() {
+            hidden = NFKSAM3Autocast.layer(layer, hidden)
+            if blocks.contains(index) { states.append(("trunk block \(index)", hidden)) }
+        }
+        let levels = grounding.neck.fpnLayers.prefix(3).map { NFKSAM3Autocast.level($0, hidden) }
+        XCTAssertTrue(arrayEqual(levels[2], grounding.imageLevels(image)[2]).item(Bool.self),
+                      "the grounding entry point encodes alike")
+        let conditioned = levels[2] + grounding.noMemoryEmbedding.reshaped([1, 1, 1, -1])
+        let decoded = try sam3Decode(grounding, levels: levels, conditioned: conditioned, embedding: embedding)
+        states += [("level 0, conv_s0", nchw(NFKSAM3Autocast.conv(decoder.convS0, levels[0]))),
+                   ("level 1, conv_s1", nchw(NFKSAM3Autocast.conv(decoder.convS1, levels[1]))),
+                   ("level 2", nchw(levels[2])), ("conditioned", nchw(conditioned)),
+                   ("ious", decoded.iou[0..., 1...]), ("masks", decoded.masks[0..., 1...]),
+                   ("best mask", grounding.segment(image: image, languageEmbedding: embedding).lowResolution)]
+        eval(states.map(\.1))
+        let keys = ["sam.trunk.ln_pre.out"] + blocks.map { "sam.trunk.\($0).out" }
+            + ["sam.backbone_fpn.0", "sam.backbone_fpn.1", "sam.backbone_fpn.2", "sam.conditioned", "ious",
+               "low_res_multi", "low_res_best"]
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("sa2va-qwen3-vl-4b-sam3 grounding", rows)
+
+        var isolated = [("ln_pre", NFKSAM3Autocast.layerNorm(backbone.layerNorm, try recorded("sam.trunk.ln_pre.in")))]
+        for index in blocks {
+            isolated.append(("trunk block \(index)",
+                             NFKSAM3Autocast.layer(backbone.layers[index], try recorded("sam.trunk.\(index).in"))))
+        }
+        let last = try recorded("sam.trunk.\(backbone.layers.count - 1).out")
+        let neck = grounding.neck.fpnLayers.prefix(3).map { NFKSAM3Autocast.level($0, last) }
+        isolated += [("neck level 0, conv_s0", nchw(NFKSAM3Autocast.conv(decoder.convS0, neck[0]))),
+                     ("neck level 1, conv_s1", nchw(NFKSAM3Autocast.conv(decoder.convS1, neck[1]))),
+                     ("neck level 2", nchw(neck[2]))]
+        let recordedLevels = [try nhwc("sam.sam_mask_decoder.conv_s0.in"), try nhwc("sam.sam_mask_decoder.conv_s1.in")]
+        let isolatedDecode = try sam3Decode(grounding, levels: recordedLevels, conditioned: try nhwc("sam.conditioned"),
+                                            embedding: embedding)
+        isolated.append(("decoder masks", isolatedDecode.masks[0..., 1...]))
+        eval(isolated.map(\.1))
+        let isolatedKeys = ["sam.trunk.ln_pre.out"] + blocks.map { "sam.trunk.\($0).out" }
+            + ["sam.backbone_fpn.0", "sam.backbone_fpn.1", "sam.backbone_fpn.2", "low_res_multi"]
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("sa2va-qwen3-vl-4b-sam3 grounding isolated", isolatedRows)
+        assertRoundingPlacement("sa2va-qwen3-vl-4b-sam3 grounding", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // Each piece of Sa2VA-Qwen3-VL-4B-SAM3's grounding on the reference's own input in its recorded type:
+    // ViT blocks 0 (windowed, 576 keys) and 7 (global, 5,184 keys, in 512-key blocks), each tracker neck
+    // level, the dense positional encoding, both two-way layers, the final attention, the upscaling path,
+    // and the heads.
+    func testSa2VAQwenSAM3GroundingPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (grounding, probe, _) = try sa2vaSAM3Grounding()
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe[key], "no \(key)").asType(probe["\(key).dtype"]?.item(Int32.self) == 1 ? .bfloat16 : .float32)
+        }
+        func nhwc(_ key: String) throws -> MLXArray { try input(key).transposed(0, 2, 3, 1) }
+        func nchw(_ x: MLXArray) -> MLXArray { x.transposed(0, 3, 1, 2) }
+        var lines = [String]()
+        for index in [0, 7] {
+            let block = grounding.backbone.layers[index]
+            let attention = block.attention
+            let p = "\(index)."
+            lines.append("ViT block \(index)")
+            lines.append(try piece("norm1", NFKSAM3Autocast.layerNorm(block.norm1, input(p + "norm1.in")), probe, p + "norm1.out"))
+            let x = try input(p + "attn.qkv.in")
+            lines.append(try piece("qkv", concatenated([attention.qProj, attention.kProj, attention.vProj].map {
+                NFKSAM3Autocast.linear($0, x)
+            }, axis: -1), probe, p + "attn.qkv.out"))
+            let qkv = try input(p + "attn.qkv.out")
+            let (n, h, w) = (qkv.dim(0), qkv.dim(1), qkv.dim(2))
+            let heads = qkv.reshaped([n, h * w, 3, attention.heads, attention.headDim]).transposed(2, 0, 3, 1, 4)
+            func rotated(_ x: MLXArray) -> MLXArray { block.rotary(x.asType(.float32)).asType(x.dtype) }
+            let attended = NFKReferenceRounding.flashAttention(
+                queries: rotated(heads[0]), keys: rotated(heads[1]), values: heads[2],
+                scale: 1 / sqrt(Float(attention.headDim)), mask: nil)
+            lines.append(try piece("attention (\(h * w) keys)", attended.transposed(0, 2, 1, 3).reshaped([n, h, w, -1]),
+                                   probe, p + "attn.proj.in"))
+            lines.append(try piece("proj", NFKSAM3Autocast.linear(attention.oProj, input(p + "attn.proj.in")), probe,
+                                   p + "attn.proj.out"))
+            lines.append(try piece("attn", NFKSAM3Autocast.attention(attention, input(p + "attn.in"), rotary: block.rotary),
+                                   probe, p + "attn.out"))
+            lines.append(try piece("norm2", NFKSAM3Autocast.layerNorm(block.norm2, input(p + "norm2.in")), probe, p + "norm2.out"))
+            lines.append(try piece("fc1 + tanh GELU", NFKSAM3Autocast.widened(block.mlp, input(p + "mlp.in")), probe,
+                                   p + "mlp.fc2.in"))
+            lines.append(try piece("fc2", NFKSAM3Autocast.linear(block.mlp.fc2, input(p + "mlp.fc2.in")), probe, p + "mlp.fc2.out"))
+            lines.append(try piece("mlp", NFKSAM3Autocast.mlp(block.mlp, input(p + "mlp.in")), probe, p + "mlp.out"))
+            lines.append(try piece("block", NFKSAM3Autocast.layer(block, input(p + "block.in")), probe, p + "block.out"))
+        }
+        let levels = grounding.neck.fpnLayers
+        let up = levels[0].scaleLayers
+        let n0 = "sam.neck.0.", n1 = "sam.neck.1.", n2 = "sam.neck.2."
+        lines.append("tracker neck")
+        lines.append(try piece("level 0 dconv 0", nchw(NFKSAM3Autocast.convTransposed(up[0] as! ConvTransposed2d,
+                                                                                        nhwc(n0 + "dconv_2x2_0.in"))),
+                               probe, n0 + "dconv_2x2_0.out"))
+        lines.append(try piece("level 0 gelu", NFKSAM3Autocast.gelu(input(n0 + "gelu.in")), probe, n0 + "gelu.out"))
+        lines.append(try piece("level 0 dconv 1", nchw(NFKSAM3Autocast.convTransposed(up[2] as! ConvTransposed2d,
+                                                                                        nhwc(n0 + "dconv_2x2_1.in"))),
+                               probe, n0 + "dconv_2x2_1.out"))
+        lines.append(try piece("level 1 dconv", nchw(NFKSAM3Autocast.convTransposed(
+            levels[1].scaleLayers[0] as! ConvTransposed2d, nhwc(n1 + "dconv_2x2.in"))), probe, n1 + "dconv_2x2.out"))
+        for (index, prefix) in [n0, n1, n2].enumerated() {
+            lines.append(try piece("level \(index) conv_1x1", nchw(NFKSAM3Autocast.conv(levels[index].proj1, nhwc(prefix + "conv_1x1.in"))),
+                                   probe, prefix + "conv_1x1.out"))
+            lines.append(try piece("level \(index) conv_3x3", nchw(NFKSAM3Autocast.conv(levels[index].proj2, nhwc(prefix + "conv_3x3.in"))),
+                                   probe, prefix + "conv_3x3.out"))
+        }
+        let grid = grounding.configuration.grid
+        lines.append(try piece("dense positional", grounding.promptEncoder.positionEncoding.grid(grid, grid)[0].transposed(1, 0),
+                               probe, "sam.sam_prompt_encoder.pe_layer.out"))
+        let decoder = grounding.maskDecoder
+        let d = "sam.sam_mask_decoder."
+        lines.append(try piece("conv_s0", nchw(NFKSAM3Autocast.conv(decoder.convS0, nhwc(d + "conv_s0.in"))), probe, d + "conv_s0.out"))
+        lines.append(try piece("conv_s1", nchw(NFKSAM3Autocast.conv(decoder.convS1, nhwc(d + "conv_s1.in"))), probe, d + "conv_s1.out"))
+        for (index, layer) in decoder.layers.enumerated() {
+            let l = d + "transformer.layers.\(index)."
+            lines.append("two-way layer \(index)")
+            for (name, attention) in [("self_attn", layer.selfAttn), ("cross_attn_token_to_image", layer.crossTokenImage),
+                                      ("cross_attn_image_to_token", layer.crossImageToken)] {
+                lines.append(try piece(name, NFKSAM3Autocast.attention(attention, input(l + name + ".q_proj.in"),
+                                                                       input(l + name + ".k_proj.in"), input(l + name + ".v_proj.in")),
+                                       probe, l + name + ".out"))
+            }
+            for (name, norm) in [("norm1", layer.norm1), ("norm2", layer.norm2), ("norm3", layer.norm3), ("norm4", layer.norm4)] {
+                lines.append(try piece(name, NFKSAM3Autocast.layerNorm(norm, input(l + name + ".in")), probe, l + name + ".out"))
+            }
+            lines.append(try piece("mlp", NFKSAM3Autocast.perceptron(layer.mlp, input(l + "mlp.in")), probe, l + "mlp.out"))
+        }
+        let f = d + "transformer.final_attn_token_to_image."
+        lines.append(try piece("final attention", NFKSAM3Autocast.attention(decoder.finalAttention, input(f + "q_proj.in"),
+                                                                            input(f + "k_proj.in"), input(f + "v_proj.in")),
+                               probe, f + "out"))
+        lines.append(try piece("norm_final_attn", NFKSAM3Autocast.layerNorm(decoder.normFinalAttention,
+                                                                            input(d + "transformer.norm_final_attn.in")),
+                               probe, d + "transformer.norm_final_attn.out"))
+        let u = d + "output_upscaling."
+        lines.append(try piece("upscale1", nchw(NFKSAM3Autocast.convTransposed(decoder.upscale1, nhwc(u + "0.in"))), probe, u + "0.out"))
+        lines.append(try piece("LayerNorm2d", nchw(NFKSAM3Autocast.layerNorm2d(decoder.upscaleNorm, nhwc(u + "1.in"))), probe, u + "1.out"))
+        lines.append(try piece("gelu", NFKSAM3Autocast.gelu(input(u + "2.in")), probe, u + "2.out"))
+        lines.append(try piece("upscale2", nchw(NFKSAM3Autocast.convTransposed(decoder.upscale2, nhwc(u + "3.in"))), probe, u + "3.out"))
+        lines.append(try piece("gelu", NFKSAM3Autocast.gelu(input(u + "4.in")), probe, u + "4.out"))
+        for index in 0 ..< decoder.maskCount {
+            let key = d + "output_hypernetworks_mlps.\(index)."
+            lines.append(try piece("hypernetwork \(index)", NFKSAM3Autocast.perceptron(decoder.hyper[index], input(key + "in")),
+                                   probe, key + "out"))
+        }
+        let iou = NFKSAM3Autocast.perceptron(decoder.iouHead, try input(d + "iou_prediction_head.in"))
+        lines.append(try piece("iou head", decoder.iouUsesSigmoid ? NFKReferenceRounding.sigmoid(iou) : iou, probe,
+                               d + "iou_prediction_head.out"))
+        lines.append(try piece("object score head", NFKSAM3Autocast.perceptron(decoder.objScoreHead,
+                                                                               input(d + "pred_obj_score_head.in")),
+                               probe, d + "pred_obj_score_head.out"))
+        print("VALIDATION bf16 sa2va-qwen3-vl-4b-sam3 grounding pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    /// The SAM 3 grounding's decoder under autocast on `levels` (the two finer ones) and `conditioned`.
+    private func sam3Decode(_ grounding: NFKSa2VASAM3GroundingEncoder, levels: [MLXArray], conditioned: MLXArray,
+                            embedding: MLXArray) throws -> (masks: MLXArray, iou: MLXArray, objectScore: MLXArray) {
+        let grid = grounding.configuration.grid
+        let encoder = grounding.promptEncoder
+        let empty = encoder.sparse(points: [(x: Float(0), y: Float(0), label: -1)])
+        return NFKSAM3Autocast.decode(grounding.maskDecoder, features: conditioned,
+                                      positional: encoder.positionEncoding.grid(grid, grid),
+                                      sparse: concatenated([empty.asType(.float32), embedding.asType(.float32)], axis: 1),
+                                      dense: encoder.dense(grid: grid), highResolution: [levels[0], levels[1]])
+    }
+
+    /// Sa2VA-Qwen3-VL-4B-SAM3's grounding at bf16, as the backend loads it, with both grounding records.
+    private func sa2vaSAM3Grounding() throws
+        -> (grounding: NFKSa2VASAM3GroundingEncoder, bf16: [String: MLXArray], f32: [String: MLXArray]) {
+        let key = "IK_VAL_SA2VA_QWEN3_VL_4B_SAM3"
+        let directory = URL(fileURLWithPath: try existing(config[key], key))
+        let bf16 = try record("sa2va_qwen3_vl_4b_sam3_grounding_bf16.safetensors")
+        let f32 = try record("sa2va_qwen3_vl_4b_sam3_grounding_f32.safetensors")
+        let net = try NFKMLXSa2VAQwenNet.load(directoryURL: directory, parts: .grounding, dtype: .bfloat16)
+        return (try XCTUnwrap(net.grounding as? NFKSa2VASAM3GroundingEncoder), bf16, f32)
+    }
+
     /// Sa2VA-1B at bf16 with both grounding records.
     private func sa2va1BGrounding() throws -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_1B"], "IK_VAL_SA2VA_1B"))

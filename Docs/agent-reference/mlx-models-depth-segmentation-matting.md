@@ -192,7 +192,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   with its own head, and high-resolution features from the FPN's two finer levels added during
   upscaling. Their `conv_s0`/`conv_s1` projections are the decoder's parameters but the reference
   applies them in its base model before calling it, so this port applies them internally and takes the
-  levels as they come off the neck. Two traps: the query positional term is the original token embedding
+  levels as they come off the neck. The upscaling `LayerNorm2d` here and in `NFKMLXSAM` takes ε = 1e-6,
+  as `segment-anything`, SAM 2, and transformers all do. MLXNN's default of 1e-5 moves no float32 cosine
+  measurably; at bf16 it rounded 47% of Sa2VA-1B's upscaling elements differently, and none after. Two
+  traps: the query positional term is the original token embedding
   at every layer and again at the final attention (the running queries drift the masks without breaking
   anything visibly), and the reference shifts a click by half a pixel to the pixel's centre before
   normalizing. The IoU head ends in a sigmoid (`iouUsesSigmoid`), as every released SAM 2 and SAM 2.1
