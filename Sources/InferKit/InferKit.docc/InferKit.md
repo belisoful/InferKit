@@ -115,6 +115,8 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 
 - ``NFKInferenceServer``
 - ``NFKRemoteInferKitBackend``
+- ``NFKBalancedBackend``
+- ``NFKServerStatus``
 
 ### Media coding
 

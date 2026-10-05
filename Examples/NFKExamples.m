@@ -392,6 +392,57 @@
 	[server stop];
 }
 
+- (void)testExampleBalancingAcrossServers
+{
+	NFKInferenceServer *first = [[NFKInferenceServer alloc] init];
+	NFKInferenceServer *second = [[NFKInferenceServer alloc] init];
+	for (NFKInferenceServer *server in @[ first, second ]) {
+		server.port = 0;
+		server.loopbackOnly = YES;
+		[server addBackend:[[NFKPassthroughBackend alloc] init] forModelName:@"echo"];
+		XCTAssertTrue([server startWithError:NULL]);
+	}
+
+	// Two servers host the model; round robin makes the turn visible.
+	NFKBalancedBackend *balanced = [NFKBalancedBackend backendWithModelName:@"echo"];
+	balanced.policy = NFKBalancingPolicyRoundRobin;
+	[balanced addServerWithBaseURL:first.localBaseURL apiKey:nil];
+	[balanced addServerWithBaseURL:second.localBaseURL apiKey:nil];
+	NSError *error = nil;
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hello" }];
+	XCTAssertEqualObjects([[balanced runInferenceForRequest:request error:&error] outputForKey:NFKInputPrompt], @"hello", @"%@", error);
+	XCTAssertEqualObjects(balanced.lastServerBaseURL, first.localBaseURL);
+	[balanced runInferenceForRequest:request error:&error];
+	XCTAssertEqualObjects(balanced.lastServerBaseURL, second.localBaseURL);
+	[first stop];
+	[second stop];
+}
+
+- (void)testExampleLoadAndModelStatus
+{
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.maximumQueuedRunsPerModel = 8;
+	[server addBackend:[[NFKPassthroughBackend alloc] init] forModelName:@"echo"];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+
+	// The status route, read typed. A free slot starts a new request at once.
+	NFKServerStatus *status = [NFKServerStatus fetchFromBaseURL:server.localBaseURL apiKey:nil error:&error];
+	NFKServerModelStatus *echo = [status modelNamed:@"echo"];
+	XCTAssertEqual(echo.queueLimit, 8, @"%@", error);
+	XCTAssertEqualObjects(echo.estimatedWaitSeconds, @0);
+	XCTAssertNotEqual(status.host.thermalState, NFKServerThermalStateUnknown);
+
+	// Leaving host details out keeps the models' load.
+	server.reportsHostDetails = NO;
+	status = [NFKServerStatus fetchFromBaseURL:server.localBaseURL apiKey:nil error:&error];
+	XCTAssertNil(status.host);
+	XCTAssertEqual([status modelNamed:@"echo"].limit, 1);
+	[server stop];
+}
+
 - (void)testExampleRemoteEmbeddingsAndLocalRunners
 {
 	// Embeddings are the same shape everywhere, and the vector comes back under the core key the

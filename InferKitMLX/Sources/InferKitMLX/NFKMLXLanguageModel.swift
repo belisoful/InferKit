@@ -71,6 +71,11 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// gpt-oss's reference does. The other families round the normalized value first, as Llama's does;
     /// the two differ only below float32. Introduced in InferKit 0.4.0.
     public var normWeightInFloat32: Bool = false
+    /// The release's `model_type`, or nil for a configuration built in code. Introduced in InferKit 0.4.0.
+    public var modelType: String?
+    /// The positions the release states it was trained to (`max_position_embeddings`), or nil when it
+    /// states none. Introduced in InferKit 0.4.0.
+    public var maximumPositions: Int?
 
     public init(hiddenSize: Int = 1024, layerCount: Int = 28, headCount: Int = 16,
                 keyValueHeadCount: Int = 8, headDimensions: Int = 128, intermediateSize: Int = 3072,

@@ -20,6 +20,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 @property (nonatomic, copy, readwrite) NSURL *baseURL;
 @property (nonatomic, assign, readwrite) NFKRemoteAPIStyle apiStyle;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
+@property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @end
 
 @implementation NFKRemoteProvider
@@ -41,7 +42,11 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
 - (instancetype)initPrivate
 {
-	return [super init];
+	self = [super init];
+	if (self != nil) {
+		_advertisedProperties = @{};
+	}
+	return self;
 }
 
 - (id)copyWithZone:(nullable NSZone *)zone
@@ -255,6 +260,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 		NFKRemoteProvider *provider = [self.inferKit providerWithBaseURL:baseURL];
 		provider.displayName = service.name;
 		provider.requiresAPIKey = [service.TXTRecord[@"auth"] isEqualToString:@"1"];
+		provider.advertisedProperties = service.TXTRecord ?: @{};
 		[providers addObject:provider];
 	}
 	return providers;

@@ -78,6 +78,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! Whether a key is required. A local server does not need one. */
 @property (nonatomic, assign, readonly) BOOL requiresAPIKey;
 
+/*! What a discovered InferKit server advertised in its Bonjour record: path, tls, auth, and version,
+	and, when the server reports host details, chip and memory (physical bytes). Empty for a preset
+	and for a provider re-pointed with providerWithBaseURL:. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, readonly) NSDictionary<NSString *, NSString *> *advertisedProperties;
+
 - (instancetype)init NS_UNAVAILABLE;
 
 /*! Two providers are equal when their identifier, base, protocol, and key requirement match. Each

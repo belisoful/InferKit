@@ -60,6 +60,11 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         XCTAssertGreaterThan(NFKFoundationModelsBackend().contextSize, 0)
     }
 
+    func testTheModelInfoCarriesTheContextSize() {
+        let backend = NFKFoundationModelsBackend()
+        XCTAssertEqual(backend.modelInfo[NFKModelInfoContextLength] as? Int, backend.contextSize)
+    }
+
     // MARK: Model selection
 
     func testTheDefaultModelIsOnDeviceWithDefaultOptions() {

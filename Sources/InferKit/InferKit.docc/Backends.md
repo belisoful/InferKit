@@ -82,6 +82,11 @@ Pure Apple frameworks, always available:
   Clients find it by address or over Bonjour.
 - ``NFKRemoteInferKitBackend`` — the native route's client: every key of a request crosses, and the
   hosted backend's result and error come back as they were.
+- ``NFKBalancedBackend`` — sends each request to one of several servers hosting the model, by expected
+  wait, and moves a request that never started to the next server. Hosted in a server of its own, it
+  makes that server a load balancer.
+- ``NFKServerStatus`` — a server's status route read typed: each model's load and what its backend
+  loaded, and the machine's state.
 - ``NFKAsyncGenerationBackend`` — a subclassable submit → poll → fetch base for job-style generation
   services. Map the service's JSON through its template methods; the base owns the loop and the
   ``NFKInferenceJob``.
@@ -159,6 +164,14 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKInferenceServer``
 - ``NFKRemoteInferKitBackend``
 - ``NFKInferenceServerError``
+- ``NFKBalancedBackend``
+- ``NFKBalancingPolicy``
+- ``NFKServerStatus``
+- ``NFKServerModelStatus``
+- ``NFKServerRunStatus``
+- ``NFKServerHostStatus``
+- ``NFKServerLoad``
+- ``NFKServingRuntimeStatus``
 
 ### Local runners
 

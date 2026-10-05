@@ -54,6 +54,11 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 */
 @property (nonatomic, assign) MLComputeUnits computeUnits;
 
+/*! The loaded model's compute units, version, compiled size, and the context length its manifest
+	declares (NFKModelInfo* keys); before a load, the compute units it will load with. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
+
 + (instancetype)backendWithModelDirectoryURL:(nullable NSURL *)modelDirectoryURL;
 
 /*!

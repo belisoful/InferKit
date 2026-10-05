@@ -8,6 +8,8 @@
 #import "NFKInferenceResult.h"
 #import "NFKErrors.h"
 #import "NFK_ARC.h"
+#import "NFKInferenceKeys.h"
+#import "NFKModelInfoSupport.h"
 #import <CoreML/CoreML.h>
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
@@ -28,6 +30,7 @@ static MTLPixelFormat NFKMTLPixelFormatForIOSurface(IOSurfaceRef surface)
 {
 	MLModel *_model;
 	id<MTLDevice> _device;
+	NSDictionary<NSString *, id> *_loadedModelInfo;
 }
 
 @synthesize modelURL = _modelURL;
@@ -168,8 +171,14 @@ static MTLPixelFormat NFKMTLPixelFormatForIOSurface(IOSurfaceRef surface)
 
 	NARC_RELEASE(_model);
 	_model = NARC_RETAIN(model);
+	_loadedModelInfo = NFKModelInfoForCoreMLModel(model, compiledURL);
 	self.modelURL = url;
 	return YES;
+}
+
+- (NSDictionary<NSString *, id> *)modelInfo
+{
+	return _loadedModelInfo ?: @{ NFKModelInfoComputeUnits: NFKModelInfoComputeUnitsName(self.computeUnits) };
 }
 
 #pragma mark Feature conversion

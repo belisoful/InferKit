@@ -297,6 +297,26 @@ enum {
 	XCTAssertEqual(backend.minimumConfidence, 0.0);
 }
 
+- (void)testTheCoreMLBackendsDescribeTheModelTheyLoaded
+{
+	NSURL *compiled = [self compiledModelFromSpecification:[self arrayInputSpecification]];
+	NFKCoreMLBackend *backend = [NFKCoreMLBackend backendWithModelURL:nil];
+	backend.computeUnits = MLComputeUnitsCPUOnly;
+	XCTAssertEqualObjects(backend.modelInfo, @{ NFKModelInfoComputeUnits: @"cpu_only" }, @"before a load, the setting it will load with");
+	NSError *error = nil;
+	XCTAssertTrue([backend loadModelFromURL:compiled error:&error], @"%@", error);
+	XCTAssertEqualObjects(backend.modelInfo[NFKModelInfoComputeUnits], @"cpu_only");
+	XCTAssertGreaterThan([backend.modelInfo[NFKModelInfoStorageBytes] longLongValue], 0);
+
+	NFKVisionCoreMLBackend *vision = [self classifier];
+	XCTAssertEqualObjects(vision.modelInfo[NFKModelInfoComputeUnits], @"all", @"MLModel's own default");
+	XCTAssertGreaterThan([vision.modelInfo[NFKModelInfoStorageBytes] longLongValue], 0);
+	MLModel *model = [MLModel modelWithContentsOfURL:compiled error:&error];
+	NFKVisionCoreMLBackend *fromModel = [NFKVisionCoreMLBackend backendWithModel:model error:&error];
+	XCTAssertNil(fromModel, @"Vision refuses a model whose input is not an image");
+	XCTAssertEqualObjects([[NFKVisionCoreMLBackend alloc] init].modelInfo, @{});
+}
+
 - (void)testALoadedModelBuildsTheSameBackend
 {
 	NSError *error = nil;

@@ -68,6 +68,8 @@
 #import <InferKit/NFKRemoteTranscriptionBackend.h>
 #import <InferKit/NFKRemoteInferKitBackend.h>
 #import <InferKit/NFKInferenceServer.h>
+#import <InferKit/NFKServerStatus.h>
+#import <InferKit/NFKBalancedBackend.h>
 #import <InferKit/NFKAsyncGenerationBackend.h>
 #import <InferKit/NFKVisionTextBackend.h>
 #import <InferKit/NFKVisionSegmentationBackend.h>

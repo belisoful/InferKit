@@ -174,6 +174,14 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    private let modelInfoCache = NFKMLXModelInfoCache()
+
+    /// The decoder's parameter count, weight bytes, precision, and quantization (`NFKModelInfo*`
+    /// keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value { NFKMLXModelDescription.info(of: [holder.net]) }
+    }
+
     /// The request parameters the backend reads.
     ///
     /// @discussion Two of the language backend's keys are absent because they describe mechanisms

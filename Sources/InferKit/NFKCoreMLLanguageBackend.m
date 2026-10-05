@@ -10,6 +10,7 @@
 #import "NFKInferenceKeys.h"
 #import "NFKErrors.h"
 #import "NFKTokenConstraint.h"
+#import "NFKModelInfoSupport.h"
 #import <CoreML/CoreML.h>
 
 #pragma mark Sampling primitives
@@ -89,6 +90,7 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	NSDictionary *_chatTemplate;
 	NSInteger _contextLength;
 	BOOL _replyIsJSON;
+	NSDictionary<NSString *, id> *_loadedModelInfo;
 }
 
 @synthesize modelDirectoryURL = _modelDirectoryURL;
@@ -249,8 +251,18 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	NSDictionary *tokenizerSection = [manifest[@"tokenizer"] isKindOfClass:NSDictionary.class] ? manifest[@"tokenizer"] : nil;
 	_chatTemplate = [tokenizerSection[@"chatTemplate"] isKindOfClass:NSDictionary.class] ? tokenizerSection[@"chatTemplate"] : nil;
 	_contextLength = [manifest[@"contextLength"] isKindOfClass:NSNumber.class] ? [manifest[@"contextLength"] integerValue] : 0;
+	NSMutableDictionary<NSString *, id> *info = [NFKModelInfoForCoreMLModel(model, compiledURL) mutableCopy];
+	if (_contextLength > 0) {
+		info[NFKModelInfoContextLength] = @(_contextLength);
+	}
+	_loadedModelInfo = info;
 	self.modelDirectoryURL = directoryURL;
 	return YES;
+}
+
+- (NSDictionary<NSString *, id> *)modelInfo
+{
+	return _loadedModelInfo ?: @{ NFKModelInfoComputeUnits: NFKModelInfoComputeUnitsName(self.computeUnits) };
 }
 
 - (nullable NSDictionary *)manifestInDirectory:(NSURL *)directoryURL error:(NSError * _Nullable *)outError

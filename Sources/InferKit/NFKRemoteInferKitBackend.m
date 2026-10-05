@@ -11,6 +11,7 @@
 @interface NFKRemoteInferKitBackend ()
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedInputKeys;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedParameterKeys;
+@property (atomic, readwrite, strong, nullable) NFKServerLoad *lastReportedLoad;
 @end
 
 @implementation NFKRemoteInferKitBackend
@@ -120,6 +121,27 @@
 	return YES;
 }
 
+- (nullable NFKServerStatus *)fetchServerStatusWithError:(NSError * _Nullable *)outError
+{
+	NSURL *base = self.endpointURL.URLByDeletingLastPathComponent.URLByDeletingLastPathComponent;
+	if (base == nil) {
+		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		return nil;
+	}
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[base URLByAppendingPathComponent:@"inferkit/status"]];
+	request.timeoutInterval = MIN(self.timeout, 30.0);
+	[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	id reply = [self JSONObjectForRequest:request error:outError];
+	if (reply == nil) {
+		return nil;
+	}
+	NFKServerStatus *status = [NFKServerStatus statusWithJSONObject:reply];
+	if (status == nil) {
+		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the server's reply is not a status" error:outError];
+	}
+	return status;
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
@@ -170,6 +192,7 @@
 				?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the served run failed"]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
+		[self recordLoadFromResponse:response];
 		if (finished || job.status == NFKInferenceJobStatusCancelled) {
 			return;
 		}
@@ -221,6 +244,7 @@
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
 	NSData *data = [self sendRequest:request response:&response error:&sendError];
+	[self recordLoadFromResponse:response];
 	NSError *failure = data == nil ? sendError : [self errorForResponse:response data:data];
 	if (failure != nil) {
 		if (outError != NULL) {
@@ -234,6 +258,15 @@
 		return nil;
 	}
 	return object;
+}
+
+/*! Keeps the load a reply's headers carry; a reply without them leaves the last one in place. */
+- (void)recordLoadFromResponse:(nullable NSHTTPURLResponse *)response
+{
+	NFKServerLoad *load = response != nil ? [NFKServerLoad loadWithHTTPHeaders:response.allHeaderFields] : nil;
+	if (load != nil) {
+		self.lastReportedLoad = load;
+	}
 }
 
 /*! The server's own error when its body carries one, domain and code intact, keeping the transport's

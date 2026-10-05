@@ -95,6 +95,20 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @property (nonatomic, readonly, copy) NSSet<NSString *> *supportedInputKeys;
 
+/*!
+	@property   modelInfo
+	@abstract   What the backend knows about its loaded model, keyed by NFKModelInfo*.
+	@discussion The values are strings and numbers: parameter count, weight and storage bytes,
+				precision, quantization, context length, key-value bytes per token, compute units,
+				and version. A backend fills the keys it knows and leaves the rest out, so a caller
+				reads a key that is present rather than trusting a zero. A backend that has not
+				loaded its model yet reports what its configuration already fixes, such as its
+				compute units. NFKInferenceServer serves it under each model's entry, so a load
+				balancer or a client can compare the models different machines host. Introduced in
+				InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
+
 @end
 
 /*!

@@ -304,6 +304,35 @@ extern NSString * const NFKUsageOutputTokens;
 /*! How many of the output tokens went to reasoning (NSNumber). */
 extern NSString * const NFKUsageReasoningTokens;
 
+/*! The family of the loaded model, such as "qwen3" or "whisper" (NSString). The NFKModelInfo* keys
+	describe a backend's loaded model under modelInfo; a backend fills the ones it knows and leaves
+	the rest out. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoArchitecture;
+/*! The loaded model's parameter count (NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoParameterCount;
+/*! The bytes the loaded weights occupy in memory (NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoWeightBytes;
+/*! The bytes the loaded model's files occupy on disk (NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoStorageBytes;
+/*! The type the weights compute in: "float32", "float16", or "bfloat16" (NSString). Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelInfoPrecision;
+/*! The bits per quantized weight, present only for a quantized model (NSNumber). Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelInfoQuantizationBits;
+/*! The weights that share one quantization scale (NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoQuantizationGroupSize;
+/*! The most tokens one sequence holds, prompt and reply together (NSNumber). Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelInfoContextLength;
+/*! The key-value cache bytes one token adds to a sequence (NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoKeyValueBytesPerToken;
+/*! The Core ML compute units the model loaded with: "cpu_only", "cpu_and_gpu", "all", or
+	"cpu_and_neural_engine" (NSString). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoComputeUnits;
+/*! The version the model declares (NSString). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoVersion;
+
 NS_ASSUME_NONNULL_END
 
 #endif /* NFKInferenceKeys_h */

@@ -696,7 +696,17 @@ arriving now, and describes the machine: thermal state, memory and its pressure,
 storage, and on macOS the GPU utilization. Every run reply carries the model's load in
 `X-InferKit-*` headers, so a balancer learns it from the replies it already receives.
 `maximumQueuedRunsPerModel` bounds the queue: a request that finds it full gets 503 with a
-`Retry-After` of the estimated wait. `reportsHostDetails` set to NO leaves out everything about the
+`Retry-After` of the estimated wait. Each model's entry also carries what its backend reports about
+the loaded model through `modelInfo` (parameter count, weight bytes, precision, quantization, context
+length, compute units), so a balancer can confirm two machines host the same model, and a linked
+runtime such as MLX reports its memory beside the machine's. `NFKServerStatus` reads the route
+typed, and a discovered provider's `advertisedProperties` carries the chip and memory the server
+advertised.
+
+`NFKBalancedBackend` spreads one model over several servers. It sends each request to the server
+expected to start it soonest, learns each server's load from its replies between status readings,
+and moves a request that never started to the next server. Servers come from URLs, Bonjour, or both.
+Hosted in a server of its own, it makes that server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about the
 machine and keeps the models' load. GPU utilization counts every process and stays high while one
 run executes, so a balancer routes on the queue figures and the estimated wait.
 

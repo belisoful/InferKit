@@ -105,6 +105,21 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         }
     }
 
+    /// The model's context length under `NFKModelInfoContextLength` once it is known (`contextSize`
+    /// above 0), and on macOS 27 / iOS 27 the on-device variant's name under `NFKModelInfoVersion`.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        var info: [String: Any] = [:]
+        let size = contextSize
+        if size > 0 {
+            info[NFKModelInfoContextLength] = size
+        }
+        if #available(macOS 27, iOS 27, *), let variant = variantDisplayName {
+            info[NFKModelInfoVersion] = variant
+        }
+        return info
+    }
+
     /// The Private Cloud Compute quota, whatever `model` is set to, so an app decides before switching
     /// to it. Nil when the package was built with an SDK before macOS 27, which has no Private Cloud
     /// Compute. Introduced in InferKit 0.4.0.

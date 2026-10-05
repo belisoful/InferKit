@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <InferKit/NFKInferenceBackend.h>
+#import <InferKit/NFKServerStatus.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -60,6 +61,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! Reads the server's description of the model: whether it is ready, and the keys its backend
 	reads. Fails with the server's error when the model is not served. */
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError;
+
+/*! The served model's load as the most recent run reply's X-InferKit-* headers carried it, refusals
+	included, or nil before a reply has carried one. Introduced in InferKit 0.4.0. */
+@property (atomic, readonly, strong, nullable) NFKServerLoad *lastReportedLoad;
+
+/*! Reads the status route of the server this backend posts to: every model's load and, when the
+	server reports host details, the machine's state. Blocks for the round trip. Introduced in
+	InferKit 0.4.0. */
+- (nullable NFKServerStatus *)fetchServerStatusWithError:(NSError * _Nullable *)outError;
 
 /*! The streamed form: the job reports the hosted run's progress and partial results, and cancelling
 	it closes the connection, which cancels the run on the server. */

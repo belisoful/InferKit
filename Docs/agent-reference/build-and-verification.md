@@ -178,7 +178,7 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2192 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 2196 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  135 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   51 — the Objective-C ones
    ```
@@ -209,13 +209,13 @@ unguarded call.
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (694), `InferKitFoundationModels` (86), and `InferKitAppleSwift`
+   package declares, so the core (718), `InferKitFoundationModels` (87), and `InferKitAppleSwift`
    (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
-   covers all 86 tests across its three test targets. Through Xcode it collapses the same way MLX does
-   — the generated `InferKitFoundationModels` scheme runs 68 and skips the 18 in the two examples
+   covers all 87 tests across its three test targets. Through Xcode it collapses the same way MLX does
+   — the generated `InferKitFoundationModels` scheme runs 69 and skips the 18 in the two examples
    targets — so it carries the same per-target shared schemes
-   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 68 / 10 / 8). Nothing here needs
+   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 69 / 10 / 8). Nothing here needs
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers

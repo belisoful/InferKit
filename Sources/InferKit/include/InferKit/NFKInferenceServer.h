@@ -50,6 +50,26 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 };
 
 /*!
+	@protocol   NFKServingRuntimeStatus
+	@abstract   A runtime that reports its own state to a server's status route.
+	@discussion A companion package's runtime class adopts it, and a server finds the class by name
+				at runtime, so the core links nothing of the runtime. The report appears in the
+				status route's host object under runtimes, keyed by runtimeStatusName, and is left
+				out with every other host detail when reportsHostDetails is NO. A server looks for
+				InferKitMLX's NFKMLXGPU by default; registerRuntimeStatusClassName: adds another
+				class. Introduced in InferKit 0.4.0.
+*/
+@protocol NFKServingRuntimeStatus <NSObject>
+
+/*! The name the report appears under, such as "mlx". */
+@property (class, nonatomic, readonly, copy) NSString *runtimeStatusName;
+
+/*! The runtime's state now, as strings and numbers. */
+@property (class, nonatomic, readonly, copy) NSDictionary<NSString *, id> *runtimeStatus;
+
+@end
+
+/*!
 	@class      NFKInferenceServer
 	@abstract   Serves the models this process hosts to clients on this machine and on the network.
 	@discussion A server hosts backends by model name and answers HTTP on two surfaces under /v1:
@@ -99,8 +119,10 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				queue: a request that finds it full is refused with 503 and a Retry-After, so a
 				client or a load balancer can try another server.
 
-				Status. Each model's load appears under "load" in the status route and in its
-				GET /models entry:
+				Status. Each model's backend describes its loaded model under "model" (its modelInfo:
+				parameter count, weight and storage bytes, precision, quantization, context length,
+				compute units) in the status route and in its GET /models entry, which also carry
+				the model's load under "load":
 				- limit, running, and queued (queue_limit when one is set).
 				- completed, failed, cancelled, and refused run counts.
 				- average_run_seconds and average_wait_seconds, moving averages that weight the
@@ -119,7 +141,8 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				The status route's "host" object describes the machine: chip, model identifier, and
 				core counts; thermal_state (nominal, fair, serious, critical) and low_power_mode;
 				memory (physical, available, recommended working set, pressure as normal, warning,
-				or critical, and this process's footprint); cpu (usage since the previous status
+				or critical, and this process's footprint); runtimes, each linked runtime's own
+				report (NFKServingRuntimeStatus), such as MLX's active and cached memory; cpu (usage since the previous status
 				reading, and the load averages); storage on the volume of storageDirectoryURL; and,
 				on macOS, gpu.utilization from the IORegistry's undocumented "Device Utilization %",
 				absent when it cannot be read. GPU utilization covers every process on the machine
@@ -198,6 +221,10 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 
 /*! Stops hosting the model. Its queued runs fail; its running ones finish. */
 - (void)removeBackendForModelName:(NSString *)modelName;
+
+/*! Adds a class, found by name at runtime, whose NFKServingRuntimeStatus report every server's
+	status route carries. A name whose class is absent or does not adopt the protocol is skipped. */
++ (void)registerRuntimeStatusClassName:(NSString *)className;
 
 /*! The backend hosted under a model name, or nil. */
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName;

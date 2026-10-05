@@ -53,7 +53,10 @@ packages in this repository — see **[Installation](Docs/installation.md)** for
   the OpenAI-compatible routes (chat with streaming, embeddings, transcription, speech, images, the
   model list) and a native route that carries a whole request, so a hosted depth, detection, or
   restoration model is reachable too. Clients find it by address or over Bonjour, and a client on
-  another machine presents a key unless the host turns that off.
+  another machine presents a key unless the host turns that off. A status route reports each model's
+  load and what its backend loaded, and the machine's thermal, memory, and processor state.
+  `NFKBalancedBackend` spreads a model over several servers by expected wait and fails over a request
+  that never started.
 - **Subsystems** — RGBA ↔ planar tensor conversion, an `MLMultiArray` bridge, image and video coding
   (`NFKImageCoding`, `NFKVideoSampling`), a tokenizer (BPE / CLIP / WordPiece / Unigram), a Core ML
   compute-plan reader, a hardware profile, and a Hugging Face download and cache layer.

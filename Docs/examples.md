@@ -3522,6 +3522,63 @@ OpenAI-compatible clients receive the core code through `NFKRemoteTransport`. Se
 serves HTTPS. On iOS, an app that serves or browses lists `_inferkit._tcp` under `NSBonjourServices`
 and carries `NSLocalNetworkUsageDescription`.
 
+### Load and model status
+
+A server reports each model's load and what its backend loaded, and the machine's state, at
+`GET /v1/inferkit/status`. `NFKServerStatus` reads it typed. Every run reply carries the model's load
+too, in `X-InferKit-Limit`, `X-InferKit-Running`, `X-InferKit-Queued`, and
+`X-InferKit-Estimated-Wait`.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; NFKRemoteProvider *studio = nil; -->
+```objc
+server.maximumQueuedRunsPerModel = 8;    // a ninth waiting request gets 503 with a Retry-After
+server.reportsHostDetails = NO;          // leaves out the machine; the models' load stays
+
+NFKServerStatus *status = [NFKServerStatus fetchFromBaseURL:studio.baseURL apiKey:key error:&error];
+NFKServerModelStatus *chat = [status modelNamed:@"qwen3"];
+NSNumber *wait = chat.estimatedWaitSeconds;                  // nil until a run has finished
+NSNumber *parameters = chat.modelInfo[NFKModelInfoParameterCount];
+BOOL hot = status.host.thermalState >= NFKServerThermalStateSerious;
+NSString *chip = studio.advertisedProperties[@"chip"];      // from the Bonjour record, no request
+```
+
+```swift
+let status = try NFKServerStatus.fetch(baseURL: studio.baseURL, apiKey: key)
+let wait = status.modelNamed("qwen3")?.estimatedWaitSeconds
+let awaited = try await NFKServerStatus.fetchStatus(baseURL: studio.baseURL, apiKey: key)
+```
+
+The host's GPU utilization counts every process and reads near 1 while a single run executes, so a
+client choosing a server compares the queue figures and the estimated wait.
+
+### Balancing across servers
+
+`NFKBalancedBackend` sends each request to whichever server hosting the model is expected to start
+it soonest. It moves a request that never started (the server was unreachable, its queue was full, or
+it does not host the model) to the next server. A server running hot or under critical memory
+pressure serves only when no other can.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; -->
+```objc
+NFKBalancedBackend *balanced = [NFKBalancedBackend backendWithModelName:@"qwen3"];
+balanced.apiKey = key;
+[balanced addServerWithBaseURL:[NSURL URLWithString:@"http://studio.local:11480/v1"] apiKey:nil];
+[balanced startDiscoveryWithInterval:30];       // and every server Bonjour finds
+NFKInferenceResult *reply = [balanced runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize the meeting." }] error:&error];
+NSURL *answeredBy = balanced.lastServerBaseURL;
+
+// Hosted in a server of its own, it makes that server the load balancer for the others.
+[server addBackend:balanced forModelName:@"qwen3"];
+```
+
+```swift
+let balanced = NFKBalancedBackend(modelName: "qwen3")
+balanced.policy = .fewestOutstanding
+balanced.addServer(withBaseURL: studio, apiKey: key)
+let reply = try balanced.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Summarize the meeting."]))
+```
+
 ## Model gallery
 
 Every shipped MLX model is built the same way: a direct `@objc` factory (`+backendWith…weightsURL:` for

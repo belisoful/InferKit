@@ -191,6 +191,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `applyStandingLimits(cacheBytes:fractionOfRecommendedWorkingSet:)` sets a standing cache cap plus a
   soft memory limit derived from that budget. The standing cap is the version of `clearCache()` that
   does not have to be remembered at every model boundary.
+  `NFKMLXGPU` adopts the core's `NFKServingRuntimeStatus` for `NFKInferenceServer`'s status route. Its
+  report checks `metalLibraryURL` first, because a memory reading without the library aborts the
+  process, and it never reads `cacheLimit`: mlx-swift 0.32's getter calls `mlx_set_cache_limit` twice
+  on the first read in a process (to learn the value), which trims the cache. `memoryLimit`,
+  `activeMemory`, `cacheMemory`, and `peakMemory` are plain reads.
   There is deliberately no `setWiredLimit:`. mlx-swift 0.31.6 admits a wired limit only through an
   async, scoped ticket — its synchronous `withWiredLimit` is deprecated and a documented no-op — so a
   persistent setter could only be a knob that silently did nothing. `NFKMLXGPU.withWiredLimit(_:_:)` is
@@ -204,6 +209,15 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   the global device; a caller wanting a whole inference on the CPU runs the synchronous call inside the
   block on their own thread, which is where the contract puts a multi-second inference anyway. The `@objc`
   case names are given explicitly (`NFKMLXDeviceTypeCPU`/`…GPU`), since Swift would generate `…Cpu`/`…Gpu`.
+- `NFKMLXModelDescription` (internal) is what a backend's `modelInfo` reads: it walks
+  `parameters().flattened()` and matches each key's owner against `namedModules()` paths, which use
+  the same dotted form. A `Quantized` owner's `weight` counts `size × 32 / bits` parameters and its
+  `scales`/`biases` count bytes only; a `Linear`'s own `bias` counts as a parameter. Precision is the
+  floating type holding the most bytes. `NFKMLXModelInfoCache` computes it once per backend, since a
+  status poll would otherwise walk a large net each second. `NFKMLXGemmaBackend`,
+  `NFKMLXGraniteBackend`, `NFKMLXMambaBackend`, `NFKMLXNemotronBackend`, and `NFKMLXDecoderBackend`
+  keep only a logits closure after their factory returns, so they report no `modelInfo` until their
+  init takes the net or a precomputed description.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls

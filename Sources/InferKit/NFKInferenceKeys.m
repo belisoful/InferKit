@@ -99,3 +99,15 @@ NSString * const NFKUsageInputTokens		= @"inputTokens";
 NSString * const NFKUsageCachedTokens		= @"cachedTokens";
 NSString * const NFKUsageOutputTokens		= @"outputTokens";
 NSString * const NFKUsageReasoningTokens	= @"reasoningTokens";
+
+NSString * const NFKModelInfoArchitecture			= @"architecture";
+NSString * const NFKModelInfoParameterCount			= @"parameter_count";
+NSString * const NFKModelInfoWeightBytes			= @"weight_bytes";
+NSString * const NFKModelInfoStorageBytes			= @"storage_bytes";
+NSString * const NFKModelInfoPrecision				= @"precision";
+NSString * const NFKModelInfoQuantizationBits		= @"quantization_bits";
+NSString * const NFKModelInfoQuantizationGroupSize	= @"quantization_group_size";
+NSString * const NFKModelInfoContextLength			= @"context_length";
+NSString * const NFKModelInfoKeyValueBytesPerToken	= @"key_value_bytes_per_token";
+NSString * const NFKModelInfoComputeUnits			= @"compute_units";
+NSString * const NFKModelInfoVersion				= @"version";

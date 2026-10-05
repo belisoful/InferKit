@@ -25,6 +25,16 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	}
 }
 
+- (void)testAnUnloadedBackendDescribesTheComputeUnitsItWillLoadWith
+{
+	if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) {
+		NFKCoreMLLanguageBackend *backend = [NFKCoreMLLanguageBackend backendWithModelDirectoryURL:nil];
+		XCTAssertEqualObjects(backend.modelInfo, @{ NFKModelInfoComputeUnits: @"all" });
+		backend.computeUnits = MLComputeUnitsCPUAndGPU;
+		XCTAssertEqualObjects(backend.modelInfo, @{ NFKModelInfoComputeUnits: @"cpu_and_gpu" });
+	}
+}
+
 - (void)testANewBackendIsNotReady
 {
 	if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) {

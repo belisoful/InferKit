@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import InferKit
 import MLX
 
 /// Objective-C access to MLX's global random seed. Seeding makes weight initialization and any sampling
@@ -258,4 +259,27 @@ public final class NFKMLXGPU: NSObject {
     // identity every time and defeat the manager's accounting.
     private static let wiredPolicy = WiredSumPolicy(
         id: UUID(uuidString: "3F2A6C41-9E5B-4D18-A7C0-5B2E1F84D963")!)
+}
+
+extension NFKMLXGPU: NFKServingRuntimeStatus {
+
+    /// The name `NFKInferenceServer`'s status route reports MLX under. Introduced in InferKit 0.4.0.
+    @objc public static var runtimeStatusName: String { "mlx" }
+
+    /// MLX's memory now, for `NFKInferenceServer`'s status route: active, cached, and peak bytes, and
+    /// the soft memory limit. MLX aborts at its first memory reading in a process without its Metal
+    /// library, so such a process reports only that the library is missing. Introduced in
+    /// InferKit 0.4.0.
+    @objc public static var runtimeStatus: [String: Any] {
+        guard metalLibraryURL != nil else {
+            return ["metal_library_found": false]
+        }
+        // The cache limit is left out: mlx-swift's getter sets the limit twice on its first read,
+        // which trims the cache under a run in flight.
+        return ["metal_library_found": true,
+                "active_memory_bytes": activeMemory,
+                "cache_memory_bytes": cacheMemory,
+                "peak_memory_bytes": peakMemory,
+                "memory_limit_bytes": memoryLimit]
+    }
 }

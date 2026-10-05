@@ -70,7 +70,7 @@ The reasons behind each step, and how to find the offender when a leg breaks, ar
    `swift test` must still exit 0 with the MLX tests skipped; a crash mid-run prints "0 failures" and
    is a truncated run, not a green one. Read the exit code.
 5. `InferKitFoundationModels/`: `swift build` + `swift test` when a change touches that companion
-   (all 86 tests across its three test targets).
+   (all 87 tests across its three test targets).
 6. `InferKitAppleSwift/`: `swift build` + `swift test` when a change touches that companion (all 26
    tests across its three test targets, one of which skips without an installed translation model).
 7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C block in `README.md`,

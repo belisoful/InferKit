@@ -667,7 +667,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 29 tests, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 8, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -720,6 +720,35 @@ and start times on `systemUptime`, and the job's last reported progress.
   busiest accelerator is reported, as a fraction. App Sandbox readability is unmeasured. It covers
   every process, so it stays out of routing (user decision, 2026-10-05).
 - A real temperature lives in the SMC, which is private; the thermal state is the public reading.
+- `modelInfo` (optional on the protocol) is reduced to string and finite-number values before it is
+  served, so a backend that puts a date or a NaN there loses that entry and nothing else. Core ML's
+  storage size is the compiled `.mlmodelc`'s allocated bytes (`NFKModelInfoSupport`); a model Core ML
+  compiled at load is measured in its temporary location.
+- `NFKServerStatus` (public) reads the route; `NFKRemoteInferKitBackend.fetchServerStatusWithError:`
+  derives the base from `endpointURL` the way `prepareWithError:` does and goes through the same
+  `JSONObjectForRequest:` seam, so a refusal arrives as the server's own error (401 →
+  `NFKInferenceServerErrorUnauthorized`). A value of the wrong JSON type reads as nil or 0, and an
+  unknown thermal or pressure name as the enum's Unknown. `advertisedProperties` is the discovered
+  TXT record as resolved, and `providerWithBaseURL:` does not carry it to the re-pointed copy.
+- `NFKBalancedBackend` (2026-10-05). Its per-request client is a private `NFKRemoteInferKitBackend`
+  subclass whose `sendRequest:` seam calls `+[NFKRemoteTransport sendOnce:…]` (exposed through the
+  private `NFKRemoteTransportPrivate.h`), because the transport's retry count is process-wide and a
+  retried 503 would hold a request on a busy server for up to `maximumRetryDelay`. "Never started" is
+  `NFKInferenceServerErrorBusy`, `…ModelNotFound`, `kNFKError_InferenceNotReady`, or
+  `kNFKError_RemoteUnreachable` whose underlying `NSURLError` is one of cannot-connect, cannot-find-
+  host, DNS failure, or not-connected. A lost connection or a timeout is not, since the run may be
+  executing. The streamed form fails over only before any progress above 0 or partial result.
+- Choosing: a load reading is the status entry or the last reply's `NFKServerLoad`, whichever is
+  newer, plus every request sent after it and not yet finished. Expected wait = the reading's
+  `estimated_wait_seconds` + sent-since × average run ÷ limit, or, without an estimate,
+  max(outstanding − limit + 1, 0) × average run ÷ limit. Any candidate without an average run turns
+  the choice into fewest-outstanding for all, so the scores share a unit. Ties rotate, and so does
+  `prepareWithError:`, which chooses a server to read the keys from.
+- `lastServerBaseURL` is the server's base URL as added. Rebuilding it from the client's endpoint by
+  deleting path components leaves a trailing slash, and the URLs then compare unequal.
+- Runtime reports: the server resolves each registered class name with `NSClassFromString` and asks
+  it only when it conforms to `NFKServingRuntimeStatus`, so the core names `NFKMLXGPU` without linking
+  MLX. A `Class<Protocol>` variable takes message sends, not dot syntax, for class properties.
 
 Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside the OpenAI `message`,
 `type`, and `code`. The transport takes an `NFKInferenceErrorDomain` code from that body over its

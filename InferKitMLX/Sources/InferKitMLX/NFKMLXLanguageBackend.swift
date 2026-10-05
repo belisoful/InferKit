@@ -322,6 +322,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// through `generationLock`: two runs through one cache would interleave their rows.
     private var promptCache: NFKMLXPromptCache?
     private let generationLock = NSLock()
+    private let modelInfoCache = NFKMLXModelInfoCache()
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
@@ -334,6 +335,24 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     /// Whether the backend can answer: it reads text prompts only, so it needs a tokenizer.
     public var isReady: Bool { holder.tokenizer != nil }
+
+    /// The loaded network's parameter count, weight bytes, precision, and quantization, with the
+    /// release's `model_type` and `max_position_embeddings` where its `config.json` states them, and
+    /// the key-value bytes each token adds while the cache is unquantized (`NFKModelInfo*` keys).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            let configuration = holder.net.configuration
+            var info = NFKMLXModelDescription.info(of: [holder.net])
+            info[NFKModelInfoArchitecture] = configuration.modelType
+            info[NFKModelInfoContextLength] = configuration.maximumPositions
+            if defaults.cacheQuantization == nil {
+                let precision: NFKMLXWeightPrecision = info[NFKModelInfoPrecision] as? String == "float32" ? .float32 : .checkpoint
+                info[NFKModelInfoKeyValueBytesPerToken] = NFKMLXModelSizing.keyValueBytesPerToken(of: configuration, precision: precision)
+            }
+            return info
+        }
+    }
 
     /// Whether the model's routed experts are paged: left in the release and read as the router
     /// reaches them, through ``expertStore``. Introduced in InferKit 0.4.0.
@@ -734,6 +753,8 @@ public final class NFKMLXLanguage: NSObject {
         // Qwen3 normalizes queries and keys per head; Qwen2 and Llama do not. The model type is what
         // says so — the config carries no flag for it.
         configuration.normalizesQueryAndKey = modelType.hasPrefix("qwen3")
+        configuration.modelType = modelType.isEmpty ? nil : modelType
+        configuration.maximumPositions = (json["max_position_embeddings"] as? NSNumber)?.intValue
         if let experts {
             guard experts.count > 0, (1 ... experts.count).contains(experts.active), experts.width > 0 else {
                 throw NFKMLXError.unsupportedConfiguration(

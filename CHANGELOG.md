@@ -83,6 +83,33 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   stream that carries an error object with that error rather than the partial text.
 - `NFKRemoteSpeechBackend.requiresVoice` (YES by default) lets a request go out without a voice; its
   factory clears it for an InferKit server, whose hosted backend chooses its own.
+- A backend describes its loaded model through the protocol's optional `modelInfo`, keyed by the
+  `NFKModelInfo*` keys: architecture, parameter count, weight and storage bytes, precision,
+  quantization bits and group size, context length, key-value bytes per token, compute units, and
+  version. The server serves it under `model` in each model's status and `/v1/models` entry. The three
+  Core ML backends report their compute units, version, and compiled size, and the Core ML language
+  backend adds the context length its manifest states.
+- A linked runtime reports its own state under the status route's `host.runtimes` by adopting
+  `NFKServingRuntimeStatus`. The server finds InferKitMLX's `NFKMLXGPU` by name, and
+  `+registerRuntimeStatusClassName:` adds another class.
+- A client reads the status route typed: `+[NFKServerStatus fetchFromBaseURL:apiKey:error:]` (and its
+  completion-handler form) or `-[NFKRemoteInferKitBackend fetchServerStatusWithError:]` returns
+  `NFKServerStatus`, with an `NFKServerModelStatus` per model, its running runs as
+  `NFKServerRunStatus`, and the machine as `NFKServerHostStatus` (thermal state and memory pressure as
+  enums). A discovered provider's `advertisedProperties` carries the server's Bonjour record, chip
+  and memory included, without a request.
+- `NFKBalancedBackend` sends each request to one of several InferKit servers hosting the model:
+  by shortest expected wait (the default), fewest outstanding runs, or round robin. It reads each
+  server's status at most every `statusInterval`, learns load from every reply's headers between
+  readings (`-[NFKRemoteInferKitBackend lastReportedLoad]`, an `NFKServerLoad`), and counts what it
+  sent since. A server at the serious or critical thermal state, or under critical memory pressure,
+  serves only when no other can. A request moves to the next server only when it never started: the
+  server could not be connected to, its queue was full, its model was not ready, or it does not host
+  the model. Its client sends once, so a full queue fails over at once rather than after the
+  transport's retry delay. An unreachable server sits out a backoff from 2 to 60 seconds.
+  `startDiscoveryWithInterval:` adds the servers Bonjour finds. Hosted in an `NFKInferenceServer`,
+  it makes that server a load balancer, and it never routes to a server whose model is itself a
+  balancer.
 - The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
@@ -455,6 +482,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### The language backends describe their loaded model
+
+- `NFKMLXLanguageBackend`, `NFKMLXPhi4MMBackend`, `NFKMLXSa2VABackend`, `NFKMLXDeepSeekBackend`,
+  `NFKMLXGemma3Backend`, and `NFKMLXGemma3nBackend` report `modelInfo`: the parameter count, the bytes
+  the loaded arrays hold, the precision, and the quantization bits and group size, read from the
+  loaded networks. A quantized weight counts its packed words times 32 over its bits. The language
+  backend adds the release's `model_type` and `max_position_embeddings`, which
+  `NFKMLXLanguageConfiguration` now keeps as `modelType` and `maximumPositions`, and the key-value
+  bytes per token while its cache is unquantized.
+- `NFKMLXGPU` adopts `NFKServingRuntimeStatus`, so a server's status route reports MLX's active,
+  cached, and peak memory and its memory limit under `host.runtimes.mlx`. A process without MLX's
+  Metal library reports only that the library is missing, because MLX aborts at its first memory
+  reading there. The cache limit is left out: mlx-swift's getter sets the limit on its first read,
+  which trims the cache under a run in flight.
 
 #### Vision towers compute in their half-precision load's type
 
@@ -2152,6 +2194,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
+
+#### The backend describes its model
+
+- `NFKFoundationModelsBackend.modelInfo` reports the context length once it is known and, on
+  macOS 27 / iOS 27, the on-device variant's name as its version.
 
 #### Every option is a core request key
 

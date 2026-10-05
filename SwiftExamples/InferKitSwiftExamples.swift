@@ -308,6 +308,41 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertTrue(found.allSatisfy { $0.apiStyle == .inferKit })
     }
 
+    // The status client from Swift: the blocking fetch throws, and the awaited form is
+    // fetchStatus(baseURL:apiKey:) so it does not take the blocking call's name.
+    func testLoadAndModelStatus() async throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.addBackend(NFKPassthroughBackend(), forModelName: "echo")
+        try server.start()
+        defer { server.stop() }
+        let base = try XCTUnwrap(server.localBaseURL)
+
+        let status = try NFKServerStatus.fetch(baseURL: base, apiKey: nil)
+        XCTAssertEqual(status.modelNamed("echo")?.estimatedWaitSeconds, 0)
+        XCTAssertNotEqual(status.host?.thermalState, .unknown)
+        let awaited = try await NFKServerStatus.fetchStatus(baseURL: base, apiKey: nil)
+        XCTAssertEqual(awaited.modelNamed("echo")?.limit, 1)
+    }
+
+    // The balancer from Swift: the class factory imports as an initializer, and the policy as an enum.
+    func testBalancingAcrossServers() throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.addBackend(NFKPassthroughBackend(), forModelName: "echo")
+        try server.start()
+        defer { server.stop() }
+
+        let balanced = NFKBalancedBackend(modelName: "echo")
+        balanced.policy = .fewestOutstanding
+        balanced.addServer(withBaseURL: try XCTUnwrap(server.localBaseURL), apiKey: nil)
+        let result = try balanced.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"]))
+        XCTAssertEqual(result.output(forKey: NFKInputPrompt) as? String, "hello")
+        XCTAssertEqual(balanced.lastServerBaseURL, server.localBaseURL)
+    }
+
     // The completion-handler forms import as async calls. Their names carry a probe prefix: the
     // importer drops the handler from the name, which would otherwise take the blocking call's.
     func testDiscoveryAwaited() async {

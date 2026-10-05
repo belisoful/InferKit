@@ -49,6 +49,33 @@ static double NFKServedAveraged(double average, double sample, NSUInteger previo
 	return previousSamples == 0 ? sample : average + 0.2 * (sample - average);
 }
 
+/*! The entries of a dictionary a client can read as JSON: string keys with string or finite number
+	values. */
+static NSDictionary<NSString *, id> *NFKServedJSONValues(id _Nullable dictionary)
+{
+	NSMutableDictionary<NSString *, id> *values = [NSMutableDictionary dictionary];
+	if (![dictionary isKindOfClass:NSDictionary.class]) {
+		return values;
+	}
+	[(NSDictionary *)dictionary enumerateKeysAndObjectsUsingBlock:^(id key, id value, BOOL *stop) {
+		BOOL finiteNumber = [value isKindOfClass:NSNumber.class] && isfinite([value doubleValue]);
+		if ([key isKindOfClass:NSString.class] && ([value isKindOfClass:NSString.class] || finiteNumber)) {
+			values[key] = value;
+		}
+	}];
+	return values;
+}
+
+static NSMutableArray<NSString *> *NFKServedRuntimeStatusClassNames(void)
+{
+	static NSMutableArray<NSString *> *names = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		names = [NSMutableArray arrayWithObject:@"NFKMLXGPU"];
+	});
+	return names;
+}
+
 static NSString *NFKServedJSONString(id object)
 {
 	NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL];
@@ -514,6 +541,42 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	[removed retire];
 }
 
++ (void)registerRuntimeStatusClassName:(NSString *)className
+{
+	NSMutableArray<NSString *> *names = NFKServedRuntimeStatusClassNames();
+	@synchronized (names) {
+		if (![names containsObject:className]) {
+			[names addObject:className];
+		}
+	}
+}
+
+/*! Each linked runtime's report, keyed by its name. */
++ (NSDictionary<NSString *, id> *)runtimeStatuses
+{
+	NSArray<NSString *> *names = nil;
+	NSMutableArray<NSString *> *registered = NFKServedRuntimeStatusClassNames();
+	@synchronized (registered) {
+		names = [registered copy];
+	}
+	NSMutableDictionary<NSString *, id> *statuses = [NSMutableDictionary dictionary];
+	for (NSString *name in names) {
+		Class runtime = NSClassFromString(name);
+		if (runtime == Nil || ![runtime conformsToProtocol:@protocol(NFKServingRuntimeStatus)]) {
+			continue;
+		}
+		Class<NFKServingRuntimeStatus> reporter = runtime;
+		statuses[[reporter runtimeStatusName]] = NFKServedJSONValues([reporter runtimeStatus]);
+	}
+	return statuses;
+}
+
+/*! What a backend reports about its loaded model, reduced to JSON values. */
++ (NSDictionary<NSString *, id> *)modelInfoOfBackend:(id<NFKInferenceBackend>)backend
+{
+	return [backend respondsToSelector:@selector(modelInfo)] ? NFKServedJSONValues(backend.modelInfo) : @{};
+}
+
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName
 {
 	@synchronized (self.models) {
@@ -807,6 +870,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
 		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
 	}
+	description[@"model"] = [NFKInferenceServer modelInfoOfBackend:backend];
 	description[@"load"] = [model loadJSONObject];
 	return @{ @"id": model.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
 			  @"inferkit": description };
@@ -848,7 +912,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		}
 		if (model != nil) {
 			[models addObject:@{ @"id": model.name, @"backend": model.backend.backendIdentifier ?: @"", @"ready": @(model.backend.isReady),
-								 @"load": [model loadJSONObject] }];
+								 @"model": [NFKInferenceServer modelInfoOfBackend:model.backend], @"load": [model loadJSONObject] }];
 		}
 	}
 	NSMutableDictionary<NSString *, id> *status = [NSMutableDictionary dictionary];
@@ -857,7 +921,9 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 						   @"uptime_seconds": @(MAX(NSDate.date.timeIntervalSince1970 - (NSTimeInterval)self.startTime, 0.0)) };
 	status[@"models"] = models;
 	if (self.reportsHostDetails) {
-		status[@"host"] = [self.hostStatus JSONObjectForStorageURL:self.storageDirectoryURL];
+		NSMutableDictionary<NSString *, id> *host = [[self.hostStatus JSONObjectForStorageURL:self.storageDirectoryURL] mutableCopy];
+		host[@"runtimes"] = [NFKInferenceServer runtimeStatuses];
+		status[@"host"] = host;
 	}
 	[response sendStatus:200 JSONObject:status headers:nil];
 }

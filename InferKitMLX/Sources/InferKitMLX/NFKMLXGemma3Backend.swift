@@ -56,6 +56,19 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    private let modelInfoCache = NFKMLXModelInfoCache()
+
+    /// The decoder's and, where the release carries them, the vision tower's and projector's parameter
+    /// count, weight bytes, precision, and quantization (`NFKModelInfo*` keys). Introduced in
+    /// InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            let model = holder.model
+            let modules: [Module?] = [model.decoder, model.vision, model.projector]
+            return NFKMLXModelDescription.info(of: modules.compactMap { $0 })
+        }
+    }
+
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]

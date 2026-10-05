@@ -151,6 +151,38 @@
 
 @end
 
+/*! A backend describing its model, with two values a JSON reply cannot carry. */
+@interface NFKServedDescribedBackend : NFKServedTestBackend
+@end
+
+@implementation NFKServedDescribedBackend
+
+- (NSDictionary<NSString *, id> *)modelInfo
+{
+	return @{ NFKModelInfoParameterCount: @7000000, NFKModelInfoPrecision: @"bfloat16",
+			  @"loaded_at": [NSDate date], @"unmeasured": @(NAN) };
+}
+
+@end
+
+/*! A runtime that reports a fixed state. */
+@interface NFKServedTestRuntime : NSObject <NFKServingRuntimeStatus>
+@end
+
+@implementation NFKServedTestRuntime
+
++ (NSString *)runtimeStatusName
+{
+	return @"test-runtime";
+}
+
++ (NSDictionary<NSString *, id> *)runtimeStatus
+{
+	return @{ @"active_memory_bytes": @4096 };
+}
+
+@end
+
 @interface NFKInferenceServerTests : XCTestCase
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
@@ -1025,6 +1057,78 @@
 	XCTAssertEqualObjects(load[@"refused"], @2);
 }
 
+- (void)testEachModelEntryCarriesWhatItsBackendReportsAboutItsModel
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"described": [[NFKServedDescribedBackend alloc] init],
+															   @"plain": [[NFKServedTestBackend alloc] init] }];
+	NSDictionary *status = [self statusOf:server];
+	NSDictionary *described = [status[@"models"] firstObject];
+	NSDictionary *plain = [status[@"models"] lastObject];
+	XCTAssertEqualObjects(described[@"id"], @"described");
+	NSDictionary *expected = @{ NFKModelInfoParameterCount: @7000000, NFKModelInfoPrecision: @"bfloat16" };
+	XCTAssertEqualObjects(described[@"model"], expected, @"a date and a non-finite number are left out");
+	XCTAssertEqualObjects(plain[@"model"], @{}, @"a backend without modelInfo reports nothing");
+
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"models/described"]] response:&response];
+	NSDictionary *entry = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	XCTAssertEqualObjects(entry[@"inferkit"][@"model"], expected);
+}
+
+- (void)testALinkedRuntimeReportsUnderTheHostAndLeavesWithIt
+{
+	[NFKInferenceServer registerRuntimeStatusClassName:@"NFKServedTestRuntime"];
+	[NFKInferenceServer registerRuntimeStatusClassName:@"NFKServedNoSuchRuntime"];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"echo": [[NFKServedTestBackend alloc] init] }];
+	NSDictionary *runtimes = [self statusOf:server][@"host"][@"runtimes"];
+	XCTAssertEqualObjects(runtimes[@"test-runtime"], @{ @"active_memory_bytes": @4096 });
+	XCTAssertNil(runtimes[@"mlx"], @"InferKitMLX is not linked into the core's tests");
+	server.reportsHostDetails = NO;
+	XCTAssertNil([self statusOf:server][@"host"]);
+}
+
+- (void)testAClientReadsTheStatusTyped
+{
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.requiresAPIKeyOnLoopback = YES;
+	server.apiKey = @"sesame";
+	[server addBackend:[[NFKServedDescribedBackend alloc] init] forModelName:@"described"];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[server stop];
+	}];
+	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	client.apiKey = @"sesame";
+	XCTAssertEqualObjects([client runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:&error].text,
+						  @"ok", @"%@", error);
+
+	NFKServerStatus *status = [client fetchServerStatusWithError:&error];
+	XCTAssertNotNil(status, @"%@", error);
+	XCTAssertEqualObjects(status.version, NFKInferKit.version);
+	NFKServerModelStatus *model = [status modelNamed:@"described"];
+	XCTAssertEqual(model.completed, 1);
+	XCTAssertEqual(model.limit, 1);
+	XCTAssertEqualObjects(model.estimatedWaitSeconds, @0);
+	XCTAssertEqualObjects(model.modelInfo[NFKModelInfoPrecision], @"bfloat16");
+	XCTAssertNotEqual(status.host.thermalState, NFKServerThermalStateUnknown);
+	XCTAssertNotEqual(status.host.memoryPressure, NFKServerMemoryPressureUnknown);
+	XCTAssertEqual(status.host.physicalMemory, NFKHardwareProfile.currentProfile.physicalMemory);
+
+	XCTAssertNil([NFKServerStatus fetchFromBaseURL:server.localBaseURL apiKey:@"wrong" error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKInferenceServerErrorDomain);
+	XCTAssertEqual(error.code, NFKInferenceServerErrorUnauthorized);
+
+	XCTestExpectation *fetched = [self expectationWithDescription:@"the status arrives"];
+	[NFKServerStatus fetchFromBaseURL:server.localBaseURL apiKey:@"sesame" completionHandler:^(NFKServerStatus *fetchedStatus, NSError *fetchError) {
+		XCTAssertEqual([fetchedStatus modelNamed:@"described"].completed, 1, @"%@", fetchError);
+		[fetched fulfill];
+	}];
+	[self waitForExpectations:@[ fetched ] timeout:5];
+}
+
 - (void)testARunningJobsProgressEstimatesItsRemainingTime
 {
 	NFKServedProgressingBackend *backend = [[NFKServedProgressingBackend alloc] init];
@@ -1077,6 +1181,11 @@
 	XCTAssertEqualObjects(found.baseURL.port, @(server.listeningPort));
 	XCTAssertEqualObjects(found.baseURL.path, @"/v1");
 	XCTAssertTrue(found.requiresAPIKey);
+	XCTAssertEqualObjects(found.advertisedProperties[@"chip"], NFKHardwareProfile.currentProfile.chipName);
+	XCTAssertEqualObjects(found.advertisedProperties[@"memory"],
+						  ([NSString stringWithFormat:@"%ld", (long)NFKHardwareProfile.currentProfile.physicalMemory]));
+	XCTAssertEqualObjects(found.advertisedProperties[@"version"], NFKInferKit.version);
+	XCTAssertEqualObjects(NFKRemoteProvider.inferKit.advertisedProperties, @{}, @"a preset advertised nothing");
 
 	// A client on another machine uses the advertised host name; from here it resolves to this machine.
 	NFKRemoteInferKitBackend *client = (NFKRemoteInferKitBackend *)[NFKRemoteProvider backendForProvider:found apiKey:@"discoverable" modelName:nil];

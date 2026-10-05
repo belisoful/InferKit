@@ -54,6 +54,10 @@ typedef NS_ENUM(NSInteger, NFKVisionCropAndScale) {
 /*! Classifications below this confidence are dropped. 0 keeps them all, which is the default. */
 @property (nonatomic) double minimumConfidence;
 
+/*! The model's compute units and version, and its compiled size when the backend was built from a
+	URL (NFKModelInfo* keys). Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
+
 /*! A backend over a loaded Core ML model. Returns nil when Vision refuses the model, which it does
 	for a model whose input is not an image. */
 + (nullable instancetype)backendWithModel:(MLModel *)model error:(NSError **)error;

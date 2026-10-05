@@ -277,6 +277,18 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedInputKeys: Set<String> {
         [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputAudio, NFKInputAudios]
     }
+
+    private let modelInfoCache = NFKMLXModelInfoCache()
+
+    /// The decoder and both towers' parameter count, weight bytes, precision, and quantization, and
+    /// the decoder's stated positions (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            var info = NFKMLXModelDescription.info(of: [model.decoder, model.imageNet, model.audioNet])
+            info[NFKModelInfoContextLength] = model.decoder.configuration.maximumPositions
+            return info
+        }
+    }
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]
     }

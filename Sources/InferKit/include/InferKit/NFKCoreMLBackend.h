@@ -44,6 +44,10 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @property (nonatomic, assign) MLComputeUnits computeUnits;
 
+/*! The loaded model's compute units, version, and compiled size (NFKModelInfo* keys); before a load,
+	the compute units it will load with. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
+
 + (instancetype)backendWithModelURL:(nullable NSURL *)modelURL;
 
 /*!

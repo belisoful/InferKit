@@ -47,7 +47,8 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   throughout: below it `isReady` is false and a request fails with `kNFKError_InferenceUnsupported`
   (never a silent fall-through to the device). `PrivateCloudComputeLanguageModel` has no
   `tokenCount(for:)`, so the context preflight is on-device only, and its `contextSize` is
-  `async throws`, so `prepare()` reads it through a semaphore and `contextSize` is 0 before then. A
+  `async throws`, so `prepare()` reads it through a semaphore and `contextSize` is 0 before then
+  (`modelInfo` leaves the context length out while it is 0). A
   reached quota (`quotaUsage.status == .limitReached`) makes the backend not ready with
   `NFKFoundationModelsErrorKey.resetDate` in `userInfo`. `privateCloudComputeQuota` and
   `variantDisplayName` are `@available(macOS 27, iOS 27, *)` `@objc` members, which ObjC reaches

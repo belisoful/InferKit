@@ -403,6 +403,17 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { NFKMLXSa2VA.modelName }
 
+    private let modelInfoCache = NFKMLXModelInfoCache()
+
+    /// The loaded network's parameter count, weight bytes, precision, and quantization
+    /// (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            let modules: [Module?] = [holder.net, holder.qwen, holder.llava]
+            return NFKMLXModelDescription.info(of: modules.compactMap { $0 })
+        }
+    }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let imageValue = request.input(forKey: NFKInputImage) else {
             throw NFKMLXError.unsupportedConfiguration("Sa2VA needs an NFKInputImage")

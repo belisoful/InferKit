@@ -9,11 +9,13 @@
 #import "NFKClassification.h"
 #import "NFKDetection.h"
 #import "NFKErrors.h"
+#import "NFKModelInfoSupport.h"
 #import <CoreML/CoreML.h>
 #import <Vision/Vision.h>
 
 @interface NFKVisionCoreMLBackend ()
 @property (nonatomic, strong) VNCoreMLModel *visionModel;
+@property (nonatomic, copy, readwrite) NSDictionary<NSString *, id> *modelInfo;
 @end
 
 @implementation NFKVisionCoreMLBackend
@@ -29,6 +31,7 @@
 	}
 	NFKVisionCoreMLBackend *backend = [[self alloc] init];
 	backend.visionModel = visionModel;
+	backend.modelInfo = NFKModelInfoForCoreMLModel(model, nil);
 	return backend;
 }
 
@@ -41,7 +44,16 @@
 		[NFKVisionSupport failWithError:error code:kNFKError_InferenceNotReady reason:reason];
 		return nil;
 	}
-	return [self backendWithModel:model error:error];
+	NFKVisionCoreMLBackend *backend = [self backendWithModel:model error:error];
+	NSMutableDictionary<NSString *, id> *info = [backend.modelInfo mutableCopy];
+	info[NFKModelInfoStorageBytes] = NFKModelInfoStorageBytesAtURL(url);
+	backend.modelInfo = info;
+	return backend;
+}
+
+- (NSDictionary<NSString *, id> *)modelInfo
+{
+	return _modelInfo ?: @{};
 }
 
 - (BOOL)isReady

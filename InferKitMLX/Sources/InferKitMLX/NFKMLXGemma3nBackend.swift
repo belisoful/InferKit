@@ -148,6 +148,15 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     }
 
     @objc public var isReady: Bool { true }
+
+    private let modelInfoCache = NFKMLXModelInfoCache()
+
+    /// The decoder's and the carried towers' parameter count, weight bytes, precision, and
+    /// quantization (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value { NFKMLXModelDescription.info(of: [holder.model.model]) }
+    }
+
     @objc public var acceptsImages: Bool { holder.model.model.vision != nil }
     @objc public var acceptsAudio: Bool { holder.model.model.audio != nil }
 
