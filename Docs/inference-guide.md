@@ -690,6 +690,16 @@ cancels its run. A failure reaches the client with its code: the native client r
 backend's error with its domain and code, and the OpenAI-compatible clients read the code the server
 names in its error body.
 
+The server reports its load for a load balancer or a dashboard. `GET /v1/inferkit/status` lists each
+model's running and queued runs, its average run and wait times, and the estimated wait for a request
+arriving now, and describes the machine: thermal state, memory and its pressure, CPU load, free
+storage, and on macOS the GPU utilization. Every run reply carries the model's load in
+`X-InferKit-*` headers, so a balancer learns it from the replies it already receives.
+`maximumQueuedRunsPerModel` bounds the queue: a request that finds it full gets 503 with a
+`Retry-After` of the estimated wait. `reportsHostDetails` set to NO leaves out everything about the
+machine and keeps the models' load. GPU utilization counts every process and stays high while one
+run executes, so a balancer routes on the queue figures and the estimated wait.
+
 ## Speech in, text out
 
 Transcription follows the same contract with `NFKInputAudio` (an `NFKAudioAsset`) in and

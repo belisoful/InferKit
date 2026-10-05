@@ -36,4 +36,6 @@ Pod::Spec.new do |s|
 
   # System frameworks the sources link against.
   s.frameworks = 'Foundation', 'CoreML', 'Vision', 'VideoToolbox', 'Speech', 'SoundAnalysis', 'NaturalLanguage', 'CoreVideo', 'CoreGraphics', 'ImageIO', 'AVFoundation', 'Metal', 'IOSurface', 'Network', 'Security'
+  # The server reads GPU utilization from the IORegistry, which only macOS exposes.
+  s.osx.frameworks = 'IOKit'
 end

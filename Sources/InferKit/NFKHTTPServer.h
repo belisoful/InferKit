@@ -47,6 +47,9 @@ NSArray<NFKHTTPFormPart *> * _Nullable NFKHTTPFormParts(NFKHTTPRequest *request)
 @property (nonatomic, readonly) BOOL finished;
 @property (nonatomic, readonly) BOOL disconnected;
 @property (nonatomic, copy, nullable) void (^disconnectHandler)(void);
+/*! Header fields added to the reply's head, read when the head is written, so they describe that
+	moment. A field the send names itself takes precedence. */
+@property (nonatomic, copy, nullable) NSDictionary<NSString *, NSString *> * _Nullable (^headerProvider)(void);
 - (void)sendStatus:(NSInteger)status headers:(nullable NSDictionary<NSString *, NSString *> *)headers body:(nullable NSData *)body;
 - (void)sendStatus:(NSInteger)status JSONObject:(id)object headers:(nullable NSDictionary<NSString *, NSString *> *)headers;
 - (void)beginStreamWithStatus:(NSInteger)status headers:(nullable NSDictionary<NSString *, NSString *> *)headers;

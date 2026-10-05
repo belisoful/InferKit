@@ -35,6 +35,9 @@ extern NSString * const NFKInferenceServerErrorDomain;
 				maximumConcurrentRunsPerModel or maximumRequestBodyBytes is zero.
 	@constant   NFKInferenceServerErrorModelNotFound A request named a model the server does not host.
 	@constant   NFKInferenceServerErrorUnauthorized A request carried no key, or the wrong one.
+	@constant   NFKInferenceServerErrorBusy A request found its model's queue full
+				(maximumQueuedRunsPerModel). The reply is 503 with a Retry-After of the estimated wait,
+				and NFKRemoteErrorRetryAfterKey carries the same moment.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -43,6 +46,7 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorInvalidConfiguration = 3,
 	NFKInferenceServerErrorModelNotFound = 4,
 	NFKInferenceServerErrorUnauthorized = 5,
+	NFKInferenceServerErrorBusy = 6,
 };
 
 /*!
@@ -60,6 +64,8 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				  backend: pixel buffers, masks, multi-arrays, audio and video files, and the core's
 				  value types. NFKRemoteInferKitBackend is its client and streams the job's progress
 				  and partial results.
+				- The status route, GET /inferkit/status, which reports each model's load and the
+				  machine's state for a load balancer or a dashboard (see Status).
 
 				A request names its model in the body's model field. When the server hosts exactly
 				one model, a request that names none runs on it.
@@ -89,10 +95,44 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				A backend that implements submitInferenceJobForRequest: streams its partial results
 				to a streamed request; a synchronous one answers in one piece. A client that
 				disconnects cancels its run, or removes it from the queue. Files the server writes
-				for inline media are removed when the run ends.
+				for inline media are removed when the run ends. maximumQueuedRunsPerModel bounds the
+				queue: a request that finds it full is refused with 503 and a Retry-After, so a
+				client or a load balancer can try another server.
 
-				apiKey, requiresAPIKey, requiresAPIKeyOnLoopback, and the hosted models take effect
-				on the next request. The other settings take effect on the next start.
+				Status. Each model's load appears under "load" in the status route and in its
+				GET /models entry:
+				- limit, running, and queued (queue_limit when one is set).
+				- completed, failed, cancelled, and refused run counts.
+				- average_run_seconds and average_wait_seconds, moving averages that weight the
+				  newest run by a fifth. Only runs that return a result feed the run average.
+				- output_tokens_per_second, from the results' NFKOutputUsage, when a backend reports
+				  tokens.
+				- estimated_wait_seconds: when a request arriving now would start. A running job that
+				  reports progress is estimated from that progress, any other run from the average
+				  run. It is absent until one run has finished, unless a slot is free.
+				- runs: each running run's elapsed_seconds, its progress when it reports one, and
+				  its estimated_remaining_seconds.
+				Every run reply carries the same reading in X-InferKit-Limit, X-InferKit-Running,
+				X-InferKit-Queued, and X-InferKit-Estimated-Wait, taken when the reply's head is
+				written.
+
+				The status route's "host" object describes the machine: chip, model identifier, and
+				core counts; thermal_state (nominal, fair, serious, critical) and low_power_mode;
+				memory (physical, available, recommended working set, pressure as normal, warning,
+				or critical, and this process's footprint); cpu (usage since the previous status
+				reading, and the load averages); storage on the volume of storageDirectoryURL; and,
+				on macOS, gpu.utilization from the IORegistry's undocumented "Device Utilization %",
+				absent when it cannot be read. GPU utilization covers every process on the machine
+				and stays near 1 while one run executes, so a load balancer routes on the queue
+				figures. Run replies carry X-InferKit-Thermal-State, and the Bonjour
+				advertisement adds the chip and the physical memory. Setting reportsHostDetails to
+				NO leaves out the host object, the thermal header, and those advertisement entries.
+				The status route needs a key under the same rules as every other route.
+
+				apiKey, requiresAPIKey, requiresAPIKeyOnLoopback, reportsHostDetails,
+				storageDirectoryURL, and the hosted models take effect on the next request. The other
+				settings take effect on the next start; the advertisement's host entries follow
+				reportsHostDetails as it was at start.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKInferenceServer : NSObject
@@ -128,6 +168,19 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 /*! How many runs one hosted backend serves at once. Defaults to 1, since a backend is not assumed to
 	be safe to run concurrently; applies to models added after it is set. */
 @property (nonatomic, assign) NSUInteger maximumConcurrentRunsPerModel;
+
+/*! How many runs wait for one hosted backend before later requests are refused with
+	NFKInferenceServerErrorBusy. Defaults to 0, which queues without limit; applies to models added
+	after it is set. */
+@property (nonatomic, assign) NSUInteger maximumQueuedRunsPerModel;
+
+/*! Whether the status route, run replies, and the Bonjour advertisement describe this machine.
+	Defaults to YES; NO leaves out every host detail and keeps the models' load. */
+@property (nonatomic, assign) BOOL reportsHostDetails;
+
+/*! A directory on the volume the status route's storage figures describe, typically where the models
+	are stored. nil uses the app's caches directory. */
+@property (nonatomic, copy, nullable) NSURL *storageDirectoryURL;
 
 /*! Whether the server is listening. */
 @property (nonatomic, readonly, getter=isRunning) BOOL running;

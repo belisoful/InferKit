@@ -549,7 +549,9 @@ static BOOL NFKHTTPEndpointIsLoopback(nw_endpoint_t _Nullable endpoint)
 - (NSMutableData *)headWithStatus:(NSInteger)status headers:(nullable NSDictionary<NSString *, NSString *> *)headers extra:(NSDictionary<NSString *, NSString *> *)extra
 {
 	NSMutableString *head = [NSMutableString stringWithFormat:@"HTTP/1.1 %ld %@\r\n", (long)status, NFKHTTPReasonPhrase(status)];
-	NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary dictionaryWithDictionary:headers ?: @{}];
+	NSDictionary<NSString *, NSString *> * _Nullable (^provider)(void) = self.headerProvider;
+	NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary dictionaryWithDictionary:(provider != nil ? provider() : nil) ?: @{}];
+	[fields addEntriesFromDictionary:headers ?: @{}];
 	[fields addEntriesFromDictionary:extra];
 	fields[@"Server"] = @"InferKit";
 	fields[@"Connection"] = self.keepAlive ? @"keep-alive" : @"close";

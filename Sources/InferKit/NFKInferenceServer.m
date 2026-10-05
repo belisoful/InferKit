@@ -12,6 +12,7 @@
 #import "NFKHTTPServer.h"
 #import "NFKServedOpenAI.h"
 #import "NFKInferenceWireCoding.h"
+#import "NFKServedHostStatus.h"
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
@@ -28,6 +29,24 @@ static NSError *NFKServedCancellation(void)
 {
 	return [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError
 						   userInfo:@{ NSLocalizedDescriptionKey: @"the client went away and the run was cancelled" }];
+}
+
+static BOOL NFKServedIsCancellation(NSError * _Nullable error)
+{
+	return error.code == NSUserCancelledError && [error.domain isEqualToString:NSCocoaErrorDomain];
+}
+
+/*! Monotonic seconds, for durations. */
+static NSTimeInterval NFKServedNow(void)
+{
+	return NSProcessInfo.processInfo.systemUptime;
+}
+
+/*! An exponential moving average that weights the newest sample by a fifth; the first sample is the
+	average. */
+static double NFKServedAveraged(double average, double sample, NSUInteger previousSamples)
+{
+	return previousSamples == 0 ? sample : average + 0.2 * (sample - average);
 }
 
 static NSString *NFKServedJSONString(id object)
@@ -60,6 +79,10 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 @property (nonatomic, copy, nullable) NSArray<NSURL *> *temporaryFiles;
 @property (atomic, assign) BOOL cancelled;
 @property (atomic, assign) BOOL finished;
+@property (nonatomic, assign) NSTimeInterval enqueuedAt;
+@property (nonatomic, assign) NSTimeInterval startedAt;
+/*! The job's last reported progress, 0 until it reports one. */
+@property (atomic, assign) double reportedProgress;
 @end
 
 @implementation NFKServedRun
@@ -111,27 +134,44 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 @end
 
-/*! A hosted backend and the queue of runs waiting for it. */
+/*! A hosted backend, the queue of runs waiting for it, and what its runs have measured. Every
+	property past backend is read and written on the model's lock. */
 @interface NFKServedModel : NSObject
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic, strong) id<NFKInferenceBackend> backend;
 @property (nonatomic, assign) NSUInteger limit;
-@property (nonatomic, assign) NSUInteger active;
+/*! The most runs that wait for a slot; 0 queues without limit. */
+@property (nonatomic, assign) NSUInteger queueLimit;
 @property (nonatomic, assign) BOOL removed;
+@property (nonatomic, strong) NSMutableArray<NFKServedRun *> *running;
 @property (nonatomic, strong) NSMutableArray<NFKServedRun *> *pending;
+@property (nonatomic, assign) NSUInteger started;
+@property (nonatomic, assign) NSUInteger completed;
+@property (nonatomic, assign) NSUInteger failed;
+@property (nonatomic, assign) NSUInteger cancelled;
+@property (nonatomic, assign) NSUInteger refused;
+@property (nonatomic, assign) NSUInteger tokenSamples;
+@property (nonatomic, assign) double averageRunSeconds;
+@property (nonatomic, assign) double averageWaitSeconds;
+@property (nonatomic, assign) double outputTokensPerSecond;
 @end
 
 @implementation NFKServedModel
 
 - (void)enqueue:(NFKServedRun *)run
 {
+	run.enqueuedAt = NFKServedNow();
 	BOOL startNow = NO;
 	BOOL refused = NO;
+	BOOL full = NO;
 	@synchronized (self) {
 		refused = self.removed;
-		if (!refused && self.active < self.limit) {
-			self.active += 1;
+		if (!refused && self.running.count < self.limit) {
+			[self beginRun:run];
 			startNow = YES;
+		} else if (!refused && self.queueLimit > 0 && [self queuedCount] >= self.queueLimit) {
+			self.refused += 1;
+			full = YES;
 		} else if (!refused) {
 			[self.pending addObject:run];
 		}
@@ -139,16 +179,27 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	if (refused) {
 		[run finishWithResult:nil error:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
 													   [NSString stringWithFormat:@"the model \"%@\" is no longer served", self.name])];
+	} else if (full) {
+		[run finishWithResult:nil error:[self busyError]];
 	} else if (startNow) {
 		[self start:run];
 	}
 }
 
+/*! Takes a slot for a run. Runs on the lock. */
+- (void)beginRun:(NFKServedRun *)run
+{
+	run.startedAt = NFKServedNow();
+	self.averageWaitSeconds = NFKServedAveraged(self.averageWaitSeconds, run.startedAt - run.enqueuedAt, self.started);
+	self.started += 1;
+	[self.running addObject:run];
+}
+
 - (void)start:(NFKServedRun *)run
 {
 	if (run.cancelled) {
+		[self run:run endedWithResult:nil error:NFKServedCancellation()];
 		[run finishWithResult:nil error:NFKServedCancellation()];
-		[self runEnded];
 		return;
 	}
 	id<NFKInferenceBackend> backend = self.backend;
@@ -161,11 +212,16 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		}
 		__weak NFKServedRun *weakRun = run;
 		job.progressHandler = ^(NFKInferenceJob *progressed) {
-			[weakRun reportPartial:progressed.partialResult progress:progressed.progress];
+			NFKServedRun *progressing = weakRun;
+			double progress = progressed.progress;
+			if (isfinite(progress) && progress > 0) {
+				progressing.reportedProgress = MIN(progress, 1.0);
+			}
+			[progressing reportPartial:progressed.partialResult progress:progress];
 		};
 		job.completionHandler = ^(NFKInferenceJob *finished) {
-			[self runEnded];
 			NSError *error = finished.status == NFKInferenceJobStatusCancelled ? NFKServedCancellation() : finished.error;
+			[self run:run endedWithResult:finished.result error:error];
 			[run finishWithResult:finished.result error:error];
 		};
 		if (cancelled) {
@@ -181,25 +237,181 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		if (!run.cancelled) {
 			result = run.work != nil ? run.work(backend, &error) : [backend runInferenceForRequest:run.request error:&error];
 		}
-		[self runEnded];
-		[run finishWithResult:run.cancelled ? nil : result error:run.cancelled ? NFKServedCancellation() : error];
+		if (run.cancelled) {
+			result = nil;
+			error = NFKServedCancellation();
+		}
+		[self run:run endedWithResult:result error:error];
+		[run finishWithResult:result error:error];
 	});
 }
 
-- (void)runEnded
+/*! Releases a run's slot, records how it ended, and starts the next waiting run. */
+- (void)run:(NFKServedRun *)run endedWithResult:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
 {
 	NFKServedRun *next = nil;
 	@synchronized (self) {
-		self.active -= 1;
-		if (self.pending.count > 0 && self.active < self.limit) {
+		[self.running removeObjectIdenticalTo:run];
+		[self recordRun:run result:result error:error];
+		if (self.pending.count > 0 && self.running.count < self.limit) {
 			next = self.pending.firstObject;
 			[self.pending removeObjectAtIndex:0];
-			self.active += 1;
+			[self beginRun:next];
 		}
 	}
 	if (next != nil) {
 		[self start:next];
 	}
+}
+
+/*! Runs on the lock. Only a run that returned a result feeds the averages, so a fast refusal does
+	not shorten them. */
+- (void)recordRun:(NFKServedRun *)run result:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
+{
+	if (run.cancelled || NFKServedIsCancellation(error)) {
+		self.cancelled += 1;
+		return;
+	}
+	if (result == nil) {
+		self.failed += 1;
+		return;
+	}
+	double seconds = NFKServedNow() - run.startedAt;
+	self.averageRunSeconds = NFKServedAveraged(self.averageRunSeconds, seconds, self.completed);
+	self.completed += 1;
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	NSNumber *tokens = [usage isKindOfClass:NSDictionary.class] ? usage[NFKUsageOutputTokens] : nil;
+	if ([tokens isKindOfClass:NSNumber.class] && tokens.doubleValue > 0 && seconds > 0) {
+		self.outputTokensPerSecond = NFKServedAveraged(self.outputTokensPerSecond, tokens.doubleValue / seconds, self.tokenSamples);
+		self.tokenSamples += 1;
+	}
+}
+
+/*! Waiting runs whose clients are still there. Runs on the lock. */
+- (NSUInteger)queuedCount
+{
+	NSUInteger count = 0;
+	for (NFKServedRun *run in self.pending) {
+		count += run.cancelled ? 0 : 1;
+	}
+	return count;
+}
+
+/*! Seconds until a running run ends: from its reported progress when it has one, else from the
+	average run, or nil before any run has finished. Runs on the lock. */
+- (nullable NSNumber *)estimatedRemainingForRun:(NFKServedRun *)run now:(NSTimeInterval)now
+{
+	double elapsed = now - run.startedAt;
+	double progress = run.reportedProgress;
+	if (progress > 0 && progress < 1) {
+		return @(elapsed * (1 - progress) / progress);
+	}
+	if (self.completed == 0) {
+		return nil;
+	}
+	return @(MAX(self.averageRunSeconds - elapsed, 0.0));
+}
+
+/*! Seconds until a run that arrives now would start, or nil when no estimate exists yet. Each slot
+	frees when its run ends, and each waiting run then holds the soonest free slot for an average
+	run. Runs on the lock. */
+- (nullable NSNumber *)estimatedWaitAt:(NSTimeInterval)now
+{
+	NSUInteger queued = [self queuedCount];
+	if (self.running.count < self.limit && queued == 0) {
+		return @0;
+	}
+	NSMutableArray<NSNumber *> *slots = [NSMutableArray arrayWithCapacity:self.limit];
+	for (NFKServedRun *run in self.running) {
+		NSNumber *remaining = [self estimatedRemainingForRun:run now:now];
+		if (remaining == nil) {
+			return nil;
+		}
+		[slots addObject:remaining];
+	}
+	while (slots.count < self.limit) {
+		[slots addObject:@0];
+	}
+	if (queued > 0 && self.completed == 0) {
+		return nil;
+	}
+	for (NSUInteger index = 0; index < queued; index++) {
+		NSUInteger soonest = [slots indexOfObject:[slots valueForKeyPath:@"@min.self"]];
+		slots[soonest] = @(slots[soonest].doubleValue + self.averageRunSeconds);
+	}
+	return [slots valueForKeyPath:@"@min.self"];
+}
+
+- (NSDictionary<NSString *, id> *)loadJSONObject
+{
+	@synchronized (self) {
+		NSMutableDictionary<NSString *, id> *load = [NSMutableDictionary dictionary];
+		load[@"limit"] = @(self.limit);
+		load[@"running"] = @(self.running.count);
+		load[@"queued"] = @([self queuedCount]);
+		if (self.queueLimit > 0) {
+			load[@"queue_limit"] = @(self.queueLimit);
+		}
+		load[@"completed"] = @(self.completed);
+		load[@"failed"] = @(self.failed);
+		load[@"cancelled"] = @(self.cancelled);
+		load[@"refused"] = @(self.refused);
+		if (self.completed > 0) {
+			load[@"average_run_seconds"] = @(self.averageRunSeconds);
+		}
+		if (self.started > 0) {
+			load[@"average_wait_seconds"] = @(self.averageWaitSeconds);
+		}
+		if (self.tokenSamples > 0) {
+			load[@"output_tokens_per_second"] = @(self.outputTokensPerSecond);
+		}
+		NSTimeInterval now = NFKServedNow();
+		load[@"estimated_wait_seconds"] = [self estimatedWaitAt:now];
+		NSMutableArray *runs = [NSMutableArray arrayWithCapacity:self.running.count];
+		for (NFKServedRun *run in self.running) {
+			NSMutableDictionary<NSString *, id> *entry = [NSMutableDictionary dictionary];
+			entry[@"elapsed_seconds"] = @(now - run.startedAt);
+			if (run.reportedProgress > 0) {
+				entry[@"progress"] = @(run.reportedProgress);
+			}
+			entry[@"estimated_remaining_seconds"] = [self estimatedRemainingForRun:run now:now];
+			[runs addObject:entry];
+		}
+		load[@"runs"] = runs;
+		return load;
+	}
+}
+
+- (NSDictionary<NSString *, NSString *> *)loadHeaders
+{
+	@synchronized (self) {
+		NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionary];
+		headers[@"X-InferKit-Limit"] = [NSString stringWithFormat:@"%lu", (unsigned long)self.limit];
+		headers[@"X-InferKit-Running"] = [NSString stringWithFormat:@"%lu", (unsigned long)self.running.count];
+		headers[@"X-InferKit-Queued"] = [NSString stringWithFormat:@"%lu", (unsigned long)[self queuedCount]];
+		NSNumber *wait = [self estimatedWaitAt:NFKServedNow()];
+		if (wait != nil) {
+			headers[@"X-InferKit-Estimated-Wait"] = [NSString stringWithFormat:@"%.3f", wait.doubleValue];
+		}
+		return headers;
+	}
+}
+
+/*! The refusal for a run that finds the queue full, carrying when a slot is expected to be free. */
+- (NSError *)busyError
+{
+	NSNumber *wait = nil;
+	NSUInteger queued = 0;
+	@synchronized (self) {
+		wait = [self estimatedWaitAt:NFKServedNow()];
+		queued = [self queuedCount];
+	}
+	NSTimeInterval retry = MAX(1.0, ceil(wait.doubleValue));
+	NSString *reason = [NSString stringWithFormat:@"the model \"%@\" has %lu runs waiting, the most it queues; retry in about %.0f seconds",
+						self.name, (unsigned long)queued, retry];
+	return [NSError errorWithDomain:NFKInferenceServerErrorDomain code:NFKInferenceServerErrorBusy
+						   userInfo:@{ NSLocalizedDescriptionKey: reason,
+									   NFKRemoteErrorRetryAfterKey: [NSDate dateWithTimeIntervalSinceNow:retry] }];
 }
 
 - (void)retire
@@ -228,6 +440,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
 @property (nonatomic, assign, readwrite) uint16_t listeningPort;
 @property (nonatomic, assign) NSInteger startTime;
+@property (nonatomic, strong) NFKServedHostStatus *hostStatus;
 @end
 
 @implementation NFKInferenceServer
@@ -242,6 +455,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		_advertisesService = YES;
 		_maximumRequestBodyBytes = 256 * 1024 * 1024;
 		_maximumConcurrentRunsPerModel = 1;
+		_reportsHostDetails = YES;
+		_hostStatus = [[NFKServedHostStatus alloc] init];
 	}
 	return self;
 }
@@ -278,6 +493,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	model.name = modelName;
 	model.backend = backend;
 	model.limit = MAX(self.maximumConcurrentRunsPerModel, 1);
+	model.queueLimit = self.maximumQueuedRunsPerModel;
+	model.running = [NSMutableArray array];
 	model.pending = [NSMutableArray array];
 	NFKServedModel *replaced = nil;
 	@synchronized (self.models) {
@@ -374,10 +591,14 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	if (self.advertisesService && !self.loopbackOnly) {
 		listener.serviceType = NFKInferenceServerServiceType;
 		listener.serviceName = self.serviceName;
-		listener.TXTRecord = @{ @"path": NFKServedBasePath,
-								@"tls": self.identity != nil ? @"1" : @"0",
-								@"auth": self.requiresAPIKey ? @"1" : @"0",
-								@"version": NFKInferKit.version };
+		NSMutableDictionary<NSString *, NSString *> *record = [@{ @"path": NFKServedBasePath,
+																  @"tls": self.identity != nil ? @"1" : @"0",
+																  @"auth": self.requiresAPIKey ? @"1" : @"0",
+																  @"version": NFKInferKit.version } mutableCopy];
+		if (self.reportsHostDetails) {
+			[record addEntriesFromDictionary:[NFKServedHostStatus TXTRecordEntries]];
+		}
+		listener.TXTRecord = record;
 	}
 	NSError *listenError = nil;
 	if (![listener startWithError:&listenError]) {
@@ -458,7 +679,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 													  @"/audio/speech": @"POST",
 													  @"/images/generations": @"POST",
 													  @"/images/edits": @"POST",
-													  @"/inferkit/run": @"POST" };
+													  @"/inferkit/run": @"POST",
+													  @"/inferkit/status": @"GET" };
 	NSString *route = [path hasPrefix:NFKServedBasePath] ? [path substringFromIndex:NFKServedBasePath.length] : nil;
 	if (route == nil || routes[route] == nil) {
 		[response sendStatus:404 JSONObject:@{ @"error": @{ @"message": [NSString stringWithFormat:@"no route %@ %@", request.method, request.path],
@@ -470,6 +692,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 	if ([route isEqualToString:@"/models"]) {
 		[self serveModelListWithResponse:response];
+	} else if ([route isEqualToString:@"/inferkit/status"]) {
+		[self serveStatusWithResponse:response];
 	} else if ([route isEqualToString:@"/chat/completions"]) {
 		[self serveChat:request response:response];
 	} else if ([route isEqualToString:@"/embeddings"]) {
@@ -502,7 +726,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 {
 	if ([error.domain isEqualToString:NFKInferenceServerErrorDomain]) {
 		NSDictionary<NSNumber *, NSNumber *> *statuses = @{ @(NFKInferenceServerErrorModelNotFound): @404,
-															@(NFKInferenceServerErrorUnauthorized): @401 };
+															@(NFKInferenceServerErrorUnauthorized): @401,
+															@(NFKInferenceServerErrorBusy): @503 };
 		return statuses[@(error.code)].integerValue ?: 400;
 	}
 	if (![error.domain isEqualToString:NFKInferenceErrorDomain]) {
@@ -548,12 +773,22 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 }
 
-/*! Queues a run for a model, cancelling it when the client goes away. */
+/*! Queues a run for a model, cancelling it when the client goes away. The reply's head carries the
+	model's load as it stands when the head is written. */
 - (void)enqueue:(NFKServedRun *)run on:(NFKServedModel *)model response:(NFKHTTPResponse *)response
 {
 	__weak NFKServedRun *weakRun = run;
 	response.disconnectHandler = ^{
 		[weakRun cancel];
+	};
+	__weak NFKInferenceServer *weakSelf = self;
+	__weak NFKServedModel *weakModel = model;
+	response.headerProvider = ^NSDictionary<NSString *, NSString *> *{
+		NSMutableDictionary<NSString *, NSString *> *headers = [[weakModel loadHeaders] mutableCopy] ?: [NSMutableDictionary dictionary];
+		if (weakSelf.reportsHostDetails) {
+			headers[@"X-InferKit-Thermal-State"] = [NFKServedHostStatus thermalStateName];
+		}
+		return headers;
 	};
 	[model enqueue:run];
 }
@@ -572,6 +807,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
 		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
 	}
+	description[@"load"] = [model loadJSONObject];
 	return @{ @"id": model.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
 			  @"inferkit": description };
 }
@@ -600,6 +836,30 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		return;
 	}
 	[response sendStatus:200 JSONObject:[self entryForModel:model] headers:nil];
+}
+
+- (void)serveStatusWithResponse:(NFKHTTPResponse *)response
+{
+	NSMutableArray *models = [NSMutableArray array];
+	for (NSString *name in self.modelNames) {
+		NFKServedModel *model = nil;
+		@synchronized (self.models) {
+			model = self.models[name];
+		}
+		if (model != nil) {
+			[models addObject:@{ @"id": model.name, @"backend": model.backend.backendIdentifier ?: @"", @"ready": @(model.backend.isReady),
+								 @"load": [model loadJSONObject] }];
+		}
+	}
+	NSMutableDictionary<NSString *, id> *status = [NSMutableDictionary dictionary];
+	status[@"object"] = @"inferkit.status";
+	status[@"server"] = @{ @"version": NFKInferKit.version, @"started": @(self.startTime),
+						   @"uptime_seconds": @(MAX(NSDate.date.timeIntervalSince1970 - (NSTimeInterval)self.startTime, 0.0)) };
+	status[@"models"] = models;
+	if (self.reportsHostDetails) {
+		status[@"host"] = [self.hostStatus JSONObjectForStorageURL:self.storageDirectoryURL];
+	}
+	[response sendStatus:200 JSONObject:status headers:nil];
 }
 
 #pragma mark Chat

@@ -39,6 +39,7 @@ let package = Package(
                 .linkedFramework("IOSurface"),
                 .linkedFramework("Network"),
                 .linkedFramework("Security"),
+                .linkedFramework("IOKit", .when(platforms: [.macOS])),
             ]
         ),
         .testTarget(

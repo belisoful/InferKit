@@ -133,6 +133,24 @@
 
 @end
 
+/*! A hanging job that reports a quarter of its progress shortly after it starts. */
+@interface NFKServedProgressingBackend : NFKServedHangingBackend
+@end
+
+@implementation NFKServedProgressingBackend
+
+- (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
+{
+	NFKInferenceJob *job = [super submitInferenceJobForRequest:request];
+	// After the server has installed its progress handler, which happens once this returns.
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[job reportProgress:0.25];
+	});
+	return job;
+}
+
+@end
+
 @interface NFKInferenceServerTests : XCTestCase
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
@@ -817,6 +835,220 @@
 	[self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"chat/completions"]] response:&response];
 	XCTAssertEqual(response.statusCode, 405);
 	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"Allow"], @"POST");
+}
+
+#pragma mark Status
+
+- (nullable NSDictionary *)statusOf:(NFKInferenceServer *)server
+{
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"inferkit/status"]] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	return data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+}
+
+/*! The first model's load once it satisfies a condition, polling for up to five seconds. */
+- (nullable NSDictionary *)loadOf:(NFKInferenceServer *)server when:(BOOL (^)(NSDictionary *load))condition
+{
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+	NSDictionary *load = nil;
+	do {
+		load = [[self statusOf:server][@"models"] firstObject][@"load"];
+		if (load != nil && condition(load)) {
+			return load;
+		}
+		[NSThread sleepForTimeInterval:0.02];
+	} while (deadline.timeIntervalSinceNow > 0);
+	return load;
+}
+
+- (NSMutableURLRequest *)chatRequestTo:(NFKInferenceServer *)server
+{
+	return [self postTo:[server.localBaseURL URLByAppendingPathComponent:@"chat/completions"]
+				   JSON:@{ @"messages": @[ @{ @"role": @"user", @"content": @"x" } ] }];
+}
+
+- (void)testTheStatusRouteReportsTheModelsLoadAndTheMachine
+{
+	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **error) {
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"ok", NFKOutputUsage: @{ NFKUsageOutputTokens: @12 } }];
+	};
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.storageDirectoryURL = [NSURL fileURLWithPath:NSTemporaryDirectory()];
+	[server addBackend:backend forModelName:@"measured"];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[server stop];
+	}];
+	NSHTTPURLResponse *response = nil;
+	[self send:[self chatRequestTo:server] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+
+	NSDictionary *status = [self statusOf:server];
+	XCTAssertEqualObjects(status[@"object"], @"inferkit.status");
+	XCTAssertEqualObjects(status[@"server"][@"version"], NFKInferKit.version);
+	NSDictionary *model = [status[@"models"] firstObject];
+	XCTAssertEqualObjects(model[@"id"], @"measured");
+	XCTAssertEqualObjects(model[@"backend"], @"served-test");
+	NSDictionary *load = model[@"load"];
+	XCTAssertEqualObjects(load[@"limit"], @1);
+	XCTAssertEqualObjects(load[@"running"], @0);
+	XCTAssertEqualObjects(load[@"queued"], @0);
+	XCTAssertEqualObjects(load[@"completed"], @1);
+	XCTAssertEqualObjects(load[@"failed"], @0);
+	XCTAssertEqualObjects(load[@"estimated_wait_seconds"], @0, @"a free slot starts a new run at once");
+	XCTAssertGreaterThanOrEqual([load[@"average_run_seconds"] doubleValue], 0.0);
+	XCTAssertGreaterThan([load[@"output_tokens_per_second"] doubleValue], 0.0);
+	XCTAssertNil(load[@"queue_limit"]);
+
+	NSDictionary *host = status[@"host"];
+	NSArray *thermalStates = @[ @"nominal", @"fair", @"serious", @"critical" ];
+	NSArray *pressures = @[ @"normal", @"warning", @"critical" ];
+	XCTAssertTrue([thermalStates containsObject:host[@"thermal_state"]], @"%@", host[@"thermal_state"]);
+	XCTAssertEqualObjects(host[@"chip"], NFKHardwareProfile.currentProfile.chipName);
+	XCTAssertEqualObjects(host[@"memory"][@"physical_bytes"], @(NFKHardwareProfile.currentProfile.physicalMemory));
+	XCTAssertTrue([pressures containsObject:host[@"memory"][@"pressure"]], @"%@", host[@"memory"][@"pressure"]);
+	XCTAssertGreaterThan([host[@"memory"][@"process_footprint_bytes"] longLongValue], 0);
+	XCTAssertEqual([host[@"cpu"][@"load_average"] count], 3u);
+	double usage = [host[@"cpu"][@"usage"] doubleValue];
+	XCTAssertTrue(usage >= 0.0 && usage <= 1.0, @"%f", usage);
+	XCTAssertGreaterThan([host[@"storage"][@"available_bytes"] longLongValue], 0);
+	NSDictionary *gpu = host[@"gpu"];
+	if (gpu != nil) {
+		XCTAssertEqualObjects(gpu[@"source"], @"ioregistry");
+		XCTAssertTrue([gpu[@"utilization"] doubleValue] >= 0.0 && [gpu[@"utilization"] doubleValue] <= 1.0);
+	}
+
+	NSData *data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"models/measured"]] response:&response];
+	NSDictionary *entry = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	XCTAssertEqualObjects(entry[@"inferkit"][@"load"][@"completed"], @1, @"the model entry carries the same load");
+}
+
+- (void)testRunRepliesCarryTheModelsLoadAndRefusalsDoNot
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"echo": [[NFKServedTestBackend alloc] init] }];
+	NSHTTPURLResponse *response = nil;
+	[self send:[self chatRequestTo:server] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Limit"], @"1");
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Running"], @"0", @"the head is written after the run released its slot");
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Queued"], @"0");
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Estimated-Wait"], @"0.000");
+	XCTAssertNotNil([response valueForHTTPHeaderField:@"X-InferKit-Thermal-State"]);
+
+	server.requiresAPIKeyOnLoopback = YES;
+	server.apiKey = @"sesame";
+	[self send:[self chatRequestTo:server] response:&response];
+	XCTAssertEqual(response.statusCode, 401);
+	XCTAssertNil([response valueForHTTPHeaderField:@"X-InferKit-Limit"]);
+	XCTAssertNil([response valueForHTTPHeaderField:@"X-InferKit-Thermal-State"]);
+	[self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"inferkit/status"]] response:&response];
+	XCTAssertEqual(response.statusCode, 401, @"the status route needs the key like every other route");
+}
+
+- (void)testHostDetailsCanBeLeftOutEntirely
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"private": [[NFKServedTestBackend alloc] init] }];
+	server.reportsHostDetails = NO;
+	NSHTTPURLResponse *response = nil;
+	[self send:[self chatRequestTo:server] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	XCTAssertNil([response valueForHTTPHeaderField:@"X-InferKit-Thermal-State"]);
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Limit"], @"1", @"the model's load stays");
+	NSDictionary *status = [self statusOf:server];
+	XCTAssertNil(status[@"host"]);
+	XCTAssertEqualObjects([status[@"models"] firstObject][@"load"][@"completed"], @1);
+}
+
+- (void)testAFullQueueIsRefusedWithAnEstimatedRetry
+{
+	dispatch_semaphore_t gate = dispatch_semaphore_create(0);
+	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **error) {
+		dispatch_semaphore_wait(gate, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"ok" }];
+	};
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.maximumQueuedRunsPerModel = 1;
+	[server addBackend:backend forModelName:@"gated"];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[server stop];
+	}];
+	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }];
+	dispatch_semaphore_signal(gate);
+	XCTAssertEqualObjects([client runInferenceForRequest:request error:&error].text, @"ok", @"%@", error);
+
+	dispatch_group_t group = dispatch_group_create();
+	for (NSInteger index = 0; index < 2; index++) {
+		dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			[client runInferenceForRequest:request error:NULL];
+		});
+	}
+	NSDictionary *load = [self loadOf:server when:^BOOL(NSDictionary *candidate) {
+		return [candidate[@"running"] integerValue] == 1 && [candidate[@"queued"] integerValue] == 1;
+	}];
+	XCTAssertEqualObjects(load[@"running"], @1);
+	XCTAssertEqualObjects(load[@"queued"], @1);
+	XCTAssertEqualObjects(load[@"queue_limit"], @1);
+	XCTAssertNotNil(load[@"estimated_wait_seconds"], @"one finished run gives the queue an estimate");
+	XCTAssertEqual([load[@"runs"] count], 1u);
+	XCTAssertNotNil([load[@"runs"] firstObject][@"elapsed_seconds"]);
+
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [self send:[self chatRequestTo:server] response:&response];
+	XCTAssertEqual(response.statusCode, 503);
+	XCTAssertGreaterThanOrEqual([[response valueForHTTPHeaderField:@"Retry-After"] integerValue], 1);
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"X-InferKit-Queued"], @"1");
+	NSDictionary *body = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+	XCTAssertEqualObjects(body[@"error"][@"inferkit_domain"], NFKInferenceServerErrorDomain);
+	XCTAssertEqualObjects(body[@"error"][@"inferkit_code"], @(NFKInferenceServerErrorBusy));
+	XCTAssertNil([client runInferenceForRequest:request error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKInferenceServerErrorDomain);
+	XCTAssertEqual(error.code, NFKInferenceServerErrorBusy);
+
+	dispatch_semaphore_signal(gate);
+	dispatch_semaphore_signal(gate);
+	XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC))), 0);
+	load = [self loadOf:server when:^BOOL(NSDictionary *candidate) {
+		return [candidate[@"completed"] integerValue] == 3;
+	}];
+	XCTAssertEqualObjects(load[@"completed"], @3);
+	XCTAssertEqualObjects(load[@"refused"], @2);
+}
+
+- (void)testARunningJobsProgressEstimatesItsRemainingTime
+{
+	NFKServedProgressingBackend *backend = [[NFKServedProgressingBackend alloc] init];
+	backend.cancelled = [self expectationWithDescription:@"the hosted job was cancelled"];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"progressing": backend }];
+	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	NFKInferenceJob *job = [client submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }]];
+	NSDictionary *load = [self loadOf:server when:^BOOL(NSDictionary *candidate) {
+		return [[candidate[@"runs"] firstObject][@"progress"] doubleValue] > 0;
+	}];
+	NSDictionary *run = [load[@"runs"] firstObject];
+	XCTAssertEqualObjects(run[@"progress"], @0.25);
+	double elapsed = [run[@"elapsed_seconds"] doubleValue];
+	XCTAssertEqualWithAccuracy([run[@"estimated_remaining_seconds"] doubleValue], 3.0 * elapsed, 1e-9,
+							   @"a quarter done after the elapsed time leaves three times it");
+	XCTAssertEqualWithAccuracy([load[@"estimated_wait_seconds"] doubleValue], 3.0 * elapsed, 1e-9,
+							   @"the next run waits for the one slot to free");
+	[job cancel];
+	[self waitForExpectations:@[ backend.cancelled ] timeout:5];
+	load = [self loadOf:server when:^BOOL(NSDictionary *candidate) {
+		return [candidate[@"cancelled"] integerValue] == 1;
+	}];
+	XCTAssertEqualObjects(load[@"cancelled"], @1);
+	XCTAssertEqualObjects(load[@"running"], @0);
 }
 
 #pragma mark Discovery

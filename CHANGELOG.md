@@ -58,6 +58,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Each hosted backend serves `maximumConcurrentRunsPerModel` runs at once (1 by default) and later
   requests queue in order. A client that disconnects cancels its run. A client-named file extension is
   reduced to letters and digits, and a shape or size that would allocate past the body is refused.
+- `maximumQueuedRunsPerModel` bounds each model's queue (0, the default, queues without limit). A
+  request that finds the queue full is refused with `NFKInferenceServerErrorBusy`, served as 503 with
+  a `Retry-After` of the estimated wait, so a client or a load balancer can try another server.
+- `GET /v1/inferkit/status` reports each model's load and the machine's state, and each model's
+  `GET /v1/models` entry carries the same load. A model's load is its limit, running and queued runs,
+  run counts by outcome, moving averages of run and wait time, output tokens per second where results
+  report usage, the estimated wait for a new request, and each running run's elapsed time, progress,
+  and estimated remaining time. The host object names the chip and cores, the thermal state, Low
+  Power Mode, memory (physical, available, working set, pressure, this process's footprint), CPU usage
+  and load averages, storage on `storageDirectoryURL`'s volume, and on macOS the GPU utilization the
+  IORegistry reports.
+- Every run reply carries the model's load in `X-InferKit-Limit`, `X-InferKit-Running`,
+  `X-InferKit-Queued`, and `X-InferKit-Estimated-Wait`, plus `X-InferKit-Thermal-State`, and the
+  Bonjour advertisement adds the chip and the physical memory. `reportsHostDetails` set to NO leaves out
+  every host detail: the host object, the thermal header, and the advertisement entries.
 - The server advertises `_inferkit._tcp` over Bonjour. `+[NFKRemoteProvider discoverInferKitServersWithTimeout:]`
   resolves each advertisement to a provider at the advertising machine's host name, and the
   `inferKit` preset (`NFKRemoteAPIStyleInferKit`, `http://localhost:11480/v1`) joins `localProviders`.
@@ -68,7 +83,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   stream that carries an error object with that error rather than the partial text.
 - `NFKRemoteSpeechBackend.requiresVoice` (YES by default) lets a request go out without a voice; its
   factory clears it for an InferKit server, whose hosted backend chooses its own.
-- The core links Network and Security.
+- The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
 

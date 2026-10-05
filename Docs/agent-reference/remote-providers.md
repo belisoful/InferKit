@@ -660,12 +660,14 @@ machine's remote clients reach a model this process hosts. Files:
 - `NFKRemoteInferKitBackend.m`: the native client. `respondsToSelector:` answers NO for the two
   supported-key properties until `prepareWithError:` has read them, which is the protocol's
   "not declared" answer.
+- `NFKServedHostStatus.h/.m` (private): the status route's host object. Owned by the server from
+  `init`, so the first CPU-usage reading covers the time since the server was created.
 - `NFKInferKitDiscovery.h/.m` (private): `DNSServiceBrowse` then `DNSServiceResolve` on one serial
   queue for the timeout. Resolving yields the advertising machine's host name (`Studio.local`), which
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 24 tests, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 29 tests, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -694,10 +696,37 @@ Traps met while building it:
 - `NFKRemoteTransport`'s blocking send retries 502, 503, and 504, so a served "not ready" (503) is
   retried like a gateway error. Tests that expect a failing status set `retryAttempts` to 0.
 
+**Status and load (2026-10-05).** `GET /v1/inferkit/status` and the `load` object in each
+`/models` entry come from `NFKServedModel`. It keeps an array of its running runs, each run's enqueue
+and start times on `systemUptime`, and the job's last reported progress.
+
+- The wait estimate gives each slot its running run's remaining time (from progress when the job
+  reports one, else the average run minus the elapsed time), then hands each queued run the soonest
+  slot for one average run. It is nil while a needed average does not exist yet, and 0 with a free
+  slot. A cancelled run still in the queue is not counted.
+- Only runs that return a result feed the run average, so a fast refusal does not shorten it. The
+  averages are exponential, newest run weighted 0.2, first run taken whole.
+- The `X-InferKit-*` headers come from `NFKHTTPResponse.headerProvider`, read when the head is
+  written. A plain reply's head is written after its run released the slot, so `Running` excludes
+  it. The provider is set in `enqueue:on:response:`, so a 401, a 404, or a malformed body carries none.
+- Host readings, all public API except the GPU: `NSProcessInfo.thermalState`; memory pressure from
+  `sysctlbyname("kern.memorystatus_vm_pressure_level")` (1, 2, 4), falling back to a
+  `DISPATCH_SOURCE_TYPE_MEMORYPRESSURE` source where the sysctl is unreadable; CPU usage as the busy
+  share of `host_processor_info` ticks since the previous reading; `getloadavg`;
+  `task_info(TASK_VM_INFO).phys_footprint`; `NSURLVolumeAvailableCapacityForImportantUsageKey`, which
+  tvOS marks unavailable, so tvOS reads `NSURLVolumeAvailableCapacityKey`.
+- GPU utilization is `IOAccelerator`'s `PerformanceStatistics` → `"Device Utilization %"`,
+  undocumented, readable without an entitlement on an M1 Max under `swift test` (2026-10-05). The
+  busiest accelerator is reported, as a fraction. App Sandbox readability is unmeasured. It covers
+  every process, so it stays out of routing (user decision, 2026-10-05).
+- A real temperature lives in the SMC, which is private; the thermal state is the public reading.
+
 Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside the OpenAI `message`,
 `type`, and `code`. The transport takes an `NFKInferenceErrorDomain` code from that body over its
 status reading, and the native client rebuilds the whole `NSError`. Status mapping: not ready 503,
 missing input, unsupported, and refused 400, rate limited 429 (with `Retry-After` from
 `NFKRemoteErrorRetryAfterKey`), upstream unreachable 502, other failures 500, unknown model 404,
-missing or wrong key 401 with `WWW-Authenticate: Bearer`.
+missing or wrong key 401 with `WWW-Authenticate: Bearer`, a full queue
+(`NFKInferenceServerErrorBusy`) 503 with `Retry-After`. The transport retries that 503 only when the
+`Retry-After` is within `maximumRetryDelay` (8 s by default).
 
