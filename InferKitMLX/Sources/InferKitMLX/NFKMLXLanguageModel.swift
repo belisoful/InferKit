@@ -96,35 +96,48 @@ public struct NFKMLXLanguageConfiguration: Sendable {
         self.attentionBias = attentionBias
     }
 
+    /// A preset with the `model_type` and `max_position_embeddings` its release's `config.json` states,
+    /// so it equals what the reader makes of that file in every stored field.
+    private static func released(_ configuration: NFKMLXLanguageConfiguration, modelType: String,
+                                 maximumPositions: Int) -> NFKMLXLanguageConfiguration {
+        var configuration = configuration
+        configuration.modelType = modelType
+        configuration.maximumPositions = maximumPositions
+        return configuration
+    }
+
     /// The released `Qwen/Qwen3-0.6B` geometry.
-    public static let qwen3_0_6B = NFKMLXLanguageConfiguration()
+    public static let qwen3_0_6B = released(NFKMLXLanguageConfiguration(), modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `Qwen/Qwen3-1.7B` geometry.
-    public static let qwen3_1_7B = NFKMLXLanguageConfiguration(
+    public static let qwen3_1_7B = released(NFKMLXLanguageConfiguration(
         hiddenSize: 2048, layerCount: 28, headCount: 16, keyValueHeadCount: 8,
-        headDimensions: 128, intermediateSize: 6144)
+        headDimensions: 128, intermediateSize: 6144), modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `Qwen/Qwen3-4B` geometry.
-    public static let qwen3_4B = NFKMLXLanguageConfiguration(
+    public static let qwen3_4B = released(NFKMLXLanguageConfiguration(
         hiddenSize: 2560, layerCount: 36, headCount: 32, keyValueHeadCount: 8,
-        headDimensions: 128, intermediateSize: 9728)
+        headDimensions: 128, intermediateSize: 9728), modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `Qwen/Qwen3-8B` geometry. Its embeddings are not tied.
-    public static let qwen3_8B = NFKMLXLanguageConfiguration(
+    public static let qwen3_8B = released(NFKMLXLanguageConfiguration(
         hiddenSize: 4096, layerCount: 36, headCount: 32, keyValueHeadCount: 8,
-        headDimensions: 128, intermediateSize: 12288, tiesWordEmbeddings: false)
+        headDimensions: 128, intermediateSize: 12288, tiesWordEmbeddings: false),
+        modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `Qwen/Qwen3-14B` geometry: 5120 wide over 40 layers of 40 heads, untied.
-    public static let qwen3_14B = NFKMLXLanguageConfiguration(
+    public static let qwen3_14B = released(NFKMLXLanguageConfiguration(
         hiddenSize: 5120, layerCount: 40, headCount: 40, keyValueHeadCount: 8,
-        headDimensions: 128, intermediateSize: 17408, tiesWordEmbeddings: false)
+        headDimensions: 128, intermediateSize: 17408, tiesWordEmbeddings: false),
+        modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `Qwen/Qwen3-32B` geometry, the largest dense size: 5120 wide over 64 layers of 64
     /// heads, untied. Its 32.8 billion parameters are 66 GB at float32 and 33 GB at the released bf16,
     /// so a 32 GB machine runs it only quantized.
-    public static let qwen3_32B = NFKMLXLanguageConfiguration(
+    public static let qwen3_32B = released(NFKMLXLanguageConfiguration(
         hiddenSize: 5120, layerCount: 64, headCount: 64, keyValueHeadCount: 8,
-        headDimensions: 128, intermediateSize: 25600, tiesWordEmbeddings: false)
+        headDimensions: 128, intermediateSize: 25600, tiesWordEmbeddings: false),
+        modelType: "qwen3", maximumPositions: 40_960)
 
     /// The released `mistralai/Mistral-Small-3.1/3.2-24B` decoder geometry, which is the text stack of
     /// a `Mistral3ForConditionalGeneration` release and what FLUX.2 [dev] reads for conditioning.
@@ -134,11 +147,11 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// than the residual. The 24 billion parameters are 48 GB at the released bf16, above what a 32 GB
     /// machine holds, so the structural check reads the released headers and the numeric check runs a
     /// small configuration of the same shape.
-    public static let mistralSmall3 = NFKMLXLanguageConfiguration(
+    public static let mistralSmall3 = released(NFKMLXLanguageConfiguration(
         hiddenSize: 5120, layerCount: 40, headCount: 32, keyValueHeadCount: 8,
         headDimensions: 128, intermediateSize: 32768, vocabularySize: 131_072,
         ropeTheta: 1_000_000_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: false,
-        normalizesQueryAndKey: false)
+        normalizesQueryAndKey: false), modelType: "mistral", maximumPositions: 131_072)
 
     /// How many experts each feed-forward holds, or 0 for the dense feed-forward.
     ///

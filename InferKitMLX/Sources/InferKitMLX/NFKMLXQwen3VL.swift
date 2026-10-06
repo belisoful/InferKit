@@ -621,6 +621,8 @@ public final class NFKMLXQwen3VL: NSObject {
     public static let decoderConfiguration: NFKMLXLanguageConfiguration = {
         var configuration = NFKMLXLanguageConfiguration.qwen3_1_7B
         configuration.ropeTheta = 5_000_000
+        configuration.modelType = "qwen3_vl_text"
+        configuration.maximumPositions = 262_144
         return configuration
     }()
 
