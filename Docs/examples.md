@@ -2046,6 +2046,53 @@ let matte = result.output(forKey: NFKOutputMask)           // gray matte on its 
 The plate and hint may equally be `MTLTexture`s from a Metal pipeline, and `outputsTexture` returns
 `MTLTexture`s — no CGImage detour.
 
+### Finishing a matte
+
+`NFKMLXMatteRefiner` finishes any matting model's matte: clip levels that spare the plate's edges,
+gamma, speck removal and hole filling, the guided filter against the plate, growth or shrinkage by a
+disc, a feather, and garbage and core mattes. Every setting starts neutral, so a new refiner returns
+the matte unchanged. `NFKMLXMatteOperations` holds each step as a Swift function on `MLXArray`, along
+with edge decontamination (multi-level foreground estimation), light wrap, additive keying, and source
+passthrough. `NFKMLXMatteTemporalBlender` steadies a clip's mattes where the picture holds still.
+
+```swift
+let refiner = NFKMLXMatteRefiner()
+refiner.clipBlack = 0.05                                 // near-transparent goes to 0
+refiner.clipWhite = 0.95                                 // near-solid goes to 1
+refiner.edgeProtectionRadius = 2                         // except along the plate's edges
+refiner.minimumSpeckArea = 400                           // drop tracking markers
+refiner.maximumHoleArea = 200                            // close small holes
+refiner.guidedFilterRadius = 8                           // carry the plate's edges into the matte
+let matte = refiner.refined(alpha, plate: plate)         // [H, W, 1] and [H, W, 3] MLXArrays
+
+let colors = NFKMLXMatteOperations.estimatedColors(image: plate, alpha: matte)   // edge decontamination
+let blender = NFKMLXMatteTemporalBlender()               // one per clip; reset() at a cut
+let steady = blender.blended(matte, plate: plate)
+```
+
+From Objective-C the refiner takes the images a matting backend returns:
+
+<!-- objc-check: given id matte = nil; id background = nil; -->
+```objc
+NSError *error = nil;
+NFKMLXMatteRefiner *refiner = [[NFKMLXMatteRefiner alloc] init];
+refiner.clipBlack = 0.05;
+refiner.clipWhite = 0.95;
+refiner.minimumSpeckArea = 400;
+refiner.guidedFilterRadius = 8;
+CGImageRef refined = [refiner refineMatte:matte plate:plate garbageMatte:nil coreMatte:nil error:&error];
+CGImageRef foreground = [refiner decontaminatedForegroundForPlate:plate matte:(__bridge id)refined error:&error];
+CGImageRef composite = [refiner compositeForeground:(__bridge id)foreground
+                                              matte:(__bridge id)refined
+                                     overBackground:background
+                                    lightWrapRadius:12
+                                  lightWrapStrength:0.5
+                                              error:&error];
+
+NFKMLXMatteTemporalBlender *blender = [[NFKMLXMatteTemporalBlender alloc] init];   // one per clip
+CGImageRef steady = [blender blendMatte:(__bridge id)refined plate:plate error:&error];
+```
+
 ### U²-Net background removal (`NFKMLXU2Net`, a shipped MLX model)
 
 `NFKMLXU2Net` is a real salient-object / background-removal network (a nested U of Residual U-blocks),

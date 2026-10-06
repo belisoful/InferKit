@@ -483,6 +483,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Finishing a matte from any matting model
+
+- `NFKMLXMatteOperations` holds model-agnostic matte operations on `MLXArray`: clip levels that can
+  spare the plate's edges, gamma, garbage and core mattes, growth and shrinkage by a disc with partial
+  values kept, a feather, speck removal and hole filling by 8-connected component area, the color
+  guided filter in its subsampled fast form, foreground and background color estimation (multi-level,
+  for edge decontamination), light wrap, additive keying, source passthrough, and a temporal blend that
+  stops where the picture moves. Each runs on the whole image, since the matting backend's 8-bit tiles
+  cannot carry an operation that reaches across them.
+- `NFKMLXMatteRefiner` (`@objc`) runs the matte steps in a fixed order from settings that start
+  neutral, on `MLXArray`s from Swift or on the `CGImage` and `MTLTexture` a matting backend returns
+  from Objective-C, and composites a foreground with a light wrap. `NFKMLXMatteTemporalBlender`
+  (`@objc`) carries one clip's previous frame and resets at a cut.
+
 #### The language backends describe their loaded model
 
 - `NFKMLXLanguageBackend`, `NFKMLXPhi4MMBackend`, `NFKMLXSa2VABackend`, `NFKMLXDeepSeekBackend`,

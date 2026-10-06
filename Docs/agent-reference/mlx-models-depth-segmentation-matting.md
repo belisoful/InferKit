@@ -549,3 +549,23 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Customization is a head retarget with no recipe yet: the repository's training code at 6b4b67a
   trains the interpolating heads, not the release's pixel-shuffle ones, so a recipe pins the older
   heads' training code first.
+
+- `NFKMLXMatteOperations`, `NFKMLXMatteRefiner` (`@objc`), `NFKMLXMatteTemporalBlender` (`@objc`):
+  model-agnostic matte finishing, in `NFKMLXMatteOperations.swift` and `NFKMLXMatteRefiner.swift`. The
+  matting backend works in 8-bit tiles, so operations that reach across tiles (morphology, connected
+  components, the guided filter) run on the stitched result here rather than in the backend. No reference
+  implementation fixes these operations; each test checks a defining property or a direct evaluation:
+  - The window extreme (doubling windows, `O(log r)` passes) and the component labels (neighbor minima
+    plus label jumps until nothing changes) are held equal to a direct search and a union-find.
+  - The guided filter is the color-guide form of He, Sun, and Tang (TPAMI 2013, Algorithm 1 with the
+    3 × 3 solve), with coefficients at `1 / subsampling` scale (the fast guided filter, arXiv 1505.00996).
+    At subsampling 1 it matches a double-precision direct evaluation within 2e-4. The box means sum
+    shifted slices, which avoids the cancellation a float32 running sum has at full resolution.
+  - The color estimate follows Germer et al. 2020 (arXiv 2006.14970): levels `round(w^(l/n))`, the
+    per-pixel 2 × 2 solve, omega 0.1, epsilon 5e-3, 10 iterations up to 32 pixels and 2 above. The paper
+    leaves the neighborhood to a figure; this uses four neighbors and Jacobi updates (the paper's
+    in-place order does not parallelize).
+  - Light wrap, additive keying, source passthrough, and the motion-gated temporal blend are this
+    package's own formulas, stated in their doc comments; no product documents a canonical one.
+  The design came from public documentation and papers only (Keylight, Nuke IBK, Blender, Resolve,
+  FFmpeg manuals; the papers above). No other implementation's source was read.

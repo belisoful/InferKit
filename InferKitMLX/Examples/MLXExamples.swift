@@ -48,6 +48,28 @@ final class MLXExamples: XCTestCase {
         XCTAssertEqual(backend.backendIdentifier, "keyer")
     }
 
+    // Docs/examples.md: Finishing a matte
+    func testExampleFinishingAMatte() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX")
+        let plate = MLXArray.ones([32, 48, 3]) * MLXArray([Float(0.2), 0.7, 0.3])
+        let alpha = MLXArray.ones([32, 48, 1]) * 0.6
+
+        let refiner = NFKMLXMatteRefiner()
+        refiner.clipBlack = 0.05                                 // near-transparent goes to 0
+        refiner.clipWhite = 0.95                                 // near-solid goes to 1
+        refiner.edgeProtectionRadius = 2                         // except along the plate's edges
+        refiner.minimumSpeckArea = 400                           // drop tracking markers
+        refiner.maximumHoleArea = 200                            // close small holes
+        refiner.guidedFilterRadius = 8                           // carry the plate's edges into the matte
+        let matte = refiner.refined(alpha, plate: plate)
+
+        let colors = NFKMLXMatteOperations.estimatedColors(image: plate, alpha: matte)   // edge decontamination
+        let blender = NFKMLXMatteTemporalBlender()               // one per clip; reset() at a cut
+        let steady = blender.blended(matte, plate: plate)
+        XCTAssertEqual(colors.foreground.shape, [32, 48, 3])
+        XCTAssertEqual(steady.shape, [32, 48, 1])
+    }
+
     // Docs/examples.md: Many tensors in and out
     func testExampleTensorBackend() {
         let configuration = NFKMLXTensorConfiguration(

@@ -1543,6 +1543,39 @@
 	XCTAssertEqualObjects(restorer.backendIdentifier, @"codeformer-photo", @"%@", error);
 }
 
+- (void)testObjectiveCFinishesAMatte
+{
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+	CGImageRef plate = [self examplePlate];
+	NSError *error = nil;
+	NFKMLXMatteRefiner *refiner = [[NFKMLXMatteRefiner alloc] init];
+	refiner.clipBlack = 0.05;
+	refiner.clipWhite = 0.95;
+	refiner.minimumSpeckArea = 400;
+	refiner.guidedFilterRadius = 8;
+	CGImageRef matte = plate;                                   // any matting backend's NFKOutputMask
+	CGImageRef refined = [refiner refineMatte:(__bridge id)matte plate:(__bridge id)plate
+								 garbageMatte:nil coreMatte:nil error:&error];
+	XCTAssertTrue(refined != NULL, @"%@", error);
+	CGImageRef foreground = [refiner decontaminatedForegroundForPlate:(__bridge id)plate
+																matte:(__bridge id)refined
+																error:&error];
+	CGImageRef composite = [refiner compositeForeground:(__bridge id)foreground
+												  matte:(__bridge id)refined
+										 overBackground:(__bridge id)plate
+										lightWrapRadius:12
+									  lightWrapStrength:0.5
+												  error:&error];
+	XCTAssertEqual(CGImageGetWidth(composite), (size_t)64, @"%@", error);
+
+	NFKMLXMatteTemporalBlender *blender = [[NFKMLXMatteTemporalBlender alloc] init];
+	CGImageRef steady = [blender blendMatte:(__bridge id)refined plate:(__bridge id)plate error:&error];
+	XCTAssertTrue(steady != NULL, @"%@", error);
+	CGImageRelease(plate);
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {
