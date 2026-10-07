@@ -9195,10 +9195,14 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         var mismatched = [String]()
         var shapeWrong = [String]()
-        for key in theirs.keys.sorted() {
-            guard let a = mine[key], let b = theirs[key] else { continue }
-            if a.shape != b.shape { shapeWrong.append("\(key) \(a.shape) vs \(b.shape)"); continue }
-            if !(a .== b).all().item(Bool.self) { mismatched.append(key) }
+        // Each released tensor is read as it is compared, and on the CPU: a GPU comparison would wait on
+        // the read inside its command buffer, and the per-layer table alone is 4 GB.
+        Device.withDefaultDevice(.cpu) {
+            for key in theirs.keys.sorted() {
+                guard let a = mine[key], let b = theirs[key] else { continue }
+                if a.shape != b.shape { shapeWrong.append("\(key) \(a.shape) vs \(b.shape)"); continue }
+                if !(a .== b).all().item(Bool.self) { mismatched.append(key) }
+            }
         }
         print("VALIDATION PARITY gemma3n-matformer: \(theirs.count) tensors compared, "
               + "\(shapeWrong.count) wrong shape, \(mismatched.count) not byte-identical")
