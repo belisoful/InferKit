@@ -261,19 +261,29 @@ What a Commit Check always runs:
 
 How the MLX tests are chosen, over the cumulative range `origin/main..HEAD` on a clean tree at `HEAD`:
 
-- A changed source file contributes every type it declares (Swift `class`, `struct`, `enum`,
-  `protocol`, `actor`, `typealias`, `extension`; Objective-C `@interface` and `@protocol`).
-- Two hops follow (`CC_HOPS=2`): every source type in a file that names one of those types joins the
+- A changed source file contributes the symbols its diff touches:
+  - A touched function, computed property, or stored property contributes its name.
+  - A touched initializer contributes the construction sites of its type (`NFKMLXLanguageBackend(`).
+  - A touched type declaration contributes the type.
+  - A touched member with a generic name (`init`, `backend`, `forward`, `model`, a name under five
+    characters) contributes its enclosing type.
+  - Comment lines contribute nothing.
+- Two hops follow (`CC_HOPS=2`): every source type in a file that names one of those symbols joins the
   set, and then every type in a file that names one of those. With one hop the selection missed the
   Qwen-Image end-to-end test.
-- A test is selected when its body names any type in the set, whatever file it sits in: a
+- A test is selected when its body names any symbol in the set, whatever file it sits in: a
   configuration struct's new field is caught by a test in an unrelated-looking file that reads it,
   which is how `NFKMLXPresetReleaseTests` caught the preset regression after `bff3d76`.
 - A changed test file selects each test whose lines the diff touches. A changed helper function in a
   test file selects every test that calls it.
 - Documentation, `Tools/`, and the manifest select no MLX test; the local legs cover them.
 
-A change to a shared layer selects the whole MLX suite, because nearly every model reaches it:
+A shared layer is a file nearly every model reaches. Its changes select by touched symbol like any
+other file's. A touched symbol every model reaches (the release reader's loading functions, the weight
+applier, the recurrent fold, the generation loop or its caches, the paging planner, a core value type)
+reaches the whole suite through the two hops. The manifests carry no symbols, so a change to
+`InferKitMLX/Package.swift`, `Package.resolved`, or the core `Package.swift` selects the whole MLX
+suite. The shared layers:
 
 - `NFKMLXReleaseWeights.swift` (the release reader) and `NFKMLXWeights.swift` (weight loading)
 - `NFKMLXRecurrent.swift`
@@ -283,9 +293,8 @@ A change to a shared layer selects the whole MLX suite, because nearly every mod
 - `NFKMLXExpertStore.swift`, `NFKMLXExpertPaging.swift`, and `NFKMLXResidency.swift` (expert paging
   and the staging planner)
 - `NFKMLXFineTune.swift`, `NFKMLXTrainer.swift`, and `NFKMLXHub.swift`
-- `InferKitMLX/Package.swift` and `Package.resolved`
 - the core value types and backend protocol: `NFKInferenceRequest`, `NFKInferenceResult`,
-  `NFKInferenceBackend.h`, `NFKTensorConversion.h`, and the core `Package.swift`
+  `NFKInferenceBackend.h`, and `NFKTensorConversion.h`
 
 The Testing Manager owns this list and the selector
 (`~/.claude/inferkit-lmc/coordinator/commitcheck/cc_select.py`). A file joins the list when a change
