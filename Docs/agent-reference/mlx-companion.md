@@ -216,8 +216,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   floating type holding the most bytes. `NFKMLXModelInfoCache` computes it once per backend, since a
   status poll would otherwise walk a large net each second. `NFKMLXGemmaBackend`,
   `NFKMLXGraniteBackend`, `NFKMLXMambaBackend`, `NFKMLXNemotronBackend`, and `NFKMLXDecoderBackend`
-  keep only a logits closure after their factory returns, so they report no `modelInfo` until their
-  init takes the net or a precomputed description.
+  run a logits closure, so their init also takes the `modules` the closure runs and the release
+  directory; `info(of:releaseDirectoryURL:)` adds the `model_type` and `max_position_embeddings` its
+  `config.json` states, at the top level or under `text_config`. A factory that builds one of them
+  passes its net, or the walk reports nothing. A paged mixture's experts sit in its
+  `NFKMLXExpertStore`, outside `parameters()`, so its count covers the resident weights only.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls

@@ -545,6 +545,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   backend adds the release's `model_type` and `max_position_embeddings`, which
   `NFKMLXLanguageConfiguration` now keeps as `modelType` and `maximumPositions`, and the key-value
   bytes per token while its cache is unquantized.
+- `NFKMLXGemmaBackend`, `NFKMLXGraniteBackend`, `NFKMLXMambaBackend`, `NFKMLXNemotronBackend`, and
+  `NFKMLXDecoderBackend` (Qwen3.5 and Qwen4-Exp) report the same description of their decoder, with
+  the `model_type` and `max_position_embeddings` their release's `config.json` states, at its top
+  level or under `text_config`.
 - `NFKMLXGPU` adopts `NFKServingRuntimeStatus`, so a server's status route reports MLX's active,
   cached, and peak memory and its memory limit under `host.runtimes.mlx`. A process without MLX's
   Metal library reports only that the library is missing, because MLX aborts at its first memory

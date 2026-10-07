@@ -65,6 +65,26 @@ enum NFKMLXModelDescription {
         return info
     }
 
+    /// The description of `modules`, with the `model_type` and `max_position_embeddings` that the
+    /// release's `config.json` states at its top level or, for a multimodal release, under
+    /// `text_config`. With no modules, only the release's statements.
+    static func info(of modules: [Module], releaseDirectoryURL: URL?) -> [String: Any] {
+        var info = modules.isEmpty ? [:] : info(of: modules)
+        guard let releaseDirectoryURL,
+              let data = try? Data(contentsOf: releaseDirectoryURL.appendingPathComponent("config.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return info
+        }
+        let text = json["text_config"] as? [String: Any]
+        if let type = json["model_type"] as? String {
+            info[NFKModelInfoArchitecture] = type
+        }
+        if let positions = (json["max_position_embeddings"] ?? text?["max_position_embeddings"]) as? Int {
+            info[NFKModelInfoContextLength] = positions
+        }
+        return info
+    }
+
     private static func precisionName(_ type: DType) -> String? {
         switch type {
         case .float32: return "float32"

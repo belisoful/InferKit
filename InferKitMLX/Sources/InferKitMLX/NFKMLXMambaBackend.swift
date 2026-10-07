@@ -14,6 +14,7 @@
 import Foundation
 import InferKit
 import MLX
+import MLXNN
 import MLXRandom
 
 /// Holds the decoder's forward and the tokenizer across the async job boundary. `MLXArray` and the
@@ -34,10 +35,16 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
     private let beginOfSequence: Int?
     private let stopTokens: Set<Int>
+    private let describedModules: [Module]
+    private let releaseDirectoryURL: URL?
+    private let modelInfoCache = NFKMLXModelInfoCache()
 
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer, identifier: String) {
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer, identifier: String,
+         modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
         self.holder = NFKMambaBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.describedModules = modules
+        self.releaseDirectoryURL = releaseDirectoryURL
         beginOfSequence = tokenizer.id(forToken: "<s>")
         stopTokens = Set([tokenizer.id(forToken: "</s>")].compactMap { $0 })
         super.init()
@@ -45,6 +52,15 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
 
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
+
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the release's
+    /// `model_type` and `max_position_embeddings` where its `config.json` states them (`NFKModelInfo*`
+    /// keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+        }
+    }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
@@ -127,7 +143,8 @@ public extension NFKMLXMamba {
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
-        return NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName)
+        return NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
+                                  modules: [net], releaseDirectoryURL: directoryURL)
     }
 
     /// The Objective-C entry: builds a Mamba text-generation backend from a release directory.

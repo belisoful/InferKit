@@ -9,6 +9,7 @@
 import XCTest
 import InferKit
 import MLX
+import MLXNN
 @testable import InferKitMLX
 
 final class NFKMLXModelInfoTests: XCTestCase {
@@ -54,6 +55,61 @@ final class NFKMLXModelInfoTests: XCTestCase {
         XCTAssertEqual(configuration.modelType, "qwen3")
         XCTAssertEqual(configuration.maximumPositions, 40960)
         XCTAssertNil(try NFKMLXLanguage.configuration(fromJSON: [:]).maximumPositions)
+    }
+
+    private func releaseDirectory(config: [String: Any]) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NFKMLXModelInfoTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+        return directory
+    }
+
+    func testAReleaseDirectoryStatesItsTypeAndPositionsAtEitherLevel() throws {
+        let flat = try releaseDirectory(config: ["model_type": "granitemoehybrid", "max_position_embeddings": 131072])
+        let flatInfo = NFKMLXModelDescription.info(of: [], releaseDirectoryURL: flat)
+        XCTAssertEqual(flatInfo[NFKModelInfoArchitecture] as? String, "granitemoehybrid")
+        XCTAssertEqual(flatInfo[NFKModelInfoContextLength] as? Int, 131072)
+        XCTAssertNil(flatInfo[NFKModelInfoParameterCount], "no modules, no parameter count")
+
+        let nested = try releaseDirectory(config: ["model_type": "qwen3_5", "text_config": ["max_position_embeddings": 262144]])
+        let nestedInfo = NFKMLXModelDescription.info(of: [], releaseDirectoryURL: nested)
+        XCTAssertEqual(nestedInfo[NFKModelInfoArchitecture] as? String, "qwen3_5")
+        XCTAssertEqual(nestedInfo[NFKModelInfoContextLength] as? Int, 262144)
+
+        let stateless = try releaseDirectory(config: ["model_type": "mamba2"])
+        XCTAssertNil(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: stateless)[NFKModelInfoContextLength])
+        XCTAssertTrue(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: nil).isEmpty)
+    }
+
+    func testABackendOverAForwardDescribesItsNetworkAndRelease() throws {
+        try requireMLXRuntime()
+        let directory = try releaseDirectory(config: ["model_type": "nemotron_h", "max_position_embeddings": 131072])
+        try JSONSerialization.data(withJSONObject: ["a": 0, "b": 1]).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let projection = Linear(4, 8)
+        let backend = NFKMLXNemotronBackend(logits: { projection($0) }, tokenizer: tokenizer, identifier: "projection",
+                                            modules: [projection], releaseDirectoryURL: directory)
+        let info = backend.modelInfo
+        XCTAssertEqual(info[NFKModelInfoParameterCount] as? Int, 4 * 8 + 8)
+        XCTAssertEqual(info[NFKModelInfoWeightBytes] as? Int, 4 * (4 * 8 + 8))
+        XCTAssertEqual(info[NFKModelInfoPrecision] as? String, "float32")
+        XCTAssertEqual(info[NFKModelInfoArchitecture] as? String, "nemotron_h")
+        XCTAssertEqual(info[NFKModelInfoContextLength] as? Int, 131072)
+    }
+
+    func testTheDecoderBackendDescribesTheNetworksItIsGiven() throws {
+        try requireMLXRuntime()
+        let directory = try releaseDirectory(config: ["model_type": "qwen3_5", "text_config": ["max_position_embeddings": 262144]])
+        try JSONSerialization.data(withJSONObject: ["a": 0, "b": 1]).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        let projection = Linear(4, 8)
+        let backend = try NFKMLXDecoderBackend.release(directoryURL: directory, identifier: "projection",
+                                                       modules: [projection]) { projection($0) }
+        XCTAssertEqual(backend.modelInfo[NFKModelInfoParameterCount] as? Int, 4 * 8 + 8)
+        XCTAssertEqual(backend.modelInfo[NFKModelInfoContextLength] as? Int, 262144)
     }
 
     func testAServedLanguageModelReportsItsModelAndMLXMemory() throws {

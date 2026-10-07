@@ -601,7 +601,8 @@ public final class NFKMLXHybridLanguage: NSObject {
     public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws
         -> any NFKInferenceBackend {
         let net = try network(directoryURL: directoryURL, precision: precision)
-        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName) { net($0) }
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName,
+                                                modules: [net]) { net($0) }
     }
 
     /// The Objective-C entry for ``backend(directoryURL:precision:)`` at the released precision.

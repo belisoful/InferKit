@@ -41,7 +41,8 @@ public extension NFKMLXHybridLanguage {
     /// with the tokenizer, chat template, and stop ids of the release directory it came from.
     /// Introduced in InferKit 0.4.0.
     static func backend(network: NFKMLXHybridLanguageNet, directoryURL: URL) throws -> any NFKInferenceBackend {
-        try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName) { network($0) }
+        try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName,
+                                         modules: [network]) { network($0) }
     }
 
     /// The projections LoRA adapts: every attention projection and the recurrence's fused input and

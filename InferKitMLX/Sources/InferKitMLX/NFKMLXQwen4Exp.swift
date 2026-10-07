@@ -1281,7 +1281,8 @@ extension NFKMLXQwen4Exp {
     public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         let net = try network(directoryURL: directoryURL, precision: precision, residency: residency)
-        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName) { net($0) }
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName,
+                                                modules: [net]) { net($0) }
     }
 
     /// The Objective-C entry for ``backend(directoryURL:precision:residency:)`` at the released

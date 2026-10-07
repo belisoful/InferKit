@@ -11,6 +11,7 @@
 import Foundation
 import InferKit
 import MLX
+import MLXNN
 import MLXRandom
 
 /// Holds the decoder's forward and the tokenizer across the async job boundary. `MLXArray` and the
@@ -40,26 +41,33 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private let chatTemplate: String?
     private let beginOfSequence: Int?
     private let stopTokens: Set<Int>
+    private let describedModules: [Module]
+    private let releaseDirectoryURL: URL?
+    private let modelInfoCache = NFKMLXModelInfoCache()
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
-         chatTemplate: String?, stopTokens: Set<Int>) {
+         chatTemplate: String?, stopTokens: Set<Int>, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
         self.holder = NFKDecoderBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.describedModules = modules
+        self.releaseDirectoryURL = releaseDirectoryURL
         self.chatTemplate = chatTemplate
         beginOfSequence = tokenizer.bosTokenId >= 0 ? tokenizer.bosTokenId : nil
         self.stopTokens = stopTokens
         super.init()
     }
 
-    /// The decoder, tokenizer, chat template, and stop ids a release directory supplies.
-    static func release(directoryURL: URL, identifier: String,
+    /// The decoder, tokenizer, chat template, and stop ids a release directory supplies; `modules`
+    /// are the networks `logits` runs, which ``modelInfo`` describes.
+    static func release(directoryURL: URL, identifier: String, modules: [Module] = [],
                         logits: @escaping (MLXArray) -> MLXArray) throws -> NFKMLXDecoderBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("\(directoryURL.lastPathComponent) has no readable tokenizer")
         }
         return NFKMLXDecoderBackend(logits: logits, tokenizer: tokenizer, identifier: identifier,
                                     chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
-                                    stopTokens: stopTokens(tokenizer: tokenizer, directoryURL: directoryURL))
+                                    stopTokens: stopTokens(tokenizer: tokenizer, directoryURL: directoryURL),
+                                    modules: modules, releaseDirectoryURL: directoryURL)
     }
 
     /// The tokenizer's end-of-sequence id and every id `generation_config.json` names as one; an
@@ -80,6 +88,15 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
+
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the release's
+    /// `model_type` and `max_position_embeddings` where its `config.json` states them (`NFKModelInfo*`
+    /// keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+        }
+    }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {

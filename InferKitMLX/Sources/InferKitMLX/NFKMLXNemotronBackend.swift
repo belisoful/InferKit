@@ -15,6 +15,7 @@
 import Foundation
 import InferKit
 import MLX
+import MLXNN
 import MLXRandom
 
 /// Holds the decoder's forward and the tokenizer across the async job boundary. `MLXArray` and the
@@ -34,16 +35,31 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKNemotronBackendHolder
     private let identifier: String
     private let stopTokens: Set<Int>
+    private let describedModules: [Module]
+    private let releaseDirectoryURL: URL?
+    private let modelInfoCache = NFKMLXModelInfoCache()
 
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String) {
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
+         modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
         self.holder = NFKNemotronBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.describedModules = modules
+        self.releaseDirectoryURL = releaseDirectoryURL
         stopTokens = tokenizer.eosTokenId >= 0 ? Set([tokenizer.eosTokenId]) : []
         super.init()
     }
 
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
+
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the release's
+    /// `model_type` and `max_position_embeddings` where its `config.json` states them (`NFKModelInfo*`
+    /// keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+        }
+    }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
@@ -124,7 +140,8 @@ public extension NFKMLXNemotronH {
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
-        return NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: nemotronModelName)
+        return NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: nemotronModelName,
+                                     modules: [net], releaseDirectoryURL: directoryURL)
     }
 
     /// The Objective-C entry: builds a Nemotron Nano 2 text-generation backend from a release directory.

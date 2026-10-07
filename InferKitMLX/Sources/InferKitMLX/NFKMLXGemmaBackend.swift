@@ -39,6 +39,9 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let startOfTurn: Int?
     private let endOfTurn: Int?
     private let stopTokens: Set<Int>
+    private let describedModules: [Module]
+    private let releaseDirectoryURL: URL?
+    private let modelInfoCache = NFKMLXModelInfoCache()
 
     /// The store a paged mixture reads its routed experts from, or nil where they are resident. Its
     /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
@@ -49,9 +52,11 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     @objc public var pagesExperts: Bool { expertStore != nil }
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String,
-         expertStore: NFKMLXExpertStore? = nil) {
+         expertStore: NFKMLXExpertStore? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
         self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.describedModules = modules
+        self.releaseDirectoryURL = releaseDirectoryURL
         self.expertStore = expertStore
         beginOfSequence = tokenizer.id(forToken: "<bos>")
         startOfTurn = tokenizer.id(forToken: "<start_of_turn>")
@@ -63,6 +68,15 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
+
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the release's
+    /// `model_type` and `max_position_embeddings` where its `config.json` states them (`NFKModelInfo*`
+    /// keys). Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+        }
+    }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
@@ -175,12 +189,13 @@ public extension NFKMLXGemmaLanguage {
         if try isUnified(configURL) {
             let net = makeUnifiedNet(try unifiedConfiguration(fromHuggingFace: configURL))
             try loadUnifiedWeights(into: net, fromDirectory: directoryURL, precision: precision)
-            return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName)
+            return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
+                                      modules: [net], releaseDirectoryURL: directoryURL)
         }
         let net = makeNet(try configuration(fromHuggingFace: configURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
         return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                  expertStore: net.expertStore)
+                                  expertStore: net.expertStore, modules: [net], releaseDirectoryURL: directoryURL)
     }
 
     /// The Objective-C entry: builds a Gemma text-generation backend from a release directory.
