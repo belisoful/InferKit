@@ -263,7 +263,9 @@ How the MLX tests are chosen, over the cumulative range `origin/main..HEAD` on a
 
 - A changed source file contributes every type it declares (Swift `class`, `struct`, `enum`,
   `protocol`, `actor`, `typealias`, `extension`; Objective-C `@interface` and `@protocol`).
-- One hop follows: every source type in a file that names one of those types joins the set.
+- Two hops follow (`CC_HOPS=2`): every source type in a file that names one of those types joins the
+  set, and then every type in a file that names one of those. With one hop the selection missed the
+  Qwen-Image end-to-end test.
 - A test is selected when its body names any type in the set, whatever file it sits in: a
   configuration struct's new field is caught by a test in an unrelated-looking file that reads it,
   which is how `NFKMLXPresetReleaseTests` caught the preset regression after `bff3d76`.
