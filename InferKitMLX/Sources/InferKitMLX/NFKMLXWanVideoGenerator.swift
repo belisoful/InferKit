@@ -178,6 +178,9 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Loads both stages now, for a resident release.
     func loadResident() throws {
         try staging.use(textStage) { _ in }
+        // umT5's load leaves its converted-away groups in MLX's buffer cache, which the pipeline's load
+        // would otherwise sit on top of.
+        NFKMLXGPU.clearCache()
         try staging.use(pipelineStage) { _ in }
     }
 
@@ -328,6 +331,8 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let prompts = [self.prompt(prompt)] + (guides ? [self.prompt(negativePrompt ?? "")] : [])
         return try staging.exclusively {
             let features = try staging.with(textStage) { stage in prompts.map { stage.features($0) } }
+            // The encode's buffers stay in MLX's cache when the text stage is held resident.
+            NFKMLXGPU.clearCache()
             return try staging.with(pipelineStage) { pipeline in
                 let latent = pipeline.denoise(textEmbeds: features[0], negativeEmbeds: guides ? features[1] : nil,
                                               frames: grid.0, height: grid.1, width: grid.2, steps: steps,

@@ -741,8 +741,25 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   graph. The released Wan 2.1 1.3B decode of 17×480×832 frames reached an MLX peak of 36.1 GB beside
   16.7 GB of resident weights, and the end-to-end run peaked at 33.8 GB on a 32 GB machine. `NFKWanCache`
   now stores `(x * 1).asType(x.dtype)`, the reference's `clone()`, and the decode evaluates each chunk
-  with its cache. The end-to-end peak fell to 28.7 GB with every parity figure unchanged. The decode of
-  a single four-frame chunk still takes about 15 GB beside the weights, and nothing has measured where.
+  with its cache. The end-to-end peak fell to 28.7 GB with every parity figure unchanged. The cost that
+  remained in each chunk is the convolution workspace of the next entry.
+- **A 3-D convolution keeps every temporal tap's workspace until its command buffer completes
+  (2026-10-07).** MLX runs a stride-1 `conv3d` with a short temporal kernel as one 2-D convolution per
+  tap (`small_kd_conv_3D_gpu`), and each tap's buffers stay in the command buffer's `copies` until it
+  completes. A 3×3 2-D convolution whose input and output channels sum to 256 or more takes the Winograd
+  path, which sizes its buffers from `recommendedMaxWorkingSetSize` (`winograd_batch_step`). Measured on
+  the Wan 2.1 decoder, one four-frame 480×832 chunk:
+  - a residual block at 240×416 with 192 channels → 12.3 GB of workspace on a 292 MB output;
+  - a residual block at 480×832 with 96 channels (implicit GEMM) → 8.2 GB on a 585 MB output;
+  - one causal convolution there → 3.96 GB, against 1.46 GB for a bare `conv3d` of the same padded
+    input, the rest being the cache concatenation, an explicit spatial-pad copy, and a lazy cache copy
+    that kept the input alive.
+  `NFKWanCausalConv3d` now runs and evaluates one output frame at a time, passes its spatial padding to
+  `conv3d`, and evaluates its cache copy when it stores it. The chunk's working memory fell from 13.8 to
+  10.3 GB and the 240×416 block's from 12.3 to 3.4 GB, with the output bit-identical and the warm full
+  decode at 23.9 s against 25.2 s. `Memory.peakMemory` counts active buffers only. A process footprint
+  also counts MLX's buffer cache, which held 5.7 GB of freed buffers after umT5's load and encode until
+  the Wan generator cleared it after its text stage.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?

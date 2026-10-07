@@ -490,6 +490,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   The released Wan 2.1 T2V 1.3B generator makes a 17-frame 480×832 clip at a 28.7 GB peak, down from
   33.8 GB, with its output unchanged. Qwen-Image's autoencoder and `NFKMLXWanAnimate` decode through
   the same path.
+- Each causal convolution in the Wan autoencoder runs one output frame at a time, with its spatial
+  padding applied by the convolution, so MLX releases a convolution's workspace frame by frame. One
+  four-frame chunk of a 480×832 decode takes 10.3 GB of working memory beside the weights, down from
+  13.8 GB, with the output bit-identical. `NFKMLXWanVideoGenerator` clears MLX's buffer cache after its
+  text stage, which held 5.7 GB of freed buffers from umT5's load and encode.
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 

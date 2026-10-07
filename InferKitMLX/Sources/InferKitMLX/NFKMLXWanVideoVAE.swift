@@ -106,10 +106,13 @@ final class NFKWanCache {
     func next() -> Int { let i = index; index += 1; return i }
     func slot(_ i: Int) -> Entry { slots[i] ?? .empty }
 
-    /// Stores `frames` in slot `i` as a copy, the reference's `clone()`. A slice shares its source's
-    /// buffer, so storing one would hold every convolution's whole chunk input until the next chunk.
+    /// Stores `frames` in slot `i` as an evaluated copy, the reference's `clone()`. A slice shares its
+    /// source's buffer, and an unevaluated copy reads it, so either would hold the convolution's whole
+    /// chunk input until the chunk is evaluated.
     func store(_ i: Int, _ frames: MLXArray) {
-        slots[i] = .frames((frames * 1).asType(frames.dtype))
+        let copy = (frames * 1).asType(frames.dtype)
+        eval(copy)
+        slots[i] = .frames(copy)
     }
 
     /// The stored frames, evaluated with each chunk so the chunk's graph is released before the next.
@@ -158,21 +161,39 @@ final class NFKWanCausalConv3d: Module {
             h = concatenated([c, h], axis: 1)
             left -= c.dim(1)
         }
-        h = padded(h, widths: [IntOrPair(0), IntOrPair((left, 0)), IntOrPair((spatialPad, spatialPad)),
-                               IntOrPair((spatialPad, spatialPad)), IntOrPair(0)])
-        let out = conv3d(h, weight, stride: IntOrTriple((strideT, 1, 1)), padding: 0)
-        return out + bias.reshaped([1, 1, 1, 1, -1])
+        return convolved(h, timePad: left)
     }
 
     /// A plain application (no caching), for the temporal resample convolutions the reference calls
     /// directly on an already-concatenated input.
     func plain(_ x: MLXArray) -> MLXArray {
-        var h = x
-        if causalPad > 0 || spatialPad > 0 {
-            h = padded(h, widths: [IntOrPair(0), IntOrPair((causalPad, 0)), IntOrPair((spatialPad, spatialPad)),
-                                   IntOrPair((spatialPad, spatialPad)), IntOrPair(0)])
+        convolved(x, timePad: causalPad)
+    }
+
+    /// `x` left-padded in time by `timePad` and convolved, the spatial padding applied by the convolution.
+    ///
+    /// @discussion MLX runs a 3-D convolution as one 2-D convolution per temporal tap, and each keeps its
+    /// workspace until its command buffer completes: about 4 GB for one 3×3×3 convolution over four
+    /// 240×416 frames of 192 channels. A stride-1 convolution over several output frames therefore runs
+    /// and evaluates one output frame at a time, which computes every output element as the whole
+    /// convolution does.
+    private func convolved(_ x: MLXArray, timePad: Int) -> MLXArray {
+        let h = timePad > 0
+            ? padded(x, widths: [IntOrPair(0), IntOrPair((timePad, 0)), IntOrPair(0), IntOrPair(0), IntOrPair(0)])
+            : x
+        let padding = IntOrTriple((0, spatialPad, spatialPad))
+        let bias = self.bias.reshaped([1, 1, 1, 1, -1])
+        let kernelT = weight.dim(1)
+        let frames = h.dim(1) - kernelT + 1
+        guard strideT == 1, frames > 1 else {
+            return conv3d(h, weight, stride: IntOrTriple((strideT, 1, 1)), padding: padding) + bias
         }
-        return conv3d(h, weight, stride: IntOrTriple((strideT, 1, 1)), padding: 0) + bias.reshaped([1, 1, 1, 1, -1])
+        let outputs = (0 ..< frames).map { t -> MLXArray in
+            let frame = conv3d(h[0..., t ..< (t + kernelT)], weight, padding: padding) + bias
+            eval(frame)
+            return frame
+        }
+        return concatenated(outputs, axis: 1)
     }
 }
 
