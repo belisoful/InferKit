@@ -339,10 +339,21 @@ final class MLXExamples: XCTestCase {
         XCTAssertEqual(continued, model.generate(prompt: followUp, options: options))
         XCTAssertEqual(cache.count, followUp.count + continued.count)
         // Persist a long system prompt's cache and reload it later.
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("system-prompt.safetensors")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("system-prompt-\(UUID().uuidString).safetensors")
         try cache.save(to: url)
         XCTAssertEqual(try NFKMLXPromptCache.load(from: url).tokens, cache.tokens)
         try? FileManager.default.removeItem(at: url)
+
+        // Serving several chats, the backend keeps a cache for each conversation a request names.
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"],
+                                          parameters: [NFKParameterConversationKey: "chat-7"])
+        let backend = try XCTUnwrap(try NFKMLXLanguage.backend(weightsURL: nil, tokenizer: nil, configuration: .tiny)
+                                    as? NFKMLXLanguageBackend)
+        backend.conversationCacheByteBudget = 4 << 30
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterConversationKey))
+        XCTAssertEqual(request.parameter(forKey: NFKParameterConversationKey) as? String, "chat-7")
+        XCTAssertEqual(backend.conversationCacheCount, 0)
     }
 
     // Docs/examples.md: A mixture-of-experts release reads through the same factory; the config

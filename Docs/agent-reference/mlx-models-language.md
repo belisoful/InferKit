@@ -329,6 +329,14 @@ attention and feed-forward.
   ever set, so generation ran to `maxTokens` — the release's eos is now the default stop when a
   request names none (a behavior change, recorded in the changelog). `NFKMLXLanguageBackend` is now
   `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
+  **Conversation caches (2026-10-07):** a request carrying `NFKParameterConversationKey` runs against
+  that conversation's own `NFKMLXPromptCache` in `NFKMLXConversationCaches`, under
+  `conversationCacheByteBudget` (2 GiB). Bytes are `NFKMLXKeyValueCache.allocatedBytes`, the sum of
+  every stored array's `nbytes`, capacity included. Eviction runs after each named run, least
+  recently used first, skipping the conversation that ran, so one conversation over the budget
+  keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
+  does not ask for reuse drops it. A named request leaves it alone. Only `NFKMLXLanguageBackend`
+  has conversation caches; DeepSeek, Gemma 3/3n, and the prefill-only backends do not.
   `Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9: the LLM oracle
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode

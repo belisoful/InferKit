@@ -1275,6 +1275,16 @@
 	//   [(NFKMLXLanguageBackend *)llm resetPromptCache];
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(resetPromptCache)]);
+
+	// Serving several chats, a request names its conversation and continues that conversation's
+	// cache, under one byte budget; a conversation's cache is dropped on its own.
+	NFKInferenceRequest *turn = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"hello" }
+		parameters:@{ NFKParameterConversationKey: @"chat-7" }];
+	XCTAssertEqualObjects(turn.parameters[NFKParameterConversationKey], @"chat-7");
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(setConversationCacheByteBudget:)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(conversationCacheCount)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(resetPromptCacheForConversation:)]);
 	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(hasDraftModel)]);
 }
 

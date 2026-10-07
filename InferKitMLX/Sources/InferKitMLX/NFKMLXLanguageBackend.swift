@@ -41,7 +41,8 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// ``NFKMLXGenerationOptions/draftTokens``.
     @objc public static let draftTokens = "NFKMLXParameterDraftTokens"
     /// Whether the backend keeps its key-value cache between requests and prefills only what a new
-    /// prompt adds to the last one, as an `NSNumber` boolean. See
+    /// prompt adds to the last one, as an `NSNumber` boolean. A request that names its conversation
+    /// under `NFKParameterConversationKey` reuses that conversation's cache unless this is NO. See
     /// ``NFKMLXGenerationOptions/reusesPromptCache``.
     @objc public static let reusesPromptCache = "NFKMLXParameterReusesPromptCache"
     /// The output's required shape, as an `NSString`: `"json"` constrains sampling to well-formed
@@ -141,7 +142,9 @@ public struct NFKMLXGenerationOptions: Sendable {
     public var draftTokens: Int = 4
 
     /// Whether the backend keeps its key-value cache between requests, so a prompt that extends the
-    /// previous one prefills only its tail. Off by default; see ``NFKMLXPromptCache``.
+    /// previous one prefills only its tail. Off by default; a request that names its conversation
+    /// under `NFKParameterConversationKey` reuses that conversation's own cache without it. See
+    /// ``NFKMLXPromptCache``.
     public var reusesPromptCache: Bool = false
 
     /// Constrains what the model may emit; nil leaves sampling free. See ``NFKMLXTokenConstraint``.
@@ -321,6 +324,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The cache kept between requests when a request asks for reuse. Generation is serialized
     /// through `generationLock`: two runs through one cache would interleave their rows.
     private var promptCache: NFKMLXPromptCache?
+    /// The caches of requests that name their conversation, read and written under `generationLock`.
+    private let conversationCaches = NFKMLXConversationCaches(byteBudget: 2 << 30)
     private let generationLock = NSLock()
     private let modelInfoCache = NFKMLXModelInfoCache()
     private let releaseDirectoryURL: URL?
@@ -387,7 +392,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
          NFKMLXGenerationParameterKey.outputFormat,
          NFKMLXGenerationParameterKey.choices,
          NFKMLXGenerationParameterKey.reasoningFormat,
-         NFKParameterReasoningEffort]
+         NFKParameterReasoningEffort,
+         NFKParameterConversationKey]
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -402,10 +408,50 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         return promptCache?.count ?? 0
     }
 
-    /// Drops the retained prompt cache, so the next request prefills from the start.
+    /// Drops every retained prompt cache, the conversations' included, so the next request prefills
+    /// from the start.
     @objc public func resetPromptCache() {
         generationLock.lock(); defer { generationLock.unlock() }
         promptCache = nil
+        conversationCaches.removeAll()
+    }
+
+    /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversationCaches.remove(conversation)
+    }
+
+    /// The bytes the conversations' prompt caches may hold together.
+    ///
+    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
+    /// continues from that conversation's own cache, so the turns of several chats served at once
+    /// each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are dropped, never the one a request is running. Lowering the budget drops down
+    /// to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversationCaches.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversationCaches.byteBudget = newValue
+            conversationCaches.evict()
+        }
+    }
+
+    /// How many conversations hold a prompt cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversationCaches.count
+    }
+
+    /// The bytes the conversations' prompt caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversationCaches.heldBytes
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -439,7 +485,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
-        let (produced, cached) = generate(tokens, options: options)
+        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request))
         let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reply = decode(produced)
 
@@ -550,11 +596,26 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         return NFKMLXChoiceConstraint(choices: options.choices ?? [], vocabulary: vocabulary)
     }
 
-    /// Runs the tokens through the plain or the speculative loop, against the retained prompt cache
-    /// when the options ask for one. Answers the tokens produced and how many of the prompt's the
-    /// cache already held, which is the cached share a run reports.
-    private func generate(_ tokens: [Int],
-                          options requested: NFKMLXGenerationOptions) -> (produced: [Int], cached: Int) {
+    /// The conversation whose prompt cache a request continues: its `NFKParameterConversationKey`,
+    /// unless the request turns reuse off.
+    static func conversation(of request: NFKInferenceRequest) -> String? {
+        guard let conversation = request.parameter(forKey: NFKParameterConversationKey) as? String,
+              !conversation.isEmpty else {
+            return nil
+        }
+        if let reuse = request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber,
+           !reuse.boolValue {
+            return nil
+        }
+        return conversation
+    }
+
+    /// Runs the tokens through the plain or the speculative loop, against the conversation's prompt
+    /// cache when the request names one, or the retained cache when the options ask for one.
+    /// Answers the tokens produced and how many of the prompt's the cache already held, which is
+    /// the cached share a run reports.
+    private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions,
+                          conversation: String?) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
@@ -567,7 +628,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             }
         }
         var cache: NFKMLXPromptCache?
-        if options.reusesPromptCache {
+        if let conversation {
+            cache = conversationCaches.cache(for: conversation, layerCount: net.configuration.layerCount,
+                                             options: options)
+        } else if options.reusesPromptCache {
             if let kept = promptCache, kept.matches(layerCount: net.configuration.layerCount, options: options) {
                 cache = kept
             } else {
@@ -584,6 +648,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
         } else {
             produced = net.generate(prompt: tokens, options: options, promptCache: cache)
+        }
+        if let conversation {
+            conversationCaches.evict(keeping: conversation)
         }
         return (produced, cache?.sharedPrefixLength ?? 0)
     }

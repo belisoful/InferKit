@@ -759,9 +759,10 @@ and start times on `systemUptime`, and the job's last reported progress.
   a server with no wait estimate keeps its conversations. Keeping a conversation skips
   `pickAmong:`, so round robin's turn advances only on requests it places. The record is written
   when a server answers, so a failover re-pins. At most 4096 conversations are kept; past that the
-  least recently used go. MLX's language backend keeps one prompt cache per backend, so affinity
-  pays where a server serves few concurrent chats, and the request still has to ask for reuse
-  (`NFKMLXGenerationParameterKey.reusesPromptCache`).
+  least recently used go. The balancer routes by a key it derives but does not add that key to the
+  request, so a server's backend sees `NFKParameterConversationKey` only when the caller sent one.
+  MLX's language backend keeps a prompt cache per named conversation (`conversationCacheByteBudget`)
+  and reuses it without `NFKMLXGenerationParameterKey.reusesPromptCache`.
 - `lastServerBaseURL` is the server's base URL as added. Rebuilding it from the client's endpoint by
   deleting path components leaves a trailing slash, and the URLs then compare unequal.
 - Runtime reports: the server resolves each registered class name with `NSClassFromString` and asks

@@ -51,6 +51,9 @@ public final class NFKMLXPromptCache {
     /// How many positions the cache holds.
     public var count: Int { tokens.count }
 
+    /// The bytes the cache occupies, its unused capacity included.
+    var allocatedBytes: Int { cache.allocatedBytes }
+
     /// Whether this cache was built for the same geometry and options as `options` asks for, which
     /// is what decides whether a backend keeps it or starts another.
     func matches(layerCount: Int, options: NFKMLXGenerationOptions) -> Bool {
@@ -169,5 +172,62 @@ public final class NFKMLXPromptCache {
         case "bfloat16": return .bfloat16
         default: return .float32
         }
+    }
+}
+
+/// The prompt caches a backend keeps for named conversations, under one byte budget.
+///
+/// @discussion Each conversation continues from its own cache, so turns of several chats arriving
+/// interleaved each prefill only what they add. Past the budget the least recently used
+/// conversations go first. The conversation a request is running is never evicted for it, so one
+/// conversation larger than the budget keeps its cache until another request needs the room. The
+/// caller serializes access.
+final class NFKMLXConversationCaches {
+    private var caches: [String: NFKMLXPromptCache] = [:]
+    /// The conversations, least recently used first.
+    private var order: [String] = []
+
+    /// The bytes the caches may hold together.
+    var byteBudget: Int
+
+    init(byteBudget: Int) {
+        self.byteBudget = byteBudget
+    }
+
+    var count: Int { caches.count }
+
+    var heldBytes: Int { caches.values.reduce(0) { $0 + $1.allocatedBytes } }
+
+    /// The conversation's cache, marked most recently used. A conversation without one, or whose
+    /// cache was built for another window or quantization, starts a new one.
+    func cache(for conversation: String, layerCount: Int, options: NFKMLXGenerationOptions) -> NFKMLXPromptCache {
+        order.removeAll { $0 == conversation }
+        order.append(conversation)
+        if let kept = caches[conversation], kept.matches(layerCount: layerCount, options: options) {
+            return kept
+        }
+        let made = NFKMLXPromptCache(layerCount: layerCount, window: options.contextWindow,
+                                     quantization: options.cacheQuantization)
+        caches[conversation] = made
+        return made
+    }
+
+    /// Evicts the least recently used conversations other than `kept` until the caches fit the budget.
+    func evict(keeping kept: String? = nil) {
+        var held = heldBytes
+        for conversation in order where held > byteBudget && conversation != kept {
+            held -= caches[conversation]?.allocatedBytes ?? 0
+            remove(conversation)
+        }
+    }
+
+    func remove(_ conversation: String) {
+        caches[conversation] = nil
+        order.removeAll { $0 == conversation }
+    }
+
+    func removeAll() {
+        caches = [:]
+        order = []
     }
 }

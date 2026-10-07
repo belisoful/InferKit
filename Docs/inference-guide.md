@@ -272,7 +272,11 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
 - **`chatTemplate`** renders `NFKInputMessages` in ChatML with the release's own special tokens, which
   is what an instruct release was trained on. Off by default, because a base model wants plain text.
 - **`reusesPromptCache`** keeps the key-value cache between requests, so a conversation's next turn
-  prefills only what it adds. Exact, since the cache rolls back to where the prompts diverge.
+  prefills only what it adds. Exact, since the cache rolls back to where the prompts diverge. A
+  request that names its conversation under `NFKParameterConversationKey` (OpenAI's
+  `prompt_cache_key` on a served chat route) continues that conversation's own cache without the
+  key, so a server answering several chats at once keeps each one's prefix. The caches share
+  `conversationCacheByteBudget` (2 GiB by default), and the least recently used go first.
 - **`draftTokens`**, with a backend built from a main release and a draft release, decodes
   speculatively: the draft proposes, the model verifies in one pass, and the output is the model's own.
 - **`jsonOutput`** and **`choices`** constrain sampling through a grammar mask, so the reply is

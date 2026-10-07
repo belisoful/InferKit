@@ -600,6 +600,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The SAM and SAM 2 mask decoders' upscaling `LayerNorm2d` uses ε = 1e-6, the references' value. It used
   MLXNN's default of 1e-5.
 
+#### A language backend keeps a prompt cache for each conversation
+
+- `NFKMLXLanguageBackend` keeps a key-value cache for each conversation a request names under
+  `NFKParameterConversationKey`, so a server answering several chats at once prefills only what each
+  turn adds. A named request reuses its conversation's cache without
+  `NFKMLXGenerationParameterKey.reusesPromptCache`, and setting that key to NO opts out. The caches
+  share `conversationCacheByteBudget` (2 GiB by default), the least recently used go first, and the
+  conversation a request is running is never dropped for it. `conversationCacheCount` and
+  `conversationCacheBytes` report them, `resetPromptCacheForConversation:` drops one, and
+  `resetPromptCache` drops every one. A request without a conversation keeps the single retained
+  cache as before. With `NFKBalancedBackend` keeping a conversation on one server and the server's
+  chat route reading OpenAI's `prompt_cache_key` into the key, an OpenAI client's chat reuses its
+  prefix on a balanced pool of MLX servers.
+
 #### Translation at parity in eight more languages and three more sizes
 
 - The SentencePiece reader runs each model's own precompiled character map as its normalizer

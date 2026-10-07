@@ -315,6 +315,13 @@ public final class NFKMLXKeyValueCache {
     /// Rows a layer currently holds.
     public func retainedLength(layer: Int = 0) -> Int { ends[layer] - starts[layer] }
 
+    /// The bytes the cache's arrays occupy, their unused capacity included.
+    var allocatedBytes: Int {
+        [keys, values, keyScales, keyBiases, valueScales, valueBiases,
+         keyGroups, keyGroupScales, keyGroupBiases, keyResidual]
+            .reduce(0) { total, layers in total + layers.reduce(0) { $0 + ($1?.nbytes ?? 0) } }
+    }
+
     /// How many cached positions a forward pass of more than one token will attend to, which is what
     /// its mask has to be built against.
     ///

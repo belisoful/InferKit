@@ -370,6 +370,11 @@ let cache = NFKMLXPromptCache(layerCount: net.configuration.layerCount)
 let reply = net.generate(prompt: turn, options: options, promptCache: cache)
 let next = net.generate(prompt: turn + reply + newMessage, options: options, promptCache: cache)
 try cache.save(to: url)                                // NFKMLXPromptCache.load(from:) restores it
+
+// Serving several chats, the backend keeps a cache for each conversation a request names:
+let request = NFKInferenceRequest(inputs: [NFKInputMessages: messages],
+                                  parameters: [NFKParameterConversationKey: "chat-7"])
+(backend as? NFKMLXLanguageBackend)?.conversationCacheByteBudget = 4 << 30   // least recently used go first
 ```
 
 **Speculative decoding.** A smaller release of the same family proposes a few tokens, the model
@@ -2535,7 +2540,13 @@ NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
 NFKInferenceRequest *pick = [[NFKInferenceRequest alloc]
 	initWithInputs:@{ NFKInputPrompt: @"Is the sky blue? Answer yes or no." }
 	parameters:@{ NFKMLXGenerationParameterKey.choices: @[ @"yes", @"no" ] }];
-// When a conversation ends, drop the retained cache:
+// Serving several chats, a request names its conversation and continues that conversation's cache:
+NFKInferenceRequest *turn = [[NFKInferenceRequest alloc]
+	initWithInputs:@{ NFKInputMessages: messages }
+	parameters:@{ NFKParameterConversationKey: @"chat-7" }];
+((NFKMLXLanguageBackend *)llm).conversationCacheByteBudget = 4LL << 30;   // least recently used go first
+// When a conversation ends, drop its cache, or every retained cache:
+[(NFKMLXLanguageBackend *)llm resetPromptCacheForConversation:@"chat-7"];
 [(NFKMLXLanguageBackend *)llm resetPromptCache];
 ```
 
