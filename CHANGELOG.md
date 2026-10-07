@@ -65,7 +65,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `GET /v1/models` entry carries the same load. A model's load is its limit, running and queued runs,
   run counts by outcome, moving averages of run and wait time, output tokens per second where results
   report usage, the input tokens they reported and the share of it a backend's cache served
-  (`cached_input_share`, `NFKServerModelStatus.cachedInputShare`), the estimated wait for a new request, and each running run's elapsed time, progress,
+  (`cached_input_share`, `NFKServerModelStatus.cachedInputShare`), what the backend reports about its
+  state now under `status` (the optional `backendStatus`, `NFKServerModelStatus.backendStatus`), the
+  estimated wait for a new request, and each running run's elapsed time, progress,
   and estimated remaining time. The host object names the chip and cores, the thermal state, Low
   Power Mode, memory (physical, available, working set, pressure, this process's footprint), CPU usage
   and load averages, storage on `storageDirectoryURL`'s volume, and on macOS the GPU utilization the
@@ -120,6 +122,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   it off. A conversation named from its messages is sent to the server under the key, so the
   server's backend can keep its prompt as it would for a caller's key. `NFKRemoteBackend` sends the
   key as `prompt_cache_key`, and `NFKInferenceServer`'s chat route reads `prompt_cache_key` into it.
+  Its `backendStatus` reports the policy, each server's health and outstanding requests, the
+  conversations it keeps, and how many times one moved.
 - The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
@@ -620,7 +624,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   conversation a request is running is never dropped for it. `conversationCacheCount` and
   `conversationCacheBytes` report them, `resetPromptCacheForConversation:` drops one, and
   `resetPromptCache` drops every one. A request without a conversation keeps the single retained
-  cache as before. With `NFKBalancedBackend` keeping a conversation on one server and the server's
+  cache as before. Its `backendStatus` reports the caches as of the last run, so a server's status
+  route shows them without waiting on a run in progress. With `NFKBalancedBackend` keeping a conversation on one server and the server's
   chat route reading OpenAI's `prompt_cache_key` into the key, an OpenAI client's chat reuses its
   prefix on a balanced pool of MLX servers. A chat sent without a key reuses it too, under the name
   the balancer derives from its opening messages.

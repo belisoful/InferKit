@@ -68,6 +68,20 @@
 
 @end
 
+/*! A backend that reports a state of the test's writing. */
+@interface NFKServedStatusBackend : NFKServedTestBackend
+@property (atomic, copy) NSDictionary<NSString *, id> *reportedStatus;
+@end
+
+@implementation NFKServedStatusBackend
+
+- (NSDictionary<NSString *, id> *)backendStatus
+{
+	return self.reportedStatus;
+}
+
+@end
+
 /*! A backend that streams: it reports each partial text, then finishes with the last. */
 @interface NFKServedStreamingBackend : NFKServedTestBackend
 @property (nonatomic, copy) NSArray<NSString *> *partials;
@@ -900,6 +914,28 @@
 {
 	return [self postTo:[server.localBaseURL URLByAppendingPathComponent:@"chat/completions"]
 				   JSON:@{ @"messages": @[ @{ @"role": @"user", @"content": @"x" } ] }];
+}
+
+- (void)testEachModelsStatusCarriesWhatItsBackendReportsAsJSON
+{
+	NFKServedStatusBackend *reporting = [[NFKServedStatusBackend alloc] init];
+	reporting.reportedStatus = @{ @"caches": @2, @"healthy": @YES, @"name": @"pool",
+								 @"servers": @[ @{ @"url": @"http://a", @"load": @0.5, @"since": [NSDate date] },
+												@{ @"url": @"http://b", @"load": @(NAN) } ],
+								 @"seen": [NSDate date], @"ratio": @(INFINITY), @3: @"numbered key" };
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"reporting": reporting,
+															  @"quiet": [[NFKServedTestBackend alloc] init] }];
+	NSDictionary *status = [self statusOf:server];
+	NSDictionary *entries = [NSDictionary dictionaryWithObjects:status[@"models"]
+														forKeys:[status[@"models"] valueForKey:@"id"]];
+	NSDictionary *expected = @{ @"caches": @2, @"healthy": @YES, @"name": @"pool",
+								@"servers": @[ @{ @"url": @"http://a", @"load": @0.5 }, @{ @"url": @"http://b" } ] };
+	XCTAssertEqualObjects(entries[@"reporting"][@"status"], expected, @"dates, non-finite numbers, and other keys are left out");
+	XCTAssertNil(entries[@"quiet"][@"status"], @"a backend that reports nothing has no status");
+
+	NFKServerStatus *typed = [NFKServerStatus statusWithJSONObject:status];
+	XCTAssertEqualObjects([typed modelNamed:@"reporting"].backendStatus[@"caches"], @2);
+	XCTAssertEqualObjects([typed modelNamed:@"quiet"].backendStatus, @{});
 }
 
 - (void)testTheStatusRouteTotalsTheInputAndTheCachedShareTheBackendReported

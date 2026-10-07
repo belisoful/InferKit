@@ -111,6 +111,8 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 @property (nonatomic, strong) NSMutableArray<NFKBalancedServer *> *servers;
 @property (nonatomic, assign) NSUInteger turn;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKBalancedConversation *> *conversations;
+/*! How many times a conversation went to a server other than the one it was tied to. */
+@property (nonatomic, assign) NSUInteger conversationMoves;
 @property (atomic, readwrite, copy, nullable) NSURL *lastServerBaseURL;
 @property (nonatomic, strong) dispatch_queue_t discoveryQueue;
 @property (nonatomic, strong, nullable) dispatch_source_t discoveryTimer;
@@ -500,6 +502,9 @@ typedef struct {
 	}
 	@synchronized (self) {
 		NFKBalancedConversation *entry = self.conversations[conversation] ?: [[NFKBalancedConversation alloc] init];
+		if (entry.server != nil && entry.server != server) {
+			self.conversationMoves += 1;
+		}
 		entry.server = server;
 		entry.lastUsed = [NSDate date];
 		self.conversations[conversation] = entry;
@@ -636,6 +641,37 @@ typedef struct {
 - (NSSet<NSString *> *)supportedParameterKeys
 {
 	return self.preparedParameterKeys ?: [NSSet set];
+}
+
+- (NSDictionary<NSString *, id> *)backendStatus
+{
+	NSArray<NSString *> *policies = @[ @"shortest_expected_wait", @"fewest_outstanding", @"round_robin" ];
+	@synchronized (self) {
+		NSDate *now = [NSDate date];
+		NSMutableArray *servers = [NSMutableArray arrayWithCapacity:self.servers.count];
+		for (NFKBalancedServer *server in self.servers) {
+			NSMutableDictionary<NSString *, id> *entry = [NSMutableDictionary dictionary];
+			entry[@"base_url"] = server.baseURL.absoluteString;
+			entry[@"discovered"] = @(server.discovered);
+			entry[@"hosts_model"] = @(server.model != nil);
+			entry[@"strained"] = @([self isStrained:server]);
+			entry[@"outstanding"] = @(server.dispatches.count);
+			NSTimeInterval resting = server.downUntil != nil ? [server.downUntil timeIntervalSinceDate:now] : 0;
+			if (resting > 0) {
+				entry[@"resting_seconds"] = @(resting);
+			}
+			if (server.statusDate != nil) {
+				entry[@"status_age_seconds"] = @([now timeIntervalSinceDate:server.statusDate]);
+			}
+			[servers addObject:entry];
+		}
+		NSInteger policy = self.policy;
+		return @{ @"policy": policy >= 0 && policy < (NSInteger)policies.count ? policies[policy] : @"unknown",
+				  @"servers": servers,
+				  @"conversation_affinity": @(self.conversationAffinity),
+				  @"conversations": @(self.conversations.count),
+				  @"conversation_moves": @(self.conversationMoves) };
+	}
 }
 
 - (NSDictionary<NSString *, id> *)modelInfo

@@ -121,8 +121,9 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 
 				Status. Each model's backend describes its loaded model under "model" (its modelInfo:
 				parameter count, weight and storage bytes, precision, quantization, context length,
-				compute units) in the status route and in its GET /models entry, which also carry
-				the model's load under "load":
+				compute units) and its state now under "status" (its backendStatus, when it reports
+				one) in the status route and in its GET /models entry, which also carry the model's
+				load under "load":
 				- limit, running, and queued (queue_limit when one is set).
 				- completed, failed, cancelled, and refused run counts.
 				- average_run_seconds and average_wait_seconds, moving averages that weight the

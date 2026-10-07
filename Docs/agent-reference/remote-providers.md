@@ -667,7 +667,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 33 tests, and `NFKBalancedBackendTests`, 17, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 34 tests, and `NFKBalancedBackendTests`, 18, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -706,6 +706,14 @@ and start times on `systemUptime`, and the job's last reported progress.
   slot. A cancelled run still in the queue is not counted.
 - Only runs that return a result feed the run average, so a fast refusal does not shorten it. The
   averages are exponential, newest run weighted 0.2, first run taken whole.
+- `backendStatus` (2026-10-07) is read on every status request and on every `/models` entry, so an
+  adopter answers from a snapshot and never takes a lock a run holds: the MLX language backend
+  refreshes its cache figures under its generation lock after each run and reads them under a
+  separate lock. `NFKServedJSONObject` keeps strings, finite numbers, booleans, and arrays and
+  string-keyed dictionaries of them, eight levels deep; an empty result leaves `status` out. The
+  balancer's report: `policy`, `servers` (`base_url`, `discovered`, `hosts_model`, `strained`,
+  `outstanding`, `resting_seconds` while backing off, `status_age_seconds`), `conversation_affinity`,
+  `conversations`, and `conversation_moves`, counted when a conversation's record changes server.
 - Token totals (2026-10-07) are lifetime sums, not averages: `input_tokens` over every completed run
   whose `NFKOutputUsage` names `NFKUsageInputTokens`, and `cached_input_tokens` / `cached_input_share`
   over the runs that also name `NFKUsageCachedTokens`, so a backend that never reports a cached count

@@ -110,6 +110,22 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         XCTAssertEqual(backend.conversationCacheCount, 1, "b's run dropped a, the one not running")
     }
 
+    func testTheBackendStatusReportsTheCaches() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 0)
+        XCTAssertEqual(backend.backendStatus["conversation_cache_byte_budget"] as? Int, 2 << 30)
+        XCTAssertEqual(try cachedTokens(backend, opening, conversation: "a"), 0)
+        XCTAssertEqual(try cachedTokens(backend, opening, reuse: true), 0)
+        let status = backend.backendStatus
+        XCTAssertEqual(status["conversation_caches"] as? Int, 1)
+        XCTAssertEqual(status["conversation_cache_bytes"] as? Int, backend.conversationCacheBytes)
+        XCTAssertGreaterThan(status["prompt_cache_length"] as? Int ?? 0, 0, "the unnamed retained cache")
+        backend.conversationCacheByteBudget = 0
+        XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 0, "lowering the budget refreshes it")
+        XCTAssertEqual(backend.backendStatus["conversation_cache_byte_budget"] as? Int, 0)
+    }
+
     func testResettingDropsOneConversationOrAll() throws {
         try requireMLXRuntime()
         let backend = try backend()

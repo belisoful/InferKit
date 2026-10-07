@@ -111,6 +111,13 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 	before the conversation moves. Defaults to 10 seconds. */
 @property (atomic, assign) NSTimeInterval conversationWaitAllowance;
 
+/*! The balancer's state, which NFKInferenceServer serves under the model's "status": the policy;
+	each server's base URL, whether it was discovered, hosts the model, or is strained, its
+	outstanding requests, the seconds left in its backoff (resting_seconds), and the age of its
+	status reading; the conversations it keeps; and conversation_moves, how many times a
+	conversation went to a server other than its own. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *backendStatus;
+
 /*! The servers' base URLs, in the order they were added. */
 @property (nonatomic, readonly, copy) NSArray<NSURL *> *serverBaseURLs;
 

@@ -85,6 +85,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy) NSString *backendIdentifier;
 @property (nonatomic, readwrite, getter=isReady) BOOL ready;
 @property (nonatomic, readwrite, copy) NSDictionary<NSString *, id> *modelInfo;
+@property (nonatomic, readwrite, copy) NSDictionary<NSString *, id> *backendStatus;
 @property (nonatomic, readwrite) NSInteger limit;
 @property (nonatomic, readwrite) NSInteger running;
 @property (nonatomic, readwrite) NSInteger queued;
@@ -112,6 +113,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	status.backendIdentifier = NFKStatusString(entry[@"backend"]);
 	status.ready = [NFKStatusNumber(entry[@"ready"]) boolValue];
 	status.modelInfo = NFKStatusDictionary(entry[@"model"]) ?: @{};
+	status.backendStatus = NFKStatusDictionary(entry[@"status"]) ?: @{};
 	NSDictionary *load = NFKStatusDictionary(entry[@"load"]) ?: @{};
 	status.limit = NFKStatusInteger(load[@"limit"]);
 	status.running = NFKStatusInteger(load[@"running"]);

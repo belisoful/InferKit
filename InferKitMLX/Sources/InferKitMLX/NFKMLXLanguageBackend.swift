@@ -325,7 +325,14 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// through `generationLock`: two runs through one cache would interleave their rows.
     private var promptCache: NFKMLXPromptCache?
     /// The caches of requests that name their conversation, read and written under `generationLock`.
-    private let conversationCaches = NFKMLXConversationCaches(byteBudget: 2 << 30)
+    private static let defaultConversationCacheByteBudget = 2 << 30
+    private let conversationCaches = NFKMLXConversationCaches(byteBudget: defaultConversationCacheByteBudget)
+    /// The cache figures ``backendStatus`` reports, refreshed under `generationLock` after each run
+    /// and each change, and read under `statusLock`, so a status request never waits on a run.
+    private var cacheStatus: [String: Any] = ["conversation_caches": 0, "conversation_cache_bytes": 0,
+                                              "conversation_cache_byte_budget": defaultConversationCacheByteBudget,
+                                              "prompt_cache_length": 0]
+    private let statusLock = NSLock()
     private let generationLock = NSLock()
     private let modelInfoCache = NFKMLXModelInfoCache()
     private let releaseDirectoryURL: URL?
@@ -414,6 +421,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         generationLock.lock(); defer { generationLock.unlock() }
         promptCache = nil
         conversationCaches.removeAll()
+        refreshCacheStatus()
     }
 
     /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
@@ -421,6 +429,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     public func resetPromptCache(forConversation conversation: String) {
         generationLock.lock(); defer { generationLock.unlock() }
         conversationCaches.remove(conversation)
+        refreshCacheStatus()
     }
 
     /// The bytes the conversations' prompt caches may hold together.
@@ -439,6 +448,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             generationLock.lock(); defer { generationLock.unlock() }
             conversationCaches.byteBudget = newValue
             conversationCaches.evict()
+            refreshCacheStatus()
         }
     }
 
@@ -452,6 +462,25 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     @objc public var conversationCacheBytes: Int {
         generationLock.lock(); defer { generationLock.unlock() }
         return conversationCaches.heldBytes
+    }
+
+    /// The prompt caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, `conversation_cache_byte_budget`, and `prompt_cache_length`, the
+    /// positions the unnamed retained cache holds. `NFKInferenceServer` serves it under the model's
+    /// "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] {
+        statusLock.lock(); defer { statusLock.unlock() }
+        return cacheStatus
+    }
+
+    /// Records the cache figures ``backendStatus`` reports. Runs under `generationLock`.
+    private func refreshCacheStatus() {
+        let figures: [String: Any] = ["conversation_caches": conversationCaches.count,
+                                      "conversation_cache_bytes": conversationCaches.heldBytes,
+                                      "conversation_cache_byte_budget": conversationCaches.byteBudget,
+                                      "prompt_cache_length": promptCache?.count ?? 0]
+        statusLock.lock(); defer { statusLock.unlock() }
+        cacheStatus = figures
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -652,6 +681,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if let conversation {
             conversationCaches.evict(keeping: conversation)
         }
+        refreshCacheStatus()
         return (produced, cache?.sharedPrefixLength ?? 0)
     }
 

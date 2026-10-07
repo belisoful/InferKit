@@ -336,7 +336,11 @@ attention and feed-forward.
   recently used first, skipping the conversation that ran, so one conversation over the budget
   keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
   does not ask for reuse drops it. A named request leaves it alone. Only `NFKMLXLanguageBackend`
-  has conversation caches; DeepSeek, Gemma 3/3n, and the prefill-only backends do not.
+  has conversation caches; DeepSeek, Gemma 3/3n, and the prefill-only backends do not. Its
+  `backendStatus` (`conversation_caches`, `conversation_cache_bytes`,
+  `conversation_cache_byte_budget`, `prompt_cache_length`) is a snapshot refreshed under
+  `generationLock` after each run, reset, or budget change and read under `statusLock`, because the
+  counting getters take `generationLock` and a status poll would otherwise wait out a run.
   `Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9: the LLM oracle
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode

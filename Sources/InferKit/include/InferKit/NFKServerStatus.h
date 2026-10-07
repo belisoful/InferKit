@@ -100,6 +100,10 @@ typedef NS_ENUM(NSInteger, NFKServerMemoryPressure) {
 /*! What the backend reports about its loaded model, keyed by NFKModelInfo*. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
 
+/*! What the backend reports about its state now (its backendStatus), or empty when it reports
+	nothing. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *backendStatus;
+
 /*! How many runs the model serves at once. */
 @property (nonatomic, readonly) NSInteger limit;
 

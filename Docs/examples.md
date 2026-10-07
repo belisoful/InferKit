@@ -3596,6 +3596,7 @@ NFKServerStatus *status = [NFKServerStatus fetchFromBaseURL:studio.baseURL apiKe
 NFKServerModelStatus *chat = [status modelNamed:@"qwen3"];
 NSNumber *wait = chat.estimatedWaitSeconds;                  // nil until a run has finished
 NSNumber *reused = chat.cachedInputShare;                     // input the prompt cache served, 0...1
+NSDictionary *live = chat.backendStatus;                      // e.g. an MLX backend's conversation caches
 NSNumber *parameters = chat.modelInfo[NFKModelInfoParameterCount];
 BOOL hot = status.host.thermalState >= NFKServerThermalStateSerious;
 NSString *chip = studio.advertisedProperties[@"chip"];      // from the Bonjour record, no request

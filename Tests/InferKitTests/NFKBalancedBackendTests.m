@@ -380,6 +380,42 @@
 	XCTAssertNil(only.lastConversationKey, @"a request in no conversation gains no key");
 }
 
+- (void)testTheBalancerReportsItsServersAndConversations
+{
+	NFKInferenceServer *first = [self serverHosting:[self backendNamed:@"first"] queueLimit:0];
+	NFKInferenceServer *second = [self serverHosting:[self backendNamed:@"second"] queueLimit:0];
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ first, second ]];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	[balancer removeServerWithBaseURL:first.localBaseURL];
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"second", @"%@", error);
+	XCTAssertNotNil([balancer runInferenceForRequest:[self requestInConversation:@"b"] error:&error], @"%@", error);
+
+	NSDictionary *status = balancer.backendStatus;
+	XCTAssertEqualObjects(status[@"policy"], @"round_robin");
+	XCTAssertEqualObjects(status[@"conversation_affinity"], @YES);
+	XCTAssertEqualObjects(status[@"conversations"], @2);
+	XCTAssertEqualObjects(status[@"conversation_moves"], @1, @"a moved when its server left; b never moved");
+	NSDictionary *only = [status[@"servers"] firstObject];
+	XCTAssertEqual([status[@"servers"] count], 1u);
+	XCTAssertEqualObjects(only[@"base_url"], second.localBaseURL.absoluteString);
+	XCTAssertEqualObjects(only[@"hosts_model"], @YES);
+	XCTAssertEqualObjects(only[@"strained"], @NO);
+	XCTAssertEqualObjects(only[@"outstanding"], @0);
+	XCTAssertNil(only[@"resting_seconds"]);
+
+	NFKInferenceServer *front = [[NFKInferenceServer alloc] init];
+	front.port = 0;
+	front.loopbackOnly = YES;
+	[front addBackend:balancer forModelName:@"chat"];
+	XCTAssertTrue([front startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[front stop];
+	}];
+	NFKServerStatus *served = [NFKServerStatus fetchFromBaseURL:front.localBaseURL apiKey:nil error:&error];
+	XCTAssertEqualObjects([served modelNamed:@"chat"].backendStatus[@"conversation_moves"], @1, @"%@", error);
+}
+
 - (void)testWithoutAffinityAChatTakesEachServerInTurn
 {
 	NFKBalancedTestBackend *first = [self backendNamed:@"first"];

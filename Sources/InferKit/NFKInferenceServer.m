@@ -49,6 +49,42 @@ static double NFKServedAveraged(double average, double sample, NSUInteger previo
 	return previousSamples == 0 ? sample : average + 0.2 * (sample - average);
 }
 
+/*! value reduced to what a client can read as JSON: strings, finite numbers, and booleans, and arrays
+	and string-keyed dictionaries of them, nested at most depth levels. Nil when nothing is left. */
+static id _Nullable NFKServedJSONObject(id _Nullable value, NSUInteger depth)
+{
+	if ([value isKindOfClass:NSString.class]) {
+		return value;
+	}
+	if ([value isKindOfClass:NSNumber.class]) {
+		return isfinite([value doubleValue]) ? value : nil;
+	}
+	if (depth == 0) {
+		return nil;
+	}
+	if ([value isKindOfClass:NSArray.class]) {
+		NSMutableArray *elements = [NSMutableArray array];
+		for (id element in (NSArray *)value) {
+			id kept = NFKServedJSONObject(element, depth - 1);
+			if (kept != nil) {
+				[elements addObject:kept];
+			}
+		}
+		return elements;
+	}
+	if ([value isKindOfClass:NSDictionary.class]) {
+		NSMutableDictionary *entries = [NSMutableDictionary dictionary];
+		[(NSDictionary *)value enumerateKeysAndObjectsUsingBlock:^(id key, id entry, BOOL *stop) {
+			id kept = [key isKindOfClass:NSString.class] ? NFKServedJSONObject(entry, depth - 1) : nil;
+			if (kept != nil) {
+				entries[key] = kept;
+			}
+		}];
+		return entries;
+	}
+	return nil;
+}
+
 /*! A token count a result's usage reports under key, or nil when it reports none. */
 static NSNumber * _Nullable NFKServedTokenCount(id usage, NSString *key)
 {
@@ -606,6 +642,16 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	return [backend respondsToSelector:@selector(modelInfo)] ? NFKServedJSONValues(backend.modelInfo) : @{};
 }
 
+/*! What a backend reports about its state now, reduced to JSON, or nil when it reports nothing. */
++ (nullable NSDictionary<NSString *, id> *)statusOfBackend:(id<NFKInferenceBackend>)backend
+{
+	if (![backend respondsToSelector:@selector(backendStatus)]) {
+		return nil;
+	}
+	NSDictionary *status = NFKServedJSONObject(backend.backendStatus, 8);
+	return status.count > 0 ? status : nil;
+}
+
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName
 {
 	@synchronized (self.models) {
@@ -900,6 +946,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
 	}
 	description[@"model"] = [NFKInferenceServer modelInfoOfBackend:backend];
+	description[@"status"] = [NFKInferenceServer statusOfBackend:backend];
 	description[@"load"] = [model loadJSONObject];
 	return @{ @"id": model.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
 			  @"inferkit": description };
@@ -940,8 +987,12 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 			model = self.models[name];
 		}
 		if (model != nil) {
-			[models addObject:@{ @"id": model.name, @"backend": model.backend.backendIdentifier ?: @"", @"ready": @(model.backend.isReady),
-								 @"model": [NFKInferenceServer modelInfoOfBackend:model.backend], @"load": [model loadJSONObject] }];
+			NSMutableDictionary<NSString *, id> *entry = [@{ @"id": model.name, @"backend": model.backend.backendIdentifier ?: @"",
+															@"ready": @(model.backend.isReady),
+															@"model": [NFKInferenceServer modelInfoOfBackend:model.backend],
+															@"load": [model loadJSONObject] } mutableCopy];
+			entry[@"status"] = [NFKInferenceServer statusOfBackend:model.backend];
+			[models addObject:entry];
 		}
 	}
 	NSMutableDictionary<NSString *, id> *status = [NSMutableDictionary dictionary];

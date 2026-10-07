@@ -20,6 +20,7 @@
 			  @"server": @{ @"version": @"0.4.0", @"started": @1800000000, @"uptime_seconds": @12.5 },
 			  @"models": @[ @{ @"id": @"chat", @"backend": @"mlx-language", @"ready": @YES,
 							   @"model": @{ NFKModelInfoParameterCount: @600000000, NFKModelInfoPrecision: @"bfloat16" },
+							   @"status": @{ @"conversation_caches": @3 },
 							   @"load": @{ @"limit": @1, @"running": @1, @"queued": @2, @"queue_limit": @4,
 										   @"completed": @10, @"failed": @1, @"cancelled": @2, @"refused": @3,
 										   @"average_run_seconds": @4.5, @"average_wait_seconds": @1.25,
@@ -51,6 +52,7 @@
 	XCTAssertEqualObjects(model.backendIdentifier, @"mlx-language");
 	XCTAssertTrue(model.isReady);
 	XCTAssertEqualObjects(model.modelInfo[NFKModelInfoPrecision], @"bfloat16");
+	XCTAssertEqualObjects(model.backendStatus[@"conversation_caches"], @3);
 	XCTAssertEqual(model.limit, 1);
 	XCTAssertEqual(model.running, 1);
 	XCTAssertEqual(model.queued, 2);

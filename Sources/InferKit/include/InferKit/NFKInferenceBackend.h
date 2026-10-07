@@ -109,6 +109,17 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *modelInfo;
 
+/*!
+	@property   backendStatus
+	@abstract   What the backend reports about its state now, such as the caches it holds or the
+				servers it spreads requests over.
+	@discussion The values are strings, numbers, and booleans, and arrays and dictionaries of them.
+				NFKInferenceServer reads it on every status request and serves it under each model's
+				"status", leaving out any value of another kind, so a backend answers from state it
+				keeps current without waiting on a run in progress. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *backendStatus;
+
 @end
 
 /*!
