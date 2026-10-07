@@ -1287,6 +1287,115 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("qwen4-exp-cut2", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
     }
 
+    // Qwen3.8-Flash-Next cut to its first four layers (`IK_VAL_QWEN4_EXP_CUT4`), the fourth its first
+    // full-attention layer, over the first 3,072 tokens of a text: past 2,048 tokens the query-sparse-attention
+    // indexer keeps 512 of the blocks a query sees and discards the rest. The records come from
+    // `hf_layer_probe` with `IK_PROBE_PROMPT_FILE`, `IK_PROBE_LAYERS=3`, and `IK_PROBE_INDEXER=1` (the
+    // indexer's block scores); the float32 run streams from a bf16 load. At each precision the indexer and
+    // the sparse-attention layer run on the reference's own input. The cut's mixture layers are the code the
+    // two-layer cut holds at both precisions; over 3,072 tokens each reaches all 512 of its experts, a 5 GB
+    // bank at bf16 that the store builds beside the experts it stacks. A block either side keeps where the
+    // reference does not, or the reverse, must score within a near-tie of the reference's 512th: float32
+    // accumulation at float32, one bf16 step at bf16, where the queries and keys the scores multiply are
+    // themselves rounded to bf16.
+    func testQwen4ExpIndexerCutMatchesTheReferenceAtBothPrecisions() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_QWEN4_EXP_CUT4"], "IK_VAL_QWEN4_EXP_CUT4"))
+        let bf16 = try record("qwen4_exp_cut4_bf16.safetensors"), f32 = try record("qwen4_exp_cut4_f32.safetensors")
+        let geometry = try NFKMLXQwen4Exp.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let length = try XCTUnwrap(f32["tokens"]).dim(0)
+        let full = try XCTUnwrap(geometry.layerTypes.firstIndex(of: .sparseAttention), "the cut keeps a sparse-attention layer")
+        let positions = broadcast(MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, 1, length]), to: [3, 1, length])
+        let queryIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([length, 1])
+        let keyIndex = MLXArray((0 ..< length).map { Int32($0) }).reshaped([1, length])
+        let causal = (keyIndex .<= queryIndex).reshaped([1, 1, length, length])
+
+        try autoreleasepool {
+            let exact = try loadedOnCPU(NFKMLXQwen4Exp.makeNet(geometry)) {
+                try NFKMLXQwen4Exp.loadWeights(into: $0, fromDirectory: directory, precision: .float32, residency: .paged)
+            }
+            try Device.withDefaultDevice(.cpu) {
+                let (cos, sin) = exact.rotaryTable(positions: positions)
+                let block = exact.model.languageModel.layers[full]
+                try assertIndexerSelection("qwen4-exp-cut4 float32", block, layer: full,
+                                           record: f32, cos: cos, sin: sin, type: .float32)
+                let attention = try XCTUnwrap(block.attention)
+                let input = try XCTUnwrap(f32["\(full).self_attn.in"]).asType(.float32).expandedDimensions(axis: 0)
+                let attended = attention(input, cos: cos, sin: sin, mask: causal)[0]
+                let similarity = 1 - distance(floats(attended), floats(try XCTUnwrap(f32["\(full).self_attn.out"])))
+                print("VALIDATION PARITY qwen4-exp-cut4 float32: sparse attention on the reference's input \(similarity)")
+                XCTAssertGreaterThan(similarity, 0.99999, "the sparse-attention layer matches transformers at float32")
+            }
+        }
+        Memory.clearCache()
+
+        let net = NFKMLXQwen4Exp.makeNet(geometry)
+        try NFKMLXQwen4Exp.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint, residency: .paged)
+        let block = net.model.languageModel.layers[full]
+        let (cos, sin) = net.rotaryTable(positions: positions)
+        try assertIndexerSelection("qwen4-exp-cut4 bf16", block, layer: full, record: bf16, cos: cos, sin: sin,
+                                   type: .bfloat16)
+        let input = try XCTUnwrap(bf16["\(full).self_attn.in"]).asType(.bfloat16).expandedDimensions(axis: 0)
+        let attended = try XCTUnwrap(block.attention)(input, cos: cos, sin: sin, mask: causal)[0]
+        eval(attended)
+        let rows = try seams([("sparse attention", attended)], bf16: bf16, f32: f32, keys: ["\(full).self_attn.out"])
+        report("qwen4-exp-cut4 isolated", rows)
+        for row in rows {
+            XCTAssertLessThan(row.ours, 0.25 * row.floor,
+                              "qwen4-exp-cut4 \(row.label) on the reference's input: a rounding placed unlike the reference's")
+        }
+        print("VALIDATION MEMORY qwen4-exp-cut4: peak \(NFKMLXGPU.peakMemory >> 20) MB")
+    }
+
+    /// The indexer of `layer` on the reference's own input (`L.self_attn.indexer.in`, cast to `type`) against the
+    /// reference's selection (`L.self_attn.indexer.out`, 0 where kept). Every block the two sides decide
+    /// differently must score within a near-tie of the reference's last kept score (`indexer.L.scores`):
+    /// 1e-5 of it at float32, the order a sum is taken in; one bf16 step at bf16, the rounding of the
+    /// queries and keys the score multiplies.
+    private func assertIndexerSelection(_ name: String, _ block: NFKQwen4ExpBlock, layer: Int,
+                                        record: [String: MLXArray], cos: MLXArray, sin: MLXArray, type: DType,
+                                        file: StaticString = #filePath, line: UInt = #line) throws {
+        let indexer = try XCTUnwrap(block.attention?.indexer, "layer \(layer) carries the indexer")
+        let input = try XCTUnwrap(record["\(layer).self_attn.indexer.in"]).asType(type).expandedDimensions(axis: 0)
+        let ours = indexer(input, cos: cos, sin: sin)[0]
+        let theirs = try XCTUnwrap(record["\(layer).self_attn.indexer.out"]).reshaped(ours.shape) .== 0
+        let scores = try XCTUnwrap(record["indexer.\(layer).scores"]).asType(.float32)
+        eval(ours, theirs)
+        let (length, ratio) = (ours.dim(0), indexer.configuration.indexerCompressRatio)
+        let budget = indexer.configuration.indexerBlockBudget
+        let mine = ours.asArray(Bool.self), reference = theirs.asArray(Bool.self)
+        let nearTie = type == .float32 ? 1e-5 : 1.0 / 256
+        let table = scores.asArray(Float.self), width = scores.dim(1)
+        var selecting = 0, differingQueries = 0, differingBlocks = 0, widest = 0.0
+        for query in 0 ..< length {
+            let blocks = (query + 1) / ratio
+            if blocks > budget { selecting += 1 }
+            var disagreed = [Int]()
+            for block in 0 ..< blocks where mine[query * length + block * ratio] != reference[query * length + block * ratio] {
+                disagreed.append(block)
+            }
+            for token in (blocks * ratio) ..< query + 1 where mine[query * length + token] != reference[query * length + token] {
+                XCTFail("\(name): query \(query) drops tail token \(token), which no block holds", file: file, line: line)
+            }
+            guard !disagreed.isEmpty else { continue }
+            differingQueries += 1
+            differingBlocks += disagreed.count
+            let row = Array(table[(query * width) ..< (query * width + blocks)]).map(Double.init)
+            let kth = row.sorted(by: >)[min(budget, blocks) - 1]
+            for block in disagreed {
+                let margin = abs(row[block] - kth) / max(abs(kth), 1e-30)
+                widest = max(widest, margin)
+                XCTAssertLessThanOrEqual(margin, nearTie, "\(name): query \(query) block \(block) scores \(row[block]) "
+                                         + "against the reference's 512th \(kth); a disagreement past a near-tie",
+                                         file: file, line: line)
+            }
+        }
+        print(String(format: "VALIDATION indexer %@: %d queries, %d past the budget; %d queries decide %d blocks "
+                     + "differently, the widest at %.2e of the reference's last kept score", name, length, selecting,
+                     differingQueries, differingBlocks, widest))
+        XCTAssertGreaterThan(selecting, 0, "\(name): the prompt reaches past the indexer's budget", file: file, line: line)
+    }
+
     // The Qwen4-Exp cut's first layer piece by piece on the reference's own bf16 inputs (its bf16 record
     // probes layer 0), the mixture routed as the reference routed.
     func testQwen4ExpCutFirstLayerPiecesMatchTheBFloat16Reference() throws {

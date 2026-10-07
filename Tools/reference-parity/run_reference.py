@@ -5636,7 +5636,10 @@ def _probe_hooks(model, probed, extra, layers=None):
             extra[f"{index}.attn.q"] = keep(query[0])
             extra[f"{index}.attn.k"] = keep(key[0])
             extra[f"{index}.attn.v"] = keep(value[0])
-            extra[f"{index}.attn.weights"] = keep(weights[0])
+            # `IK_PROBE_ATTN_WEIGHTS=0` leaves the probabilities out: at thousands of tokens they are
+            # the largest tensor in the record and the weighted sum already checks them.
+            if os.environ.get("IK_PROBE_ATTN_WEIGHTS") != "0":
+                extra[f"{index}.attn.weights"] = keep(weights[0])
             extra[f"{index}.attn.out"] = keep(output[0])
         return output, weights
 
@@ -5818,12 +5821,15 @@ def _stream_float32(model):
         return [t for t in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False))
                 if t.is_floating_point()]
 
-    held = {}  # id(tensor) -> [tensor, stored dtype, holders]
+    # id(tensor) -> [tensor, stored data, holders]. The stored data is put back as it was rather than
+    # narrowed from the widened copy, which would leave a new allocation beside a memory-mapped original
+    # for every module that has run.
+    held = {}
 
     def hold(t):
         entry = held.get(id(t))
         if entry is None:
-            entry = held[id(t)] = [t, t.data.dtype, 0]
+            entry = held[id(t)] = [t, t.data, 0]
             if t.data.dtype != torch.float32:
                 t.data = t.data.float()
         entry[2] += 1
@@ -5833,8 +5839,7 @@ def _stream_float32(model):
         entry[2] -= 1
         if entry[2] == 0:
             del held[id(t)]
-            if t.data.dtype != entry[1]:
-                t.data = t.data.to(entry[1])
+            t.data = entry[1]
 
     def owned(module):
         # An embedding table is read only through its own `forward`, which widens the rows it reads.
@@ -5892,7 +5897,11 @@ def run_hf_layer_probe(image, checkpoint):
     and counts the elements that differ. `IK_PROBE_ROUTES=1` also records every mixture layer's routing
     as `route.L.index` (the kept experts, `[tokens, k]`), with `route.L.weights` from a Gemma 4 router or
     `route.L.values` from the layer's `topk` call otherwise (`_route_hooks`), so a port can route as the
-    reference did where `torch.topk` breaks a tie. `image` unused.
+    reference did where `torch.topk` breaks a tie. `IK_PROBE_INDEXER=1` records each Qwen4-Exp attention
+    indexer's block scores as `indexer.L.scores` (`_indexer_hooks`). `IK_PROBE_PROMPT_FILE` (with
+    `IK_PROBE_PROMPT_TOKENS`) replaces the five-token prompt, `IK_PROBE_ATTN_WEIGHTS=0` leaves out the
+    attention probabilities, and `IK_PROBE_LAST_LOGITS=n` keeps the last `n` positions' logits. `image`
+    unused.
     """
     import json
     import torch
@@ -5913,18 +5922,74 @@ def run_hf_layer_probe(image, checkpoint):
     extra = {}
     restore = _probe_hooks(model, probed, extra)
     restore_routes = _route_hooks(model, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
-    prompt = "The capital of France is"
+    # `IK_PROBE_PROMPT_FILE` replaces the five-token prompt with a text file's, cut to its first
+    # `IK_PROBE_PROMPT_TOKENS` tokens where given (a sparse-attention indexer selects only past 2,048).
+    prompt_file = os.environ.get("IK_PROBE_PROMPT_FILE")
+    prompt = open(prompt_file).read() if prompt_file else "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
+    if os.environ.get("IK_PROBE_PROMPT_TOKENS"):
+        ids = ids[:, :int(os.environ["IK_PROBE_PROMPT_TOKENS"])]
+    restore_indexer = _indexer_hooks(model, extra) if os.environ.get("IK_PROBE_INDEXER") == "1" else None
     with torch.no_grad():
         out = model(input_ids=ids, output_hidden_states=True, **_prefill_options(config))
     restore()
     if restore_routes is not None:
         restore_routes()
+    if restore_indexer is not None:
+        restore_indexer()
     extra["tokens"] = ids[0].to(torch.int32).contiguous()
     for index, state in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = state[0].detach().float().clone().contiguous()
     globals()["_extra"] = extra
-    return out.logits[0].float().contiguous()
+    # `IK_PROBE_LAST_LOGITS=n` keeps the last `n` positions' logits, which over a long prompt and a large
+    # vocabulary would otherwise outweigh the rest of the record.
+    rows = int(os.environ.get("IK_PROBE_LAST_LOGITS", "0"))
+    return (out.logits[0, -rows:] if rows else out.logits[0]).float().contiguous()
+
+
+def _indexer_hooks(model, extra):
+    """Records each Qwen4-Exp attention indexer's block scores into `extra` as `indexer.L.scores`
+    (`[queries, blocks]`, float32, `-inf` past a query's complete blocks), the values its per-query
+    `topk` ranks, so a port can tell a near-tie from a disagreement. A query that sees no complete
+    block calls no `topk`; those are the leading ones under a causal mask, so the recorded rows fill
+    the table from the bottom. Returns a function that undoes the `Tensor.topk` patch."""
+    import torch
+
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n)
+    running, rows = [], {}
+    for index, layer in enumerate(decoder_layers):
+        indexer = getattr(getattr(layer, "self_attn", None), "indexer", None)
+        if indexer is None:
+            continue
+        def enter(module, args, index=index):
+            running.append(index)
+            rows[index] = []
+        def leave(module, args, output, index=index):
+            running.pop()
+            scores = rows.pop(index)
+            queries = args[0].shape[1]
+            width = max((len(r) for r in scores), default=0)
+            table = torch.full((queries, width), float("-inf"))
+            for offset, row in enumerate(scores):
+                table[queries - len(scores) + offset, :len(row)] = row
+            extra[f"indexer.{index}.scores"] = table.contiguous()
+        indexer.register_forward_pre_hook(enter)
+        indexer.register_forward_hook(leave)
+
+    method = torch.Tensor.topk
+
+    def tensor_topk(self, *args, **kwargs):
+        if running:
+            rows[running[-1]].append(self.detach().float().clone())
+        return method(self, *args, **kwargs)
+
+    torch.Tensor.topk = tensor_topk
+
+    def restore():
+        torch.Tensor.topk = method
+    return restore
 
 
 def _route_hooks(model, extra):
@@ -5955,14 +6020,16 @@ def _route_hooks(model, extra):
                 extra[f"route.{index}.index"] = output[2].detach().to(torch.int32).clone().contiguous()
             router.register_forward_hook(hook)
             continue
+        # The `topk` that routes is the mixture's; Qwen4-Exp's attention indexer calls its own.
+        scope = getattr(layer, "block_sparse_moe", None) or getattr(layer, "mlp", None) or layer
         def enter(module, args, index=index):
             running.append(index)
 
         def leave(module, args, output):
             running.pop()
 
-        layer.register_forward_pre_hook(enter)
-        layer.register_forward_hook(leave)
+        scope.register_forward_pre_hook(enter)
+        scope.register_forward_hook(leave)
 
     function, method = torch.topk, torch.Tensor.topk
 

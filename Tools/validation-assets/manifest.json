@@ -5492,6 +5492,14 @@
       "note": "Qwen3.8-Flash-Next (Qwen4-Exp; license qwen-community-1.0): two linear-attention layers of 512 experts with ten kept. Cut by the IO kit's cut-qwen4exp.py, which applies truncate.py's functions with a stricter filter: the n-gram table (layers.1.ple.*, 128 shards, 102 GB) and the multi-token-prediction head (mtp.*) are left out, and the cut's config empties ple_layer_ids. That list counts from one, so the release's [2] names the cut's second layer, which both sides run without its n-gram embedding. Records: hf_layer_probe in the qwenimage oracle environment (transformers 5.17), which loads qwen4_exp as Qwen4ExpForConditionalGeneration with no cache: bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1, float32 streamed with IK_PROBE_STREAM_F32=1, and qwen4_exp_cut2_bf16_fn the bf16 run with IK_PROBE_FUNCTIONS=causal_conv1d_fn,torch_chunk_gated_delta_rule as well."
     },
     {
+      "repo": "Qwen/Qwen3.8-Flash-Next",
+      "layers": 4,
+      "directory": "qwen3.8-flash-next-cut4",
+      "config": "IK_VAL_QWEN4_EXP_CUT4",
+      "record": "qwen4_exp_cut4",
+      "note": "The first four layers, the fourth the first sparse-attention layer, for the indexer (24.2 GB, revision de4b8e4d as cut2). Cut as cut2 is (cut-qwen4exp.py with LAYERS=4: no n-gram table, no multi-token head, ple_layer_ids emptied). Records: hf_layer_probe in the qwenimage oracle environment with IK_PROBE_LAYERS=3 IK_PROBE_INDEXER=1 IK_PROBE_PROMPT_FILE=<records>/qwen4_exp_cut4_prompt.txt IK_PROBE_PROMPT_TOKENS=3072 IK_PROBE_ATTN_WEIGHTS=0 IK_PROBE_LAST_LOGITS=64: bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1, float32 streamed with IK_PROBE_STREAM_F32=1; the stored pair keeps the tokens, the indexer's input, mask and scores, and the sparse attention's input and output."
+    },
+    {
       "repo": "Qwen/Qwen3-VL-8B-Instruct",
       "layers": 4,
       "directory": "qwen3-vl-8b-cut4",
@@ -5625,6 +5633,11 @@
       "records": "clip_b32{,_photo,_face,_subject}_f16 / _f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=float16 | IK_PROBE_FLOOR=float16 clip_probe [--image <validation root>/inputs/photo.jpg | face960.jpg | subject384.jpg --size 224] (openai/clip-vit-base-patch32; the process hangs at exit after writing its record)"
+    },
+    {
+      "records": "qwen4_exp_cut4_bf16 / _f32",
+      "environment": "qwenimage",
+      "command": "hf_layer_probe --checkpoint <cuts>/qwen3.8-flash-next-cut4 with the cut4 entry's environment (IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 | IK_PROBE_STREAM_F32=1), then trimmed to tokens, 3.self_attn.indexer.{in,out}, indexer.3.scores, 3.self_attn.{in,out}"
     }
   ],
   "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key reaches ~/.inferkit-validation.json through the IO Coordinator, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",

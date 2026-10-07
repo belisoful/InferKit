@@ -485,9 +485,19 @@ attention and feed-forward.
   with 512 experts and ten kept, the float32 run paging the experts and the bf16 run routed as the
   reference routed. `ple_layer_ids` counts from one, so the release's `[2]` names the cut's second
   layer: the cut empties it and leaves the 102 GB n-gram table out, and both sides run that layer
-  without it. The sparse-attention indexer is not reached: it keeps 512 blocks of four tokens, so a
-  tie among blocks needs a prompt past 2,048 tokens, and a cut to its first full-attention layer is
-  23 GB at bf16. The oracle drives `Qwen4ExpForConditionalGeneration`, whose tensor names match the
+  without it. The sparse-attention indexer keeps 512 blocks of four tokens, so it discards blocks only
+  past 2,048 tokens; it is measured on a cut to the first four layers, the fourth the first
+  full-attention one (`IK_VAL_QWEN4_EXP_CUT4`, 24.2 GB), over the first 3,072 tokens of a text
+  (`testQwen4ExpIndexerCutMatchesTheReferenceAtBothPrecisions`). At float32 the selection is the
+  reference's for every one of the 1,021 queries past the budget, and the sparse-attention layer on the
+  reference's input reaches 0.9999999999990795. At bf16, 3 queries decide 6 blocks differently, each
+  within 1.2e-4 of the reference's 512th score (`IK_PROBE_INDEXER=1` records every query's block
+  scores); the queries and keys a score multiplies are bf16, so the bar is one bf16 step. The sparse
+  attention at bf16 sits at 0.0024 of its floor. The cut's mixtures run in neither test: over 3,072
+  tokens each reaches all 512 of its experts, a 5 GB bf16 bank the paged store stacks beside the
+  experts it materializes, past what this machine holds beside the rest. The routing records come from
+  the mixture's own `topk`: the indexer calls `Tensor.topk` once per query, which a recorder scoped to
+  the whole layer took for a second routing. The oracle drives `Qwen4ExpForConditionalGeneration`, whose tensor names match the
   release's (the text class matches 1 of 386), with no cache, since transformers refuses a cache with
   no attention layer to measure. `testQwen4ExpCutLinearAttentionStepsMatchTheBFloat16Reference` holds
   each step of the first linear attention on the reference's own inputs, from the function probe.

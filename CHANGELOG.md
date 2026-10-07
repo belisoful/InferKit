@@ -493,6 +493,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 
+#### Qwen4-Exp's sparse-attention indexer measured on its release
+
+- The indexer of Qwen3.8-Flash-Next's first sparse-attention layer is held to transformers on the released
+  weights, cut to four layers, over 3,072 tokens, where it keeps 512 of up to 768 blocks. At float32 it
+  selects what the reference selects for every query; at bfloat16 the 6 blocks it decides differently
+  are near-ties, within one bfloat16 step of the reference's 512th score. The sparse-attention layer on
+  the reference's input matches at 0.9999999999990795 at float32.
+- The reference oracle takes a prompt from a file, records each indexer's block scores, and reads a
+  mixture's routing from the mixture alone, where it had also counted the indexer's own `topk`. Its
+  float32 streaming puts each module's stored tensors back as they were, so a memory-mapped release is
+  not copied.
+
 #### Gemma 3n and Gemma 4 read a release before converting it
 
 - `NFKMLXReleaseWeights.materializedArrays(inDirectory:precision:remap:transform:)` reads a release
