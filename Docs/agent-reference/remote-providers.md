@@ -717,8 +717,13 @@ and start times on `systemUptime`, and the job's last reported progress.
   tvOS marks unavailable, so tvOS reads `NSURLVolumeAvailableCapacityKey`.
 - GPU utilization is `IOAccelerator`'s `PerformanceStatistics` → `"Device Utilization %"`,
   undocumented, readable without an entitlement on an M1 Max under `swift test` (2026-10-05). The
-  busiest accelerator is reported, as a fraction. App Sandbox readability is unmeasured. It covers
-  every process, so it stays out of routing (user decision, 2026-10-05).
+  busiest accelerator is reported, as a fraction. It covers every process, so it stays out of
+  routing (user decision, 2026-10-05).
+- Under App Sandbox (an ad-hoc-signed `.app` with only `app-sandbox` and `network.server`, macOS
+  26.6.2, M1 Max, 2026-10-07), every host field reads as it does unsandboxed: the IORegistry GPU
+  figure, the memory-pressure sysctl (no fallback taken), processor ticks, the footprint, and storage,
+  which then measures the container's volume. A bare executable signed with the sandbox entitlement
+  stops at launch with SIGTRAP; the sandbox needs a bundle.
 - A real temperature lives in the SMC, which is private; the thermal state is the public reading.
 - `modelInfo` (optional on the protocol) is reduced to string and finite-number values before it is
   served, so a backend that puts a date or a NaN there loses that entry and nothing else. Core ML's
