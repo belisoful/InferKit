@@ -28,7 +28,8 @@ static NSDictionary<NSString *, NSArray<NSString *> *> *NFKRemoteWireNames(void)
 				   NFKParameterTopP: @[ @"top_p" ],
 				   NFKParameterTopK: @[ @"top_k" ],
 				   NFKParameterStopSequences: @[ @"stop" ],
-				   NFKParameterRepetitionPenalty: @[ @"repetition_penalty", @"repeat_penalty" ] };
+				   NFKParameterRepetitionPenalty: @[ @"repetition_penalty", @"repeat_penalty" ],
+				   NFKParameterConversationKey: @[ @"prompt_cache_key" ] };
 	});
 	return names;
 }

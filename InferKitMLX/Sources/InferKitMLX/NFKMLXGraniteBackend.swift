@@ -53,9 +53,9 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
-    /// The decoder's parameter count, weight bytes, precision, and quantization, with the release's
-    /// `model_type` and `max_position_embeddings` where its `config.json` states them (`NFKModelInfo*`
-    /// keys). Introduced in InferKit 0.4.0.
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
+    /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
+    /// `config.json` states (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)

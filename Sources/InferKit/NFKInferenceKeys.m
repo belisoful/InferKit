@@ -51,6 +51,7 @@ NSString * const NFKParameterWordTimestamps	= @"wordTimestamps";
 NSString * const NFKParameterVocabulary		= @"vocabulary";
 NSString * const NFKParameterCitations		= @"citations";
 NSString * const NFKParameterPreviousResponseIdentifier = @"previousResponseIdentifier";
+NSString * const NFKParameterConversationKey = @"conversationKey";
 NSString * const NFKVideoOperationEdit		= @"edit";
 NSString * const NFKVideoOperationExtend	= @"extend";
 NSString * const NFKParameterSampleRate		= @"sampleRate";

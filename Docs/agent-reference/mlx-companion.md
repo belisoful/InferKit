@@ -221,6 +221,12 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `config.json` states, at the top level or under `text_config`. A factory that builds one of them
   passes its net, or the walk reports nothing. A paged mixture's experts sit in its
   `NFKMLXExpertStore`, outside `parameters()`, so its count covers the resident weights only.
+  `storage_bytes` carries the whole release instead: `storageBytes(at:)` sums the allocated size of
+  every file under the release directory, a symbolic link counted at its target (a Python Hugging
+  Face cache links snapshot files to blobs). Counting paged parameters exactly would take one rule
+  per expert format (stacked matrices, packed quantized words with scales, MXFP4 blocks, DeepSeek's
+  FP8/FP4 store), so the release size stands in for them. `NFKMLXLanguageBackend` and
+  `NFKMLXDeepSeekBackend` take `releaseDirectoryURL` from their directory factories.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls

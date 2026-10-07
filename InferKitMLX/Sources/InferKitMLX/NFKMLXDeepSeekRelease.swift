@@ -601,7 +601,8 @@ public extension NFKMLXDeepSeek {
             resolved.chatTemplate = .jinja(template: template)
         }
         return NFKMLXDeepSeekBackend(net: net, tokenizer: tokenizer, identifier: deepSeekModelName,
-                                     images: images, draft: draft, options: resolved)
+                                     images: images, draft: draft, options: resolved,
+                                     releaseDirectoryURL: directoryURL)
     }
 
     /// Builds a text-generation backend from a released directory, holding it as `residency` says.

@@ -415,6 +415,14 @@
 	XCTAssertEqualObjects(balanced.lastServerBaseURL, first.localBaseURL);
 	[balanced runInferenceForRequest:request error:&error];
 	XCTAssertEqualObjects(balanced.lastServerBaseURL, second.localBaseURL);
+
+	// A conversation stays on the server that answered it, where a kept prompt is reused.
+	NFKInferenceRequest *turn = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"and the action items?" }
+															parameters:@{ NFKParameterConversationKey: @"meeting-42" }];
+	[balanced runInferenceForRequest:turn error:&error];
+	NSURL *home = balanced.lastServerBaseURL;
+	[balanced runInferenceForRequest:turn error:&error];
+	XCTAssertEqualObjects(balanced.lastServerBaseURL, home, @"%@", error);
 	[first stop];
 	[second stop];
 }

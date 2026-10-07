@@ -26,7 +26,8 @@ static NSDictionary<NSString *, NSString *> *NFKServedChatParameterNames(void)
 				   @"top_p": NFKParameterTopP,
 				   @"top_k": NFKParameterTopK,
 				   @"repetition_penalty": NFKParameterRepetitionPenalty,
-				   @"repeat_penalty": NFKParameterRepetitionPenalty };
+				   @"repeat_penalty": NFKParameterRepetitionPenalty,
+				   @"prompt_cache_key": NFKParameterConversationKey };
 	});
 	return names;
 }

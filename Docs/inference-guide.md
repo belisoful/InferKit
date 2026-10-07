@@ -573,7 +573,8 @@ out as `max_tokens` (`max_completion_tokens` for OpenAI's reasoning models, such
 `gpt-5.6-luna`), `NFKParameterTopP` as `top_p`, `NFKParameterTopK` as `top_k`, and
 `NFKParameterStopSequences` as `stop` (`stop_sequences` on Anthropic). `NFKParameterRepetitionPenalty`
 goes out as both `repetition_penalty` and `repeat_penalty`, since the servers disagree on the name and
-agree on the meaning. `NFKParameterReasoningEffort` goes out as `reasoning_effort` with the level
+agree on the meaning. `NFKParameterConversationKey` goes out as `prompt_cache_key`, the name OpenAI
+routes its prompt cache by. `NFKParameterReasoningEffort` goes out as `reasoning_effort` with the level
 renamed to the one the service reads (light → low, moderate → medium, deep → high). On the Messages
 API it goes out as adaptive thinking at the same named effort from Claude Opus 4.6 on, and as a
 `thinking` budget in tokens on earlier models. Claude models from Opus 4.7 on refuse sampling, so the
@@ -705,7 +706,12 @@ advertised.
 
 `NFKBalancedBackend` spreads one model over several servers. It sends each request to the server
 expected to start it soonest, learns each server's load from its replies between status readings,
-and moves a request that never started to the next server. Servers come from URLs, Bonjour, or both.
+and moves a request that never started to the next server. A conversation's requests go to the server
+that answered the previous one, so a backend that keeps its prompt between requests reuses it: the
+caller names the conversation with `NFKParameterConversationKey` (OpenAI's `prompt_cache_key` on the
+chat route), or the balancer knows a chat by its messages through the first user turn. The
+conversation moves when its server leaves, fails over, or is expected to wait more than
+`conversationWaitAllowance` longer than another. Servers come from URLs, Bonjour, or both.
 Hosted in a server of its own, it makes that server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about the
 machine and keeps the models' load. GPU utilization counts every process and stays high while one
 run executes, so a balancer routes on the queue figures and the estimated wait.

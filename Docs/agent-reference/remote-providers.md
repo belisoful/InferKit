@@ -667,7 +667,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 8, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 15, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -744,6 +744,19 @@ and start times on `systemUptime`, and the job's last reported progress.
   max(outstanding − limit + 1, 0) × average run ÷ limit. Any candidate without an average run turns
   the choice into fewest-outstanding for all, so the scores share a unit. Ties rotate, and so does
   `prepareWithError:`, which chooses a server to read the keys from.
+- Conversation affinity (2026-10-07). A conversation's name is `key:` + `NFKParameterConversationKey`, or
+  `messages:` + the SHA-256 of the messages through the first user message, serialized as JSON with
+  sorted keys; messages that are not JSON (a part holding an image or data object) name no conversation.
+  The opening, not the whole history, is hashed because each turn adds the previous reply, which a
+  client may reformat. Two chats that open identically share a server, which costs nothing but
+  balance. The pinned server is kept when it is among the candidates (healthy ones first, as for any
+  choice) and no candidate's expected wait is more than `conversationWaitAllowance` below its own;
+  a server with no wait estimate keeps its conversations. Keeping a conversation skips
+  `pickAmong:`, so round robin's turn advances only on requests it places. The record is written
+  when a server answers, so a failover re-pins. At most 4096 conversations are kept; past that the
+  least recently used go. MLX's language backend keeps one prompt cache per backend, so affinity
+  pays where a server serves few concurrent chats, and the request still has to ask for reuse
+  (`NFKMLXGenerationParameterKey.reusesPromptCache`).
 - `lastServerBaseURL` is the server's base URL as added. Rebuilding it from the client's endpoint by
   deleting path components leaves a trailing slash, and the URLs then compare unequal.
 - Runtime reports: the server resolves each registered class name with `NSClassFromString` and asks

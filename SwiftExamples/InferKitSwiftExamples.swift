@@ -341,6 +341,12 @@ final class InferKitSwiftExamples: XCTestCase {
         let result = try balanced.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"]))
         XCTAssertEqual(result.output(forKey: NFKInputPrompt) as? String, "hello")
         XCTAssertEqual(balanced.lastServerBaseURL, server.localBaseURL)
+
+        balanced.conversationWaitAllowance = 30
+        let turn = NFKInferenceRequest(inputs: [NFKInputPrompt: "and the action items?"],
+                                       parameters: [NFKParameterConversationKey: "meeting-42"])
+        XCTAssertEqual(try balanced.runInference(for: turn).output(forKey: NFKInputPrompt) as? String,
+                       "and the action items?")
     }
 
     // The completion-handler forms import as async calls. Their names carry a probe prefix: the

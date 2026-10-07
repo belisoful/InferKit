@@ -110,6 +110,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `startDiscoveryWithInterval:` adds the servers Bonjour finds. Hosted in an `NFKInferenceServer`,
   it makes that server a load balancer, and it never routes to a server whose model is itself a
   balancer.
+- `NFKBalancedBackend` keeps a conversation on the server that answered its previous request, where
+  a backend that keeps its prompt between requests reuses it. `NFKParameterConversationKey` names
+  the conversation; without one, a chat is known by its messages through the first user message. The
+  conversation moves when its server stops being a candidate, when the request fails over, or when
+  another candidate's expected wait is more than `conversationWaitAllowance` (10 seconds) shorter,
+  and is forgotten after `conversationIdleInterval` (600 seconds) idle. `conversationAffinity` turns
+  it off. `NFKRemoteBackend` sends the key as `prompt_cache_key`, and `NFKInferenceServer`'s chat
+  route reads `prompt_cache_key` into it.
 - The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
@@ -549,6 +557,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXDecoderBackend` (Qwen3.5 and Qwen4-Exp) report the same description of their decoder, with
   the `model_type` and `max_position_embeddings` their release's `config.json` states, at its top
   level or under `text_config`.
+- A language backend built from a release directory reports the bytes the directory occupies on
+  disk (`NFKModelInfoStorageBytes`), a linked file counted at its target. A paged model's routed
+  experts stay in the release, so its parameter count and weight bytes cover the resident weights
+  and its storage bytes the whole release. `NFKMLXLanguageBackend`, `NFKMLXDeepSeekBackend`, and the
+  five backends above report it.
 - `NFKMLXGPU` adopts `NFKServingRuntimeStatus`, so a server's status route reports MLX's active,
   cached, and peak memory and its memory limit under `host.runtimes.mlx`. A process without MLX's
   Metal library reports only that the library is missing, because MLX aborts at its first memory

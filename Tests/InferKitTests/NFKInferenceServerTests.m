@@ -355,6 +355,7 @@
 															   parameters:@{ NFKParameterMaxTokens: @12, NFKParameterTemperature: @0.5,
 																			 NFKParameterStopSequences: @[ @"END" ],
 																			 NFKParameterReasoningEffort: NFKReasoningEffortDeep,
+																			 NFKParameterConversationKey: @"chat-7",
 																			 @"custom_field": @"kept" }
 														   outputModality:NFKModalityText];
 	NSError *error = nil;
@@ -369,6 +370,7 @@
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterTemperature], @0.5);
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterStopSequences], (@[ @"END" ]));
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterReasoningEffort], NFKReasoningEffortDeep);
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterConversationKey], @"chat-7", @"read back from prompt_cache_key");
 	XCTAssertEqualObjects([received parameterForKey:@"custom_field"], @"kept");
 	XCTAssertEqual(received.outputModality, NFKModalityText);
 }

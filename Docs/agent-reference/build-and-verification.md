@@ -178,7 +178,7 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2219 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 2220 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  136 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   52 — the Objective-C ones
    ```
@@ -209,7 +209,7 @@ unguarded call.
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (718), `InferKitFoundationModels` (87), and `InferKitAppleSwift`
+   package declares, so the core (726), `InferKitFoundationModels` (87), and `InferKitAppleSwift`
    (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
    covers all 87 tests across its three test targets. Through Xcode it collapses the same way MLX does

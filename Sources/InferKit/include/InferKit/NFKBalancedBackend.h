@@ -56,6 +56,19 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 				fails the request. A server that cannot be connected to sits out for a backoff that
 				doubles from 2 seconds to 60, and a successful reading returns it.
 
+				Keeping conversations together: a request in a conversation goes to the server that
+				answered the conversation's previous request, where a backend that keeps its prompt
+				between requests (such as MLX's language backend asked to reuse its prompt cache)
+				continues from it instead of reading the history again.
+				- A conversation is named by the request's NFKParameterConversationKey, or else by the
+				  messages up to and including its first user message, which every later turn of a
+				  chat repeats. A request with neither belongs to no conversation.
+				- The conversation's server is used while it remains a candidate and no candidate's
+				  expected wait is more than conversationWaitAllowance shorter than its own. Otherwise
+				  the request is chosen as any other, and the conversation moves to the server that
+				  answers it, as it does after a failover.
+				- A conversation idle for conversationIdleInterval is forgotten.
+
 				startDiscoveryWithInterval: adds the servers Bonjour finds and drops a discovered
 				server once two browses in a row miss it. A server added by URL stays until it is
 				removed. A server reached both ways counts as two.
@@ -84,6 +97,17 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 
 /*! The request timeout passed to each server's client. Defaults to 600 seconds. */
 @property (atomic, assign) NSTimeInterval timeout;
+
+/*! Whether a conversation's requests go to the server that answered its previous request. Defaults
+	to YES. */
+@property (atomic, assign) BOOL conversationAffinity;
+
+/*! How long a conversation keeps its server after its last request. Defaults to 600 seconds. */
+@property (atomic, assign) NSTimeInterval conversationIdleInterval;
+
+/*! How much longer a conversation's server may be expected to wait than the shortest expected wait
+	before the conversation moves. Defaults to 10 seconds. */
+@property (atomic, assign) NSTimeInterval conversationWaitAllowance;
 
 /*! The servers' base URLs, in the order they were added. */
 @property (nonatomic, readonly, copy) NSArray<NSURL *> *serverBaseURLs;

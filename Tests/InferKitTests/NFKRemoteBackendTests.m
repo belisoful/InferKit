@@ -210,6 +210,19 @@
 	XCTAssertNil(body[NFKParameterRepetitionPenalty]);
 }
 
+- (void)testTheConversationKeyGoesOutAsThePromptCacheKey
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+									parameters:@{ NFKParameterConversationKey: @"chat-7" }];
+	[self.backend runInferenceForRequest:request error:NULL];
+
+	NSDictionary *body = [self.backend decodedRequestBody];
+	XCTAssertEqualObjects(body[@"prompt_cache_key"], @"chat-7");
+	XCTAssertNil(body[NFKParameterConversationKey]);
+}
+
 // A caller who writes the endpoint's own name keeps what they wrote: the translation runs first and
 // the fold runs after it.
 - (void)testAnExplicitWireNameOutranksTheTranslatedCoreKey

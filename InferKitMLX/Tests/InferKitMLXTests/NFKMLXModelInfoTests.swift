@@ -83,6 +83,23 @@ final class NFKMLXModelInfoTests: XCTestCase {
         XCTAssertTrue(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: nil).isEmpty)
     }
 
+    func testAReleaseDirectoryCountsItsFilesAndTheTargetsOfItsLinks() throws {
+        let directory = try releaseDirectory(config: ["model_type": "qwen3"])
+        let blobs = try releaseDirectory(config: [:])
+        let blob = blobs.appendingPathComponent("weights-blob")
+        try Data(count: 200_000).write(to: blob)
+        try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("model.safetensors"),
+                                                   withDestinationURL: blob)
+        let allocated = { (url: URL) in try url.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize ?? 0 }
+        let expected = try allocated(directory.appendingPathComponent("config.json")) + allocated(blob)
+        XCTAssertEqual(NFKMLXModelDescription.storageBytes(at: directory), expected, "the link counts its blob")
+        XCTAssertGreaterThanOrEqual(expected, 200_000)
+        XCTAssertEqual(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: directory)[NFKModelInfoStorageBytes] as? Int,
+                       expected)
+        XCTAssertNil(NFKMLXModelDescription.storageBytes(at: directory.appendingPathComponent("config.json")),
+                     "a file is not a release directory")
+    }
+
     func testABackendOverAForwardDescribesItsNetworkAndRelease() throws {
         try requireMLXRuntime()
         let directory = try releaseDirectory(config: ["model_type": "nemotron_h", "max_position_embeddings": 131072])

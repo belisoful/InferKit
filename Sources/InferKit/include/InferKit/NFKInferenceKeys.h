@@ -163,6 +163,11 @@ extern NSString * const NFKParameterCitations;
 	previous_response_id, Gemini's previous_interaction_id. The service keeps the history, so the
 	request carries only the new turn. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKParameterPreviousResponseIdentifier;
+/*! A caller-chosen name for the conversation the request belongs to (NSString). NFKBalancedBackend
+	sends a conversation's requests to one server, where a backend that keeps its prompt between
+	requests reuses it. OpenAI-compatible services read it as prompt_cache_key, and NFKInferenceServer's
+	chat route reads prompt_cache_key into it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterConversationKey;
 
 /*! Edits the source clip according to the prompt. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKVideoOperationEdit;

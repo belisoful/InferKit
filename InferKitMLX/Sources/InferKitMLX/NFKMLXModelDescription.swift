@@ -65,13 +65,16 @@ enum NFKMLXModelDescription {
         return info
     }
 
-    /// The description of `modules`, with the `model_type` and `max_position_embeddings` that the
-    /// release's `config.json` states at its top level or, for a multimodal release, under
-    /// `text_config`. With no modules, only the release's statements.
+    /// The description of `modules`, with the bytes the release directory occupies on disk and the
+    /// `model_type` and `max_position_embeddings` that its `config.json` states at its top level or,
+    /// for a multimodal release, under `text_config`. With no modules, only the release's figures.
     static func info(of modules: [Module], releaseDirectoryURL: URL?) -> [String: Any] {
         var info = modules.isEmpty ? [:] : info(of: modules)
-        guard let releaseDirectoryURL,
-              let data = try? Data(contentsOf: releaseDirectoryURL.appendingPathComponent("config.json")),
+        guard let releaseDirectoryURL else {
+            return info
+        }
+        info[NFKModelInfoStorageBytes] = storageBytes(at: releaseDirectoryURL)
+        guard let data = try? Data(contentsOf: releaseDirectoryURL.appendingPathComponent("config.json")),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return info
         }
@@ -83,6 +86,30 @@ enum NFKMLXModelDescription {
             info[NFKModelInfoContextLength] = positions
         }
         return info
+    }
+
+    /// The bytes the files under `directoryURL` occupy on disk, or nil where it is not a directory. A
+    /// symbolic link counts its target, so a Hugging Face cache snapshot, whose files link to its
+    /// blobs, counts the blobs.
+    static func storageBytes(at directoryURL: URL) -> Int? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue,
+              let enumerator = FileManager.default.enumerator(at: directoryURL,
+                                                              includingPropertiesForKeys: [.isSymbolicLinkKey]) else {
+            return nil
+        }
+        var total = 0
+        for case let url as URL in enumerator {
+            let isLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+            let file = isLink ? url.resolvingSymlinksInPath() : url
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .totalFileAllocatedSizeKey]),
+                  values.isRegularFile == true else {
+                continue
+            }
+            total += values.totalFileAllocatedSize ?? 0
+        }
+        return total
     }
 
     private static func precisionName(_ type: DType) -> String? {

@@ -3603,7 +3603,9 @@ client choosing a server compares the queue figures and the estimated wait.
 `NFKBalancedBackend` sends each request to whichever server hosting the model is expected to start
 it soonest. It moves a request that never started (the server was unreachable, its queue was full, or
 it does not host the model) to the next server. A server running hot or under critical memory
-pressure serves only when no other can.
+pressure serves only when no other can. A conversation stays on the server that answered it, where a
+backend that keeps its prompt reuses it; `NFKParameterConversationKey` names one, and a chat without
+a key is known by its opening messages.
 
 <!-- objc-check: given NFKInferenceServer *server = nil; -->
 ```objc
@@ -3615,6 +3617,11 @@ NFKInferenceResult *reply = [balanced runInferenceForRequest:
     [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize the meeting." }] error:&error];
 NSURL *answeredBy = balanced.lastServerBaseURL;
 
+// A conversation's turns go to one server.
+NFKInferenceRequest *turn = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"And the action items?" }
+                                                        parameters:@{ NFKParameterConversationKey: @"meeting-42" }];
+reply = [balanced runInferenceForRequest:turn error:&error];
+
 // Hosted in a server of its own, it makes that server the load balancer for the others.
 [server addBackend:balanced forModelName:@"qwen3"];
 ```
@@ -3624,6 +3631,9 @@ let balanced = NFKBalancedBackend(modelName: "qwen3")
 balanced.policy = .fewestOutstanding
 balanced.addServer(withBaseURL: studio, apiKey: key)
 let reply = try balanced.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Summarize the meeting."]))
+balanced.conversationWaitAllowance = 30   // seconds a conversation waits for its own server
+let turn = NFKInferenceRequest(inputs: [NFKInputPrompt: "And the action items?"],
+                               parameters: [NFKParameterConversationKey: "meeting-42"])
 ```
 
 ## Model gallery

@@ -89,6 +89,36 @@
 
 @end
 
+/*! A balancer that reads one server as expected to wait 30 seconds and every server as averaging a
+	one-second run. */
+@interface NFKBalancedWaitingBackend : NFKBalancedBackend
+@property (nonatomic, copy) NSURL *slowBaseURL;
+@end
+
+@implementation NFKBalancedWaitingBackend
+
+- (nullable NFKServerStatus *)fetchStatusFromBaseURL:(NSURL *)baseURL apiKey:(nullable NSString *)apiKey error:(NSError **)error
+{
+	NFKServerStatus *status = [super fetchStatusFromBaseURL:baseURL apiKey:apiKey error:error];
+	if (status == nil) {
+		return nil;
+	}
+	NSMutableDictionary *reply = [status.JSONObject mutableCopy];
+	NSMutableArray *models = [NSMutableArray array];
+	for (NSDictionary *entry in reply[@"models"]) {
+		NSMutableDictionary *model = [entry mutableCopy];
+		NSMutableDictionary *load = [model[@"load"] mutableCopy];
+		load[@"average_run_seconds"] = @1;
+		load[@"estimated_wait_seconds"] = [baseURL isEqual:self.slowBaseURL] ? @30 : @0;
+		model[@"load"] = load;
+		[models addObject:model];
+	}
+	reply[@"models"] = models;
+	return [NFKServerStatus statusWithJSONObject:reply];
+}
+
+@end
+
 @interface NFKBalancedBackendTests : XCTestCase
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
@@ -207,6 +237,129 @@
 	[balancer removeServerWithBaseURL:cool.localBaseURL];
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self request] error:&error].text, @"hot",
 						  @"a strained server still serves when it is the last: %@", error);
+}
+
+#pragma mark Conversations
+
+/*! A chat's request at its turn-th user message: every turn repeats the opening and the replies. */
+- (NFKInferenceRequest *)chat:(NSString *)opening turn:(NSInteger)turn
+{
+	NSMutableArray *messages = [NSMutableArray arrayWithObject:@{ @"role": @"system", @"content": @"be brief" }];
+	[messages addObject:@{ @"role": @"user", @"content": opening }];
+	for (NSInteger index = 1; index < turn; index++) {
+		[messages addObject:@{ @"role": @"assistant", @"content": [NSString stringWithFormat:@"reply %ld", (long)index] }];
+		[messages addObject:@{ @"role": @"user", @"content": [NSString stringWithFormat:@"and %ld?", (long)index] }];
+	}
+	return [NFKInferenceRequest requestWithInputs:@{ NFKInputMessages: messages }];
+}
+
+- (NFKInferenceRequest *)requestInConversation:(NSString *)conversation
+{
+	return [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }
+									   parameters:@{ NFKParameterConversationKey: conversation }];
+}
+
+- (NFKBalancedBackend *)roundRobinOver:(NSArray<NFKInferenceServer *> *)servers
+{
+	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	balancer.policy = NFKBalancingPolicyRoundRobin;
+	for (NFKInferenceServer *server in servers) {
+		[balancer addServerWithBaseURL:server.localBaseURL apiKey:nil];
+	}
+	return balancer;
+}
+
+- (void)testEachTurnOfAChatGoesToTheServerThatAnsweredItsFirst
+{
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
+	NSError *error = nil;
+	NSString *home = [balancer runInferenceForRequest:[self chat:@"hello" turn:1] error:&error].text;
+	XCTAssertNotNil(home, @"%@", error);
+	for (NSInteger turn = 2; turn <= 4; turn++) {
+		XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:turn] error:&error].text, home,
+							  @"turn %ld: %@", (long)turn, error);
+	}
+}
+
+- (void)testAConversationKeyNamesTheConversation
+{
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"b"] error:&error].text, @"second", @"%@", error);
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+}
+
+- (void)testAStreamedTurnKeepsItsConversation
+{
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	NFKInferenceJob *job = [balancer submitInferenceJobForRequest:[self requestInConversation:@"a"]];
+	XCTAssertTrue([self waitFor:^BOOL { return job.status == NFKInferenceJobStatusSucceeded; }], @"%@", job.error);
+	XCTAssertEqualObjects(job.result.text, @"first");
+}
+
+- (void)testAConversationMovesWhenItsServerLeavesAndStaysWhereItMoved
+{
+	NFKInferenceServer *first = [self serverHosting:[self backendNamed:@"first"] queueLimit:0];
+	NFKInferenceServer *second = [self serverHosting:[self backendNamed:@"second"] queueLimit:0];
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ first, second ]];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	[balancer removeServerWithBaseURL:first.localBaseURL];
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"second", @"%@", error);
+	[balancer addServerWithBaseURL:first.localBaseURL apiKey:nil];
+	for (NSInteger index = 0; index < 2; index++) {
+		XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"second",
+							  @"the conversation stays where it moved: %@", error);
+	}
+}
+
+- (void)testAConversationMovesWhenItsServerWouldKeepItWaitingTooLong
+{
+	NFKInferenceServer *slow = [self serverHosting:[self backendNamed:@"slow"] queueLimit:0];
+	NFKInferenceServer *idle = [self serverHosting:[self backendNamed:@"idle"] queueLimit:0];
+	NFKBalancedWaitingBackend *balancer = [[NFKBalancedWaitingBackend alloc] init];
+	balancer.modelName = @"chat";
+	balancer.policy = NFKBalancingPolicyRoundRobin;
+	balancer.statusInterval = 0;
+	[balancer addServerWithBaseURL:slow.localBaseURL apiKey:nil];
+	[balancer addServerWithBaseURL:idle.localBaseURL apiKey:nil];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"slow", @"%@", error);
+
+	balancer.slowBaseURL = slow.localBaseURL;
+	balancer.conversationWaitAllowance = 60;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"slow",
+						  @"30 seconds is within the allowance: %@", error);
+	balancer.conversationWaitAllowance = 10;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"idle",
+						  @"30 seconds is past the allowance: %@", error);
+}
+
+- (void)testAnIdleConversationIsForgotten
+{
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
+	balancer.conversationIdleInterval = 0;
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"first", @"%@", error);
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"second", @"%@", error);
+}
+
+- (void)testWithoutAffinityAChatTakesEachServerInTurn
+{
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
+	balancer.conversationAffinity = NO;
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:1] error:&error].text, @"first", @"%@", error);
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:2] error:&error].text, @"second", @"%@", error);
 }
 
 #pragma mark Failing over

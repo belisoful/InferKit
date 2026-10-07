@@ -159,12 +159,14 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     private let images: NFKMLXDeepSeekImageStack?
     /// The release's own draft stack, where it carries one.
     private let draft: NFKMLXDeepSeekDraftStack?
+    private let releaseDirectoryURL: URL?
 
     init(net: NFKMLXDeepSeekNet, tokenizer: NFKTokenizer, identifier: String,
          images: NFKMLXDeepSeekImageStack? = nil, draft: NFKMLXDeepSeekDraftStack? = nil,
-         options: NFKMLXGenerationOptions = NFKMLXGenerationOptions()) {
+         options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(), releaseDirectoryURL: URL? = nil) {
         holder = NFKDeepSeekBackendHolder(net: net, tokenizer: tokenizer)
         self.identifier = identifier
+        self.releaseDirectoryURL = releaseDirectoryURL
         self.images = images
         self.draft = draft
         defaults = options
@@ -176,10 +178,15 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
 
     private let modelInfoCache = NFKMLXModelInfoCache()
 
-    /// The decoder's parameter count, weight bytes, precision, and quantization (`NFKModelInfo*`
-    /// keys). Introduced in InferKit 0.4.0.
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
+    /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
+    /// `config.json` states (`NFKModelInfo*` keys). Paged experts stay in the release, so a paged
+    /// decoder's parameter count and weight bytes cover the resident weights and its storage bytes
+    /// the whole release. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
-        modelInfoCache.value { NFKMLXModelDescription.info(of: [holder.net]) }
+        modelInfoCache.value {
+            NFKMLXModelDescription.info(of: [holder.net], releaseDirectoryURL: releaseDirectoryURL)
+        }
     }
 
     /// The request parameters the backend reads.
