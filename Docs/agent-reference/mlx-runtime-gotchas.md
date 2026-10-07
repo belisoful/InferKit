@@ -759,7 +759,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   10.3 GB and the 240×416 block's from 12.3 to 3.4 GB, with the output bit-identical and the warm full
   decode at 23.9 s against 25.2 s. `Memory.peakMemory` counts active buffers only. A process footprint
   also counts MLX's buffer cache, which held 5.7 GB of freed buffers after umT5's load and encode until
-  the Wan generator cleared it after its text stage.
+  the Wan generator cleared it after its text stage. A batch of frames through one 2-D convolution
+  holds its workspace the same way: the Wan resample upsampled a chunk's four frames to 480×832×192
+  and convolved them as one batch through Winograd, about 6.1 GB. `NFKWanResample` now resamples,
+  convolves, and evaluates each frame on its own. That step fell to 2.0 GB, the 240×416 upsampler from
+  3.9 to 1.3 GB, and the chunk from 10.3 to 7.3 GB, with the decode bit-identical. The encoder's
+  stride-2 resample runs each frame the same way and moved the Wan 2.1 latent cosine in its last
+  digits, 0.9999999999999988 to 0.9999999999999998. The released end-to-end run peaked at 25.6 GB.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?

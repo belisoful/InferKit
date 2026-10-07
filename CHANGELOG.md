@@ -503,6 +503,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   four-frame chunk of a 480×832 decode takes 10.3 GB of working memory beside the weights, down from
   13.8 GB, with the output bit-identical. `NFKMLXWanVideoGenerator` clears MLX's buffer cache after its
   text stage, which held 5.7 GB of freed buffers from umT5's load and encode.
+- The Wan autoencoder's spatial resample works one frame at a time. A chunk's decode falls to 7.3 GB of
+  working memory and the released 17-frame 480×832 end-to-end run to a 25.6 GB peak, with the decode
+  bit-identical.
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 

@@ -366,16 +366,30 @@ final class NFKWanResample: Module {
         }
     }
 
-    /// Applies the per-frame spatial resample convolution.
+    /// Applies the spatial resample convolution to each frame.
+    ///
+    /// @discussion Each frame is resampled, convolved, and evaluated on its own. MLX keeps a 3×3
+    /// convolution's workspace until its command buffer completes, and the 2-D upsampler of a four-frame
+    /// 480×832 chunk took about 6 GB that way with its frames as one batch.
     private func spatial(_ x: MLXArray) -> MLXArray {
         let b = x.dim(0), t = x.dim(1), c = x.dim(4)
-        var frames = x.reshaped([b * t, x.dim(2), x.dim(3), c])
-        if mode.hasPrefix("downsample") {
-            frames = padded(frames, widths: [IntOrPair(0), IntOrPair((0, 1)), IntOrPair((0, 1)), IntOrPair(0)])
-        } else {
-            frames = NFKRealESRGANNet.upsampleNearest2x(frames)
+        let frames = x.reshaped([b * t, x.dim(2), x.dim(3), c])
+        let conv = resample[1] as! Conv2d
+        let resampled = { (frames: MLXArray) -> MLXArray in
+            self.mode.hasPrefix("downsample")
+                ? padded(frames, widths: [IntOrPair(0), IntOrPair((0, 1)), IntOrPair((0, 1)), IntOrPair(0)])
+                : NFKRealESRGANNet.upsampleNearest2x(frames)
         }
-        let out = (resample[1] as! Conv2d)(frames)
+        let out: MLXArray
+        if frames.dim(0) == 1 {
+            out = conv(resampled(frames))
+        } else {
+            out = concatenated((0 ..< frames.dim(0)).map { i -> MLXArray in
+                let frame = conv(resampled(frames[i ..< (i + 1)]))
+                eval(frame)
+                return frame
+            }, axis: 0)
+        }
         return out.reshaped([b, t, out.dim(1), out.dim(2), out.dim(3)])
     }
 
