@@ -246,6 +246,59 @@ unguarded call.
    captured variable without `__block`, a call to a method no type declares, and two blocks that
    were fragments of a statement.
 
+## Commit Check
+
+A Commit Check is the Full Check above with the MLX tests limited to those the commits under test can
+affect. It is the gate for a push: a green Commit Check on `HEAD` whose logged selection covers every
+commit in `origin/main..HEAD` pushes the same way a green Full Check does. A Full Check still runs on a
+schedule (nightly, and before every `vX.Y.Z` tag), so a selection mistake cannot outlive a day.
+
+What a Commit Check always runs:
+
+- Every local leg of the Full Check: the core build and test, iOS, tvOS, the analyzer at a fresh
+  derived-data path, both Apple companions' build and test, the doc snippets, the podspec lint, DocC,
+  and the MLX build. Together they take about five minutes.
+
+How the MLX tests are chosen, over the cumulative range `origin/main..HEAD` on a clean tree at `HEAD`:
+
+- A changed source file contributes every type it declares (Swift `class`, `struct`, `enum`,
+  `protocol`, `actor`, `typealias`, `extension`; Objective-C `@interface` and `@protocol`).
+- One hop follows: every source type in a file that names one of those types joins the set.
+- A test is selected when its body names any type in the set, whatever file it sits in: a
+  configuration struct's new field is caught by a test in an unrelated-looking file that reads it,
+  which is how `NFKMLXPresetReleaseTests` caught the preset regression after `bff3d76`.
+- A changed test file selects each test whose lines the diff touches. A changed helper function in a
+  test file selects every test that calls it.
+- Documentation, `Tools/`, and the manifest select no MLX test; the local legs cover them.
+
+A change to a shared layer selects the whole MLX suite, because nearly every model reaches it:
+
+- `NFKMLXReleaseWeights.swift` (the release reader) and `NFKMLXWeights.swift` (weight loading)
+- `NFKMLXRecurrent.swift`
+- `NFKMLXRuntime.swift` and `NFKMLXDevice.swift` (the GPU, random, and device wrappers)
+- `NFKMLXLanguageModel.swift`, `NFKMLXLanguageBackend.swift`, and `NFKMLXPromptCache.swift` (the
+  generation runtime and its caches)
+- `NFKMLXExpertStore.swift`, `NFKMLXExpertPaging.swift`, and `NFKMLXResidency.swift` (expert paging
+  and the staging planner)
+- `NFKMLXFineTune.swift`, `NFKMLXTrainer.swift`, and `NFKMLXHub.swift`
+- `InferKitMLX/Package.swift` and `Package.resolved`
+- the core value types and backend protocol: `NFKInferenceRequest`, `NFKInferenceResult`,
+  `NFKInferenceBackend.h`, `NFKTensorConversion.h`, and the core `Package.swift`
+
+The Testing Manager owns this list and the selector
+(`~/.claude/inferkit-lmc/coordinator/commitcheck/cc_select.py`). A file joins the list when a change
+to it has broken a test the selector would have skipped.
+
+The selected tests run under the Full Check's own harness: heavy tests one per process, Wan's
+end-to-end test under its wider swap watchdog, and every `NFKMLXReferenceParityTests` and
+`NFKMLXBFloat16ParityTests` test in its own process. The remaining selected tests run one process per
+class. A selected test that the build does not list fails the check.
+
+The log names its selection: each changed file, each symbol and hop, and each selected test with the
+reason it was selected. The green criteria are the Full Check's: `HEAD` and a clean status at both ends,
+every leg at exit 0 with 0 warnings, every selected step at exit 0 with its tests executed, no
+zero-test crash, and the LMC run released as passed.
+
 ## Large Model Coordination (LMC)
 
 Several sessions share one Mac, and two multi-gigabyte test runs at once thrash memory: each
