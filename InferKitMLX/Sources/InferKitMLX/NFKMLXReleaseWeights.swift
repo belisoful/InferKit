@@ -52,11 +52,11 @@ enum NFKMLXReleaseWeights {
     /// @discussion MLX reads a file only on the CPU, and a GPU operation evaluated together with the read
     /// it consumes waits for that read inside its command buffer. A release left to a model's first
     /// evaluation holds its reads and conversions together: Gemma 4 E2B at float32 peaks at 23.6 GB that
-    /// way and at 15.4 GB here. Each group is read in one evaluation and converted in the next, so no GPU
-    /// command buffer waits on a file. `transform` reshapes one tensor at its stored type before
-    /// the conversion, or drops it by returning nil. A reshaping that spans tensors (stacking experts,
-    /// folding an adapter into its base) stays with the lazy reader, where each original is read only as
-    /// its result is formed.
+    /// way and at 15.4 GB here. Each group is read in one evaluation and converted in the next, on the
+    /// CPU, which has no GPU watchdog, so the load itself encodes no GPU work. `transform` reshapes one
+    /// tensor at its stored type before the conversion, or drops it by returning nil. A reshaping that
+    /// spans tensors (stacking experts, folding an adapter into its base) stays with the lazy reader,
+    /// where each original is read only as its result is formed.
     ///
     /// - Parameters:
     ///   - precision: as ``arrays(inDirectory:precision:remap:)``.
@@ -72,13 +72,16 @@ enum NFKMLXReleaseWeights {
             var read = [(String, MLXArray)](), groupBytes = 0
             func flush() {
                 eval(read.map(\.1))
-                let converted = read.compactMap { name, value in
-                    transform(name, value).map { kept, shaped in
-                        (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
+                // Evaluated inside the scope, so no GPU operation later waits on a CPU-stream result.
+                merged += Device.withDefaultDevice(.cpu) {
+                    let converted = read.compactMap { name, value in
+                        transform(name, value).map { kept, shaped in
+                            (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
+                        }
                     }
+                    eval(converted.map(\.1))
+                    return converted
                 }
-                eval(converted.map(\.1))
-                merged += converted
                 read.removeAll()
                 groupBytes = 0
             }
@@ -102,9 +105,8 @@ enum NFKMLXReleaseWeights {
     /// whole beside the converted one: each group of about 256 MB converts and evaluates before the next
     /// is read, and each stored array is dropped once converted.
     ///
-    /// A group is read in one evaluation and converted in the next. MLX reads a file only on the CPU,
-    /// and a GPU conversion evaluated with the read waits for it inside its command buffer; reading
-    /// first leaves no GPU command buffer waiting on a file.
+    /// A group is read in one evaluation and converted in the next, on the CPU, which has no GPU
+    /// watchdog, so the load itself encodes no GPU work.
     static func arrays(inDirectory directory: URL, converting dtype: DType,
                        remap: (String) -> String? = { $0 }) throws -> [(String, MLXArray)] {
         var merged = [(String, MLXArray)]()
@@ -120,7 +122,7 @@ enum NFKMLXReleaseWeights {
             }
             for key in stored.keys.sorted() {
                 guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
-                let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
+                let converted = value.dtype.isFloatingPoint ? value.asType(dtype, stream: .cpu) : value
                 merged.append((name, converted))
                 read.append(value)
                 group.append(converted)

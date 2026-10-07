@@ -810,9 +810,9 @@ public final class NFKMLXGemmaLanguage: NSObject {
                             precision: NFKMLXWeightPrecision = .float32,
                             skipping skipped: (String) -> Bool = { _ in false }) throws {
         let prefix = "model.language_model."
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             $0.hasPrefix(prefix) && !skipped($0) ? String($0.dropFirst(prefix.count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(mapped, to: net)
     }
 

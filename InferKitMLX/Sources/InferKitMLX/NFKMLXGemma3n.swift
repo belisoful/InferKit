@@ -897,8 +897,9 @@ public final class NFKMLXGemma3nLanguage: NSObject {
     static func loadWeights(into net: NFKMLXGemma3nNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
         let configuration = net.configuration
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: { decoderName(of: $0, configuration: configuration) })
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: precision,
+            remap: { decoderName(of: $0, configuration: configuration) })
         try NFKMLXWeights.apply(mapped, to: net)
     }
 }

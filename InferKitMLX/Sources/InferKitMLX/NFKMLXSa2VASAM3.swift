@@ -66,10 +66,18 @@ final class NFKSa2VASAM3GroundingEncoder: Module, NFKSa2VAGrounding {
     var autocasts: Bool { NFKReferenceRounding.isReduced(noMemoryEmbedding) }
 
     /// The neck's first three levels, 288, 144, and 72 across.
+    ///
+    /// @discussion In half precision each level is evaluated before the next is built. MLX schedules a lazy
+    /// graph as a whole, so three levels left to one evaluation hold their float32 convolution transients
+    /// at once.
     func imageLevels(_ image: MLXArray) -> [MLXArray] {
         guard autocasts else { return Array(neck(backbone(image)).prefix(3)) }
         let hidden = NFKSAM3Autocast.backbone(backbone, image)
-        return neck.fpnLayers.prefix(3).map { NFKSAM3Autocast.level($0, hidden) }
+        return neck.fpnLayers.prefix(3).map { layer in
+            let level = NFKSAM3Autocast.level(layer, hidden)
+            eval(level)
+            return level
+        }
     }
 
     func segment(levels: [MLXArray], languageEmbedding: MLXArray) -> (highResolution: MLXArray, lowResolution: MLXArray) {
@@ -290,7 +298,36 @@ enum NFKSAM3Autocast {
         default:
             break
         }
-        return conv(level.proj2, conv(level.proj1, out))
+        let projected = conv(level.proj1, out)
+        guard projected.dim(1) > bandRows, projected.dim(1) % bandRows == 0 else { return conv(level.proj2, projected) }
+        return banded(level.proj2, projected)
+    }
+
+    /// The output rows ``banded(_:_:)`` computes at a time: a multiple of the six-row output tiles of MLX's
+    /// Winograd convolution, which the 288- and 144-row levels take whole and in bands alike.
+    static let bandRows = 48
+
+    /// ``conv(_:_:)`` for a 3x3, stride-1, padding-1 convolution, in bands of ``bandRows`` output rows each
+    /// evaluated before the next, which holds the Winograd transforms to one band's.
+    ///
+    /// @discussion Each band reads its rows and one row either side from the zero-padded input, so its tiles
+    /// are the whole map's tiles and its values the whole convolution's, bit for bit. A band short enough to
+    /// leave the Winograd path would round differently, which is why only maps that divide into full bands
+    /// are banded.
+    static func banded(_ layer: Conv2d, _ x: MLXArray) -> MLXArray {
+        let type = layer.weight.dtype
+        let wide = padded(x.asType(type).asType(.float32), widths: [.init(0), .init(1), .init(1), .init(0)])
+        let weight = layer.weight.asType(.float32)
+        let bias = layer.bias?.asType(.float32)
+        var bands = [MLXArray]()
+        for start in stride(from: 0, to: x.dim(1), by: bandRows) {
+            var y = conv2d(wide[0..., start ..< start + bandRows + 2, 0..., 0...], weight, stride: .init(1),
+                           padding: .init(0))
+            if let bias { y = y + bias }
+            bands.append(y.asType(type))
+            eval(bands[bands.count - 1])
+        }
+        return concatenated(bands, axis: 1)
     }
 
     /// The two-way attention: projections in the weights' type, then the flash kernel.

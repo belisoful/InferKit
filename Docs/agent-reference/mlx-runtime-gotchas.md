@@ -36,6 +36,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
 - A lazy decode pins its sources and intermediates. `NFKMLXDeepSeek.dequantized` evaluates each
   entry as it is produced; returning lazy graphs would hold the whole shard's decode live at once, and
   for a block-scaled format the expanded scale array alone is the weight's full size.
+- MLX reads a file only on the CPU stream (`Load::eval_gpu` throws on Metal). A release read lazily and
+  converted in a model's first evaluation holds its reads and conversions together: Gemma 4 E2B's
+  float32 load peaked at 23.6 GB that way and at 15.4 GB read group by group, each group read in one
+  evaluation and widened in the next (`NFKMLXReleaseWeights.materializedArrays`). Measured in
+  isolation, a GPU command buffer waiting up to 26 s on a CPU-stream input, with GPU work ahead of the
+  wait or without, completes without a watchdog timeout.
 - Splitting a lazy computation into blocks bounds no memory unless each block is evaluated before the
   next: MLX schedules the graph as a whole. SAM 3's reference flash attention over 5,184 keys held
   +1.97 GB of float32 scores unsplit and +2.87 GB split into 512-row query blocks; evaluating each block

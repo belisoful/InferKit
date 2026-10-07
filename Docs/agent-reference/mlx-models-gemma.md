@@ -260,7 +260,17 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   piece run alone is held to a quarter of its floor (`testGemma3nE4BInBFloat16MatchesTheBFloat16Reference`).
   The per-block differences carry the reference's own drift plus an unbiased residual: their scale is
   within 1e-5 of the reference's per copy, and their per-channel mean does not repeat from one block to
-  the next, where the reference's bf16 error does. The released-sizes check
+  the next, where the reference's bf16 error does. The isolated bar's floor is the drift accumulated up
+  to that layer, so it does not show how far a block alone departs: run on the reference's four copies,
+  layer 6 differs in 24% of its elements and layers 0 and 5 in under 0.01%. Every piece of every layer
+  run alone on the reference's own input differs in 0.04% of its elements or fewer, by one or two
+  steps, except the per-layer GELU, whose 1.6% are values near 1e-7 where Metal's and torch's `tanh`
+  disagree on an exact zero. The whole block's spread starts in one token: at layer 4 the attention
+  output differs in 1,033 of token 2's 2,048 entries while the inputs it reads are bit-identical. The
+  attention runs at scale 1.0 and its scores reach 15 to 18, where one bf16 step is 0.06 to 0.125 of a
+  softmax logit, so a query that differs by one step from the order of a sum moves the token's whole
+  attention. A wide projection then spreads one differing input to about 8% of its row. The reference
+  carries the same sensitivity, which its own spread under one-step nudges measures. The released-sizes check
   (`testGemma3nE4BMatchesTheReferenceLogits`) reads the eager bf16 record: logit cosine 0.99925, argmax
   5/6, and a position whose top token departs from the bf16 reference's must carry the float32
   reference's, which this one does. Both Gemma 3n bf16 keys (`IK_PARITY_GEMMA3N_E2B_BF16`,

@@ -518,8 +518,9 @@ public final class NFKMLXGemma3nVision: NSObject {
     /// Loads the tower from a released directory, taking only the vision tower's tensors.
     static func loadWeights(into net: NFKMLXGemma3nVisionNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: towerName(of:))
-        try NFKMLXWeights.apply(mapped.map { ($0.0, converted($0.0, $0.1)) }, to: net)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 remap: towerName(of:),
+                                                                 transform: { ($0, converted($0, $1)) })
+        try NFKMLXWeights.apply(mapped, to: net)
     }
 }

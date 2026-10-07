@@ -45,6 +45,11 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   and Gemma's copy had no sharded path — a capability gap consolidation removed as a side effect.
   The per-family differences stay in the loaders where they belong: the tied-`lm_head` drop, the
   hybrid's `model.language_model.` remap and depthwise-conv transpose, Gemma's tower skip.
+  `arrays(inDirectory:precision:remap:)` returns lazy reads; `materializedArrays(…transform:)` reads
+  and converts in groups of about 256 MB and returns them evaluated, which lowers a large load's
+  footprint (Gemma 3n and Gemma 4 read through it). A caller that builds new arrays from most of what
+  it reads stays lazy: an eager read would hold every original beside its result, which doubles the
+  peak of per-expert stacking (`stackingExperts`) and adds about 13 GB to Phi-4's float32 LoRA fold.
 - `NFKMLXGGUF` / `NFKMLXGGUFFormat` — the **native GGUF reader**, the sequel to the native PyTorch
   checkpoint reader, and the format most quantized language models are distributed in. Same contract:
   pure Foundation below the MLX materialization (parsing and dequantization run under `swift test`;

@@ -493,6 +493,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 
+#### Gemma 3n and Gemma 4 read a release before converting it
+
+- `NFKMLXReleaseWeights.materializedArrays(inDirectory:precision:remap:transform:)` reads a release
+  in groups of about 256 MB: each group is read from disk in one evaluation, then converted on the CPU
+  in the next, and returned materialized. `arrays(inDirectory:converting:)` converts on the CPU too, so
+  neither encodes GPU work while a release loads. The Gemma 4 and Gemma 3n loaders (decoders, towers, and the
+  MatFormer slice) read through it. Their earlier reader left every file read and float32 widening to
+  the model's first evaluation; Gemma 4 E2B's float32 load now peaks at 15.4 GB in place of 23.6 GB.
+  The values are the same bytes converted by the same operations.
+- `transform` reshapes one tensor at its stored type before the conversion, or drops it. MatFormer
+  slices E4B to E2B through it, one tensor at a time.
+
 #### Finishing a matte from any matting model
 
 - `NFKMLXMatteOperations` holds model-agnostic matte operations on `MLXArray`: clip levels that can
@@ -541,8 +553,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   convolutions in bfloat16, layer norms in float32 with float32 outputs, so the ViT's residual stream
   stays float32, and the ViT MLP's first projection with its tanh GELU rounded once, as cuBLASLt fuses
   them. Its ViT attends 512 query rows at a time and evaluates each block before the next, which holds
-  its float32 scores to one block's. The grounding's weights take 0.95 GB in place of 1.89 GB, and the
-  backend's peak falls from 11.1 GB to 10.4 GB while it loads and from 12.3 GB to 11.6 GB while it
+  its float32 scores to one block's. Its tracker neck evaluates each level before the next, and the
+  3×3 convolutions of the 288- and 144-row levels run in 48-row bands, each evaluated, with values
+  identical to the whole convolution's. The grounding's weights take 0.95 GB in place of 1.89 GB, and
+  the backend's peak falls from 11.1 GB to 10.4 GB while it loads and from 12.3 GB to 11.5 GB while it
   answers. Float32 loads are unchanged.
 - The SAM 3 grounding returns no mask where its decoder finds no object: the release replaces the masks
   with -1024 when the object score is not positive. Sa2VA's SAM 2 releases leave that rule out.

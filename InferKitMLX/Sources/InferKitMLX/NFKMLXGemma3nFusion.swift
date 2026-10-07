@@ -313,9 +313,10 @@ public final class NFKMLXGemma3n: NSObject {
         let model = NFKMLXGemma3nModel(decoder: decoder, vision: vision, audio: audio,
                                        visionEmbedder: visionEmbedder, audioEmbedder: audioEmbedder,
                                        tokens: tokenVocabulary)
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: { name(of: $0, decoder: textConfiguration) })
-        try NFKMLXWeights.apply(mapped.map { ($0.0, converted($0.0, $0.1)) }, to: model)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: precision, remap: { name(of: $0, decoder: textConfiguration) },
+            transform: { ($0, converted($0, $1)) })
+        try NFKMLXWeights.apply(mapped, to: model)
         return model
     }
 }

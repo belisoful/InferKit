@@ -670,8 +670,9 @@ public final class NFKMLXGemma3nAudio: NSObject {
     /// Loads the encoder from a released directory, taking only the audio tower's tensors.
     static func loadWeights(into net: NFKMLXGemma3nAudioNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: encoderName(of:))
-        try NFKMLXWeights.apply(mapped.map { ($0.0, converted($0.0, $0.1)) }, to: net)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 remap: encoderName(of:),
+                                                                 transform: { ($0, converted($0, $1)) })
+        try NFKMLXWeights.apply(mapped, to: net)
     }
 }

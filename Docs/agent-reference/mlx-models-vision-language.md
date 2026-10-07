@@ -511,9 +511,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (`present(_:objectScore:)`); every SAM 2 Sa2VA release comments that rule out. The ViT's reference
   flash attention takes `queryBlock` 512, each block evaluated in turn: over a global layer's 5,184 keys
   the unsplit graph held +1.97 GB of float32 scores, the fused kernel +0.23 GB, and 512-row blocks +0.88
-  GB, numerics identical. The tracker neck (+1.3 GB, its 3×3 convolutions in float32) is now the
-  grounding's largest stage. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
-  11.6 GB (-4B-SAM3; 12.3 GB with its grounding at float32, which loaded at 11.1 GB against 10.4 GB now),
+  GB, numerics identical. The tracker neck held +1.3 GB with its three levels in one graph. It now
+  evaluates each level in turn, and the 3×3 `proj2` of the 288- and 144-row levels runs in 48-row
+  bands (`NFKSAM3Autocast.banded`), each evaluated, which takes it to +0.6 GB. MLX takes these
+  convolutions on its Winograd path, whose output tiles are six rows tall; a band of a multiple of six
+  rows that reads one row of halo either side computes the whole map's tiles, so 0 of 21.2M (288) and
+  0 of 5.3M (144) elements differ. A band short enough to leave the Winograd path would round
+  differently, which is why the 72-row level is not banded. The backend peaks at 6.7 GB (Qwen3-VL-2B), 9.7 GB (Qwen2.5-VL-3B), 11.1 GB (Qwen3-VL-4B), and
+  11.5 GB (-4B-SAM3; 12.3 GB with its grounding at float32, which loaded at 11.1 GB against 10.4 GB now),
   where float32 reached 24.5 GB, and answers each release's float32 reference text
   exactly. Against the float32 records (`testTheBFloat16LoadStaysNearTheFloat32Reference`), each seam is
   held to twice its release's own bfloat16 distance there, read at run time from the release's probe

@@ -172,10 +172,10 @@ extension NFKMLXGemma3n {
                                      base: NFKMLXGemma3nConfiguration,
                                      precision: NFKMLXWeightPrecision) throws -> [(String, MLXArray)] {
         try validate(slice, against: base)
-        let full = try NFKMLXReleaseWeights.arrays(
+        return try NFKMLXReleaseWeights.materializedArrays(
             inDirectory: directory, precision: precision,
-            remap: { NFKMLXGemma3nLanguage.decoderName(of: $0, configuration: base) })
-        return full.compactMap { Self.sliced($0.0, $0.1, by: slice, base: base) }
+            remap: { NFKMLXGemma3nLanguage.decoderName(of: $0, configuration: base) },
+            transform: { Self.sliced($0, $1, by: slice, base: base) })
     }
 
     /// A Gemma 3n decoder built by slicing a LARGER release, without a checkpoint of its own.

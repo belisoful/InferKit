@@ -177,9 +177,9 @@ public extension NFKMLXGemmaLanguage {
     static func loadUnifiedWeights(into net: NFKMLXGemma4UnifiedNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
         let prefix = "model.language_model."
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(mapped, to: net)
     }
 }
