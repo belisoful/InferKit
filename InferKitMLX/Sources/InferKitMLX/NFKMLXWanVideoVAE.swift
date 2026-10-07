@@ -155,45 +155,66 @@ final class NFKWanCausalConv3d: Module {
     /// `x` NDHWC, `cache` the previous chunk's stored frames (or none). Prepends the cache and left-pads
     /// the remainder, so the temporal receptive field crosses the chunk boundary causally.
     func callAsFunction(_ x: MLXArray, cache: NFKWanCache.Entry) -> MLXArray {
-        var h = x
+        var prefix: MLXArray?
         var left = causalPad
         if case .frames(let c) = cache, left > 0 {
-            h = concatenated([c, h], axis: 1)
+            prefix = c
             left -= c.dim(1)
         }
-        return convolved(h, timePad: left)
+        return convolved(x, after: Self.leftPadded(prefix, frames: left, like: x))
     }
 
     /// A plain application (no caching), for the temporal resample convolutions the reference calls
     /// directly on an already-concatenated input.
     func plain(_ x: MLXArray) -> MLXArray {
-        convolved(x, timePad: causalPad)
+        convolved(x, after: Self.leftPadded(nil, frames: causalPad, like: x))
     }
 
-    /// `x` left-padded in time by `timePad` and convolved, the spatial padding applied by the convolution.
+    /// `prefix` preceded by `frames` zero frames shaped as `x`'s, or nil where both are empty.
+    private static func leftPadded(_ prefix: MLXArray?, frames: Int, like x: MLXArray) -> MLXArray? {
+        guard frames > 0 else { return prefix }
+        let zeros = MLXArray.zeros([x.dim(0), frames, x.dim(2), x.dim(3), x.dim(4)], dtype: x.dtype)
+        return prefix.map { concatenated([zeros, $0], axis: 1) } ?? zeros
+    }
+
+    /// The convolution of `prefix` followed by `x` along time, the spatial padding applied by the
+    /// convolution.
     ///
     /// @discussion MLX runs a 3-D convolution as one 2-D convolution per temporal tap, and each keeps its
     /// workspace until its command buffer completes: about 4 GB for one 3×3×3 convolution over four
     /// 240×416 frames of 192 channels. A stride-1 convolution over several output frames therefore runs
     /// and evaluates one output frame at a time, which computes every output element as the whole
-    /// convolution does.
-    private func convolved(_ x: MLXArray, timePad: Int) -> MLXArray {
-        let h = timePad > 0
-            ? padded(x, widths: [IntOrPair(0), IntOrPair((timePad, 0)), IntOrPair(0), IntOrPair(0), IntOrPair(0)])
-            : x
+    /// convolution does. Each output frame reads its input window as a view of `x` where the window lies
+    /// past `prefix`, and is written into one output, so neither the joined input nor a second copy of
+    /// the output is held.
+    private func convolved(_ x: MLXArray, after prefix: MLXArray?) -> MLXArray {
         let padding = IntOrTriple((0, spatialPad, spatialPad))
         let bias = self.bias.reshaped([1, 1, 1, 1, -1])
         let kernelT = weight.dim(1)
-        let frames = h.dim(1) - kernelT + 1
+        let lead = prefix?.dim(1) ?? 0
+        let frames = lead + x.dim(1) - kernelT + 1
         guard strideT == 1, frames > 1 else {
+            let h = prefix.map { concatenated([$0, x], axis: 1) } ?? x
             return conv3d(h, weight, stride: IntOrTriple((strideT, 1, 1)), padding: padding) + bias
         }
-        let outputs = (0 ..< frames).map { t -> MLXArray in
-            let frame = conv3d(h[0..., t ..< (t + kernelT)], weight, padding: padding) + bias
-            eval(frame)
-            return frame
+        func window(_ t: Int) -> MLXArray {
+            guard let prefix, t < lead else { return x[0..., (t - lead) ..< (t - lead + kernelT)] }
+            let head = prefix[0..., t ..< min(lead, t + kernelT)]
+            let tail = t + kernelT - lead
+            return tail > 0 ? concatenated([head, x[0..., 0 ..< tail]], axis: 1) : head
         }
-        return concatenated(outputs, axis: 1)
+        var out: MLXArray?
+        for t in 0 ..< frames {
+            let frame = conv3d(window(t), weight, padding: padding) + bias
+            if out == nil {
+                var shape = frame.shape
+                shape[1] = frames
+                out = MLXArray.zeros(shape, dtype: frame.dtype)
+            }
+            out![0..., t ..< (t + 1)] = frame
+            eval(out!)
+        }
+        return out!
     }
 }
 

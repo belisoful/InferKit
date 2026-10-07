@@ -766,6 +766,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   3.9 to 1.3 GB, and the chunk from 10.3 to 7.3 GB, with the decode bit-identical. The encoder's
   stride-2 resample runs each frame the same way and moved the Wan 2.1 latent cosine in its last
   digits, 0.9999999999999988 to 0.9999999999999998. The released end-to-end run peaked at 25.6 GB.
+  Each causal convolution then held its six-frame joined input and its four frame outputs beside their
+  concatenation. It now reads each output frame's window as a view of the chunk, joining only the windows
+  that reach into the cached frames, and writes each frame into one output by slice update. A
+  full-resolution residual block fell from 4.7 to 3.8 GB and the chunk from 7.3 to 6.4 GB, with the
+  decode bit-identical, and the end-to-end run peaked at 24.6 GB. What remains in that block is its
+  input, kept for the residual add, and the RMS norm's temporaries.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?
