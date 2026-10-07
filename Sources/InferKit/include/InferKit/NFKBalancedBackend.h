@@ -62,7 +62,9 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 				continues from it instead of reading the history again.
 				- A conversation is named by the request's NFKParameterConversationKey, or else by the
 				  messages up to and including its first user message, which every later turn of a
-				  chat repeats. A request with neither belongs to no conversation.
+				  chat repeats. A request with neither belongs to no conversation. A conversation named
+				  from the messages is sent to the server under NFKParameterConversationKey, so the
+				  server's backend can keep the conversation's prompt as it would for a caller's key.
 				- The conversation's server is used while it remains a candidate and no candidate's
 				  expected wait is more than conversationWaitAllowance shorter than its own. Otherwise
 				  the request is chosen as any other, and the conversation moves to the server that

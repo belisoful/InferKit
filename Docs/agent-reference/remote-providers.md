@@ -667,7 +667,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 15, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 17, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -759,10 +759,12 @@ and start times on `systemUptime`, and the job's last reported progress.
   a server with no wait estimate keeps its conversations. Keeping a conversation skips
   `pickAmong:`, so round robin's turn advances only on requests it places. The record is written
   when a server answers, so a failover re-pins. At most 4096 conversations are kept; past that the
-  least recently used go. The balancer routes by a key it derives but does not add that key to the
-  request, so a server's backend sees `NFKParameterConversationKey` only when the caller sent one.
-  MLX's language backend keeps a prompt cache per named conversation (`conversationCacheByteBudget`)
-  and reuses it without `NFKMLXGenerationParameterKey.reusesPromptCache`.
+  least recently used go. A name derived from the messages is added to the request it sends as
+  `NFKParameterConversationKey` (the `messages:` digest), so a server's backend keeps a keyless
+  chat's prompt too; a caller's own key goes out as written, and a request in no conversation gains
+  none. MLX's language backend keeps a prompt cache per named conversation
+  (`conversationCacheByteBudget`) and reuses it without
+  `NFKMLXGenerationParameterKey.reusesPromptCache`.
 - `lastServerBaseURL` is the server's base URL as added. Rebuilding it from the client's endpoint by
   deleting path components leaves a trailing slash, and the URLs then compare unequal.
 - Runtime reports: the server resolves each registered class name with `NSClassFromString` and asks

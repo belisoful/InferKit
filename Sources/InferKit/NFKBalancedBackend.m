@@ -479,6 +479,19 @@ typedef struct {
 	return YES;
 }
 
+/*! The request as sent to a server. A conversation the balancer named from the request's messages
+	travels under NFKParameterConversationKey, so the server's backend keeps that conversation's
+	prompt as it would for a caller's own key. */
+- (NFKInferenceRequest *)request:(NFKInferenceRequest *)request forwardingConversation:(nullable NSString *)conversation
+{
+	if (conversation == nil || request.parameters[NFKParameterConversationKey] != nil) {
+		return request;
+	}
+	NSMutableDictionary<NSString *, id> *parameters = [request.parameters mutableCopy] ?: [NSMutableDictionary dictionary];
+	parameters[NFKParameterConversationKey] = conversation;
+	return [NFKInferenceRequest requestWithInputs:request.inputs parameters:parameters outputModality:request.outputModality];
+}
+
 /*! Ties the conversation to the server that answered it. */
 - (void)recordConversation:(nullable NSString *)conversation onServer:(NFKBalancedServer *)server
 {
@@ -665,6 +678,7 @@ typedef struct {
 												  error:(NSError * _Nullable *)outError
 {
 	NSString *conversation = [self conversationOfRequest:request];
+	NFKInferenceRequest *forwarded = [self request:request forwardingConversation:conversation];
 	NSMutableSet<NFKBalancedServer *> *tried = [NSMutableSet set];
 	NSError *lastError = nil;
 	for (NFKBalancedServer *server = [self chooseServerExcluding:tried conversation:conversation]; server != nil;
@@ -673,7 +687,7 @@ typedef struct {
 		NSDate *sent = [NSDate date];
 		NFKRemoteInferKitBackend *client = [self clientForServer:server sentAt:sent];
 		NSError *error = nil;
-		NFKInferenceResult *result = [client runInferenceForRequest:request error:&error];
+		NFKInferenceResult *result = [client runInferenceForRequest:forwarded error:&error];
 		[self server:server finished:sent client:client error:result != nil ? nil : error];
 		if (result != nil) {
 			[self recordConversation:conversation onServer:server];
@@ -694,8 +708,9 @@ typedef struct {
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
-	[self submitRequest:request conversation:[self conversationOfRequest:request] toJob:job
-				  tried:[NSMutableSet set] lastError:nil];
+	NSString *conversation = [self conversationOfRequest:request];
+	[self submitRequest:[self request:request forwardingConversation:conversation] conversation:conversation
+				  toJob:job tried:[NSMutableSet set] lastError:nil];
 	return job;
 }
 

@@ -713,7 +713,8 @@ expected to start it soonest, learns each server's load from its replies between
 and moves a request that never started to the next server. A conversation's requests go to the server
 that answered the previous one, so a backend that keeps its prompt between requests reuses it: the
 caller names the conversation with `NFKParameterConversationKey` (OpenAI's `prompt_cache_key` on the
-chat route), or the balancer knows a chat by its messages through the first user turn. The
+chat route), or the balancer knows a chat by its messages through the first user turn and sends
+that name to the server under the same key. The
 conversation moves when its server leaves, fails over, or is expected to wait more than
 `conversationWaitAllowance` longer than another. Servers come from URLs, Bonjour, or both.
 Hosted in a server of its own, it makes that server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about the

@@ -116,8 +116,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   conversation moves when its server stops being a candidate, when the request fails over, or when
   another candidate's expected wait is more than `conversationWaitAllowance` (10 seconds) shorter,
   and is forgotten after `conversationIdleInterval` (600 seconds) idle. `conversationAffinity` turns
-  it off. `NFKRemoteBackend` sends the key as `prompt_cache_key`, and `NFKInferenceServer`'s chat
-  route reads `prompt_cache_key` into it.
+  it off. A conversation named from its messages is sent to the server under the key, so the
+  server's backend can keep its prompt as it would for a caller's key. `NFKRemoteBackend` sends the
+  key as `prompt_cache_key`, and `NFKInferenceServer`'s chat route reads `prompt_cache_key` into it.
 - The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
@@ -612,7 +613,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `resetPromptCache` drops every one. A request without a conversation keeps the single retained
   cache as before. With `NFKBalancedBackend` keeping a conversation on one server and the server's
   chat route reading OpenAI's `prompt_cache_key` into the key, an OpenAI client's chat reuses its
-  prefix on a balanced pool of MLX servers.
+  prefix on a balanced pool of MLX servers. A chat sent without a key reuses it too, under the name
+  the balancer derives from its opening messages.
 
 #### Translation at parity in eight more languages and three more sizes
 

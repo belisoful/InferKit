@@ -17,6 +17,7 @@
 @property (nonatomic, strong) dispatch_semaphore_t gate;
 @property (atomic, assign) NSInteger running;
 @property (atomic, assign) NSInteger answered;
+@property (atomic, copy, nullable) NSString *lastConversationKey;
 @end
 
 @implementation NFKBalancedTestBackend
@@ -55,6 +56,7 @@
 	@synchronized (self) {
 		self.running += 1;
 	}
+	self.lastConversationKey = request.parameters[NFKParameterConversationKey];
 	if (self.gated) {
 		dispatch_semaphore_wait(self.gate, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
 	}
@@ -352,13 +354,41 @@
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error].text, @"second", @"%@", error);
 }
 
+- (void)testAChatWithoutAKeyReachesItsServerUnderTheNameTheBalancerGaveIt
+{
+	NFKBalancedTestBackend *only = [self backendNamed:@"only"];
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:only queueLimit:0] ]];
+	NSError *error = nil;
+	XCTAssertNotNil([balancer runInferenceForRequest:[self chat:@"hello" turn:1] error:&error], @"%@", error);
+	NSString *named = only.lastConversationKey;
+	XCTAssertTrue([named hasPrefix:@"messages:"], @"%@", named);
+	NFKInferenceJob *job = [balancer submitInferenceJobForRequest:[self chat:@"hello" turn:2]];
+	XCTAssertTrue([self waitFor:^BOOL { return job.status == NFKInferenceJobStatusSucceeded; }], @"%@", job.error);
+	XCTAssertEqualObjects(only.lastConversationKey, named, @"the streamed second turn carries the same name");
+	XCTAssertNotNil([balancer runInferenceForRequest:[self chat:@"goodbye" turn:1] error:&error], @"%@", error);
+	XCTAssertNotEqualObjects(only.lastConversationKey, named, @"another chat is another conversation");
+}
+
+- (void)testACallersKeyReachesTheServerAsWritten
+{
+	NFKBalancedTestBackend *only = [self backendNamed:@"only"];
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:only queueLimit:0] ]];
+	NSError *error = nil;
+	XCTAssertNotNil([balancer runInferenceForRequest:[self requestInConversation:@"a"] error:&error], @"%@", error);
+	XCTAssertEqualObjects(only.lastConversationKey, @"a");
+	XCTAssertNotNil([balancer runInferenceForRequest:[self request] error:&error], @"%@", error);
+	XCTAssertNil(only.lastConversationKey, @"a request in no conversation gains no key");
+}
+
 - (void)testWithoutAffinityAChatTakesEachServerInTurn
 {
-	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:[self backendNamed:@"first"] queueLimit:0],
+	NFKBalancedTestBackend *first = [self backendNamed:@"first"];
+	NFKBalancedBackend *balancer = [self roundRobinOver:@[ [self serverHosting:first queueLimit:0],
 														   [self serverHosting:[self backendNamed:@"second"] queueLimit:0] ]];
 	balancer.conversationAffinity = NO;
 	NSError *error = nil;
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:1] error:&error].text, @"first", @"%@", error);
+	XCTAssertNil(first.lastConversationKey, @"without affinity the balancer names no conversation");
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:2] error:&error].text, @"second", @"%@", error);
 }
 
