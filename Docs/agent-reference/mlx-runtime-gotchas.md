@@ -727,7 +727,16 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   backend test in the S–Z chunk. It now reads through `NFKMLXReleaseWeights.arrays(inDirectory:converting:)`,
   which evaluates in groups of about 256 MB; at float32 the conversion is the identity, so the groups
   carry file reads and no GPU work, and the chunk passed (473 tests, 20.5 GB peak). A converting
-  bfloat16 load still casts on the GPU, group by group.
+  bfloat16 load reads each group in one evaluation and casts it on the GPU in the next (2026-10-06).
+- **A cached MLX slice holds its source's whole buffer (2026-10-06).** A slice, and `copy`, share the
+  source array's buffer (`Copy::eval` calls `copy_shared_buffer`), so a streaming cache that keeps the
+  last frames of an input as a slice keeps the entire input alive until the slot is replaced. The Wan
+  VAE stored each causal convolution's trailing frames this way and built every chunk into one lazy
+  graph. The released Wan 2.1 1.3B decode of 17×480×832 frames reached an MLX peak of 36.1 GB beside
+  16.7 GB of resident weights, and the end-to-end run peaked at 33.8 GB on a 32 GB machine. `NFKWanCache`
+  now stores `(x * 1).asType(x.dtype)`, the reference's `clone()`, and the decode evaluates each chunk
+  with its cache. The end-to-end peak fell to 28.7 GB with every parity figure unchanged. The decode of
+  a single four-frame chunk still takes about 15 GB beside the weights, and nothing has measured where.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?

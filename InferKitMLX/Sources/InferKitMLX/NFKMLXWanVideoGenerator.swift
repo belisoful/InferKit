@@ -51,10 +51,10 @@ enum NFKMLXWanRelease {
     /// `Conv3d` weight is stored `[out, in, t, h, w]` and loads as MLX's `[out, t, h, w, in]`.
     static func loadTransformer(into net: NFKMLXWanTransformerNet, fromDirectory directory: URL,
                                 precision: NFKMLXWeightPrecision) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
-        try NFKMLXWeights.apply(arrays.map { key, value in
-            (key, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
-        }, to: net, verifyShapes: true)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: precision,
+            transform: { ($0, $1.ndim == 5 ? $1.transposed(0, 2, 3, 4, 1) : $1) })
+        try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
     }
 
     /// The autoencoder geometry a `vae/config.json` describes, with its latent statistics.
@@ -83,8 +83,9 @@ enum NFKMLXWanRelease {
     /// spatial one as `[out, h, w, in]`, and an RMS scale stored with trailing singleton axes flattens.
     static func loadVAE(into net: NFKMLXWanVideoVAENet, fromDirectory directory: URL,
                         precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
-        try NFKMLXWeights.apply(arrays.map(adaptedVAE), to: net, verifyShapes: true)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 transform: adaptedVAE)
+        try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
     }
 
     static func adaptedVAE(key: String, value: MLXArray) -> (String, MLXArray) {

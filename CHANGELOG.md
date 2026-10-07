@@ -483,6 +483,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Wan decodes a clip in bounded memory
+
+- `NFKMLXWanVideoVAENet` keeps a copy of each causal convolution's trailing frames between chunks and
+  evaluates each chunk before the next, so a chunk's intermediates are released as the decode moves on.
+  The released Wan 2.1 T2V 1.3B generator makes a 17-frame 480×832 clip at a 28.7 GB peak, down from
+  33.8 GB, with its output unchanged. Qwen-Image's autoencoder and `NFKMLXWanAnimate` decode through
+  the same path.
+- A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
+  evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
+
 #### Finishing a matte from any matting model
 
 - `NFKMLXMatteOperations` holds model-agnostic matte operations on `MLXArray`: clip levels that can

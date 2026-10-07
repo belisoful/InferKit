@@ -45,31 +45,91 @@ enum NFKMLXReleaseWeights {
         return merged
     }
 
+    /// The arrays a release holds, read from disk and converted before they are returned, in groups of
+    /// about 256 MB, where ``arrays(inDirectory:precision:remap:)`` leaves both to the model's first
+    /// evaluation.
+    ///
+    /// @discussion MLX reads a file only on the CPU, and a GPU operation evaluated together with the read
+    /// it consumes waits for that read inside its command buffer. A release left to a model's first
+    /// evaluation holds its reads and conversions together: Gemma 4 E2B at float32 peaks at 23.6 GB that
+    /// way and at 15.4 GB here. Each group is read in one evaluation and converted in the next, so no GPU
+    /// command buffer waits on a file. `transform` reshapes one tensor at its stored type before
+    /// the conversion, or drops it by returning nil. A reshaping that spans tensors (stacking experts,
+    /// folding an adapter into its base) stays with the lazy reader, where each original is read only as
+    /// its result is formed.
+    ///
+    /// - Parameters:
+    ///   - precision: as ``arrays(inDirectory:precision:remap:)``.
+    ///   - remap: as ``arrays(inDirectory:precision:remap:)``.
+    ///   - transform: the tensor a remapped one becomes, in the stored element type, or nil to drop it.
+    static func materializedArrays(inDirectory directory: URL, precision: NFKMLXWeightPrecision = .float32,
+                                   remap: (String) -> String? = { $0 },
+                                   transform: (String, MLXArray) -> (String, MLXArray)? = { ($0, $1) })
+        throws -> [(String, MLXArray)] {
+        var merged = [(String, MLXArray)]()
+        for url in try files(inDirectory: directory) {
+            var stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+            var read = [(String, MLXArray)](), groupBytes = 0
+            func flush() {
+                eval(read.map(\.1))
+                let converted = read.compactMap { name, value in
+                    transform(name, value).map { kept, shaped in
+                        (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
+                    }
+                }
+                eval(converted.map(\.1))
+                merged += converted
+                read.removeAll()
+                groupBytes = 0
+            }
+            for key in stored.keys.sorted() {
+                guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
+                read.append((name, value))
+                groupBytes += value.nbytes
+                if groupBytes >= 256 << 20 {
+                    flush()
+                }
+            }
+            flush()
+        }
+        return merged
+    }
+
     /// The arrays a release holds with every floating tensor converted to `dtype`, evaluated in groups
     /// as they are read.
     ///
     /// @discussion A float32 release held at a 16-bit type loads this way so the stored copy never sits
     /// whole beside the converted one: each group of about 256 MB converts and evaluates before the next
     /// is read, and each stored array is dropped once converted.
+    ///
+    /// A group is read in one evaluation and converted in the next. MLX reads a file only on the CPU,
+    /// and a GPU conversion evaluated with the read waits for it inside its command buffer; reading
+    /// first leaves no GPU command buffer waiting on a file.
     static func arrays(inDirectory directory: URL, converting dtype: DType,
                        remap: (String) -> String? = { $0 }) throws -> [(String, MLXArray)] {
         var merged = [(String, MLXArray)]()
         for url in try files(inDirectory: directory) {
             var stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
-            var group = [MLXArray](), groupBytes = 0
+            var read = [MLXArray](), group = [MLXArray](), groupBytes = 0
+            func flush() {
+                eval(read)
+                eval(group)
+                read.removeAll()
+                group.removeAll()
+                groupBytes = 0
+            }
             for key in stored.keys.sorted() {
                 guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
                 let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
                 merged.append((name, converted))
+                read.append(value)
                 group.append(converted)
                 groupBytes += value.nbytes
                 if groupBytes >= 256 << 20 {
-                    eval(group)
-                    group.removeAll()
-                    groupBytes = 0
+                    flush()
                 }
             }
-            eval(group)
+            flush()
         }
         return merged
     }

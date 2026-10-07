@@ -105,6 +105,17 @@ final class NFKWanCache {
     func resetIndex() { index = 0 }
     func next() -> Int { let i = index; index += 1; return i }
     func slot(_ i: Int) -> Entry { slots[i] ?? .empty }
+
+    /// Stores `frames` in slot `i` as a copy, the reference's `clone()`. A slice shares its source's
+    /// buffer, so storing one would hold every convolution's whole chunk input until the next chunk.
+    func store(_ i: Int, _ frames: MLXArray) {
+        slots[i] = .frames((frames * 1).asType(frames.dtype))
+    }
+
+    /// The stored frames, evaluated with each chunk so the chunk's graph is released before the next.
+    var heldFrames: [MLXArray] {
+        slots.values.compactMap { if case .frames(let frames) = $0 { frames } else { nil } }
+    }
 }
 
 /// Slices the last `n` frames off the time axis (axis 1) of an NDHWC tensor.
@@ -174,7 +185,7 @@ private func wanCausal(_ conv: NFKWanCausalConv3d, _ x: MLXArray, _ cache: NFKWa
         cacheX = concatenated([wanTail(prev, 1), cacheX], axis: 1)
     }
     let out = conv(x, cache: cache.slot(i))
-    cache.slots[i] = .frames(cacheX)
+    cache.store(i, cacheX)
     return out
 }
 
@@ -371,7 +382,7 @@ final class NFKWanResample: Module {
                 } else {
                     conv = timeConv.plain(h)                               // Rep: no cache prepend
                 }
-                cache.slots[i] = .frames(cacheX)
+                cache.store(i, cacheX)
                 // [B, T, H, W, 2C] -> split the doubled channel and interleave it as a new frame sub-axis.
                 h = conv.reshaped([b, t, height, w, 2, c]).transposed(0, 1, 4, 2, 3, 5)
                     .reshaped([b, t * 2, height, w, c])
@@ -381,11 +392,11 @@ final class NFKWanResample: Module {
         if mode == "downsample3d", let timeConv {
             let i = cache.next()
             if case .empty = cache.slot(i) {
-                cache.slots[i] = .frames(h)
+                cache.store(i, h)
             } else if case .frames(let prev) = cache.slot(i) {
                 let cacheX = wanTail(h, 1)
                 h = timeConv.plain(concatenated([wanTail(prev, 1), h], axis: 1))
-                cache.slots[i] = .frames(cacheX)
+                cache.store(i, cacheX)
             }
         }
         return h
@@ -665,15 +676,16 @@ public final class NFKMLXWanVideoVAENet: Module {
         let frames = x.dim(1)
         let cache = NFKWanCache()
         let iterations = 1 + (frames - 1) / 4
-        var out: MLXArray?
+        var chunks = [MLXArray]()
         for i in 0 ..< iterations {
             cache.resetIndex()
             let chunk = i == 0 ? x[0..., 0 ..< 1, 0..., 0..., 0...]
                                : x[0..., (1 + 4 * (i - 1)) ..< min(1 + 4 * i, frames), 0..., 0..., 0...]
             let encoded = encoder(chunk, cache)
-            out = out.map { concatenated([$0, encoded], axis: 1) } ?? encoded
+            eval([encoded] + cache.heldFrames)
+            chunks.append(encoded)
         }
-        return quantConv(out!, cache: .empty)[0..., 0..., 0..., 0..., 0 ..< configuration.zDim]
+        return quantConv(concatenated(chunks, axis: 1), cache: .empty)[0..., 0..., 0..., 0..., 0 ..< configuration.zDim]
     }
 
     /// The full pre-split moments (both mean and log-variance), for validation.
@@ -682,15 +694,16 @@ public final class NFKMLXWanVideoVAENet: Module {
         let frames = x.dim(1)
         let cache = NFKWanCache()
         let iterations = 1 + (frames - 1) / 4
-        var out: MLXArray?
+        var chunks = [MLXArray]()
         for i in 0 ..< iterations {
             cache.resetIndex()
             let chunk = i == 0 ? x[0..., 0 ..< 1, 0..., 0..., 0...]
                                : x[0..., (1 + 4 * (i - 1)) ..< min(1 + 4 * i, frames), 0..., 0..., 0...]
             let encoded = encoder(chunk, cache)
-            out = out.map { concatenated([$0, encoded], axis: 1) } ?? encoded
+            eval([encoded] + cache.heldFrames)
+            chunks.append(encoded)
         }
-        return quantConv(out!, cache: .empty)
+        return quantConv(concatenated(chunks, axis: 1), cache: .empty)
     }
 
     /// The decoder's first-frame stage outputs (conv_in, mid, up-block 0), for validation.
@@ -708,13 +721,14 @@ public final class NFKMLXWanVideoVAENet: Module {
         let frames = latent.dim(1)
         let cache = NFKWanCache()
         let x = postQuantConv(latent, cache: .empty)
-        var out: MLXArray?
+        var chunks = [MLXArray]()
         for i in 0 ..< frames {
             cache.resetIndex()
             let frame = x[0..., i ..< (i + 1), 0..., 0..., 0...]
             let decoded = decoder(frame, cache, firstChunk: i == 0)
-            out = out.map { concatenated([$0, decoded], axis: 1) } ?? decoded
+            eval([decoded] + cache.heldFrames)
+            chunks.append(decoded)
         }
-        return clip(unpatchify(out!), min: -1, max: 1)
+        return clip(unpatchify(concatenated(chunks, axis: 1)), min: -1, max: 1)
     }
 }
