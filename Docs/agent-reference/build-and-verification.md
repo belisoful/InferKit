@@ -268,9 +268,11 @@ How the MLX tests are chosen, over the cumulative range `origin/main..HEAD` on a
   - A touched member with a generic name (`init`, `backend`, `forward`, `model`, a name under five
     characters) contributes its enclosing type.
   - Comment lines contribute nothing.
-- Two hops follow (`CC_HOPS=2`): every source type in a file that names one of those symbols joins the
-  set, and then every type in a file that names one of those. With one hop the selection missed the
-  Qwen-Image end-to-end test.
+- Two hops follow (`CC_HOPS=2`): a source type joins the set when its own body names one of those
+  symbols, and then a type joins when its body names one of the types the first hop added. A type's
+  body runs from its declaration through its closing brace, and an extension's body counts for the
+  type it extends; an Objective-C class's runs from `@interface` or `@implementation` through `@end`.
+  With one hop the selection missed the Qwen-Image end-to-end test.
 - A test is selected when its body names any symbol in the set, whatever file it sits in: a
   configuration struct's new field is caught by a test in an unrelated-looking file that reads it,
   which is how `NFKMLXPresetReleaseTests` caught the preset regression after `bff3d76`.
