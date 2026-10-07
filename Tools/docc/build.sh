@@ -8,8 +8,11 @@
 # the SDK) and feeds the result to `docc convert` together with the `InferKit.docc` catalog.
 #
 # The three Swift companions (InferKitFoundationModels, InferKitMLX, InferKitAppleSwift) are Swift
-# targets, so the swift-docc-plugin extracts their symbol graphs. Each carries its own `.docc` catalog and builds with
-# `swift package generate-documentation`.
+# targets, each with its own `.docc` catalog. InferKitFoundationModels and InferKitAppleSwift build with
+# the swift-docc-plugin (`swift package generate-documentation`). The plugin extracts a symbol graph
+# for every dependency, and on mlx-swift's C++ Cmlx target `clang -extract-api` parses C++ headers as
+# C and fails, so InferKitMLX extracts its own module's graph with `swift-symbolgraph-extract` and
+# converts it with `docc convert`, which yields the pages the plugin does.
 #
 # Usage:
 #   Tools/docc/build.sh [output-dir]        # core only (default: ./.docc-build/InferKit.doccarchive)
@@ -22,16 +25,55 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-# Builds one Swift companion package's DocC via the swift-docc-plugin.
+# Builds InferKitMLX's DocC from the symbol graph of its own module, extracted after a build.
+build_mlx_from_its_module() {
+    local out="$1"
+    local dir="$ROOT/InferKitMLX"
+    echo "==> Building InferKitMLX DocC (swift-symbolgraph-extract)"
+    ( cd "$dir" && swift build --target InferKitMLX )
+    local bin maps
+    bin="$(cd "$dir" && swift build --show-bin-path)"
+    maps="$(dirname "$(dirname "$bin")")/Intermediates.noindex/GeneratedModuleMaps"
+    if [ ! -f "$maps/InferKit.modulemap" ]; then
+        echo "error: no InferKit.modulemap under $maps" >&2
+        exit 1
+    fi
+    # The C targets the module imports (Cmlx, _NumericsShims) are found through their own module maps.
+    local clang_maps=()
+    while IFS= read -r map; do
+        clang_maps+=(-Xcc "-fmodule-map-file=$map" -Xcc "-I$(dirname "$map")")
+    done < <(find "$dir/.build/checkouts" -path '*/include/module.modulemap')
+    (
+        graphs="$(mktemp -d)"
+        trap 'rm -rf "$graphs"' EXIT
+        xcrun swift-symbolgraph-extract -module-name InferKitMLX \
+            -target arm64-apple-macosx14.0 -sdk "$(xcrun --show-sdk-path)" \
+            -I "$bin" -F "$bin" \
+            -Xcc "-I$ROOT/Sources/InferKit/include" -Xcc "-fmodule-map-file=$maps/InferKit.modulemap" \
+            ${clang_maps[@]+"${clang_maps[@]}"} \
+            -minimum-access-level public -output-dir "$graphs"
+        rm -rf "$out"
+        xcrun docc convert "$dir/Sources/InferKitMLX/InferKitMLX.docc" \
+            --fallback-display-name InferKitMLX \
+            --fallback-bundle-identifier InferKitMLX \
+            --additional-symbol-graph-dir "$graphs" \
+            --emit-lmdb-index \
+            --output-path "$out"
+    )
+}
+
+# Builds one Swift companion package's DocC.
 build_companion() {
     local pkg="$1"
     local out="$ROOT/.docc-build/$pkg.doccarchive"
-    echo "==> Building $pkg DocC (swift-docc-plugin)"
     mkdir -p "$ROOT/.docc-build"
-    # Xcode 27's default build system runs `clang -extract-api` over mlx-swift's C++ Cmlx target
-    # and fails on a C++ header parsed as C; the native build system skips that step.
-    ( cd "$ROOT/$pkg" && swift package --build-system native --allow-writing-to-directory "$out" \
-        generate-documentation --target "$pkg" --output-path "$out" )
+    if [ "$pkg" = "InferKitMLX" ]; then
+        build_mlx_from_its_module "$out"
+    else
+        echo "==> Building $pkg DocC (swift-docc-plugin)"
+        ( cd "$ROOT/$pkg" && swift package --allow-writing-to-directory "$out" \
+            generate-documentation --target "$pkg" --output-path "$out" )
+    fi
     local pages
     pages="$(find "$out/data/documentation" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')"
     echo "==> Built $out ($pages documentation pages)"
