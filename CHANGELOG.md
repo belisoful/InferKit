@@ -511,6 +511,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - Each causal convolution in the Wan autoencoder reads its input frames in place and writes into one
   output. A chunk's decode falls to 6.4 GB of working memory and the released end-to-end run to a
   24.6 GB peak, with the decode bit-identical.
+- The Wan autoencoder's residual blocks normalize and activate one frame at a time and release the first
+  convolution's output before the second runs. A chunk's decode falls to 4.8 GB of working memory, with
+  the decode bit-identical.
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 

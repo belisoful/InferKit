@@ -269,9 +269,26 @@ final class NFKWanResidualBlock: Module {
 
     func callAsFunction(_ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
         let shortcut = convShortcut.map { wanCausal($0, x, cache) } ?? x
-        var h = wanCausal(conv1, silu(norm1(x)), cache)
-        h = wanCausal(conv2, silu(norm2(h)), cache)
-        return h + shortcut
+        var h: MLXArray? = wanCausal(conv1, Self.activated(norm1, x), cache)
+        let activated = Self.activated(norm2, h!)
+        // Released before the second convolution runs, so its buffer is not held beside that convolution's.
+        h = nil
+        return wanCausal(conv2, activated, cache) + shortcut
+    }
+
+    /// `silu(norm(x))`, computed and evaluated one frame at a time into one output.
+    ///
+    /// @discussion The norm reduces over the channel axis alone, so a frame at a time computes every
+    /// element as the whole tensor does, and holds one frame's temporaries instead of the clip's.
+    private static func activated(_ norm: NFKWanRMSNorm, _ x: MLXArray) -> MLXArray {
+        let frames = x.dim(1)
+        guard frames > 1 else { return silu(norm(x)) }
+        let out = MLXArray.zeros(x.shape, dtype: x.dtype)
+        for t in 0 ..< frames {
+            out[0..., t ..< (t + 1)] = silu(norm(x[0..., t ..< (t + 1)]))
+            eval(out)
+        }
+        return out
     }
 }
 
