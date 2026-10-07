@@ -1197,7 +1197,9 @@ extension NFKMLXQwen4Exp {
     /// @discussion The release nests the decoder under `model.language_model.` beside a vision tower
     /// and a multi-token-prediction head, and splits each n-gram table across `split_ngram_parts`
     /// tensors so that the saved layout matches the one it was trained under. Only the decoder's
-    /// tensors are taken, and each table's parts are concatenated in index order.
+    /// tensors are taken, and each table's parts are concatenated in index order. The tensors are read
+    /// and converted on the CPU before they are applied, so the decoder's first GPU evaluation waits on
+    /// no file read.
     public static func loadWeights(into net: NFKMLXQwen4ExpNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
         try loadWeights(into: net, fromDirectory: directory, precision: precision, skipping: { _ in false })
@@ -1233,11 +1235,11 @@ extension NFKMLXQwen4Exp {
         var shards = [String: [(index: Int, value: MLXArray)]]()
         var direct = [(String, MLXArray)]()
 
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             key -> String? in
             guard !isDropped(key: key), !skipped(key) else { return nil }
             return tied && key.hasPrefix("lm_head.") ? nil : key
-        }
+        })
         for (key, value) in read {
             if let shard = ngramShard(key: key) {
                 shards[shard.table, default: []].append((shard.index, value))

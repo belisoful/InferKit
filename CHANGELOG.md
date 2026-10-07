@@ -533,6 +533,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   The values are the same bytes converted by the same operations.
 - `transform` reshapes one tensor at its stored type before the conversion, or drops it. MatFormer
   slices E4B to E2B through it, one tensor at a time.
+- Qwen4-Exp's loader reads through it too, so a resident load's first GPU evaluation waits on no file
+  read. Its two-layer release cut's first-layer pieces peak at 5.0 GB in place of 8.3 GB.
 
 #### Finishing a matte from any matting model
 
