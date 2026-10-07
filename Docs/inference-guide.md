@@ -697,7 +697,8 @@ names in its error body.
 
 The server reports its load for a load balancer or a dashboard. `GET /v1/inferkit/status` lists each
 model's running and queued runs, its average run and wait times, and the estimated wait for a request
-arriving now, and describes the machine: thermal state, memory and its pressure, CPU load, free
+arriving now, with the share of input tokens a backend's prompt cache served (`cached_input_share`),
+which shows whether keeping conversations together is paying off, and describes the machine: thermal state, memory and its pressure, CPU load, free
 storage, and on macOS the GPU utilization. Every run reply carries the model's load in
 `X-InferKit-*` headers, so a balancer learns it from the replies it already receives.
 `maximumQueuedRunsPerModel` bounds the queue: a request that finds it full gets 503 with a

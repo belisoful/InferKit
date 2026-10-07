@@ -24,6 +24,7 @@
 										   @"completed": @10, @"failed": @1, @"cancelled": @2, @"refused": @3,
 										   @"average_run_seconds": @4.5, @"average_wait_seconds": @1.25,
 										   @"estimated_wait_seconds": @9.0,
+										   @"input_tokens": @400, @"cached_input_tokens": @150, @"cached_input_share": @0.5,
 										   @"runs": @[ @{ @"elapsed_seconds": @2.0, @"progress": @0.5,
 														  @"estimated_remaining_seconds": @2.0 } ] } } ],
 			  @"host": @{ @"chip": @"Apple M1 Max", @"model_identifier": @"MacBookPro18,2",
@@ -61,6 +62,9 @@
 	XCTAssertEqualObjects(model.averageRunSeconds, @4.5);
 	XCTAssertEqualObjects(model.averageWaitSeconds, @1.25);
 	XCTAssertNil(model.outputTokensPerSecond, @"absent from the reply");
+	XCTAssertEqual(model.inputTokens, 400);
+	XCTAssertEqual(model.cachedInputTokens, 150);
+	XCTAssertEqualObjects(model.cachedInputShare, @0.5, @"the server's share, read as sent");
 	XCTAssertEqualObjects(model.estimatedWaitSeconds, @9.0);
 	XCTAssertEqual(model.runs.count, 1u);
 	XCTAssertEqual(model.runs.firstObject.elapsedSeconds, 2.0);

@@ -442,6 +442,7 @@
 	NFKServerModelStatus *echo = [status modelNamed:@"echo"];
 	XCTAssertEqual(echo.queueLimit, 8, @"%@", error);
 	XCTAssertEqualObjects(echo.estimatedWaitSeconds, @0);
+	XCTAssertNil(echo.cachedInputShare, @"nil until a backend reports a cached count");
 	XCTAssertNotEqual(status.host.thermalState, NFKServerThermalStateUnknown);
 
 	// Leaving host details out keeps the models' load.

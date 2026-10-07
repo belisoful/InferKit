@@ -64,7 +64,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `GET /v1/inferkit/status` reports each model's load and the machine's state, and each model's
   `GET /v1/models` entry carries the same load. A model's load is its limit, running and queued runs,
   run counts by outcome, moving averages of run and wait time, output tokens per second where results
-  report usage, the estimated wait for a new request, and each running run's elapsed time, progress,
+  report usage, the input tokens they reported and the share of it a backend's cache served
+  (`cached_input_share`, `NFKServerModelStatus.cachedInputShare`), the estimated wait for a new request, and each running run's elapsed time, progress,
   and estimated remaining time. The host object names the chip and cores, the thermal state, Low
   Power Mode, memory (physical, available, working set, pressure, this process's footprint), CPU usage
   and load averages, storage on `storageDirectoryURL`'s volume, and on macOS the GPU utilization the

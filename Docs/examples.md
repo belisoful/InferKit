@@ -3595,6 +3595,7 @@ server.reportsHostDetails = NO;          // leaves out the machine; the models' 
 NFKServerStatus *status = [NFKServerStatus fetchFromBaseURL:studio.baseURL apiKey:key error:&error];
 NFKServerModelStatus *chat = [status modelNamed:@"qwen3"];
 NSNumber *wait = chat.estimatedWaitSeconds;                  // nil until a run has finished
+NSNumber *reused = chat.cachedInputShare;                     // input the prompt cache served, 0...1
 NSNumber *parameters = chat.modelInfo[NFKModelInfoParameterCount];
 BOOL hot = status.host.thermalState >= NFKServerThermalStateSerious;
 NSString *chip = studio.advertisedProperties[@"chip"];      // from the Bonjour record, no request
@@ -3603,6 +3604,7 @@ NSString *chip = studio.advertisedProperties[@"chip"];      // from the Bonjour 
 ```swift
 let status = try NFKServerStatus.fetch(baseURL: studio.baseURL, apiKey: key)
 let wait = status.modelNamed("qwen3")?.estimatedWaitSeconds
+let reused = status.modelNamed("qwen3")?.cachedInputShare      // nil until a backend reports a cached count
 let awaited = try await NFKServerStatus.fetchStatus(baseURL: studio.baseURL, apiKey: key)
 ```
 

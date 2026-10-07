@@ -96,6 +96,9 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy, nullable) NSNumber *averageRunSeconds;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *averageWaitSeconds;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *outputTokensPerSecond;
+@property (nonatomic, readwrite) NSInteger inputTokens;
+@property (nonatomic, readwrite) NSInteger cachedInputTokens;
+@property (nonatomic, readwrite, copy, nullable) NSNumber *cachedInputShare;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *estimatedWaitSeconds;
 @property (nonatomic, readwrite, copy) NSArray<NFKServerRunStatus *> *runs;
 @end
@@ -121,6 +124,9 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	status.averageRunSeconds = NFKStatusNumber(load[@"average_run_seconds"]);
 	status.averageWaitSeconds = NFKStatusNumber(load[@"average_wait_seconds"]);
 	status.outputTokensPerSecond = NFKStatusNumber(load[@"output_tokens_per_second"]);
+	status.inputTokens = NFKStatusInteger(load[@"input_tokens"]);
+	status.cachedInputTokens = NFKStatusInteger(load[@"cached_input_tokens"]);
+	status.cachedInputShare = NFKStatusNumber(load[@"cached_input_share"]);
 	status.estimatedWaitSeconds = NFKStatusNumber(load[@"estimated_wait_seconds"]);
 	NSMutableArray<NFKServerRunStatus *> *runs = [NSMutableArray array];
 	for (id value in [load[@"runs"] isKindOfClass:NSArray.class] ? load[@"runs"] : @[]) {

@@ -123,6 +123,16 @@ typedef NS_ENUM(NSInteger, NFKServerMemoryPressure) {
 @property (nonatomic, readonly, copy, nullable) NSNumber *averageWaitSeconds;
 @property (nonatomic, readonly, copy, nullable) NSNumber *outputTokensPerSecond;
 
+/*! The input tokens the completed runs reported since the server started, or 0 when none did. */
+@property (nonatomic, readonly) NSInteger inputTokens;
+
+/*! The input tokens a backend's cache served, over the runs that reported a cached count. */
+@property (nonatomic, readonly) NSInteger cachedInputTokens;
+
+/*! The share of input tokens a backend's cache served, in 0...1, over the runs that reported a cached
+	count, or nil before one has. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *cachedInputShare;
+
 /*! Seconds until a request arriving now would start, or nil before the server has an estimate. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *estimatedWaitSeconds;
 

@@ -49,6 +49,13 @@ static double NFKServedAveraged(double average, double sample, NSUInteger previo
 	return previousSamples == 0 ? sample : average + 0.2 * (sample - average);
 }
 
+/*! A token count a result's usage reports under key, or nil when it reports none. */
+static NSNumber * _Nullable NFKServedTokenCount(id usage, NSString *key)
+{
+	id count = [usage isKindOfClass:NSDictionary.class] ? usage[key] : nil;
+	return [count isKindOfClass:NSNumber.class] && [count longLongValue] >= 0 ? count : nil;
+}
+
 /*! The entries of a dictionary a client can read as JSON: string keys with string or finite number
 	values. */
 static NSDictionary<NSString *, id> *NFKServedJSONValues(id _Nullable dictionary)
@@ -181,6 +188,10 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 @property (nonatomic, assign) double averageRunSeconds;
 @property (nonatomic, assign) double averageWaitSeconds;
 @property (nonatomic, assign) double outputTokensPerSecond;
+@property (nonatomic, assign) unsigned long long inputTokens;
+@property (nonatomic, assign) unsigned long long cachedInputTokens;
+/*! The input tokens of the runs that reported a cached count, which the cached share divides by. */
+@property (nonatomic, assign) unsigned long long cachedRunInputTokens;
 @end
 
 @implementation NFKServedModel
@@ -312,6 +323,17 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		self.outputTokensPerSecond = NFKServedAveraged(self.outputTokensPerSecond, tokens.doubleValue / seconds, self.tokenSamples);
 		self.tokenSamples += 1;
 	}
+	NSNumber *input = NFKServedTokenCount(usage, NFKUsageInputTokens);
+	if (input == nil) {
+		return;
+	}
+	self.inputTokens += input.unsignedLongLongValue;
+	NSNumber *cached = NFKServedTokenCount(usage, NFKUsageCachedTokens);
+	if (cached != nil) {
+		// A cached count above the input count is clamped, so the share stays within 0...1.
+		self.cachedInputTokens += MIN(cached.unsignedLongLongValue, input.unsignedLongLongValue);
+		self.cachedRunInputTokens += input.unsignedLongLongValue;
+	}
 }
 
 /*! Waiting runs whose clients are still there. Runs on the lock. */
@@ -391,6 +413,13 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		}
 		if (self.tokenSamples > 0) {
 			load[@"output_tokens_per_second"] = @(self.outputTokensPerSecond);
+		}
+		if (self.inputTokens > 0) {
+			load[@"input_tokens"] = @(self.inputTokens);
+		}
+		if (self.cachedRunInputTokens > 0) {
+			load[@"cached_input_tokens"] = @(self.cachedInputTokens);
+			load[@"cached_input_share"] = @((double)self.cachedInputTokens / (double)self.cachedRunInputTokens);
 		}
 		NSTimeInterval now = NFKServedNow();
 		load[@"estimated_wait_seconds"] = [self estimatedWaitAt:now];

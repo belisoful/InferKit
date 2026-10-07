@@ -667,7 +667,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 32 tests, and `NFKBalancedBackendTests`, 17, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 33 tests, and `NFKBalancedBackendTests`, 17, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -706,6 +706,12 @@ and start times on `systemUptime`, and the job's last reported progress.
   slot. A cancelled run still in the queue is not counted.
 - Only runs that return a result feed the run average, so a fast refusal does not shorten it. The
   averages are exponential, newest run weighted 0.2, first run taken whole.
+- Token totals (2026-10-07) are lifetime sums, not averages: `input_tokens` over every completed run
+  whose `NFKOutputUsage` names `NFKUsageInputTokens`, and `cached_input_tokens` / `cached_input_share`
+  over the runs that also name `NFKUsageCachedTokens`, so a backend that never reports a cached count
+  does not dilute the share. A cached count above the input is clamped to it. Lifetime sums let a
+  client take the share over any window from two readings; an exponential average could not be
+  differenced.
 - The `X-InferKit-*` headers come from `NFKHTTPResponse.headerProvider`, read when the head is
   written. A plain reply's head is written after its run released the slot, so `Running` excludes
   it. The provider is set in `enqueue:on:response:`, so a 401, a 404, or a malformed body carries none.

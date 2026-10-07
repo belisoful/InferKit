@@ -902,6 +902,35 @@
 				   JSON:@{ @"messages": @[ @{ @"role": @"user", @"content": @"x" } ] }];
 }
 
+- (void)testTheStatusRouteTotalsTheInputAndTheCachedShareTheBackendReported
+{
+	NSArray<NSDictionary *> *usages = @[ @{ NFKUsageInputTokens: @10, NFKUsageCachedTokens: @0 },
+										 @{ NFKUsageInputTokens: @10, NFKUsageCachedTokens: @6 },
+										 @{ NFKUsageInputTokens: @5 } ];
+	__block NSUInteger turn = 0;
+	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **error) {
+		NSDictionary *usage = usages[turn++ % usages.count];
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"ok", NFKOutputUsage: usage }];
+	};
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"cached": backend }];
+	NSDictionary *load = [[self statusOf:server][@"models"] firstObject][@"load"];
+	XCTAssertNil(load[@"input_tokens"], @"no run has reported usage");
+	XCTAssertNil(load[@"cached_input_share"]);
+	for (NSUInteger index = 0; index < usages.count; index++) {
+		NSHTTPURLResponse *response = nil;
+		[self send:[self chatRequestTo:server] response:&response];
+		XCTAssertEqual(response.statusCode, 200);
+	}
+	load = [[self statusOf:server][@"models"] firstObject][@"load"];
+	XCTAssertEqualObjects(load[@"input_tokens"], @25, @"every run that reported its input");
+	XCTAssertEqualObjects(load[@"cached_input_tokens"], @6);
+	XCTAssertEqualWithAccuracy([load[@"cached_input_share"] doubleValue], 0.3, 1e-12,
+							   @"6 of the 20 input tokens of the two runs that reported a cached count");
+	NFKServerStatus *typed = [NFKServerStatus statusWithJSONObject:[self statusOf:server]];
+	XCTAssertEqual([typed modelNamed:@"cached"].inputTokens, 25);
+}
+
 - (void)testTheStatusRouteReportsTheModelsLoadAndTheMachine
 {
 	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];

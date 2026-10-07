@@ -321,6 +321,7 @@ final class InferKitSwiftExamples: XCTestCase {
 
         let status = try NFKServerStatus.fetch(baseURL: base, apiKey: nil)
         XCTAssertEqual(status.modelNamed("echo")?.estimatedWaitSeconds, 0)
+        XCTAssertNil(status.modelNamed("echo")?.cachedInputShare)
         XCTAssertNotEqual(status.host?.thermalState, .unknown)
         let awaited = try await NFKServerStatus.fetchStatus(baseURL: base, apiKey: nil)
         XCTAssertEqual(awaited.modelNamed("echo")?.limit, 1)

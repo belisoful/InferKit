@@ -129,6 +129,10 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				  newest run by a fifth. Only runs that return a result feed the run average.
 				- output_tokens_per_second, from the results' NFKOutputUsage, when a backend reports
 				  tokens.
+				- input_tokens, the input tokens the completed runs' usage reported since the server
+				  started, and, over the runs whose usage also reported NFKUsageCachedTokens,
+				  cached_input_tokens and cached_input_share, the share of their input a backend's
+				  cache served. Two readings' difference gives the share over the time between them.
 				- estimated_wait_seconds: when a request arriving now would start. A running job that
 				  reports progress is estimated from that progress, any other run from the average
 				  run. It is absent until one run has finished, unless a slot is free.
