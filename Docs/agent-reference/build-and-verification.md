@@ -277,14 +277,19 @@ How the MLX tests are chosen, over the cumulative range `origin/main..HEAD` on a
 - A test is selected when its body names any symbol in the set, whatever file it sits in: a
   configuration struct's new field is caught by a test in an unrelated-looking file that reads it,
   which is how `NFKMLXPresetReleaseTests` caught the preset regression after `bff3d76`.
-- A changed test file selects each test whose lines the diff touches. A changed helper function in a
-  test file selects every test that calls it.
-- Documentation, `Tools/`, and the manifest select no MLX test; the local legs cover them.
+- A changed test file selects each test whose lines the diff touches, and:
+  - A changed helper function selects the tests in its own file that call it, directly or through
+    another of that file's helpers. A helper's name never joins the symbol set: test classes repeat
+    helper names (`requireMLXRuntime`, `report`), so the name would select tests in unrelated files.
+  - A changed line of code outside every function (a nested type's field, a stored property, a
+    constant) selects every test in its file.
+- Documentation and `Tools/`, the validation-asset manifest included, select no MLX test; the local
+  legs cover them.
 
 A shared layer is a file nearly every model reaches. Its changes select by touched symbol like any
 other file's. A touched symbol every model reaches (the release reader's loading functions, the weight
 applier, the recurrent fold, the generation loop or its caches, the paging planner, a core value type)
-reaches the whole suite through the two hops. The manifests carry no symbols, so a change to
+reaches the whole suite through the hops. The manifests carry no symbols, so a change to
 `InferKitMLX/Package.swift`, `Package.resolved`, or the core `Package.swift` selects the whole MLX
 suite. The shared layers:
 
