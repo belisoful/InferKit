@@ -158,6 +158,25 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Whether the text encoder and the transformer stay loaded together between clips.
     @objc public var holdsStagesResident: Bool { staging.resident }
 
+    /// Whether umT5 is released once a clip's prompts are encoded, and loaded again for the next clip.
+    /// Off by default.
+    ///
+    /// @discussion A resident generator holds umT5 (10.8 GB at bfloat16) through denoising and decoding so
+    /// the next clip reuses it. Releasing it lowers MLX's working memory for each clip by that much and
+    /// costs a umT5 load per clip. The transformer and the autoencoder stay as the residency plan holds
+    /// them.
+    ///
+    /// Pair it with `NFKMLXGPU.applyStandingLimits()`. Under MLX's default cache limit the freed buffers
+    /// return to MLX's cache, which trims only near the recommended working set, so the process footprint
+    /// barely falls. Measured on the Wan 2.1 T2V 1.3B release at 17×480×832 on a 32 GB Mac:
+    /// - neither → a 24.9 GB footprint peak;
+    /// - the release alone → 24.4 GB;
+    /// - the standing limits alone → 23.9 GB;
+    /// - both → 17.8 GB, with 6.4 GB held between clips.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc public var releasesTextEncoderAfterEncoding = false
+
     /// Whether umT5 runs at float32 rather than at bfloat16. It does where the residency plan affords
     /// the float32 encoder.
     @objc public internal(set) var encodesInFloat32 = true
@@ -331,7 +350,10 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let prompts = [self.prompt(prompt)] + (guides ? [self.prompt(negativePrompt ?? "")] : [])
         return try staging.exclusively {
             let features = try staging.with(textStage) { stage in prompts.map { stage.features($0) } }
-            // The encode's buffers stay in MLX's cache when the text stage is held resident.
+            if releasesTextEncoderAfterEncoding {
+                textStage.release()
+            }
+            // The encode's buffers, and umT5's own where it was released, stay in MLX's cache until cleared.
             NFKMLXGPU.clearCache()
             return try staging.with(pipelineStage) { pipeline in
                 let latent = pipeline.denoise(textEmbeds: features[0], negativeEmbeds: guides ? features[1] : nil,

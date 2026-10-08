@@ -929,6 +929,19 @@ What the glue had wrong or lacked before the oracle, all invisible to a shape te
 - `prompt_clean` runs `ftfy.fix_text`, which no oracle env carries and the port does not implement; it
   changes only mis-decoded text. The oracle stubs it to identity and says so.
 
+`NFKMLXWanVideoGenerator.releasesTextEncoderAfterEncoding` (off by default) releases umT5 after the
+encode and loads it again for the next clip; the transformer and autoencoder stay resident. The staging
+test asserts two umT5 loads, one pipeline load, and identical clips. Measured on the 2.1 T2V 1.3B
+release, two 17×480×832 clips (footprint peak / between clips / MLX cache after a clip):
+
+- neither → 24.9 GB / 24.3 GB / 7.3 GB;
+- `NFKMLXGPU.applyStandingLimits()` alone → 23.9 GB / 18.4 GB / 0.3 GB;
+- the release alone → 24.4 GB / 24.4 GB / 18.3 GB;
+- both → 17.8 GB / 6.4 GB / 0.3 GB, swap 6–7 GB against 12–13 GB.
+
+Every clip's mean was identical. The release alone frees 10.8 GB of working memory (MLX active peak
+23.8 → 17.8 GB) and MLX's cache takes it back; see `mlx-runtime-gotchas.md`.
+
 Z-Image (`NFKMLXZImageGenerator`, `run_reference.py z_image_pipeline`, key `IK_PARITY_Z_IMAGE_PIPELINE`,
 tokenizer `IK_VAL_QWEN3_4B`): glue exact to double-precision noise (final latents 0.9999999999973, image
 0.9999999999999971; the guided and unguided records are 0.9958 apart, which the test asserts). What the

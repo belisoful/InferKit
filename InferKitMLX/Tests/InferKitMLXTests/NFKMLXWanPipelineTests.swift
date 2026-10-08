@@ -201,6 +201,21 @@ final class NFKMLXWanPipelineTests: XCTestCase {
             XCTAssertEqual(b.reshaped([-1]).asArray(Float.self), a.reshaped([-1]).asArray(Float.self),
                            "staging does not change the clip")
         }
+
+        loads = (0, 0)
+        let releasing = try generator(resident: true)
+        releasing.releasesTextEncoderAfterEncoding = true
+        let releasingClips = try (0 ..< 2).map { _ in
+            try releasing.video(forPrompt: "a red fox", frames: 5, width: 16, height: 16, seed: 3)
+        }
+        XCTAssertEqual(loads.text, 2, "a released umT5 loads again for the next clip")
+        XCTAssertEqual(loads.pipeline, 1, "the transformer and autoencoder stay resident")
+        XCTAssertFalse(releasing.isHoldingTextEncoder)
+        XCTAssertTrue(releasing.isHoldingPipeline)
+        for (a, b) in zip(residentClips, releasingClips) {
+            XCTAssertEqual(b.reshaped([-1]).asArray(Float.self), a.reshaped([-1]).asArray(Float.self),
+                           "releasing umT5 does not change the clip")
+        }
     }
 
     // The release's own umT5 tokenizer (a 256k-piece SentencePiece model) against the fast tokenizer

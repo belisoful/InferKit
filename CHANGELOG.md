@@ -533,6 +533,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The Wan autoencoder's residual blocks normalize and activate one frame at a time and release the first
   convolution's output before the second runs. A chunk's decode falls to 4.8 GB of working memory, with
   the decode bit-identical.
+- `NFKMLXWanVideoGenerator.releasesTextEncoderAfterEncoding`, off by default, releases umT5 once a
+  clip's prompts are encoded and loads it again for the next clip. With `NFKMLXGPU.applyStandingLimits()`
+  the released 17-frame 480×832 run peaks at 17.8 GB and holds 6.4 GB between clips, against 24.9 GB
+  with neither. Under MLX's default cache limit the freed buffers stay in MLX's cache, and the release
+  alone peaks at 24.4 GB.
 - A release load that converts its weights to a 16-bit type reads each group of about 256 MB in one
   evaluation and converts it in the next. The Wan transformer and autoencoder load the same way.
 

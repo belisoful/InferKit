@@ -777,6 +777,15 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   a debug build a reassigned `var` holds the old array until the assignment completes, which is through
   the whole second convolution. The block fell to 2.6 GB and the chunk to 4.8 GB, bit-identical. The
   end-to-end footprint stayed at 24.6 GB, within the sampler's 1 GB step.
+- **Under MLX's default limits, freed memory stays in MLX's cache (2026-10-07).** The
+  default cache limit is the memory limit (31,129 MB on a 32 GB M1 Max), and the allocator trims the
+  cache only when active plus cached memory reaches about 0.95 × `recommendedMaxWorkingSetSize`
+  (about 24.3 GB here). Releasing a model therefore lowers `Memory.activeMemory` and leaves the process
+  footprint where it was: dropping Wan's 10.8 GB umT5 after the encode took the MLX active peak from
+  23.8 to 17.8 GB, the cache after a clip from 7.3 to 18.3 GB, and the footprint peak only from 24.9 to
+  24.4 GB. Once working memory sits below the trim point, the trim point is the footprint. A cache cap
+  (`NFKMLXGPU.applyStandingLimits()`) is what makes a release show: with both, the peak was 17.8 GB and
+  the footprint between clips 6.4 GB. `Memory.peakMemory` never shows this; read `phys_footprint`.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?
