@@ -220,13 +220,20 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   directory; `info(of:releaseDirectoryURL:)` adds the `model_type` and `max_position_embeddings` its
   `config.json` states, at the top level or under `text_config`. A factory that builds one of them
   passes its net, or the walk reports nothing. A paged mixture's experts sit in its
-  `NFKMLXExpertStore`, outside `parameters()`, so its count covers the resident weights only.
-  `storage_bytes` carries the whole release instead: `storageBytes(at:)` sums the allocated size of
-  every file under the release directory, a symbolic link counted at its target (a Python Hugging
-  Face cache links snapshot files to blobs). Counting paged parameters exactly would take one rule
-  per expert format (stacked matrices, packed quantized words with scales, MXFP4 blocks, DeepSeek's
-  FP8/FP4 store), so the release size stands in for them. `NFKMLXLanguageBackend` and
-  `NFKMLXDeepSeekBackend` take `releaseDirectoryURL` from their directory factories.
+  `NFKMLXExpertStore`, outside `parameters()`, so each paged layer adopts `NFKMLXPagedParameters`
+  and states what it stands for from its geometry, which every storage format shares: the paged
+  switch linear experts × out × in (and its quantization), Gemma's and Qwen4-Exp's paged experts the
+  element count of the stacked tensors they replaced (passed in at the swap), and DeepSeek's paged
+  mixture routed experts × 3 × hidden × intermediate (its experts carry no biases), and a DeepSeek
+  n-gram table held stored rows × columns. The walker adds these to the parameter count, and to the
+  bytes only `pagedHeldBytes`: what a held load keeps in memory (`NFKMLXExpertStore.heldBytes(group:)`,
+  the stored table's bytes), nothing for a mapped one. The paging tests hold a paged net's count to
+  the resident net's, and DeepSeek's held load's bytes to its parameters plus the stored bytes. Reading the stored tensors instead would
+  take one rule per format (stacked matrices, packed quantized words with scales, MXFP4 blocks,
+  DeepSeek's FP8/FP4 store). `storageBytes(at:)` measures a release directory, every file under it,
+  or a single file (a GGUF), a symbolic link counted at its target (a Python Hugging Face cache links
+  snapshot files to blobs). `NFKMLXLanguageBackend` takes `releaseURL` from its directory and GGUF
+  factories, `NFKMLXDeepSeekBackend` `releaseDirectoryURL` from its directory factory.
 - HF vs MLX: `NFKHFHub` is a download/cache layer, not a runtime. Every model here downloads through
   it, the bundled Stable Diffusion releases included (`NFKMLXBackend.cacheDirectoryURL` chooses where).
   A gated repository needs a credential: `NFKHFHub.accessToken` sends it as a bearer token and falls

@@ -822,13 +822,18 @@ final class NFKQwen4ExpLinearAttention: Module {
 /// because they are bare parameters rather than layers, and this module matches that naming so the
 /// loader needs no rewrite. `gate_up_proj` is `[experts, 2 · width, hidden]` with the gate in the
 /// FIRST half of its rows and the lift in the second; the gpt-oss form interleaves them instead.
-final class NFKQwen4ExpExperts: Module {
+final class NFKQwen4ExpExperts: Module, NFKMLXPagedParameters {
     /// Nil where the experts are paged: each projection is then read from ``pagers``.
     @ParameterInfo(key: "gate_up_proj") var gateUp: MLXArray?
     @ParameterInfo(key: "down_proj") var down: MLXArray?
 
     let intermediateSize: Int
     private(set) var pagers: (gateUp: NFKMLXExpertPager, down: NFKMLXExpertPager)?
+    /// The parameters the paged form reads from the release; 0 in the resident form.
+    private(set) var pagedParameterCount = 0
+    var pagedHeldBytes: Int {
+        pagers.map { $0.gateUp.store.heldBytes(group: $0.gateUp.group) + $0.down.store.heldBytes(group: $0.down.group) } ?? 0
+    }
 
     init(_ c: NFKMLXQwen4ExpConfiguration) {
         intermediateSize = c.expertIntermediateSize
@@ -844,10 +849,11 @@ final class NFKQwen4ExpExperts: Module {
 
     /// The paged form: no parameters, both projections read from `store` under `path`, this module's
     /// own key path.
-    init(pagedFrom store: NFKMLXExpertStore, path: String, intermediateSize: Int) {
+    init(pagedFrom store: NFKMLXExpertStore, path: String, intermediateSize: Int, parameterCount: Int) {
         pagers = (NFKMLXExpertPager(store: store, group: path + ".gate_up_proj"),
                   NFKMLXExpertPager(store: store, group: path + ".down_proj"))
         self.intermediateSize = intermediateSize
+        pagedParameterCount = parameterCount
         super.init()
     }
 
@@ -1221,7 +1227,9 @@ extension NFKMLXQwen4Exp {
                     let count = mixture.experts.gateUp?.dim(0) ?? 0
                     let path = "model.language_model.layers.\(index).mlp.experts"
                     let paged = NFKQwen4ExpExperts(pagedFrom: store, path: path,
-                                                   intermediateSize: mixture.experts.intermediateSize)
+                                                   intermediateSize: mixture.experts.intermediateSize,
+                                                   parameterCount: (mixture.experts.gateUp?.size ?? 0)
+                                                       + (mixture.experts.down?.size ?? 0))
                     try mixture.update(modules: ModuleChildren.unflattened([("experts", paged)]), verify: .noUnusedKeys)
                     return [(path + ".gate_up_proj", count, ["weight"]), (path + ".down_proj", count, ["weight"])]
                 }

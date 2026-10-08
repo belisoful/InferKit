@@ -1017,7 +1017,7 @@ final class NFKDeepSeekAttention: Module {
 }
 
 /// The mixture of experts: routed experts plus one shared expert every token passes through.
-final class NFKDeepSeekMoE: Module {
+final class NFKDeepSeekMoE: Module, NFKMLXPagedParameters {
     @ModuleInfo(key: "gate") var gate: NFKDeepSeekGate
     @ModuleInfo(key: "experts") var experts: [NFKDeepSeekExpert]
     @ModuleInfo(key: "shared_experts") var shared: NFKDeepSeekExpert
@@ -1043,6 +1043,13 @@ final class NFKDeepSeekMoE: Module {
                                                  limit: c.swigluLimit, servedBlock: served)
         super.init()
     }
+
+    /// The routed experts' three matrices each, where they are paged; 0 where they are resident.
+    var pagedParameterCount: Int {
+        paging == nil ? 0 : configuration.routedExpertCount * 3 * configuration.hiddenSize * configuration.expertIntermediateSize
+    }
+
+    var pagedHeldBytes: Int { paging.map { $0.store.heldBytes(layer: $0.layer) } ?? 0 }
 
     func callAsFunction(_ x: MLXArray, tokens: MLXArray?, images: MLXArray? = nil) -> MLXArray {
         let c = configuration

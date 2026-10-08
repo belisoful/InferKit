@@ -335,15 +335,15 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let statusLock = NSLock()
     private let generationLock = NSLock()
     private let modelInfoCache = NFKMLXModelInfoCache()
-    private let releaseDirectoryURL: URL?
+    private let releaseURL: URL?
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
-         draft: NFKMLXLanguageNet? = nil, releaseDirectoryURL: URL? = nil) {
+         draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil) {
         self.holder = NFKLMHolder(net, tokenizer, draft: draft)
         self.identifier = identifier
         self.defaults = options
-        self.releaseDirectoryURL = releaseDirectoryURL
+        self.releaseURL = releaseURL
         super.init()
     }
 
@@ -352,16 +352,16 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     /// The loaded network's parameter count, weight bytes, precision, and quantization, with the
     /// release's `model_type` and `max_position_embeddings` where its `config.json` states them, the
-    /// bytes a release directory occupies on disk, and the key-value bytes each token adds while the
-    /// cache is unquantized (`NFKModelInfo*` keys). A paged model's routed experts stay in the
-    /// release, so its parameter count and weight bytes cover the resident weights and its storage
-    /// bytes the whole release. Introduced in InferKit 0.4.0.
+    /// bytes its release directory or GGUF file occupies on disk, and the key-value bytes each token
+    /// adds while the cache is unquantized (`NFKModelInfo*` keys). A paged model's routed experts
+    /// count toward its parameters; its weight bytes are what memory holds, which leaves out experts
+    /// read from the release. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             let configuration = holder.net.configuration
             var info = NFKMLXModelDescription.info(of: [holder.net])
-            if let releaseDirectoryURL {
-                info[NFKModelInfoStorageBytes] = NFKMLXModelDescription.storageBytes(at: releaseDirectoryURL)
+            if let releaseURL {
+                info[NFKModelInfoStorageBytes] = NFKMLXModelDescription.storageBytes(at: releaseURL)
             }
             info[NFKModelInfoArchitecture] = configuration.modelType
             info[NFKModelInfoContextLength] = configuration.maximumPositions
@@ -1277,7 +1277,7 @@ public final class NFKMLXLanguage: NSObject {
         throws -> any NFKInferenceBackend {
         let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, residency: residency)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options, releaseDirectoryURL: directoryURL)
+                                     options: options, releaseURL: directoryURL)
     }
 
     /// Builds from a release directory together with a smaller release of the same family as the
@@ -1299,7 +1299,7 @@ public final class NFKMLXLanguage: NSObject {
                 + "tokenizer")
         }
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options, draft: draft, releaseDirectoryURL: directoryURL)
+                                     options: options, draft: draft, releaseURL: directoryURL)
     }
 
     /// The release's own Jinja `chat_template`, or nil where it ships none.

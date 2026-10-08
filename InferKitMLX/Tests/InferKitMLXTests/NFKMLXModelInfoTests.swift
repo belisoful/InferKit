@@ -83,6 +83,67 @@ final class NFKMLXModelInfoTests: XCTestCase {
         XCTAssertTrue(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: nil).isEmpty)
     }
 
+    /// A resident norm beside a paged expert layer, as a decoder block holds them.
+    private final class PagedBlock: Module {
+        @ModuleInfo(key: "norm") var norm: RMSNorm
+        @ModuleInfo(key: "experts") var experts: NFKLMPagedSwitchLinear
+
+        init(experts: NFKLMPagedSwitchLinear) {
+            _norm.wrappedValue = RMSNorm(dimensions: 8)
+            _experts.wrappedValue = experts
+            super.init()
+        }
+    }
+
+    func testAPagedLayerCountsTheParametersItStandsForAndNoBytes() throws {
+        try requireMLXRuntime()
+        let pager = NFKMLXExpertPager(store: NFKMLXExpertStore(cacheByteBudget: 0), group: "experts")
+        let plain = PagedBlock(experts: NFKLMPagedSwitchLinear(pager: pager, experts: 4, outputSize: 8, inputSize: 16))
+        let info = NFKMLXModelDescription.info(of: [plain])
+        XCTAssertEqual(info[NFKModelInfoParameterCount] as? Int, 8 + 4 * 8 * 16, "the norm's 8 and the experts' 512")
+        XCTAssertEqual(info[NFKModelInfoWeightBytes] as? Int, 4 * 8, "only the resident norm is in memory")
+        XCTAssertNil(info[NFKModelInfoQuantizationBits])
+
+        let packed = PagedBlock(experts: NFKLMPagedSwitchLinear(
+            pager: pager, experts: 4, outputSize: 8, inputSize: 16,
+            quantization: NFKMLXWeights.Quantization(bits: 4, groupSize: 64)))
+        let quantized = NFKMLXModelDescription.info(of: [packed])
+        XCTAssertEqual(quantized[NFKModelInfoQuantizationBits] as? Int, 4, "the paged experts carry the most parameters")
+        XCTAssertEqual(quantized[NFKModelInfoQuantizationGroupSize] as? Int, 64)
+    }
+
+    func testEachPagedExpertFormStatesItsCount() throws {
+        try requireMLXRuntime()
+        let store = NFKMLXExpertStore(cacheByteBudget: 0)
+        XCTAssertEqual(NFKGemmaExperts(pagedFrom: store, path: "e", moeIntermediateSize: 4, parameterCount: 96)
+            .pagedParameterCount, 96)
+        XCTAssertEqual(NFKGemmaExperts(expertCount: 2, hiddenSize: 8, moeIntermediateSize: 4).pagedParameterCount, 0,
+                       "resident experts are counted from their arrays")
+        XCTAssertEqual(NFKQwen4ExpExperts(pagedFrom: store, path: "e", intermediateSize: 4, parameterCount: 96)
+            .pagedParameterCount, 96)
+
+        var deepSeek = NFKMLXDeepSeekConfiguration.v4Flash
+        deepSeek.hiddenSize = 64
+        deepSeek.expertIntermediateSize = 32
+        deepSeek.routedExpertCount = 8
+        let paged = NFKDeepSeekMoE(deepSeek, layer: 0,
+                                   expertStore: NFKMLXDeepSeekExpertStore(configuration: deepSeek, cacheByteBudget: 0))
+        XCTAssertEqual(paged.pagedParameterCount, 8 * 3 * 64 * 32, "eight experts, three bias-free matrices each")
+        XCTAssertEqual(NFKDeepSeekMoE(deepSeek, layer: 0).pagedParameterCount, 0)
+    }
+
+    func testASingleFileReleaseIsMeasuredByItself() throws {
+        let directory = try releaseDirectory(config: [:])
+        let file = directory.appendingPathComponent("model.gguf")
+        try Data(count: 300_000).write(to: file)
+        let allocated = try XCTUnwrap(file.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize)
+        XCTAssertEqual(NFKMLXModelDescription.storageBytes(at: file), allocated)
+        let link = directory.appendingPathComponent("linked.gguf")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        XCTAssertEqual(NFKMLXModelDescription.storageBytes(at: link), allocated, "a link counts its target")
+        XCTAssertNil(NFKMLXModelDescription.storageBytes(at: directory.appendingPathComponent("absent.gguf")))
+    }
+
     func testAReleaseDirectoryCountsItsFilesAndTheTargetsOfItsLinks() throws {
         let directory = try releaseDirectory(config: ["model_type": "qwen3"])
         let blobs = try releaseDirectory(config: [:])
@@ -96,8 +157,6 @@ final class NFKMLXModelInfoTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(expected, 200_000)
         XCTAssertEqual(NFKMLXModelDescription.info(of: [], releaseDirectoryURL: directory)[NFKModelInfoStorageBytes] as? Int,
                        expected)
-        XCTAssertNil(NFKMLXModelDescription.storageBytes(at: directory.appendingPathComponent("config.json")),
-                     "a file is not a release directory")
     }
 
     func testABackendOverAForwardDescribesItsNetworkAndRelease() throws {

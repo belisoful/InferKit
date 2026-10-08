@@ -553,12 +553,17 @@ final class NFKGemmaRouter: Module {
 /// The Gemma 4 experts: one fused gate-and-up projection and one down projection, each stored as a
 /// stacked `[experts, …]` tensor and dispatched through `gatherMM`. The output is the routing-weighted
 /// sum of the selected experts, so the router's weights are applied here rather than by the block.
-final class NFKGemmaExperts: Module {
+final class NFKGemmaExperts: Module, NFKMLXPagedParameters {
     /// Nil where the experts are paged: each projection is then read from ``pagers``.
     @ParameterInfo(key: "gate_up_proj") var gateUp: MLXArray?
     @ParameterInfo(key: "down_proj") var down: MLXArray?
     let moeIntermediateSize: Int
     private(set) var pagers: (gateUp: NFKMLXExpertPager, down: NFKMLXExpertPager)?
+    /// The parameters the paged form reads from the release; 0 in the resident form.
+    private(set) var pagedParameterCount = 0
+    var pagedHeldBytes: Int {
+        pagers.map { $0.gateUp.store.heldBytes(group: $0.gateUp.group) + $0.down.store.heldBytes(group: $0.down.group) } ?? 0
+    }
 
     init(expertCount: Int, hiddenSize: Int, moeIntermediateSize: Int) {
         _gateUp.wrappedValue = MLXArray.ones([expertCount, 2 * moeIntermediateSize, hiddenSize])
@@ -569,10 +574,11 @@ final class NFKGemmaExperts: Module {
 
     /// The paged form: no parameters, both projections read from `store` under `path`, this module's
     /// own key path.
-    init(pagedFrom store: NFKMLXExpertStore, path: String, moeIntermediateSize: Int) {
+    init(pagedFrom store: NFKMLXExpertStore, path: String, moeIntermediateSize: Int, parameterCount: Int) {
         pagers = (NFKMLXExpertPager(store: store, group: path + ".gate_up_proj"),
                   NFKMLXExpertPager(store: store, group: path + ".down_proj"))
         self.moeIntermediateSize = moeIntermediateSize
+        pagedParameterCount = parameterCount
         super.init()
     }
 
@@ -834,7 +840,8 @@ public final class NFKMLXGemmaLanguage: NSObject {
                     }
                     let path = "layers.\(index).experts"
                     let paged = NFKGemmaExperts(pagedFrom: store, path: path,
-                                                moeIntermediateSize: experts.moeIntermediateSize)
+                                                moeIntermediateSize: experts.moeIntermediateSize,
+                                                parameterCount: (experts.gateUp?.size ?? 0) + (experts.down?.size ?? 0))
                     try block.update(modules: ModuleChildren.unflattened([("experts", paged)]), verify: .noUnusedKeys)
                     return [(path + ".gate_up_proj", count, ["weight"]), (path + ".down_proj", count, ["weight"])]
                 }

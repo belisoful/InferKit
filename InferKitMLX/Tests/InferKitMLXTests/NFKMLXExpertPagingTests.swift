@@ -178,6 +178,19 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         try index.write(to: directory.appendingPathComponent("model.safetensors.index.json"))
     }
 
+    /// A paged net reports the resident one's parameter count, from its paged layers' geometry, and
+    /// fewer weight bytes, since its experts stay in the release.
+    private func assertPagedDescribesTheResidentModel(_ paged: Module, _ resident: Module,
+                                                      file: StaticString, line: UInt) {
+        let pagedInfo = NFKMLXModelDescription.info(of: [paged])
+        let residentInfo = NFKMLXModelDescription.info(of: [resident])
+        XCTAssertEqual(pagedInfo[NFKModelInfoParameterCount] as? Int, residentInfo[NFKModelInfoParameterCount] as? Int,
+                       "the paged experts count as the resident ones do", file: file, line: line)
+        XCTAssertLessThan(pagedInfo[NFKModelInfoWeightBytes] as? Int ?? .max,
+                          residentInfo[NFKModelInfoWeightBytes] as? Int ?? 0,
+                          "and hold no bytes in memory", file: file, line: line)
+    }
+
     /// Loads `directory` into a fresh net both ways and holds the paged logits to the resident ones.
     @discardableResult
     private func assertPagedMatchesResident(_ directory: URL, geometry: NFKMLXLanguageConfiguration,
@@ -196,6 +209,7 @@ final class NFKMLXExpertPagingTests: XCTestCase {
                        "a paged net holds no expert matrix as a parameter", file: file, line: line)
         XCTAssertEqual(store.heldBytes, 0, "every expert stays in the release", file: file, line: line)
         XCTAssertGreaterThan(store.mappedBytes, 0, file: file, line: line)
+        assertPagedDescribesTheResidentModel(paged, resident, file: file, line: line)
 
         let expected = resident(tokens)
         let actual = paged(tokens)
@@ -332,6 +346,7 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         XCTAssertGreaterThan(pagedStore.expertCount, 0, file: file, line: line)
         XCTAssertLessThan(paged.parameters().flattened().count, resident.parameters().flattened().count,
                           "the paged net holds no expert projection", file: file, line: line)
+        assertPagedDescribesTheResidentModel(paged, resident, file: file, line: line)
         let expected = forward(resident)
         XCTAssertEqual(forward(paged).asArray(Float.self), expected.asArray(Float.self),
                        "a paged load computes the resident one's logits", file: file, line: line)

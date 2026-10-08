@@ -13,6 +13,7 @@
 //
 
 import XCTest
+import InferKit
 import MLX
 import MLXNN
 @testable import InferKitMLX
@@ -3343,6 +3344,19 @@ final class NFKMLXDeepSeekTests: XCTestCase {
             XCTAssertNil(paged.layers[layer].engram?.table,
                          "and builds no float embedding for it")
         }
+
+        // Both groups still count as the decoder's parameters, and what a held load keeps of them in
+        // memory, the release's stored bytes, counts as its weight bytes.
+        let storedTables = pagedShaped.engramLayerIDs
+            .compactMap { paged.layers[$0].engram?.storedTable?.storedBytes }
+            .reduce(0, +)
+        let pagedInfo = NFKMLXModelDescription.info(of: [paged])
+        XCTAssertEqual(pagedInfo[NFKModelInfoParameterCount] as? Int,
+                       NFKMLXModelDescription.info(of: [resident])[NFKModelInfoParameterCount] as? Int,
+                       "a paged decoder reports the resident one's parameter count")
+        let ownBytes = paged.parameters().flattened().reduce(0) { $0 + $1.1.nbytes }
+        XCTAssertEqual(pagedInfo[NFKModelInfoWeightBytes] as? Int, ownBytes + store.storedBytes + storedTables,
+                       "its weight bytes are its parameters plus the stored experts and tables it holds")
 
         let ids = MLXArray([3, 9, 14, 2, 7, 11, 5].map(Int32.init)).reshaped([1, 7])
         let (mine, theirs) = (resident(ids), paged(ids))

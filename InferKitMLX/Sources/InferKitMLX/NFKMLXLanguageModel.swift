@@ -1077,7 +1077,7 @@ final class NFKLMQuantizedSwitchLinear: NFKLMSwitchLinear, Quantized {
 /// @discussion The layer holds no parameters. Each call reads the experts its indices name, stacks
 /// them, and runs the gathered multiply the resident form runs over that stack, so each routed token
 /// meets the matrix it meets resident. A quantized group is stored packed and multiplied packed.
-final class NFKLMPagedSwitchLinear: NFKLMExpertLinear {
+final class NFKLMPagedSwitchLinear: NFKLMExpertLinear, NFKMLXPagedParameters {
     let pager: NFKMLXExpertPager
     let quantization: NFKMLXWeights.Quantization?
     /// Whether the store holds each expert `[in, out]`; see ``NFKMLXExpertSlice/inputMajor``.
@@ -1096,6 +1096,10 @@ final class NFKLMPagedSwitchLinear: NFKLMExpertLinear {
     override var expertCount: Int { geometry.experts }
     override var outputSize: Int { geometry.output }
     override var inputSize: Int { geometry.input }
+
+    var pagedParameterCount: Int { geometry.experts * geometry.output * geometry.input }
+    var pagedHeldBytes: Int { pager.store.heldBytes(group: pager.group) }
+    var pagedQuantization: (bits: Int, groupSize: Int)? { quantization.map { ($0.bits, $0.groupSize) } }
 
     override func callAsFunction(_ x: MLXArray, experts: MLXArray) -> MLXArray {
         guard let quantization else { return pager.gatherMM(x, experts: experts, inputMajor: inputMajor) }

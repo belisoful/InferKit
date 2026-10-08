@@ -8,13 +8,32 @@ import InferKit
 import MLX
 import MLXNN
 
+/// A layer whose weights are held outside its parameters, as a paged load leaves them: in the
+/// release, read as its router reaches them, or in memory in the form the release stores them. It
+/// states how many parameters it stands for, the bytes it keeps in memory, and the quantization its
+/// weights are stored at.
+protocol NFKMLXPagedParameters {
+    /// The parameters held outside the layer's own; 0 where its weights are resident.
+    var pagedParameterCount: Int { get }
+    /// The bytes of those weights kept in memory, 0 where they stay in the release.
+    var pagedHeldBytes: Int { get }
+    /// The bits and group size of a quantized paged layer, or nil.
+    var pagedQuantization: (bits: Int, groupSize: Int)? { get }
+}
+
+extension NFKMLXPagedParameters {
+    var pagedQuantization: (bits: Int, groupSize: Int)? { nil }
+}
+
 /// What a loaded network reports under a backend's `modelInfo`: its parameter count, the bytes its
 /// arrays hold, the floating type its weights compute in, and its quantization.
 ///
 /// A quantized layer keeps its weight packed into `uint32` words, with its scales and biases beside
 /// it. Its parameters are the packed words times 32 over its bits; its scales and biases count toward
 /// the bytes and not the parameters. A network quantized at more than one setting reports the one
-/// that covers the most parameters.
+/// that covers the most parameters. A paged layer (``NFKMLXPagedParameters``) adds the parameters it
+/// stands for and, where it is quantized, its setting, and adds to the bytes only what it keeps in
+/// memory: nothing where its weights stay in the release.
 enum NFKMLXModelDescription {
 
     private struct Setting: Hashable {
@@ -32,6 +51,14 @@ enum NFKMLXModelDescription {
             for (path, child) in module.namedModules() {
                 if let layer = child as? Quantized {
                     quantized[path] = layer
+                }
+                if let paged = child as? NFKMLXPagedParameters {
+                    let count = paged.pagedParameterCount
+                    parameters += count
+                    bytes += paged.pagedHeldBytes
+                    if let setting = paged.pagedQuantization {
+                        quantizedParameters[Setting(bits: setting.bits, groupSize: setting.groupSize), default: 0] += count
+                    }
                 }
             }
             for (key, array) in module.parameters().flattened() {
@@ -88,14 +115,20 @@ enum NFKMLXModelDescription {
         return info
     }
 
-    /// The bytes the files under `directoryURL` occupy on disk, or nil where it is not a directory. A
-    /// symbolic link counts its target, so a Hugging Face cache snapshot, whose files link to its
-    /// blobs, counts the blobs.
-    static func storageBytes(at directoryURL: URL) -> Int? {
+    /// The bytes a release occupies on disk: a single file's, or every file's under a directory, or
+    /// nil where nothing is at `url`. A symbolic link counts its target, so a Hugging Face cache
+    /// snapshot, whose files link to its blobs, counts the blobs.
+    static func storageBytes(at url: URL) -> Int? {
+        let resolved = url.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue,
-              let enumerator = FileManager.default.enumerator(at: directoryURL,
+        guard FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory) else {
+            return nil
+        }
+        guard isDirectory.boolValue else {
+            return (try? resolved.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize
+        }
+        let directoryURL = resolved
+        guard let enumerator = FileManager.default.enumerator(at: directoryURL,
                                                               includingPropertiesForKeys: [.isSymbolicLinkKey]) else {
             return nil
         }

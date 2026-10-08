@@ -303,7 +303,7 @@ final class NFKDeepSeekNgramHash {
 /// The hashed columns fetch one table row each; `wkv` turns them into one key per hyper-connection
 /// copy plus a value the copies share. The gate is a normalized dot product of stream against key,
 /// so a lookup that does not match the position contributes nothing.
-final class NFKDeepSeekEngram: Module {
+final class NFKDeepSeekEngram: Module, NFKMLXPagedParameters {
     /// Absent where the table is held in the form the release stores it. A released table is 384
     /// million rows of 256 channels, 366 GiB decoded, so a decoder that pages it must not build the
     /// float embedding at all.
@@ -327,6 +327,10 @@ final class NFKDeepSeekEngram: Module {
     let quantizesActivations: Bool
     let fp8BlockSize: Int
     let computeType: DType
+
+    /// The stored table's rows and columns, where the table is held stored; 0 where it is an embedding.
+    var pagedParameterCount: Int { storedTable.map { $0.rowCount * $0.dimensions } ?? 0 }
+    var pagedHeldBytes: Int { storedTable?.storedBytes ?? 0 }
 
     /// - Parameter pagingTable: builds no float embedding, leaving the table to `storedTable`.
     init(_ c: NFKMLXDeepSeekConfiguration, rows: Int, pagingTable: Bool = false) {

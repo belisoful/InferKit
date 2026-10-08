@@ -173,6 +173,15 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
     /// How many experts the store holds, across every group.
     @objc public var expertCount: Int { locked { sources.count } }
 
+    /// The bytes one group's sources keep in memory.
+    func heldBytes(group: String) -> Int {
+        locked {
+            sources.reduce(0) { total, entry in
+                entry.key.group == group ? total + entry.value.values.reduce(0) { $0 + $1.heldBytes } : total
+            }
+        }
+    }
+
     /// A store whose cache holds up to `cacheByteBudget` bytes of materialized experts.
     @objc public init(cacheByteBudget: Int) {
         budget = cacheByteBudget

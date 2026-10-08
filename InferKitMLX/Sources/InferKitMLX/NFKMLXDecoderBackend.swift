@@ -91,9 +91,9 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
     /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
-    /// `config.json` states (`NFKModelInfo*` keys). A paged decoder's routed experts stay in the
-    /// release, so its parameter count and weight bytes cover the resident weights and its storage
-    /// bytes the whole release. Introduced in InferKit 0.4.0.
+    /// `config.json` states (`NFKModelInfo*` keys). A paged decoder's routed experts count toward its
+    /// parameters; its weight bytes are what memory holds, which leaves out experts read from the
+    /// release. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)

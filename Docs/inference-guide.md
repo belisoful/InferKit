@@ -724,6 +724,59 @@ Hosted in a server of its own, it makes that server a load balancer for the othe
 machine and keeps the models' load. GPU utilization counts every process and stays high while one
 run executes, so a balancer routes on the queue figures and the estimated wait.
 
+### A pool of chat servers
+
+Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the
+machine that has it, take three parts:
+
+- **Workers.** Each hosts the MLX language backend in an `NFKInferenceServer`. The backend keeps a
+  prompt cache for each conversation a request names, under `conversationCacheByteBudget`; size it
+  to the memory the model leaves free. `maximumQueuedRunsPerModel` keeps a worker's queue short, so a
+  request that would wait behind it is refused at once and goes to another worker.
+- **The front.** An `NFKBalancedBackend` over the workers, hosted in an `NFKInferenceServer` of its
+  own under the same model name. Clients reach the pool through the front alone. It keeps each
+  conversation on the worker that answered it, and a conversation moves only when its worker leaves,
+  fails over, or is expected to wait more than `conversationWaitAllowance` longer than another.
+- **Clients.** Any OpenAI client sends chat completions to the front. A client that sends
+  `prompt_cache_key` names its conversations; without it the front names a chat by its system and
+  first user messages and sends that name on, so each worker still keeps one cache per chat.
+
+<!-- objc-check: given NFKBalancedBackend *pool = nil; -->
+```objc
+// On each worker: the model, a cache budget sized to its memory, and a short queue.
+id<NFKInferenceBackend> qwen = [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory error:&error];
+((NFKMLXLanguageBackend *)qwen).conversationCacheByteBudget = 8LL << 30;
+NFKInferenceServer *worker = [[NFKInferenceServer alloc] init];
+worker.apiKey = key;
+worker.maximumQueuedRunsPerModel = 4;              // a fifth waiting request goes to another worker
+[worker addBackend:qwen forModelName:@"qwen3"];
+[worker startWithError:&error];
+
+// On the front machine: the workers Bonjour finds, served under the same model name.
+pool = [NFKBalancedBackend backendWithModelName:@"qwen3"];
+pool.apiKey = key;
+[pool startDiscoveryWithInterval:30];
+NFKInferenceServer *front = [[NFKInferenceServer alloc] init];
+front.apiKey = key;
+[front addBackend:pool forModelName:@"qwen3"];
+[front startWithError:&error];
+```
+
+A client's request body names its conversation beside the usual fields:
+
+```json
+{ "model": "qwen3", "prompt_cache_key": "chat-7",
+  "messages": [{ "role": "user", "content": "And the action items?" }] }
+```
+
+Each machine's `GET /v1/inferkit/status` shows whether the pool works as intended. On the front,
+the model's `status` lists every worker's health and outstanding requests, the conversations kept,
+and `conversation_moves`; moves that climb with steady traffic mean the allowance is too tight or a
+worker too slow. On a worker, `cached_input_share` is the share of input its cache served, and the
+backend's `status` gives its conversation caches against the budget; a share near 0 on multi-turn
+traffic means chats are not returning to the worker that holds them, or the budget evicts them
+before their next turn.
+
 ## Speech in, text out
 
 Transcription follows the same contract with `NFKInputAudio` (an `NFKAudioAsset`) in and

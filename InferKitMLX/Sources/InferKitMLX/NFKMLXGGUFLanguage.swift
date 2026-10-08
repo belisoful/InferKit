@@ -27,7 +27,7 @@ extension NFKMLXLanguage {
         throws -> any NFKInferenceBackend {
         let (net, tokenizer) = try loadedGGUF(at: ggufURL)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options)
+                                     options: options, releaseURL: ggufURL)
     }
 
     /// The Objective-C entry: builds a backend from a GGUF file. Generation options are set per request

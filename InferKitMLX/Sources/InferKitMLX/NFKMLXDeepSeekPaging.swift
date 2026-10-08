@@ -439,6 +439,11 @@ public final class NFKMLXDeepSeekExpertStore {
         }
     }
 
+    /// The bytes one layer's stored experts keep in memory.
+    func heldBytes(layer: Int) -> Int {
+        experts.heldBytes(group: Self.group(layer))
+    }
+
     /// The expert at `index` of `layer`, decoded from its stored bytes or taken from the cache.
     func expert(layer: Int, index: Int) -> NFKDeepSeekExpert? {
         guard let matrices = experts.expert(group: Self.group(layer), index: index),

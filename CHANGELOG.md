@@ -589,11 +589,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXDecoderBackend` (Qwen3.5 and Qwen4-Exp) report the same description of their decoder, with
   the `model_type` and `max_position_embeddings` their release's `config.json` states, at its top
   level or under `text_config`.
-- A language backend built from a release directory reports the bytes the directory occupies on
-  disk (`NFKModelInfoStorageBytes`), a linked file counted at its target. A paged model's routed
-  experts stay in the release, so its parameter count and weight bytes cover the resident weights
-  and its storage bytes the whole release. `NFKMLXLanguageBackend`, `NFKMLXDeepSeekBackend`, and the
-  five backends above report it.
+- A language backend built from a release directory or a GGUF file reports the bytes the release
+  occupies on disk (`NFKModelInfoStorageBytes`), a linked file counted at its target.
+  `NFKMLXLanguageBackend`, `NFKMLXDeepSeekBackend`, and the five backends above report it.
+- A paged model's routed experts, and DeepSeek's stored n-gram tables, count toward its parameter
+  count, from each paged layer's geometry. Its weight bytes are what memory holds: the stored bytes
+  a held load keeps, and nothing for weights read from the release. A quantized paged layer counts
+  toward the reported quantization too.
 - `NFKMLXGPU` adopts `NFKServingRuntimeStatus`, so a server's status route reports MLX's active,
   cached, and peak memory and its memory limit under `host.runtimes.mlx`. A process without MLX's
   Metal library reports only that the library is missing, because MLX aborts at its first memory
