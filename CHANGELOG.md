@@ -497,6 +497,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Each bfloat16 block held to the rounding it adds itself
+
+- Every bf16 record a parity test holds an isolated seam to carries each block's own floor, `<key>.floor`:
+  the reference's block run again in float32 on the bf16 run's own input. The accumulated floor the
+  isolated checks used carries every earlier block's drift, so a deep block passed it while 10% to 60% of
+  its elements differed. Each isolated seam is now also held inside its block floor, and the reports print
+  `ours/block-floor` beside the accumulated floor. Across the families the median seam sits at under
+  0.0001 to 0.35 of it, and the widest, SAM 3's mask decoder, at 0.87.
+- SigLIP 2's pooling head (0.66) and CLIP's vision layers (up to 0.49) were taken apart piece by piece:
+  every piece matches the reference to a step in under 0.3% of its elements, and a wide projection spreads
+  those steps over the block.
+- `run_reference.py` records the floors under `IK_PROBE_BLOCK_FLOOR=1`. A mixture layer's float32 copy
+  keeps the bf16 run's experts, a sparse attention its indexer selection, and a last decoder layer's floor
+  follows the final norm where that reproduces the recorded state.
+
 #### Wan decodes a clip in bounded memory
 
 - `NFKMLXWanVideoVAENet` keeps a copy of each causal convolution's trailing frames between chunks and

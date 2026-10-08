@@ -80,6 +80,16 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let floor: Double
         /// `1 - cosine` of this side's bf16 against the reference's float32.
         let exact: Double
+        /// `1 - cosine` of the reference's bf16 against the same block run in float32 on the bf16 run's own
+        /// input (`<key>.floor`, `IK_PROBE_BLOCK_FLOOR=1`): the rounding that block adds, where recorded.
+        var blockFloor: Double? = nil
+
+        /// `ours` as a fraction of the block floor, or nil where none is recorded or the block adds no rounding
+        /// (a layer norm CUDA autocast computes in float32 has a block floor of 0).
+        var blockRatio: Double? {
+            guard let blockFloor, blockFloor > 1e-13 else { return nil }
+            return ours / blockFloor
+        }
     }
 
     /// Compares `states` (this side, bf16) against the `<prefix>i` tensors of both records.
@@ -93,15 +103,24 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             let differing = zip(ours, reference).filter { $0 != $1 }.count
             return Seam(label: state.0, differing: Double(differing) / Double(max(ours.count, 1)),
                         ours: distance(ours, reference), floor: distance(reference, exact),
-                        exact: distance(ours, exact))
+                        exact: distance(ours, exact),
+                        blockFloor: bf16["\(key).floor"].map { distance(reference, floats($0)) })
         }
     }
 
+    /// Prints `rows` under `name`. The block floors print only in a report of seams run on the reference's own
+    /// input (named `isolated` or `pieces`): an end-to-end state carries every earlier block's drift, so its
+    /// distance against one block's floor measures nothing.
     private func report(_ name: String, _ rows: [Seam]) {
-        var lines = ["VALIDATION bf16 \(name):  seam  differing  ours-vs-ref-bf16  floor(ref bf16 vs f32)  ours-vs-f32"]
+        let blockFloors = (name.contains("isolated") || name.contains("pieces")) && rows.contains { $0.blockFloor != nil }
+        var lines = ["VALIDATION bf16 \(name):  seam  differing  ours-vs-ref-bf16  floor(ref bf16 vs f32)  ours-vs-f32"
+                     + (blockFloors ? "  block-floor  ours/block-floor" : "")]
         for row in rows {
-            lines.append(String(format: "  %-16s %8.4f%%  %.3e  %.3e  %.3e%@", (row.label as NSString).utf8String!,
-                                row.differing * 100, row.ours, row.floor, row.exact,
+            let block = !blockFloors ? "" : row.blockFloor.map {
+                String(format: "  %.3e  %@", $0, row.blockRatio.map { String(format: "%.4f", $0) } ?? "float32")
+            } ?? ""
+            lines.append(String(format: "  %-16s %8.4f%%  %.3e  %.3e  %.3e%@%@", (row.label as NSString).utf8String!,
+                                row.differing * 100, row.ours, row.floor, row.exact, block,
                                 row.exact > 2 * row.floor ? "  <- farther from f32 than twice the floor" : ""))
         }
         print(lines.joined(separator: "\n"))
@@ -342,15 +361,38 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let last = endToEnd[endToEnd.count - 1]
         print(String(format: "VALIDATION bf16 %@ summary: worst isolated %@ at %.4f of the floor; %@ ours-vs-f32 %.3e, floor %.3e",
                      name, worst.label, worst.ours / max(worst.floor, 1e-30), last.label, last.exact, last.floor))
+        let blocked = isolated.filter { $0.blockRatio != nil }
+        if let worstBlock = blocked.max(by: { $0.blockRatio! < $1.blockRatio! }) {
+            let ratios = blocked.map { $0.blockRatio! }.sorted()
+            let unrounded = isolated.filter { $0.blockFloor != nil && $0.blockRatio == nil }.count
+            print(String(format: "VALIDATION bf16 %@ block floors: %d of %d seams%@, median %.4f, worst %@ at %.4f of its block floor",
+                         name, blocked.count, isolated.count, unrounded > 0 ? String(format: " (%d in float32)", unrounded) : "",
+                         ratios[ratios.count / 2], worstBlock.label, worstBlock.blockRatio!))
+        }
         for row in isolated {
             XCTAssertLessThan(row.ours, isolatedBar * row.floor,
                               "\(name) \(row.label) on the reference's input: a rounding placed unlike the reference's",
                               file: file, line: line)
         }
+        assertWithinBlockFloors(name, isolated, file: file, line: line)
         for row in endToEnd.suffix(2) {
             XCTAssertLessThanOrEqual(row.exact, 2 * row.floor,
                                      "\(name) \(row.label): farther from float32 than twice the reference's bf16",
                                      file: file, line: line)
+        }
+    }
+
+    /// Each seam with a recorded block floor stays inside it: run on the reference's own input, a block may
+    /// differ from the reference's bf16 output by no more than the rounding that block adds itself. The widest
+    /// measured is SAM 3's mask decoder at 0.87 of it. SigLIP 2's pooling head reaches 0.66 from one
+    /// weighted-sum element a float32 accumulation order puts a step from torch's, which its 768-wide out
+    /// projection spreads over every output.
+    private func assertWithinBlockFloors(_ name: String, _ rows: [Seam], file: StaticString = #filePath,
+                                         line: UInt = #line) {
+        for row in rows {
+            guard let ratio = row.blockRatio else { continue }
+            XCTAssertLessThan(ratio, 1, "\(name) \(row.label) on the reference's input: farther from it than its own block's rounding",
+                              file: file, line: line)
         }
     }
 
@@ -486,6 +528,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             for row in isolatedRows {
                 XCTAssertLessThan(row.ours, 0.25 * row.floor, "clip-b32\(plate) \(row.label) on the reference's input")
             }
+            assertWithinBlockFloors("clip-b32\(plate)", isolatedRows)
             plates.append((states, keys, half, f32))
         }
         let first = try XCTUnwrap(plates.first, "no clip_b32 record")
@@ -1344,6 +1387,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             XCTAssertLessThan(row.ours, 0.25 * row.floor,
                               "qwen4-exp-cut4 \(row.label) on the reference's input: a rounding placed unlike the reference's")
         }
+        assertWithinBlockFloors("qwen4-exp-cut4", rows)
         print("VALIDATION MEMORY qwen4-exp-cut4: peak \(NFKMLXGPU.peakMemory >> 20) MB")
     }
 
@@ -3089,8 +3133,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA4_26B_CUT6"], "IK_VAL_GEMMA4_26B_CUT6"))
         let routes = try record("gemma4_26b_cut6_bf16_routes.safetensors")
+        // The block floors come from the routed run, whose float32 copies route as its bf16 layers did.
+        let floors = routes.filter { $0.key.hasSuffix(".floor") }
         try gemma4Prefix("gemma4_26b_cut6", directory: directory, unified: false,
-                         bf16: record("gemma4_26b_cut6_bf16.safetensors"),
+                         bf16: record("gemma4_26b_cut6_bf16.safetensors").merging(floors) { $1 },
                          f32: record("gemma4_26b_cut6_f32.safetensors"), routes: routes)
     }
 

@@ -283,6 +283,40 @@ measured on the reference's own layer, not assumed:
 - Its eight or so expert matmuls let accumulation order alone reach 0.27 of the floor (Gemma 4
   26B-A4B), so a mixture layer's isolated bar is 0.5 of the floor rather than 0.25.
 
+An isolated seam's floor is the reference's bf16 run against its float32 run at that key, which carries
+the drift of every block before it, so a deep block passes it while 10% to 60% of its elements differ.
+`IK_PROBE_BLOCK_FLOOR=1` records each block's own floor beside its seam: once the block has run in the
+bf16 model, a float32 copy of it runs on the same arguments widened, and its output is kept as
+`<key>.floor` (`_block_floor_hooks`). Every bf16 record a test holds a seam to carries them.
+
+- The copy carries no hooks and no instance-level `forward`, since transformers 4.57 binds an
+  output-recording wrapper to each layer that would call the bf16 original. It drops a key-value cache
+  argument and copies a shared key-value mapping (Gemma 3n and 4).
+- A mixture layer's copy keeps the bf16 run's experts (`route.L.index`), and a sparse attention keeps the
+  bf16 run's indexer selection, since a float32 router or indexer breaks near-ties its own way. A release
+  function that casts to bf16 by name runs at the copy's type (SAM 3's fused `addmm_act`).
+- The last decoder layer's state is its output through the final norm (`norm`, or `norm_f` in
+  Nemotron-H). Its floor follows the same norm, and the oracle keeps it only where the bf16 composite
+  reproduces the recorded state bit for bit, so Qwen4-Exp's last state, read through its hyper-connection
+  mixer, has none.
+- A seam no single module produces is composed in float32: Voxtral's and Music 3's feed-forwards, the
+  SAM 2 and SAM 3 necks with the decoder's high-resolution convolutions, and the SAM mask decoder on the
+  recorded levels.
+- Only a block's first call is kept, so a prefill's floor survives the decode steps after it, and a
+  streamed float32 run records none.
+
+`seams` reads each floor into `Seam.blockFloor`, and every isolated seam with one is held inside it
+(`assertWithinBlockFloors`), beside the quarter of the accumulated floor. Across the families, the median
+seam sits at under 0.0001 to 0.35 of its block floor. The widest are SAM 3's mask decoder at 0.87,
+SAM 2's at 0.73, SigLIP 2's pooling head at 0.66, Gemma 4 26B-A4B's mixture layers at 0.50, CLIP's vision
+layers at 0.49, and Music 3's depth attention at 0.41. Two of those were taken apart piece by piece, and
+neither is a misplaced rounding. In SigLIP 2's head every step matches torch's but one weighted-sum
+element, a float32 accumulation order a step apart, which the 768-wide out projection spreads over 291 of
+768 outputs. In CLIP every piece of a vision layer differs in under 0.3% of its elements, and the whole
+block in 18% to 26% of them, behind out projections and `fc2` that sum 768 and 3,072 inputs. A seam whose
+block adds no rounding has a block floor of 0 (a layer norm CUDA autocast computes in float32) and is
+reported as `float32`.
+
 A deep network can carry a one-step difference anywhere in it to the logits many times over, so a run
 of either side is one draw. Where every piece run alone sits far inside its bar and only the composed
 logits exceed twice the floor, the two distributions decide. `run_reference.py hf_bf16_spread` with

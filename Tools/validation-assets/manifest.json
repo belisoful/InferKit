@@ -5296,7 +5296,8 @@
       "layers": 4,
       "directory": "codestral-mamba-cut4",
       "config": "IK_VAL_CODESTRAL_CUT4",
-      "record": "codestral_cut4"
+      "record": "codestral_cut4",
+      "note": "Its records come from the gemma oracle environment: llmvenv's slow sentencepiece tokenizer fails at import (protobuf `builder`)."
     },
     {
       "repo": "Qwen/Qwen3-14B",

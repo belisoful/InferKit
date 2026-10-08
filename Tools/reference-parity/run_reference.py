@@ -4354,12 +4354,18 @@ def _tiny_decoder_record(model, tokens, release_name=lambda key: key):
     restore = None
     if os.environ.get("IK_PROBE_LAYERS"):
         restore = _probe_hooks(model, [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")], extra)
+    floors, count = {}, None
+    if mode == "bfloat16" and getattr(model.config, "model_type", None) != "mamba2":
+        count = _decoder_floor_hooks(model, floors)
     with torch.no_grad():
         out = model(tokens, output_hidden_states=True)
     if restore is not None:
         restore()
     for index, hidden in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    if count is not None:
+        _check_floor_composite(floors, f"hidden.{count}", out.hidden_states[-1])
+        extra.update(floors)
     for key, value in model.state_dict().items():
         extra[f"w::{release_name(key)}"] = (value.float() if value.is_floating_point()
                                             else value).contiguous()
@@ -4621,10 +4627,13 @@ def run_granite_hybrid_real(image, checkpoint):
     else:
         model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
     ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)
+    floors = {}
+    count = _decoder_floor_hooks(model, floors)
     with torch.no_grad():
         out = model(ids, output_hidden_states=True)
         logits = out.logits[0].float()
         generated = model.generate(ids, max_new_tokens=12, do_sample=False, pad_token_id=0)
+    _check_floor_composite(floors, f"hidden.{count}", out.hidden_states[-1])
     continuation = generated[0, ids.shape[1]:]
     extra = {
         "tokens": ids[0].to(torch.int32).contiguous(),
@@ -4632,6 +4641,7 @@ def run_granite_hybrid_real(image, checkpoint):
     }
     for index, hidden in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    extra.update(floors)
     globals()["_extra"] = extra
     return logits.contiguous()
 
@@ -4944,15 +4954,24 @@ def run_granite_speech_real(image, checkpoint):
     probes = {}
     if os.environ.get("IK_PROBE_ENCODER"):
         _probe_encoder_layers(model.encoder.layers, probes)
+        _piece_floor_hooks(model.encoder.layers, range(len(model.encoder.layers)), ("ff1", "attn", "conv", "ff2"),
+                           probes, "enc.")
+    projector_floor = {}
+    _block_floor_hooks([model.projector], ["projector_out"], projector_floor)
     with torch.no_grad():
         encoder_out = model.encoder(features)
         recorded = dict(probes)
         projector_out = model.projector(encoder_out)
+        recorded.update(projector_floor)
         # `IK_PROBE_LAYERS` records the named decoder layers on the prefill, as `hf_layer_probe` does.
         decoder_probes, restore = {}, None
         if os.environ.get("IK_PROBE_LAYERS"):
             layers = [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")]
             restore = _probe_hooks(model.language_model, layers, decoder_probes)
+            decoder_layers = next(m for n, m in model.language_model.named_modules()
+                                  if isinstance(m, torch.nn.ModuleList) and n.endswith("layers"))
+            _piece_floor_hooks(decoder_layers, layers,
+                               ("input_layernorm", "self_attn", "post_attention_layernorm", "mlp"), decoder_probes)
         logits = model(input_ids=ids, input_features=features, input_features_mask=mask).logits[0].float()
         recorded.update({f"dec.{key}": value for key, value in decoder_probes.items()})
         if restore is not None:
@@ -5054,6 +5073,14 @@ def run_voxtral_real(image, checkpoint):
     probes = {}
     if os.environ.get("IK_PROBE_ENCODER"):
         _probe_encoder_layers(model.audio_tower.layers, probes)
+        layers = model.audio_tower.layers
+        _piece_floor_hooks(layers, range(len(layers)), ("self_attn_layer_norm", "self_attn", "final_layer_norm"),
+                           probes, "enc.")
+        # The feed-forward seam is fc1, the activation, and fc2 together, held at fc2's output.
+        for index, layer in enumerate(layers):
+            _composite_floor_hook(layer.fc1, {"fc1": layer.fc1, "act": layer.activation_fn, "fc2": layer.fc2},
+                                  lambda m, x: m["fc2"](m["act"](m["fc1"](x))), f"enc.{index}.fc2.out", probes)
+    _block_floor_hooks([model.multi_modal_projector], ["audio_embeds"], probes, batched=False, verify=True)
     with torch.no_grad():
         encoder_out = model.audio_tower(features).last_hidden_state
         audio_embeds = model.get_audio_features(features)
@@ -5063,8 +5090,12 @@ def run_voxtral_real(image, checkpoint):
     restore = None
     if os.environ.get("IK_PROBE_LAYERS"):
         decoder_probes = {}
-        restore = _probe_hooks(model.language_model, [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")],
-                               decoder_probes)
+        probed = [int(x) for x in os.environ["IK_PROBE_LAYERS"].split(",")]
+        restore = _probe_hooks(model.language_model, probed, decoder_probes)
+        decoder_layers = next(m for n, m in model.language_model.named_modules()
+                              if isinstance(m, torch.nn.ModuleList) and n.endswith("layers"))
+        _piece_floor_hooks(decoder_layers, probed,
+                           ("input_layernorm", "self_attn", "post_attention_layernorm", "mlp"), decoder_probes)
     with torch.no_grad():
         logits = model(input_ids=ids, input_features=features).logits[0].float()
         if restore is not None:
@@ -5332,6 +5363,10 @@ def run_gemma3n(image, checkpoint):
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
 
+    # A layer's floor is its AltUp copy 0, as its hidden state is; the last state is collapsed and normed
+    # outside the layers, so it takes none.
+    floors = {}
+    _decoder_floor_hooks(model, floors, final=False)
     with torch.no_grad():
         out = model(ids, output_hidden_states=True)
         logits = out.logits[0]
@@ -5344,6 +5379,8 @@ def run_gemma3n(image, checkpoint):
              "continuation": continuation.to(torch.int32).contiguous()}
     for index, state in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = state[0].float().contiguous()
+    floors.pop(f"hidden.{len(out.hidden_states) - 1}.floor", None)
+    extra.update(floors)
     globals()["_extra"] = extra
     return logits.float().contiguous()
 
@@ -5392,6 +5429,12 @@ def run_gemma3n_vision_probe(image, checkpoint):
                 extra[f"{label}.in"] = channels_last(args[0])
                 extra[f"{label}.out"] = channels_last(output)
             block.register_forward_hook(hook)
+    _block_floor_hooks([block for stage in tower.blocks for block in stage],
+                       [f"block.{s}.{b}.out" for s, stage in enumerate(tower.blocks) for b in range(len(stage))],
+                       extra, keep=channels_last)
+    if getattr(tower, "msfa", None) is not None:
+        _block_floor_hooks([tower.msfa], ["fused"], extra, keep=channels_last, verify=True)
+    _block_floor_hooks([embedder], ["output"], extra, verify=True)
     attention = next(m for m in tower.blocks[2] if hasattr(m, "attn"))
     for name, module in attention.named_modules():
         def hook(module, args, output, label=f"attn.{name or 'block'}"):
@@ -5563,11 +5606,14 @@ def run_gemma3(image, checkpoint):
 
     prompt = "The capital of France is"
     ids = tokenizer(prompt, return_tensors="pt").input_ids
+    floors = {}
+    count = _decoder_floor_hooks(model, floors)
     with torch.no_grad():
         out = model(input_ids=ids, output_hidden_states=True)
         logits = out.logits[0]
         generated = model.generate(input_ids=ids, max_new_tokens=12, do_sample=False,
                                    pad_token_id=tokenizer.pad_token_id)
+    _check_floor_composite(floors, f"hidden.{count}", out.hidden_states[-1])
     continuation = generated[0, ids.shape[1]:]
 
     # The rendered template already spells `<bos>`, so it is tokenized without a second one.
@@ -5583,6 +5629,7 @@ def run_gemma3(image, checkpoint):
         extra[f"probe.{index}"] = torch.tensor(tokenizer(probe, add_special_tokens=False).input_ids, dtype=torch.int32)
     for index, state in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = state[0].float().contiguous()
+    extra.update(floors)
     globals()["_extra"] = extra
     return logits.float().contiguous()
 
@@ -5632,7 +5679,7 @@ def _probe_hooks(model, probed, extra, layers=None):
     def recording(module, query, key, value, attention_mask, **kwargs):
         output, weights = original(module, query, key, value, attention_mask, **kwargs)
         index = layer_of.get(id(module))
-        if index is not None:
+        if index is not None and not _BLOCK_FLOOR_RUNNING[0]:
             extra[f"{index}.attn.q"] = keep(query[0])
             extra[f"{index}.attn.k"] = keep(key[0])
             extra[f"{index}.attn.v"] = keep(value[0])
@@ -5651,6 +5698,8 @@ def _probe_hooks(model, probed, extra, layers=None):
         def wrap(inner, name=function, calls=[0]):
             def recorded(*args, **kwargs):
                 result = inner(*args, **kwargs)
+                if _BLOCK_FLOOR_RUNNING[0]:
+                    return result
                 call = calls[0]
                 calls[0] += 1
                 for i, value in enumerate(list(args) + [kwargs[k] for k in sorted(kwargs)]):
@@ -5719,6 +5768,10 @@ def run_t5_layer_probe(image, checkpoint):
     blocks[-1].register_forward_hook(lambda module, args, output: extra.__setitem__(
         f"hidden.{len(blocks)}", (output[0] if isinstance(output, tuple) else output)[0]
         .detach().float().clone().contiguous()) and None)
+    # A streamed float32 run narrows each module back after it runs, so it takes no floors.
+    if not stream:
+        _block_floor_hooks(list(blocks), [f"hidden.{i + 1}" for i in range(len(blocks))], extra)
+        _block_floor_hooks([model.encoder.final_layer_norm], ["output"], extra)
     with torch.no_grad():
         out = model(input_ids=tokens, attention_mask=mask)
     restore()
@@ -5882,6 +5935,24 @@ def _stream_float32(model):
             module.register_forward_hook(restore)
 
 
+def _decoder_floor_hooks(model, extra, final=True):
+    """Block floors for a decoder's layers, keyed by the states they produce (`hidden.i+1`); the last
+    layer's state passes through the final norm, which its floor follows (`_check_floor_composite`
+    keeps it only where that reproduces the recorded state). Returns the layer count."""
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n and "embed_tokens_extend" not in n)
+    count = len(decoder_layers)
+    parent = model.get_submodule(next(n for n, m in model.named_modules() if m is decoder_layers).rsplit(".", 1)[0])
+    # The final norm is `norm` in most decoders and `norm_f` in Nemotron-H's.
+    final_norm = next((getattr(parent, name) for name in ("norm", "norm_f") if getattr(parent, name, None) is not None),
+                      None) if final else None
+    _block_floor_hooks(list(decoder_layers), [f"hidden.{i + 1}" for i in range(count)], extra,
+                       indices=list(range(count)),
+                       finals={count - 1: final_norm} if final_norm is not None else None)
+    return count
+
+
 def run_hf_layer_probe(image, checkpoint):
     """Every submodule's input and output inside chosen decoder layers of a transformers release.
 
@@ -5922,6 +5993,27 @@ def run_hf_layer_probe(image, checkpoint):
     extra = {}
     restore = _probe_hooks(model, probed, extra)
     restore_routes = _route_hooks(model, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
+    # Each layer's floor is keyed by the hidden state it produces: `hidden.i+1` where the states are the
+    # layers' inputs (the last one is normed, so it carries none), `hidden.i` where a Mamba-2 stack records
+    # each block's output.
+    decoder_layers = next(m for n, m in model.named_modules()
+                          if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
+                          and "vision" not in n and "audio" not in n and "embed_tokens_extend" not in n)
+    count = len(decoder_layers)
+    # Gemma 3n is held at each block's whole AltUp output, every layer included. A streamed float32 run
+    # narrows each module back after it runs, so it takes no floors.
+    if stream or os.environ.get("IK_PROBE_FLOOR_BLOCKS") == "0":
+        pass
+    elif config.get("model_type") == "mamba2":
+        _block_floor_hooks(list(decoder_layers), [f"hidden.{i}" for i in range(count)], extra,
+                           indices=list(range(count)))
+    elif config.get("model_type") == "gemma3n" or config.get("text_config", {}).get("model_type") == "gemma3n_text":
+        _block_floor_hooks(list(decoder_layers), [f"{i}.block.out.whole" for i in range(count)], extra,
+                           batched=False, indices=list(range(count)))
+    else:
+        _decoder_floor_hooks(model, extra)
+    restore_replay = (_floor_route_replay(extra)
+                      if restore_routes is not None and os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" else None)
     # `IK_PROBE_PROMPT_FILE` replaces the five-token prompt with a text file's, cut to its first
     # `IK_PROBE_PROMPT_TOKENS` tokens where given (a sparse-attention indexer selects only past 2,048).
     prompt_file = os.environ.get("IK_PROBE_PROMPT_FILE")
@@ -5930,9 +6022,13 @@ def run_hf_layer_probe(image, checkpoint):
     if os.environ.get("IK_PROBE_PROMPT_TOKENS"):
         ids = ids[:, :int(os.environ["IK_PROBE_PROMPT_TOKENS"])]
     restore_indexer = _indexer_hooks(model, extra) if os.environ.get("IK_PROBE_INDEXER") == "1" else None
+    if os.environ.get("IK_PROBE_INDEXER") == "1" and not stream:
+        _sparse_attention_floor_hooks(decoder_layers, probed, extra)
     with torch.no_grad():
         out = model(input_ids=ids, output_hidden_states=True, **_prefill_options(config))
     restore()
+    if restore_replay is not None:
+        restore_replay()
     if restore_routes is not None:
         restore_routes()
     if restore_indexer is not None:
@@ -5940,11 +6036,33 @@ def run_hf_layer_probe(image, checkpoint):
     extra["tokens"] = ids[0].to(torch.int32).contiguous()
     for index, state in enumerate(out.hidden_states):
         extra[f"hidden.{index}"] = state[0].detach().float().clone().contiguous()
+    _check_floor_composite(extra, f"hidden.{count}", out.hidden_states[-1])
+    if f"hidden.{count}.floor" in extra and len(out.hidden_states) != count + 1:
+        del extra[f"hidden.{count}.floor"]
     globals()["_extra"] = extra
     # `IK_PROBE_LAST_LOGITS=n` keeps the last `n` positions' logits, which over a long prompt and a large
     # vocabulary would otherwise outweigh the rest of the record.
     rows = int(os.environ.get("IK_PROBE_LAST_LOGITS", "0"))
     return (out.logits[0, -rows:] if rows else out.logits[0]).float().contiguous()
+
+
+def _sparse_attention_floor_hooks(layers, probed, extra):
+    """`IK_PROBE_BLOCK_FLOOR=1`: the floor of each probed layer's sparse attention (`L.self_attn.out`), its
+    float32 copy run with the token selection the half run's indexer made: a float32 indexer would select
+    other blocks at the near-ties and attend over other tokens."""
+    for index in probed:
+        attention = getattr(layers[index], "self_attn", None)
+        if attention is None or getattr(attention, "indexer", None) is None:
+            continue
+        selected = {}
+
+        def capture(module, args, output, selected=selected):
+            selected.setdefault("mask", output.detach())
+        attention.indexer.register_forward_hook(capture)
+
+        def replay(wide, selected=selected):
+            wide.indexer.forward = lambda *args, **kwargs: selected["mask"].float()
+        _block_floor_hooks([attention], [f"{index}.self_attn.out"], extra, prepare=replay)
 
 
 def _indexer_hooks(model, extra):
@@ -5981,7 +6099,7 @@ def _indexer_hooks(model, extra):
     method = torch.Tensor.topk
 
     def tensor_topk(self, *args, **kwargs):
-        if running:
+        if running and not _BLOCK_FLOOR_RUNNING[0]:
             rows[running[-1]].append(self.detach().float().clone())
         return method(self, *args, **kwargs)
 
@@ -5989,6 +6107,36 @@ def _indexer_hooks(model, extra):
 
     def restore():
         torch.Tensor.topk = method
+    return restore
+
+
+def _floor_route_replay(extra):
+    """While a floor re-run is in progress, a `topk` whose indices have the shape of that layer's recorded
+    routing (`route.L.index`) returns the recorded experts, with their values gathered from its own input,
+    so the float32 block routes as the half block did; a near-tie its own float32 scores break the other way
+    would otherwise route a different expert. A `topk` of another shape (an attention indexer's) is left
+    alone. Returns a function that undoes the patch."""
+    function, method = torch.topk, torch.Tensor.topk
+
+    def replayed(result, source, args, kwargs):
+        layer = _BLOCK_FLOOR_LAYER[0]
+        recorded = extra.get(f"route.{layer}.index") if _BLOCK_FLOOR_RUNNING[0] and layer is not None else None
+        if recorded is None or tuple(result.indices.shape) != tuple(recorded.shape):
+            return result
+        dim = kwargs.get("dim", args[1] if len(args) > 1 else -1)
+        indices = recorded.to(result.indices.dtype)
+        return torch.return_types.topk((source.gather(dim, indices), indices))
+
+    def topk(input, *args, **kwargs):
+        return replayed(function(input, *args, **kwargs), input, args, kwargs)
+
+    def tensor_topk(self, *args, **kwargs):
+        return replayed(method(self, *args, **kwargs), self, args, kwargs)
+
+    torch.topk, torch.Tensor.topk = topk, tensor_topk
+
+    def restore():
+        torch.topk, torch.Tensor.topk = function, method
     return restore
 
 
@@ -6035,13 +6183,13 @@ def _route_hooks(model, extra):
 
     def topk(*args, **kwargs):
         result = function(*args, **kwargs)
-        if running:
+        if running and not _BLOCK_FLOOR_RUNNING[0]:
             record(running[-1], result.values, result.indices)
         return result
 
     def tensor_topk(self, *args, **kwargs):
         result = method(self, *args, **kwargs)
-        if running:
+        if running and not _BLOCK_FLOOR_RUNNING[0]:
             record(running[-1], result.values, result.indices)
         return result
 
@@ -6365,6 +6513,211 @@ def _probe_precision(modules):
     return bf16
 
 
+# True while `_block_floor_hooks` re-runs a block in float32: every recorder leaves that run out, so the
+# half run's keys and call numbering stay as they were.
+_BLOCK_FLOOR_RUNNING = [False]
+# The decoder-layer index of the block a floor re-run is in, where the caller names one; route replay reads it.
+_BLOCK_FLOOR_LAYER = [None]
+# Each composite floor's half-precision side (`finals` in `_block_floor_hooks`), keyed as its floor.
+_FLOOR_COMPOSITES = {}
+# Each verified floor's half output, laid out as its seam (`verify` in `_block_floor_hooks`).
+_FLOOR_HALVES = {}
+
+
+def _floor_copy(module):
+    """A float32 copy of `module` that runs as its class does: no hooks, and no `forward` set on an
+    instance. While `output_hidden_states` is set, transformers 4.57 binds an output-recording wrapper to
+    each layer's `forward`, and a copied wrapper still calls the original half-precision layer."""
+    import copy
+
+    wide = copy.deepcopy(module).float()
+    for sub in wide.modules():
+        sub._forward_hooks.clear()
+        sub._forward_pre_hooks.clear()
+        for name in ("_forward_hooks_with_kwargs", "_forward_pre_hooks_with_kwargs", "_forward_hooks_always_called"):
+            getattr(sub, name, {}).clear()
+        sub.__dict__.pop("forward", None)
+    return wide
+
+
+def _check_floor_composite(extra, key, recorded):
+    """Keeps `<key>.floor` only where the composite it was formed through reproduces the half run's
+    recorded state at `key` bit for bit; a final state formed some other way (a hyper-connection read
+    ahead of the norm) gets no floor rather than a wrong one."""
+    composite = _FLOOR_COMPOSITES.pop(key, None)
+    if f"{key}.floor" not in extra:
+        return
+    if composite is None or composite.shape != recorded.shape or not torch.equal(composite, recorded):
+        del extra[f"{key}.floor"]
+        print(f"no floor for {key}: the block and its final module do not reproduce the recorded state")
+
+
+def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=None, keep=None, verify=False,
+                       prepare=None, during=None):
+    """`IK_PROBE_BLOCK_FLOOR=1`: each of `blocks`, after it runs in a half-precision model, runs again as a
+    float32 copy on the same arguments widened, and that output is kept as `<key>.floor`. The distance from
+    the block's own half-precision output to it is the rounding the block itself adds, which is the bar a
+    port's block run alone on the half run's input is held to; the distance from the float32 run at the
+    same key carries every earlier block's drift as well.
+
+    The copy carries no hooks, so it records nothing and runs no probe. A key-value cache argument is
+    dropped and a mutable mapping (Gemma 3n's `shared_kv_states`) is copied, so the float32 run leaves the
+    half run's state as it found it. A block whose float32 copy routes a mixture differently on a near-tie
+    gives a larger floor, never a smaller one. Only a block's first call is kept, so a prefill's floor
+    survives the decode steps after it. `finals` maps a block's position to a module its output passes
+    through before its key (a final norm); its float32 copy follows the block's, and the half-precision
+    composite is kept in `_FLOOR_COMPOSITES` for `_check_floor_composite`. `keep` lays an output out as
+    the seam is recorded (in place of dropping the batch axis). `verify` keeps the half output laid out
+    the same way in `_FLOOR_HALVES`, and the record is written with the floor only where that equals the
+    seam, for a seam recorded from something other than the hooked module's own output. `prepare(wide)`
+    adjusts each float32 copy before it runs (replaying a selection the half run made), and `during()`
+    gives a context the copy runs in (a release function that casts to bf16 by name, computed instead as
+    the float32 oracle computes it). Does nothing unless the variable is set and the block's parameters
+    are half precision."""
+    import collections.abc
+    import contextlib
+    import copy
+
+    if os.environ.get("IK_PROBE_BLOCK_FLOOR") != "1":
+        return
+
+    def widen(value):
+        if torch.is_tensor(value):
+            return value.float() if value.is_floating_point() else value
+        if isinstance(value, tuple):
+            return tuple(widen(v) for v in value)
+        if isinstance(value, list):
+            return [widen(v) for v in value]
+        if isinstance(value, collections.abc.MutableMapping):
+            return {k: widen(v) for k, v in value.items()}
+        return value
+
+    def first(output):
+        return output[0] if isinstance(output, tuple) else output
+
+    for position, (block, key) in enumerate(zip(blocks, keys)):
+        def hook(module, args, kwargs, output, key=key, layer=None if indices is None else indices[position],
+                 final=(finals or {}).get(position)):
+            if next(module.parameters()).dtype == torch.float32 or f"{key}.floor" in extra:
+                return None
+            wide = _floor_copy(module)
+            wide_final = _floor_copy(final) if final is not None else None
+            if prepare is not None:
+                prepare(wide)
+            arguments = {k: (None if k in ("past_key_values", "past_key_value", "cache_params") else widen(v))
+                         for k, v in kwargs.items()}
+            if "use_cache" in arguments:
+                arguments["use_cache"] = False
+            _BLOCK_FLOOR_RUNNING[0] = True
+            _BLOCK_FLOOR_LAYER[0] = layer
+            # Under the emulated CUDA autocast (`IK_PROBE_AUTOCAST=cuda`) a float32 copy would be lowered back
+            # to bf16, so the emulation is suspended for the re-run.
+            suspended = torch.autocast("cuda", enabled=False) if _AUTOCAST_STATE[-1] else contextlib.nullcontext()
+            try:
+                with torch.no_grad(), suspended, (during() if during is not None else contextlib.nullcontext()):
+                    result = first(wide(*widen(args), **arguments))
+                    if wide_final is not None:
+                        result = wide_final(result)
+                        _FLOOR_COMPOSITES[key] = final(first(output)).detach()
+            except Exception as error:
+                print(f"no floor for {key}: {type(error).__name__}: {error}")
+                return None
+            finally:
+                _BLOCK_FLOOR_RUNNING[0] = False
+                _BLOCK_FLOOR_LAYER[0] = None
+            def laid_out(value):
+                if keep is not None:
+                    return keep(value)
+                return (value[0] if batched else value).detach().float().clone().contiguous()
+            extra[f"{key}.floor"] = laid_out(result)
+            if verify:
+                _FLOOR_HALVES[key] = laid_out(first(output))
+            del wide, wide_final
+            return None
+        block.register_forward_hook(hook, with_kwargs=True)
+
+
+def _composite_floor_hook(entry, modules, compose, key, extra, batched=True):
+    """`IK_PROBE_BLOCK_FLOOR=1`: a floor for a seam no single module produces (a feed-forward written
+    inline in its block, a neck and the convolutions after it). On `entry`'s first half-precision call,
+    `compose(wide, x)` runs on float32 copies of `modules` (a dict) and `entry`'s first input widened (a
+    list widened element by element), and its output is kept as `<key>.floor`; a `compose` that returns
+    a dict gives one floor per key instead, and `key` only marks the first call."""
+    import contextlib
+    import copy
+
+    if os.environ.get("IK_PROBE_BLOCK_FLOOR") != "1":
+        return
+
+    def widen(value):
+        if isinstance(value, (list, tuple)):
+            return type(value)(widen(v) for v in value)
+        return value.float() if torch.is_tensor(value) and value.is_floating_point() else value
+
+    def laid_out(value):
+        return (value[0] if batched else value).detach().float().clone().contiguous()
+
+    def hook(module, args, output):
+        if next(module.parameters()).dtype == torch.float32 or f"{key}.floor" in extra:
+            return None
+        wide = {name: _floor_copy(m) if isinstance(m, torch.nn.Module) else m for name, m in modules.items()}
+        _BLOCK_FLOOR_RUNNING[0] = True
+        suspended = torch.autocast("cuda", enabled=False) if _AUTOCAST_STATE[-1] else contextlib.nullcontext()
+        try:
+            with torch.no_grad(), suspended:
+                result = compose(wide, widen(args[0]))
+        except Exception as error:
+            print(f"no floor for {key}: {type(error).__name__}: {error}")
+            return None
+        finally:
+            _BLOCK_FLOOR_RUNNING[0] = False
+        if isinstance(result, dict):
+            extra.update({f"{name}.floor": laid_out(value) for name, value in result.items()})
+            extra.setdefault(f"{key}.floor", extra[f"{next(iter(result))}.floor"])
+        else:
+            extra[f"{key}.floor"] = laid_out(result)
+        return None
+    entry.register_forward_hook(hook)
+
+
+def _sam_decoder_floor(sam, extra, seg_embedding):
+    """`IK_PROBE_BLOCK_FLOOR=1`: `low_res_multi`'s floor, the mask decoder's heads in float32 (autocast
+    suspended) on the half run's own recorded inputs: the high-resolution levels before `conv_s0` /
+    `conv_s1`, the conditioned features, and the `[SEG]` embedding, as a port's isolated decode reads
+    them."""
+    import contextlib
+    import copy
+
+    if os.environ.get("IK_PROBE_BLOCK_FLOOR") != "1" or next(sam.parameters()).dtype == torch.float32:
+        return
+    wide = _floor_copy(sam)
+    decoder = wide.sam_mask_decoder
+    suspended = torch.autocast("cuda", enabled=False) if _AUTOCAST_STATE[-1] else contextlib.nullcontext()
+    _BLOCK_FLOOR_RUNNING[0] = True
+    try:
+        with torch.no_grad(), suspended:
+            high_res = [decoder.conv_s0(extra["sam.sam_mask_decoder.conv_s0.in"]),
+                        decoder.conv_s1(extra["sam.sam_mask_decoder.conv_s1.in"])]
+            out = wide._forward_sam_heads(backbone_features=extra["sam.conditioned"], point_inputs=None,
+                                          mask_inputs=None, high_res_features=high_res, multimask_output=True,
+                                          language_embd=seg_embedding.float().unsqueeze(0))
+    except Exception as error:
+        print(f"no floor for low_res_multi: {type(error).__name__}: {error}")
+        return
+    finally:
+        _BLOCK_FLOOR_RUNNING[0] = False
+    extra["low_res_multi.floor"] = out[0].detach().float().clone().contiguous()
+    del wide
+
+
+def _piece_floor_hooks(layers, probed, names, extra, prefix=""):
+    """Block floors for the submodules `names` of each of `layers` that `probed` lists, keyed
+    `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself)."""
+    pieces = [(index, name) for index in probed for name in names]
+    _block_floor_hooks([layers[index].get_submodule("" if name == "block" else name) for index, name in pieces],
+                       [f"{prefix}{index}.{name}.out" for index, name in pieces], extra)
+
+
 def _probe_layer_states(layers, extra, prefix, probed, batched=True):
     """Hooks `layers` so each layer's input is kept as `<prefix>.hidden.i` and the last layer's output as
     `<prefix>.hidden.L`, and every submodule of the layers `probed` names as `<prefix>.<i>.<name>.in` /
@@ -6380,6 +6733,7 @@ def _probe_layer_states(layers, extra, prefix, probed, batched=True):
             with_kwargs=True)
     layers[-1].register_forward_hook(lambda module, args, output: extra.__setitem__(
         f"{prefix}.hidden.{len(layers)}", keep(first(output))) and None)
+    _block_floor_hooks(layers, [f"{prefix}.hidden.{index + 1}" for index in range(len(layers))], extra, batched)
     for index in probed:
         for name, module in layers[index].named_modules():
             label = f"{prefix}.{index}.{name}" if name else f"{prefix}.{index}.block"
@@ -9291,6 +9645,8 @@ def run_siglip2_probe(image):
     vision.embeddings.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.embeddings", keep(o)) and None)
     vision.post_layernorm.register_forward_hook(lambda m, a, o: extra.__setitem__("vit.post", keep(o)) and None)
     text.final_layer_norm.register_forward_hook(lambda m, a, o: extra.__setitem__("text.final", keep(o)) and None)
+    _block_floor_hooks([vision.post_layernorm, vision.head, text.final_layer_norm],
+                       ["vit.post", "head.block.out", "text.final"], extra)
     for name, module in vision.head.named_modules():
         label = f"head.{name}" if name else "head.block"
         def hook(module, args, output, label=label):
@@ -11057,6 +11413,13 @@ def run_music_depth(image, checkpoint):
         inputs = inputs.to(torch.bfloat16).to(dtype)
         projection_input = projection_input.to(torch.bfloat16).to(dtype)
         _probe_encoder_layers(decoder.layers, probes)
+        _piece_floor_hooks(decoder.layers, range(len(decoder.layers)),
+                           ("input_layernorm", "attn", "post_attention_layernorm"), probes, "enc.")
+        # The feed-forward seam is the gated SiLU written inline in the block, held at down_proj's output.
+        for index, layer in enumerate(decoder.layers):
+            _composite_floor_hook(layer.gate_proj, {"gate": layer.gate_proj, "up": layer.up_proj, "down": layer.down_proj},
+                                  lambda m, x: m["down"](torch.nn.functional.silu(m["gate"](x)) * m["up"](x)),
+                                  f"enc.{index}.down_proj.out", probes)
     with torch.no_grad():
         hidden = decoder(inputs)
         head_logits = torch.stack([head(hidden[:, -1]) for head in decoder.audio_heads])
@@ -12886,6 +13249,10 @@ def run_sa2va_probe(image, checkpoint):
         child.register_forward_hook(lambda module, args, output, slot=slot: (
             extra.__setitem__(f"mlp1.{slot}.in", keep(args[0])), extra.__setitem__(f"mlp1.{slot}.out", keep(output)))
             and None)
+    _block_floor_hooks(list(blocks), [f"vit.hidden.{i + 1}" for i in range(len(blocks))], extra, batched=False)
+    # The decoder's last hidden state is normed, so its last layer carries no floor.
+    decoder = model.language_model.model.layers
+    _block_floor_hooks(list(decoder)[:-1], [f"dec.hidden.{i + 1}" for i in range(len(decoder) - 1)], extra)
 
     with torch.no_grad():
         vit_embeds = model.extract_feature(pixel_values)
@@ -12970,6 +13337,20 @@ def run_sa2va_grounding_probe(image, checkpoint):
         block = trunk.blocks[index]
         block.register_forward_pre_hook(lambda m, args, index=index: keep(f"sam.trunk.{index}.in", args[0]) and None)
         block.register_forward_hook(lambda m, args, output, index=index: keep(f"sam.trunk.{index}.out", output) and None)
+    boundaries = sorted(set(starts + ends))
+    _block_floor_hooks([trunk.blocks[i] for i in boundaries], [f"sam.trunk.{i}.out" for i in boundaries], extra,
+                       batched=False)
+    # The neck's levels after the scalp, the first two through the decoder's high-resolution convolutions,
+    # as `forward_image` leaves them in `backbone_fpn`.
+    scalp = sam.image_encoder.scalp
+    def neck_levels(m, stages):
+        levels = m["neck"](stages)[0]
+        levels = levels[:len(levels) - scalp]
+        return {"sam.backbone_fpn.0": m["s0"](levels[0]), "sam.backbone_fpn.1": m["s1"](levels[1]),
+                "sam.backbone_fpn.2": levels[2]}
+    _composite_floor_hook(sam.image_encoder.neck, {"neck": sam.image_encoder.neck, "s0": sam.sam_mask_decoder.conv_s0,
+                                                   "s1": sam.sam_mask_decoder.conv_s1},
+                          neck_levels, "sam.neck", extra, batched=False)
     probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", ",".join(map(str, starts))).split(",")]
     for index in probed:
         for name, module in trunk.blocks[index].named_modules():
@@ -13018,6 +13399,8 @@ def run_sa2va_grounding_probe(image, checkpoint):
     keep("low_res_multi", sam_out[0])
     keep("ious", sam_out[2])
     keep("low_res_best", sam_out[3])
+    _sam_decoder_floor(sam, extra, seg_embedding)
+    extra.pop("sam.neck.floor", None)
     globals()["_extra"] = extra
     return sam_out[3].float().contiguous()
 
@@ -13159,6 +13542,8 @@ def run_sa2va_qwen_probe(image, checkpoint):
         layer.register_forward_hook(layer_hook, with_kwargs=True)
     language.norm.register_forward_hook(lambda module, args, output: extra.__setitem__(
         "dec.norm.out", keep(output[0])) and None)
+    _block_floor_hooks(list(blocks), [f"vit.hidden.{i + 1}" for i in range(len(blocks))], extra, batched=False)
+    _block_floor_hooks(list(language.layers), [f"dec.layer.{i}.out" for i in range(len(language.layers))], extra)
 
     restore_routes = _route_hooks(qwen, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
     with torch.no_grad():
@@ -13426,6 +13811,7 @@ def run_sa2va_sam3_probe(image, checkpoint):
     the dense positional encoding as `sam.<name>.in` / `.out`, and `low_res_multi`, `ious`, and
     `low_res_best`; `<key>.dtype` is 1 where the tensor was bf16. Returns `low_res_best`. Runs under the
     `llm` oracle env. `image` unused."""
+    import contextlib
     import sys
     import types
     from PIL import Image
@@ -13493,6 +13879,36 @@ def run_sa2va_sam3_probe(image, checkpoint):
         blocks[index].register_forward_hook(lambda m, args, output, index=index: keep(f"sam.trunk.{index}.out", output) and None)
     trunk.ln_pre.register_forward_pre_hook(lambda m, args: keep("sam.trunk.ln_pre.in", args[0]) and None)
     trunk.ln_pre.register_forward_hook(lambda m, args, output: keep("sam.trunk.ln_pre.out", output) and None)
+    # The release's fused `addmm_act` casts the ViT MLP's first projection to bf16 by name; a block's float32
+    # copy takes it at its input's type, as the float32 oracle's staged copy does.
+    @contextlib.contextmanager
+    def fused_at_input_type():
+        vitdet = next(module for name, module in list(sys.modules.items()) if name.endswith("sam3pkg_model_vitdet"))
+        released = vitdet.addmm_act
+
+        def addmm_act(activation, linear, mat1):
+            flat = mat1.reshape(-1, mat1.shape[-1])
+            gelu = activation in [torch.nn.functional.gelu, torch.nn.GELU]
+            y = torch.ops.aten._addmm_activation(linear.bias.detach(), flat, linear.weight.detach().t(),
+                                                 beta=1, alpha=1, use_gelu=gelu)
+            return y.view(mat1.shape[:-1] + (y.shape[-1],))
+        vitdet.addmm_act = addmm_act
+        try:
+            yield
+        finally:
+            vitdet.addmm_act = released
+    _block_floor_hooks([trunk.ln_pre] + [blocks[i] for i in recorded],
+                       ["sam.trunk.ln_pre.out"] + [f"sam.trunk.{i}.out" for i in recorded], extra, batched=False,
+                       during=fused_at_input_type)
+    # Each of the first three tracker neck levels, the first two through the decoder's high-resolution
+    # convolutions, as `forward_image` leaves them in `backbone_fpn`.
+    for level in range(3):
+        convs = {"level": vision.sam2_convs[level]}
+        if level < 2:
+            convs["s"] = getattr(sam.sam_mask_decoder, f"conv_s{level}")
+        _composite_floor_hook(vision.sam2_convs[level], convs,
+                              lambda m, x: m["s"](m["level"](x)) if "s" in m else m["level"](x),
+                              f"sam.backbone_fpn.{level}", extra, batched=False)
     probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{full[0]}").split(",")]
     for index in probed:
         record_tree(blocks[index], str(index))
@@ -13530,6 +13946,7 @@ def run_sa2va_sam3_probe(image, checkpoint):
     keep("low_res_multi", sam_out[0])
     keep("ious", sam_out[2])
     keep("low_res_best", sam_out[3])
+    _sam_decoder_floor(sam, extra, seg_embedding)
     extra["input_ids"] = ids[0].to(torch.int32).contiguous()
     globals()["_extra"] = extra
     return sam_out[3].float().contiguous()
@@ -15137,6 +15554,8 @@ def run_phi4mm_bf16(image, checkpoint):
 
     decoder_probes = {}
     restore = _probe_hooks(model, [0, 1, 31], decoder_probes)
+    _piece_floor_hooks(model.model.layers, [0, 1, 31],
+                       ("input_layernorm", "self_attn", "post_attention_layernorm", "mlp"), decoder_probes)
     ids = tokenizer("<|user|>What is the capital of France?<|end|><|assistant|>", return_tensors="pt").input_ids
     with torch.no_grad():
         extra["text_logits"] = model(input_ids=ids, input_mode=torch.tensor([0]), use_cache=False).logits[0].float()
@@ -15144,9 +15563,10 @@ def run_phi4mm_bf16(image, checkpoint):
     extra.update({f"dec.{key}": value for key, value in decoder_probes.items()})
     extra["text_tokens"] = ids[0].to(torch.int32).contiguous()
 
-    def run(prefix, prompt, layers, hooks, **media):
+    def run(prefix, prompt, layers, hooks, pieces, **media):
         probes, captured = {}, {}
         _probe_encoder_layers(layers, probes)
+        _piece_floor_hooks(layers, *pieces, probes, "enc.")
         for name, module, pick in hooks:
             def capture(m, i, o, name=name, pick=pick):
                 captured.setdefault(name, pick(o).detach().float())   # a hook's return replaces the output
@@ -15163,6 +15583,8 @@ def run_phi4mm_bf16(image, checkpoint):
                         embed.audio_embed.encoder.encoders,
                         [("encoder", embed.audio_embed.encoder, first),
                          ("proj", embed.audio_embed.audio_projection["speech"], lambda o: o)],
+                        ([0, 1, 12, 23], [f"_checkpoint_wrapped_module.{name}" for name in
+                                          ("feed_forward_in", "self_attn", "conv", "feed_forward_out", "layer_norm")]),
                         audios=[(speech, rate)])
     extra["speech_input_audio"] = inputs["input_audio_embeds"][0].float().contiguous()
     extra["speech_audio_encoder"] = seams["encoder"][0].contiguous()
@@ -15172,6 +15594,7 @@ def run_phi4mm_bf16(image, checkpoint):
                         embed.image_embed.img_processor.encoder.layers,
                         [("siglip", embed.image_embed.img_processor, lambda o: o.hidden_states[-2]),
                          ("proj", embed.image_embed.img_projection, lambda o: o)],
+                        ([0, 1, 13, 25], ("self_attn", "mlp", "block")),
                         images=[photo])
     extra["vision_input_image"] = inputs["input_image_embeds"][0].float().contiguous()
     extra["vision_siglip_m2"] = seams["siglip"].reshape(-1, seams["siglip"].shape[-1]).contiguous()
@@ -22018,6 +22441,19 @@ def main():
         # Integer extras stay integer: class labels are indices, and casting them to float would make
         # the Swift side guess at the conversion back.
         record[name] = value.float() if value.is_floating_point() else value
+    # A block floor is compared element for element with its seam, so one of another shape is left out,
+    # as is a verified one whose block's half output is not the seam.
+    for name in [n for n in record if n.endswith(".floor")]:
+        seam = record.get(name[:-len(".floor")])
+        if seam is None or tuple(seam.shape) != tuple(record[name].shape):
+            print(f"no {name}: shape {tuple(record[name].shape)} against the seam's "
+                  f"{None if seam is None else tuple(seam.shape)}")
+            del record[name]
+            continue
+        half = _FLOOR_HALVES.get(name[:-len(".floor")])
+        if half is not None and not torch.equal(half.float(), seam.float()):
+            print(f"no {name}: the hooked module's half output is not the recorded seam")
+            del record[name]
     save_file(record, args.output)
     print(f"wrote {args.output}: input {tuple(image.shape)}, reference output {tuple(result.shape)}")
 

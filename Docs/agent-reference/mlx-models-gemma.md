@@ -262,7 +262,9 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   within 1e-5 of the reference's per copy, and their per-channel mean does not repeat from one block to
   the next, where the reference's bf16 error does. The isolated bar's floor is the drift accumulated up
   to that layer, so it does not show how far a block alone departs: run on the reference's four copies,
-  layer 6 differs in 24% of its elements and layers 0 and 5 in under 0.01%. Every piece of every layer
+  layer 6 differs in 24% of its elements and layers 0 and 5 in under 0.01%. Against each block's own
+  floor (`<key>.floor`, the reference's block run in float32 on its own bf16 input) the 35 blocks sit at a
+  median 0.017 of it and at most 0.10 (layer 7). Every piece of every layer
   run alone on the reference's own input differs in 0.04% of its elements or fewer, by one or two
   steps, except the per-layer GELU, whose 1.6% are values near 1e-7 where Metal's and torch's `tanh`
   disagree on an exact zero. The whole block's spread starts in one token: at layer 4 the attention
