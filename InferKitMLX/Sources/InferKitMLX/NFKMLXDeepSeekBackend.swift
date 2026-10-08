@@ -162,8 +162,9 @@ final class NFKDeepSeekBackendHolder: @unchecked Sendable {
 /// main thread and prefers `submitInferenceJobForRequest:`.
 ///
 /// A request that names its conversation under `NFKParameterConversationKey` keeps the prefill of
-/// its prompt, and the conversation's next prompt prefills only what it adds where that is exact
-/// (``NFKMLXDeepSeekPromptCache``). A run with pictures, or one the draft stack decodes, prefills
+/// its prompt, and the conversation's next prompt prefills only what it adds where both the old
+/// prompt and the addition reach the configuration's largest compression ratio, the shortest chunk
+/// its chunked prefill holds exact. A run with pictures, or one the draft stack decodes, prefills
 /// from the start.
 ///
 /// Introduced in InferKit 0.4.0.
@@ -238,9 +239,9 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     ///
     /// @discussion A request that names its conversation under `NFKParameterConversationKey`
     /// continues from the prefill of that conversation's last prompt, so the turns of several chats
-    /// served at once each prefill only what they add. When the caches outgrow the budget, the least recently used
-    /// conversations are dropped, never the one a request is running. Lowering the budget drops down
-    /// to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    /// served at once each prefill only what they add. When the caches outgrow the budget, the least
+    /// recently used conversations are dropped, never the one a request is running. Lowering the
+    /// budget drops down to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
     @objc public var conversationCacheByteBudget: Int {
         get {
             generationLock.lock(); defer { generationLock.unlock() }

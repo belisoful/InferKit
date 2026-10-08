@@ -698,33 +698,33 @@ backend's error with its domain and code, and the OpenAI-compatible clients read
 names in its error body.
 
 The server reports its load for a load balancer or a dashboard. `GET /v1/inferkit/status` lists each
-model's running and queued runs, its average run and wait times, and the estimated wait for a request
-arriving now, with the share of input tokens a backend's prompt cache served (`cached_input_share`),
-which shows whether keeping conversations together is paying off, and what the backend reports
-about its state now under `status`: a balancer its servers' health and its conversations, an MLX
-language backend its conversation caches. It also describes the machine: thermal state, memory and its pressure, CPU load, free
-storage, and on macOS the GPU utilization. Every run reply carries the model's load in
-`X-InferKit-*` headers, so a balancer learns it from the replies it already receives.
-`maximumQueuedRunsPerModel` bounds the queue: a request that finds it full gets 503 with a
-`Retry-After` of the estimated wait. Each model's entry also carries what its backend reports about
-the loaded model through `modelInfo` (parameter count, weight bytes, precision, quantization, context
-length, compute units), so a balancer can confirm two machines host the same model, and a linked
-runtime such as MLX reports its memory beside the machine's. `NFKServerStatus` reads the route
-typed, and a discovered provider's `advertisedProperties` carries the chip and memory the server
-advertised.
+model's running and queued runs, its average run and wait times, and the estimated wait for a
+request arriving now, with the share of input tokens a backend's prompt cache served
+(`cached_input_share`), which shows whether keeping conversations together is paying off, and what
+the backend reports about its state now under `status`: a balancer its servers' health and its
+conversations, an MLX language backend its conversation caches. It also describes the machine:
+thermal state, memory and its pressure, CPU load, free storage, and on macOS the GPU utilization.
+Every run reply carries the model's load in `X-InferKit-*` headers, so a balancer learns it from the
+replies it already receives. `maximumQueuedRunsPerModel` bounds the queue: a request that finds it
+full gets 503 with a `Retry-After` of the estimated wait. Each model's entry also carries what its
+backend reports about the loaded model through `modelInfo` (parameter count, weight bytes,
+precision, quantization, context length, compute units), so a balancer can confirm two machines host
+the same model, and a linked runtime such as MLX reports its memory beside the machine's.
+`NFKServerStatus` reads the route typed, and a discovered provider's `advertisedProperties` carries
+the chip and memory the server advertised.
 
 `NFKBalancedBackend` spreads one model over several servers. It sends each request to the server
 expected to start it soonest, learns each server's load from its replies between status readings,
-and moves a request that never started to the next server. A conversation's requests go to the server
-that answered the previous one, so a backend that keeps its prompt between requests reuses it: the
-caller names the conversation with `NFKParameterConversationKey` (OpenAI's `prompt_cache_key` on the
-chat route), or the balancer knows a chat by its messages through the first user turn and sends
-that name to the server under the same key. The
-conversation moves when its server leaves, fails over, or is expected to wait more than
-`conversationWaitAllowance` longer than another. Servers come from URLs, Bonjour, or both.
-Hosted in a server of its own, it makes that server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about the
-machine and keeps the models' load. GPU utilization counts every process and stays high while one
-run executes, so a balancer routes on the queue figures and the estimated wait.
+and moves a request that never started to the next server. A conversation's requests go to the
+server that answered the previous one, so a backend that keeps its prompt between requests reuses
+it: the caller names the conversation with `NFKParameterConversationKey` (OpenAI's
+`prompt_cache_key` on the chat route), or the balancer knows a chat by its messages through the
+first user turn and sends that name to the server under the same key. The conversation moves when
+its server leaves, fails over, or is expected to wait more than `conversationWaitAllowance` longer
+than another. Servers come from URLs, Bonjour, or both. Hosted in a server of its own, it makes that
+server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about
+the machine and keeps the models' load. GPU utilization counts every process and stays high while
+one run executes, so a balancer routes on the queue figures and the estimated wait.
 
 ### A pool of chat servers
 
@@ -733,8 +733,9 @@ machine that has it, take three parts:
 
 - **Workers.** Each hosts the MLX language backend (or the Gemma 3 or DeepSeek backend) in an
   `NFKInferenceServer`. The backend keeps a prompt cache for each conversation a request names,
-  under `conversationCacheByteBudget`; size it to the memory the model leaves free. `maximumQueuedRunsPerModel` keeps a worker's queue short, so a
-  request that would wait behind it is refused at once and goes to another worker.
+  under `conversationCacheByteBudget`; size it to the memory the model leaves free.
+  `maximumQueuedRunsPerModel` keeps a worker's queue short, so a request that would wait behind it
+  is refused at once and goes to another worker.
 - **The front.** An `NFKBalancedBackend` over the workers, hosted in an `NFKInferenceServer` of its
   own under the same model name. Clients reach the pool through the front alone. It keeps each
   conversation on the worker that answered it, and a conversation moves only when its worker leaves,
