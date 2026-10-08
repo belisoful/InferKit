@@ -380,7 +380,7 @@ public final class NFKMLXPhi4MM: NSObject {
     /// The speech tower's tensors in the module's names, with the convolutions channels-last; the biases
     /// and the normalization statistics pass through.
     static func audioArrays(directoryURL: URL) throws -> [(String, MLXArray)] {
-        try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, remap: audioModuleKey(forRelease:))
+        try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: audioModuleKey(forRelease:))
             .map { key, value in (key, channelsLast(key, value)) }
     }
 
@@ -398,9 +398,9 @@ public final class NFKMLXPhi4MM: NSObject {
     /// channels-last. The SigLIP parts the penultimate-layer feature never reaches are skipped.
     static func imageArrays(directoryURL: URL,
                             configuration: NFKMLXSigLIPConfiguration = .phi4mm) throws -> [(String, MLXArray)] {
-        try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) {
+        try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: {
             imageModuleKey(forRelease: $0, imageLayers: configuration.layerCount)
-        }.map { key, value in (key, channelsLast(key, value)) }
+        }).map { key, value in (key, channelsLast(key, value)) }
     }
 
     /// The image tower loaded from a release directory.

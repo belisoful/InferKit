@@ -221,9 +221,9 @@ public final class NFKMLXGemma2Net: Module {
                             precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXGemma2Net {
         let net = NFKMLXGemma2Net(try NFKMLXGemma2Configuration.configuration(
             fromHuggingFace: directory.appendingPathComponent("config.json")))
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: { key in
             key.hasPrefix("model.") ? String(key.dropFirst("model.".count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(mapped, to: net)
         return net
     }

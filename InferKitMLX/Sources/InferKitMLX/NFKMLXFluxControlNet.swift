@@ -241,7 +241,7 @@ public final class NFKMLXFluxControlNetNet: Module {
     /// convolutions transpose to MLX's NHWC; every other weight is at most 2-D.
     public static func loadWeights(into net: NFKMLXFluxControlNetNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         let weights = arrays.map { name, value -> (String, MLXArray) in
             (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }

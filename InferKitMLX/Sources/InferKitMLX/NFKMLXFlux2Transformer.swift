@@ -743,7 +743,7 @@ public final class NFKMLXFlux2TransformerNet: Module {
     /// most 2-D, so no layout change is needed.
     public static func loadWeights(into net: NFKMLXFlux2TransformerNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         try NFKMLXWeights.apply(arrays, to: net)
     }
 }

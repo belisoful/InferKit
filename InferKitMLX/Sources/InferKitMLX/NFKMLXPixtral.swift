@@ -381,9 +381,9 @@ public final class NFKMLXPixtral: NSObject {
         let configuration = try NFKMLXPixtralVisionConfiguration.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         let net = NFKMLXPixtralVisionNet(configuration)
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: { key in
             key.hasPrefix("vision_tower.") ? String(key.dropFirst("vision_tower.".count)) : nil
-        }
+        })
         // The patch convolution weight is stored 4-D (`[out, channels, patch, patch]`) and flattens to a
         // linear weight `[out, channels · patch²]`.
         let mapped = arrays.map { key, value -> (String, MLXArray) in
@@ -401,10 +401,10 @@ public final class NFKMLXPixtral: NSObject {
         let textConfiguration = try decoderConfiguration(directoryURL: directoryURL)
         let net = NFKMLXPixtralConnector(visionSize: visionConfiguration.hiddenSize,
                                          textSize: textConfiguration.hiddenSize)
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: { key in
             key.hasPrefix("multi_modal_projector.")
                 ? String(key.dropFirst("multi_modal_projector.".count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
         return net
     }
@@ -434,9 +434,9 @@ public final class NFKMLXPixtral: NSObject {
     public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
         let configuration = try decoderConfiguration(directoryURL: directoryURL)
         let net = NFKMLXLanguageNet(configuration)
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: { key in
             key.hasPrefix("language_model.") ? String(key.dropFirst("language_model.".count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(arrays, to: net)
         return net
     }

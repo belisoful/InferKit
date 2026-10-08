@@ -538,10 +538,10 @@ public final class NFKMLXHybridLanguage: NSObject {
     public static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
         let tied = net.lmHead == nil
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             guard let name = moduleKey(forReference: $0) else { return nil }
             return tied && name.hasPrefix("lm_head.") ? nil : name
-        }
+        })
         // The releases store `A_log` and the recurrence's norm weight in float32 beside bf16 elsewhere,
         // and the reference loads every tensor in the release's own type. At `.checkpoint` those take
         // the type most tensors carry, so the decay reads the same rounded `A_log` the reference does.

@@ -362,7 +362,7 @@ extension NFKMLXSANATransformerNet {
     /// diffusers' own names; the patch convolution moves from `[out, in, kH, kW]` to MLX's
     /// `[out, kH, kW, in]`. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXSANATransformerNet, fromDirectory directory: URL) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory).map { key, value in
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory).map { key, value in
             (key, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(arrays, to: net)

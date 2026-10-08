@@ -472,7 +472,7 @@ public final class NFKMLXSD3TransformerNet: Module {
     /// needing a layout change is the 4-D patch-embed convolution, transposed to MLX's NHWC.
     public static func loadWeights(into net: NFKMLXSD3TransformerNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         let weights = arrays.map { name, value -> (String, MLXArray) in
             (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }

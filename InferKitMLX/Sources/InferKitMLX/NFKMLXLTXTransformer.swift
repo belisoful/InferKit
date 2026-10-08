@@ -355,7 +355,7 @@ public final class NFKMLXLTXTransformer: NSObject {
     /// applies; the module keys mirror the reference's `LTXVideoTransformer3DModel`. Introduced in
     /// InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXLTXTransformerNet, from directory: URL) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, remap: remapReferenceKey)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, remap: remapReferenceKey)
         try NFKMLXWeights.apply(arrays, to: net)
     }
 

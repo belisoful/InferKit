@@ -255,7 +255,7 @@ public final class NFKMLXSD3ControlNetNet: Module {
     /// transpose to MLX's NHWC.
     public static func loadWeights(into net: NFKMLXSD3ControlNetNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         let weights = arrays.map { name, value -> (String, MLXArray) in
             (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }

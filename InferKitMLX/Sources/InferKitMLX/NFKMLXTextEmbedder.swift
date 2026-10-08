@@ -371,10 +371,10 @@ public final class NFKMLXQwen3Embedding: NSObject {
     /// them exactly.
     static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL) throws {
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: .float32)
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32) { key in
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .float32, remap: { key in
             if key.hasPrefix("lm_head.") { return nil }
             return key.hasPrefix("model.") ? key : "model.\(key)"
-        }
+        })
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }
 

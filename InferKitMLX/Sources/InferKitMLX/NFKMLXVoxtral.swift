@@ -212,11 +212,11 @@ public final class NFKMLXVoxtral: NSObject {
     public static func loadWeights(into net: NFKMLXVoxtralNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .checkpoint) throws {
         let tied = net.languageModel.lmHead == nil
-        let read = try NFKMLXReleaseWeights.arrays(
-            inDirectory: directory, precision: precision == .float32 ? .checkpoint : precision) { key in
+        let read = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: precision == .float32 ? .checkpoint : precision, remap: { key in
             if tied && key.hasPrefix("language_model.lm_head.") { return nil }
             return remap(key)
-        }
+        })
         let merged = read.map { name, value -> (String, MLXArray) in
             var array = value.ndim == 3 && name.hasSuffix(".weight") ? value.transposed(0, 2, 1) : value
             if precision == .float32 && widensAtFloat32(name, array) {

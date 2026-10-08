@@ -467,9 +467,9 @@ public final class NFKMLXMamba: NSObject {
     public static func loadWeights(into net: NFKMLXMamba2Net, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
         let tied = net.lmHead == nil
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             tied && $0.hasPrefix("lm_head.") ? nil : $0
-        }
+        })
         let merged = read.map { name, value in
             (name, name.hasSuffix("conv1d.weight") && value.ndim == 3
                  ? value.reshaped([value.dim(0), value.dim(2)]) : value)

@@ -89,7 +89,7 @@ public final class NFKMLXQwenImageVAE: NSObject {
     /// Loads a release's `vae/` weights.
     public static func loadWeights(into net: NFKMLXWanVideoVAENet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         try NFKMLXWeights.apply(arrays.map { adapted(key: $0.0, value: $0.1) }, to: net,
                                 verifyShapes: true)
     }

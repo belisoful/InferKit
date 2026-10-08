@@ -310,7 +310,7 @@ public final class NFKMLXT5Seq2SeqNet: Module {
     public func loadWeights(fromDirectory directory: URL, half: Bool = false) throws {
         let arrays = half
             ? try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .bfloat16)
-            : try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint)
+            : try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint)
         try load(arrays, half: half)
     }
 

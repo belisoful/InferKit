@@ -749,7 +749,7 @@ public final class NFKMLXLTX2TransformerNet: Module {
     /// layout change is needed.
     public static func loadWeights(into net: NFKMLXLTX2TransformerNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision)
         try NFKMLXWeights.apply(arrays, to: net)
     }
 }

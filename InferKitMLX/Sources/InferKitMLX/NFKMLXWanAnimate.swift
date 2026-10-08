@@ -601,9 +601,9 @@ public final class NFKMLXWanAnimate: NSObject {
     /// tensor inventory. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXWanAnimateNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             moduleKey(forRelease: $0)
-        }.map { name, value in
+        }).map { name, value in
             (name, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
         }
         try NFKMLXWeights.apply(arrays, to: net)

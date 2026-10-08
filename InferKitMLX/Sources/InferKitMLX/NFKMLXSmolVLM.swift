@@ -635,7 +635,10 @@ public final class NFKMLXSmolVLM: NSObject {
     static func loadWeights(vision: NFKMLXSigLIPNet, connector: NFKMLXSmolVLMConnector,
                             decoder: NFKMLXLanguageNet, directoryURL: URL) throws {
         // The 2.2B is sharded, so this reads through the shard-index-aware reader rather than one file.
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { $0 }
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: { key in
+            key.hasPrefix("model.vision_model.") || key.hasPrefix("model.connector.")
+                || key.hasPrefix("model.text_model.") || key == "lm_head.weight" ? key : nil
+        })
 
         let visionWeights = arrays.compactMap { key, value -> (String, MLXArray)? in
             guard key.hasPrefix("model.vision_model.") else { return nil }

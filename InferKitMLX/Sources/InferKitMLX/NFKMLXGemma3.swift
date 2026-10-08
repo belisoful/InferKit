@@ -616,8 +616,8 @@ public final class NFKMLXGemma3Language: NSObject {
     /// apply then proves the decoder's own set is complete. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXGemma3Net, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: decoderName(of:))
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 remap: decoderName(of:))
         try NFKMLXWeights.apply(mapped, to: net)
     }
 }

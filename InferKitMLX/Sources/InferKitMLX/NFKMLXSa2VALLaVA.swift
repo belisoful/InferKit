@@ -224,13 +224,18 @@ public final class NFKMLXSa2VALLaVANet: Module {
             try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: self)
             return
         }
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory)
         var mapped = [(String, MLXArray)]()
         let grounding = "grounding_encoder.sam2_model."
         let renames = [("model.model.vision_tower.vision_model.", "vision."),
                        ("model.model.multi_modal_projector.", "projector."),
                        ("model.model.language_model.", "language_model.model."),
                        ("model.lm_head.", "language_model.lm_head.")]
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, remap: { key in
+            if key.hasPrefix(grounding) {
+                return NFKMLXSAM2.remapTrackerKey(String(key.dropFirst(grounding.count))) == nil ? nil : key
+            }
+            return key.hasPrefix("text_hidden_fcs.") || renames.contains { key.hasPrefix($0.0) } ? key : nil
+        })
         for (key, value) in arrays {
             if key.hasPrefix(grounding) {
                 guard let remapped = NFKMLXSAM2.remapTrackerKey(String(key.dropFirst(grounding.count))) else { continue }

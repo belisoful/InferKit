@@ -341,10 +341,10 @@ public final class NFKMLXNemotronH: NSObject {
     /// tensors a release carries are skipped, as transformers skips them.
     public static func loadWeights(into net: NFKMLXNemotronHNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .checkpoint) throws {
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: { key in
             if key.hasPrefix("mtp.") || key.hasPrefix("model.mtp") { return nil }
             return key.hasPrefix("backbone.") ? "model." + key.dropFirst("backbone.".count) : key
-        }
+        })
         let merged = read.map { name, value in
             (name, name.hasSuffix("conv1d.weight") && value.ndim == 3
                  ? value.reshaped([value.dim(0), value.dim(2)]) : value)

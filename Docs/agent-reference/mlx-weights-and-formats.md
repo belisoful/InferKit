@@ -47,9 +47,18 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   hybrid's `model.language_model.` remap and depthwise-conv transpose, Gemma's tower skip.
   `arrays(inDirectory:precision:remap:)` returns lazy reads; `materializedArrays(…transform:)` reads
   and converts in groups of about 256 MB and returns them evaluated, which lowers a large load's
-  footprint (Gemma 3n and Gemma 4 read through it). A caller that builds new arrays from most of what
-  it reads stays lazy: an eager read would hold every original beside its result, which doubles the
-  peak of per-expert stacking (`stackingExperts`) and adds about 13 GB to Phi-4's float32 LoRA fold.
+  footprint and leaves no file read for a GPU command buffer to wait on. Every loader whose tensors
+  convert one at a time reads through it (2026-10-08). A caller that builds new arrays from most of
+  what it reads stays lazy: an eager read would hold every original beside its result, which doubles
+  the peak of per-expert stacking (`stackingExperts`) and adds about 13 GB to Phi-4's float32 LoRA
+  fold. The lazy readers that remain:
+  - the per-expert tensors of a language release (`NFKMLXLanguage.isPerExpert`), read beside the
+    materialized rest;
+  - Phi-4-multimodal's decoder, whose LoRA fold spans tensors;
+  - FLUX.2's latent codec, which takes two `bn.` statistics from the autoencoder's file;
+  - Sa2VA-Qwen's SAM 3 probe, which reads one key's presence and no tensor.
+  A remap that drops what a loader never applies keeps an eager read from reading it: the SmolVLM and
+  Sa2VA-LLaVA loaders filter by prefix before the read.
 - `NFKMLXGGUF` / `NFKMLXGGUFFormat` — the **native GGUF reader**, the sequel to the native PyTorch
   checkpoint reader, and the format most quantized language models are distributed in. Same contract:
   pure Foundation below the MLX materialization (parsing and dequantization run under `swift test`;

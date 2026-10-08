@@ -566,6 +566,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   slices E4B to E2B through it, one tensor at a time.
 - Qwen4-Exp's loader reads through it too, so a resident load's first GPU evaluation waits on no file
   read. Its two-layer release cut's first-layer pieces peak at 5.0 GB in place of 8.3 GB.
+- Every other release loader whose tensors are renamed, transposed, or converted one at a time reads
+  through it as well: the dense and paged language loaders, the hybrid, Mamba-2, Granite, Nemotron-H,
+  Gemma 2 and 3, the text embedders and ModernBERT, the FLUX, FLUX.2, SD3, SANA, LTX, LTX-2,
+  Qwen-Image, and Music 3 transformers and ControlNets, the T5 and MADLAD encoders, and the Pixtral,
+  Phi-4 towers, Qwen3-VL, SmolVLM, Sa2VA, Voxtral, and WanAnimate loaders. A language release that
+  stores each expert as its own tensor keeps those tensors lazy, so stacking reads each one as the stack
+  forms. The values are the same bytes converted by the same operations.
 
 #### Finishing a matte from any matting model
 

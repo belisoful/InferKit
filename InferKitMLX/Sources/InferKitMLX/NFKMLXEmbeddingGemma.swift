@@ -226,7 +226,7 @@ public final class NFKMLXEmbeddingGemma: NSObject {
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: .float32)
         // The backbone's keys are the checkpoint's (no `model.` prefix), so nothing is remapped. The
         // Dense projections live in their own subdirectories, which `files(inDirectory:)` does not read.
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .float32)
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
         return (try dense(directory, "2_Dense"), try dense(directory, "3_Dense"))
     }

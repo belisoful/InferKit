@@ -951,7 +951,7 @@ public final class NFKMLXMusic3: NSObject {
             pairs = NFKMLXWeights.converted(checkpoint.arrays.map { ($0, $1) }, to: stored)
             needsConvTranspose = checkpoint.needsConvTranspose
         } else {
-            pairs = try NFKMLXReleaseWeights.arrays(inDirectory: url, precision: precision)
+            pairs = try NFKMLXReleaseWeights.materializedArrays(inDirectory: url, precision: precision)
             needsConvTranspose = true
         }
         let mapped = pairs.map { key, value -> (String, MLXArray) in

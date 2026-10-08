@@ -416,7 +416,7 @@ public final class NFKMLXModernBERTReranker: NSObject {
     /// Loads the released checkpoint. Every key is the module's, so nothing is remapped.
     static func loadWeights(into net: NFKMLXModernBertRerankerNet, fromDirectory directory: URL) throws {
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: .float32)
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .float32)
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }
 

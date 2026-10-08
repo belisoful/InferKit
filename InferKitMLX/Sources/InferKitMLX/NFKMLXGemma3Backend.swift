@@ -418,7 +418,7 @@ public final class NFKMLXGemma3: NSObject {
             if visionName(of: key) != nil || projectorName(of: key) != nil { return vision != nil ? key : nil }
             return nil
         }
-        for (key, value) in try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision, remap: wanted) {
+        for (key, value) in try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: wanted) {
             if let name = NFKMLXGemma3Language.decoderName(of: key) {
                 decoderWeights.append((name, value))
             } else if let name = visionName(of: key) {

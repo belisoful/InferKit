@@ -834,11 +834,11 @@ public final class NFKMLXGraniteSpeech: NSObject {
                                    precision: NFKMLXWeightPrecision = .checkpoint,
                                    mergeAudioAdapter: Bool = true) throws {
         let tied = net.languageModel.lmHead == nil
-        let read = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) { key in
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: { key in
             if key.hasSuffix("num_batches_tracked") { return nil }
             if tied && key.hasPrefix("language_model.lm_head.") { return nil }
             return key
-        }
+        })
         var base = Dictionary(uniqueKeysWithValues: read.map { name, value in
             // Conv1d weights are the only 3-D `.weight` tensors; move them to channels-last. The learned
             // query is also 3-D but ends `.query`, so gating on `.weight` leaves it untouched.

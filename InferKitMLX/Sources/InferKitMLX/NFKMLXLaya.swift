@@ -722,7 +722,7 @@ public final class NFKMLXLaya: NSObject {
     /// Loads a release directory's `model.safetensors`, refusing one the machine cannot hold.
     static func loadWeights(into net: NFKMLXLayaNet, fromDirectory directory: URL) throws {
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: .float32)
-        let mapped = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32)
+        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .float32)
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }
 

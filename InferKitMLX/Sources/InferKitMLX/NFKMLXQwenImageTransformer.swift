@@ -642,8 +642,8 @@ public final class NFKMLXQwenImage: NSObject {
     /// and runs at the precision the weights ship in.
     public static func loadWeights(into net: NFKMLXQwenImageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .checkpoint) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
-                                                     remap: remapReferenceKey)
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 remap: remapReferenceKey)
         try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
     }
 }

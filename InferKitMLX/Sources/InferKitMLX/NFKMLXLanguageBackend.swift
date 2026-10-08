@@ -1013,6 +1013,12 @@ public final class NFKMLXLanguage: NSObject {
     private static let expertPattern = try! NSRegularExpression(
         pattern: #"^(.*\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"#)
 
+    /// Whether a release key holds one expert's projection, which ``stackingExperts(_:)`` stacks.
+    static func isPerExpert(_ key: String) -> Bool {
+        let name = moduleKey(forRelease: key)
+        return expertPattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
+    }
+
     /// Stacks a release's per-expert tensors (`…experts.N.gate_proj.weight`) into the module's one
     /// `[experts, out, in]` tensor per projection, leaving every other pair as it is.
     static func stackingExperts(_ mapped: [(String, MLXArray)]) -> [(String, MLXArray)] {
@@ -1132,9 +1138,9 @@ public final class NFKMLXLanguage: NSObject {
                 return (key, keeps ? value : value.asType(.float32))
             }
         } else {
-            kept = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
+            kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
                 (tied && $0.hasPrefix("lm_head.")) || inventory.isExpert($0) ? nil : $0
-            }
+            })
         }
         var packedGroups = [String: Bool]()
         var inputMajorGroups = Set<String>()
@@ -1227,9 +1233,13 @@ public final class NFKMLXLanguage: NSObject {
         // A tied release still ships `lm_head.weight`, byte-identical to the embedding, and a tied
         // module has no projection to put it in.
         let tied = net.lmHead == nil
-        let merged = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision) {
-            tied && $0.hasPrefix("lm_head.") ? nil : $0
-        }
+        // Each expert stored as its own tensor stays lazy: stacking reads it as the stack forms, so the
+        // stored experts never sit whole beside the stacked ones.
+        let kept: (String) -> String? = { tied && $0.hasPrefix("lm_head.") ? nil : $0 }
+        let merged = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 remap: { isPerExpert($0) ? nil : kept($0) })
+            + NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
+                                             remap: { isPerExpert($0) ? kept($0) : nil })
         let prepared = releaseWeights(merged)
         try installPackedExperts(into: net, from: prepared)
         try NFKMLXWeights.apply(prepared, to: net, verifyShapes: true)

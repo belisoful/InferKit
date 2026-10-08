@@ -560,7 +560,7 @@ public final class NFKMLXQwen3VL: NSObject {
         let prefix = outerPrefix + "model.visual."
         let remap = { (key: String) in key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil }
         let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, converting: $0, remap: remap) }
-            ?? NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, remap: remap)
+            ?? NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: remap)
         let mapped = arrays.map { key, value -> (String, MLXArray) in
             key == "patch_embed.proj.weight" && value.ndim == 5 ? (key, value.reshaped([value.dim(0), -1])) : (key, value)
         }
@@ -675,7 +675,7 @@ public final class NFKMLXQwen3VL: NSObject {
                 // A converted load reads in evaluated groups, so the release's tensors never sit whole
                 // beside their conversions.
                 let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0, remap: remap) }
-                    ?? NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision, remap: remap)
+                    ?? NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: remap)
                 try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
             })
     }
