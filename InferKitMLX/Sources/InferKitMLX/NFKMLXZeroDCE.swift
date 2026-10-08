@@ -152,7 +152,7 @@ public final class NFKMLXZeroDCE: NSObject {
     /// A checkpoint written by fine-tuning is already in the module's layout and skips the transpose,
     /// so a customized model and a converted one load through this same path.
     static func loadWeights(into net: NFKMLXZeroDCENet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in
             (key, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
@@ -309,7 +309,7 @@ public final class NFKMLXZeroDCEPlus: NSObject {
     /// Loads a released checkpoint. The module keys are the checkpoint's, so only the convolution
     /// layouts move.
     static func loadWeights(into net: NFKMLXZeroDCEPlusNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in
             (key, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }

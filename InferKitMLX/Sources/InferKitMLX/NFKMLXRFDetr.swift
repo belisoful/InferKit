@@ -1403,7 +1403,7 @@ public final class NFKMLXRFDetr: NSObject {
     }
 
     private static func loadWeights(intoModule net: Module, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
             if let range = key.range(of: ".self_attn.in_proj_") {

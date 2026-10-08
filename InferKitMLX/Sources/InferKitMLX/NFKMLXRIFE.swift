@@ -314,7 +314,7 @@ public final class NFKMLXRIFE: NSObject {
     }
 
     static func loadWeights(into net: NFKMLXRIFENet, from url: URL, remap: ((String) -> String)? = nil) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             let name = remap?(key) ?? remapReferenceKey(key)
@@ -686,7 +686,7 @@ public final class NFKMLXRIFEv4: NSObject {
     /// `[1, C, 1, 1]`, which becomes `[1, 1, 1, C]` in this layout. A file `NFKMLXWeights` saved is already
     /// in this layout.
     static func loadWeights(into net: NFKMLXRIFEv4Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)

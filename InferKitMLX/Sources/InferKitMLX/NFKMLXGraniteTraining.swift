@@ -66,7 +66,7 @@ public extension NFKMLXGraniteHybrid {
     /// wrote already carries this module's own layout (the depthwise convolution squeezed), so it loads
     /// straight, unlike the release directory whose convolution is `[C, 1, K]`.
     static func loadWeights(into net: NFKMLXGraniteHybridNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { ($0.key, $0.value.asType(.float32)) }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }

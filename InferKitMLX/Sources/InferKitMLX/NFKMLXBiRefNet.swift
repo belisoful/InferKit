@@ -716,7 +716,7 @@ public final class NFKMLXBiRefNet: NSObject {
     /// training-only decoder heads (gdt prediction, ms-supervision) are dropped; 4-D convolution weights
     /// transpose to MLX's layout, and the fp16 release upcasts to float32.
     static func loadWeights(into model: NFKMLXBiRefNetModel, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         func prepared(_ value: MLXArray) -> MLXArray {
             (checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value).asType(.float32)

@@ -94,7 +94,7 @@ public final class NFKMLXNeuralG2P: NFKMLXPhonemizer, @unchecked Sendable {
 
     /// Loads a safetensors checkpoint into the model.
     public func loadWeights(from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in (remap(key), value) }
         try NFKMLXWeights.apply(mapped, to: net)

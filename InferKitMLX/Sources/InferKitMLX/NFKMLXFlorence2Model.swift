@@ -131,7 +131,7 @@ public final class NFKMLXFlorence2Net: Module {
     /// through the DaViT remap; the BART subtree drops its `language_model.model.` prefix and routes
     /// through the shared seq2seq key map (which drops the tied embedding/head copies).
     public func loadWeights(from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         // A file `NFKMLXWeights.save` wrote (a fine-tune) holds this module's own names and layout.
         guard checkpoint.needsConvTranspose else {
             try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: self)

@@ -514,7 +514,7 @@ public final class NFKMLXParakeet: NSObject {
     /// preprocessor's stored window and filterbank to the front end and transposing the convolutions to
     /// MLX's channels-last layouts (4-D `[out,in,kH,kW]` → `[out,kH,kW,in]`, 3-D `[out,in,k]` → `[out,k,in]`).
     public static func loadWeights(into net: NFKMLXParakeetNet, from url: URL) throws {
-        try loadWeights(into: net, checkpoint: try NFKMLXWeights.loadCheckpoint(url: url))
+        try loadWeights(into: net, checkpoint: try NFKMLXWeights.materializedCheckpoint(url: url))
     }
 
     static func loadWeights(into net: NFKMLXParakeetNet, checkpoint: NFKMLXWeights.Checkpoint) throws {
@@ -650,7 +650,7 @@ extension NFKMLXParakeet {
         let vocabURL = try FileManager.default.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
             .first { $0.lastPathComponent.hasSuffix("_tokenizer.vocab") }
         let vocabulary = try vocabURL.map { try NFKMLXParakeetVocabulary(vocabURL: $0) }
-        return try backend(vocabulary: vocabulary, checkpoint: try NFKMLXWeights.loadCheckpoint(
+        return try backend(vocabulary: vocabulary, checkpoint: try NFKMLXWeights.materializedCheckpoint(
             url: directoryURL.appendingPathComponent("model_weights.ckpt")))
     }
 

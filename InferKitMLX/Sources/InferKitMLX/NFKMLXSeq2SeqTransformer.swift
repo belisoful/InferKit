@@ -697,7 +697,7 @@ public final class NFKMLXSeq2SeqNet: Module {
 
     /// Loads a transformers checkpoint (`pytorch_model.bin` or `model.safetensors`).
     public func loadWeights(from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         try load(checkpoint.arrays)
     }
 
@@ -705,7 +705,7 @@ public final class NFKMLXSeq2SeqNet: Module {
     public func loadWeights(fromDirectory directory: URL) throws {
         var arrays = [String: MLXArray]()
         for url in try Self.weightFiles(in: directory) {
-            for (key, value) in try NFKMLXWeights.loadCheckpoint(url: url).arrays { arrays[key] = value }
+            for (key, value) in try NFKMLXWeights.materializedCheckpoint(url: url).arrays { arrays[key] = value }
         }
         try load(arrays)
     }

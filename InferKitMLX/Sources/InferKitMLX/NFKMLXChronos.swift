@@ -320,7 +320,7 @@ extension NFKMLXChronosNet {
     /// checkpoint's HF T5 names, so nothing is transposed; the tied `embed_tokens` aliases and the unused
     /// `lm_head` / `quantiles` buffer are dropped.
     public func loadWeights(from url: URL) throws {
-        let raw = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let raw = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         let mapped = raw.compactMap { key, value -> (String, MLXArray)? in
             if key.contains("embed_tokens") || key == "lm_head.weight" || key == "quantiles" { return nil }
             return (key, value)

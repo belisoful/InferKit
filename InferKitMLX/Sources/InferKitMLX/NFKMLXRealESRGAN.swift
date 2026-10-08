@@ -303,7 +303,7 @@ public final class NFKMLXRealESRGAN: NSObject {
     /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
     /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKRealESRGANNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (key, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
@@ -316,7 +316,7 @@ public final class NFKMLXRealESRGAN: NSObject {
     ///
     /// - Since: InferKit 0.3.1
     static func loadCompactWeights(into net: NFKRealESRGANCompactNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in
             (key, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }

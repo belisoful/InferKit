@@ -290,7 +290,7 @@ public final class NFKMLXPose: NSObject {
     /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from the on-disk
     /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXPoseNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)

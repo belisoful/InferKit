@@ -576,7 +576,7 @@ public final class NFKMLXGTCRNFactory: NSObject {
     /// `encoder.en_convs`, `dpgrnn{1,2}`, `decoder.de_convs`, `point_conv*`, `tra`, `intra_rnn`, …), so
     /// the loader only folds the GRUs and transposes the 4-D convolution weights.
     static func loadWeights(into net: NFKMLXGTCRN, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let folded = NFKMLXRecurrentFold.fold(checkpoint.arrays)
         let mapped: [(String, MLXArray)] = folded.map { key, value in
             guard value.ndim == 4, checkpoint.needsConvTranspose else { return (key, value) }

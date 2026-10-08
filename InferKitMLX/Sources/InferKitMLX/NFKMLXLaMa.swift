@@ -374,7 +374,7 @@ public final class NFKMLXLaMa: NSObject {
     /// and transposing 4-D convolution weights to MLX's layout. `remap` overrides the built-in
     /// translation for a checkpoint that stores its weights some other way.
     static func loadWeights(into net: NFKMLXLaMaNet, from url: URL, remap: ((String) -> String)? = nil) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             // The raw Lightning checkpoint prefixes the generator's keys; the offline converter

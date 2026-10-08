@@ -59,7 +59,7 @@ public final class NFKMLXIPAdapter {
                             numTokens: Int = 4) throws -> NFKMLXIPAdapter {
         let attentions = unet.crossAttentions
         let crossAttentionDim = attentions.first?.contextDimensions ?? 768
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let arrays = checkpoint.arrays
 
         // The image projection: the released `proj` linear is this module's `image_embeds`.

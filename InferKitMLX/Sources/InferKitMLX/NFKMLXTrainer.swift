@@ -133,7 +133,7 @@ public struct NFKMLXTrainingCheckpoint: Sendable {
               FileManager.default.fileExists(atPath: optimizerStateURL.path) else {
             return 0
         }
-        let weights = try NFKMLXWeights.loadCheckpoint(url: url)
+        let weights = try NFKMLXWeights.materializedCheckpoint(url: url)
         try NFKMLXWeights.apply(weights.arrays.map { ($0.key, $0.value) }, to: model, verifyShapes: true)
         let state = try NFKMLXOptimizerState.load(from: optimizerStateURL)
         try NFKMLXOptimizerState.restore(state.arrays, into: optimizer)

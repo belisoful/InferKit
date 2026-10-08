@@ -1313,7 +1313,7 @@ public final class NFKMLXRTDetr: NSObject {
     /// With `matchingShapesOnly`, a tensor loads only where its shape matches, as the original's
     /// `load_tuning_state` does, and only the class branches may stay uncovered.
     static func loadWeights(into net: NFKMLXRTDetrNet, from url: URL, matchingShapesOnly: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard let name = remapReferenceKey(key) else { return nil }
             // A release carries the denoising embedding, and a net built for inference has none. MLX

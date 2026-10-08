@@ -38,7 +38,7 @@ extension NFKMLXWav2Vec2Net {
     /// retargeted to a new vocabulary), which keep their initialization. Every other parameter must be
     /// supplied, except `masked_spec_embed`, which a release trained without SpecAugment does not carry.
     func loadWeights(url: URL, leavingFresh fresh: [String]) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [String: MLXArray]()
         let renamed = ["encoder.pos_conv_embed.conv.parametrizations.weight.original0": "encoder.pos_conv_embed.conv.weight_g",
                        "encoder.pos_conv_embed.conv.parametrizations.weight.original1": "encoder.pos_conv_embed.conv.weight_v"]

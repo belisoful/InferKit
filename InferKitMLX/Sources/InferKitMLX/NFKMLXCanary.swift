@@ -367,7 +367,7 @@ public final class NFKMLXCanary: NSObject {
     /// Loads the released `model_weights.ckpt` into `net`, feeding the preprocessor's stored window and
     /// filterbank to the front end and transposing the convolutions to MLX's channels-last layouts.
     public static func loadWeights(into net: NFKMLXCanaryNet, from url: URL) throws {
-        try loadWeights(into: net, checkpoint: try NFKMLXWeights.loadCheckpoint(url: url))
+        try loadWeights(into: net, checkpoint: try NFKMLXWeights.materializedCheckpoint(url: url))
     }
 
     static func loadWeights(into net: NFKMLXCanaryNet, checkpoint: NFKMLXWeights.Checkpoint) throws {

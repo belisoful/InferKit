@@ -355,7 +355,7 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
         throws -> NFKMLXOpenJevDeBERTaNet {
         let net = NFKMLXOpenJevDeBERTaNet(configuration)
         if let weightsURL {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
             try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value.asType(.float32)) }, to: net,
                                     verifyShapes: true)
         }
@@ -365,8 +365,8 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     /// Loads a release directory: the encoder from `model.safetensors`, the head from `head.safetensors`.
     static func loadRelease(into net: NFKMLXOpenJevDeBERTaNet, directory: URL) throws {
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: .float32)
-        let encoder = try NFKMLXWeights.loadCheckpoint(url: directory.appendingPathComponent("model.safetensors"))
-        let head = try NFKMLXWeights.loadCheckpoint(url: directory.appendingPathComponent("head.safetensors"))
+        let encoder = try NFKMLXWeights.materializedCheckpoint(url: directory.appendingPathComponent("model.safetensors"))
+        let head = try NFKMLXWeights.materializedCheckpoint(url: directory.appendingPathComponent("head.safetensors"))
         let arrays = encoder.arrays.map { ("backbone." + $0.key, $0.value.asType(.float32)) }
             + head.arrays.map { ("head." + $0.key, $0.value.asType(.float32)) }
         try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)

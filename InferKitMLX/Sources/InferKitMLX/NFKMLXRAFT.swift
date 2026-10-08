@@ -547,7 +547,7 @@ public final class NFKMLXRAFT: NSObject {
     /// Loads a safetensors checkpoint, transposing 4-D convolution weights to MLX's layout. `remap`
     /// maps the reference nested names to the module's keys (sweep task).
     static func loadWeights(into net: NFKMLXRAFTNet, from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         // Deduplicated through a dictionary: the reference reuses each block's norm3 inside its
         // downsample Sequential, so a raw checkpoint lists the same tensor under both names and the

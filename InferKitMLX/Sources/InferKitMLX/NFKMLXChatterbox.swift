@@ -354,7 +354,7 @@ public final class NFKMLXChatterbox: NSObject {
     /// MLX's `Wx`/`Wh`/`bias`; the training-only `similarity_weight`/`similarity_bias` are not parameters
     /// of the embedding and are dropped.
     public static func loadVoiceEncoderWeights(into net: NFKMLXChatterboxVoiceEncoderNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         var folded = [String: MLXArray]()
         for (key, value) in checkpoint.arrays {

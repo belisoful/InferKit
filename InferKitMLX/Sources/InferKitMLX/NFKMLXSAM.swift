@@ -670,7 +670,7 @@ public final class NFKMLXSAM: NSObject {
 
     static func loadWeights(into net: NFKMLXSAMNet, from url: URL,
                             remap: (String) -> String = remapReferenceKey) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value -> (String, MLXArray) in
             let name = remap(key)

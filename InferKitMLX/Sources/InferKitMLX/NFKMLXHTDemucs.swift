@@ -878,7 +878,7 @@ public extension NFKMLXHTDemucs {
 
     /// Loads a converted reference checkpoint into `net`.
     static func loadWeights(into net: NFKMLXHTDemucsNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)
             guard checkpoint.needsConvTranspose else { return (name, value) }

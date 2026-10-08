@@ -441,7 +441,7 @@ public final class NFKMLXMossFormer2SRFactory: NSObject {
     /// The backbone checkpoint is `{"mossformer": {"mossformer.…": …}}`: the container is not one the
     /// native reader unwraps, so its name lands as a second prefix, stripped here before the SE remap.
     static func loadBackboneWeights(into net: NFKMLXMossFormer2SENet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             let stripped = key.hasPrefix("mossformer.mossformer.") ? String(key.dropFirst("mossformer.".count)) : key
             guard let name = NFKMLXMossFormer2Factory.remapReferenceKey(stripped) else { return nil }

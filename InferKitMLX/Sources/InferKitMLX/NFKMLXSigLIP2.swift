@@ -551,7 +551,7 @@ public final class NFKMLXSigLIP2: NSObject {
     /// and mapping the reference's `vision_model.`/`text_model.` prefixes onto the module's `vision`/`text`.
     /// Linear and embedding weights and the pooling head's fused projection are 2-D and pass through.
     static func loadWeights(into net: NFKMLXSigLIP2Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)

@@ -573,6 +573,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Phi-4 towers, Qwen3-VL, SmolVLM, Sa2VA, Voxtral, and WanAnimate loaders. A language release that
   stores each expert as its own tensor keeps those tensors lazy, so stacking reads each one as the stack
   forms. The values are the same bytes converted by the same operations.
+- `NFKMLXWeights.materializedCheckpoint(url:reading:)` reads a single-file checkpoint and evaluates
+  the arrays `reading` keeps, in groups of about 256 MB, before it returns. Every loader that applies
+  a whole checkpoint reads through it, 108 of them, so a model's first evaluation waits on no file read.
+  The single-file language loaders read all but the per-expert and paged expert tensors, and the SAM 3
+  and V-JEPA 2 loaders read only the towers they apply. `loadCheckpoint(url:)` stays lazy for the loaders
+  that probe a few keys, take one part of a shared file, or fuse weight norms, LoRA adapters, or
+  projections across tensors. The values are unchanged: only when each file is read moves.
 
 #### Finishing a matte from any matting model
 

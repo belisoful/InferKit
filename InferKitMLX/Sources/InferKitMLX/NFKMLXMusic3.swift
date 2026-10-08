@@ -945,7 +945,7 @@ public final class NFKMLXMusic3: NSObject {
         let pairs: [(String, MLXArray)]
         let needsConvTranspose: Bool
         if let singleFile {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: singleFile)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: singleFile)
             try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
             let stored: NFKMLXWeightPrecision = checkpoint.quantization != nil ? .checkpoint : precision
             pairs = NFKMLXWeights.converted(checkpoint.arrays.map { ($0, $1) }, to: stored)
@@ -965,7 +965,7 @@ public final class NFKMLXMusic3: NSObject {
     /// transposes; the file ships bf16 and loads at the requested precision.
     static func loadDepthWeights(into net: NFKMusic3DepthDecoderNet, from url: URL,
                                  precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
         let stored: NFKMLXWeightPrecision = checkpoint.quantization != nil ? .checkpoint : precision
         let mapped = NFKMLXWeights.converted(checkpoint.arrays.map { ($0, $1) }, to: stored)
@@ -975,7 +975,7 @@ public final class NFKMLXMusic3: NSObject {
     /// Loads the released `condition_encoder/diffusion_pytorch_model.safetensors` (or a fine-tuned
     /// save). Only the projection is a convolution; the blend logits and the scale pass through.
     static func loadConditionWeights(into net: NFKMusic3ConditionEncoderNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             if checkpoint.needsConvTranspose, value.ndim == 3 {
                 return (key, value.transposed(0, 2, 1))

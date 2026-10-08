@@ -756,7 +756,7 @@ public final class NFKMLXHFTTransformer: NSObject {
     /// The converter already shortens the reference's `encoder_spec2midi.*` / `decoder_spec2midi.*`
     /// names, so nothing else is remapped here.
     public static func loadWeights(into net: NFKMLXHFTTransformerNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
             mapped.append((key, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value))

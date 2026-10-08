@@ -644,7 +644,7 @@ public final class NFKMLXCodeFormer: NSObject {
     /// convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's channels-last
     /// `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXCodeFormerNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remapReferenceKey(key, connectResolutions: net.configuration.connectResolutions),

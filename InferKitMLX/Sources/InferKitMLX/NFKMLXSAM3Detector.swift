@@ -655,9 +655,11 @@ extension NFKMLXSAM3 {
 
     /// Loads the detector out of a released checkpoint, ignoring everything else it holds.
     public static func loadDetectorWeights(into net: NFKMLXSAM3DetectorNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let prefix = "detector_model."
         let wanted = ["detr_encoder.", "detr_decoder.", "dot_product_scoring.", "mask_decoder."]
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: { key in
+            wanted.contains { key.hasPrefix(prefix + $0) }
+        })
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard key.hasPrefix(prefix) else { return nil }
             let name = String(key.dropFirst(prefix.count))
@@ -723,12 +725,15 @@ extension NFKMLXSAM3 {
 
     /// Loads all three networks from one released checkpoint, reading the 3.44 GB file once.
     public static func loadWeights(into model: NFKMLXSAM3ImageModel, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let prefix = "detector_model."
         var visionArrays = [(String, MLXArray)]()
         var textArrays = [(String, MLXArray)]()
         var detectorArrays = [(String, MLXArray)]()
         let detectorStages = ["detr_encoder.", "detr_decoder.", "dot_product_scoring.", "mask_decoder."]
+        let read = ["vision_encoder.", "text_encoder.", "text_projection."] + detectorStages
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: { key in
+            read.contains { key.hasPrefix(prefix + $0) }
+        })
 
         for (key, value) in checkpoint.arrays {
             guard key.hasPrefix(prefix) else { continue }

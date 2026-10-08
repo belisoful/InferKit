@@ -87,7 +87,7 @@ public final class NFKMLXYOLOGenerations: NSObject {
     /// Loads a released ultralytics checkpoint. The graph rows put every module at the reference's own
     /// index, so only the detection head's positional Sequentials need translating.
     static func loadWeights(into net: NFKMLXYOLOGenerationNet, from url: URL, matchingShapesOnly: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let head = "model.\(net.nodes.count - 1)."
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             // A BatchNorm's batch counter is bookkeeping the port does not carry.

@@ -528,7 +528,7 @@ public final class NFKMLXCMGAN: NSObject {
     /// attributes and the four `TSCB_{i}` blocks map onto arrays; the 4-D and 3-D convolution weights
     /// transpose to channels-last; the BatchNorm counters are dropped.
     static func loadWeights(into net: NFKMLXCMGANNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }
             var tensor = value

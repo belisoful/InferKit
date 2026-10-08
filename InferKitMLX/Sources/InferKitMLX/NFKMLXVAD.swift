@@ -557,7 +557,7 @@ public final class NFKMLXVAD: NSObject {
     /// The reference stores its analysis window and mel filterbank alongside the weights; those are front
     /// end constants rather than parameters, so they load onto the front end directly.
     static func loadWeights(into net: NFKMLXVADNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         if let window = raw["preprocessor.featurizer.window"] {
             net.frontEnd.load(window: window)

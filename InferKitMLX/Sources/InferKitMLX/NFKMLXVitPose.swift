@@ -719,7 +719,7 @@ public final class NFKMLXVitPose: NSObject {
     /// layouts move: a forward convolution to `[out, kH, kW, in]` and a transposed one to
     /// `[out, kH, kW, in]` from PyTorch's `[in, out, kH, kW]`, a different axis order.
     static func loadWeights(into net: NFKMLXVitPoseNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
             guard !key.hasSuffix("num_batches_tracked") else { continue }

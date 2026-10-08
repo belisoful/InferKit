@@ -20,7 +20,7 @@ extension NFKMLXTableTransformerNet {
     /// initialization for a new class set.
     func loadWeights(fromDirectory directory: URL, skippingClassifier: Bool) throws {
         let url = directory.appendingPathComponent("model.safetensors")
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             if key.hasSuffix("num_batches_tracked") { return nil }
             if skippingClassifier && key.hasPrefix("class_labels_classifier.") { return nil }

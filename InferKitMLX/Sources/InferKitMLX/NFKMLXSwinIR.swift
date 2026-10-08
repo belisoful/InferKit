@@ -639,7 +639,7 @@ public final class NFKMLXSwinIR: NSObject {
     /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
     /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXSwinIRNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

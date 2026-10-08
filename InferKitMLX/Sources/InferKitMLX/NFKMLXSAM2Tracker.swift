@@ -510,7 +510,7 @@ extension NFKMLXSAM2 {
 
     /// Loads a whole released checkpoint into the tracker. Every tensor a release ships is read.
     public static func loadWeights(into tracker: NFKMLXSAM2TrackerNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard let name = remapTrackerKey(key) else { return nil }
             guard checkpoint.needsConvTranspose, value.ndim == 4 else { return (name, value) }

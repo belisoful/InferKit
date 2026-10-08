@@ -416,7 +416,7 @@ public final class NFKMLXRetinaFace: NSObject {
     /// Loads the released checkpoint, converted or raw, or a file `NFKMLXWeights` saved, which carries
     /// the module's own keys and loads as written.
     static func loadWeights(into net: NFKMLXRetinaFaceNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let released = checkpoint.arrays.keys.contains { $0.contains("body.") }
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard let name = released ? remapReferenceKey(key) : key else { return nil }

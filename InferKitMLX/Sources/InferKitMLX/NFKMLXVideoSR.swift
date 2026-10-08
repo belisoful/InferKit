@@ -429,7 +429,7 @@ public final class NFKMLXVideoSR: NSObject {
     /// `[out, kH, kW, in]` (SPyNet's `[1, 3, 1, 1]` normalization buffers become `[1, 1, 1, 3]`
     /// through the same transpose).
     static func loadWeights(into net: NFKMLXVideoSRNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

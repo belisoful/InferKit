@@ -59,6 +59,27 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   - Sa2VA-Qwen's SAM 3 probe, which reads one key's presence and no tensor.
   A remap that drops what a loader never applies keeps an eager read from reading it: the SmolVLM and
   Sa2VA-LLaVA loaders filter by prefix before the read.
+- A single file follows the same split (2026-10-08). `NFKMLXWeights.materializedCheckpoint(url:reading:)`
+  evaluates the arrays `reading` keeps before it returns, and the 108 loaders that apply a whole
+  checkpoint read through it. `loadCheckpoint(url:)` stays lazy at 43 loader call sites, by kind:
+  - probes that read a key or a shape and then load the file again (`classCount` in YOLO and RT-DETR,
+    the `lm_head` probes in Qwen3-VL and SmolVLM, Conv-TasNet's configuration, Basic Pitch's
+    normalization, the denoiser's width);
+  - one part of a file that other loaders read too (DeepSeek's image and draft stacks, Chatterbox's
+    tokenizer, the SAM 2 component loaders, Florence-2's vision half, Depth Anything's encoder-only
+    network) or that drops a large unused part (AdaIN's and the VGG perceptual nets' classifiers,
+    BiSeNet's aux heads, FRCRN's and MODNet's duplicate copies, Silero's 8 kHz branch);
+  - fusions across tensors: weight norm (DAC, SNAC, HiFi-GAN, BigVGAN, Kokoro, Chatterbox HiFT,
+    MossFormer2 SR, Music 3's vocoder, Resemble Enhance), DDColor's spectral norm, the Granite Speech
+    adapter fold, and the SD text encoder's and SegFormer's joined projections;
+  - DeepSeek's decoder, whose paging maps expert bytes it never reads, and the Sa2VA probes that open
+    a file only to learn its layout;
+  - a tensor kept as data and read where it is used (Kokoro's voicepack, Stable Diffusion's stored text
+    context, Chatterbox's built-in conditionals).
+  A `reading` predicate keeps an eager read to the part a loader applies: the single-file language
+  loader skips per-expert tensors (stacked lazily) and a paged load's experts, SAM 3's tower loaders
+  read their tower out of the 3.44 GB file, and V-JEPA 2 skips its pretraining predictor. A raw
+  PyTorch checkpoint is in memory once read, whichever reader opens it.
 - `NFKMLXGGUF` / `NFKMLXGGUFFormat` — the **native GGUF reader**, the sequel to the native PyTorch
   checkpoint reader, and the format most quantized language models are distributed in. Same contract:
   pure Foundation below the MLX materialization (parsing and dequantization run under `swift test`;

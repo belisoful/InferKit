@@ -155,7 +155,7 @@ public final class NFKMLXISNet: NSObject {
     /// convolution weights to MLX's layout. The RSU blocks are U²-Net's, so the reference `rebnconvN`
     /// names translate through ``NFKMLXU2Net/remapReferenceKey(_:)``.
     static func loadWeights(into net: NFKMLXISNetNet, from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in
             (remap(NFKMLXU2Net.remapReferenceKey(key)),
              checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

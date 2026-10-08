@@ -663,7 +663,7 @@ public final class NFKMLXYOLO: NSObject {
     /// convolution weights from PyTorch's `[out, in, kH, kW]` to MLX's channels-last
     /// `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXYOLONet, from url: URL, matchingShapesOnly: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         var mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

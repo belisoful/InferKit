@@ -501,7 +501,7 @@ public final class NFKMLXMPSENetFactory: NSObject {
     /// Loads a released MP-SENet generator checkpoint (a bare state dict) into the net: fold the
     /// bidirectional GRUs, remap the reference names, and transpose the 4-D convolution weights.
     static func loadWeights(into net: NFKMLXMPSENet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let folded = NFKMLXRecurrentFold.fold(checkpoint.arrays)
         let mapped: [(String, MLXArray)] = folded.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }

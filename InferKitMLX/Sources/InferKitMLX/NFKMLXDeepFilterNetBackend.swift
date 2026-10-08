@@ -251,7 +251,7 @@ public final class NFKMLXDeepFilterNetFactory: NSObject {
     /// `Conv2dNormAct` / `SqueezedGRU_S` Sequential names, and transpose the convolutions (the ERB
     /// decoder's `convt2`/`convt1` are grouped `ConvTranspose2d`).
     static func loadWeights(into net: NFKMLXDeepFilterNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let folded = foldGRUs(checkpoint.arrays)
         let mapped: [(String, MLXArray)] = folded.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }

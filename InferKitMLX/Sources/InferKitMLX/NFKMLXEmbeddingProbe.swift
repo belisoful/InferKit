@@ -48,7 +48,7 @@ public final class NFKMLXEmbeddingProbe: Module {
 
     /// Reloads a saved probe, reading its width and class count from the file.
     public convenience init(weightsURL: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
         guard let weight = checkpoint.arrays["classifier.weight"], weight.ndim == 2 else {
             throw NFKMLXError.trainingDataMismatch("\(weightsURL.lastPathComponent) holds no probe classifier")
         }

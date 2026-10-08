@@ -499,7 +499,7 @@ extension NFKMLXMimiNet {
     /// `embed`, squeezes the k1 projection convolutions to `Linear`, transposes the Conv1d weights to
     /// MLX's NLC layout, and assembles each transposed convolution's forward kernel (transpose + flip).
     public func loadWeights(from url: URL) throws {
-        let raw = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let raw = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         var clusterUsage = [String: MLXArray]()
         for (key, value) in raw where key.hasSuffix(".cluster_usage") { clusterUsage[key] = value }
 

@@ -233,7 +233,7 @@ public final class NFKMLXEmbeddingGemma: NSObject {
 
     private static func dense(_ directory: URL, _ subdirectory: String) throws -> MLXArray {
         let url = directory.appendingPathComponent(subdirectory).appendingPathComponent("model.safetensors")
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         guard let weight = checkpoint.arrays["linear.weight"] else {
             throw NFKMLXError.malformedCheckpoint("\(subdirectory)/model.safetensors has no linear.weight")
         }
@@ -250,7 +250,7 @@ public final class NFKMLXEmbeddingGemma: NSObject {
         throws -> any NFKInferenceBackend {
         let net = NFKMLXGemma3EncoderNet(configuration)
         if let weightsURL {
-            let mapped = try NFKMLXWeights.loadCheckpoint(url: weightsURL).arrays.map { ($0, $1) }
+            let mapped = try NFKMLXWeights.materializedCheckpoint(url: weightsURL).arrays.map { ($0, $1) }
             try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
         }
         let dense2 = try loadDense(dense2URL, rows: 4 * configuration.hiddenSize, columns: configuration.hiddenSize)
@@ -262,7 +262,7 @@ public final class NFKMLXEmbeddingGemma: NSObject {
 
     private static func loadDense(_ url: URL?, rows: Int, columns: Int) throws -> MLXArray {
         guard let url else { return MLXRandom.normal([rows, columns]) * 0.02 }
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         guard let weight = checkpoint.arrays["linear.weight"] else {
             throw NFKMLXError.malformedCheckpoint("\(url.lastPathComponent) has no linear.weight")
         }

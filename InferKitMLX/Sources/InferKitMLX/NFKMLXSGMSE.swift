@@ -867,7 +867,7 @@ public final class NFKMLXSGMSE: NSObject {
     /// The only transform is the 4-D Conv2d weight transpose `[out, in, kH, kW]` → `[out, kH, kW, in]`;
     /// the `NIN` `W` (`[in, out]`) and every `Linear`/GroupNorm/Fourier weight are ≤ 2-D and pass through.
     static func loadWeights(into net: NFKMLXNCSNppNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             (transpose && value.ndim == 4) ? (key, value.transposed(0, 2, 3, 1)) : (key, value)

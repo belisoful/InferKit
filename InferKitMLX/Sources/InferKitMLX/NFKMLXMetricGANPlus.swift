@@ -218,7 +218,7 @@ public final class NFKMLXMetricGANPlus: NSObject {
     /// weights and biases fold into MLX's `Wx`/`Wh`/`bias` under `blstm.N.forward` / `.reverse` (the
     /// gate order i, f, g, o is shared, so the matrices transfer as they are).
     static func loadWeights(into net: NFKMLXMetricGANPlusNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays where !key.hasPrefix("blstm.rnn.") {
             mapped.append((key, value))

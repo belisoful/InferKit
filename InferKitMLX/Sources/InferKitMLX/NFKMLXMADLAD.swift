@@ -316,7 +316,7 @@ public final class NFKMLXT5Seq2SeqNet: Module {
 
     /// Loads one checkpoint file, such as one ``NFKMLXWeights/save(_:extraArrays:to:)`` wrote after a fine-tune.
     public func loadWeights(from url: URL, half: Bool = false) throws {
-        try load(Array(try NFKMLXWeights.loadCheckpoint(url: url).arrays), half: half)
+        try load(Array(try NFKMLXWeights.materializedCheckpoint(url: url).arrays), half: half)
     }
 
     /// A release stores the shared embedding under `shared.weight`, or only as an `embed_tokens`

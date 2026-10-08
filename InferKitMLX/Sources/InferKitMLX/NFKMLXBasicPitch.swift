@@ -917,7 +917,7 @@ public final class NFKMLXBasicPitch: NSObject {
     /// The checkpoint's layout must match the network's: build the network with ``network(weightsURL:reinitializing:)``,
     /// which reads the layout from the file.
     public static func loadWeights(into net: NFKMLXBasicPitchNet, from url: URL) throws {
-        try apply(try NFKMLXWeights.loadCheckpoint(url: url), to: net)
+        try apply(try NFKMLXWeights.materializedCheckpoint(url: url), to: net)
     }
 
     /// The normalization layout a checkpoint holds: separate when it carries the normalization after

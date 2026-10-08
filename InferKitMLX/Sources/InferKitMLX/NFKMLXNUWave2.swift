@@ -470,7 +470,7 @@ public final class NFKMLXNUWave2: NSObject {
     /// `Diffusion`, whose `NuWave2` is `model`); the STFT window buffers are dropped; the 1-D and 1×1
     /// 2-D convolutions transpose to channels-last.
     static func loadWeights(into net: NFKMLXNUWave2Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }
             var tensor = value

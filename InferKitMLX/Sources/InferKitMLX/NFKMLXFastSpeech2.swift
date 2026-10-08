@@ -409,7 +409,7 @@ public final class NFKMLXFastSpeech2: NSObject {
     /// convolution layouts translate; the batch-norm step counters have no counterpart. Introduced in
     /// InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXFastSpeech2Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             if key.hasSuffix("num_batches_tracked") { return nil }
             // The raw transformers release prefixes every key with `model.`; the offline converter

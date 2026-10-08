@@ -714,7 +714,7 @@ public final class NFKMLXLaya: NSObject {
 
     /// Loads one checkpoint file, released or fine-tuned, at float32.
     public static func loadWeights(into net: NFKMLXLayaNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { ($0.key, $0.value.asType(.float32)) }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }

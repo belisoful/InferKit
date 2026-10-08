@@ -1010,7 +1010,7 @@ public final class NFKMLXAllInOne: NSObject {
     /// MLX's `[out, kH, kW, in]`. Every other tensor transfers unchanged, so the module's names are
     /// the reference's and no remap is needed.
     public static func loadWeights(into net: NFKMLXAllInOneNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
             mapped.append((key, value.ndim == 4 && checkpoint.needsConvTranspose ? value.transposed(0, 2, 3, 1) : value))

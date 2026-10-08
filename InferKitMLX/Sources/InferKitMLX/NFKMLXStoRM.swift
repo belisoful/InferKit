@@ -260,7 +260,7 @@ public final class NFKMLXStoRM: NSObject {
     /// Loads the EMA safetensors — both networks under `denoiser_net.*` / `score_net.*` (the NCSN++ keys
     /// the port mirrors). The only transform is the 4-D Conv2d weight transpose.
     static func loadWeights(into net: NFKMLXStoRMNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             (transpose && value.ndim == 4) ? (key, value.transposed(0, 2, 3, 1)) : (key, value)

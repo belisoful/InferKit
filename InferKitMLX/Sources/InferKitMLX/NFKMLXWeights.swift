@@ -207,6 +207,37 @@ public enum NFKMLXWeights {
                           quantization: quantization)
     }
 
+    /// Reads a checkpoint as ``loadCheckpoint(url:)`` does and evaluates the arrays `reading` keeps, in
+    /// groups of about 256 MB, before returning.
+    ///
+    /// @discussion MLX reads a file only on the CPU, and a GPU operation evaluated together with the read
+    /// it consumes waits for that read inside its command buffer. A checkpoint left lazy is read in the
+    /// model's first evaluation, beside every cast and transpose built on it. Reading it here first
+    /// leaves that evaluation no file to wait on. A loader that applies most of a file reads it this
+    /// way. A loader that probes a few keys, takes one part of a shared file, or builds new tensors
+    /// from many of its tensors keeps ``loadCheckpoint(url:)``, or names its part in `reading`; the
+    /// arrays `reading` drops stay lazy and are read only if used. A raw PyTorch checkpoint is already
+    /// in memory.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func materializedCheckpoint(url: URL, reading: (String) -> Bool = { _ in true }) throws
+        -> Checkpoint {
+        let checkpoint = try loadCheckpoint(url: url)
+        var group = [MLXArray](), groupBytes = 0
+        for key in checkpoint.arrays.keys.sorted() where reading(key) {
+            guard let value = checkpoint.arrays[key] else { continue }
+            group.append(value)
+            groupBytes += value.nbytes
+            if groupBytes >= 256 << 20 {
+                eval(group)
+                group.removeAll()
+                groupBytes = 0
+            }
+        }
+        eval(group)
+        return checkpoint
+    }
+
     /// The file's first block, for format sniffing. One tar header (512 bytes) is read because a
     /// `.nemo`'s ustar magic sits at offset 257, past a 4-byte peek. A missing file returns empty, so
     /// the safetensors path raises its own error for it as it always has.

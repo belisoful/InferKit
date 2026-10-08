@@ -42,7 +42,7 @@ public extension NFKMLXGemma3Language {
     /// module's own keys, unlike a release directory, which ``loadWeights(into:fromDirectory:precision:)``
     /// reads. Introduced in InferKit 0.4.0.
     static func loadWeights(into net: NFKMLXGemma3Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { ($0.key, $0.value.dtype.isFloatingPoint ? $0.value.asType(.float32) : $0.value) }
         try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
     }

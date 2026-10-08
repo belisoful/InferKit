@@ -263,7 +263,7 @@ public final class NFKMLXDeepLab: NSObject {
     /// count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes wholesale, so
     /// loading them would silently restore the old class set.
     static func loadWeights(into net: NFKMLXDeepLabNet, from url: URL, retargeting: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let poolBranch = net.configuration.dilations.count + 1
         let mapped = raw.map { key, value in

@@ -396,7 +396,7 @@ extension NFKMLXBasicPitch {
     ///
     /// - Since: InferKit 0.4.0
     public static func network(weightsURL: URL, reinitializing: Bool = false) throws -> NFKMLXBasicPitchNet {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
         guard reinitializing else {
             let net = makeNet(NFKMLXBasicPitchConfiguration(normalization: normalization(of: checkpoint)))
             try apply(checkpoint, to: net)

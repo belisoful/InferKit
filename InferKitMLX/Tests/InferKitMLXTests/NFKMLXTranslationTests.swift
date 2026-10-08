@@ -645,12 +645,12 @@ final class NFKMLXTranslationTests: XCTestCase {
         configuration.layerTypes = Array(configuration.layerTypes.prefix(kept))
         configuration.layerCount = kept
         let decoder = NFKMLXGemma3Net(configuration)
-        let weights = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .checkpoint) { key in
+        let weights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint, remap: { key in
             guard let name = NFKMLXGemma3Language.decoderName(of: key) else { return nil }
             let parts = name.split(separator: ".")
             if parts.count > 1, parts[0] == "layers", let layer = Int(parts[1]), layer >= kept { return nil }
             return name
-        }
+        })
         try NFKMLXWeights.apply(weights, to: decoder)
 
         let translator = try NFKMLXTranslateGemma.translator(decoder: decoder, directoryURL: directory, precision: .checkpoint)

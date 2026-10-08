@@ -630,7 +630,7 @@ public final class NFKMLXMuScriptor: NSObject {
     /// legacy single-codebook remap the reference also applies: older checkpoints store the embedding
     /// and the head as the first entry of a module list.
     public static func loadWeights(into net: NFKMLXMuScriptorNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var mapped = [(String, MLXArray)]()
         for (key, value) in checkpoint.arrays {
             mapped.append((remapReferenceKey(key), value))

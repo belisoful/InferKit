@@ -1760,7 +1760,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
         func output(_ precision: NFKMLXWeightPrecision, _ dtype: DType) throws -> MLXArray {
             let net = NFKMLXFlux2TransformerNet(configuration)
-            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.materializedArrays(
                 inDirectory: URL(fileURLWithPath: release), precision: precision, remap: kept), to: net)
             let result = net(try XCTUnwrap(arrays["hidden"]).asType(dtype),
                              encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(dtype),
@@ -2013,7 +2013,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
         let dtype: DType = cut ? .float32 : .bfloat16
         let net = NFKMLXFlux2TransformerNet(configuration)
-        try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+        try NFKMLXWeights.apply(try NFKMLXReleaseWeights.materializedArrays(
             inDirectory: URL(fileURLWithPath: release), precision: cut ? .float32 : .checkpoint, remap: kept), to: net)
         func cosineWith(_ mine: MLXArray, _ reference: MLXArray) -> Double {
             eval(mine)
@@ -2076,7 +2076,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             configuration.layerCount = 28
             configuration.tiesWordEmbeddings = true                     // no head: the conditioning never reads one
             decoder = NFKMLXLanguage.makeNet(configuration)
-            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.arrays(
+            try NFKMLXWeights.apply(try NFKMLXReleaseWeights.materializedArrays(
                 inDirectory: encoderDirectory, precision: .float32, remap: { name in
                     if name.hasPrefix("lm_head.") { return nil }
                     if name.hasPrefix("model.layers.") {
@@ -9679,14 +9679,14 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                             useClippedLinears: useClippedLinears)
         }
         func load(_ vision: NFKMLXGemma4VisionNet, clamps: Bool) throws {
-            try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+            try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
                 guard key.hasPrefix("model.vision_tower.") else { return nil }
                 let name = String(key.dropFirst("model.vision_tower.".count))
                     .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
                 let isClamp = name.hasSuffix("input_min") || name.hasSuffix("input_max")
                     || name.hasSuffix("output_min") || name.hasSuffix("output_max")
                 return (!clamps && isClamp) ? nil : name
-            }, to: vision)
+            }), to: vision)
         }
         func encoderCosine(_ hidden: MLXArray) -> Double {
             eval(hidden)
@@ -9738,15 +9738,15 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                             useClippedLinears: true))
         let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
 
-        let visionWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        let visionWeights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             guard key.hasPrefix("model.vision_tower.") else { return nil }
             return String(key.dropFirst("model.vision_tower.".count))
                 .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
-        }
+        })
         try NFKMLXWeights.apply(visionWeights, to: vision)
-        let embedWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        let embedWeights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(embedWeights, to: embedder)
 
         let patches = pixelValues.shape[0]
@@ -9793,13 +9793,13 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                            useClippedLinears: true))
         let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 1536, textHidden: 1536)
 
-        let audioWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        let audioWeights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             key.hasPrefix("model.audio_tower.") ? String(key.dropFirst("model.audio_tower.".count)) : nil
-        }
+        })
         try NFKMLXGemmaLanguage.loadAudioWeights(audioWeights, into: audio)
-        let embedWeights = try NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        let embedWeights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             key.hasPrefix("model.embed_audio.") ? String(key.dropFirst("model.embed_audio.".count)) : nil
-        }
+        })
         try NFKMLXWeights.apply(embedWeights, to: embedder)
 
         let encoded = audio(features.reshaped([1, features.shape[0], features.shape[1]]))
@@ -9842,14 +9842,14 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                             patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
                                             useClippedLinears: true))
         let visionEmbedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
-        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             key.hasPrefix("model.vision_tower.")
                 ? String(key.dropFirst("model.vision_tower.".count)).replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
                 : nil
-        }, to: vision)
-        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release) { key in
+        }), to: vision)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, remap: { key in
             key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
-        }, to: visionEmbedder)
+        }), to: visionEmbedder)
 
         let model = NFKMLXGemma4ConditionalGeneration(
             decoder: decoder, visionTower: vision, visionEmbedder: visionEmbedder,

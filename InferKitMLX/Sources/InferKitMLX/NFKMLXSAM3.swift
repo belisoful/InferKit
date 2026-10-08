@@ -454,7 +454,7 @@ public final class NFKMLXSAM3: NSObject {
 
     /// Loads the vision encoder out of a released checkpoint, ignoring everything else it holds.
     public static func loadVisionWeights(into net: NFKMLXSAM3VisionNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: { remapVisionKey($0) != nil })
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard let name = remapVisionKey(key) else { return nil }
             guard checkpoint.needsConvTranspose, value.ndim == 4 else { return (name, value) }
@@ -719,8 +719,10 @@ extension NFKMLXSAM3 {
 
     /// Loads the text tower and the prompt projection out of a released checkpoint.
     public static func loadTextWeights(into net: NFKMLXSAM3TextNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let prefix = "detector_model."
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: {
+            $0.hasPrefix(prefix + "text_encoder.") || $0.hasPrefix(prefix + "text_projection.")
+        })
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard key.hasPrefix(prefix) else { return nil }
             let name = String(key.dropFirst(prefix.count))

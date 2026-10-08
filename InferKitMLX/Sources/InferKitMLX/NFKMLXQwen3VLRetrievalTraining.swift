@@ -134,7 +134,7 @@ extension NFKMLXQwen3VLReranker {
     public func makeHead(weightsURL: URL? = nil) throws -> NFKMLXQwen3VLRerankerHead {
         let head = NFKMLXQwen3VLRerankerHead(direction: scoringDirection())
         if let weightsURL {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
             try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: head,
                                     verifyShapes: true)
         }

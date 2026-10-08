@@ -1010,7 +1010,7 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     /// Loads a diffusers UNet checkpoint into `net`.
     public static func loadUNetWeights(into net: NFKMLXSDUNet, from url: URL,
                                        precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let linear = net.configuration.usesLinearProjection
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             var name = remapUNetKey(key)
@@ -1050,7 +1050,7 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     /// Loads a diffusers autoencoder checkpoint into `net`.
     public static func loadVAEWeights(into net: NFKMLXSDAutoencoder, from url: URL,
                                       precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = remapVAEKey(key)
             guard checkpoint.needsConvTranspose else { return (name, value) }
@@ -1092,7 +1092,7 @@ public final class NFKMLXSDPipeline: Module {
     /// Loads a single checkpoint holding both networks under `unet.` and `vae.` — the layout
     /// `NFKMLXWeights.save` writes, so a fine-tuned pipeline reloads through one file.
     public func loadWeights(from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = key.hasPrefix("vae.")
                 ? "vae." + NFKMLXStableDiffusionModels.remapVAEKey(String(key.dropFirst(4)))

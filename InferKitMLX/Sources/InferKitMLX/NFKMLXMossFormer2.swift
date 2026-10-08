@@ -699,7 +699,7 @@ public final class NFKMLXMossFormer2Factory: NSObject {
     /// `nn.Sequential` indices, and transpose the convolution weights. A file `NFKMLXWeights` saved
     /// carries the module's own keys and loads as written.
     static func loadWeights(into net: NFKMLXMossFormer2SENet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let released = checkpoint.arrays.keys.contains { $0.hasPrefix("mossformer.") }
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             guard let name = released ? remapReferenceKey(key) : key else { return nil }

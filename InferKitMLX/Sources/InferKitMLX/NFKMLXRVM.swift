@@ -804,7 +804,7 @@ public final class NFKMLXRVM: NSObject {
     /// channels-last `[out, kH, kW, in]`.
     static func loadWeights(into net: NFKMLXRVMNet, from url: URL,
                             blocks: [NFKRVMBlockSpec]? = nil) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mobileBlocks = blocks ?? net.configuration.blocks
         let mapped = raw.compactMap { key, value -> (String, MLXArray)? in

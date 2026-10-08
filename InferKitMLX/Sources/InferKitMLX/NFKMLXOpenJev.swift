@@ -406,7 +406,7 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     /// detour here multiplies by their transposes. The adapter takes the decoder's element type.
     static func loadAdapter(into net: NFKMLXOpenJevNet, from url: URL) throws {
         let dtype = net.decoder.model.embedTokens.weight.dtype
-        let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let arrays = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         var mapped = [(String, MLXArray)]()
         for (key, value) in arrays {
             guard let name = adapterKey(forReference: key) else {
@@ -437,7 +437,7 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     static func loadHead(into net: NFKMLXOpenJevNet, checkpointDirectory: URL) throws {
         let tuned = checkpointDirectory.appendingPathComponent("head.safetensors")
         let url = FileManager.default.fileExists(atPath: tuned.path) ? tuned : checkpointDirectory.appendingPathComponent("head.pt")
-        let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let arrays = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         try applyPart(arrays.map { ("head." + $0.key, $0.value.asType(.float32)) }, to: net) { $0.hasPrefix("head.") }
     }
 

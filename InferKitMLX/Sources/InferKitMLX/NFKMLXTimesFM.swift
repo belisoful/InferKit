@@ -278,7 +278,7 @@ extension NFKMLXTimesFMNet {
     }
 
     func loadWeights(url: URL) throws {
-        let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let arrays = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         var mapped = arrays.keys.contains { $0.hasPrefix("model.layers.") } ? try Self.official(fromTransformers: arrays) : arrays
         for (name, fused) in mapped where name.hasSuffix(".attn.qkv_proj.weight") {
             let prefix = String(name.dropLast("qkv_proj.weight".count))

@@ -498,7 +498,7 @@ public final class NFKMLXHAT: NSObject {
     /// Loads a released checkpoint, whose tensors live under `params_ema` or `params`. The two
     /// relative-position index buffers are recomputed from the window geometry, so they are dropped.
     static func loadWeights(into net: NFKMLXHATNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             guard !key.hasSuffix("relative_position_index_SA"),
                   !key.hasSuffix("relative_position_index_OCA") else { return nil }

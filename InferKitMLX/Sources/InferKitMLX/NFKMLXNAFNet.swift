@@ -285,7 +285,7 @@ public final class NFKMLXNAFNet: NSObject {
     /// Loads a safetensors checkpoint, transposing 4-D convolution weights to MLX's layout. `remap`
     /// maps the reference `sca.1`/`encoders.N.M` names to the module's keys (validation-sweep task).
     static func loadWeights(into net: NFKMLXNAFNetNet, from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remap(remapReferenceKey(key)),

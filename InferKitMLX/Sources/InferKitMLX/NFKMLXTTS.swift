@@ -100,7 +100,7 @@ public final class NFKMLXTTS: @unchecked Sendable {
     /// Loads the acoustic model and vocoder from safetensors checkpoints.
     public func loadWeights(acousticURL: URL?, vocoderURL: URL?) throws {
         if let acousticURL {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: acousticURL)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: acousticURL)
             let raw = checkpoint.arrays
             let mapped = raw.map { key, value -> (String, MLXArray) in
                 checkpoint.needsConvTranspose && value.ndim == 3 ? (key, value.transposed(0, 2, 1)) : (key, value)

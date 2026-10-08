@@ -542,7 +542,7 @@ public final class NFKMLXDepthAnything: NSObject {
     /// `[out, in, kH, kW]` to MLX `[out, kH, kW, in]`. `remap` renames keys when a checkpoint differs.
     static func loadWeights(into net: NFKMLXDepthAnythingNet, from url: URL,
                             remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         try NFKMLXWeights.apply(mapped(checkpoint.arrays, needsConvTranspose: checkpoint.needsConvTranspose, remap: remap),
                                 to: net)
     }

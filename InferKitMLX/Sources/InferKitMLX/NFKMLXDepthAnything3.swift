@@ -1011,7 +1011,7 @@ public final class NFKMLXDepthAnything3: NSObject {
     /// DualDPT branches (`model.head.`), and the camera decoder and encoder, transposing 4-D
     /// convolution weights to MLX's channels-last layout. Every released tensor is consumed.
     static func loadWeights(into net: NFKMLXDepthAnything3Net, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         // The transposed-convolution resize layers (`resize_layers.0` and `.1`) store their weight as
         // PyTorch `[C_in, C_out, kH, kW]`, which MLX's ConvTransposed2d reads as `[C_out, kH, kW, C_in]`
         // — a different axis order from a regular convolution's `[out, kH, kW, in]`. Both are square

@@ -1126,7 +1126,9 @@ public final class NFKMLXLanguage: NSObject {
         var stored = precision
         let kept: [(String, MLXArray)]
         if files.count == 1 {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: files[0])
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: files[0], reading: {
+                !(tied && $0.hasPrefix("lm_head.")) && !inventory.isExpert($0)
+            })
             try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
             recorded = checkpoint.quantization
             if checkpoint.quantization != nil {
@@ -1174,13 +1176,15 @@ public final class NFKMLXLanguage: NSObject {
     /// the same keys and loads here too. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXLanguageNet, from url: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let tied = net.lmHead == nil
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: {
+            !isPerExpert($0) && !(tied && $0.hasPrefix("lm_head."))
+        })
         // A quantized checkpoint reshapes the module to match and loads at its stored dtypes: the
         // packed weights are uint32 whatever the request, and the scales keep the precision the
         // quantization was computed at.
         try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
         let keepStored = precision == .checkpoint || checkpoint.quantization != nil
-        let tied = net.lmHead == nil
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             // A tied release still ships `lm_head.weight`: in Qwen3-0.6B it is byte-identical to
             // `model.embed_tokens.weight`, so the module keeps one copy and the file's duplicate is

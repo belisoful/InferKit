@@ -30,7 +30,7 @@ extension NFKMLXWav2Vec2BertNet {
     /// Loads a directory's `model.safetensors`, leaving parameters under `fresh` (module prefixes such as
     /// `adapter.` and `lm_head.`) at their initialization. Every other parameter must be supplied.
     func loadWeights(fromDirectory directory: URL, leavingFresh fresh: [String]) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: directory.appendingPathComponent("model.safetensors"))
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: directory.appendingPathComponent("model.safetensors"))
         var mapped = [String: MLXArray]()
         for (rawKey, value) in checkpoint.arrays {
             let key = rawKey.hasPrefix("wav2vec2_bert.") ? String(rawKey.dropFirst("wav2vec2_bert.".count)) : rawKey

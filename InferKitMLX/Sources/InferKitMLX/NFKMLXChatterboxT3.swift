@@ -520,7 +520,7 @@ extension NFKMLXChatterbox {
     /// `tfmr.model.` here (the shared decoder keeps the transformers `model.` prefix); nothing needs a
     /// transpose.
     public static func loadT3Weights(into net: NFKMLXT3Net, from url: URL) throws {
-        try applyT3(try NFKMLXWeights.loadCheckpoint(url: url).arrays, to: net)
+        try applyT3(try NFKMLXWeights.materializedCheckpoint(url: url).arrays, to: net)
     }
 
     /// Builds the T3 at the CHECKPOINT's own text vocabulary and loads it.
@@ -529,7 +529,7 @@ extension NFKMLXChatterbox {
     /// dimension is shared, and the speech vocabulary is 8194 in both. Reading the width from the
     /// checkpoint is what lets one entry load either release.
     public static func makeT3(from url: URL) throws -> NFKMLXT3Net {
-        let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let arrays = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         var configuration = NFKMLXT3Configuration.released
         if let embedding = arrays["text_emb.weight"] {
             configuration.textVocabulary = embedding.dim(0)

@@ -222,7 +222,7 @@ public final class NFKMLXTAESD: NSObject {
     /// 4-D Conv2d weights `[out, in, kH, kW]` → MLX's `[out, kH, kW, in]`. The `[Module]`-array layout
     /// makes the numeric Sequential keys match directly, so there is no name remap.
     static func loadWeights(into net: NFKMLXTAESDNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             (transpose && value.ndim == 4) ? (key, value.transposed(0, 2, 3, 1)) : (key, value)

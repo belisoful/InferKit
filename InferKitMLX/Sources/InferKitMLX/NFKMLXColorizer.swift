@@ -319,7 +319,7 @@ public final class NFKMLXColorizer: NSObject {
     /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`. The converter has already
     /// swapped ConvTranspose weights into the same on-disk layout, so one transpose covers both.
     static func loadWeights(into net: NFKMLXColorizerNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.compactMap { key, value -> (String, MLXArray)? in
             guard !key.hasSuffix("num_batches_tracked") else { return nil }
@@ -637,7 +637,7 @@ public final class NFKMLXSiggraphColorizer: NSObject {
     /// Loads a safetensors checkpoint, remapping the reference's names and transposing 4-D weights.
     /// The upsamplers are transposed convolutions and take the other axis order.
     static func loadWeights(into net: NFKMLXSiggraphNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.compactMap { key, value -> (String, MLXArray)? in
             // The 529-class auxiliary head supervises training and inference never reads it.

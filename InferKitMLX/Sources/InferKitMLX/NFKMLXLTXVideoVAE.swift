@@ -372,7 +372,7 @@ public final class NFKMLXLTXVideoVAE: NSObject {
     /// `[out, kT, kH, kW, in]`. The causal-conv wrapper keeps the reference's `.conv` key, so the names
     /// match with no remap. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXLTXVideoVAENet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             (transpose && value.ndim == 5) ? (key, value.transposed(0, 2, 3, 4, 1)) : (key, value)

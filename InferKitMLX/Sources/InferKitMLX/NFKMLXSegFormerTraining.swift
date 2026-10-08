@@ -92,7 +92,7 @@ extension NFKMLXSegFormer {
             return net
         }
 
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
         let mapped = checkpoint.arrays.map { key, value in
             (remapReferenceKey(key),
              checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

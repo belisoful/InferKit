@@ -42,7 +42,7 @@ public final class NFKMLXEmbeddingAdapter: Module {
     /// Builds an adapter over `dimensions`-wide embeddings from a file `NFKMLXWeights.save` wrote.
     public convenience init(dimensions: Int, weightsURL: URL) throws {
         self.init(dimensions: dimensions)
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: weightsURL)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: weightsURL)
         try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: self, verifyShapes: true)
     }
 

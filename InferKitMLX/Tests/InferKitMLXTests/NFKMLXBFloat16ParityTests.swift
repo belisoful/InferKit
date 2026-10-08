@@ -699,14 +699,14 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                             patchSize: 16, positionEmbeddingSize: 10240, poolingKernelSize: 3,
                                             useClippedLinears: true))
         let embedder = NFKMLXGemma4MultimodalEmbedder(multimodalHidden: 768, textHidden: 1536)
-        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, precision: .checkpoint, remap: { key in
             guard key.hasPrefix("model.vision_tower.") else { return nil }
             return String(key.dropFirst("model.vision_tower.".count))
                 .replacingOccurrences(of: "encoder.layers.", with: "encoder_layers.")
-        }, to: vision)
-        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+        }), to: vision)
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, precision: .checkpoint, remap: { key in
             key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
-        }, to: embedder)
+        }), to: embedder)
         func recorded(_ key: String) throws -> MLXArray {
             try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
         }
@@ -750,9 +750,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         try NFKMLXGemma3nVision.loadWeights(into: net, fromDirectory: release, precision: .checkpoint)
         let embedder = NFKGemma3nMultimodalEmbedder(hiddenSize: 2048, textHiddenSize: 2048, vocabularySize: 128,
                                                     vocabularyOffset: 262_144)
-        try NFKMLXWeights.apply(NFKMLXReleaseWeights.arrays(inDirectory: release, precision: .checkpoint) { key in
+        try NFKMLXWeights.apply(NFKMLXReleaseWeights.materializedArrays(inDirectory: release, precision: .checkpoint, remap: { key in
             key.hasPrefix("model.embed_vision.") ? String(key.dropFirst("model.embed_vision.".count)) : nil
-        }, to: embedder)
+        }), to: embedder)
         func recorded(_ key: String) throws -> MLXArray {
             try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
         }

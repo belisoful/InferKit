@@ -349,7 +349,7 @@ public final class NFKMLXVoiceRestoreFactory: NSObject {
     /// GLU feed-forward, the gateloop `to_qkva`) drop their positional indices; the `final_norm` `g` and
     /// buffers are renamed / dropped. All weights are 2-D and pass through with no transpose.
     static func loadWeights(into net: NFKMLXVoiceRestore, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }
             return (name, value)

@@ -75,7 +75,7 @@ public final class NFKMLXTrOCRNet: Module {
         var visionArrays: [(String, MLXArray)] = []
         var decoderArrays: [(String, MLXArray)] = []
         for url in try NFKMLXTrOCRNet.weightFiles(in: directory) {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
             // A file `NFKMLXWeights.save` wrote (a fine-tune) holds this module's own names and layout.
             guard checkpoint.needsConvTranspose else {
                 try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: self)

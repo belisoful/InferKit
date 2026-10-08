@@ -363,7 +363,7 @@ public final class NFKMLXDCAutoencoderNet: Module {
     /// Loads a diffusers `AutoencoderDC` checkpoint. The reference's `<blocks>.<i>.<j>` `nn.Sequential`
     /// indices map onto the module's `<i>.block.<j>`; the convolution weights transpose to NHWC.
     public static func loadWeights(into net: NFKMLXDCAutoencoderNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let stageIndex = try! NSRegularExpression(pattern: "(down_blocks|up_blocks)\\.([0-9]+)\\.([0-9]+)\\.")
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = stageIndex.stringByReplacingMatches(in: key, range: NSRange(key.startIndex..., in: key),

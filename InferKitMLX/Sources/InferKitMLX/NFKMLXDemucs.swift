@@ -575,7 +575,7 @@ public final class NFKMLXDemucs: NSObject {
     /// `[in, out, kernel]` while the module's `ConvTransposed2d` over a singleton width expects
     /// `[out, kernel, 1, in]`. The plain Conv1d transpose would silently mis-shape those.
     static func loadWeights(into net: NFKMLXDemucsNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         var mapped = raw.compactMap { key, value -> (String, MLXArray)? in
             if isBottleneckKey(key) { return nil }              // handled below: two biases fold into one

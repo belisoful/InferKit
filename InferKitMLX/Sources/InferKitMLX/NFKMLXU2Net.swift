@@ -240,7 +240,7 @@ public final class NFKMLXU2Net: NSObject {
     /// ``remapReferenceKey(_:)`` so a raw release loads directly; a converted file's keys pass
     /// through it unchanged.
     static func loadWeights(into net: NFKMLXU2NetNet, from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remap(remapReferenceKey(key)),

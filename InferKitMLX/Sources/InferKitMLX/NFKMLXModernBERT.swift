@@ -407,7 +407,7 @@ public final class NFKMLXModernBERTReranker: NSObject {
         throws -> NFKMLXModernBERTReranker {
         let net = NFKMLXModernBertRerankerNet(configuration)
         if let weightsURL {
-            let mapped = try NFKMLXWeights.loadCheckpoint(url: weightsURL).arrays.map { ($0, $1) }
+            let mapped = try NFKMLXWeights.materializedCheckpoint(url: weightsURL).arrays.map { ($0, $1) }
             try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
         }
         return NFKMLXModernBERTReranker(net: net, tokenizer: tokenizer, configuration: configuration)

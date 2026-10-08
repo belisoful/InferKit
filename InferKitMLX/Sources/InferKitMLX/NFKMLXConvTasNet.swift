@@ -351,7 +351,7 @@ public final class NFKMLXConvTasNet: NSObject {
 
     /// Loads a safetensors checkpoint, transposing Conv1d weights `[out, in, k]` → MLX's `[out, k, in]`.
     static func loadWeights(into net: NFKMLXConvTasNetNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         // The slope widths the module actually has, so a shared slope can be widened to match.
         let widths = Dictionary(uniqueKeysWithValues: net.parameters().flattened()

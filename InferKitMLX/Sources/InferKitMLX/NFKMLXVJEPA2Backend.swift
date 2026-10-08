@@ -21,7 +21,9 @@ extension NFKMLXVJEPA2Net {
     /// must be supplied.
     func loadWeights(fromDirectory directory: URL, leavingFresh fresh: [String]) throws {
         let url = directory.appendingPathComponent("model.safetensors")
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url, reading: { key in
+            !(key.hasPrefix("vjepa2.") ? String(key.dropFirst("vjepa2.".count)) : key).hasPrefix("predictor.")
+        })
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
             let key = key.hasPrefix("vjepa2.") ? String(key.dropFirst("vjepa2.".count)) : key
             if key.hasPrefix("predictor.") { return nil }

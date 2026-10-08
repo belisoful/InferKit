@@ -378,7 +378,7 @@ public final class NFKMLXApollo: NSObject {
     /// rotary tables are recomputed; the band bottlenecks' and heads' `nn.Sequential` indices become
     /// `norm` / `conv`; the 1-D convolutions transpose to channels-last.
     static func loadWeights(into net: NFKMLXApolloNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped: [(String, MLXArray)] = checkpoint.arrays.compactMap { key, value in
             guard let name = remapReferenceKey(key) else { return nil }
             let tensor = value.ndim == 3 && checkpoint.needsConvTranspose ? value.transposed(0, 2, 1) : value

@@ -396,7 +396,7 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     static func loadWeights(into net: NFKMLXCosmosTokenizerNet, from urls: [URL]) throws {
         var mapped: [(String, MLXArray)] = []
         for url in urls {
-            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
             for (key, value) in checkpoint.arrays {
                 guard !derivedBufferSuffixes.contains(where: { key.hasSuffix($0) }) else { continue }
                 var array = value.asType(.float32)

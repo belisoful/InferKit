@@ -393,7 +393,7 @@ public final class NFKMLXBiSeNet: NSObject {
     /// class count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes
     /// wholesale, so loading them would silently restore the old class set.
     static func loadWeights(into net: NFKMLXBiSeNetNet, from url: URL, retargeting: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in
             (remapReferenceKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)

@@ -848,7 +848,7 @@ public final class NFKMLXWhisper: NSObject {
     /// Loads a safetensors checkpoint, transposing convolution weights: 4-D `[out,in,kH,kW]` →
     /// `[out,kH,kW,in]`, 3-D Conv1d `[out,in,k]` → `[out,k,in]`.
     static func loadWeights(into net: NFKMLXWhisperNet, from url: URL, remap: (String) -> String = { $0 }) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         // A transformers export names the same tensors its own way; translate rather than reject.
         let huggingFace = raw.keys.contains { $0.hasPrefix("model.encoder.") || $0.hasPrefix("model.decoder.") }

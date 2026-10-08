@@ -335,7 +335,7 @@ public final class NFKMLXAudioTagger: NSObject {
     /// count differs from `net`'s. MLX's `update(parameters:)` adopts a checkpoint's shapes wholesale, so
     /// loading it would silently restore the old class set.
     static func loadWeights(into net: NFKMLXAudioTaggerNet, from url: URL, retargeting: Bool = false) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         if let filterbank = raw["logmel_extractor.melW"] {
             net.frontEnd.load(filterbank: filterbank)
