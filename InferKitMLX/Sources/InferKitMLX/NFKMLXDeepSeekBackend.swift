@@ -37,15 +37,30 @@ public extension NFKMLXDeepSeekNet {
     func generate(prompt: [Int], embeddings: MLXArray? = nil, images: MLXArray? = nil,
                   options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                   onToken: ((Int) -> Bool)? = nil) -> [Int] {
+        generate(prompt: prompt, embeddings: embeddings, images: images, options: options,
+                 promptCache: nil, onToken: onToken)
+    }
+
+    /// ``generate(prompt:embeddings:images:options:onToken:)`` continuing a conversation's kept
+    /// prefill where the prompt extends it, and leaving `promptCache` holding this prompt's prefill.
+    /// A prompt with pictures empties it and prefills from the start.
+    internal func generate(prompt: [Int], embeddings: MLXArray?, images: MLXArray?,
+                           options: NFKMLXGenerationOptions, promptCache: NFKMLXDeepSeekPromptCache?,
+                           onToken: ((Int) -> Bool)?) -> [Int] {
         guard !prompt.isEmpty else { return [] }
         if let seed = options.seed { MLXRandom.seed(seed) }
 
-        let cache = NFKMLXDeepSeekCache(configuration)
+        if embeddings != nil {
+            promptCache?.reset()
+        }
+        let continued = embeddings == nil ? promptCache : nil
+        let (cache, start) = continued?.begin(prompt) ?? (NFKMLXDeepSeekCache(configuration), 0)
         // Only the prompt carries pictures. A token the model produces is text, so every step after
         // this one embeds its own id and marks nothing, which is what holds images to the prompt.
-        var logits = prefill(prompt, embeddings: embeddings, images: images, cache: cache,
+        var logits = prefill(Array(prompt[start...]), embeddings: embeddings, images: images, cache: cache,
                              chunkSize: options.prefillChunkSize)
         eval(logits)
+        continued?.finish(prompt, cache: cache)
         var produced = [Int]()
         let cursor = options.constraint?.makeCursor()
 
@@ -146,6 +161,11 @@ final class NFKDeepSeekBackendHolder: @unchecked Sendable {
 /// token through the cache. Inference is synchronous and multi-second, so a caller runs it off the
 /// main thread and prefers `submitInferenceJobForRequest:`.
 ///
+/// A request that names its conversation under `NFKParameterConversationKey` keeps the prefill of
+/// its prompt, and the conversation's next prompt prefills only what it adds where that is exact
+/// (``NFKMLXDeepSeekPromptCache``). A run with pictures, or one the draft stack decodes, prefills
+/// from the start.
+///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXDeepSeekBackend)
 public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
@@ -155,6 +175,8 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// The vocabulary's bytes, read once and kept for every constrained request.
     private var vocabulary: NFKMLXVocabulary?
     private let generationLock = NSLock()
+    /// The named conversations' kept prefills, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXDeepSeekPromptCache>(byteBudget: 2 << 30)
     /// The tower, aligner, delimiters and preprocessor, where the release carries them.
     private let images: NFKMLXDeepSeekImageStack?
     /// The release's own draft stack, where it carries one.
@@ -206,11 +228,63 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         var keys: Set<String> = [
             NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
             NFKParameterJSONSchema, NFKMLXGenerationParameterKey.chatTemplate,
-            NFKMLXGenerationParameterKey.prefillChunkSize,
+            NFKMLXGenerationParameterKey.prefillChunkSize, NFKParameterConversationKey,
         ]
         if draft != nil { keys.insert(NFKMLXGenerationParameterKey.draftTokens) }
         return keys
     }
+
+    /// The bytes the conversations' prompt caches may hold together.
+    ///
+    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
+    /// continues from the prefill of that conversation's last prompt, so the turns of several chats
+    /// served at once each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are dropped, never the one a request is running. Lowering the budget drops down
+    /// to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.states.byteBudget = newValue
+            conversations.states.evict()
+            conversations.refresh()
+        }
+    }
+
+    /// How many conversations hold a prompt cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' prompt caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it
+    /// under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 
     /// The request inputs the backend reads.
     ///
@@ -291,11 +365,11 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             embeddings = inputs.embeddings
             spanMask = inputs.images
         }
-        let produced = generate(promptTokens, embeddings: embeddings, images: spanMask,
-                                options: options)
+        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask,
+                                          options: options, conversation: NFKMLXConversation.name(of: request))
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
                                                 outputTokens: produced.count, reasoningTokens: nil),
         ])
     }
@@ -303,7 +377,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// One generation at a time. A run threads its own cache through the shared decoder, so two
     /// interleaving their steps would read each other's positions.
     private func generate(_ tokens: [Int], embeddings: MLXArray? = nil, images: MLXArray? = nil,
-                          options: NFKMLXGenerationOptions) -> [Int] {
+                          options: NFKMLXGenerationOptions, conversation: String?) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         var resolved = options
         resolved.constraint = constraint(for: options)
@@ -311,11 +385,22 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         // logits the mask never reached, so the two mechanisms would disagree about what is legal.
         if let draft, resolved.draftTokens > 0, resolved.temperature == 0,
            resolved.constraint == nil {
-            return holder.net.generate(prompt: tokens, draft: draft, embeddings: embeddings,
-                                       images: images, options: resolved)
+            return (holder.net.generate(prompt: tokens, draft: draft, embeddings: embeddings,
+                                        images: images, options: resolved), 0)
         }
-        return holder.net.generate(prompt: tokens, embeddings: embeddings, images: images,
-                                   options: resolved)
+        let configuration = holder.net.configuration
+        let promptCache = conversation.map { name in
+            conversations.states.state(for: name) { NFKMLXDeepSeekPromptCache(configuration: configuration) }
+        }
+        defer {
+            if let conversation {
+                conversations.states.evict(keeping: conversation)
+            }
+            conversations.refresh()
+        }
+        let produced = holder.net.generate(prompt: tokens, embeddings: embeddings, images: images,
+                                           options: resolved, promptCache: promptCache, onToken: nil)
+        return (produced, promptCache?.sharedPrefixLength ?? 0)
     }
 
     /// The constraint a request asks for: a schema set on the options, or none.

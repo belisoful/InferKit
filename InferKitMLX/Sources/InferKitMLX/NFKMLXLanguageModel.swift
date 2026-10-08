@@ -641,6 +641,29 @@ public final class NFKMLXKeyValueCache {
         return true
     }
 
+    /// Whether every layer in `layers` retains at least `count` rows, so a rollback over them can
+    /// succeed. A cache shared between layer kinds leaves the other kind's slots empty.
+    func canRollback(by count: Int, layers: [Int]) -> Bool {
+        layers.allSatisfy { count <= retainedLength(layer: $0) }
+    }
+
+    /// ``rollback(by:)`` over the layers in `layers` alone, the ones a cache shared between layer
+    /// kinds serves. Returns false, and changes nothing, when one of them cannot roll back that far.
+    func rollback(by count: Int, layers: [Int]) -> Bool {
+        precondition(count >= 0, "a rollback discards a non-negative number of positions")
+        guard count > 0 else { return true }
+        guard canRollback(by: count, layers: layers) else { return false }
+        for layer in layers {
+            ends[layer] -= count
+            if let quantization, quantization.groupsKeysAlongTheSequence {
+                rollbackPerChannelKeys(layer: layer, count: count, groupSize: quantization.groupSize,
+                                       bits: quantization.bits)
+            }
+        }
+        offset -= count
+        return true
+    }
+
     /// The element type the model computes in, for a persisted cache to restore.
     var storedDTypeForExport: DType { storedDType }
 

@@ -335,12 +335,31 @@ attention and feed-forward.
   every stored array's `nbytes`, capacity included. Eviction runs after each named run, least
   recently used first, skipping the conversation that ran, so one conversation over the budget
   keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
-  does not ask for reuse drops it. A named request leaves it alone. Only `NFKMLXLanguageBackend`
-  has conversation caches; DeepSeek, Gemma 3/3n, and the prefill-only backends do not. Its
-  `backendStatus` (`conversation_caches`, `conversation_cache_bytes`,
-  `conversation_cache_byte_budget`, `prompt_cache_length`) is a snapshot refreshed under
-  `generationLock` after each run, reset, or budget change and read under `statusLock`, because the
-  counting getters take `generationLock` and a status poll would otherwise wait out a run.
+  does not ask for reuse drops it. A named request leaves it alone. `NFKMLXLanguageBackend`,
+  `NFKMLXGemma3Backend`, and `NFKMLXDeepSeekBackend` keep conversation caches; Gemma 3n, the
+  multimodal backends, and the prefill-only backends do not. The store is generic
+  (`NFKMLXConversationStates<State>`) and `NFKMLXConversationKeeper` pairs it with the status
+  snapshot; `NFKMLXConversation.name(of:)` reads the key for all three.
+  - Gemma 3 (`NFKMLXGemma3PromptCache`) keeps rows the way the dense cache does, generated ones
+    included, and rolls back through `NFKMLXGemma3Cache.rollback(by:kinds:)`. Each half of the hybrid
+    cache leaves the other kind's layer slots empty, so the plain `rollback(by:)`, which demands
+    every layer retain the rows, always refused; `rollback(by:layers:)` limits the check to the
+    layers a half serves. A prompt parting further back than the sliding window starts over, and a
+    prompt with an image resets the conversation, since `<image_soft_token>` ids are the same for
+    every image.
+  - DeepSeek (`NFKMLXDeepSeekPromptCache`) keeps only prefill-built state: a `Snapshot` taken where a
+    prompt's prefill ends. Its cache has no rollback (the window is a ring), and chunked prefill is
+    held to a single pass only for chunks of at least `minimumPrefillChunk`, so the next prompt
+    restores the snapshot and prefills the extension only when it extends the last prompt and both
+    pieces reach that length; otherwise it prefills from the start. Draft-stack runs and runs with
+    pictures do not use it. The snapshot's bytes count every captured buffer, which overstates by
+    whatever the live cache also holds while a run is in progress.
+  Each backend's `backendStatus` (`conversation_caches`, `conversation_cache_bytes`,
+  `conversation_cache_byte_budget`, and on the language backend `prompt_cache_length`) is a
+  snapshot refreshed under the generation lock after each run, reset, or budget change and read
+  under a lock of its own (the language backend's `statusLock`, the keeper's on the others),
+  because the counting getters take the generation lock and a status poll would otherwise wait out
+  a run.
   `Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9: the LLM oracle
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode

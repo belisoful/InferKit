@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import InferKit
 import MLX
 
 /// A key-value cache kept between generations.
@@ -175,59 +176,129 @@ public final class NFKMLXPromptCache {
     }
 }
 
-/// The prompt caches a backend keeps for named conversations, under one byte budget.
+/// What a backend keeps for one named conversation between requests.
+protocol NFKMLXConversationState: AnyObject {
+    /// The bytes it occupies, the unused capacity of its buffers included.
+    var allocatedBytes: Int { get }
+}
+
+extension NFKMLXPromptCache: NFKMLXConversationState {}
+
+/// The name of the conversation a request continues: its `NFKParameterConversationKey`, unless the
+/// request turns prompt reuse off with `NFKMLXGenerationParameterKey.reusesPromptCache`.
+enum NFKMLXConversation {
+    static func name(of request: NFKInferenceRequest) -> String? {
+        guard let conversation = request.parameter(forKey: NFKParameterConversationKey) as? String,
+              !conversation.isEmpty else {
+            return nil
+        }
+        if let reuse = request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber,
+           !reuse.boolValue {
+            return nil
+        }
+        return conversation
+    }
+}
+
+/// What a backend keeps for its named conversations, under one byte budget.
 ///
-/// @discussion Each conversation continues from its own cache, so turns of several chats arriving
+/// @discussion Each conversation continues from its own state, so turns of several chats arriving
 /// interleaved each prefill only what they add. Past the budget the least recently used
 /// conversations go first. The conversation a request is running is never evicted for it, so one
-/// conversation larger than the budget keeps its cache until another request needs the room. The
+/// conversation larger than the budget keeps its state until another request needs the room. The
 /// caller serializes access.
-final class NFKMLXConversationCaches {
-    private var caches: [String: NFKMLXPromptCache] = [:]
+final class NFKMLXConversationStates<State: NFKMLXConversationState> {
+    private var states: [String: State] = [:]
     /// The conversations, least recently used first.
     private var order: [String] = []
 
-    /// The bytes the caches may hold together.
+    /// The bytes the states may hold together.
     var byteBudget: Int
 
     init(byteBudget: Int) {
         self.byteBudget = byteBudget
     }
 
-    var count: Int { caches.count }
+    var count: Int { states.count }
 
-    var heldBytes: Int { caches.values.reduce(0) { $0 + $1.allocatedBytes } }
+    var heldBytes: Int { states.values.reduce(0) { $0 + $1.allocatedBytes } }
 
-    /// The conversation's cache, marked most recently used. A conversation without one, or whose
-    /// cache was built for another window or quantization, starts a new one.
-    func cache(for conversation: String, layerCount: Int, options: NFKMLXGenerationOptions) -> NFKMLXPromptCache {
+    /// The conversation's state, marked most recently used. A conversation without one, or whose
+    /// state `isUsable` refuses, starts a new one from `make`.
+    func state(for conversation: String, isUsable: (State) -> Bool = { _ in true },
+               make: () -> State) -> State {
         order.removeAll { $0 == conversation }
         order.append(conversation)
-        if let kept = caches[conversation], kept.matches(layerCount: layerCount, options: options) {
+        if let kept = states[conversation], isUsable(kept) {
             return kept
         }
-        let made = NFKMLXPromptCache(layerCount: layerCount, window: options.contextWindow,
-                                     quantization: options.cacheQuantization)
-        caches[conversation] = made
+        let made = make()
+        states[conversation] = made
         return made
     }
 
-    /// Evicts the least recently used conversations other than `kept` until the caches fit the budget.
+    /// Evicts the least recently used conversations other than `kept` until the states fit the budget.
     func evict(keeping kept: String? = nil) {
         var held = heldBytes
         for conversation in order where held > byteBudget && conversation != kept {
-            held -= caches[conversation]?.allocatedBytes ?? 0
+            held -= states[conversation]?.allocatedBytes ?? 0
             remove(conversation)
         }
     }
 
     func remove(_ conversation: String) {
-        caches[conversation] = nil
+        states[conversation] = nil
         order.removeAll { $0 == conversation }
     }
 
     func removeAll() {
-        caches = [:]
+        states = [:]
         order = []
+    }
+}
+
+/// The language backend's conversation prompt caches.
+typealias NFKMLXConversationCaches = NFKMLXConversationStates<NFKMLXPromptCache>
+
+extension NFKMLXConversationStates where State == NFKMLXPromptCache {
+    /// The conversation's cache, marked most recently used. A conversation without one, or whose
+    /// cache was built for another window or quantization, starts a new one.
+    func cache(for conversation: String, layerCount: Int, options: NFKMLXGenerationOptions) -> NFKMLXPromptCache {
+        state(for: conversation, isUsable: { $0.matches(layerCount: layerCount, options: options) }) {
+            NFKMLXPromptCache(layerCount: layerCount, window: options.contextWindow,
+                              quantization: options.cacheQuantization)
+        }
+    }
+}
+
+/// A backend's conversation states and the figures its `backendStatus` reports.
+///
+/// @discussion The states are read and written under the backend's generation lock. The figures are
+/// a snapshot ``refresh()`` takes there and ``status`` reads under a lock of its own, so a status
+/// request never waits on a run in progress.
+final class NFKMLXConversationKeeper<State: NFKMLXConversationState>: @unchecked Sendable {
+    let states: NFKMLXConversationStates<State>
+    private var figures: [String: Any]
+    private let figuresLock = NSLock()
+
+    init(byteBudget: Int) {
+        states = NFKMLXConversationStates(byteBudget: byteBudget)
+        figures = ["conversation_caches": 0, "conversation_cache_bytes": 0,
+                   "conversation_cache_byte_budget": byteBudget]
+    }
+
+    /// Records the figures ``status`` reports. Runs under the backend's generation lock.
+    func refresh() {
+        let taken: [String: Any] = ["conversation_caches": states.count,
+                                    "conversation_cache_bytes": states.heldBytes,
+                                    "conversation_cache_byte_budget": states.byteBudget]
+        figuresLock.lock(); defer { figuresLock.unlock() }
+        figures = taken
+    }
+
+    /// The figures as of the last run or change.
+    var status: [String: Any] {
+        figuresLock.lock(); defer { figuresLock.unlock() }
+        return figures
     }
 }

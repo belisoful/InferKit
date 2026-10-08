@@ -276,7 +276,9 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
   request that names its conversation under `NFKParameterConversationKey` (OpenAI's
   `prompt_cache_key` on a served chat route) continues that conversation's own cache without the
   key, so a server answering several chats at once keeps each one's prefix. The caches share
-  `conversationCacheByteBudget` (2 GiB by default), and the least recently used go first.
+  `conversationCacheByteBudget` (2 GiB by default), and the least recently used go first. The Gemma 3
+  and DeepSeek backends keep conversation caches the same way; DeepSeek continues only a prompt that
+  extends the last one by at least its largest compression ratio.
 - **`draftTokens`**, with a backend built from a main release and a draft release, decodes
   speculatively: the draft proposes, the model verifies in one pass, and the output is the model's own.
 - **`jsonOutput`** and **`choices`** constrain sampling through a grammar mask, so the reply is
@@ -729,9 +731,9 @@ run executes, so a balancer routes on the queue figures and the estimated wait.
 Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the
 machine that has it, take three parts:
 
-- **Workers.** Each hosts the MLX language backend in an `NFKInferenceServer`. The backend keeps a
-  prompt cache for each conversation a request names, under `conversationCacheByteBudget`; size it
-  to the memory the model leaves free. `maximumQueuedRunsPerModel` keeps a worker's queue short, so a
+- **Workers.** Each hosts the MLX language backend (or the Gemma 3 or DeepSeek backend) in an
+  `NFKInferenceServer`. The backend keeps a prompt cache for each conversation a request names,
+  under `conversationCacheByteBudget`; size it to the memory the model leaves free. `maximumQueuedRunsPerModel` keeps a worker's queue short, so a
   request that would wait behind it is refused at once and goes to another worker.
 - **The front.** An `NFKBalancedBackend` over the workers, hosted in an `NFKInferenceServer` of its
   own under the same model name. Clients reach the pool through the front alone. It keeps each

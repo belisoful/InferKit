@@ -2780,6 +2780,42 @@ final class NFKMLXDeepSeekTests: XCTestCase {
     // sequence through the decoder every step. The reference oracle holds three steps against the
     // reference; this holds the loop against the port's own prefill, which is the part a longer run
     // would drift in.
+    // A conversation's next prompt restores the prefill its last prompt left and prefills only what it
+    // adds, which is a chunked prefill split at the old prompt's end, so it answers as a fresh run.
+    // An extension shorter than a compressor's ratio is not such a chunk and prefills from the start.
+    func testAConversationContinuesItsLastPrefillAndAnswersAsAFreshRun() throws {
+        try requireMLXRuntime()
+        let net = oracleNet()
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 3
+        let minimum = oracleShaped.minimumPrefillChunk
+        let cache = NFKMLXDeepSeekPromptCache(configuration: oracleShaped)
+        let first = [3, 9, 14, 2, 7, 11, 5]
+        let reply = net.generate(prompt: first, embeddings: nil, images: nil, options: options,
+                                 promptCache: cache, onToken: nil)
+        XCTAssertEqual(cache.tokens, first, "only the prompt's prefill is kept")
+
+        let next = first + reply + [1, 13]
+        XCTAssertGreaterThanOrEqual(next.count - first.count, minimum)
+        let continued = net.generate(prompt: next, embeddings: nil, images: nil, options: options,
+                                     promptCache: cache, onToken: nil)
+        XCTAssertEqual(cache.sharedPrefixLength, first.count, "the extension alone prefills")
+        XCTAssertEqual(continued, net.generate(prompt: next, options: options), "the answer of a fresh run")
+
+        let short = next + [4]
+        XCTAssertLessThan(short.count - next.count, minimum)
+        let shortAnswer = net.generate(prompt: short, embeddings: nil, images: nil, options: options,
+                                       promptCache: cache, onToken: nil)
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "an extension shorter than a ratio prefills from the start")
+        XCTAssertEqual(shortAnswer, net.generate(prompt: short, options: options))
+
+        let other = [8, 8, 2, 6, 10]
+        _ = net.generate(prompt: other, embeddings: nil, images: nil, options: options, promptCache: cache, onToken: nil)
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "a prompt that does not extend the last one starts over")
+        XCTAssertEqual(cache.tokens, other)
+        XCTAssertGreaterThan(cache.allocatedBytes, 0)
+    }
+
     func testCachedGenerationMatchesRunningTheWholeSequenceEachStep() throws {
         try requireMLXRuntime()
         let net = oracleNet()

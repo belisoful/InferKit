@@ -252,6 +252,97 @@ final class NFKMLXGemma3Tests: XCTestCase {
                           tokens: NFKMLXGemma3Tokens(tokensPerImage: 3), chatTemplate: nil)
     }
 
+    /// Greedy, never stopping early, so each turn feeds the cache a full reply.
+    private var continuingOptions: NFKMLXGenerationOptions {
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 3
+        options.stopTokens = [-1]
+        return options
+    }
+
+    private func longestSharedPrefix(_ a: [Int], _ b: [Int]) -> Int {
+        zip(a, b).prefix { $0 == $1 }.count
+    }
+
+    // A conversation's next turn continues the rows its last turn left, rolled back to where the
+    // prompts part, and answers what a run from nothing answers.
+    func testAContinuedConversationAnswersAsAFreshRun() throws {
+        let model = try tinyModel()
+        let options = continuingOptions
+        let configuration = model.decoder.configuration
+        let cache = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+        let first = [2, 11, 12]
+        let reply = try model.generate(tokens: first, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.tokens, first + reply, "the prompt and every token the run fed")
+
+        let next = first + reply + [13, 11]
+        let continued = try model.generate(tokens: next, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, first.count + reply.count, "only the new message prefills")
+        XCTAssertEqual(continued, try model.generate(tokens: next, options: options), "the answer of a fresh run")
+
+        let held = cache.tokens
+        let branch = Array(held.dropLast(1)) + [15, 16]
+        let branched = try model.generate(tokens: branch, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, longestSharedPrefix(held, branch),
+                       "a prompt that parts inside the window rolls back to where it parts")
+        XCTAssertEqual(branched, try model.generate(tokens: branch, options: options))
+    }
+
+    // The sliding layers keep only their window, so a prompt that parts further back than the window
+    // reaches cannot roll back and starts the cache over.
+    func testAPromptPartingBeyondTheWindowStartsOver() throws {
+        let model = try tinyModel()
+        let options = continuingOptions
+        let configuration = model.decoder.configuration
+        let cache = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+        _ = try model.generate(tokens: [2, 11, 12, 13, 11, 12, 13, 11], image: nil, options: options,
+                               promptCache: cache) { _ in true }
+        let restart = [2, 14, 14, 14]
+        let answered = try model.generate(tokens: restart, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "the window has dropped the positions it would roll back to")
+        XCTAssertEqual(cache.tokens, restart + answered)
+        XCTAssertEqual(answered, try model.generate(tokens: restart, options: options))
+    }
+
+    // Decoding keeps the sliding layers at their window, so rolling back two positions after a
+    // two-token reply leaves fewer rows than the masks read. That rollback is refused and the run
+    // starts over; continuing would build masks one key wider than the cache.
+    func testARollbackThatWouldLeaveTheWindowShortStartsOver() throws {
+        let model = try tinyModel()
+        var options = continuingOptions
+        options.maxTokens = 2
+        let configuration = model.decoder.configuration
+        let cache = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+        let reply = try model.generate(tokens: [2, 11, 12], image: nil, options: options, promptCache: cache) { _ in true }
+        let parted = [2, 11, 12] + [reply[0] == 10 ? 14 : 10, 11, 12]
+        let answered = try model.generate(tokens: parted, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "two positions back from a full window is past what it keeps")
+        XCTAssertEqual(answered, try model.generate(tokens: parted, options: options))
+    }
+
+    func testTheBackendKeepsACacheForEachNamedConversation() throws {
+        let backend = NFKMLXGemma3Backend(model: try tinyModel(), identifier: "tiny")
+        // One reply token, so the next turn rolls back at most one position, which the window keeps.
+        func cachedTokens(_ prompt: String, conversation: String?) throws -> Int {
+            var parameters: [String: Any] = [NFKParameterTemperature: 0, NFKParameterMaxTokens: 1]
+            parameters[NFKParameterConversationKey] = conversation
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt],
+                                                                           parameters: parameters))
+            let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+            return try XCTUnwrap(usage[NFKUsageCachedTokens])
+        }
+        XCTAssertEqual(try cachedTokens("Hi", conversation: "a"), 0)
+        XCTAssertGreaterThanOrEqual(try cachedTokens("Hi Hi", conversation: "a"), 3, "the first turn's prompt is reused")
+        XCTAssertEqual(try cachedTokens("Hi Hi", conversation: nil), 0, "a request in no conversation keeps nothing")
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterConversationKey))
+        XCTAssertEqual(backend.conversationCacheCount, 1)
+        XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 1)
+        XCTAssertEqual(backend.backendStatus["conversation_cache_bytes"] as? Int, backend.conversationCacheBytes)
+        backend.resetPromptCache(forConversation: "a")
+        XCTAssertEqual(backend.conversationCacheCount, 0)
+    }
+
     func testThePromptExpandsAnImageAndTheBlockIdsMarkIt() throws {
         let model = try tinyModel()
         let ids = model.promptTokens("Hi", withImage: true)

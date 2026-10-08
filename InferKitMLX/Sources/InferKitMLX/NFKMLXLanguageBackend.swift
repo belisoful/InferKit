@@ -628,15 +628,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The conversation whose prompt cache a request continues: its `NFKParameterConversationKey`,
     /// unless the request turns reuse off.
     static func conversation(of request: NFKInferenceRequest) -> String? {
-        guard let conversation = request.parameter(forKey: NFKParameterConversationKey) as? String,
-              !conversation.isEmpty else {
-            return nil
-        }
-        if let reuse = request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber,
-           !reuse.boolValue {
-            return nil
-        }
-        return conversation
+        NFKMLXConversation.name(of: request)
     }
 
     /// Runs the tokens through the plain or the speculative loop, against the conversation's prompt

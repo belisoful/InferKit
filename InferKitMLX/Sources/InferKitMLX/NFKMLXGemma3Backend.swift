@@ -39,13 +39,18 @@ final class NFKGemma3CancelFlag: @unchecked Sendable {
 /// `MTLTexture`) in a multimodal release — the image's 256 soft tokens are placed before the text, as
 /// the reference processor places them. Returns `NFKOutputText`. `NFKParameterTemperature`,
 /// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults. A
-/// submitted job reports each token through `partialResult` and honors cancellation between tokens.
+/// submitted job reports each token through `partialResult` and honors cancellation between tokens. A
+/// request that names its conversation under `NFKParameterConversationKey` continues that
+/// conversation's own cache and prefills only what its prompt adds; a request with an image starts
+/// the conversation's cache over.
 @objc(NFKMLXGemma3Backend)
 public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     private let holder: NFKGemma3Holder
     private let identifier: String
     /// Generation is serialized: two runs through one set of networks would interleave their work.
     private let generationLock = NSLock()
+    /// The named conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXGemma3PromptCache>(byteBudget: 2 << 30)
 
     init(model: NFKMLXGemma3Model, identifier: String) {
         holder = NFKGemma3Holder(model)
@@ -71,8 +76,61 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+         NFKParameterConversationKey]
     }
+
+    /// The bytes the conversations' prompt caches may hold together.
+    ///
+    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
+    /// continues from that conversation's own cache, so the turns of several chats served at once
+    /// each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are dropped, never the one a request is running. Lowering the budget drops down
+    /// to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.states.byteBudget = newValue
+            conversations.states.evict()
+            conversations.refresh()
+        }
+    }
+
+    /// How many conversations hold a prompt cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' prompt caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it
+    /// under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages, NFKInputImage] }
@@ -114,15 +172,28 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
 
+        let conversation = NFKMLXConversation.name(of: request)
         generationLock.lock(); defer { generationLock.unlock() }
+        let configuration = model.decoder.configuration
+        let promptCache = conversation.map { name in
+            conversations.states.state(for: name) {
+                NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+            }
+        }
+        defer {
+            if let conversation {
+                conversations.states.evict(keeping: conversation)
+            }
+            conversations.refresh()
+        }
         var produced = [Int]()
-        try model.generate(tokens: ids, image: image, options: options) { token in
+        try model.generate(tokens: ids, image: image, options: options, promptCache: promptCache) { token in
             produced.append(token)
             return onToken?(token, produced) ?? true
         }
         return NFKInferenceResult(outputs: [
             NFKOutputText: model.decode(produced),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: promptCache?.sharedPrefixLength ?? 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
         ])
     }

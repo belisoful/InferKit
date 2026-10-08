@@ -183,3 +183,69 @@ public final class NFKMLXDeepSeekCache {
         engramHistory = extent > needed ? joined[0..., (extent - needed)...] : joined
     }
 }
+
+extension NFKMLXDeepSeekCache.Snapshot {
+    /// The bytes the captured buffers occupy. A buffer the live cache still holds counts here too, so
+    /// this is the most a kept snapshot can add.
+    var allocatedBytes: Int {
+        let single = window.reduce(0) { $0 + ($1?.nbytes ?? 0) } + (engramHistory?.nbytes ?? 0)
+            + (draftStates?.nbytes ?? 0)
+        let keyed = [compressed, indexKeys, pendingValues, pendingScores]
+            .reduce(0) { total, buffers in total + buffers.values.reduce(0) { $0 + $1.nbytes } }
+        return single + keyed
+    }
+}
+
+/// A DeepSeek conversation's state between generations: the cache as the last prompt's prefill left
+/// it, and that prompt's token ids.
+///
+/// @discussion Only prefill-built state is kept: the snapshot is taken where a prompt's prefill ends,
+/// before any token is decoded. A new prompt that extends the last one restores it and prefills only
+/// the extension, which is a chunked prefill split at the old prompt's end, and chunked prefill is
+/// held to a single pass for chunks of at least `minimumPrefillChunk`
+/// (`testAChunkedPrefillMatchesASinglePass`). So the extension is continued only where both pieces
+/// reach that length; any other prompt prefills from the start. The rows the reply's decode wrote are
+/// not reused, so whether a decode step equals a prefill of the same positions does not bear on the
+/// answer.
+final class NFKMLXDeepSeekPromptCache: NFKMLXConversationState {
+    let configuration: NFKMLXDeepSeekConfiguration
+    /// The last prompt's token ids, whose prefill the snapshot holds.
+    private(set) var tokens: [Int] = []
+    private var snapshot: NFKMLXDeepSeekCache.Snapshot?
+    /// How many of the last prompt's tokens came from the snapshot.
+    private(set) var sharedPrefixLength = 0
+
+    init(configuration: NFKMLXDeepSeekConfiguration) {
+        self.configuration = configuration
+    }
+
+    var allocatedBytes: Int { snapshot?.allocatedBytes ?? 0 }
+
+    /// A cache to prefill `prompt` into and the position the prefill starts at: the last prompt's
+    /// end where `prompt` extends it and both pieces reach `minimumPrefillChunk`, else the start.
+    func begin(_ prompt: [Int]) -> (cache: NFKMLXDeepSeekCache, start: Int) {
+        let cache = NFKMLXDeepSeekCache(configuration)
+        let minimum = configuration.minimumPrefillChunk
+        guard let snapshot, tokens.count >= minimum, prompt.count - tokens.count >= minimum,
+              prompt.starts(with: tokens) else {
+            sharedPrefixLength = 0
+            return (cache, 0)
+        }
+        cache.restore(snapshot)
+        sharedPrefixLength = tokens.count
+        return (cache, tokens.count)
+    }
+
+    /// Keeps `cache` as the prefill of `prompt` left it, before any token is decoded.
+    func finish(_ prompt: [Int], cache: NFKMLXDeepSeekCache) {
+        tokens = prompt
+        snapshot = cache.snapshot()
+    }
+
+    /// Forgets the kept prefill.
+    func reset() {
+        tokens = []
+        snapshot = nil
+        sharedPrefixLength = 0
+    }
+}

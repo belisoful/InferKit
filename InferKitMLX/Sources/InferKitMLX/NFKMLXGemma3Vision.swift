@@ -314,14 +314,30 @@ public final class NFKMLXGemma3Model {
     public func generate(tokens ids: [Int], image: Any? = nil,
                          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                          onToken: (Int) -> Bool = { _ in true }) throws -> [Int] {
+        try generate(tokens: ids, image: image, options: options, promptCache: nil, onToken: onToken)
+    }
+
+    /// ``generate(tokens:image:options:onToken:)`` continuing from `promptCache`, which prefills only
+    /// what `ids` adds to the tokens it holds and records what this run feeds. A prompt with an image
+    /// empties it and runs on a cache of its own.
+    @discardableResult
+    func generate(tokens ids: [Int], image: Any?, options: NFKMLXGenerationOptions,
+                  promptCache: NFKMLXGemma3PromptCache?, onToken: (Int) -> Bool) throws -> [Int] {
         let soft = try image.map { try softTokens(for: $0) }
-        let cache = NFKMLXGemma3Cache(layerCount: decoder.configuration.layerCount,
-                                      slidingWindow: decoder.configuration.slidingWindow)
+        if soft != nil {
+            promptCache?.reset()
+        }
+        let continued = soft == nil ? promptCache : nil
+        let start = continued?.align(to: ids) ?? 0
+        let cache = continued?.cache ?? NFKMLXGemma3Cache(layerCount: decoder.configuration.layerCount,
+                                                          slidingWindow: decoder.configuration.slidingWindow)
         if let seed = options.seed { MLXRandom.seed(seed) }
         let stops = options.stopTokens.isEmpty ? Set([tokens.endOfSequence, tokens.endOfTurn]) : options.stopTokens
 
-        var hidden = decoder.hiddenStates(fromEmbeddings: fusedEmbeddings(tokens: ids, softTokens: soft),
+        let fed = Array(ids[start...])
+        var hidden = decoder.hiddenStates(fromEmbeddings: fusedEmbeddings(tokens: fed, softTokens: soft),
                                           cache: cache, blockIds: blockIds(for: ids))
+        continued?.record(fed)
         var produced = [Int]()
         for _ in 0 ..< Swift.max(options.maxTokens, 0) {
             let last = decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...]).reshaped([-1])
@@ -331,6 +347,7 @@ public final class NFKMLXGemma3Model {
             if !onToken(next) { break }
             hidden = decoder.hiddenStates(
                 fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])), cache: cache)
+            continued?.record([next])
         }
         return produced
     }

@@ -646,6 +646,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   chat route reading OpenAI's `prompt_cache_key` into the key, an OpenAI client's chat reuses its
   prefix on a balanced pool of MLX servers. A chat sent without a key reuses it too, under the name
   the balancer derives from its opening messages.
+- `NFKMLXGemma3Backend` and `NFKMLXDeepSeekBackend` keep conversation caches too, with the same
+  properties and status. Gemma 3 continues its hybrid cache, rolled back to where a prompt parts, and
+  starts over when the prompt parts further back than the sliding window or carries an image.
+  DeepSeek keeps the prefill of its last prompt and continues it where the next prompt extends it by
+  at least the configuration's largest compression ratio, the shortest chunk its chunked prefill
+  holds exact; a shorter extension, a draft-stack run, or a run with pictures prefills from the start.
 
 #### Translation at parity in eight more languages and three more sizes
 

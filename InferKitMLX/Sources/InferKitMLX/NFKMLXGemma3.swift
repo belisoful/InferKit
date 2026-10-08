@@ -281,6 +281,78 @@ public final class NFKMLXGemma3Cache {
         full.advance(by: count)
         sliding.advance(by: count)
     }
+
+    /// Discards the newest `count` positions from both caches, each over the layers of its kind.
+    /// Returns false, and changes nothing, when the sliding cache would be left holding fewer than the
+    /// `min(offset, window - 1)` positions its masks read: the window has already dropped the
+    /// positions a rollback that far would need back.
+    func rollback(by count: Int, kinds: [NFKMLXGemmaAttentionKind]) -> Bool {
+        let fullLayers = kinds.indices.filter { kinds[$0] == .full }
+        let slidingLayers = kinds.indices.filter { kinds[$0] != .full }
+        let needed = Swift.min(offset - count, window - 1)
+        guard full.canRollback(by: count, layers: fullLayers),
+              sliding.canRollback(by: count, layers: slidingLayers),
+              slidingLayers.allSatisfy({ sliding.retainedLength(layer: $0) - count >= needed }) else { return false }
+        return full.rollback(by: count, layers: fullLayers) && sliding.rollback(by: count, layers: slidingLayers)
+    }
+
+    /// The bytes both caches occupy, their unused capacity included.
+    var allocatedBytes: Int { full.allocatedBytes + sliding.allocatedBytes }
+}
+
+/// A Gemma 3 hybrid cache kept between generations, with the token ids it holds rows for.
+///
+/// @discussion A chat turn's prompt is the previous turn's prompt and reply plus the new message, so
+/// rolling both caches back to the last position the new prompt shares leaves only what is new to
+/// prefill, and every retained row is one an ordinary pass wrote. The sliding cache keeps only its
+/// window, and its masks read the last `window - 1` positions, so a rollback that would leave fewer
+/// starts the cache over, as does a prompt that diverges further back than the window reaches. A
+/// prompt with an image is never continued, because its placeholder tokens are the same whatever the
+/// image is.
+final class NFKMLXGemma3PromptCache: NFKMLXConversationState {
+    private(set) var cache: NFKMLXGemma3Cache
+    /// The token ids the cache holds rows for, in order.
+    private(set) var tokens: [Int] = []
+    /// How many of the last aligned prompt's tokens the cache already held.
+    private(set) var sharedPrefixLength = 0
+    let kinds: [NFKMLXGemmaAttentionKind]
+    let slidingWindow: Int
+
+    init(kinds: [NFKMLXGemmaAttentionKind], slidingWindow: Int) {
+        self.kinds = kinds
+        self.slidingWindow = slidingWindow
+        cache = NFKMLXGemma3Cache(layerCount: kinds.count, slidingWindow: slidingWindow)
+    }
+
+    var allocatedBytes: Int { cache.allocatedBytes }
+
+    /// Rolls the cache back to the longest prefix it shares with `prompt`, at most one short of the
+    /// prompt so a token runs through the model, and returns that prefix's length.
+    func align(to prompt: [Int]) -> Int {
+        var shared = 0
+        let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
+        while shared < limit && tokens[shared] == prompt[shared] {
+            shared += 1
+        }
+        let discarded = tokens.count - shared
+        guard cache.rollback(by: discarded, kinds: kinds) else {
+            reset()
+            return 0
+        }
+        tokens.removeLast(discarded)
+        sharedPrefixLength = shared
+        return shared
+    }
+
+    /// Records tokens whose rows a pass has just written.
+    func record(_ fed: [Int]) { tokens.append(contentsOf: fed) }
+
+    /// Empties the cache.
+    func reset() {
+        cache = NFKMLXGemma3Cache(layerCount: kinds.count, slidingWindow: slidingWindow)
+        tokens = []
+        sharedPrefixLength = 0
+    }
 }
 
 /// The attention masks a Gemma 3 pass needs, one per layer kind.
