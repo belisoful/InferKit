@@ -89,6 +89,16 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   loader skips per-expert tensors (stacked lazily) and a paged load's experts, SAM 3's tower loaders
   read their tower out of the 3.44 GB file, and V-JEPA 2 skips its pretraining predictor. A raw
   PyTorch checkpoint is in memory once read, whichever reader opens it.
+- Two tests hold the split (2026-10-09). `NFKMLXLazyReadSitesTests` reads the sources and counts each
+  file's lazy `arrays(inDirectory:precision:remap:)` and `loadCheckpoint(url:)` calls against a list
+  that gives each file's reason; a new lazy read fails it until the loader reads first or the list
+  names why it stays lazy, and a stale entry fails it too. `NFKMLXLoadFootprintTests` loads synthetic
+  2 GiB releases through each reader and holds the kernel's interval footprint peak, reset before the
+  load (`proc_reset_footprint_interval`), to a budget above the result. Measured: a conversion holds
+  one 256 MiB group, a stored-type or single-file read holds nothing, and a lazy widening, the
+  control the widening test asserts exceeds its budget, holds 1216 MiB. A footprint delta needs a
+  settled start: buffers MLX releases leave `phys_footprint` over the following moments, and a
+  start read before they leave undercounts the load.
 - `NFKMLXGGUF` / `NFKMLXGGUFFormat` — the **native GGUF reader**, the sequel to the native PyTorch
   checkpoint reader, and the format most quantized language models are distributed in. Same contract:
   pure Foundation below the MLX materialization (parsing and dequantization run under `swift test`;
