@@ -71,8 +71,8 @@ public extension NFKMLXGemma3Language {
     /// Adapts a Gemma 3 decoder's attention with LoRA and trains it on token sequences.
     ///
     /// - Parameters:
-    ///   - net: the decoder, from ``network(directoryURL:precision:)`` at `.float32`, or the `decoder`
-    ///     of an `NFKMLXGemma3Model`.
+    ///   - net: the decoder, from ``network(directoryURL:precision:residency:)`` at `.float32`, or the
+    ///     `decoder` of an `NFKMLXGemma3Model`.
     ///   - examples: supplies one example per step: the token ids (from
     ///     `NFKMLXGemma3Model.promptTokens(_:withImage:)` or `chatTokens(messages:withImage:)`) and how
     ///     many leading tokens are prompt. The prompt is context and is not scored; 0 scores the whole
