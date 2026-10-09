@@ -4105,7 +4105,7 @@
       "config": {
         "IK_VAL_TRANSLATEGEMMA_27B": ""
       },
-      "note": "TranslateGemma 27B (Google, Gemma terms; gated, the Gemma acceptance covers it), 55 GB of bfloat16 that fits this machine on neither side. The reference streams the first 14 decoder layers one at a time: `TRANSLATEGEMMA_LAYERS=14 run_reference.py translategemma_streamed <out> --checkpoint <this directory>` (gemmavenv, 6 GB); the test loads the same 14 layers at .checkpoint and reads IK_PARITY_TRANSLATEGEMMA_27B."
+      "note": "TranslateGemma 27B (Google, Gemma terms; gated, the Gemma acceptance covers it), 55 GB of bfloat16 that fits this machine on neither side. The reference reads each decoder layer from the release as its forward reaches it and records what run_translategemma records: `run_reference.py translategemma_layerwise <out> --checkpoint <this directory>` (gemmavenv, bfloat16, about 5 GB); the test streams the decoder at .checkpoint and reads IK_PARITY_TRANSLATEGEMMA_27B."
     },
     {
       "key": "TRANSLATEGEMMA_4B",

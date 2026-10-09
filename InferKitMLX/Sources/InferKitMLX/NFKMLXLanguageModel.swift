@@ -315,6 +315,12 @@ public final class NFKMLXKeyValueCache {
     /// Rows a layer currently holds.
     public func retainedLength(layer: Int = 0) -> Int { ends[layer] - starts[layer] }
 
+    /// Every array the cache holds for `layer`.
+    func arrays(layer: Int) -> [MLXArray] {
+        [keys, values, keyScales, keyBiases, valueScales, valueBiases,
+         keyGroups, keyGroupScales, keyGroupBiases, keyResidual].compactMap { $0[layer] }
+    }
+
     /// The bytes the cache's arrays occupy, their unused capacity included.
     var allocatedBytes: Int {
         [keys, values, keyScales, keyBiases, valueScales, valueBiases,

@@ -409,6 +409,9 @@ public final class NFKMLXGemma3Net: Module {
 
     public let configuration: NFKMLXGemma3Configuration
     private let embeddingScale: Float
+    /// The layers a streamed load leaves in the release, read in their turn on every pass; nil where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
 
     public init(_ c: NFKMLXGemma3Configuration) {
         configuration = c
@@ -432,6 +435,24 @@ public final class NFKMLXGemma3Net: Module {
                              blockIds: [Int]? = nil) -> MLXArray {
         var trace = [MLXArray]()
         return forward(embeddings, cache: cache, blockIds: blockIds, trace: &trace)
+    }
+
+    /// Throws the first failed read of a streamed layer. A pass skips a layer it could not read, so a
+    /// caller holding a streamed decoder checks after each pass. Nothing is thrown where every layer is
+    /// held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
+    /// Throws for a streamed decoder: its streamed layers are read from the release on every pass and
+    /// hold no parameters between passes for an optimizer to update.
+    func requireHeldLayers() throws {
+        guard layerStream == nil else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed Gemma 3 decoder does not train; load it with a residency that holds every layer")
+        }
     }
 
     /// The output projection on its own: post-norm hidden states → logits, tied to the embedding and
@@ -469,8 +490,18 @@ public final class NFKMLXGemma3Net: Module {
         trace.append(hidden)
         for (index, layer) in layers.enumerated() {
             let kind = c.layerTypes[index]
-            hidden = layer(hidden, mask: kind == .full ? masks.full : masks.sliding,
-                           cache: cache?.cache(for: kind), layer: index)
+            let layerCache = cache?.cache(for: kind)
+            let mask = kind == .full ? masks.full : masks.sliding
+            if let layerStream, layerStream.streams(index) {
+                guard layerStream.install(index, into: layer) else {
+                    trace.append(hidden)
+                    continue
+                }
+                hidden = layer(hidden, mask: mask, cache: layerCache, layer: index)
+                layerStream.release(index, from: layer, after: [hidden] + (layerCache?.arrays(layer: index) ?? []))
+            } else {
+                hidden = layer(hidden, mask: mask, cache: layerCache, layer: index)
+            }
             trace.append(hidden)
         }
         cache?.advance(by: length)
@@ -609,6 +640,35 @@ public final class NFKMLXGemma3Language: NSObject {
             return String(key.dropFirst(prefix.count))
         }
         return nil
+    }
+
+    /// The decoder's module key for a checkpoint key a load reads: nil for a tensor outside the decoder
+    /// or inside one of the `streamed` layers, which their stream reads.
+    static func heldDecoderName(of key: String, streamed: Set<Int>) -> String? {
+        guard let name = decoderName(of: key) else { return nil }
+        if let layer = NFKMLXLayerStream.layer(ofDecoderName: name)?.layer, streamed.contains(layer) {
+            return nil
+        }
+        return name
+    }
+
+    /// Leaves the `streamed` layers of `net` in the release at `directory`, read in their turn on every
+    /// pass, and returns the empty placeholders those layers hold between turns, named as the decoder
+    /// names them, for a strict apply of the held weights to include. Call it before anything evaluates
+    /// `net`, so the random weights the streamed layers were built with are never materialized.
+    static func stream(_ streamed: Set<Int>, of net: NFKMLXGemma3Net, directory: URL,
+                       precision: NFKMLXWeightPrecision) throws -> [(String, MLXArray)] {
+        guard !streamed.isEmpty else { return [] }
+        let stream = try NFKMLXLayerStream.streaming(directory: directory, layers: streamed, precision: precision) { key in
+            decoderName(of: key).flatMap { NFKMLXLayerStream.layer(ofDecoderName: $0) }
+        }
+        var placeholders = [(String, MLXArray)]()
+        for index in streamed.sorted() {
+            stream.vacate(index, module: net.layers[index])
+            placeholders += net.layers[index].parameters().flattened().map { ("layers.\(index).\($0)", $1) }
+        }
+        net.layerStream = stream
+        return placeholders
     }
 
     /// Loads the decoder from a released directory, single-file or sharded, taking only the language

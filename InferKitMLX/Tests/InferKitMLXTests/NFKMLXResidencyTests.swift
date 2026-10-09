@@ -111,4 +111,44 @@ final class NFKMLXResidencyTests: XCTestCase {
         XCTAssertNoThrow(try NFKMLXResidencyBudget.verifyEachStageLoads(stages, plan: placement, budget: 0, names: []),
                          "a machine that reports no budget refuses no stage")
     }
+
+    // A dense 13 GiB stage, 3 GiB outside ten 1 GiB layers. Streamed it needs the 3 GiB, two layers in
+    // flight, and the reserve: 9 GiB. A 12 GiB budget leaves 3 GiB beyond that, so three layers stay.
+    private var dense: NFKMLXStageFootprint {
+        NFKMLXStageFootprint(bytes: 13 * gib, layerBytes: Array(repeating: gib, count: 10))
+    }
+
+    func testADenseStageThatDoesNotFitStreamsTheLayersItCannotHold() throws {
+        XCTAssertEqual(dense.streamedMinimumBytes, 5 * gib)
+        let plan = try NFKMLXResidencyBudget.plan([dense], residency: .automatic, budget: 12 * gib)
+        XCTAssertTrue(plan.streams(0))
+        XCTAssertFalse(plan.holdsStagesResident)
+        XCTAssertFalse(plan.pagesExperts)
+        XCTAssertEqual(plan.heldLayers(0, of: dense), 0 ..< 3, "the first layers stay, as many as fit")
+        XCTAssertEqual(try NFKMLXResidencyBudget.plan([dense], residency: .streamed, budget: 12 * gib), plan)
+        XCTAssertNoThrow(try NFKMLXResidencyBudget.verifyEachStageLoads([dense], plan: plan, budget: 12 * gib, names: []),
+                         "a streamed stage was checked streamed")
+        XCTAssertThrowsError(try NFKMLXResidencyBudget.verifyEachStageLoads(
+            [dense], plan: try NFKMLXResidencyBudget.plan([dense], residency: .staged, budget: 12 * gib),
+            budget: 12 * gib, names: []), "staged, the same stage cannot load")
+        XCTAssertThrowsError(try NFKMLXResidencyBudget.plan([dense], residency: .automatic, budget: 8 * gib),
+                             "streamed and still too large is refused")
+        XCTAssertThrowsError(try NFKMLXResidencyBudget.plan([dense], residency: .resident, budget: 12 * gib))
+    }
+
+    func testStreamingIsChosenOnlyAgainstAKnownShortfall() throws {
+        XCTAssertEqual(try NFKMLXResidencyBudget.plan([dense], residency: .automatic, budget: 0), .staged,
+                       "a machine that reports no budget never streams on its own")
+        let told = try NFKMLXResidencyBudget.plan([dense], residency: .streamed, budget: 0)
+        XCTAssertEqual(told.heldLayers(0, of: dense), 0 ..< 0, "asked to stream there, it holds no layer")
+        let roomy = try NFKMLXResidencyBudget.plan([dense], residency: .streamed, budget: 18 * gib)
+        XCTAssertFalse(roomy.streams(0), "a stage that loads whole is not streamed")
+        XCTAssertEqual(roomy.heldLayers(0, of: dense), 0 ..< 10)
+        XCTAssertEqual(try NFKMLXResidencyBudget.plan([NFKMLXStageFootprint(bytes: 13 * gib)], residency: .automatic,
+                                                      budget: 12 * gib), .staged,
+                       "a stage without layers has nothing to stream")
+        let mixture = NFKMLXStageFootprint(bytes: 13 * gib, pageableBytes: 8 * gib, layerBytes: Array(repeating: gib, count: 10))
+        let paged = try NFKMLXResidencyBudget.plan([mixture], residency: .automatic, budget: 12 * gib)
+        XCTAssertTrue(paged.pagesExperts && !paged.streams(0), "a mixture pages before it streams")
+    }
 }

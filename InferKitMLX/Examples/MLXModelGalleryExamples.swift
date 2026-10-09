@@ -298,6 +298,12 @@ final class MLXModelGalleryExamples: XCTestCase {
         let projector = NFKMLXGemma3MultimodalProjector(visionHidden: 32, textHidden: 64, patchesPerSide: 4, tokensPerImage: 4)
         let soft = projector(tower(MLXRandom.uniform(low: -1, high: 1, [1, 64, 64, 3])))
         XCTAssertEqual(soft.shape, [1, 4, 64], "16 patches pool to 4 soft tokens at the decoder width")
+
+        // A release larger than the working set, such as the 27B, streams the decoder layers it cannot
+        // hold: NFKMLXGemma3.backend(directoryURL:precision:residency:) with `.streamed`, or `.automatic`,
+        // which streams only where the release does not fit whole. Without a release the factory refuses.
+        XCTAssertThrowsError(try NFKMLXGemma3.backend(directoryURL: URL(fileURLWithPath: "/nonexistent/gemma3"),
+                                                      precision: .checkpoint, residency: .streamed))
     }
 
     func testGemma3n() throws {

@@ -166,10 +166,13 @@ public final class NFKMLXTranslateGemma: NSObject {
     static let optionalFiles = ["generation_config.json", "special_tokens_map.json", "added_tokens.json"]
     static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
-    /// Loads a release directory as a translator.
-    public static func translator(directoryURL directory: URL,
-                                  precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXTranslateGemmaTranslator {
-        try translator(model: try NFKMLXGemma3.model(directoryURL: directory, precision: precision), directoryURL: directory)
+    /// Loads a release directory as a translator, its decoder held as `residency` says: `.automatic`
+    /// holds it whole where the release fits the working set and streams its layers where it does not
+    /// (see `NFKMLXGemma3.load(directoryURL:precision:residency:)`).
+    public static func translator(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
+                                  residency: NFKMLXResidency = .automatic) throws -> NFKMLXTranslateGemmaTranslator {
+        try translator(model: try NFKMLXGemma3.model(directoryURL: directory, precision: precision, residency: residency),
+                       directoryURL: directory)
     }
 
     /// Wraps a loaded Gemma 3 model with the release's language table.
@@ -200,7 +203,16 @@ public final class NFKMLXTranslateGemma: NSObject {
     /// Builds the backend from a release directory at the given precision.
     @objc(backendWithDirectoryURL:precision:error:)
     public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
-        NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, precision: precision))
+        try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
+    }
+
+    /// Builds the backend from a release directory at the given precision, its decoder held as
+    /// `residency` says. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, precision: precision,
+                                                            residency: residency))
     }
 
     /// Downloads a release (`google/translategemma-4b-it`; the repo is gated, so the hub needs an
@@ -275,7 +287,8 @@ public final class NFKMLXTranslateGemma: NSObject {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXFineTune.run(
+        try net.requireHeldLayers()
+        return try NFKMLXFineTune.run(
             net,
             freezing: {
                 guard let rank else {

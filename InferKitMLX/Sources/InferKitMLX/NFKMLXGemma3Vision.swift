@@ -337,6 +337,7 @@ public final class NFKMLXGemma3Model {
         let fed = Array(ids[start...])
         var hidden = decoder.hiddenStates(fromEmbeddings: fusedEmbeddings(tokens: fed, softTokens: soft),
                                           cache: cache, blockIds: blockIds(for: ids))
+        try verifyStream(clearing: promptCache)
         continued?.record(fed)
         var produced = [Int]()
         for _ in 0 ..< Swift.max(options.maxTokens, 0) {
@@ -347,9 +348,21 @@ public final class NFKMLXGemma3Model {
             if !onToken(next) { break }
             hidden = decoder.hiddenStates(
                 fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])), cache: cache)
+            try verifyStream(clearing: promptCache)
             continued?.record([next])
         }
         return produced
+    }
+
+    /// Throws a streamed decoder's failed read, emptying `promptCache`, whose cache the failed pass
+    /// left holding a skipped layer's positions.
+    private func verifyStream(clearing promptCache: NFKMLXGemma3PromptCache?) throws {
+        do {
+            try decoder.verifyStream()
+        } catch {
+            promptCache?.reset()
+            throw error
+        }
     }
 
     /// The text of a token sequence, the markers left out.

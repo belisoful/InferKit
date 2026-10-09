@@ -61,6 +61,14 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
+    /// How many decoder layers a streamed load leaves in the release and reads on every pass; 0 where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { holder.model.decoder.layerStream?.layers.count ?? 0 }
+
+    /// The bytes each pass reads from the release for its streamed layers; 0 where every layer is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { holder.model.decoder.layerStream?.bytesPerPass ?? 0 }
+
     private let modelInfoCache = NFKMLXModelInfoCache()
 
     /// The decoder's and, where the release carries them, the vision tower's and projector's parameter
@@ -236,6 +244,14 @@ public final class NFKMLXGemma3: NSObject {
     /// The loaded model.
     public var model: NFKMLXGemma3Model { holder.model }
 
+    /// How many decoder layers a streamed load leaves in the release and reads on every pass; 0 where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { holder.model.decoder.layerStream?.layers.count ?? 0 }
+
+    /// The bytes each pass reads from the release for its streamed layers; 0 where every layer is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { holder.model.decoder.layerStream?.bytesPerPass ?? 0 }
+
     init(model: NFKMLXGemma3Model) {
         holder = NFKGemma3Holder(model)
         super.init()
@@ -247,15 +263,26 @@ public final class NFKMLXGemma3: NSObject {
     /// - Parameter directory: the release directory.
     /// - Parameter precision: `.float32` (the default, what the parity records were measured at) or
     ///   `.checkpoint` to keep the released bf16, which halves the memory.
-    public static func load(directoryURL directory: URL,
-                            precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXGemma3 {
-        NFKMLXGemma3(model: try model(directoryURL: directory, precision: precision))
+    /// - Parameter residency: how the decoder is held. `.automatic` (the default) holds it whole where
+    ///   the release fits the machine's working set and streams its layers where it does not;
+    ///   `.streamed` streams the layers that do not fit; `.resident`, `.staged`, and `.paged` hold it
+    ///   whole and refuse a release that does not fit. Introduced in InferKit 0.4.0.
+    public static func load(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
+                            residency: NFKMLXResidency = .automatic) throws -> NFKMLXGemma3 {
+        NFKMLXGemma3(model: try model(directoryURL: directory, precision: precision, residency: residency))
     }
 
     /// The Objective-C entry: loads a release directory.
     @objc(gemma3WithDirectoryURL:error:)
     public static func gemma3(directoryURL: URL) throws -> NFKMLXGemma3 {
         try load(directoryURL: directoryURL)
+    }
+
+    /// The Objective-C entry: loads a release directory at float32, its decoder held as `residency`
+    /// says. Introduced in InferKit 0.4.0.
+    @objc(gemma3WithDirectoryURL:residency:error:)
+    public static func gemma3(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXGemma3 {
+        try load(directoryURL: directoryURL, residency: residency)
     }
 
     /// Answers a question about an image (greedy, through the chat template). The release must be a
@@ -271,16 +298,25 @@ public final class NFKMLXGemma3: NSObject {
         try holder.model.answer(image: nil, question: question)
     }
 
-    /// Builds a backend from a release directory.
-    public static func backend(directoryURL directory: URL,
-                               precision: NFKMLXWeightPrecision = .float32) throws -> any NFKInferenceBackend {
-        NFKMLXGemma3Backend(model: try model(directoryURL: directory, precision: precision), identifier: modelName)
+    /// Builds a backend from a release directory, its decoder held as `residency` says (see
+    /// ``load(directoryURL:precision:residency:)``).
+    public static func backend(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
+                               residency: NFKMLXResidency = .automatic) throws -> any NFKInferenceBackend {
+        NFKMLXGemma3Backend(model: try model(directoryURL: directory, precision: precision, residency: residency),
+                            identifier: modelName)
     }
 
     /// The Objective-C entry: builds a backend from a release directory.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, precision: .float32)
+    }
+
+    /// The Objective-C entry: builds a backend from a release directory at float32, its decoder held as
+    /// `residency` says. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: .float32, residency: residency)
     }
 
     static let requiredFiles = ["config.json", "tokenizer.json"]
@@ -349,10 +385,11 @@ public final class NFKMLXGemma3: NSObject {
         return kind == "gemma3" || kind == "gemma3_text"
     }
 
-    /// The model object for a release directory, every part loaded.
-    public static func model(directoryURL directory: URL,
-                             precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXGemma3Model {
-        let parts = try load(directory: directory, precision: precision, decoder: true)
+    /// The model object for a release directory, every part loaded, the decoder held as `residency`
+    /// says (see ``load(directoryURL:precision:residency:)``).
+    public static func model(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
+                             residency: NFKMLXResidency = .automatic) throws -> NFKMLXGemma3Model {
+        let parts = try load(directory: directory, precision: precision, decoder: true, residency: residency)
         guard let decoder = parts.decoder else { throw NFKMLXError.noOutput }
         return NFKMLXGemma3Model(decoder: decoder, vision: parts.vision, projector: parts.projector,
                                  tokenizer: parts.tokenizer, tokens: parts.tokens,
@@ -371,8 +408,10 @@ public final class NFKMLXGemma3: NSObject {
     }
 
     /// Everything a release directory describes, its weights read once and partitioned by prefix.
-    /// `decoder` false leaves the language model unloaded (its weights are most of the file).
-    static func load(directory: URL, precision: NFKMLXWeightPrecision, decoder wantsDecoder: Bool) throws
+    /// `decoder` false leaves the language model unloaded (its weights are most of the file). A
+    /// streamed decoder's streamed layers are not read here; their stream reads them in their turn.
+    static func load(directory: URL, precision: NFKMLXWeightPrecision, decoder wantsDecoder: Bool,
+                     residency: NFKMLXResidency = .automatic, budget: Int = NFKMLXResidencyBudget.current()) throws
         -> (decoder: NFKMLXGemma3Net?, vision: NFKMLXGemma3VisionNet?, projector: NFKMLXGemma3MultimodalProjector?,
             tokenizer: NFKMLXGemmaTokenizer, tokens: NFKMLXGemma3Tokens) {
         let configURL = directory.appendingPathComponent("config.json")
@@ -384,11 +423,15 @@ public final class NFKMLXGemma3: NSObject {
         guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directory) else {
             throw NFKMLXError.unsupportedConfiguration("the Gemma 3 release has no readable tokenizer.json")
         }
-        if wantsDecoder {
-            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
-        }
+        let streamed = wantsDecoder
+            ? try streamedLayers(directory: directory, precision: precision, includesVision: json["vision_config"] != nil,
+                                 residency: residency, budget: budget)
+            : []
 
         let decoder = wantsDecoder ? NFKMLXGemma3Net(textConfiguration) : nil
+        let placeholders = try decoder.map {
+            try NFKMLXGemma3Language.stream(streamed, of: $0, directory: directory, precision: precision)
+        } ?? []
 
         var vision: NFKMLXGemma3VisionNet?
         var projector: NFKMLXGemma3MultimodalProjector?
@@ -414,7 +457,12 @@ public final class NFKMLXGemma3: NSObject {
         var visionWeights = [(String, MLXArray)]()
         var projectorWeights = [(String, MLXArray)]()
         let wanted: (String) -> String? = { key in
-            if NFKMLXGemma3Language.decoderName(of: key) != nil { return wantsDecoder ? key : nil }
+            if NFKMLXGemma3Language.decoderName(of: key) != nil {
+                guard wantsDecoder, NFKMLXGemma3Language.heldDecoderName(of: key, streamed: streamed) != nil else {
+                    return nil
+                }
+                return key
+            }
             if visionName(of: key) != nil || projectorName(of: key) != nil { return vision != nil ? key : nil }
             return nil
         }
@@ -428,7 +476,8 @@ public final class NFKMLXGemma3: NSObject {
             }
         }
         if let decoder {
-            try NFKMLXWeights.apply(decoderWeights, to: decoder)
+            try NFKMLXWeights.apply(decoderWeights + placeholders, to: decoder)
+            decoder.layerStream?.prime()
         }
         if let vision, let projector {
             try NFKMLXWeights.apply(visionWeights, to: vision)
@@ -437,6 +486,55 @@ public final class NFKMLXGemma3: NSObject {
 
         let tokens = markerTokens(json: json, tokenizer: tokenizer, tokensPerImage: tokensPerImage)
         return (decoder, vision, projector, tokenizer, tokens)
+    }
+
+    /// The decoder layers a load leaves in the release under `residency`; empty where it holds them all.
+    ///
+    /// @discussion `.automatic` holds the decoder whole where the release passes the check every load
+    /// makes, so a release that loaded before loads the same way, and plans a stream only where that
+    /// check fails. `.streamed` always plans. Every other residency holds the decoder whole, and the
+    /// check refuses a release that does not fit.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, includesVision: Bool,
+                               residency: NFKMLXResidency, budget: Int) throws -> Set<Int> {
+        let fitsWhole = { try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision) }
+        switch residency {
+        case .automatic where (try? fitsWhole()) != nil, .resident, .staged, .paged:
+            try fitsWhole()
+            return []
+        case .automatic, .streamed:
+            let footprint = try decoderFootprint(directory: directory, precision: precision, includesVision: includesVision)
+            let plan = try NFKMLXResidencyBudget.plan([footprint], residency: residency, budget: budget)
+            guard plan.streams(0) else {
+                try fitsWhole()
+                return []
+            }
+            return Set(plan.heldLayers(0, of: footprint).upperBound ..< footprint.layerBytes.count)
+        }
+    }
+
+    /// The decoder, and the vision tower and projector where they load beside it, as one stage whose
+    /// repeated layers are counted apart, at the bytes `precision` holds them in.
+    static func decoderFootprint(directory: URL, precision: NFKMLXWeightPrecision,
+                                 includesVision: Bool) throws -> NFKMLXStageFootprint {
+        var layers = [Int: Int]()
+        var fixed = 0
+        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) {
+                let widens = precision == .float32 && (entry.dtype == "BF16" || entry.dtype == "F16")
+                let bytes = entry.byteCount * (widens ? 2 : 1)
+                if let name = NFKMLXGemma3Language.decoderName(of: key) {
+                    if let layer = NFKMLXLayerStream.layer(ofDecoderName: name)?.layer {
+                        layers[layer, default: 0] += bytes
+                    } else {
+                        fixed += bytes
+                    }
+                } else if includesVision, visionName(of: key) != nil || projectorName(of: key) != nil {
+                    fixed += bytes
+                }
+            }
+        }
+        let layerBytes = (0 ..< (layers.keys.max().map { $0 + 1 } ?? 0)).map { layers[$0] ?? 0 }
+        return NFKMLXStageFootprint(bytes: fixed + layerBytes.reduce(0, +), layerBytes: layerBytes)
     }
 
     /// The vision tower's module key for a checkpoint key, or nil for a tensor that is not the tower's.

@@ -614,67 +614,31 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     /// The 12B is 24 GB of bfloat16: the reference runs at that precision (`TRANSLATEGEMMA_DTYPE=bfloat16`)
-    /// and the port loads at `.checkpoint`, so the comparison is bfloat16 against bfloat16.
-    // The released 12B is 24 GB at bfloat16, past the working set of a 32 GB machine, so the test loads
-    // its first 24 of 48 decoder layers and holds each against the reference's hidden state at the same
-    // layer, which depends on no layer after it. The 4B runs the whole translator path (logits, greedy
-    // continuation, fine-tuning loss) through the same code.
+    /// and the port loads at `.checkpoint`, so the comparison is bfloat16 against bfloat16. The release is
+    /// past the working set of a 32 GB machine, so the decoder streams the layers it cannot hold.
     func testTranslateGemma12BMatchesTheReference() throws {
-        try checkTranslateGemmaPrefix(weightsKey: "IK_VAL_TRANSLATEGEMMA_12B", recordKey: "IK_PARITY_TRANSLATEGEMMA_12B",
-                                      layerCount: 48, kept: 24, name: "translategemma-12b")
+        try checkTranslateGemma(weightsKey: "IK_VAL_TRANSLATEGEMMA_12B", recordKey: "IK_PARITY_TRANSLATEGEMMA_12B",
+                                precision: .checkpoint, residency: .streamed, name: "translategemma-12b")
     }
 
-    /// The 27B is 55 GB of bfloat16, so neither side holds it whole: the reference streams its first
-    /// layers one at a time (`run_reference.py translategemma_streamed`, `TRANSLATEGEMMA_LAYERS`), and the
-    /// port keeps as many as the record holds, about 14 GB for 14 layers with the embeddings.
+    /// The 27B is 55 GB of bfloat16, so neither side holds it whole: the reference reads each decoder layer
+    /// as its forward reaches it (`run_reference.py translategemma_layerwise`), and the port streams the
+    /// layers it cannot hold.
     func testTranslateGemma27BMatchesTheReference() throws {
-        try checkTranslateGemmaPrefix(weightsKey: "IK_VAL_TRANSLATEGEMMA_27B", recordKey: "IK_PARITY_TRANSLATEGEMMA_27B",
-                                      layerCount: 62, kept: nil, name: "translategemma-27b")
+        try checkTranslateGemma(weightsKey: "IK_VAL_TRANSLATEGEMMA_27B", recordKey: "IK_PARITY_TRANSLATEGEMMA_27B",
+                                precision: .checkpoint, residency: .streamed, name: "translategemma-27b")
     }
 
-    /// Loads the first `kept` decoder layers at `.checkpoint` (the record's own `layers` count when nil)
-    /// and holds each layer's last-position state against the reference's.
-    private func checkTranslateGemmaPrefix(weightsKey: String, recordKey: String, layerCount: Int, kept: Int?, name: String) throws {
+    private func checkTranslateGemma(weightsKey: String, recordKey: String, precision: NFKMLXWeightPrecision,
+                                     residency: NFKMLXResidency = .automatic, name: String) throws {
         try requireMLXRuntime()
         let (directory, record) = try release(weightsKey, recordKey)
-        let kept = try kept ?? ints(XCTUnwrap(record["layers"]))[0]
-        let json = try XCTUnwrap(JSONSerialization.jsonObject(
-            with: Data(contentsOf: directory.appendingPathComponent("config.json"))) as? [String: Any])
-        var configuration = try NFKMLXGemma3Language.configuration(fromJSON: json)
-        XCTAssertEqual(configuration.layerCount, layerCount)
-        configuration.layerTypes = Array(configuration.layerTypes.prefix(kept))
-        configuration.layerCount = kept
-        let decoder = NFKMLXGemma3Net(configuration)
-        let weights = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint, remap: { key in
-            guard let name = NFKMLXGemma3Language.decoderName(of: key) else { return nil }
-            let parts = name.split(separator: ".")
-            if parts.count > 1, parts[0] == "layers", let layer = Int(parts[1]), layer >= kept { return nil }
-            return name
-        })
-        try NFKMLXWeights.apply(weights, to: decoder)
-
-        let translator = try NFKMLXTranslateGemma.translator(decoder: decoder, directoryURL: directory, precision: .checkpoint)
-        XCTAssertGreaterThan(translator.languages.count, 500)
-        let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
-        XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
-
-        // The trace holds the embeddings, then each layer's output; a whole-model record's final entry
-        // is normed, so the comparison covers the kept layers only.
-        let states = decoder.layerStates(MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count]))
-        var worst: (layer: Int, cosine: Float) = (-1, 1)
-        for index in 0 ..< kept {
-            let layerCosine = cosine(states[index][0, ids.count - 1], try XCTUnwrap(record["hidden_last.\(index)"]))
-            if layerCosine < worst.cosine { worst = (index, layerCosine) }
+        let translator = try NFKMLXTranslateGemma.translator(directoryURL: directory, precision: precision,
+                                                             residency: residency)
+        let stream = translator.model.decoder.layerStream
+        if residency == .streamed {
+            XCTAssertNotNil(stream, "a release past the working set streams")
         }
-        print("\(name): worst layer state cosine \(worst.cosine) at layer \(worst.layer) of the first \(kept)")
-        // Two bfloat16 stacks differ in accumulation order, which drifts over the layers.
-        XCTAssertGreaterThan(worst.cosine, 0.99, "a layer diverges beyond bfloat16 drift")
-    }
-
-    private func checkTranslateGemma(weightsKey: String, recordKey: String, precision: NFKMLXWeightPrecision, name: String) throws {
-        try requireMLXRuntime()
-        let (directory, record) = try release(weightsKey, recordKey)
-        let translator = try NFKMLXTranslateGemma.translator(directoryURL: directory, precision: precision)
         XCTAssertGreaterThan(translator.languages.count, 500)
         let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
         XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
@@ -700,7 +664,11 @@ final class NFKMLXTranslationTests: XCTestCase {
         let produced = try translator.generate(promptTokens: ids, maxTokens: 48)
         let reference = ints(record["continuation"]!).filter { $0 != 1 && $0 != 106 }
         XCTAssertEqual(produced, reference, "greedy continuation")
-        let text = try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: translator.defaultDecoding)
+        // A streamed decoder reads every layer it does not hold on each step, so the translation is
+        // decoded from the continuation above rather than generated a second time.
+        let text = stream == nil
+            ? try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: translator.defaultDecoding)
+            : translator.model.decode(produced).trimmingCharacters(in: .whitespacesAndNewlines)
         print("\(name):", text, "| logit cosine \(logitCosine); argmax \(agreeing)/16")
         XCTAssertFalse(text.isEmpty)
         let loss = NFKMLXTranslateGemmaObjective()(translator.model.decoder, record["tokens"]!, record["target_ids"]!)
@@ -709,6 +677,11 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0],
                        accuracy: precision == .float32 ? 1e-2 : 0.1, "fine-tuning loss")
         print("loss mine \(loss.item(Float.self)) reference \(record["loss"]!.asArray(Float.self)[0])")
+        if let stream {
+            let (bytes, seconds) = stream.readStatistics
+            print("\(name): \(stream.layers.count) of \(translator.model.decoder.configuration.layerCount) layers streamed, "
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9)))
+        }
     }
 
     // MARK: Language probes

@@ -497,6 +497,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A dense decoder larger than the working set streams its layers
+
+- `NFKMLXResidency.streamed` holds the decoder layers that fit the working set and reads each of the
+  others from the release in its turn, on every pass, the next layer read while the current one
+  computes. `.automatic` streams only a release that does not fit whole, so every release that loaded
+  before loads the same way. Gemma 3 and TranslateGemma take it: `NFKMLXGemma3.load`, `model`,
+  `backend`, `NFKMLXGemma3Language.network`, and `NFKMLXTranslateGemma.translator` and `backend` gain a
+  `residency:` argument, and Objective-C reaches it through `gemma3WithDirectoryURL:residency:error:`,
+  `backendWithDirectoryURL:residency:error:`, and TranslateGemma's
+  `backendWithDirectoryURL:precision:residency:error:`.
+- A streamed decoder computes the held decoder's values exactly. Each pass costs a read of every layer
+  it does not hold, uncached, in one `pread` per tensor into memory MLX wraps without copying.
+- `NFKMLXGemma3Backend` and `NFKMLXGemma3` report `streamedLayerCount` and `streamedBytesPerPass`. A
+  failed read is thrown from generation (`NFKMLXGemma3Net.verifyStream()`), and a streamed decoder
+  refuses to fine-tune.
+- The planner gains streamed stages: a stage declares its layers' bytes, needs everything outside them
+  plus two layers in flight, and holds its first layers while they fit what the budget leaves.
+
 #### Each bfloat16 block held to the rounding it adds itself
 
 - Every bf16 record a parity test holds an isolated seam to carries each block's own floor, `<key>.floor`:

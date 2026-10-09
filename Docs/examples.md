@@ -476,6 +476,28 @@ NFKInferenceRequest *request =
 NSString *answer = [backend runInferenceForRequest:request error:&error].text;
 ```
 
+**Streaming a dense decoder larger than the working set.** A dense decoder computes every layer on
+every token, so it has no experts to page. `NFKMLXResidency.streamed` holds the decoder layers that
+fit the machine's working set and reads each of the others from the release in its turn, on every
+pass, the next one read while the current one computes. `.automatic`, the default, streams only where
+the release does not fit whole, so a release that loads today loads the same way. A streamed decoder
+computes the held decoder's values exactly, and each pass costs a read of every layer it does not
+hold: the 27B TranslateGemma streams about 40 GB a pass from a 2 GB/s drive. Gemma 3 and TranslateGemma
+stream; a streamed decoder runs and does not fine-tune.
+
+```swift
+let big = try NFKMLXGemma3.backend(directoryURL: releaseDirectory, precision: .checkpoint, residency: .streamed)
+if let gemma = big as? NFKMLXGemma3Backend {
+    print(gemma.streamedLayerCount, gemma.streamedBytesPerPass)   // layers read per pass, and their bytes
+}
+```
+
+```objc
+id<NFKInferenceBackend> big = [NFKMLXGemma3 backendWithDirectoryURL:releaseDirectory
+                                                          residency:NFKMLXResidencyStreamed error:&error];
+NSLog(@"%ld layers streamed", (long)((NFKMLXGemma3Backend *)big).streamedLayerCount);
+```
+
 **Gemma 3n.** `NFKMLXGemma3n` runs the tri-modal E2B and E4B releases: a picture through
 MobileNetV5-300M, a clip through the Universal Speech Model Conformer, and the decoder over the fused
 prompt. It is a separate architecture from Gemma 3 — AltUp's four parallel residual copies, the LAuReL

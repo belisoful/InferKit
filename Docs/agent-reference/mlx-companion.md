@@ -250,11 +250,12 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   Support/InferKit/models` location, and the `NFKMLXDownload`/`NFKMLXHub` factories substitute it when a
   caller passes `nil`. The core hub stays strict (explicit `nil` cache → fails, asserted by a test).
 
-## Residency: staging and paging
+## Residency: staging, paging, and streaming
 
 `NFKMLXResidency` (`NFKMLXResidency.swift`) is how a model holds its weights against the working set,
-and one plan, `NFKMLXResidencyBudget.plan(_:residency:budget:)`, chooses between two mechanisms from
-each stage's `NFKMLXStageFootprint` (its bytes, and how many of them are routed experts).
+and one plan, `NFKMLXResidencyBudget.plan(_:residency:budget:)`, chooses between three mechanisms from
+each stage's `NFKMLXStageFootprint` (its bytes, how many of them are routed experts, and its repeated
+layers' bytes).
 
 - Staging changes WHEN whole stages are loaded. A model built from stages that run strictly in turn
   loads each for its turn and releases it after. FLUX.1 (CLIP-L and T5-XXL, then transformer and
@@ -268,11 +269,17 @@ each stage's `NFKMLXStageFootprint` (its bytes, and how many of them are routed 
   The language family (Qwen2-MoE, Qwen3-MoE, Mixtral, gpt-oss bf16 and MXFP4, a quantized save), the
   Gemma 4 26B-A4B mixture, the Qwen3-VL 30B-A3B decoder (fused `gate_up_proj` split per expert),
   Qwen4-Exp, Granite 4.0-H's mixtures and DeepSeek page.
+- Streaming changes WHEN one stage's layers are loaded. A dense stage too large to hold whole holds
+  the repeated layers that fit and reads each of the others from the release in its turn, on every pass
+  (`NFKMLXLayerStreaming.swift`). Gemma 3 and TranslateGemma stream.
 
 The cases: `.resident` holds everything and throws where it is known not to fit; `.staged` stages and
-never pages; `.paged` stages and pages; `.automatic` holds everything where the total fits (`holds`),
-pages where the largest stage is known not to fit whole and has experts (`!admits`), and stages
-otherwise. Staging is tried first: it costs a load per run, paging a read per step. A model without
+never pages; `.paged` stages and pages; `.streamed` stages and streams each stage with layers that is
+known not to fit whole (`!admits`), and on a machine that reports no budget streams every such stage
+holding none of its layers; `.automatic` holds everything where the total fits (`holds`), pages where
+the largest stage is known not to fit whole and has experts (`!admits`), streams where a stage with
+layers is known not to fit whole, and stages otherwise. Staging is tried first: it costs a load per run,
+paging a read per step, streaming a read of every unheld layer per pass. A model without
 experts reads `.paged` as `.staged`; a single-stage backend (a language model) has nothing to stage and
 loads resident under `.staged`.
 
@@ -345,6 +352,41 @@ Paging:
   `deepSeekBackendWithDirectoryURL:error:` are `.automatic`; the explicit `paging:` presets and
   `deepSeekPagedBackendWithDirectoryURL:…` stay for a caller choosing groups itself, and an
   `NFKMLXDeepSeekLoadOptions.paging` preset overrides its `residency`.
+
+Streaming:
+
+- A stage declares its repeated layers' bytes (`NFKMLXStageFootprint.layerBytes`, counted inside
+  `bytes`). Streamed, it needs everything outside the layers plus the two largest layers, the one
+  computing and the one being read (`streamedMinimumBytes`); a stage short of that beside the reserve is
+  refused. The plan gives each streamed stage what the budget leaves past that minimum
+  (`streamedStages`), and the stage holds its first layers, in order, while they fit (`heldLayers`).
+  `verifyEachStageLoads` skips a streamed stage.
+- `NFKMLXLayerStream` opens the release's shards with `F_NOCACHE` and reads each tensor of a layer in
+  one `pread` into page-aligned memory of its own (`posix_memalign`), which `MLXArray(rawPointer:…)`
+  wraps. MLX's Metal allocator wraps a page-aligned pointer with `newBuffer(bytesNoCopy:)` and copies
+  once, calling the finalizer at once, where Metal refuses it. A serial `.userInitiated` queue reads the
+  next streamed layer while the current one computes, cyclically, so the next pass's first layer is read
+  at the end of a pass and held until it starts.
+- A streamed layer's module is built, its parameters replaced with zero-length placeholders before
+  anything evaluates the random initialization (`vacate`), filled through `NFKMLXWeights.apply` for
+  its turn (`install`), and emptied again once its output and the cache arrays it wrote are evaluated
+  (`release`). An unevaluated output is a graph over the layer's weights and would keep them alive.
+  The held-weight apply includes the placeholders, so its coverage check still sees every layer.
+- A read failure skips the layer and is sticky (`readFailure`). `NFKMLXGemma3Net.verifyStream()` throws
+  it; `NFKMLXGemma3Model.generate` checks after every pass and empties the prompt cache it was writing.
+  The non-throwing forward APIs (`hiddenStates`, `logits`) cannot report it themselves.
+- Gemma 3 plans one stage (decoder, and the vision tower and projector where they load) from its shard
+  headers at the load precision (`NFKMLXGemma3.decoderFootprint`). `.automatic` holds the release whole
+  where `verifyFits` passes, so every load that worked before loads the same way, and plans only where
+  it fails. `.resident`, `.staged`, and `.paged` keep `verifyFits`'s refusal. A streamed decoder does
+  not fine-tune (`requireHeldLayers`).
+- A streamed pass computes the held pass's values exactly: the same stored tensors, the same exact
+  bfloat16 → float32 widening at `.float32`, the same kernels; only the evaluation boundaries move.
+- The drive: the store's 4 TB Thunderbolt SSD reads uncached at 2.12 GB/s in 64 MB `pread`s at one
+  request in flight and 2.27–2.30 GB/s at two to four (2026-10-03, cold 27B shards); 1 MB reads reach
+  0.91 GB/s, and a mapped range faulted in after `MADV_WILLNEED` 0.80 GB/s. Hence `pread` per tensor,
+  not the expert store's mapping, which suits small reads that repeat. Decode is read-bound: a layer's
+  compute is milliseconds against hundreds of milliseconds of read.
 
 Precision choice:
 

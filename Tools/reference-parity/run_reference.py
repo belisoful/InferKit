@@ -19543,6 +19543,13 @@ def run_translategemma(image, checkpoint):
     # runs the reference at the release's own precision; the port is then compared at .checkpoint.
     dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "float32"))
     model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=dtype).eval()
+    return _translategemma_record(model, tokenizer)
+
+
+def _translategemma_record(model, tokenizer):
+    """What `run_translategemma` records, from a built model: the template ids, the last 16 prompt
+    positions' logits, the last prompt position's state after every layer, the greedy continuation,
+    and the masked fine-tuning loss."""
     source_lang, target_lang = _translation_languages()
     sentence = TRANSLATION_PROBES[source_lang.split("-")[0]][1]
     messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
@@ -19576,77 +19583,89 @@ def run_translategemma(image, checkpoint):
     return logits[-16:].float().contiguous()
 
 
-def run_translategemma_streamed(image, checkpoint):
-    """TranslateGemma's first TRANSLATEGEMMA_LAYERS decoder layers (default 16) run one layer at a time,
-    for a release too large to hold whole (the 27B is 55 GB of bfloat16): the template ids and the last
-    prompt position's state entering the stack and after each layer, `hidden_last.<index>` as
-    `run_translategemma` records them, built from transformers' own `Gemma3DecoderLayer`, rotary
-    embedding, scaled embedding, and mask functions. Each layer's weights load from the shard index,
-    run, and are freed. Precision from TRANSLATEGEMMA_DTYPE (default bfloat16, the release's);
-    TRANSLATEGEMMA_ATTENTION picks the attention implementation (default sdpa, what from_pretrained
-    uses on this machine). The pair follows TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG. The
-    output is the last recorded state; no logits, greedy text, or loss, which need the whole stack."""
-    import gc
-    from safetensors import safe_open
-    from transformers import AutoConfig, AutoTokenizer
-    from transformers.masking_utils import create_causal_mask, create_sliding_window_causal_mask
-    from transformers.models.gemma3.modeling_gemma3 import (Gemma3DecoderLayer, Gemma3RotaryEmbedding,
-                                                            Gemma3TextScaledWordEmbedding)
+def run_translategemma_layerwise(image, checkpoint):
+    """`run_translategemma` for a release too large to hold whole (the 27B is 55 GB of bfloat16): the
+    same model class, entry points, and record, with each decoder layer's weights read from the release
+    as the forward reaches the layer and freed after it. The model is built on the meta device; the
+    embedding, the final norm, and the rotary tables are built on the CPU and filled, the tied head
+    shares the embedding, and a forward pre-hook on each decoder layer assigns its tensors, which a
+    forward hook returns to the meta device. Every pass, `generate`'s steps included, reads every layer.
+    Reads bypass the file cache (`F_NOCACHE`), which could not hold the release anyway. The vision tower
+    and projector are allocated uninitialized and never run (the item is text-only); they give the model
+    its device. Precision from TRANSLATEGEMMA_DTYPE (default bfloat16, the release's); TRANSLATEGEMMA_ATTENTION
+    picks the attention implementation (default sdpa, what `from_pretrained` uses on this machine)."""
+    import fcntl
+    import struct
+    from transformers import AutoConfig, AutoModelForImageTextToText, AutoTokenizer, GenerationConfig
 
-    layers = int(os.environ.get("TRANSLATEGEMMA_LAYERS", "16"))
     dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "bfloat16"))
     config = AutoConfig.from_pretrained(checkpoint)
-    config = getattr(config, "text_config", config)
-    config._attn_implementation = os.environ.get("TRANSLATEGEMMA_ATTENTION", "sdpa")
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-    source_lang, target_lang = _translation_languages()
-    sentence = TRANSLATION_PROBES[source_lang.split("-")[0]][1]
-    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
-                                              "target_lang_code": target_lang, "text": sentence}]}]
-    text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-    ids = torch.tensor([tokenizer(text, add_special_tokens=False).input_ids])
 
+    stored = {"BF16": torch.bfloat16, "F16": torch.float16, "F32": torch.float32}
+    entries, descriptors = {}, {}
     with open(os.path.join(checkpoint, "model.safetensors.index.json")) as handle:
-        weight_map = json.load(handle)["weight_map"]
-    embed_key = next(k for k in weight_map if k.endswith("embed_tokens.weight") and "vision" not in k)
+        shards = sorted(set(json.load(handle)["weight_map"].values()))
+    for shard in shards:
+        path = os.path.join(checkpoint, shard)
+        descriptor = os.open(path, os.O_RDONLY)
+        fcntl.fcntl(descriptor, fcntl.F_NOCACHE, 1)
+        descriptors[shard] = descriptor
+        (length,) = struct.unpack("<Q", os.pread(descriptor, 8, 0))
+        header = json.loads(os.pread(descriptor, length, 8))
+        for key, entry in header.items():
+            if key != "__metadata__":
+                begin, end = entry["data_offsets"]
+                entries[key] = (shard, stored[entry["dtype"]], entry["shape"], 8 + length + begin, end - begin)
+
+    def read(key):
+        shard, kind, shape, offset, count = entries[key]
+        buffer = bytearray(count)
+        view, done = memoryview(buffer), 0
+        while done < count:
+            got = os.preadv(descriptors[shard], [view[done:]], offset + done)
+            if got <= 0:
+                raise IOError(f"{shard}: {key} ends early")
+            done += got
+        return torch.frombuffer(buffer, dtype=kind).reshape(shape).to(dtype, copy=True)
+
+    embed_key = next(k for k in entries if k.endswith("embed_tokens.weight") and "vision" not in k)
     prefix = embed_key[: -len("embed_tokens.weight")]
+    with torch.device("meta"):
+        model = AutoModelForImageTextToText.from_config(
+            config, dtype=dtype, attn_implementation=os.environ.get("TRANSLATEGEMMA_ATTENTION", "sdpa"))
+    model.eval()
+    model.generation_config = GenerationConfig.from_pretrained(checkpoint)
+    text_model = model.model.language_model
+    text_config = text_model.config
+    model.model.vision_tower.to_empty(device="cpu")
+    model.model.multi_modal_projector.to_empty(device="cpu")
+    embed = type(text_model.embed_tokens)(text_config.vocab_size, text_config.hidden_size, text_config.pad_token_id,
+                                          embed_scale=text_config.hidden_size**0.5)
+    embed.weight = torch.nn.Parameter(read(embed_key), requires_grad=False)
+    text_model.embed_tokens = embed
+    model.lm_head.weight = embed.weight
+    text_model.norm.weight = torch.nn.Parameter(read(prefix + "norm.weight"), requires_grad=False)
+    text_model.rotary_emb = type(text_model.rotary_emb)(text_config)
 
-    def tensor(name):
-        with safe_open(os.path.join(checkpoint, weight_map[name]), framework="pt") as shard:
-            return shard.get_tensor(name)
+    for index, layer in enumerate(text_model.layers):
+        layer_prefix = f"{prefix}layers.{index}."
+        keys = [k for k in entries if k.startswith(layer_prefix)]
 
-    embed = Gemma3TextScaledWordEmbedding(config.vocab_size, config.hidden_size, config.pad_token_id,
-                                          embed_scale=config.hidden_size**0.5)
-    embed.weight.data = tensor(embed_key).to(dtype)
-    with torch.no_grad():
-        hidden = embed(ids)
-        position_ids = torch.arange(ids.shape[1]).unsqueeze(0)
-        mask_kwargs = {"config": config, "inputs_embeds": hidden, "attention_mask": None,
-                       "past_key_values": None, "position_ids": position_ids}
-        masks = {"full_attention": create_causal_mask(**mask_kwargs),
-                 "sliding_attention": create_sliding_window_causal_mask(**mask_kwargs)}
-        rotary = Gemma3RotaryEmbedding(config)
-        position_embeddings = {kind: rotary(hidden, position_ids, kind) for kind in set(config.layer_types)}
-        extra = {"tokens": ids[0].to(torch.int32).contiguous(),
-                 "layers": torch.tensor([layers], dtype=torch.int32),
-                 "hidden_last.0": hidden[0, -1].float().contiguous()}
-        del embed
-        for index in range(layers):
-            kind = config.layer_types[index]
-            layer = Gemma3DecoderLayer(config, index)
-            layer_prefix = f"{prefix}layers.{index}."
-            state = {k[len(layer_prefix):]: tensor(k) for k in weight_map if k.startswith(layer_prefix)}
-            layer.load_state_dict(state)
-            layer.to(dtype).eval()
-            out = layer(hidden, attention_mask=masks[kind], position_embeddings=position_embeddings[kind],
-                        position_ids=position_ids)
-            hidden = out[0] if isinstance(out, tuple) else out
-            extra[f"hidden_last.{index + 1}"] = hidden[0, -1].float().contiguous()
-            del layer, state, out
-            gc.collect()
-            print(f"layer {index} ({kind}) done", flush=True)
-    globals()["_extra"] = extra
-    return hidden[0, -1].float().contiguous()
+        def install(module, args, layer_prefix=layer_prefix, keys=keys):
+            module.load_state_dict({k[len(layer_prefix):]: read(k) for k in keys}, strict=True, assign=True)
+
+        def vacate(module, args, output):
+            module.to("meta")
+
+        layer.register_forward_pre_hook(install)
+        layer.register_forward_hook(vacate)
+
+    try:
+        return _translategemma_record(model, tokenizer)
+    finally:
+        for descriptor in descriptors.values():
+            os.close(descriptor)
 
 
 def run_trocr_loss(image, checkpoint):
@@ -20932,7 +20951,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_streamed": run_translategemma_streamed, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

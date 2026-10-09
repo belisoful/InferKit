@@ -2,7 +2,7 @@
 //  NFKMLXResidency.swift
 //  InferKitMLX
 //
-//  How a model holds its weights against the machine's working set. Two mechanisms answer it, and
+//  How a model holds its weights against the machine's working set. Three mechanisms answer it, and
 //  one plan chooses between them.
 //
 //  - Staging changes WHEN whole stages are loaded. A model built from stages that run one after
@@ -12,9 +12,12 @@
 //  - Paging changes WHERE part of one stage lives. A mixture's routed experts stay where the release
 //    stores them (`NFKMLXExpertStore`) and are materialized as the router reaches them, so a stage
 //    too large to hold whole still runs when only its routed experts are left behind.
+//  - Streaming changes WHEN one stage's layers are loaded. A dense stage too large to hold whole has
+//    no experts to leave behind, so it holds the repeated layers that fit and reads each of the others
+//    from the release in its turn (`NFKMLXLayerStream`), on every pass.
 //
-//  Neither changes what any stage computes. Staging is tried first because it costs a load per run;
-//  paging costs a read per step.
+//  None changes what any stage computes. Staging is tried first because it costs a load per run;
+//  paging costs a read per step, and streaming a read of every layer it does not hold per pass.
 //
 //  Introduced in InferKit 0.4.0.
 //
@@ -40,25 +43,45 @@ import MLX
     /// every step reads the experts it routes to that the cache does not hold. A model without routed
     /// experts holds its stages as ``staged`` does.
     case paged
+    /// Stages as ``staged`` does, and leaves a stage's repeated layers in the release where the stage
+    /// does not fit whole: it holds the layers that fit and reads each of the others in its turn, on
+    /// every pass. The way a dense model larger than the working set runs, and slower than paging,
+    /// since every pass reads every layer it does not hold. A model without streamable layers holds
+    /// its stages as ``staged`` does.
+    case streamed
 }
 
 /// What one stage weighs: every byte it holds resident, how many of those are routed experts a paged
-/// load leaves in the release, and what it would hold at a wider precision it prefers.
+/// load leaves in the release, what it would hold at a wider precision it prefers, and the repeated
+/// layers a streamed load may leave in the release.
 struct NFKMLXStageFootprint: Equatable {
     let bytes: Int
     let pageableBytes: Int
     /// The stage at a wider precision it takes where the plan can afford it, such as a text encoder
     /// stored at bfloat16 and run at float32; nil for a stage with one precision.
     let widenedBytes: Int?
+    /// Each repeated layer's bytes, in the order a pass runs them, counted inside ``bytes``; empty for a
+    /// stage that cannot stream.
+    let layerBytes: [Int]
 
-    init(bytes: Int, pageableBytes: Int = 0, widenedBytes: Int? = nil) {
+    init(bytes: Int, pageableBytes: Int = 0, widenedBytes: Int? = nil, layerBytes: [Int] = []) {
         self.bytes = bytes
         self.pageableBytes = pageableBytes
         self.widenedBytes = widenedBytes
+        self.layerBytes = layerBytes
     }
 
     /// What the stage holds with its routed experts paged.
     var unpagedBytes: Int { bytes - pageableBytes }
+
+    /// What the stage holds outside its repeated layers.
+    var unstreamableBytes: Int { bytes - layerBytes.reduce(0, +) }
+
+    /// What a streamed load of the stage needs at the least: everything outside the repeated layers,
+    /// and the two largest layers, the one computing and the one being read.
+    var streamedMinimumBytes: Int {
+        unstreamableBytes + layerBytes.sorted(by: >).prefix(2).reduce(0, +)
+    }
 }
 
 /// How a model holds its weights: whether its stages stay loaded between runs, and whether its routed
@@ -72,6 +95,9 @@ struct NFKMLXResidencyPlan: Equatable {
     let expertCacheBytes: Int
     /// The positions of the stages that load at their wider precision.
     var widenedStages: Set<Int> = []
+    /// The stages that stream their repeated layers, each with the bytes it may hold in layers beyond
+    /// the two a pass has in flight.
+    var streamedStages = [Int: Int]()
 
     static let resident = NFKMLXResidencyPlan(holdsStagesResident: true, pagesExperts: false,
                                               expertCacheBytes: 0)
@@ -80,6 +106,23 @@ struct NFKMLXResidencyPlan: Equatable {
 
     /// Whether the stage at `index` loads at its wider precision.
     func widens(_ index: Int) -> Bool { widenedStages.contains(index) }
+
+    /// Whether the stage at `index` streams its repeated layers.
+    func streams(_ index: Int) -> Bool { streamedStages[index] != nil }
+
+    /// The layers of the stage at `index` a load holds: every one where the stage does not stream, and
+    /// otherwise the first ones, in order, while their bytes fit what the plan gave the stage.
+    func heldLayers(_ index: Int, of stage: NFKMLXStageFootprint) -> Range<Int> {
+        guard let room = streamedStages[index] else { return 0 ..< stage.layerBytes.count }
+        var total = 0
+        var count = 0
+        for bytes in stage.layerBytes {
+            guard total + bytes <= room else { break }
+            total += bytes
+            count += 1
+        }
+        return 0 ..< count
+    }
 }
 
 /// The working set a staged model plans against, and the rule it plans by.
@@ -133,15 +176,22 @@ enum NFKMLXResidencyBudget {
     /// - `.staged` → stages take turns, no paging.
     /// - `.paged` → stages take turns and routed experts are paged; throws where a stage is known not
     ///   to fit even with its experts paged.
-    /// - `.automatic` → the first of those three that is known to fit. Every stage held where the
-    ///   total fits; paged where the largest stage is known not to fit whole and has experts to page;
-    ///   staged otherwise. A machine that reports no budget is staged and never paged, because paging
-    ///   is chosen only against a known shortfall.
+    /// - `.streamed` → stages take turns, and a stage known not to fit whole streams its repeated
+    ///   layers; throws where such a stage is known not to fit even streamed. On a machine that reports
+    ///   no budget every stage with layers streams and holds none of them.
+    /// - `.automatic` → the first of those that is known to fit. Every stage held where the total
+    ///   fits; paged where the largest stage is known not to fit whole and has experts to page;
+    ///   streamed where a stage with repeated layers is known not to fit whole; staged otherwise. A
+    ///   machine that reports no budget is staged and never paged or streamed, because both are chosen
+    ///   only against a known shortfall.
     ///
     /// A paged load's cache takes half of what the largest stage leaves of the budget once its
     /// unpaged weights and the reserve are counted, and never more than that stage's experts. The
     /// other half is left to the operating system's page cache, which holds the release's recently
     /// read experts. The split is a policy choice that no measurement here has tuned.
+    ///
+    /// A streamed stage holds its first layers while they fit what the budget leaves once the reserve,
+    /// everything outside the layers, and the two layers a pass has in flight are counted.
     ///
     /// A stage with a wider precision takes it where that is known to fit, and residency is decided
     /// first, at each stage's own precision:
@@ -165,6 +215,21 @@ enum NFKMLXResidencyBudget {
             return NFKMLXResidencyPlan(holdsStagesResident: false, pagesExperts: true,
                                        expertCacheBytes: max(0, min(largestPageable, headroom)))
         }
+        let streamable = stages.indices.filter { !stages[$0].layerBytes.isEmpty }
+        let oversized = streamable.filter { budget <= 0 || !admits(stages[$0].bytes, budget: budget) }
+        func streamed() throws -> NFKMLXResidencyPlan {
+            var plan = NFKMLXResidencyPlan.staged
+            for index in oversized {
+                let minimum = stages[index].streamedMinimumBytes
+                guard admits(minimum, budget: budget) else {
+                    throw NFKMLXError.unsupportedConfiguration(
+                        "stage \(index) needs \(gib(minimum)) streamed, two layers in flight, plus a "
+                        + "\(gib(reserve)) reserve, against a \(gib(budget)) working set")
+                }
+                plan.streamedStages[index] = budget > 0 ? budget - reserve - minimum : 0
+            }
+            return plan
+        }
         let placement: NFKMLXResidencyPlan
         switch residency {
         case .resident:
@@ -172,18 +237,22 @@ enum NFKMLXResidencyBudget {
                 throw NFKMLXError.unsupportedConfiguration(
                     "the stages need \(gib(total)) together plus a \(gib(reserve)) reserve, against a "
                     + "\(gib(budget)) working set; hold them staged"
-                    + (pageable ? " or paged" : ""))
+                    + (pageable ? " or paged" : "") + (streamable.isEmpty ? "" : " or streamed"))
             }
             placement = .resident
         case .staged:
             placement = .staged
         case .paged:
             placement = pageable ? try paged() : .staged
+        case .streamed:
+            placement = try streamed()
         case .automatic:
             if holds(total, budget: budget) {
                 placement = .resident
             } else if pageable, budget > 0, !holds(largest.bytes, budget: budget) {
                 placement = try paged()
+            } else if budget > 0, !oversized.isEmpty {
+                placement = try streamed()
             } else {
                 placement = .staged
             }
@@ -210,11 +279,12 @@ enum NFKMLXResidencyBudget {
 
     /// Throws where a staged placement has a stage known not to load on its own, at the precision
     /// `plan` chose for it: the refusal a single release's `verifyFits` gives, made before any stage
-    /// loads. A resident placement was checked whole when it was planned.
+    /// loads. A resident placement was checked whole when it was planned, and a streamed stage was
+    /// checked streamed.
     static func verifyEachStageLoads(_ stages: [NFKMLXStageFootprint], plan: NFKMLXResidencyPlan,
                                      budget: Int, names: [String]) throws {
         guard !plan.holdsStagesResident else { return }
-        for (index, stage) in stages.enumerated() {
+        for (index, stage) in stages.enumerated() where !plan.streams(index) {
             let bytes = plan.widens(index) ? stage.widenedBytes ?? stage.bytes
                 : (plan.pagesExperts ? stage.unpagedBytes : stage.bytes)
             guard admits(bytes, budget: budget) else {

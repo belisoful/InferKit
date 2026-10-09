@@ -28,13 +28,28 @@ public extension NFKMLXGemma3Language {
     }
 
     /// Builds a Gemma 3 decoder from a release directory at the geometry its `config.json` declares,
-    /// the decoder's tensors alone.
+    /// the decoder's tensors alone, held as `residency` says (see
+    /// `NFKMLXGemma3.load(directoryURL:precision:residency:)`).
     ///
     /// @discussion `.float32`, the default, is the precision a fine-tune adapts. The 4B decoder is about
-    /// 16 GB at float32. Introduced in InferKit 0.4.0.
-    static func network(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXGemma3Net {
+    /// 16 GB at float32. A streamed decoder runs and does not train. Introduced in InferKit 0.4.0.
+    static func network(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
+                        residency: NFKMLXResidency = .automatic) throws -> NFKMLXGemma3Net {
+        try network(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``network(directoryURL:precision:residency:)`` planned against `budget`.
+    internal static func network(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                 budget: Int) throws -> NFKMLXGemma3Net {
         let net = makeNet(try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json")))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
+        let streamed = try NFKMLXGemma3.streamedLayers(directory: directoryURL, precision: precision, includesVision: false,
+                                                       residency: residency, budget: budget)
+        let placeholders = try stream(streamed, of: net, directory: directoryURL, precision: precision)
+        let held = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, precision: precision,
+                                                               remap: { heldDecoderName(of: $0, streamed: streamed) })
+        try NFKMLXWeights.apply(held + placeholders, to: net)
+        net.layerStream?.prime()
         return net
     }
 
@@ -102,7 +117,8 @@ public extension NFKMLXGemma3Language {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXFineTune.run(
+        try net.requireHeldLayers()
+        return try NFKMLXFineTune.run(
             net,
             freezing: {
                 guard let rank else {

@@ -1127,6 +1127,20 @@
 	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(submitInferenceJobForRequest:)]);
 	XCTAssertEqualObjects(NFKMLXGemma3.modelName, @"gemma3");
 
+	// A release larger than the working set streams the decoder layers it cannot hold, reading each in
+	// its turn on every pass. NFKMLXResidencyAutomatic, the plain factories' choice, streams only where
+	// the release does not fit whole; the backend and the model report what streams:
+	//   id<NFKInferenceBackend> big = [NFKMLXGemma3 backendWithDirectoryURL:dir
+	//                                                             residency:NFKMLXResidencyStreamed error:&error];
+	//   NSInteger streamed = ((NFKMLXGemma3Backend *)big).streamedLayerCount;
+	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(backendWithDirectoryURL:residency:error:)]);
+	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(gemma3WithDirectoryURL:residency:error:)]);
+	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(streamedBytesPerPass)]);
+	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXTranslateGemma respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertNotEqual(NFKMLXResidencyStreamed, NFKMLXResidencyPaged);
+
 	NSError *error = nil;
 	id<NFKInferenceBackend> backend =
 		[NFKMLXGemma3 backendWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/gemma3"] error:&error];
