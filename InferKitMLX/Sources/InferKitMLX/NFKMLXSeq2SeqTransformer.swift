@@ -710,13 +710,19 @@ public final class NFKMLXSeq2SeqNet: Module {
         try load(arrays)
     }
 
+    /// The weight files of a release: `model.safetensors` or its shards, else `pytorch_model.bin`, else
+    /// the shards a `pytorch_model.bin.index.json` names (NLLB-200 3.3B).
     static func weightFiles(in directory: URL) throws -> [URL] {
         if let files = try? NFKMLXReleaseWeights.files(inDirectory: directory) { return files }
         let bin = directory.appendingPathComponent("pytorch_model.bin")
-        guard FileManager.default.fileExists(atPath: bin.path) else {
-            throw NFKMLXError.unsupportedConfiguration("\(directory.lastPathComponent) holds no model.safetensors or pytorch_model.bin")
+        if FileManager.default.fileExists(atPath: bin.path) { return [bin] }
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("pytorch_model.bin.index.json")),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let weightMap = json["weight_map"] as? [String: String], !weightMap.isEmpty {
+            return Set(weightMap.values).sorted().map { directory.appendingPathComponent($0) }
         }
-        return [bin]
+        throw NFKMLXError.unsupportedConfiguration(
+            "\(directory.lastPathComponent) holds no model.safetensors, pytorch_model.bin, or shard index")
     }
 
     private func load(_ arrays: [String: MLXArray]) throws {

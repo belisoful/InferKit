@@ -62,7 +62,7 @@ the following cells; each links to its example.
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
 | audio | text | `NFKRemoteTranscriptionBackend` (remote), `NFKMLXWhisper` (local) | [Audio → text](#audio--text-transcription) |
-| text | text (translation) | `NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXMADLAD`, `NFKMLXTranslateGemma` (local) | [Translation](#translation-nfkmlxmarian-nfkmlxm2m100-nfkmlxmadlad-swift-and-objective-c) |
+| text | text (translation) | `NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXNLLB`, `NFKMLXMADLAD`, `NFKMLXTranslateGemma` (local) | [Translation](#translation-nfkmlxmarian-nfkmlxm2m100-nfkmlxmadlad-swift-and-objective-c) |
 | text | audio | `NFKMLXSpeechBackend` | [Text → audio](#text--audio-speech) |
 | audio | audio(s) | `NFKMLXDemucsBackend` / `NFKMLXHTDemucsBackend` (stem separation) | [Audio → stems](#audio--stems-demucs) |
 | any | unchanged | `NFKPassthroughBackend` | [Testing](#testing-without-weights) |
@@ -1227,13 +1227,14 @@ BOOL images = capabilities.vision;                              // NFKInputImage
 BOOL declared = [remote.supportedParameterKeys containsObject:NFKParameterJSONSchema];
 ```
 
-### Translation (`NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXMADLAD`, Swift and Objective-C)
+### Translation (`NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXNLLB`, `NFKMLXMADLAD`, Swift and Objective-C)
 
-Three open-weight translators answer the same contract Apple's translator does in
+Four open-weight translators answer the same contract Apple's translator does in
 `InferKitAppleSwift`: text under `NFKInputPrompt`, the target under `NFKParameterTargetLanguage`
 (BCP-47, required), the source under `NFKParameterSourceLanguage` (optional; M2M-100 detects it), and
 the translation under `NFKOutputText`. OPUS-MT is one small model per language pair, named by two
-tags; M2M-100 covers 100 languages in one release; MADLAD-400 covers 400+ through a `<2xx>` marker;
+tags; M2M-100 covers 100 languages in one release and NLLB-200 202 on the same network (`NFKMLXNLLB`,
+four sizes from 600M to 3.3B); MADLAD-400 covers 400+ through a `<2xx>` marker;
 TranslateGemma (`NFKMLXTranslateGemma`, gated on Hugging Face) is Gemma 3 driven by its translation
 template, the strongest of the four and the largest.
 
@@ -3791,6 +3792,7 @@ let ipAdapter   = try NFKMLXTextToImage.imageAdapterBackend(configuration: .stab
 // Translation (text → text; every translator loads a release directory)
 let opusMT     = try NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil) // "opus-mt"; downloads Helsinki-NLP/opus-mt-en-de
 let m2m100     = try NFKMLXM2M100.backend(variant: .m418M, directoryURL: m2mDir)   // "m2m100"; .m1_2B, .small100 → "small100"
+let nllb       = try NFKMLXNLLB.backend(variant: .distilled600M, directoryURL: nllbDir) // "nllb-200"; 202 languages; .m1_3B, .distilled1_3B, .m3_3B
 let madlad     = try NFKMLXMADLAD.backend(directoryURL: madladDir, half: true)     // "madlad400-3b-mt"; 400+ languages, bfloat16
 let tgemma     = try NFKMLXTranslateGemma.backend(directoryURL: tgDir, precision: .checkpoint) // "translategemma"; Gemma 3 + the translation template
 let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText; .tiny … .largeV3Turbo
@@ -4616,8 +4618,8 @@ let tuned = try NFKMLXMarian.translator(
 A tuned directory holds the weights alone, so the release's geometry comes along with it as
 `net.configuration`.
 
-`NFKMLXM2M100.fineTune` and `NFKMLXMADLAD.fineTune` take the same shape (M2M-100's target ids lead with
-the `__xx__` marker; MADLAD adapts a float32 load). `NFKMLXTranslateGemma.fineTune` adapts the Gemma 3
+`NFKMLXM2M100.fineTune`, `NFKMLXNLLB.fineTune`, and `NFKMLXMADLAD.fineTune` take the same shape (M2M-100's
+target ids lead with the `__xx__` marker, NLLB's with the `xxx_Xxxx` code; MADLAD adapts a float32 load). `NFKMLXTranslateGemma.fineTune` adapts the Gemma 3
 decoder on (prompt ids, model-turn ids) pairs from `promptTokens(text:sourceCode:targetCode:)`, the prompt
 positions masked in the loss.
 

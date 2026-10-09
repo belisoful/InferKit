@@ -852,14 +852,16 @@ wider field of unported open-weight models this roadmap draws from is surveyed i
 
 Each of these unlocks a category rather than a model.
 
-- **Text translation — SHIPPED.** Three open-weight translators behind the core's translation
+- **Text translation — SHIPPED.** Four open-weight translators behind the core's translation
   contract (`NFKParameterSourceLanguage` / `NFKParameterTargetLanguage`, `NFKCapabilityTranslation`):
   OPUS-MT (`NFKMLXMarian`, one Helsinki-NLP release per pair, named by two language tags), M2M-100
-  (`NFKMLXM2M100`, 100 languages, plus SMaLL-100), and MADLAD-400 3B-MT (`NFKMLXMADLAD`, 400+
-  languages over T5). All three are at reference parity against transformers (tokenizers, encoders,
-  logits, greedy and beam outputs exact) with LoRA fine-tuning, and `NFKMLXTranslationProvider` sits
-  ahead of Apple's translator in the capability chain. NLLB-200 and SeamlessM4T stay out on their
-  non-commercial licenses; TranslateGemma (`NFKMLXTranslateGemma`, 4B / 12B / 27B) is Gemma 3 driven by its translation template and ships at reference parity on the 4B.
+  (`NFKMLXM2M100`, 100 languages, plus SMaLL-100), NLLB-200 (`NFKMLXNLLB`, 202 languages in four
+  sizes from 600M to 3.3B), and MADLAD-400 (`NFKMLXMADLAD`, 400+ languages over T5, 3B and 7B). All
+  four are at reference parity against transformers (tokenizers, encoders, logits, greedy and beam
+  outputs exact) with LoRA fine-tuning, and `NFKMLXTranslationProvider` sits ahead of Apple's
+  translator in the capability chain. TranslateGemma (`NFKMLXTranslateGemma`, 4B / 12B / 27B) is
+  Gemma 3 driven by its translation template, at reference parity on every size. SeamlessM4T is not
+  ported: its text path is NLLB's architecture, and its speech paths add a unit decoder and a vocoder.
 - **Text embeddings and reranking — SHIPPED.** Two embedders and a reranker. `Qwen3-Embedding-0.6B`
   (`NFKMLXQwen3Embedding`) is the dense decoder read one layer earlier, last-token pooled over an
   appended `<|endoftext|>` and L2-normalized. `EmbeddingGemma-300M` (`NFKMLXEmbeddingGemma`) is the

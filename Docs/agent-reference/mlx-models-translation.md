@@ -113,6 +113,24 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   (`alirezamsh/small100`, the release's own `SMALL100Tokenizer`: target marker on the source, decoder
   started plain) at reference parity: tokenizations id-exact, encoder cosine 1.0000001, logit cosine
   0.99999976 with argmax 16/16, greedy and beam token-exact, loss 0.7012323 against 0.70121324.
+- `NFKMLXNLLB` (`@objc`, `NFKMLXNLLBVariant` `.distilled600M` / `.m1_3B` / `.distilled1_3B` / `.m3_3B`) /
+  `NFKMLXNLLBTranslator` — NLLB-200 (`M2M100ForConditionalGeneration` + `NllbTokenizer`, Meta,
+  CC-BY-NC-4.0): the M2M-100 network (`model_type` `m2m_100`, 12 + 12 at 1024 for the 600M, 24 + 24 for
+  the 1.3Bs, 24 + 24 at 2048 for the 3.3B) over a 256k SentencePiece BPE vocabulary that the release
+  numbers as fairseq did: `<s>` `<pad>` `</s>` `<unk>` at 0 to 3, every model piece at its id plus one,
+  the 202 `xxx_Xxxx` codes after the vocabulary in the order `special_tokens_map.json` lists them
+  (`eng_Latn` 256047), `<mask>` last; `vocab_size` 256206 leaves two rows unused. The table is built
+  from the model file and that list (`NFKMLXNLLB.releaseTable`), no `vocab.json`. The source leads
+  with its code and ends with `</s>`; the decoder starts from `</s>` with the target code forced; the
+  decode drops markers and the four specials and trims, as `skip_special_tokens` does. A BCP-47 tag
+  maps through `NFKMLXNLLBTranslator.individualLanguage` (NLLB's picks for macrolanguages: `ar` →
+  `arb`, `fa` → `pes`, `no` → `nob`, `ms` → `zsm`, `sw` → `swh`, …) then ISO 639-3, with the tag's
+  script, the implied script (`zh` → `zho_Hans`, `zh-TW` → `zho_Hant`), or the release's one script
+  for that language; a tag that names a script the release lacks (`sr-Latn`) is unsupported, as is a
+  language it writes in two scripts when the tag names neither (`ace`). The releases name no beam
+  count and transformers' default is 1, so the default decode is greedy; `NFKMLXTranslationParameterKey.beamCount`
+  turns on a beam search, and the records hold a 5-beam one beside the greedy decode. Registered as
+  `nllb-200` (the distilled 600M). At reference parity on `facebook/nllb-200-distilled-600M`: every probe tokenization id-exact, encoder cosine 1.0000002, teacher-forced logit cosine 0.99999994 with argmax 18/18, greedy and 5-beam outputs token-exact and text-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), training loss 0.36211884 against 0.361941. The distilled 1.3B (`facebook/nllb-200-distilled-1.3B`, 5.5 GB, 24 + 24 at 1024) at reference parity: encoder cosine 1.0000001, logit cosine 0.9999999 with argmax 18/18, generations and text exact, loss 0.33422005 against 0.3340959. The 1.3B (`facebook/nllb-200-1.3B`) at reference parity: encoder cosine 0.9999999, logit cosine 1.0000001 with argmax 18/18, generations and text exact, loss 0.35767236 against 0.35754162. The 3.3B (`facebook/nllb-200-3.3B`, 17.6 GB of float32 in three `pytorch_model-*.bin` shards under `pytorch_model.bin.index.json`, which the seq2seq loader reads) at reference parity: encoder cosine 1.0000001, logit cosine 1.0 with argmax 18/18, generations and text exact, loss 0.32635206 against 0.32632384.
 - `NFKMLXMADLAD` (`@objc`) / `NFKMLXMADLADTranslator` — MADLAD-400 3B-MT (`T5ForConditionalGeneration`,
   Google, Apache-2.0): 32 + 32 T5 layers at 1024 with 16 heads of 128 and an 8192-wide gated-GELU FFN,
   a 256k unigram vocabulary, and 493 `<2xx>` target markers as user-defined pieces. Tokenization follows
@@ -205,7 +223,8 @@ and needs `MARIAN_TARGET_CODE` (the code inside `>>…<<`) on a group release. T
 `TRANSLATION_PROBES`, one list per source language (en, ja, zh, ar, vi, th, hi, ko), and the loss
 sentence is `TRANSLATION_TARGETS[target]`; the Swift tests hold the same table. A record also carries
 the reference's decoded greedy and beam text as UTF-8 (`greedy_text`, `beam_text`), which the tests hold
-byte for byte against `translate`. Further runners: `small100` (imports the release's own
+byte for byte against `translate`. Further runners: `nllb` (NllbTokenizer with `NLLB_CODES` mapping the probe tags to
+`xxx_Xxxx`), `small100` (imports the release's own
 `tokenization_small100.py`), `madlad` with `MADLAD_DTYPE=bfloat16` for the 7B, and
 `translategemma_layerwise`, which records what `run_translategemma` records for a release too large to
 hold whole: the model is built on the meta device and each decoder layer's tensors are read from the
@@ -237,6 +256,7 @@ seams of sentence 1, the greedy and beam ids and their decoded text, and the los
   and logit cosines 0.9999999 to 1.0000004, generations and text exact.
 - MADLAD-400 3B, ten pairs (zh-Hant added): tokenizations id-exact, encoder cosines 0.99999976 to
   1.0000004, logit cosines 0.99999976 to 1.0000002, generations and text exact.
+- NLLB-200 600M, ten pairs (zh-Hant as `zho_Hant`): tokenizations id-exact, encoder cosines 0.99999994 to 1.0000002, logit cosines 0.99999964 to 1.0000004, greedy and 5-beam ids and decoded text exact, losses within 1e-2; `zh-Hant` decodes to Traditional characters under `zho_Hant`.
 - TranslateGemma 4B, ten pairs: template ids exact, last-16 logit cosines 0.99999946 to 1.0000008,
   greedy continuation and text exact, losses within 1e-2. The 4B writes Simplified characters for
   `zh-Hant` (the template names both scripts "Chinese"), which the port reproduces.
@@ -276,11 +296,6 @@ Coordinator and every run through the Testing Coordinator.
 The toolkit is license agnostic: a weight license is the consumer's to read and comply with, and it does
 not block a port (user decision, 2026-10-02). Each entry below names the port cost, not a bar.
 
-- NLLB-200 (`facebook/nllb-200-distilled-600M`, `-1.3B`, `-distilled-1.3B`, `-3.3B`; CC-BY-NC-4.0) is the
-  M2M-100 architecture and loads through `NFKMLXSeq2SeqNet` unchanged. The delta is the tokenizer:
-  `sentencepiece.bpe.model` with 200 `xxx_Xxxx` codes (`eng_Latn`, `zho_Hans`, `jpn_Jpan`) as added
-  tokens, the source code at the front of the source and `</s>` at its end, the decoder started from
-  `</s>` with the target code forced. A day's port on the shipped reader.
 - SeamlessM4T v2 (`facebook/seamless-m4t-v2-large`, CC-BY-NC-4.0): its text-to-text path is an
   NLLB-style 24 + 24 encoder-decoder over the same 256k vocabulary; the speech paths add the shipped
   W2V-BERT encoder, a UnitY text-to-unit decoder, and a HiFi-GAN unit vocoder. Text-to-text is a

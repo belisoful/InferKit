@@ -4030,6 +4030,81 @@
       "note": "SMaLL-100 (MIT), the 12 + 3 M2M-100 distillation whose target marker leads the source. NFKMLXM2M100.translator(directoryURL:variant: .small100) reads the directory; tokenization_small100.py is the release's own tokenizer, which the oracle imports (`run_reference.py small100 <out> --checkpoint <this directory>`, llmvenv); the test reads IK_PARITY_SMALL100."
     },
     {
+      "key": "NLLB",
+      "directory": "nllb-200-distilled-600m",
+      "repo": "facebook/nllb-200-distilled-600M",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+        "tokenizer.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_NLLB": ""
+      },
+      "note": "NLLB-200 distilled 600M (Meta, CC-BY-NC-4.0), 2.46 GB of float32 as pytorch_model.bin. NFKMLXNLLB.translator(directoryURL:variant:) reads config.json, sentencepiece.bpe.model, and special_tokens_map.json (the 202 language codes in id order); tokenizer.json is for the oracle. Parity record: `run_reference.py nllb <out> --checkpoint <this directory>` (llmvenv; TRANSLATION_SOURCE_LANG/TRANSLATION_TARGET_LANG pick a probe pair); the test reads IK_PARITY_NLLB."
+    },
+    {
+      "key": "NLLB_DISTILLED_1_3B",
+      "directory": "nllb-200-distilled-1.3b",
+      "repo": "facebook/nllb-200-distilled-1.3B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+        "tokenizer.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_NLLB_DISTILLED_1_3B": ""
+      },
+      "note": "NLLB-200 distilled 1.3B (Meta, CC-BY-NC-4.0), 5.48 GB of float32 as pytorch_model.bin. NFKMLXNLLB.translator(directoryURL:variant:) reads config.json, sentencepiece.bpe.model, and special_tokens_map.json (the 202 language codes in id order); tokenizer.json is for the oracle. Parity record: `run_reference.py nllb <out> --checkpoint <this directory>` (llmvenv; TRANSLATION_SOURCE_LANG/TRANSLATION_TARGET_LANG pick a probe pair); the test reads IK_PARITY_NLLB_DISTILLED_1_3B."
+    },
+    {
+      "key": "NLLB_1_3B",
+      "directory": "nllb-200-1.3b",
+      "repo": "facebook/nllb-200-1.3B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+        "tokenizer.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_NLLB_1_3B": ""
+      },
+      "note": "NLLB-200 1.3B (Meta, CC-BY-NC-4.0), 5.48 GB of float32 as pytorch_model.bin. NFKMLXNLLB.translator(directoryURL:variant:) reads config.json, sentencepiece.bpe.model, and special_tokens_map.json (the 202 language codes in id order); tokenizer.json is for the oracle. Parity record: `run_reference.py nllb <out> --checkpoint <this directory>` (llmvenv; TRANSLATION_SOURCE_LANG/TRANSLATION_TARGET_LANG pick a probe pair); the test reads IK_PARITY_NLLB_1_3B."
+    },
+    {
+      "key": "NLLB_3_3B",
+      "directory": "nllb-200-3.3b",
+      "repo": "facebook/nllb-200-3.3B",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "sentencepiece.bpe.model",
+        "tokenizer.json",
+        "pytorch_model.bin.index.json",
+        "pytorch_model-00001-of-00003.bin",
+        "pytorch_model-00002-of-00003.bin",
+        "pytorch_model-00003-of-00003.bin"
+      ],
+      "config": {
+        "IK_VAL_NLLB_3_3B": ""
+      },
+      "note": "NLLB-200 3.3B (Meta, CC-BY-NC-4.0), 17.6 GB in 3 shards of float32 as pytorch_model.bin. NFKMLXNLLB.translator(directoryURL:variant:) reads config.json, sentencepiece.bpe.model, and special_tokens_map.json (the 202 language codes in id order); tokenizer.json is for the oracle. Parity record: `run_reference.py nllb <out> --checkpoint <this directory>` (llmvenv; TRANSLATION_SOURCE_LANG/TRANSLATION_TARGET_LANG pick a probe pair); the test reads IK_PARITY_NLLB_3_3B."
+    },
+    {
       "key": "M2M100_1_2B",
       "directory": "m2m100-1.2b",
       "repo": "facebook/m2m100_1.2B",

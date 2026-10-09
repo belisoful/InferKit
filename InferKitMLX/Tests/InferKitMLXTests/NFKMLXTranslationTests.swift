@@ -218,6 +218,85 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(c.activation, .relu)
     }
 
+    func testTheConfigurationReadsAnNLLBReleaseConfig() throws {
+        let config: [String: Any] = ["model_type": "m2m_100", "vocab_size": 256206, "d_model": 1024, "encoder_layers": 12,
+                                     "decoder_layers": 12, "encoder_attention_heads": 16, "encoder_ffn_dim": 4096,
+                                     "decoder_ffn_dim": 4096, "activation_function": "relu", "scale_embedding": true,
+                                     "pad_token_id": 1, "eos_token_id": 2, "decoder_start_token_id": 2, "bos_token_id": 0]
+        let c = try NFKMLXSeq2SeqConfiguration(huggingFaceConfig: config)
+        XCTAssertEqual(c.vocabularySize, 256206)
+        XCTAssertEqual(c.positions, .fairseqSinusoidal)
+        XCTAssertTrue(c.normalizeBefore)
+        XCTAssertEqual(c.decoderStartTokenId, 2)
+    }
+
+    /// The release numbers its vocabulary as fairseq did: four specials, every model piece one past
+    /// its id, the language codes after the vocabulary in the listed order, then `<mask>`.
+    func testTheNLLBReleaseTableFollowsFairseq() throws {
+        // A release's model file holds <unk>, <s>, </s> first; the synthetic one puts <unk> first on its own.
+        let model = try syntheticModel(kind: 1, pieces: [("<s>", 0), ("</s>", 0), ("\u{2581}he", -1), ("llo", -2), ("\u{2581}", -3)])
+        let segmenter = NFKMLXSentencePieceSegmenter(model: model)
+        let (entries, languageIds) = NFKMLXNLLB.releaseTable(segmenter: segmenter, languages: ["eng_Latn", "deu_Latn"])
+        XCTAssertEqual(entries.prefix(4).map(\.id), [0, 1, 2, 3])
+        XCTAssertEqual(entries.prefix(4).map(\.piece), ["<s>", "<pad>", "</s>", "<unk>"])
+        XCTAssertEqual(entries.first { $0.piece == "\u{2581}" }?.id, segmenter.id(of: "\u{2581}")! + 1)
+        XCTAssertEqual(languageIds, ["eng_Latn": segmenter.pieceCount + 1, "deu_Latn": segmenter.pieceCount + 2])
+        XCTAssertEqual(entries.last?.piece, "<mask>")
+        XCTAssertEqual(entries.last?.id, segmenter.pieceCount + 3)
+        let tokenizer = NFKMLXSentencePieceTokenizer(segmenter: segmenter, vocabularyEntries: entries, eosTokenId: 2, bosTokenId: 0)
+        let translator = NFKMLXNLLBTranslator(net: NFKMLXSeq2SeqNet(.tinyM2M100), tokenizer: tokenizer, languageIds: languageIds,
+                                              identifier: "nllb-200", beams: 5, maxTokens: 8)
+        XCTAssertEqual(translator.sourceIds(for: "hello", source: "en"),
+                       [languageIds["eng_Latn"]!, segmenter.id(of: "\u{2581}he")! + 1, segmenter.id(of: "llo")! + 1, 2])
+        XCTAssertEqual(translator.text(of: [languageIds["deu_Latn"]!, segmenter.id(of: "\u{2581}he")! + 1, segmenter.id(of: "llo")! + 1, 2]), "hello",
+                       "the marker, the end token, and the leading space are left out")
+        XCTAssertEqual(translator.text(of: [3, segmenter.id(of: "\u{2581}he")! + 1]), "he", "the unknown token is left out, as the reference's decode leaves it")
+    }
+
+    func testNLLBResolvesLanguageTagsToItsCodes() throws {
+        let model = try syntheticModel(kind: 1, pieces: [("<s>", 0), ("</s>", 0), ("a", -1)])
+        let segmenter = NFKMLXSentencePieceSegmenter(model: model)
+        let (entries, languageIds) = NFKMLXNLLB.releaseTable(segmenter: segmenter, languages: NFKMLXNLLBTranslator.languages)
+        let translator = NFKMLXNLLBTranslator(
+            net: NFKMLXSeq2SeqNet(.tinyM2M100), tokenizer: NFKMLXSentencePieceTokenizer(segmenter: segmenter, vocabularyEntries: entries, eosTokenId: 2),
+            languageIds: languageIds, identifier: "nllb-200", beams: 5, maxTokens: 8)
+        XCTAssertEqual(languageIds.count, 202)
+        XCTAssertEqual(translator.code(for: "en"), "eng_Latn")
+        XCTAssertEqual(translator.code(for: "en-GB"), "eng_Latn")
+        XCTAssertEqual(translator.code(for: "zh"), "zho_Hans")
+        XCTAssertEqual(translator.code(for: "zh-TW"), "zho_Hant")
+        XCTAssertEqual(translator.code(for: "zh-Hant"), "zho_Hant")
+        XCTAssertEqual(translator.code(for: "yue"), "yue_Hant")
+        XCTAssertEqual(translator.code(for: "ar"), "arb_Arab", "Standard Arabic for the macrolanguage")
+        XCTAssertEqual(translator.code(for: "fa"), "pes_Arab")
+        XCTAssertEqual(translator.code(for: "no"), "nob_Latn")
+        XCTAssertEqual(translator.code(for: "sr"), "srp_Cyrl")
+        XCTAssertEqual(translator.code(for: "sr-Latn"), nil, "the release writes Serbian in Cyrillic only")
+        XCTAssertEqual(translator.code(for: "ja"), "jpn_Jpan")
+        XCTAssertEqual(translator.code(for: "ko"), "kor_Hang")
+        XCTAssertEqual(translator.code(for: "pt-BR"), "por_Latn")
+        XCTAssertEqual(translator.code(for: "ace"), nil, "two scripts and no tag to choose one")
+        XCTAssertEqual(translator.code(for: "ace-Latn"), "ace_Latn")
+        XCTAssertEqual(translator.code(for: "eng_Latn"), "eng_Latn", "an NLLB code passes through")
+        XCTAssertNil(translator.code(for: "xx"))
+        XCTAssertTrue(translator.supports(language: "hi"))
+    }
+
+    func testASeq2SeqReleaseMayShardItsPyTorchWeights() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("seq2seq-shards-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let index = ["weight_map": ["model.shared.weight": "pytorch_model-00001-of-00002.bin", "model.encoder.layers.0.fc1.weight": "pytorch_model-00002-of-00002.bin",
+                                    "model.encoder.layers.0.fc2.weight": "pytorch_model-00001-of-00002.bin"]]
+        try JSONSerialization.data(withJSONObject: index).write(to: directory.appendingPathComponent("pytorch_model.bin.index.json"))
+        XCTAssertEqual(try NFKMLXSeq2SeqNet.weightFiles(in: directory).map(\.lastPathComponent),
+                       ["pytorch_model-00001-of-00002.bin", "pytorch_model-00002-of-00002.bin"])
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent("seq2seq-empty-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: empty) }
+        XCTAssertThrowsError(try NFKMLXSeq2SeqNet.weightFiles(in: empty))
+    }
+
     func testLanguageTagsCanonicalize() {
         XCTAssertEqual(NFKMLXTranslationBackend.canonical("PT_br"), "pt-br")
         XCTAssertEqual(NFKMLXTranslationBackend.primary("zh-Hant-TW"), "zh")
@@ -456,6 +535,51 @@ final class NFKMLXTranslationTests: XCTestCase {
 
     func testM2M100_1_2BMatchesTheReference() throws {
         try checkM2M100(weightsKey: "IK_VAL_M2M100_1_2B", recordKey: "IK_PARITY_M2M100_1_2B", variant: .m1_2B, name: "m2m100-1.2b")
+    }
+
+    func testNLLBMatchesTheReference() throws {
+        try checkNLLB(weightsKey: "IK_VAL_NLLB", recordKey: "IK_PARITY_NLLB", variant: .distilled600M, name: "nllb-200")
+    }
+
+    func testNLLBDistilled1_3BMatchesTheReference() throws {
+        try checkNLLB(weightsKey: "IK_VAL_NLLB_DISTILLED_1_3B", recordKey: "IK_PARITY_NLLB_DISTILLED_1_3B", variant: .distilled1_3B, name: "nllb-200-distilled-1.3b")
+    }
+
+    func testNLLB1_3BMatchesTheReference() throws {
+        try checkNLLB(weightsKey: "IK_VAL_NLLB_1_3B", recordKey: "IK_PARITY_NLLB_1_3B", variant: .m1_3B, name: "nllb-200-1.3b")
+    }
+
+    func testNLLB3_3BMatchesTheReference() throws {
+        try checkNLLB(weightsKey: "IK_VAL_NLLB_3_3B", recordKey: "IK_PARITY_NLLB_3_3B", variant: .m3_3B, name: "nllb-200-3.3b")
+    }
+
+    private func checkNLLB(weightsKey: String, recordKey: String, variant: NFKMLXNLLBVariant, name: String) throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release(weightsKey, recordKey)
+        let translator = try NFKMLXNLLB.translator(directoryURL: directory, variant: variant)
+        XCTAssertEqual(translator.languageIds["eng_Latn"], 256047)
+        for (index, sentence) in Self.sentences.enumerated() {
+            XCTAssertEqual(translator.sourceIds(for: sentence, source: "en"), ints(record["tokens_\(index)"]!), "tokens of \(sentence)")
+        }
+        var decoding = translator.defaultDecoding
+        decoding.maxTokens = 64
+        decoding.forcedFirstToken = translator.languageIds["deu_Latn"]
+        checkSeams(translator.net, encode: { translator.net.encode($0) }, decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
+                   record: record, decoding: decoding, sourceIds: translator.sourceIds(for: Self.sentences[1], source: "en"), name: name)
+        var greedy = decoding
+        greedy.beams = 1
+        let greedyText = try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: greedy)
+        XCTAssertEqual(greedyText, utf8(record["greedy_text"]!), "\(name) greedy text")
+        var beam = decoding
+        beam.beams = ints(record["beams"]!)[0]
+        let beamText = try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: beam)
+        XCTAssertEqual(beamText, utf8(record["beam_text"]!), "\(name) beam text")
+        print("\(name):", greedyText)
+        XCTAssertEqual([translator.languageIds["deu_Latn"]!] + translator.tokenizer.encode(Self.target, dummyPrefix: nil) + [2],
+                       ints(record["target_ids"]!), "target tokenization")
+        let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
+        XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "training loss")
+        print("loss mine \(loss.item(Float.self)) reference \(record["loss"]!.asArray(Float.self)[0])")
     }
 
     /// SMaLL-100 carries the target marker on the source and starts its decoder plain.
@@ -917,6 +1041,43 @@ final class NFKMLXTranslationTests: XCTestCase {
             XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) training loss")
         }
         if ran == 0 { throw XCTSkip("no IK_VAL_MARIAN_<pair> release with its IK_PARITY_MARIAN_<pair> record is present") }
+    }
+
+    func testNLLBProbePairsMatchTheReference() throws {
+        try requireMLXRuntime()
+        let pairs = Self.multilingualProbePairs("NLLB", weightsKey: "IK_VAL_NLLB")
+        let records = try pairs.compactMap { pair in try record(pair.recordKey).map { (pair, $0) } }
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_NLLB"], !records.isEmpty else {
+            throw XCTSkip("set IK_VAL_NLLB and at least one IK_PARITY_NLLB_<pair> record")
+        }
+        let translator = try NFKMLXNLLB.translator(directoryURL: URL(fileURLWithPath: directory))
+        for (pair, record) in records {
+            let sentences = Self.probes[pair.source]!
+            let targetCode = translator.code(for: pair.target)!
+            for (index, sentence) in sentences.enumerated() {
+                XCTAssertEqual(translator.sourceIds(for: sentence, source: pair.source), ints(record["tokens_\(index)"]!),
+                               "\(pair.recordKey) tokens of \(sentence)")
+            }
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 64
+            decoding.forcedFirstToken = translator.languageIds[targetCode]
+            checkSeams(translator.net, encode: { translator.net.encode($0) },
+                       decode: { translator.net.decode($0, memory: $1, cache: translator.net.makeCache()) },
+                       record: record, decoding: decoding, sourceIds: translator.sourceIds(for: sentences[1], source: pair.source), name: pair.recordKey)
+            var greedy = decoding
+            greedy.beams = 1
+            let greedyText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: greedy)
+            XCTAssertEqual(greedyText, utf8(record["greedy_text"]!), "\(pair.recordKey) greedy text")
+            var beam = decoding
+            beam.beams = ints(record["beams"]!)[0]
+            let beamText = try translator.translate(sentences[1], from: pair.source, to: pair.target, decoding: beam)
+            XCTAssertEqual(beamText, utf8(record["beam_text"]!), "\(pair.recordKey) beam text")
+            print("\(pair.recordKey):", greedyText)
+            XCTAssertEqual([translator.languageIds[targetCode]!] + translator.tokenizer.encode(Self.targets[pair.target]!, dummyPrefix: nil) + [2],
+                           ints(record["target_ids"]!), "\(pair.recordKey) target tokenization")
+            let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
+            XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: 1e-2, "\(pair.recordKey) training loss")
+        }
     }
 
     func testM2M100ProbePairsMatchTheReference() throws {

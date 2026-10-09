@@ -165,6 +165,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 | --- | --- | --- |
 | ``NFKMLXMarian`` | `opus-mt` | OPUS-MT, one Helsinki-NLP release per language pair (or target group); built from a directory, a repo, or two language tags |
 | ``NFKMLXM2M100`` | `m2m100`, `small100` | M2M-100 418M / 1.2B and SMaLL-100, 100 languages many-to-many; the source detected when omitted |
+| ``NFKMLXNLLB`` | `nllb-200` | NLLB-200 distilled 600M / 1.3B / distilled 1.3B / 3.3B, 202 languages on the M2M-100 network |
 | ``NFKMLXMADLAD`` | `madlad400-3b-mt` | MADLAD-400 3B-MT, 400+ languages over T5, float32 or bfloat16 |
 | ``NFKMLXTranslateGemma`` | `translategemma` | TranslateGemma 4B / 12B / 27B, Gemma 3 driven by its translation template; greedy |
 

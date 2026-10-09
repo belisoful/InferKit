@@ -282,11 +282,13 @@
 	// URL is an error rather than a random network. The pair factory names the OPUS-MT repo itself.
 	[NFKMLXMarian register];
 	[NFKMLXM2M100 register];
+	[NFKMLXNLLB register];
 	[NFKMLXMADLAD register];
 	[NFKMLXTranslateGemma register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"opus-mt"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"m2m100"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"small100"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"nllb-200"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"madlad400-3b-mt"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"translategemma"]);
 	XCTAssertEqualObjects([NFKMLXMarian repoWithSourceLanguage:@"en" targetLanguage:@"de"], @"Helsinki-NLP/opus-mt-en-de");

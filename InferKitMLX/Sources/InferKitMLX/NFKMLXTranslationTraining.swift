@@ -168,6 +168,31 @@ extension NFKMLXM2M100 {
     }
 }
 
+extension NFKMLXNLLB {
+    /// Adapts an NLLB-200 network the way ``NFKMLXMarian/fineTune(_:examples:rank:alpha:objective:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``
+    /// adapts Marian: source ids from ``NFKMLXNLLBTranslator/sourceIds(for:source:)``, target ids as
+    /// the target code, the pieces, and the end token.
+    @discardableResult
+    public static func fineTune(
+        _ net: NFKMLXSeq2SeqNet,
+        examples: (Int) -> (source: MLXArray, target: MLXArray),
+        rank: Int? = 8,
+        alpha: Float = 16,
+        objective: NFKMLXTranslationObjective = NFKMLXTranslationObjective(),
+        optimizer: Optimizer? = nil,
+        steps: Int,
+        clipGradientNorm: Float? = 1.0,
+        accumulationSteps: Int = 1,
+        checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        observer: NFKMLXTrainer.Observer? = nil
+    ) throws -> [Float] {
+        try NFKMLXTranslationTraining.fineTune(
+            net, adapting: NFKMLXTranslationTraining.isSeq2SeqDecoderProjection, examples: examples,
+            rank: rank, alpha: alpha, loss: objective.callAsFunction, optimizer: optimizer, steps: steps,
+            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)
+    }
+}
+
 extension NFKMLXMADLAD {
     /// Adapts a MADLAD network's decoder `q` and `v` projections with LoRA: source ids from
     /// ``NFKMLXMADLADTranslator/sourceIds(for:target:)``, target ids as the pieces and the end token.

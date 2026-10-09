@@ -497,6 +497,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### NLLB-200 translates 202 languages on the M2M-100 network
+
+- `NFKMLXNLLB` loads the four NLLB-200 releases (distilled 600M, 1.3B, distilled 1.3B, 3.3B) through
+  `NFKMLXSeq2SeqNet`, numbering the vocabulary as fairseq did and resolving a BCP-47 tag to the
+  release's `xxx_Xxxx` code and script. Every size is at reference parity, the 600M on the eight
+  probe languages as well, and `NFKMLXNLLB.fineTune` adapts the decoder with LoRA. Registered as
+  `nllb-200`.
+
 #### A dense decoder larger than the working set streams its layers
 
 - `NFKMLXResidency.streamed` holds the decoder layers that fit the working set and reads each of the

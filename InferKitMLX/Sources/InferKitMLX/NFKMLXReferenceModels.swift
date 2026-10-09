@@ -34,6 +34,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXHybridLanguage.register()
         NFKMLXMarian.register()
         NFKMLXM2M100.register()
+        NFKMLXNLLB.register()
         NFKMLXMADLAD.register()
         NFKMLXTranslateGemma.register()
         NFKMLXTranslationProvider.register()

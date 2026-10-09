@@ -545,6 +545,7 @@ encoder(configuration:directory:)
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | OPUS-MT (Marian) | ``NFKMLXMarian`` | ``NFKMLXSeq2SeqNet`` | ``NFKMLXSeq2SeqConfiguration`` from the release's `config.json`; `.tinyMarian` for tests | `opus-mt` (the registry URL is the release directory) | ``NFKMLXTranslationBackend`` |
+| NLLB-200 | ``NFKMLXNLLB`` | ``NFKMLXSeq2SeqNet`` | ``NFKMLXNLLBVariant`` `.distilled600M` / `.m1_3B` / `.distilled1_3B` / `.m3_3B`; the configuration from `config.json`; `.tinyM2M100` for tests | `nllb-200` | ``NFKMLXTranslationBackend`` |
 | M2M-100 / SMaLL-100 | ``NFKMLXM2M100`` | ``NFKMLXSeq2SeqNet`` | ``NFKMLXM2M100Variant`` `.m418M` / `.m1_2B` / `.small100`; the configuration from `config.json`; `.tinyM2M100` for tests | `m2m100` · `small100` | ``NFKMLXTranslationBackend`` |
 | TranslateGemma 4B / 12B / 27B | ``NFKMLXTranslateGemma`` | ``NFKMLXGemma3Net`` through ``NFKMLXGemma3Model`` | the release's `config.json` and its `chat_template.jinja` language table | `translategemma` | ``NFKMLXTranslationBackend`` |
 | MADLAD-400 3B-MT | ``NFKMLXMADLAD`` | ``NFKMLXT5Seq2SeqNet`` | ``NFKMLXMADLADConfiguration`` `.mt3B` / `.mt7B` (`.tiny` for tests), read from `config.json` | `madlad400-3b-mt` | ``NFKMLXTranslationBackend`` |
@@ -556,13 +557,15 @@ NFKMLXMarian.backend(directoryURL:)
 // M2M-100 418M / 1.2B, SMaLL-100
 NFKMLXM2M100.backend(variant: .m418M, directoryURL:)
 NFKMLXM2M100.backend(variant: .m418M, revision: nil, cacheDirectoryURL: nil)
+// NLLB-200, 202 languages
+NFKMLXNLLB.backend(variant: .distilled600M, directoryURL:)
 // MADLAD-400 3B-MT, bfloat16
 NFKMLXMADLAD.backend(directoryURL:, half: true)
 // TranslateGemma, at the checkpoint's bfloat16
 NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
 // Fine-tuning
 // The release directory supplies its geometry from its config.json
-NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
+NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXNLLB.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
 ```
 
 ```objc
@@ -572,6 +575,8 @@ NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKM
 // M2M-100 418M / 1.2B, SMaLL-100
 [NFKMLXM2M100 backendWithVariant:NFKMLXM2M100VariantM418M directoryURL:dir error:&error]
 [NFKMLXM2M100 backendWithVariant:NFKMLXM2M100VariantM418M revision:nil cacheDirectoryURL:nil error:&error]
+// NLLB-200, 202 languages
+[NFKMLXNLLB backendWithVariant:NFKMLXNLLBVariantDistilled600M directoryURL:dir error:&error]
 // MADLAD-400 3B-MT, bfloat16
 [NFKMLXMADLAD backendWithDirectoryURL:dir halfPrecision:YES error:&error]
 // TranslateGemma, at the checkpoint's bfloat16

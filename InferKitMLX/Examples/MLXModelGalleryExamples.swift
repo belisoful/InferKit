@@ -1534,13 +1534,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         try requireMLXRuntime()
         // The released translators load from their release directories: NFKMLXMarian.backend(directoryURL:)
         // (one OPUS-MT pair, or backend(sourceLanguage:targetLanguage:cacheDirectoryURL:) to download it),
-        // NFKMLXM2M100.backend(variant:directoryURL:) (100 languages, or SMaLL-100), and
+        // NFKMLXM2M100.backend(variant:directoryURL:) (100 languages, or SMaLL-100),
+        // NFKMLXNLLB.backend(variant:directoryURL:) (202 languages on the same network), and
         // NFKMLXMADLAD.backend(directoryURL:half:) (400+ languages, T5). Each answers NFKInputPrompt with
         // NFKOutputText for the NFKParameterTargetLanguage asked. Here tiny random networks exercise the
         // two architectures and the shared greedy/beam decoder without a download.
         let marian = try NFKMLXMarian.network(directoryURL: nil, configuration: .tinyMarian)
         let m2m = try NFKMLXM2M100.network(directoryURL: nil, configuration: .tinyM2M100)
-        for net in [marian, m2m] {
+        let nllb = try NFKMLXNLLB.network(directoryURL: nil, configuration: .tinyM2M100)
+        for net in [marian, m2m, nllb] {
             let c = net.configuration
             let decoding = NFKMLXSeq2SeqDecoding(beams: 3, maxTokens: 8, startToken: c.decoderStartTokenId, endToken: c.eosTokenId)
             let tokens = NFKMLXSeq2SeqDecoder.generate(net, source: [5, 6, 7, c.eosTokenId], decoding: decoding)

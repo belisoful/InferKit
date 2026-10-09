@@ -242,6 +242,9 @@ limits.
 - ``NFKMLXM2M100``
 - ``NFKMLXM2M100Variant``
 - ``NFKMLXM2M100Translator``
+- ``NFKMLXNLLB``
+- ``NFKMLXNLLBVariant``
+- ``NFKMLXNLLBTranslator``
 - ``NFKMLXMADLAD``
 - ``NFKMLXMADLADConfiguration``
 - ``NFKMLXMADLADTranslator``

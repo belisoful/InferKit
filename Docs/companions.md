@@ -733,9 +733,14 @@ models.
   SMaLL-100 distillation (`.small100`), the source language detected when a request omits it; `m2m100`
   and `small100`; at reference parity against transformers' `M2M100ForConditionalGeneration` (tokens,
   greedy and 5-beam outputs exact on 418M).
+- **`NFKMLXNLLB`** — NLLB-200 over 202 languages (`.distilled600M`, `.m1_3B`, `.distilled1_3B`, `.m3_3B`;
+  CC-BY-NC-4.0), the M2M-100 network with fairseq's vocabulary numbering and `xxx_Xxxx` codes, a
+  BCP-47 tag resolved to its code and script; `nllb-200`; at reference parity against transformers'
+  `M2M100ForConditionalGeneration` + `NllbTokenizer` (tokens, greedy and 5-beam outputs exact on every
+  size).
 - **`NFKMLXMADLAD`** — MADLAD-400 3B-MT, Google's T5 translator over 400+ languages named by a `<2xx>`
   marker, loaded at float32 or bfloat16 (`half`); `madlad400-3b-mt`; at reference parity against
-  transformers' `T5ForConditionalGeneration` (tokens, greedy and 4-beam outputs exact). All three read
+  transformers' `T5ForConditionalGeneration` (tokens, greedy and 4-beam outputs exact). All four read
   `NFKParameterSourceLanguage` / `NFKParameterTargetLanguage`, tune the decode through
   `NFKMLXTranslationParameterKey`, fine-tune with LoRA on the decoder, and `NFKMLXTranslationProvider`
   answers the core's `translation` capability with M2M-100 when its release is cached.
