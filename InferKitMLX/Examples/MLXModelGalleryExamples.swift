@@ -1555,6 +1555,15 @@ final class MLXModelGalleryExamples: XCTestCase {
         // release. The template itself renders without weights.
         let languages = NFKMLXTranslateGemmaTranslator.languageTable(inDirectory: URL(fileURLWithPath: "/nonexistent"))
         XCTAssertTrue(languages.isEmpty, "the table comes from the release's chat_template.jinja")
+
+        // A smaller release drafts for a streamed one: the 27B with the 4B, for instance, through
+        // NFKMLXTranslateGemma.translator(directoryURL:draftDirectoryURL:precision:residency:), whose model
+        // reports what drafting kept in lastSpeculativeReport. Without a release the factory refuses.
+        XCTAssertThrowsError(try NFKMLXTranslateGemma.translator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent/translategemma-27b-it"),
+            draftDirectoryURL: URL(fileURLWithPath: "/nonexistent/translategemma-4b-it"),
+            precision: .checkpoint, residency: .streamed))
+        XCTAssertEqual(NFKMLXSpeculativeReport().acceptanceRate, 0, "a report with no proposals keeps none")
     }
 
     private static func solid(_ side: Int, value: UInt8 = 128) -> CGImage {
