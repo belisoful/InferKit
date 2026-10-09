@@ -295,10 +295,10 @@ bf16 model, a float32 copy of it runs on the same arguments widened, and its out
 - A mixture layer's copy keeps the bf16 run's experts (`route.L.index`), and a sparse attention keeps the
   bf16 run's indexer selection, since a float32 router or indexer breaks near-ties its own way. A release
   function that casts to bf16 by name runs at the copy's type (SAM 3's fused `addmm_act`).
-- The last decoder layer's state is its output through the final norm (`norm`, or `norm_f` in
-  Nemotron-H). Its floor follows the same norm, and the oracle keeps it only where the bf16 composite
-  reproduces the recorded state bit for bit, so Qwen4-Exp's last state, read through its hyper-connection
-  mixer, has none.
+- The last decoder layer's state is its output through the final module: `norm`, `norm_f` in
+  Nemotron-H, or Qwen4-Exp's hyper-connection mixer, which collapses its streams. Its floor follows the
+  same module, and the oracle keeps it only where the bf16 composite reproduces the recorded state bit
+  for bit.
 - A seam no single module produces is composed in float32: Voxtral's and Music 3's feed-forwards, the
   SAM 2 and SAM 3 necks with the decoder's high-resolution convolutions, and the SAM mask decoder on the
   recorded levels.

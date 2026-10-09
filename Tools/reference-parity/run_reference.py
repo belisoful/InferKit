@@ -5937,16 +5937,18 @@ def _stream_float32(model):
 
 def _decoder_floor_hooks(model, extra, final=True):
     """Block floors for a decoder's layers, keyed by the states they produce (`hidden.i+1`); the last
-    layer's state passes through the final norm, which its floor follows (`_check_floor_composite`
-    keeps it only where that reproduces the recorded state). Returns the layer count."""
+    layer's state passes through the final module (a norm, or Qwen4-Exp's hyper-connection readout), which
+    its floor follows (`_check_floor_composite` keeps it only where that reproduces the recorded state).
+    Returns the layer count."""
     decoder_layers = next(m for n, m in model.named_modules()
                           if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
                           and "vision" not in n and "audio" not in n and "embed_tokens_extend" not in n)
     count = len(decoder_layers)
     parent = model.get_submodule(next(n for n, m in model.named_modules() if m is decoder_layers).rsplit(".", 1)[0])
-    # The final norm is `norm` in most decoders and `norm_f` in Nemotron-H's.
-    final_norm = next((getattr(parent, name) for name in ("norm", "norm_f") if getattr(parent, name, None) is not None),
-                      None) if final else None
+    # The final module is `norm` in most decoders, `norm_f` in Nemotron-H's, and the hyper-connection readout
+    # in Qwen4-Exp's, which collapses its streams to the last hidden state.
+    final_norm = next((getattr(parent, name) for name in ("norm", "norm_f", "hyper_connection_mixer")
+                       if getattr(parent, name, None) is not None), None) if final else None
     _block_floor_hooks(list(decoder_layers), [f"hidden.{i + 1}" for i in range(count)], extra,
                        indices=list(range(count)),
                        finals={count - 1: final_norm} if final_norm is not None else None)
@@ -13544,6 +13546,10 @@ def run_sa2va_qwen_probe(image, checkpoint):
         "dec.norm.out", keep(output[0])) and None)
     _block_floor_hooks(list(blocks), [f"vit.hidden.{i + 1}" for i in range(len(blocks))], extra, batched=False)
     _block_floor_hooks(list(language.layers), [f"dec.layer.{i}.out" for i in range(len(language.layers))], extra)
+    deepstack_mergers = list(getattr(visual, "deepstack_merger_list", []))
+    _block_floor_hooks([visual.merger] + deepstack_mergers,
+                       ["merger.block.out"] + [f"deepstack.{i}.block.out" for i in range(len(deepstack_mergers))],
+                       extra, batched=False)
 
     restore_routes = _route_hooks(qwen, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
     with torch.no_grad():
