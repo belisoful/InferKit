@@ -39,6 +39,15 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   quantized module saves as one file, so quantized-sharded does not arise) and the music loaders;
   round-tripped exactly by `testAQuantizedCheckpointRoundTripsThroughTheLoaders`, embedding-packed
   case included.
+  `quantize(module:…)` leaves the quantized arrays lazy over the weights they replace, because
+  `matchStructure` calls it on a freshly built module where evaluating would materialize random
+  weights. A caller that quantizes a LOADED module and runs it calls `eval(module)` then
+  `NFKMLXGPU.clearCache()` first. Measured 2026-10-09: a bf16 TranslateGemma 4B quantized to 4 bits
+  without them kept its 7.8 GB of bf16 weights until the first forward pass, which freed them into
+  the buffer cache (about 7 GB in `NFKMLXGPU.cacheMemory`), and the process peaked in the 24.6 GB
+  bucket. Clearing without the eval frees nothing. Shipped callers: the drafted Gemma 3 factory
+  (`NFKMLXGemma3.model(directoryURL:draftDirectoryURL:…)`) evaluates and clears;
+  `NFKMLXMusic3.quantizeRelease` evaluates through `NFKMLXWeights.save`, drops the module, and clears.
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read once), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,

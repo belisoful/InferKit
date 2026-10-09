@@ -57,6 +57,15 @@ public enum NFKMLXQuantization {
     /// the root with every replaced path at once, which rebuilds a module array from the entries
     /// named: a skipped layer at an array's end drops the tail, and one at its start aborts.
     ///
+    /// The quantized arrays are lazy over the weights they replace, and this method does not evaluate
+    /// them: on a freshly built module that would materialize random initial weights for nothing. On
+    /// a loaded module the caller evaluates it (`eval(module)`) before running it, and where memory
+    /// matters then calls `NFKMLXGPU.clearCache()`. Until the evaluation the replaced weights stay
+    /// alive beside the quantized ones; the first forward pass frees them into MLX's buffer cache,
+    /// where they stay until cleared. A bfloat16 TranslateGemma 4B quantized to 4 bits and run
+    /// without these steps holds about 7 GB of freed bfloat16 weights in that cache. Clearing the
+    /// cache before the evaluation frees nothing, because the weights are still referenced.
+    ///
     /// - Throws: `NFKMLXError.unsupportedConfiguration` when an eligible layer sits directly in an
     ///   array nested inside another, which MLX cannot update in place.
     public static func quantize(module: Module, bits: Int = 4, groupSize: Int = 64,
