@@ -19623,7 +19623,8 @@ def run_translategemma_layerwise(image, checkpoint):
         buffer = bytearray(count)
         view, done = memoryview(buffer), 0
         while done < count:
-            got = os.preadv(descriptors[shard], [view[done:]], offset + done)
+            # macOS refuses a read longer than INT_MAX bytes, and the 27B's embedding is 2.8 GB.
+            got = os.preadv(descriptors[shard], [view[done:done + (1 << 30)]], offset + done)
             if got <= 0:
                 raise IOError(f"{shard}: {key} ends early")
             done += got
