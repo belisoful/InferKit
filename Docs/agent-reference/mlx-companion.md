@@ -380,6 +380,18 @@ Streaming:
   where `verifyFits` passes, so every load that worked before loads the same way, and plans only where
   it fails. `.resident`, `.staged`, and `.paged` keep `verifyFits`'s refusal. A streamed decoder does
   not fine-tune (`requireHeldLayers`).
+- A draft cuts the passes (`NFKMLXGemma3Model.useDraft(_:)`, `speculate`): a smaller release of the
+  same vocabulary, held, proposes `draftTokens` tokens a round and one pass of the streamed decoder scores
+  them, through the language family's `verifyGreedily` / `verifyBySampling`. The target's rollback of
+  the rejected proposals always succeeds: the sliding cache trims to `window - 1` before it appends, so a
+  multi-token pass leaves every row a rollback of up to its length removes. The draft feeds itself one
+  token a pass, and past its window a single-token cache keeps too few rows to roll back more than one;
+  the draft then prefills again from every token the target holds rows for. The drafted factories load
+  the draft's decoder alone (`load(…, vision: false)`), at the release's own precision, quantize it to
+  `draftBits` (4 by default), and plan the target against the working set less the draft's held bytes,
+  passing those bytes to `verifyFits` as its reserve. Unquantized, a 4B draft (about 9 GB with its
+  vision tower) left this machine's planner budget of about 15.4 GB too little for the 12B's streamed
+  minimum (3.75 GB plus the 4 GiB reserve) or the 27B's (5.3 GB plus the reserve).
 - A streamed pass computes the held pass's values exactly: the same stored tensors, the same exact
   bfloat16 → float32 widening at `.float32`, the same kernels; only the evaluation boundaries move.
 - The drive: the store's 4 TB Thunderbolt SSD reads uncached at 2.12 GB/s in 64 MB `pread`s at one
@@ -387,6 +399,16 @@ Streaming:
   0.91 GB/s, and a mapped range faulted in after `MADV_WILLNEED` 0.80 GB/s. Hence `pread` per tensor,
   not the expert store's mapping, which suits small reads that repeat. Decode is read-bound: a layer's
   compute is milliseconds against hundreds of milliseconds of read.
+- Inside a run the read rate is set by memory pressure, not the read pattern. The same per-tensor reads
+  of 12B layers measured 2.0–2.2 GB/s on a quiet machine; the streamed 12B read 1.02 GB/s at an 18 GB
+  footprint with swap at 6–8 GB, and the 27B 0.69 GB/s. A pool reusing released layers' buffers was
+  tried and read 0.78 GB/s on the 12B against 1.02 without it, with swap starting higher, so the stream
+  allocates fresh memory per tensor. What lowers the pressure is what the run holds beside the stream:
+  quantizing a draft left its replaced bfloat16 weights in MLX's buffer cache, 7 GB. `quantize(module:)`
+  leaves lazy arrays over the weights it replaces, so the drafted factory evaluates the draft before it
+  clears the cache; clearing first freed nothing. With the evaluation the drafted 12B and 27B runs hold
+  0.5–0.7 GB of cache, peak in the 18 GB bucket in place of 24.6, and take 93 s and 183 s in place of
+  234 s and 467 s.
 
 Precision choice:
 

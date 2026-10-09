@@ -138,6 +138,67 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
         XCTAssertThrowsError(try streamed.verifyStream(), "the truncated release cannot be read")
     }
 
+    /// A Gemma 3 model around `decoder`, its tokenizer a stand-in: generation reads token ids.
+    private func model(_ decoder: NFKMLXGemma3Net) throws -> NFKMLXGemma3Model {
+        let json: [String: Any] = ["model": ["vocab": ["<pad>": 0, "<eos>": 1, "<bos>": 2, "<unk>": 3], "merges": [],
+                                             "unk_token": "<unk>"],
+                                   "added_tokens": [["id": 2, "content": "<bos>", "special": true]]]
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("layer-stream-tok-\(UUID().uuidString).json")
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        return NFKMLXGemma3Model(decoder: decoder, vision: nil, projector: nil,
+                                 tokenizer: try XCTUnwrap(NFKMLXGemmaTokenizer(tokenizerJSON: url)),
+                                 tokens: NFKMLXGemma3Tokens(tokensPerImage: 3), chatTemplate: nil)
+    }
+
+    // A streamed decoder's pass verifies several of a held draft's proposals, so a drafted run reads
+    // the release fewer times than a plain one and produces the held decoder's greedy output.
+    func testAStreamedDecoderVerifiesAHeldDraftsProposals() throws {
+        try requireMLXRuntime()
+        let directory = try release()
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 16
+        options.stopTokens = [-1]
+        let prompt = tokens.map { Int($0) }
+        let held = try model(try NFKMLXGemma3Language.network(directoryURL: directory, precision: .float32,
+                                                              residency: .resident, budget: 0))
+        let plain = try held.generate(tokens: prompt, options: options)
+
+        let streamed = try model(try streamedNet(directory, precision: .float32))
+        try streamed.useDraft(held)
+        XCTAssertEqual(try streamed.generate(tokens: prompt, options: options), plain)
+        let report = streamed.lastSpeculativeReport
+        XCTAssertEqual(report.accepted, report.proposed, "the draft is the same release held")
+        XCTAssertLessThan(report.rounds + 1, plain.count, "fewer streamed passes than tokens")
+    }
+
+    // The drafted factory holds the draft's decoder alone, quantized, and the output is still the
+    // release's own greedy output.
+    func testTheDraftedFactoryHoldsAQuantizedDecoderAndKeepsTheOutput() throws {
+        try requireMLXRuntime()
+        let directory = try release()
+        let tokenizer: [String: Any] = ["model": ["vocab": ["<pad>": 0, "<eos>": 1, "<bos>": 2, "<unk>": 3], "merges": [],
+                                                  "unk_token": "<unk>"],
+                                        "added_tokens": [["id": 2, "content": "<bos>", "special": true]]]
+        try JSONSerialization.data(withJSONObject: tokenizer).write(to: directory.appendingPathComponent("tokenizer.json"))
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 12
+        options.stopTokens = [-1]
+        let prompt = tokens.map { Int($0) }
+        let plain = try NFKMLXGemma3.model(directoryURL: directory, precision: .checkpoint, residency: .resident)
+            .generate(tokens: prompt, options: options)
+
+        let drafted = try NFKMLXGemma3.model(directoryURL: directory, draftDirectoryURL: directory, precision: .checkpoint,
+                                             residency: .automatic)
+        let draft = try XCTUnwrap(drafted.draft)
+        XCTAssertNil(draft.vision)
+        XCTAssertTrue(draft.decoder.leafModules().flattened().contains { $0.1 is QuantizedLinear },
+                      "the draft's projections are quantized")
+        XCTAssertEqual(try drafted.generate(tokens: prompt, options: options), plain)
+        XCTAssertGreaterThan(drafted.lastSpeculativeReport.rounds, 0)
+    }
+
     func testAStreamedDecoderDoesNotTrain() throws {
         try requireMLXRuntime()
         let streamed = try streamedNet(try release(), precision: .float32)

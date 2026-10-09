@@ -154,13 +154,20 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   16/16; the last position's state after every layer against the reference's `hidden_states` drifts
   smoothly with the worst cosine 0.9994581 at the final layer, which is the two accumulation orders and
   not a seam; the masked SFT loss 0.4313063 against 0.4847855, the drift amplified by a 262k-way
-  cross-entropy over a dozen positions. A float32 reference for the 12B needs 48 GB and is not
-  producible here. The 27B (`google/translategemma-27b-it`, 55 GB of bfloat16, 62 layers at 5376) fits
-  neither side whole: the reference streams its first 14 decoder layers one at a time
-  (`run_reference.py translategemma_streamed`, `TRANSLATEGEMMA_LAYERS=14`, 6 GB, 56 s) and the port
-  loads those 14 layers at `.checkpoint` (14.3 GB with the embeddings and the tokenizer). Template ids
-  exact; each layer's last-position state against the reference's, worst cosine 0.9999819 at layer 13.
-  Logits, the greedy translation, and the loss need the whole stack and wait on a layer-at-a-time loader.
+  cross-entropy over a dozen positions. Those 12B figures were measured with the model held, which
+  swapped; the test now streams the decoder (`.streamed`, 16 of 48 layers held) through the same path and
+  reads greedy token-exact, logit cosine 0.9990946 with argmax 16/16, and worst layer state 0.9996596 at
+  layer 48 (285 s, 136.7 GB read). A float32 reference for the 12B needs 48 GB and is not producible here.
+  The 27B (`google/translategemma-27b-it`, 55 GB of bfloat16, 62 layers at 5376) fits neither side whole:
+  the reference reads each decoder layer as its forward reaches it (`run_reference.py
+  translategemma_layerwise`, 1687 s, 11.95 GB peak) and the port streams the decoder at `.checkpoint`
+  (15 of 62 layers held). bfloat16 against bfloat16: template ids exact; the greedy translation
+  token-exact ("Der flinke braune Fuchs springt über den faulen Hund."); logits at the last 16 prompt
+  positions cosine 0.9991661 with argmax 16/16; worst layer state 0.9996508 at layer 62; the masked
+  SFT loss 0.35301155 against 0.33496428 (855 and 1121 s across two Commit Checks, the store read at
+  0.69 GB/s). The 4B drafting for either size, held at 4 bits, keeps the output and cuts the passes:
+  the 12B produced its 15 tokens in 6 passes, keeping 14 of 20 proposals, in 93 s; the 27B its 14
+  tokens in 6 passes, keeping 13 of 20, in 183 s, both runs in the 18 GB footprint bucket.
 
 ## Customization
 
@@ -200,15 +207,16 @@ sentence is `TRANSLATION_TARGETS[target]`; the Swift tests hold the same table. 
 the reference's decoded greedy and beam text as UTF-8 (`greedy_text`, `beam_text`), which the tests hold
 byte for byte against `translate`. Further runners: `small100` (imports the release's own
 `tokenization_small100.py`), `madlad` with `MADLAD_DTYPE=bfloat16` for the 7B, and
-`translategemma_streamed`, which runs the first `TRANSLATEGEMMA_LAYERS` (default 16) decoder layers one
-at a time from the shard index and records `hidden_last.<index>` only, for a release too large to hold
-whole. Probe records are keyed `IK_PARITY_<FAMILY>_<SRC>_<TGT>` (`IK_PARITY_MARIAN_JA_EN`,
+`translategemma_layerwise`, which records what `run_translategemma` records for a release too large to
+hold whole: the model is built on the meta device and each decoder layer's tensors are read from the
+release (`F_NOCACHE`, in reads under 1 GiB, since macOS refuses longer ones) as the forward reaches the
+layer and freed after it, so `generate` and the `labels=` loss run through transformers' own entry points.
+On the 4B at bfloat16 its record equals `run_translategemma`'s bit for bit (42 keys). Probe records are keyed `IK_PARITY_<FAMILY>_<SRC>_<TGT>` (`IK_PARITY_MARIAN_JA_EN`,
 `IK_PARITY_MADLAD_EN_ZH_HANT`), and a probe test skips the pairs whose record is absent. The 12B
 figures above were measured with the whole model resident, which swapped on this 32 GB machine; the
-test now loads the first 24 of the 48 layers at `.checkpoint` (about 14 GB with the tokenizer and the
-vision tower) and holds the template ids and each kept layer's last-position state (> 0.99) against the
-same record. A layer's state depends on no later layer, so the cut needs no second reference. The 4B
-test runs the logits, the greedy continuation, and the loss through the same code.
+12B and 27B tests now stream the decoder (`residency: .streamed`) and run the logits, every layer's state,
+the greedy continuation, and the loss through the same code as the 4B. A streamed decoder decodes the
+greedy ids for the printed translation instead of generating twice.
 
 ## Language probes
 
@@ -258,15 +266,10 @@ Coordinator and every run through the Testing Coordinator.
   about 17 GB. Keys `IK_VAL_MADLAD_7B` / `IK_PARITY_MADLAD_7B`. `madlad400-7b-mt-bt` is the same
   geometry and is not separately measured.
 - `google/translategemma-27b-it` (62 layers at 5376, about 54 GB bfloat16, gated): neither side fits
-  whole, and the model is dense, so neither expert paging nor staging holds it. A layer-at-a-time loader
-  for dense models is being planned elsewhere in the package (2026-10-02); the 27B is fetched and
-  measured once that loader exists. Until then the fallback is the 12B pattern, the first K layers at
-  `.checkpoint` within about 14 GB (K around 14 of 62). The reference side needs a streamed forward in
-  the oracle either way: open the shards with
-  `safetensors.safe_open`, run the embedding and layers 0 ..< K one layer at a time in torch, freeing each,
-  and record the last position's state after every layer plus the template ids. That is a new runner
-  (`translategemma_streamed`), not the whole-model `run_translategemma`. Greedy output and loss are not
-  producible for the 27B here. Keys `IK_VAL_TRANSLATEGEMMA_27B` / `IK_PARITY_TRANSLATEGEMMA_27B`.
+  whole, and the model is dense. The port streams the decoder layers it cannot hold (`.streamed`), and
+  the reference runs `translategemma_layerwise`, the whole-model record built one layer at a time.
+  Keys `IK_VAL_TRANSLATEGEMMA_27B` / `IK_PARITY_TRANSLATEGEMMA_27B` (the earlier first-14-layers record
+  is kept as `.v1`).
 
 ## Not yet ported
 

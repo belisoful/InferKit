@@ -514,6 +514,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   refuses to fine-tune.
 - The planner gains streamed stages: a stage declares its layers' bytes, needs everything outside them
   plus two layers in flight, and holds its first layers while they fit what the budget leaves.
+- A smaller Gemma 3 release of the same vocabulary drafts for a larger one
+  (`NFKMLXGemma3Model.useDraft(_:)`, the `draftDirectoryURL:` factories on `NFKMLXGemma3` and
+  `NFKMLXTranslateGemma`): it proposes `NFKMLXGenerationParameterKey.draftTokens` tokens a round and one
+  pass of the larger model verifies them, so a streamed decoder reads its release fewer times than it
+  produces tokens. At temperature 0 the output is the larger model's greedy output. The factories hold
+  the draft's decoder alone at 4 bits (`draftBits`), since a draft's precision moves how many proposals
+  are kept and never the output, and plan the larger release against what the draft leaves of the
+  working set.
 
 #### Each bfloat16 block held to the rounding it adds itself
 

@@ -69,6 +69,10 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.4.0.
     @objc public var streamedBytesPerPass: Int { holder.model.decoder.layerStream?.bytesPerPass ?? 0 }
 
+    /// Whether generation drafts with a smaller release (`NFKMLXGemma3Model.useDraft(_:)`).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var hasDraftModel: Bool { holder.model.draft != nil }
+
     private let modelInfoCache = NFKMLXModelInfoCache()
 
     /// The decoder's and, where the release carries them, the vision tower's and projector's parameter
@@ -85,7 +89,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
-         NFKParameterConversationKey]
+         NFKParameterConversationKey, NFKMLXGenerationParameterKey.draftTokens]
     }
 
     /// The bytes the conversations' prompt caches may hold together.
@@ -163,6 +167,9 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         }
         if let value = request.parameter(forKey: NFKParameterSeed) as? NSNumber {
             options.seed = value.uint64Value
+        }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
+            options.draftTokens = value.intValue
         }
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let model = holder.model
@@ -252,6 +259,10 @@ public final class NFKMLXGemma3: NSObject {
     /// Introduced in InferKit 0.4.0.
     @objc public var streamedBytesPerPass: Int { holder.model.decoder.layerStream?.bytesPerPass ?? 0 }
 
+    /// Whether generation drafts with a smaller release (`NFKMLXGemma3Model.useDraft(_:)`).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var hasDraftModel: Bool { holder.model.draft != nil }
+
     init(model: NFKMLXGemma3Model) {
         holder = NFKGemma3Holder(model)
         super.init()
@@ -317,6 +328,64 @@ public final class NFKMLXGemma3: NSObject {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, precision: .float32, residency: residency)
+    }
+
+    /// Loads a release with a smaller release of the same vocabulary drafting for it (see
+    /// `NFKMLXGemma3Model.useDraft(_:)`): the 27B streamed with the 4B held beside it, for instance.
+    ///
+    /// @discussion The draft loads held: its decoder alone, quantized to `draftBits` from the release's
+    /// own precision (4 by default; nil keeps it at `precision`). A draft only proposes tokens, so its
+    /// precision moves how many proposals are kept and never the output, and quantized it leaves the
+    /// release more of the working set: a 4B draft at 4 bits holds about 3 GB where it would hold
+    /// 8 GB at bfloat16. The release is held as `residency` says, planned against what the draft
+    /// leaves. Introduced in InferKit 0.4.0.
+    public static func load(directoryURL directory: URL, draftDirectoryURL: URL,
+                            precision: NFKMLXWeightPrecision = .float32,
+                            residency: NFKMLXResidency = .automatic, draftBits: Int? = 4) throws -> NFKMLXGemma3 {
+        NFKMLXGemma3(model: try model(directoryURL: directory, draftDirectoryURL: draftDirectoryURL,
+                                      precision: precision, residency: residency, draftBits: draftBits))
+    }
+
+    /// Builds a backend from a release with a smaller release drafting for it (see
+    /// ``load(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``), the draft at 4 bits.
+    /// `NFKMLXGenerationParameterKey.draftTokens` sets the proposals per round, and 0 decodes without
+    /// the draft. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL directory: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        NFKMLXGemma3Backend(model: try model(directoryURL: directory, draftDirectoryURL: draftDirectoryURL,
+                                             precision: precision, residency: residency),
+                            identifier: modelName)
+    }
+
+    /// The model for a release with the draft release's decoder, quantized to `draftBits`, set as its
+    /// draft. The release is planned against what the held draft leaves of the working set.
+    static func model(directoryURL directory: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                      residency: NFKMLXResidency, draftBits: Int? = 4) throws -> NFKMLXGemma3Model {
+        // A quantized draft loads at the release's own precision; widening it first only raises the peak.
+        let draftParts = try load(directory: draftDirectoryURL, precision: draftBits == nil ? precision : .checkpoint,
+                                  decoder: true, residency: .resident, vision: false)
+        guard let drafter = draftParts.decoder else { throw NFKMLXError.noOutput }
+        if let draftBits {
+            try NFKMLXQuantization.quantize(module: drafter, bits: draftBits)
+            // The quantized arrays are lazy over the weights they replace. Evaluated here, those weights
+            // are freed now and cleared from MLX's buffer cache, where they would otherwise sit, larger
+            // than the quantized draft, beside the release the plan sizes without them.
+            eval(drafter)
+            NFKMLXGPU.clearCache()
+        }
+        let draft = NFKMLXGemma3Model(decoder: drafter, vision: nil, projector: nil, tokenizer: draftParts.tokenizer,
+                                      tokens: draftParts.tokens, chatTemplate: nil)
+        let draftBytes = drafter.parameters().flattened().reduce(0) { $0 + $1.1.nbytes }
+        let budget = NFKMLXResidencyBudget.current()
+        let parts = try load(directory: directory, precision: precision, decoder: true, residency: residency,
+                             budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
+        guard let decoder = parts.decoder else { throw NFKMLXError.noOutput }
+        let model = NFKMLXGemma3Model(decoder: decoder, vision: parts.vision, projector: parts.projector,
+                                      tokenizer: parts.tokenizer, tokens: parts.tokens,
+                                      chatTemplate: chatTemplate(inDirectory: directory))
+        try model.useDraft(draft)
+        return model
     }
 
     static let requiredFiles = ["config.json", "tokenizer.json"]
@@ -411,7 +480,8 @@ public final class NFKMLXGemma3: NSObject {
     /// `decoder` false leaves the language model unloaded (its weights are most of the file). A
     /// streamed decoder's streamed layers are not read here; their stream reads them in their turn.
     static func load(directory: URL, precision: NFKMLXWeightPrecision, decoder wantsDecoder: Bool,
-                     residency: NFKMLXResidency = .automatic, budget: Int = NFKMLXResidencyBudget.current()) throws
+                     residency: NFKMLXResidency = .automatic, budget: Int = NFKMLXResidencyBudget.current(),
+                     reserving reserved: Int = 0, vision wantsVision: Bool = true) throws
         -> (decoder: NFKMLXGemma3Net?, vision: NFKMLXGemma3VisionNet?, projector: NFKMLXGemma3MultimodalProjector?,
             tokenizer: NFKMLXGemmaTokenizer, tokens: NFKMLXGemma3Tokens) {
         let configURL = directory.appendingPathComponent("config.json")
@@ -424,8 +494,9 @@ public final class NFKMLXGemma3: NSObject {
             throw NFKMLXError.unsupportedConfiguration("the Gemma 3 release has no readable tokenizer.json")
         }
         let streamed = wantsDecoder
-            ? try streamedLayers(directory: directory, precision: precision, includesVision: json["vision_config"] != nil,
-                                 residency: residency, budget: budget)
+            ? try streamedLayers(directory: directory, precision: precision,
+                                 includesVision: wantsVision && json["vision_config"] != nil,
+                                 residency: residency, budget: budget, reserving: reserved)
             : []
 
         let decoder = wantsDecoder ? NFKMLXGemma3Net(textConfiguration) : nil
@@ -436,7 +507,7 @@ public final class NFKMLXGemma3: NSObject {
         var vision: NFKMLXGemma3VisionNet?
         var projector: NFKMLXGemma3MultimodalProjector?
         var tokensPerImage = 256
-        if let visionJSON = json["vision_config"] as? [String: Any] {
+        if wantsVision, let visionJSON = json["vision_config"] as? [String: Any] {
             func integer(_ key: String, _ fallback: Int) -> Int { (visionJSON[key] as? NSNumber)?.intValue ?? fallback }
             let visionConfiguration = NFKMLXSigLIPConfiguration(
                 hiddenSize: integer("hidden_size", 1152), layerCount: integer("num_hidden_layers", 27),
@@ -493,10 +564,13 @@ public final class NFKMLXGemma3: NSObject {
     /// @discussion `.automatic` holds the decoder whole where the release passes the check every load
     /// makes, so a release that loaded before loads the same way, and plans a stream only where that
     /// check fails. `.streamed` always plans. Every other residency holds the decoder whole, and the
-    /// check refuses a release that does not fit.
+    /// check refuses a release that does not fit. `reserved` is what something held beside the decoder,
+    /// such as a draft, takes from the check; `budget` already leaves it out.
     static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, includesVision: Bool,
-                               residency: NFKMLXResidency, budget: Int) throws -> Set<Int> {
-        let fitsWhole = { try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision) }
+                               residency: NFKMLXResidency, budget: Int, reserving reserved: Int = 0) throws -> Set<Int> {
+        let fitsWhole = {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
+        }
         switch residency {
         case .automatic where (try? fitsWhole()) != nil, .resident, .staged, .paged:
             try fitsWhole()

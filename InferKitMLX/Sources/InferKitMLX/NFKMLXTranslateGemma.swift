@@ -175,6 +175,19 @@ public final class NFKMLXTranslateGemma: NSObject {
                        directoryURL: directory)
     }
 
+    /// Loads a release as a translator with a smaller release drafting for it, the 27B streamed with the
+    /// 4B's decoder held beside it at `draftBits` for instance (see
+    /// `NFKMLXGemma3.load(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`). Introduced in
+    /// InferKit 0.4.0.
+    public static func translator(directoryURL directory: URL, draftDirectoryURL: URL,
+                                  precision: NFKMLXWeightPrecision = .float32,
+                                  residency: NFKMLXResidency = .automatic,
+                                  draftBits: Int? = 4) throws -> NFKMLXTranslateGemmaTranslator {
+        try translator(model: try NFKMLXGemma3.model(directoryURL: directory, draftDirectoryURL: draftDirectoryURL,
+                                                     precision: precision, residency: residency, draftBits: draftBits),
+                       directoryURL: directory)
+    }
+
     /// Wraps a loaded Gemma 3 model with the release's language table.
     public static func translator(model: NFKMLXGemma3Model, directoryURL directory: URL) throws -> NFKMLXTranslateGemmaTranslator {
         let languages = NFKMLXTranslateGemmaTranslator.languageTable(inDirectory: directory)
@@ -213,6 +226,15 @@ public final class NFKMLXTranslateGemma: NSObject {
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, precision: precision,
                                                             residency: residency))
+    }
+
+    /// Builds the backend from a release with a smaller release drafting for it. Introduced in InferKit
+    /// 0.4.0.
+    @objc(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL,
+                                                            precision: precision, residency: residency))
     }
 
     /// Downloads a release (`google/translategemma-4b-it`; the repo is gated, so the hub needs an

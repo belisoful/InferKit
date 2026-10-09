@@ -621,6 +621,50 @@ final class NFKMLXTranslationTests: XCTestCase {
                                 precision: .checkpoint, residency: .streamed, name: "translategemma-12b")
     }
 
+    /// The streamed 12B with the 4B held beside it as its draft: the greedy continuation is the record's,
+    /// in fewer passes of the 12B than tokens.
+    func testTranslateGemma12BDraftedByThe4BMatchesTheReference() throws {
+        try checkTranslateGemmaDrafted(weightsKey: "IK_VAL_TRANSLATEGEMMA_12B", recordKey: "IK_PARITY_TRANSLATEGEMMA_12B",
+                                       name: "translategemma-12b")
+    }
+
+    /// The streamed 27B with the 4B as its draft, which holds no 27B layer beside the 4B on a 32 GB machine.
+    func testTranslateGemma27BDraftedByThe4BMatchesTheReference() throws {
+        try checkTranslateGemmaDrafted(weightsKey: "IK_VAL_TRANSLATEGEMMA_27B", recordKey: "IK_PARITY_TRANSLATEGEMMA_27B",
+                                       name: "translategemma-27b")
+    }
+
+    /// MLX's own memory beside the machine's working set, for a streamed run's record.
+    private static var memoryReading: String {
+        String(format: "; MLX peak %.1f GB, active %.1f GB, cache %.1f GB, working set %.1f GB",
+               Double(NFKMLXGPU.peakMemory) / 1e9, Double(NFKMLXGPU.activeMemory) / 1e9,
+               Double(NFKMLXGPU.cacheMemory) / 1e9, Double(NFKMLXGPU.recommendedWorkingSetSize) / 1e9)
+    }
+
+    private func checkTranslateGemmaDrafted(weightsKey: String, recordKey: String, name: String) throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release(weightsKey, recordKey)
+        guard let draftPath = NFKMLXValidationConfig.environment["IK_VAL_TRANSLATEGEMMA"],
+              FileManager.default.fileExists(atPath: draftPath) else {
+            throw XCTSkip("set IK_VAL_TRANSLATEGEMMA to the translategemma-4b-it release directory, the draft")
+        }
+        let translator = try NFKMLXTranslateGemma.translator(directoryURL: directory, draftDirectoryURL: URL(fileURLWithPath: draftPath),
+                                                             precision: .checkpoint, residency: .streamed)
+        let stream = try XCTUnwrap(translator.model.decoder.layerStream)
+        let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
+        let started = Date()
+        let produced = try translator.generate(promptTokens: ids, maxTokens: 48)
+        let seconds = Date().timeIntervalSince(started)
+        XCTAssertEqual(produced, ints(record["continuation"]!).filter { $0 != 1 && $0 != 106 }, "greedy continuation")
+        let report = translator.model.lastSpeculativeReport
+        print("\(name) drafted by the 4B: \(produced.count) tokens in \(report.rounds + 1) passes, "
+              + "\(report.accepted) of \(report.proposed) proposals kept, \(stream.layers.count) of "
+              + "\(translator.model.decoder.configuration.layerCount) layers streamed, " + String(format: "%.1f s", seconds)
+              + Self.memoryReading)
+        XCTAssertLessThan(report.rounds + 1, produced.count, "fewer passes of the streamed model than tokens")
+    }
+
     /// The 27B is 55 GB of bfloat16, so neither side holds it whole: the reference reads each decoder layer
     /// as its forward reaches it (`run_reference.py translategemma_layerwise`), and the port streams the
     /// layers it cannot hold.
@@ -680,7 +724,8 @@ final class NFKMLXTranslationTests: XCTestCase {
         if let stream {
             let (bytes, seconds) = stream.readStatistics
             print("\(name): \(stream.layers.count) of \(translator.model.decoder.configuration.layerCount) layers streamed, "
-                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9)))
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9))
+                  + Self.memoryReading)
         }
     }
 

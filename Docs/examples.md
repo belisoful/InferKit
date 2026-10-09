@@ -498,6 +498,28 @@ id<NFKInferenceBackend> big = [NFKMLXGemma3 backendWithDirectoryURL:releaseDirec
 NSLog(@"%ld layers streamed", (long)((NFKMLXGemma3Backend *)big).streamedLayerCount);
 ```
 
+A smaller release of the same vocabulary held beside a streamed one cuts the passes: it drafts a few
+tokens, one pass of the streamed decoder scores them all, and the leading ones it agrees with are kept.
+At temperature 0 the output is the streamed decoder's own greedy output. The draft's decoder is held
+alone at 4 bits (`draftBits`), since its precision moves how many proposals are kept and never the
+output, and the release is planned against what the draft leaves of the working set. `NFKMLXGenerationParameterKey.draftTokens` sets the proposals
+per round (4 by default; 0 decodes without the draft).
+
+```swift
+let drafted = try NFKMLXTranslateGemma.translator(directoryURL: translateGemma27B, draftDirectoryURL: translateGemma4B,
+                                                  precision: .checkpoint, residency: .streamed)
+let german = try drafted.translate("The quick brown fox.", from: "en", to: "de", decoding: drafted.defaultDecoding)
+print(drafted.model.lastSpeculativeReport.acceptanceRate)
+```
+
+<!-- objc-check: given NSURL *draftDirectory; -->
+```objc
+id<NFKInferenceBackend> drafted = [NFKMLXGemma3 backendWithDirectoryURL:releaseDirectory
+                                                      draftDirectoryURL:draftDirectory
+                                                              precision:NFKMLXWeightPrecisionCheckpoint
+                                                              residency:NFKMLXResidencyStreamed error:&error];
+```
+
 **Gemma 3n.** `NFKMLXGemma3n` runs the tri-modal E2B and E4B releases: a picture through
 MobileNetV5-300M, a clip through the Universal Speech Model Conformer, and the decoder over the fused
 prompt. It is a separate architecture from Gemma 3 — AltUp's four parallel residual copies, the LAuReL

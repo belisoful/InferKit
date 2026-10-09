@@ -152,7 +152,10 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   reference's weights within 1.5e-6. `makeNet`, `loadWeights(into:fromDirectory:precision:)`,
   `network(directoryURL:precision:)`, and `network(weightsURL:configuration:)` are public;
   `NFKMLXGemma3.model(decoder:directoryURL:precision:)` pairs an adapted decoder with its release's
-  tokenizer and vision tower, and `NFKMLXGemma3.backend(model:)` serves it. 12B and 27B stay offline.
+  tokenizer and vision tower, and `NFKMLXGemma3.backend(model:)` serves it. The 12B and 27B run
+  streamed (`NFKMLXResidency.streamed`, mlx-companion.md "Streaming"): `.automatic` streams a release
+  that does not fit whole, and TranslateGemma 12B and 27B are measured that way
+  (mlx-models-translation.md).
 - `NFKMLXGemma3n` / `NFKMLXGemma3nNet` / `NFKMLXGemma3nAudioNet` / `NFKMLXGemma3nVisionNet` — Gemma 3n,
   tri-modal and end to end, at reference parity on the released E2B weights for every stage, each on
   its first numeric run. A distinct architecture from Gemma 3 and Gemma 4, sharing the family name and

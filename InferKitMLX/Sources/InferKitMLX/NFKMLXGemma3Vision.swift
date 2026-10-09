@@ -173,6 +173,34 @@ public final class NFKMLXGemma3Model {
     /// Whether the release carries a vision tower, so an image can be asked about.
     public var acceptsImages: Bool { vision != nil && projector != nil }
 
+    /// A smaller Gemma 3 of the same vocabulary that proposes tokens for generation to verify, several
+    /// in one pass of this model; nil decodes one token a pass. Set it with ``useDraft(_:)``.
+    /// Introduced in InferKit 0.4.0.
+    public private(set) var draft: NFKMLXGemma3Model?
+
+    /// What the last generation that drafted did: its verifying passes and its kept proposals.
+    /// Introduced in InferKit 0.4.0.
+    public private(set) var lastSpeculativeReport = NFKMLXSpeculativeReport()
+
+    /// Makes `draft` propose tokens for generation, or stops drafting with nil.
+    ///
+    /// @discussion Each pass of this model costs about the same whether it scores one position or a
+    /// few, and a streamed decoder pays a read of every layer it does not hold on each one. The draft
+    /// proposes ``NFKMLXGenerationOptions/draftTokens`` tokens a round, this model scores them in one
+    /// pass, and the leading proposals it agrees with are kept, so a round yields up to that many plus
+    /// one tokens for one pass. At temperature 0 every kept token is this model's own argmax given the
+    /// tokens before it, so the output is the greedy output; above 0 the acceptance test leaves the
+    /// distribution this model's own. A prompt with an image decodes without the draft. The draft must
+    /// share this model's vocabulary, which is checked here. Introduced in InferKit 0.4.0.
+    public func useDraft(_ draft: NFKMLXGemma3Model?) throws {
+        if let draft, draft.decoder.configuration.vocabularySize != decoder.configuration.vocabularySize {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the draft's vocabulary has \(draft.decoder.configuration.vocabularySize) entries where the "
+                + "model's has \(decoder.configuration.vocabularySize); a draft must share the model's vocabulary")
+        }
+        self.draft = draft
+    }
+
     // MARK: Prompts
 
     /// The reference processor's spelling of one image in a prompt: `\n\n<start_of_image>`, the soft
@@ -339,6 +367,10 @@ public final class NFKMLXGemma3Model {
                                           cache: cache, blockIds: blockIds(for: ids))
         try verifyStream(clearing: promptCache)
         continued?.record(fed)
+        if let draft, soft == nil, options.draftTokens > 0 {
+            return try speculate(after: hidden, prompt: ids, cache: cache, promptCache: continued, draft: draft,
+                                 options: options, stops: stops, onToken: onToken)
+        }
         var produced = [Int]()
         for _ in 0 ..< Swift.max(options.maxTokens, 0) {
             let last = decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...]).reshaped([-1])
@@ -350,6 +382,102 @@ public final class NFKMLXGemma3Model {
                 fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])), cache: cache)
             try verifyStream(clearing: promptCache)
             continued?.record([next])
+        }
+        return produced
+    }
+
+    /// The rest of a generation whose prompt `hidden` ends, with `draft` proposing each round's tokens
+    /// and one pass of this model verifying them.
+    ///
+    /// @discussion A verifying pass appends the round's first token and every proposal, and the
+    /// rejected proposals are rolled back. That rollback always succeeds: the sliding cache trims to its
+    /// window before it appends, so it holds every row the rollback removes. The draft fed itself every
+    /// proposal but the last, one token a pass, so it is rolled back one fewer, or fed the last where all
+    /// were kept. Past its window a single-token cache keeps too few rows to roll back more than one, and
+    /// the draft then starts over from every token this model holds rows for.
+    private func speculate(after hidden: MLXArray, prompt ids: [Int], cache: NFKMLXGemma3Cache,
+                           promptCache: NFKMLXGemma3PromptCache?, draft: NFKMLXGemma3Model,
+                           options: NFKMLXGenerationOptions, stops: Set<Int>,
+                           onToken: (Int) -> Bool) throws -> [Int] {
+        let proposalsPerRound = Swift.max(options.draftTokens, 1)
+        let drafter = draft.decoder
+        var draftCache = NFKMLXGemma3Cache(layerCount: drafter.configuration.layerCount,
+                                           slidingWindow: drafter.configuration.slidingWindow)
+        func prefillDraft(_ tokens: [Int]) {
+            draftCache = NFKMLXGemma3Cache(layerCount: drafter.configuration.layerCount,
+                                           slidingWindow: drafter.configuration.slidingWindow)
+            let embedded = drafter.embed(MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count]))
+            eval(drafter.hiddenStates(fromEmbeddings: embedded, cache: draftCache))
+        }
+        var held = ids
+        prefillDraft(held)
+        func draftRow(after token: Int) -> MLXArray {
+            let state = drafter.hiddenStates(fromEmbeddings: drafter.embed(MLXArray([Int32(token)]).reshaped([1, 1])),
+                                             cache: draftCache)
+            return drafter.logits(fromHidden: state).reshaped([-1])
+        }
+
+        var report = NFKMLXSpeculativeReport()
+        defer { lastSpeculativeReport = report }
+        var produced = [Int]()
+        func emit(_ token: Int) -> Bool {
+            guard produced.count < options.maxTokens, !stops.contains(token) else { return false }
+            produced.append(token)
+            return onToken(token)
+        }
+
+        var next = NFKMLXLanguageNet.sample(decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...]).reshaped([-1]),
+                                            options: options)
+        guard emit(next) else { return produced }
+        while produced.count < options.maxTokens {
+            var proposals = [Int]()
+            var distributions = [MLXArray]()
+            var fed = next
+            for _ in 0 ..< proposalsPerRound {
+                let row = draftRow(after: fed)
+                if options.temperature > 0 {
+                    let distribution = NFKMLXLanguageNet.probabilities(of: row, options: options)
+                    distributions.append(distribution)
+                    fed = MLXRandom.categorical(log(distribution)).item(Int.self)
+                } else {
+                    fed = row.argMax().item(Int.self)
+                }
+                proposals.append(fed)
+            }
+
+            // Row j predicts what follows the j-th input, so row j judges proposal j and the last row
+            // predicts what follows the final proposal.
+            let batch = [next] + proposals
+            let verified = decoder.hiddenStates(
+                fromEmbeddings: decoder.embed(MLXArray(batch.map { Int32($0) }).reshaped([1, batch.count])), cache: cache)
+            try verifyStream(clearing: promptCache)
+            let rows = decoder.logits(fromHidden: verified)[0]
+            let (accepted, following) = options.temperature > 0
+                ? NFKMLXLanguageNet.verifyBySampling(rows: rows, proposals: proposals,
+                                                     proposalDistributions: distributions, options: options)
+                : NFKMLXLanguageNet.verifyGreedily(rows: rows, proposals: proposals)
+            report.rounds += 1
+            report.proposed += proposals.count
+            report.accepted += accepted
+
+            let rejected = proposals.count - accepted
+            guard cache.rollback(by: rejected, kinds: decoder.configuration.layerTypes) else {
+                promptCache?.reset()
+                throw NFKMLXError.unsupportedConfiguration("the cache could not roll back \(rejected) rejected proposals")
+            }
+            promptCache?.record(Array(batch.prefix(1 + accepted)))
+            held += batch.prefix(1 + accepted)
+            if rejected == 0 {
+                eval(draftRow(after: proposals[proposals.count - 1]))
+            } else if !draftCache.rollback(by: rejected - 1, kinds: drafter.configuration.layerTypes) {
+                prefillDraft(held)
+            }
+
+            for token in proposals.prefix(accepted) {
+                guard emit(token) else { return produced }
+            }
+            guard emit(following) else { return produced }
+            next = following
         }
         return produced
     }

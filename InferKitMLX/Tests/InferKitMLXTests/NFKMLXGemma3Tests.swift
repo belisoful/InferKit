@@ -265,6 +265,84 @@ final class NFKMLXGemma3Tests: XCTestCase {
         zip(a, b).prefix { $0 == $1 }.count
     }
 
+    private func greedy(_ count: Int) -> NFKMLXGenerationOptions {
+        var options = continuingOptions
+        options.maxTokens = count
+        return options
+    }
+
+    // The prompt and the run outlast the tiny 4-position window, so the target's rollbacks cross the
+    // sliding cache's trim and the draft starts over where its own cache cannot roll back.
+    func testDraftedGenerationIsThePlainGreedyOutput() throws {
+        let model = try tinyModel()
+        let prompt = [2, 11, 12, 13, 14, 15]
+        let plain = try model.generate(tokens: prompt, options: greedy(20))
+
+        try model.useDraft(model)
+        XCTAssertEqual(try model.generate(tokens: prompt, options: greedy(20)), plain)
+        XCTAssertEqual(model.lastSpeculativeReport.accepted, model.lastSpeculativeReport.proposed,
+                       "a draft identical to the model is always right")
+        XCTAssertLessThan(model.lastSpeculativeReport.rounds, plain.count - 1, "and saves passes")
+
+        NFKMLXRandom.seed(5)
+        try model.useDraft(try tinyModel())
+        XCTAssertEqual(try model.generate(tokens: prompt, options: greedy(20)), plain,
+                       "a wrong draft costs passes, never tokens")
+        XCTAssertGreaterThan(model.lastSpeculativeReport.rounds, 0)
+
+        var off = greedy(20)
+        off.draftTokens = 0
+        let rounds = model.lastSpeculativeReport.rounds
+        XCTAssertEqual(try model.generate(tokens: prompt, options: off), plain)
+        XCTAssertEqual(model.lastSpeculativeReport.rounds, rounds, "no proposals asked, none made")
+    }
+
+    func testDraftedGenerationHonorsStopsTheHandlerAndTheLimit() throws {
+        let model = try tinyModel()
+        let plain = try model.generate(tokens: [2, 11], options: greedy(12))
+        NFKMLXRandom.seed(6)
+        try model.useDraft(try tinyModel())
+        if let later = plain.indices.dropFirst().first(where: { !plain[..<$0].contains(plain[$0]) }) {
+            var stopping = greedy(12)
+            stopping.stopTokens = [plain[later]]
+            XCTAssertEqual(try model.generate(tokens: [2, 11], options: stopping), Array(plain.prefix(later)))
+        }
+        var seen = 0
+        let cut = try model.generate(tokens: [2, 11], options: greedy(12)) { _ in
+            seen += 1
+            return seen < 3
+        }
+        XCTAssertEqual(cut, Array(plain.prefix(3)))
+        XCTAssertEqual(try model.generate(tokens: [2, 11], options: greedy(5)), Array(plain.prefix(5)))
+    }
+
+    func testADraftedConversationContinuesAsAFreshRun() throws {
+        let model = try tinyModel()
+        try model.useDraft(model)
+        let options = continuingOptions
+        let configuration = model.decoder.configuration
+        let cache = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+        let first = [2, 11, 12]
+        let reply = try model.generate(tokens: first, image: nil, options: options, promptCache: cache) { _ in true }
+        // A verifying pass keeps every proposal the model agrees with, past the reply's limit too.
+        XCTAssertEqual(Array(cache.tokens.prefix(first.count + reply.count)), first + reply,
+                       "the cache holds rows for the prompt and the reply")
+        let next = first + reply + [13, 11]
+        let continued = try model.generate(tokens: next, image: nil, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(continued, try model.generate(tokens: next, options: options))
+    }
+
+    func testADraftMustShareTheVocabulary() throws {
+        let model = try tinyModel()
+        var configuration = NFKMLXGemma3Configuration.tiny
+        configuration.vocabularySize = 140
+        let other = NFKMLXGemma3Model(decoder: NFKMLXGemma3Net(configuration), vision: nil, projector: nil,
+                                      tokenizer: try tinyTokenizer(), tokens: NFKMLXGemma3Tokens(tokensPerImage: 3),
+                                      chatTemplate: nil)
+        XCTAssertThrowsError(try model.useDraft(other))
+        XCTAssertNil(model.draft)
+    }
+
     // A conversation's next turn continues the rows its last turn left, rolled back to where the
     // prompts part, and answers what a run from nothing answers.
     func testAContinuedConversationAnswersAsAFreshRun() throws {

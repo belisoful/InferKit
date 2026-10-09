@@ -241,7 +241,8 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         }
         var done = 0
         while done < count {
-            let got = pread(descriptor, pointer + done, count - done, off_t(tensor.entry.start + done))
+            // Darwin refuses a read longer than INT_MAX bytes, so a larger tensor reads in parts.
+            let got = pread(descriptor, pointer + done, Swift.min(count - done, 1 << 30), off_t(tensor.entry.start + done))
             if got < 0, errno == EINTR { continue }
             guard got > 0 else {
                 free(pointer)

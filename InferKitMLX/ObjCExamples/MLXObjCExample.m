@@ -1140,6 +1140,15 @@
 	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(streamedLayerCount)]);
 	XCTAssertTrue([NFKMLXTranslateGemma respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertNotEqual(NFKMLXResidencyStreamed, NFKMLXResidencyPaged);
+	// A smaller release of the same vocabulary drafts for it: each pass of the streamed decoder verifies
+	// several of the draft's proposals. NFKMLXGenerationParameterKey.draftTokens sets how many.
+	//   id<NFKInferenceBackend> drafted = [NFKMLXGemma3 backendWithDirectoryURL:dir draftDirectoryURL:smallDir
+	//                                                                 precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                                 residency:NFKMLXResidencyStreamed error:&error];
+	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXTranslateGemma respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(hasDraftModel)]);
+	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(hasDraftModel)]);
 
 	NSError *error = nil;
 	id<NFKInferenceBackend> backend =
