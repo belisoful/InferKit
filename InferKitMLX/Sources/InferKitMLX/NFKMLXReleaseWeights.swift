@@ -49,14 +49,16 @@ enum NFKMLXReleaseWeights {
     /// about 256 MB, where ``arrays(inDirectory:precision:remap:)`` leaves both to the model's first
     /// evaluation.
     ///
-    /// @discussion MLX reads a file only on the CPU, and a GPU operation evaluated together with the read
-    /// it consumes waits for that read inside its command buffer. A release left to a model's first
+    /// @discussion MLX reads a file only on the CPU, and a GPU operation evaluated together with the
+    /// read it consumes waits for that read inside its command buffer. A release left to a model's first
     /// evaluation holds its reads and conversions together: Gemma 4 E2B at float32 peaks at 23.6 GB that
-    /// way and at 15.4 GB here. Each group is read in one evaluation and converted in the next, on the
-    /// CPU, which has no GPU watchdog, so the load itself encodes no GPU work. `transform` reshapes one
-    /// tensor at its stored type before the conversion, or drops it by returning nil. A reshaping that
-    /// spans tensors (stacking experts, folding an adapter into its base) stays with the lazy reader,
-    /// where each original is read only as its result is formed.
+    /// way and at 15.4 GB here. Each group is read in one evaluation and converted on the default device
+    /// in the next, so no command buffer waits on a file. On the GPU the conversion runs 3 to 16 times
+    /// faster and gives the CPU's bits for every value except a NaN, which stays a NaN but can change
+    /// sign and payload. `transform` reshapes one tensor at its stored type before the conversion, or
+    /// drops it by returning nil. A reshaping that spans tensors (stacking experts, folding an adapter
+    /// into its base) stays with the lazy reader, where each original is read only as its result is
+    /// formed.
     ///
     /// - Parameters:
     ///   - precision: as ``arrays(inDirectory:precision:remap:)``.
@@ -72,16 +74,13 @@ enum NFKMLXReleaseWeights {
             var read = [(String, MLXArray)](), groupBytes = 0
             func flush() {
                 eval(read.map(\.1))
-                // Evaluated inside the scope, so no GPU operation later waits on a CPU-stream result.
-                merged += Device.withDefaultDevice(.cpu) {
-                    let converted = read.compactMap { name, value in
-                        transform(name, value).map { kept, shaped in
-                            (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
-                        }
+                let converted = read.compactMap { name, value in
+                    transform(name, value).map { kept, shaped in
+                        (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
                     }
-                    eval(converted.map(\.1))
-                    return converted
                 }
+                eval(converted.map(\.1))
+                merged += converted
                 read.removeAll()
                 groupBytes = 0
             }
@@ -105,8 +104,8 @@ enum NFKMLXReleaseWeights {
     /// whole beside the converted one: each group of about 256 MB converts and evaluates before the next
     /// is read, and each stored array is dropped once converted.
     ///
-    /// A group is read in one evaluation and converted in the next, on the CPU, which has no GPU
-    /// watchdog, so the load itself encodes no GPU work.
+    /// A group is read in one evaluation and converted on the default device in the next, so no command
+    /// buffer waits on a file.
     static func arrays(inDirectory directory: URL, converting dtype: DType,
                        remap: (String) -> String? = { $0 }) throws -> [(String, MLXArray)] {
         var merged = [(String, MLXArray)]()
@@ -122,7 +121,7 @@ enum NFKMLXReleaseWeights {
             }
             for key in stored.keys.sorted() {
                 guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
-                let converted = value.dtype.isFloatingPoint ? value.asType(dtype, stream: .cpu) : value
+                let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
                 merged.append((name, converted))
                 read.append(value)
                 group.append(converted)

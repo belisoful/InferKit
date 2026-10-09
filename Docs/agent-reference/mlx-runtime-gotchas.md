@@ -33,6 +33,11 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `MLXArray([1e-21]).square()` is `0.0` on the GPU and `1e-42` on the CPU, same machine, same process.
   Anything that squares small numbers — a norm, a variance, a cosine over tiny vectors — can read
   exactly zero. Reduce toward a magnitude the type holds comfortably, never away from one.
+- A float type conversion keeps subnormals on the GPU. Converting every float32, bfloat16, and float16
+  bit pattern to the other two types on both devices gives the same bits for every value but a NaN
+  (2026-10-09). The GPU keeps a NaN a NaN and rewrites its sign and payload: a float32 NaN becomes
+  bfloat16 `0x7FFF` on the GPU and `0x7FC0` on the CPU. A test that compares converted values bit
+  for bit compares a NaN by being NaN.
 - A lazy decode pins its sources and intermediates. `NFKMLXDeepSeek.dequantized` evaluates each
   entry as it is produced; returning lazy graphs would hold the whole shard's decode live at once, and
   for a block-scaled format the expanded scale array alone is the weight's full size.

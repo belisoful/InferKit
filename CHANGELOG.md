@@ -582,12 +582,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 #### Gemma 3n and Gemma 4 read a release before converting it
 
 - `NFKMLXReleaseWeights.materializedArrays(inDirectory:precision:remap:transform:)` reads a release
-  in groups of about 256 MB: each group is read from disk in one evaluation, then converted on the CPU
-  in the next, and returned materialized. `arrays(inDirectory:converting:)` converts on the CPU too, so
-  neither encodes GPU work while a release loads. The Gemma 4 and Gemma 3n loaders (decoders, towers, and the
-  MatFormer slice) read through it. Their earlier reader left every file read and float32 widening to
-  the model's first evaluation; Gemma 4 E2B's float32 load now peaks at 15.4 GB in place of 23.6 GB.
-  The values are the same bytes converted by the same operations.
+  in groups of about 256 MB: each group is read from disk in one evaluation, then converted on the
+  default device in the next, and returned materialized. `arrays(inDirectory:converting:)` converts
+  the same way, so no GPU command buffer waits on a file read while a release loads. On the GPU the
+  conversion gives the CPU's bits for every value but a NaN and runs 3 to 16 times faster:
+  umT5-XXL's float32 release converts to bfloat16 in 1.9 s in place of 31.2 s, and FLUX.1-schnell's
+  bfloat16 transformer to float32 in 2.2 s in place of 30.4 s. The Gemma 4 and Gemma 3n loaders
+  (decoders, towers, and the MatFormer slice) read through it. Their earlier reader left every file
+  read and float32 widening to the model's first evaluation; Gemma 4 E2B's float32 load now peaks at
+  15.4 GB in place of 23.6 GB. The values are the same bytes converted by the same operations.
 - `transform` reshapes one tensor at its stored type before the conversion, or drops it. MatFormer
   slices E4B to E2B through it, one tensor at a time.
 - Qwen4-Exp's loader reads through it too, so a resident load's first GPU evaluation waits on no file
