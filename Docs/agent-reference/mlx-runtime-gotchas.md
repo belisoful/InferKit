@@ -729,16 +729,20 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   is small, so the command buffer's time went to faulting pages back in. Evaluating the weights one
   array at a time on the GPU is not enough: the Gemma 3 test still timed out that way with 6 GB in
   swap, and the Qwen3 cut test timed out running alone. The fix is to load and convert on the CPU,
-  which has no watchdog. `loadedOnCPU` in `NFKMLXBFloat16ParityTests` does this, one array at a time
-  inside `Device.withDefaultDevice(.cpu)`. The cast is exact on either device, so every recorded
-  cosine reproduces to the last digit. Five cut tests that used it passed with 4.6–5.8 GB in swap.
-  Each such test also releases one net (an `autoreleasepool`, then `Memory.clearCache()`) before
-  loading the next. A test whose peak is in the tens of gigabytes runs in its own process, not in the
-  shared suite. Sa2VA's InternVL loader hit the same timeout loading Sa2VA-4B at float32 after the
-  backend test in the S–Z chunk. It now reads through `NFKMLXReleaseWeights.arrays(inDirectory:converting:)`,
-  which evaluates in groups of about 256 MB; at float32 the conversion is the identity, so the groups
-  carry file reads and no GPU work, and the chunk passed (473 tests, 20.5 GB peak). A converting
-  bfloat16 load reads each group in one evaluation and casts it on the GPU in the next (2026-10-06).
+  which has no watchdog. `loaded(onCPU:)` in `NFKMLXBFloat16ParityTests` does this for a release
+  its loader leaves partly lazy (a mixture's per-expert tensors, paged experts), one array at a time
+  inside `Device.withDefaultDevice(.cpu)`. A dense release's loader reads every tensor before it
+  returns, so its float32 load evaluates on the GPU with no file read in the command buffer: the
+  seven dense cut tests went from 165 s to 84 s with every VALIDATION line identical (2026-10-09).
+  The cast is exact on either device, so every recorded cosine reproduces to the last digit. Five
+  cut tests that used it passed with 4.6–5.8 GB in swap. Each such test also releases one net (an
+  `autoreleasepool`, then `Memory.clearCache()`) before loading the next. A test whose peak is in
+  the tens of gigabytes runs in its own process, not in the shared suite. Sa2VA's InternVL loader
+  hit the same timeout loading Sa2VA-4B at float32 after the backend test in the S–Z chunk. It now
+  reads through `NFKMLXReleaseWeights.arrays(inDirectory:converting:)`, which evaluates in groups of
+  about 256 MB; at float32 the conversion is the identity, so the groups carry file reads and no GPU
+  work, and the chunk passed (473 tests, 20.5 GB peak). A converting bfloat16 load reads each group
+  in one evaluation and casts it on the GPU in the next (2026-10-06).
 - **A cached MLX slice holds its source's whole buffer (2026-10-06).** A slice, and `copy`, share the
   source array's buffer (`Copy::eval` calls `copy_shared_buffer`), so a streaming cache that keeps the
   last frames of an input as a slice keeps the entire input alive until the slot is replaced. The Wan
