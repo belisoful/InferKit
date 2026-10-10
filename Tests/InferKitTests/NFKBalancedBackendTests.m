@@ -121,6 +121,11 @@
 
 @end
 
+/*! How long a test waits for a server's status reading or for a condition. A status reading that
+	times out reads the server as not hosting the model, so a short timeout fails a request on a
+	loaded machine before the server answers. */
+static const NSTimeInterval NFKBalancedTestPatience = 60.0;
+
 @interface NFKBalancedBackendTests : XCTestCase
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
@@ -164,6 +169,15 @@
 	return backend;
 }
 
+/*! A balancer of the class for the model "chat" whose status readings wait NFKBalancedTestPatience. */
+- (__kindof NFKBalancedBackend *)balancerOfClass:(Class)balancerClass
+{
+	NFKBalancedBackend *balancer = [[balancerClass alloc] init];
+	balancer.modelName = @"chat";
+	balancer.statusTimeout = NFKBalancedTestPatience;
+	return balancer;
+}
+
 - (NFKInferenceRequest *)request
 {
 	return [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }];
@@ -171,7 +185,7 @@
 
 - (BOOL)waitFor:(BOOL (^)(void))condition
 {
-	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:NFKBalancedTestPatience];
 	while (!condition() && deadline.timeIntervalSinceNow > 0) {
 		[NSThread sleepForTimeInterval:0.01];
 	}
@@ -186,7 +200,7 @@
 	NFKBalancedTestBackend *second = [self backendNamed:@"second"];
 	first.gated = YES;
 	second.gated = YES;
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	balancer.policy = NFKBalancingPolicyFewestOutstanding;
 	[balancer addServerWithBaseURL:[self serverHosting:first queueLimit:0].localBaseURL apiKey:nil];
 	[balancer addServerWithBaseURL:[self serverHosting:second queueLimit:0].localBaseURL apiKey:nil];
@@ -210,7 +224,7 @@
 {
 	NFKBalancedTestBackend *first = [self backendNamed:@"first"];
 	NFKBalancedTestBackend *second = [self backendNamed:@"second"];
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	[balancer addServerWithBaseURL:[self serverHosting:first queueLimit:0].localBaseURL apiKey:nil];
 	[balancer addServerWithBaseURL:[self serverHosting:second queueLimit:0].localBaseURL apiKey:nil];
@@ -226,8 +240,7 @@
 {
 	NFKInferenceServer *hot = [self serverHosting:[self backendNamed:@"hot"] queueLimit:0];
 	NFKInferenceServer *cool = [self serverHosting:[self backendNamed:@"cool"] queueLimit:0];
-	NFKBalancedStrainedBackend *balancer = [[NFKBalancedStrainedBackend alloc] init];
-	balancer.modelName = @"chat";
+	NFKBalancedStrainedBackend *balancer = [self balancerOfClass:NFKBalancedStrainedBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	balancer.strainedBaseURL = hot.localBaseURL;
 	[balancer addServerWithBaseURL:hot.localBaseURL apiKey:nil];
@@ -263,7 +276,7 @@
 
 - (NFKBalancedBackend *)roundRobinOver:(NSArray<NFKInferenceServer *> *)servers
 {
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	for (NFKInferenceServer *server in servers) {
 		[balancer addServerWithBaseURL:server.localBaseURL apiKey:nil];
@@ -326,8 +339,7 @@
 {
 	NFKInferenceServer *slow = [self serverHosting:[self backendNamed:@"slow"] queueLimit:0];
 	NFKInferenceServer *idle = [self serverHosting:[self backendNamed:@"idle"] queueLimit:0];
-	NFKBalancedWaitingBackend *balancer = [[NFKBalancedWaitingBackend alloc] init];
-	balancer.modelName = @"chat";
+	NFKBalancedWaitingBackend *balancer = [self balancerOfClass:NFKBalancedWaitingBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	balancer.statusInterval = 0;
 	[balancer addServerWithBaseURL:slow.localBaseURL apiKey:nil];
@@ -436,7 +448,7 @@
 	busy.gated = YES;
 	NFKInferenceServer *busyServer = [self serverHosting:busy queueLimit:1];
 	NFKInferenceServer *idleServer = [self serverHosting:[self backendNamed:@"idle"] queueLimit:0];
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	[balancer addServerWithBaseURL:busyServer.localBaseURL apiKey:nil];
 	[balancer addServerWithBaseURL:idleServer.localBaseURL apiKey:nil];
@@ -462,7 +474,7 @@
 				   @"the request reached the busy server first");
 
 	// A fresh balancer's first turn is the busy server again.
-	NFKBalancedBackend *streaming = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *streaming = [self balancerOfClass:NFKBalancedBackend.class];
 	streaming.policy = NFKBalancingPolicyRoundRobin;
 	[streaming addServerWithBaseURL:busyServer.localBaseURL apiKey:nil];
 	[streaming addServerWithBaseURL:idleServer.localBaseURL apiKey:nil];
@@ -472,7 +484,7 @@
 		XCTAssertEqualObjects(finished.result.text, @"idle", @"%@", finished.error);
 		[streamed fulfill];
 	};
-	[self waitForExpectations:@[ streamed ] timeout:5];
+	[self waitForExpectations:@[ streamed ] timeout:NFKBalancedTestPatience];
 
 	dispatch_semaphore_signal(busy.gate);
 	dispatch_semaphore_signal(busy.gate);
@@ -481,7 +493,7 @@
 
 - (void)testAnUnreachableServerSitsOut
 {
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	balancer.policy = NFKBalancingPolicyRoundRobin;
 	[balancer addServerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1"] apiKey:nil];
 	[balancer addServerWithBaseURL:[self serverHosting:[self backendNamed:@"alive"] queueLimit:0].localBaseURL apiKey:nil];
@@ -504,7 +516,7 @@
 	[self addTeardownBlock:^{
 		[other stop];
 	}];
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	[balancer addServerWithBaseURL:other.localBaseURL apiKey:nil];
 	[balancer addServerWithBaseURL:[self serverHosting:[self backendNamed:@"host"] queueLimit:0].localBaseURL apiKey:nil];
 	NSError *error = nil;
@@ -521,7 +533,7 @@
 - (void)testAServerHostingABalancerBalancesAndSkipsItself
 {
 	NFKInferenceServer *back = [self serverHosting:[self backendNamed:@"back"] queueLimit:0];
-	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:@"chat"];
+	NFKBalancedBackend *balancer = [self balancerOfClass:NFKBalancedBackend.class];
 	NFKInferenceServer *front = [self serverHosting:balancer queueLimit:0];
 	[balancer addServerWithBaseURL:front.localBaseURL apiKey:nil];
 	[balancer addServerWithBaseURL:back.localBaseURL apiKey:nil];
@@ -553,6 +565,7 @@
 		[server stop];
 	}];
 	NFKBalancedBackend *balancer = [NFKBalancedBackend backendWithModelName:model];
+	balancer.statusTimeout = NFKBalancedTestPatience;
 	balancer.apiKey = @"discoverable";
 	[balancer startDiscoveryWithInterval:1.0];
 	[self addTeardownBlock:^{
