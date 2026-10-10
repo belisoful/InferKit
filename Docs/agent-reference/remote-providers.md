@@ -622,6 +622,51 @@ parameter key (nothing is sampled), and puts the whole reply under `NFKOutputStr
 and leaves the question factories as static methods (`choiceQuestion(withInstructions:options:)`),
 which the Swift example pins.
 
+**OpenAI's Decisions API (`NFKOpenAIDecisionsBackend`).** Announced at DevDay on 2026-09-29 as a
+limited preview, then opened to every developer as a public beta on 2026-10-06. `POST
+https://api.openai.com/v1/decisions` with a Bearer token takes `{model, input, questions,
+safety_identifier?}` and answers `{model, answers, usage}`. The schema here comes from the
+openai-python SDK's generated types (`src/openai/types/decision*.py`, v3.28.0), because the guide at
+`developers.openai.com/api/docs/guides/decisions` shows only excerpts and no API reference page is
+published. The differences from System One:
+
+- `input` is a string or an array of user messages (`{role: user, content}`, where content is a
+  string or `input_text` / `input_image` parts). Images are base64 data URLs only: no hosted URL, no
+  `file_id`, at most 128 image parts a request. Non-user roles, audio, and files are rejected.
+- `questions` is an array. Each question has an optional `name` that must be unique; `predicate`
+  takes only instructions, `choice` takes `choices: [{value, description?}]` (a value may be a JSON
+  boolean, distinct from the string), and `score` takes `levels: [{label, description?}]`, lowest first.
+- Each answer echoes `name`. `predicate` → `probability`; `choice` → `choice`, `probabilities: [{value,
+  probability}]`, `confidence`; `score` → `score` (the probability-weighted level index, from 0),
+  `probabilities: [{value, label, probability}]`, `confidence`; `refusal` → `name` only (the host
+  declines one question without disclosing its score).
+- `usage` is the Responses shape (`input_tokens`, `input_tokens_details.cached_tokens`,
+  `output_tokens`, `output_tokens_details.reasoning_tokens`, `total_tokens`).
+- Only `gpt-6-luna` is accepted at release. Pricing is $0.10 per million input tokens, with output and
+  cache reads and writes free. The guide documents no error codes, rate limits, or size limits.
+
+The backend maps this onto the engine-neutral vocabulary rather than adding a type:
+
+- The question's `NFKInputQuestions` identifier is its `name`, and questions go in sorted identifier
+  order, so an unnamed answer is matched by position.
+- A noul is sent as a predicate. Its true/false meanings have no field, so they follow the
+  instructions as `True means:` / `False means:` lines.
+- A score's level descriptions go as labels. A dictionary state is sent as its sorted-key JSON text,
+  and `NFKInputMessages` as a `role: content` transcript.
+- `NFKDecisionAnswer.answerWithDictionary:` reads `predicate` and the array forms. A refusal names no
+  type, so the backend builds it with `refusalForType:raw:` from its question's type.
+- No `NFKDecisionType` case was added for a refusal. The InferKitMLX decision models switch over the
+  enum, and a new case warns there. `refused` is a flag on the answer instead.
+- The Decisions API is a route on the `openai` preset, like `/moderations`, so it has no
+  `NFKRemoteAPIStyle` value. `+backendForProvider:apiKey:modelName:` answers for `openai` only, at
+  its own base or a re-pointed one.
+
+A standard key got **403** `"Decision API is not enabled for this user."` (`invalid_request_error`)
+during the preview (eesel AI, 2026-10-01/02). That body reaches the caller through
+`NFKRemoteTransport`'s error. The answer shape is asserted live only by
+`-[NFKOpenAIDecisionsBackendTests testALiveEndpointAnswersATypedDecision]`, gated on
+`INFERKIT_OPENAI_API_KEY`.
+
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
 shipping a preset would imply one exists. `opencode.ai` answers `Not Found` on its API path — it is a
 coding agent that calls other providers rather than an inference service. Codex is OpenAI's coding

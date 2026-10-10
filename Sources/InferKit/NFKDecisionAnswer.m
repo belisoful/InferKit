@@ -5,6 +5,10 @@
 
 #import "NFKDecisionAnswer.h"
 
+@interface NFKDecisionAnswer ()
+@property (nonatomic, readwrite, getter=isRefused) BOOL refused;
+@end
+
 @implementation NFKDecisionAnswer
 
 + (nullable instancetype)answerWithDictionary:(NSDictionary<NSString *, id> *)dictionary
@@ -18,22 +22,77 @@
 		type = NFKDecisionTypeChoice;
 	} else if ([name isEqualToString:@"score"]) {
 		type = NFKDecisionTypeScore;
-	} else if ([name isEqualToString:@"noul"]) {
+	} else if ([name isEqualToString:@"noul"] || [name isEqualToString:@"predicate"]) {
 		type = NFKDecisionTypeNoul;
 	} else {
 		return nil;
 	}
-	NSString *choice = [dictionary[@"choice"] isKindOfClass:NSString.class] ? dictionary[@"choice"] : nil;
-	NSDictionary *probabilities = [dictionary[@"probabilities"] isKindOfClass:NSDictionary.class] ? dictionary[@"probabilities"] : nil;
-	NSDictionary *legend = [dictionary[@"legend"] isKindOfClass:NSDictionary.class] ? dictionary[@"legend"] : nil;
+	id choice = dictionary[@"choice"];
+	NSDictionary *probabilities = [self probabilitiesIn:dictionary[@"probabilities"]];
+	NSDictionary *legend = [dictionary[@"legend"] isKindOfClass:NSDictionary.class] ? dictionary[@"legend"] : [self legendIn:dictionary[@"probabilities"]];
+	double probability = dictionary[@"noul"] != nil ? [self numberIn:dictionary forKey:@"noul"] : [self numberIn:dictionary forKey:@"probability"];
 	return [[self alloc] initWithType:type
-							   choice:type == NFKDecisionTypeChoice ? choice : nil
+							   choice:type == NFKDecisionTypeChoice && choice != nil ? [self keyForValue:choice] : nil
 								score:type == NFKDecisionTypeScore ? [self numberIn:dictionary forKey:@"score"] : 0
-						  probability:type == NFKDecisionTypeNoul ? [self numberIn:dictionary forKey:@"noul"] : 0
+						  probability:type == NFKDecisionTypeNoul ? probability : 0
 						   confidence:[self numberIn:dictionary forKey:@"confidence"]
 						probabilities:type == NFKDecisionTypeNoul ? nil : probabilities
 							   legend:type == NFKDecisionTypeScore ? legend : nil
 								  raw:dictionary];
+}
+
++ (instancetype)refusalForType:(NFKDecisionType)type raw:(nullable NSDictionary<NSString *, id> *)raw
+{
+	NFKDecisionAnswer *answer = [[self alloc] initWithType:type choice:nil score:0 probability:0 confidence:0
+											 probabilities:nil legend:nil raw:raw];
+	answer.refused = YES;
+	return answer;
+}
+
+/*! A map passes through; an array of {value, probability} entries is keyed by its values. */
++ (nullable NSDictionary<NSString *, NSNumber *> *)probabilitiesIn:(id)wire
+{
+	if ([wire isKindOfClass:NSDictionary.class]) {
+		return wire;
+	}
+	if (![wire isKindOfClass:NSArray.class]) {
+		return nil;
+	}
+	NSMutableDictionary<NSString *, NSNumber *> *probabilities = [NSMutableDictionary dictionary];
+	for (NSDictionary *entry in wire) {
+		if ([entry isKindOfClass:NSDictionary.class] && entry[@"value"] != nil && [entry[@"probability"] isKindOfClass:NSNumber.class]) {
+			probabilities[[self keyForValue:entry[@"value"]]] = entry[@"probability"];
+		}
+	}
+	return probabilities;
+}
+
+/*! The labels of an array of {value, label, probability} score entries, keyed by level index. */
++ (nullable NSDictionary<NSString *, NSString *> *)legendIn:(id)wire
+{
+	if (![wire isKindOfClass:NSArray.class]) {
+		return nil;
+	}
+	NSMutableDictionary<NSString *, NSString *> *legend = [NSMutableDictionary dictionary];
+	for (NSDictionary *entry in wire) {
+		if ([entry isKindOfClass:NSDictionary.class] && entry[@"value"] != nil && [entry[@"label"] isKindOfClass:NSString.class]) {
+			legend[[self keyForValue:entry[@"value"]]] = entry[@"label"];
+		}
+	}
+	return legend.count > 0 ? legend : nil;
+}
+
+/*! An option or level value as a key: a string as is, a JSON boolean as "true" or "false", and a
+	number as its decimal text. */
++ (NSString *)keyForValue:(id)value
+{
+	if ([value isKindOfClass:NSString.class]) {
+		return value;
+	}
+	if ([value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+		return [value boolValue] ? @"true" : @"false";
+	}
+	return [value description];
 }
 
 + (double)numberIn:(NSDictionary *)dictionary forKey:(NSString *)key
@@ -81,6 +140,7 @@
 	}
 	NFKDecisionAnswer *other = object;
 	return self.type == other.type
+		&& self.refused == other.refused
 		&& (self.choice == other.choice || [self.choice isEqualToString:other.choice])
 		&& self.score == other.score
 		&& self.probability == other.probability
@@ -97,6 +157,9 @@
 
 - (NSString *)description
 {
+	if (self.refused) {
+		return [NSString stringWithFormat:@"<%@ %@ refused>", NSStringFromClass(self.class), [NFKDecisionQuestion nameForType:self.type]];
+	}
 	switch (self.type) {
 		case NFKDecisionTypeChoice:
 			return [NSString stringWithFormat:@"<%@ choice %@ %.3f>", NSStringFromClass(self.class), self.choice ?: @"?", self.confidence];
@@ -125,6 +188,7 @@
 	[coder encodeObject:self.probabilities forKey:@"probabilities"];
 	[coder encodeObject:self.legend forKey:@"legend"];
 	[coder encodeObject:self.raw forKey:@"raw"];
+	[coder encodeBool:self.refused forKey:@"refused"];
 }
 
 - (nullable instancetype)initWithCoder:(NSCoder *)coder
@@ -132,7 +196,7 @@
 	NSSet *plist = [NSSet setWithArray:@[ NSDictionary.class, NSArray.class, NSString.class, NSNumber.class, NSNull.class ]];
 	NSSet *stringMap = [NSSet setWithArray:@[ NSDictionary.class, NSString.class ]];
 	NSSet *numberMap = [NSSet setWithArray:@[ NSDictionary.class, NSString.class, NSNumber.class ]];
-	return [self initWithType:[coder decodeIntegerForKey:@"type"]
+	self = [self initWithType:[coder decodeIntegerForKey:@"type"]
 					   choice:[coder decodeObjectOfClass:NSString.class forKey:@"choice"]
 						score:[coder decodeDoubleForKey:@"score"]
 				  probability:[coder decodeDoubleForKey:@"probability"]
@@ -140,6 +204,10 @@
 				probabilities:[coder decodeObjectOfClasses:numberMap forKey:@"probabilities"]
 					   legend:[coder decodeObjectOfClasses:stringMap forKey:@"legend"]
 						  raw:[coder decodeObjectOfClasses:plist forKey:@"raw"]];
+	if (self != nil) {
+		self.refused = [coder decodeBoolForKey:@"refused"];
+	}
+	return self;
 }
 
 @end

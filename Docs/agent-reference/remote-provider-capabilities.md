@@ -29,6 +29,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | audio → text | `/audio/transcriptions` | covered (`gpt-transcribe` text and stream, diarized_json, words); `whisper-1` family shuts down 2027-02-26 |
 | audio → English text | `/audio/translations` | covered until `whisper-1` shuts down |
 | text + image → moderation | `/moderations` | covered |
+| text + image → typed decisions (predicate, choice, score) | `/decisions` | covered (`NFKOpenAIDecisionsBackend`); public beta from 2026-10-06 |
 | text → embedding | `/embeddings` | covered |
 | text + image → video | `/videos` | covered; shuts down 2026-09-24 |
 | speech ↔ speech, realtime transcription, realtime translation | `wss …/v1/realtime`, `…/realtime/translations` | covered (`NFKRealtimeSession`) |

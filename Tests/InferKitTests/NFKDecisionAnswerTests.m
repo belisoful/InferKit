@@ -64,4 +64,53 @@
 	XCTAssertNotEqualObjects(answer, other);
 }
 
+- (void)testThePredicateAndArrayShapesReadIntoTheSameFields
+{
+	NFKDecisionAnswer *predicate = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"predicate", @"name": @"damaged", @"probability": @0.92 }];
+	XCTAssertEqual(predicate.type, NFKDecisionTypeNoul);
+	XCTAssertEqualWithAccuracy(predicate.probability, 0.92, 1e-12);
+	XCTAssertNil(predicate.probabilities);
+
+	NFKDecisionAnswer *choice = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"choice", @"choice": @"billing", @"confidence": @0.93,
+		@"probabilities": @[ @{ @"value": @"billing", @"probability": @0.95 }, @{ @"value": @"other", @"probability": @0.05 } ] }];
+	XCTAssertEqualObjects(choice.choice, @"billing");
+	XCTAssertEqualObjects(choice.probabilities, (@{ @"billing": @0.95, @"other": @0.05 }));
+	XCTAssertNil(choice.legend);
+
+	NFKDecisionAnswer *score = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"score", @"score": @1.1, @"confidence": @0.55,
+		@"probabilities": @[ @{ @"value": @0, @"label": @"Cosmetic", @"probability": @0.1 },
+							 @{ @"value": @1, @"label": @"Workaround available", @"probability": @0.7 },
+							 @{ @"value": @2, @"label": @"Fully blocked", @"probability": @0.2 } ] }];
+	XCTAssertEqualWithAccuracy(score.score, 1.1, 1e-12);
+	XCTAssertEqualObjects(score.probabilities[@"1"], @0.7);
+	XCTAssertEqualObjects(score.legend[@"2"], @"Fully blocked");
+}
+
+- (void)testABooleanChoiceValueReadsAsItsJSONText
+{
+	NFKDecisionAnswer *choice = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"choice", @"choice": @YES,
+		@"probabilities": @[ @{ @"value": @YES, @"probability": @0.8 }, @{ @"value": @"true", @"probability": @0.2 } ] }];
+	XCTAssertEqualObjects(choice.choice, @"true");
+	XCTAssertEqual(choice.probabilities.count, 1, @"the boolean and the string share a key, which raw keeps apart");
+	XCTAssertEqual([choice.raw[@"probabilities"] count], 2);
+}
+
+- (void)testARefusalCarriesNoValueAndArchivesAsRefused
+{
+	XCTAssertNil(([NFKDecisionAnswer answerWithDictionary:@{ @"type": @"refusal", @"name": @"q" }]), @"a refusal names no type to read");
+	NFKDecisionAnswer *refusal = [NFKDecisionAnswer refusalForType:NFKDecisionTypeChoice raw:@{ @"type": @"refusal", @"name": @"q" }];
+	XCTAssertTrue(refusal.isRefused);
+	XCTAssertEqual(refusal.type, NFKDecisionTypeChoice);
+	XCTAssertNil(refusal.choice);
+	XCTAssertEqualObjects(refusal.raw[@"name"], @"q");
+
+	NSError *error = nil;
+	NSData *archive = [NSKeyedArchiver archivedDataWithRootObject:refusal requiringSecureCoding:YES error:&error];
+	NFKDecisionAnswer *back = [NSKeyedUnarchiver unarchivedObjectOfClass:NFKDecisionAnswer.class fromData:archive error:&error];
+	XCTAssertTrue(back.isRefused, @"%@", error);
+	XCTAssertEqualObjects(back, refusal);
+	XCTAssertNotEqualObjects(refusal, [[NFKDecisionAnswer alloc] initWithType:NFKDecisionTypeChoice choice:nil score:0 probability:0
+																	confidence:0 probabilities:nil legend:nil raw:nil]);
+}
+
 @end

@@ -110,6 +110,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKCostEntry``
 - ``NFKAccountBalance``
 - ``NFKTypeSafeBackend``
+- ``NFKOpenAIDecisionsBackend``
 
 ### Serving
 

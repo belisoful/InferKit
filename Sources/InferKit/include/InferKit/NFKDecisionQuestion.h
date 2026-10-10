@@ -22,7 +22,8 @@ typedef NS_ENUM(NSInteger, NFKDecisionType) {
 	NFKDecisionTypeChoice = 0,
 	/*! A level on an ordered scale: severity, priority, quality. */
 	NFKDecisionTypeScore = 1,
-	/*! Whether a statement holds, as a probability: a yes-or-no judgment. */
+	/*! Whether a statement holds, as a probability: a yes-or-no judgment. OpenAI's Decisions API
+		calls this type a predicate. */
 	NFKDecisionTypeNoul = 2,
 };
 

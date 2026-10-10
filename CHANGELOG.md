@@ -35,6 +35,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Typed decisions from OpenAI's Decisions API
+
+- `NFKOpenAIDecisionsBackend` calls OpenAI's Decisions API (`POST /decisions` on the `openai` preset).
+  It reads the request `NFKTypeSafeBackend` reads and returns the same `NFKDecisionAnswer`s, so a
+  feature moves between Jev, OpenAI, and the on-device decision models by swapping the object. A
+  noul is sent as the service's predicate, and each question is named by its identifier. An image
+  beside the state rides as an inline PNG data URL. `backendForProvider:apiKey:modelName:` builds it
+  for the `openai` preset; the model is required, and `gpt-6-luna` is the one the service accepts.
+- `NFKDecisionAnswer` reads the Decisions API's shapes beside Jev's: a `predicate` answer fills
+  `probability`, and probabilities given as an array of entries fill `probabilities`, with a score's
+  labels filling `legend`. `refused` marks a question the service declined, and
+  `refusalForType:raw:` builds that answer.
+
 #### Serving a model to other machines
 
 - `NFKInferenceServer` hosts any `NFKInferenceBackend` under a model name and serves it over HTTP on

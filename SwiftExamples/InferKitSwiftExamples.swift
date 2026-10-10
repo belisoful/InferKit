@@ -594,6 +594,19 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(decided.answers?["severity"]?.legend?["2"], "high")
     }
 
+    // OpenAI's Decisions API from Swift: the provider factory returns an optional, and a refusal
+    // reads through `isRefused`.
+    func testOpenAIDecisions() throws {
+        let luna = NFKOpenAIDecisionsBackend(for: .openAI, apiKey: "sk-…", modelName: "gpt-6-luna")
+        XCTAssertEqual(luna?.endpointURL?.absoluteString, "https://api.openai.com/v1/decisions")
+
+        // What comes back (needs network): `try luna.answers(forState: state, questions: questions)`.
+        let urgent = NFKDecisionAnswer(dictionary: ["type": "predicate", "name": "urgent", "probability": 0.91])
+        XCTAssertEqual(urgent?.type, .noul)
+        let declined = NFKDecisionAnswer.refusal(for: .choice, raw: ["type": "refusal", "name": "department"])
+        XCTAssertTrue(declined.isRefused)
+    }
+
     // MARK: Apple's own engines
 
     // Docs/examples.md: Reading the text in an image (Vision, no weights)

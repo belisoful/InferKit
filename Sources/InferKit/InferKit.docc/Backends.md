@@ -62,6 +62,8 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteModerationBackend`` — per-category moderation scores and a verdict for text or an image.
 - ``NFKTypeSafeBackend`` — TypeSafe AI's System One API, which serves Jev: typed answers to
   ``NFKDecisionQuestion``s about a state, rather than text.
+- ``NFKOpenAIDecisionsBackend`` — OpenAI's Decisions API: the same questions and answers, with images
+  beside the state.
 - ``NFKRemoteReranker`` — query-and-documents relevance scores, the shape of the on-device reranker.
 - ``NFKRemoteResponsesBackend`` — the Responses API: service-run tools, reasoning summaries, background
   jobs, and continuation by response id.
@@ -197,6 +199,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteRetrievalStore``
 - ``NFKRemoteUsageReporter``
 - ``NFKTypeSafeBackend``
+- ``NFKOpenAIDecisionsBackend``
 
 ### Media coding
 

@@ -3555,6 +3555,48 @@ A question already in the service's own shape (`{type, instructions, criteria}`)
 `NFKInputQuestions` as a dictionary and passes through. A rate limit or an overload (429, 529) is
 retried through `NFKRemoteTransport` like every other blocking remote call.
 
+### Typed decisions (`NFKOpenAIDecisionsBackend`, OpenAI's Decisions API)
+
+OpenAI's Decisions API answers the same three question types as Jev and takes the same request, so
+`NFKOpenAIDecisionsBackend` reads the questions and returns the answers `NFKTypeSafeBackend` does. It
+is one more route on the `openai` preset (`POST /decisions`). The model is required, and `gpt-6-luna`
+is the one the service accepts. A noul is sent as the service's predicate, each question is named by
+its identifier, and an image beside the state rides inline.
+
+```objc
+NFKOpenAIDecisionsBackend *luna = [NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI
+                                                                        apiKey:key modelName:@"gpt-6-luna"];
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [luna answersForState:@"Help! My payouts have been failing for 3 days."
+                questions:@{ @"department": [NFKDecisionQuestion choiceQuestionWithInstructions:@"Which team should handle this?"
+                                                                                       options:@[ @"billing", @"technical", @"sales" ]],
+                             @"urgent":     [NFKDecisionQuestion noulQuestionWithInstructions:@"The customer needs an answer today."] }
+                    error:&error];
+answers[@"department"].choice;                          // "technical"
+answers[@"urgent"].probability;                         // 0.91
+
+// Text and an image as the shared evidence; the photo is sent as a PNG data URL.
+NFKInferenceRequest *inspect = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputState: @"Inspect the product in this photo.",
+    NFKInputImage: (__bridge id)photo,
+    NFKInputQuestions: @{ @"damaged": [NFKDecisionQuestion noulQuestionWithInstructions:@"The product has visible damage."] } }];
+NFKDecisionAnswer *damaged = [luna runInferenceForRequest:inspect error:&error].answers[@"damaged"];
+if (damaged.isRefused) {
+    // The service declined this one question; the others are answered.
+}
+```
+
+```swift
+let luna = NFKOpenAIDecisionsBackend(for: .openAI, apiKey: key, modelName: "gpt-6-luna")!
+let answers = try luna.answers(forState: "Help! My payouts have been failing for 3 days.", questions: questions)
+answers["urgent"]?.probability       // 0.91
+```
+
+A dictionary state is sent as its JSON text and `NFKInputMessages` as a "role: content" transcript,
+because the service reads a string or user messages only. A question already in the service's shape
+(`{type, name, instructions, choices | levels}`) passes through. `safety_identifier` and any other body
+field go in as request parameters.
+
 Midjourney has no official public API, so there is no preset for it; `opencode.ai` is a coding agent
 rather than an inference service; and Codex is OpenAI's agent using the OpenAI API, so it is the
 `openai` preset.

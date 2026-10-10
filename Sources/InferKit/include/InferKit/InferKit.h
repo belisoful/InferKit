@@ -40,6 +40,7 @@
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKTypeSafeBackend.h>
+#import <InferKit/NFKOpenAIDecisionsBackend.h>
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKRemoteModel.h>

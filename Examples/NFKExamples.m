@@ -754,6 +754,36 @@
 	XCTAssertEqualObjects(decided.answers[@"department"].choice, @"technical");
 }
 
+- (void)testExampleOpenAIDecisions
+{
+	// OpenAI's Decisions API takes the same questions and returns the same answers as Jev. It is one
+	// more route on the openai preset; the model is required, and gpt-6-luna is the one it serves.
+	NFKOpenAIDecisionsBackend *luna = [NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI
+																			apiKey:@"sk-…" modelName:@"gpt-6-luna"];
+	XCTAssertEqualObjects(luna.endpointURL.absoluteString, @"https://api.openai.com/v1/decisions");
+	XCTAssertTrue(luna.isReady);
+
+	// A photo rides beside the text; the backend sends it inline, the one form the service reads.
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 2, 2, 8, 8, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGImageRef photo = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	NFKInferenceRequest *inspect = [NFKInferenceRequest requestWithInputs:@{
+		NFKInputState: @"Inspect the product in this photo.",
+		NFKInputImage: (__bridge id)photo,
+		NFKInputQuestions: @{ @"damaged": [NFKDecisionQuestion noulQuestionWithInstructions:@"The product has visible damage."] } }];
+	XCTAssertNotNil([inspect inputForKey:NFKInputImage]);
+	CGImageRelease(photo);
+
+	// What comes back (needs network): a yes-or-no question is answered as a predicate, read into the
+	// same probability a Jev noul fills, and a declined question comes back refused.
+	NFKDecisionAnswer *damaged = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"predicate", @"name": @"damaged", @"probability": @0.92 }];
+	XCTAssertEqual(damaged.type, NFKDecisionTypeNoul);
+	XCTAssertEqualWithAccuracy(damaged.probability, 0.92, 1e-9);
+	XCTAssertFalse(damaged.isRefused);
+}
+
 - (void)testExampleAsyncGenerationBackendContract
 {
 	ExampleImageGenerationBackend *backend = [[ExampleImageGenerationBackend alloc] init];

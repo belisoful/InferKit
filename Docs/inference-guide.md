@@ -134,6 +134,7 @@ companion packages add engines the core cannot host, without raising the core's 
 | `NFKRemoteBackend` | core | An OpenAI-compatible endpoint | Twelve named presets, hosted and local (Ollama, LM Studio, llama.cpp, vLLM). Foundation-only. |
 | `NFKAnthropicBackend` | core | Anthropic's Messages API | Its own backend, because the protocol differs; the same request shape. |
 | `NFKTypeSafeBackend` | core | TypeSafe AI's System One API (Jev) | Typed decisions rather than text: `NFKInputState` + `NFKInputQuestions` in, `NFKDecisionAnswer`s under `NFKOutputAnswers` out. |
+| `NFKOpenAIDecisionsBackend` | core | OpenAI's Decisions API | The request `NFKTypeSafeBackend` reads, answered by `gpt-6-luna`; images ride beside the state, and a declined question comes back with `refused` set. |
 | `NFKRemoteTranscriptionBackend` | core | An OpenAI-compatible audio→text (Whisper) endpoint | `NFKInputAudio` in, `NFKOutputText` out. |
 | `NFKRemoteEmbeddingBackend` | core | An OpenAI-compatible embeddings endpoint | `NFKInputPrompt` in, `NFKOutputEmbedding` out; batches through `embeddingsForTexts:error:`. |
 | `NFKRemoteSpeechBackend` | core | An OpenAI-compatible text→speech endpoint | `NFKInputPrompt` in, an `NFKAudioAsset` (WAV by default) under `NFKOutputAudio`. A voice is required. |
@@ -565,7 +566,10 @@ name the provider does not know, so it is the cheap check before a request carri
   `NFKInputState` (or the prompt, or the messages) and `NFKDecisionQuestion`s under
   `NFKInputQuestions`, and the reply is an `NFKDecisionAnswer` per question under `NFKOutputAnswers`.
   The key is a Bearer token and the model is required; `jev-latest` is the alias of the current
-  release, and `modelsWithAPIKey:error:` lists the rest.
+  release, and `modelsWithAPIKey:error:` lists the rest. OpenAI's Decisions API answers the same
+  request on the `openai` preset, through `NFKOpenAIDecisionsBackend`, which
+  `[NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-6-luna"]`
+  builds.
 
 ```objc
 NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:@"ollama"];
@@ -664,8 +668,9 @@ more services complete the surface: `NFKRemoteVideoBackend` (job-style video gen
 `NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart, speaking Gemini Veo, xAI, Together,
 OpenRouter, and OpenAI's videos API, which OpenAI removes on 2026-09-24), `NFKRemoteReranker` (Together,
 OpenRouter, llama.cpp, vLLM; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
-`NFKTypeSafeBackend` is the one remote backend that does not generate: Jev answers typed questions
-about a state, with the probabilities behind each answer, at the latency and price of a classifier.
+`NFKTypeSafeBackend` and `NFKOpenAIDecisionsBackend` are the remote backends that do not generate:
+Jev and OpenAI's Decisions API answer typed questions about a state, with the probabilities behind
+each answer, at the latency and price of a classifier.
 
 ## Serving a model to other machines
 
