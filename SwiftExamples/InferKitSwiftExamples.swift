@@ -594,6 +594,28 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(decided.answers?["severity"]?.legend?["2"], "high")
     }
 
+    // Gemini's voice library from Swift: the calls import as throwing methods, and the factory as an
+    // optional initializer.
+    func testGeminiVoiceLibrary() throws {
+        let voices = NFKGeminiVoiceLibrary(for: .googleGemini, apiKey: "AIza…")
+        XCTAssertEqual(voices?.endpointURL?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/voices")
+        XCTAssertNil(NFKGeminiVoiceLibrary(for: .openAI, apiKey: "sk-…"))
+
+        let designed = NFKRemoteVoice(identifier: "voice_abc", name: "Astronomer", languages: ["en-GB"],
+                                      raw: ["sample_audio": ["mime_type": "audio/wav", "data": "UklGRg=="]])
+        XCTAssertEqual(designed.sampleAudioData?.count, 4)
+
+        // What the calls look like (they need network, so this is compiled and not run).
+        func manage(_ voices: NFKGeminiVoiceLibrary, clip: Data, consent: Data) throws {
+            let prebuilt = try voices.voices(matchingFilters: ["type": "prebuilt", "language_code": ["en-US", "en-GB"]])
+            let astronomer = try voices.designVoice(withDescription: "A warm astronomer with a gentle British accent.",
+                                                    displayName: "Astronomer", attributes: ["gender": "male"])
+            let replica = try voices.replicateVoice(fromAudio: clip, consentAudio: consent, displayName: nil, stores: false)
+            try voices.deleteVoice(withIdentifier: astronomer.identifier)
+            _ = (prebuilt, replica)
+        }
+    }
+
     // OpenAI's Decisions API from Swift: the provider factory returns an optional, and a refusal
     // reads through `isRefused`.
     func testOpenAIDecisions() throws {

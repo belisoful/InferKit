@@ -35,6 +35,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Gemini's voice library
+
+- `NFKGeminiVoiceLibrary` reaches the Gemini API's Voices endpoint (`/v1beta/voices`). It lists the
+  prebuilt and custom voices by filter across every page, looks one up, designs and stores a voice
+  from a description, replicates one from a recording and a consent clip, and deletes a stored one.
+  Each voice is an `NFKRemoteVoice` whose identifier `NFKGeminiInteractionsBackend` speaks with.
+  `voiceLibraryForProvider:apiKey:` builds it for the `gemini` preset.
+- `NFKRemoteVoice.sampleAudioData` is the preview clip a service returns inline with a voice, decoded.
+
+#### Claude Sonnet 5.5 structured output
+
+- `NFKAnthropicBackend` asks Claude Sonnet 5.5 for a JSON schema through `output_config.format`,
+  because the model refuses a forced `tool_choice` with HTTP 400, as Claude Opus 5.5 does.
+
 #### Typed decisions from OpenAI's Decisions API
 
 - `NFKOpenAIDecisionsBackend` calls OpenAI's Decisions API (`POST /decisions` on the `openai` preset).

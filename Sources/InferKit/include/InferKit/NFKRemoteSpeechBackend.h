@@ -51,6 +51,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 /*! The service's own record of the voice. */
 @property (nonatomic, copy, readonly) NSDictionary *raw;
 
+/*! The preview clip the service returned inline with the voice, decoded, or nil. A Gemini voice
+	carries a WAV preview when it is designed and when it is looked up by identifier. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, nullable) NSData *sampleAudioData;
+
 - (instancetype)initWithIdentifier:(NSString *)identifier
 							  name:(nullable NSString *)name
 						 languages:(NSArray<NSString *> *)languages

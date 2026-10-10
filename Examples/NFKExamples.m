@@ -665,6 +665,15 @@
 	XCTAssertEqual(speak.outputModality, NFKModalityAudio);
 	XCTAssertTrue(gemini.isReady);
 
+	// Gemini's voice library lists, designs, replicates, and deletes voices; a voice's identifier is
+	// what the Interactions backend speaks with.
+	NFKGeminiVoiceLibrary *voices = [NFKGeminiVoiceLibrary voiceLibraryForProvider:NFKRemoteProvider.googleGemini apiKey:@"AIza…"];
+	XCTAssertEqualObjects(voices.endpointURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/voices");
+	NFKRemoteVoice *designed = [[NFKRemoteVoice alloc] initWithIdentifier:@"voice_abc" name:@"Astronomer" languages:@[ @"en-GB" ]
+																	  raw:@{ @"sample_audio": @{ @"mime_type": @"audio/wav", @"data": @"UklGRg==" } }];
+	XCTAssertEqual(designed.sampleAudioData.length, 4);
+	gemini.voice = designed.identifier;
+
 	// Fill-in-the-middle: the code before the gap is the prompt, the code after it the suffix.
 	NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
 																				 apiKey:@"k" modelName:@"codestral-latest"];

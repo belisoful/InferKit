@@ -68,7 +68,7 @@ static NSArray<NSString *> *NFKAnthropicSummarizingFamilies(void)
 /*! The families that refuse a forced tool_choice, so a schema goes through output_config.format. */
 static NSArray<NSString *> *NFKAnthropicUnforcedToolFamilies(void)
 {
-	return @[ @"claude-opus-5-5", @"claude-fable-5-1", @"claude-mythos-5-1" ];
+	return @[ @"claude-opus-5-5", @"claude-sonnet-5-5", @"claude-fable-5-1", @"claude-mythos-5-1" ];
 }
 
 static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NSString *> *families)

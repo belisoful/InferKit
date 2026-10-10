@@ -68,6 +68,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKRemoteEmbeddingBackend``
 - ``NFKRemoteSpeechBackend``
 - ``NFKRemoteVoice``
+- ``NFKGeminiVoiceLibrary``
 - ``NFKRemoteImageBackend``
 - ``NFKRemoteTranscriptionBackend``
 - ``NFKAsyncGenerationBackend``

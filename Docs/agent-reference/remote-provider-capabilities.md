@@ -57,6 +57,7 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | text + image + audio + video + PDF → text, tools, structured output | Interactions / OpenAI-layer chat | covered (`NFKGeminiInteractionsBackend`) |
 | text + images → image (generate and edit, Nano Banana) | Interactions `response_format: image` | covered |
 | text → speech (30 voices, two speakers) | Interactions `response_format: audio` | covered (Interactions) |
+| voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
 | audio → text with diarization and word times | Interactions `transcription_config` (`gemini-3.5-transcribe`) | covered (Interactions) |
 | text (+ images) → music | Interactions (`lyria-3.5`, `lyria-3-*`) | covered |
 | text + image + video + audio → video, video editing | Interactions (`gemini-omni-1.1-flash`) | covered (Interactions, background); Google names it the default video model over Veo |

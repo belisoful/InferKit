@@ -69,6 +69,8 @@ Pure Apple frameworks, always available:
   jobs, and continuation by response id.
 - ``NFKGeminiInteractionsBackend`` — Gemini's native Interactions API: text, images, speech, music,
   transcription, and video from one endpoint.
+- ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, replicate, and delete the voices
+  the Interactions backend speaks with.
 - ``NFKRemoteCompletionBackend`` — raw continuation and fill-in-the-middle for code.
 - ``NFKRemoteOCRBackend`` — a document or image read into markdown, with a schema filled from it.
 - ``NFKRemoteClassifierBackend`` — a hosted classifier's scores as classifications.
@@ -188,6 +190,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteReranker``
 - ``NFKRemoteResponsesBackend``
 - ``NFKGeminiInteractionsBackend``
+- ``NFKGeminiVoiceLibrary``
 - ``NFKRemoteCompletionBackend``
 - ``NFKRemoteOCRBackend``
 - ``NFKRemoteClassifierBackend``

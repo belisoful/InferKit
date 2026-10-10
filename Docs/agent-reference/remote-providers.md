@@ -215,12 +215,16 @@ not thinking: Opus 4.7 onward, Sonnet 5, Fable, and Opus 5 / 5.5 return 400 on `
 `top_k`. Outside the 4.6 families the request adds `display: summarized`, since the default display
 from 4.7 on is `omitted` (an empty `thinking` string, now skipped when joining the reasoning).
 Thinking counts toward `max_tokens`, so an effort raises the limit by the same budget table (deep for a
-pass-through level). `NFKAnthropicUnforcedToolFamilies()` (Opus 5.5, Fable 5.1, Mythos 5.1) returns 400 on a forced
+pass-through level). `NFKAnthropicUnforcedToolFamilies()` (Opus 5.5, Sonnet 5.5, Fable 5.1, Mythos 5.1) returns 400 on a forced
 `tool_choice`, so there the schema goes out as `output_config.format` and the reply's JSON text is
 parsed into `NFKOutputStructured`. Every model also refuses a forced tool beside
 `thinking: {type: enabled}`, so a budget-family request that carries both a schema and an effort takes
 `output_config.format` too. Opus 5.5 also always thinks: it refuses `thinking: {type: disabled}`,
-which the backend never sends. Its effort default is `medium`, one level below Opus 5. **OpenAI
+which the backend never sends. Its effort default is `medium`, one level below Opus 5. Sonnet 5.5
+(2026-09-28) joined the unforced list from its release notes ("Forced tool use returns 400"). Haiku
+5.5 (2026-10-07) did not: its notes list sampling, `budget_tokens`, prefill, and `computer_20250124`
+as 400s and say nothing about `tool_choice`. Neither 5.5 model takes sampling, which the
+current-model default already covers. **OpenAI
 reasoning families (2026-09-22):** `NFKRemoteBackend` spells the limit `max_completion_tokens` when
 `modelName` has the prefix `gpt-5`, `gpt-6`, `o1`, `o3`, or `o4`, because those refuse `max_tokens` on
 Chat Completions. The match is a prefix, so a router's `openai/gpt-…` keeps `max_tokens`. GPT-5.6 Sol
@@ -666,6 +670,39 @@ during the preview (eesel AI, 2026-10-01/02). That body reaches the caller throu
 `NFKRemoteTransport`'s error. The answer shape is asserted live only by
 `-[NFKOpenAIDecisionsBackendTests testALiveEndpointAnswersATypedDecision]`, gated on
 `INFERKIT_OPENAI_API_KEY`.
+
+**Gemini's voice library (`NFKGeminiVoiceLibrary`).** The Voices API shipped on 2026-09-22 beside the
+Gemini 3.8 Flash TTS models. The field names come from the google-genai Python SDK's generated types
+(`google/genai/_gaos/types/voices/`, v2.29.0), because the guides
+(`ai.google.dev/gemini-api/docs/voice-design`, `voice-replication`, `speech-generation#voice-library`)
+show requests but no response bodies. Shape, under `https://generativelanguage.googleapis.com/v1beta`,
+with `x-goog-api-key`:
+
+- `GET /voices` reads the filters `language_code`, `region_code`, `accent`, `gender`, `pitch`,
+  `persona`, `context`, `type` (prebuilt, prompted, replicated), `search`, and `page_size` (default 50,
+  at most 1000), plus `page_token`. A repeated filter matches as alternatives, and different filters
+  must all match. It answers `{voices, next_page_token}`, custom voices first.
+- `GET /voices/{id}` and `DELETE /voices/{id}`. The delete answers `{}`.
+- `POST /voices` takes `{store, voice}`. `voice` carries `type`, `model` (optional; the latest
+  voice-design model otherwise), `display_name`, the discovery fields, and either `prompted: {input}`
+  or `replicated: {source_audio, consent_audio}`, each `{mime_type, data}` with data in base64.
+- A reply voice carries `id` (stored) or `key` (`voicekey_…`, replicated with `store: false`), plus
+  `sample_audio` (a WAV preview on create and get, not in a listing), `expire_time`, and `usage`.
+
+Rules from the SDK docstrings: `store` defaults to false, and a prompted voice requires it true, so
+`designVoiceWithDescription:` always stores. A stored voice expires a year after its last use, a key
+after seven days. A project holds 200 stored voices, and going over answers `RESOURCE_EXHAUSTED` (429,
+retried by the transport). The consent clip is the same adult reading Google's per-locale consent
+statement, and the source clip is 10 to 30 seconds. Both are recommended as 24 kHz mono 16-bit WAV.
+
+The library reads a clip's type from a file's extension or from the bytes' signature (`RIFF`, `fLaC`,
+`ID3` or an MPEG frame sync). Anything else is refused before sending, because the service needs the
+type named. The voice identifier is the id, or the key when there is no id. That string goes into
+the Interactions backend's `speech_config[].voice` unchanged; a custom voice works in a
+single-speaker reply only. Google's speech guide now shows the multi-speaker `speech_config` as an
+object `{mode?, speakers: [...]}`, where the backend sends an array of `{speaker, voice}`. That has
+not been checked against a live call. The live test (`testALiveListingNamesThePrebuiltVoices`) is
+gated on `INFERKIT_GEMINI_API_KEY`.
 
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
 shipping a preset would imply one exists. `opencode.ai` answers `Not Found` on its API path — it is a

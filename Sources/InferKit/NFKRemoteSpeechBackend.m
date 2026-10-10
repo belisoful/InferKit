@@ -66,6 +66,13 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	return self;
 }
 
+- (nullable NSData *)sampleAudioData
+{
+	NSDictionary *sample = [self.raw[@"sample_audio"] isKindOfClass:NSDictionary.class] ? self.raw[@"sample_audio"] : nil;
+	NSString *encoded = [sample[@"data"] isKindOfClass:NSString.class] ? sample[@"data"] : nil;
+	return encoded == nil ? nil : [[NSData alloc] initWithBase64EncodedString:encoded options:0];
+}
+
 @end
 
 /*! What a streamed reply assembles into: the decoded audio so far. */

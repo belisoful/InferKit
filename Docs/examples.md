@@ -3443,6 +3443,17 @@ NFKAudioAsset *spoken = [[gemini runInferenceForRequest:
     [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Say cheerfully: good morning!" }
                                 parameters:@{} outputModality:NFKModalityAudio] error:&error] outputForKey:NFKOutputAudio];
 
+// Gemini's voice library: list the voices, design one from a description, and speak with it.
+NFKGeminiVoiceLibrary *voices = [NFKGeminiVoiceLibrary voiceLibraryForProvider:NFKRemoteProvider.googleGemini apiKey:key];
+NSArray<NFKRemoteVoice *> *british = [voices voicesMatchingFilters:@{ @"language_code": @"en-GB", @"gender": @"female" } error:&error];
+NFKRemoteVoice *astronomer = [voices designVoiceWithDescription:@"A warm astronomer in his late sixties with a gentle British accent."
+                                                    displayName:@"Astronomer"
+                                                     attributes:@{ @"gender": @"male", @"language_code": @"en-GB" }
+                                                          error:&error];
+NSData *preview = astronomer.sampleAudioData;                           // a WAV of the new voice
+gemini.modelName = @"gemini-3.8-flash-tts";
+gemini.voice = astronomer.identifier;                                   // voice_…
+
 // Fill-in-the-middle, OCR, and a token count before sending.
 NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
                                                                              apiKey:key modelName:@"codestral-latest"];
