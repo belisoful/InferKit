@@ -307,7 +307,7 @@ encoder frozen, over the reference's teacher-forced `labels=` loss.
 | --- | --- | --- | --- | --- |
 | `NFKMLXMarian` | ships | LoRA | public | Measured to 3e-5. |
 | `NFKMLXM2M100` | ships | LoRA | public | The round trip runs through `network(directoryURL:)` after the merge. |
-| `NFKMLXNLLB` | ships | LoRA | public | The M2M-100 recipe on the same network; target ids lead with the `xxx_Xxxx` code. |
+| `NFKMLXNLLB` | ships | LoRA | public | The M2M-100 recipe on the same network; target ids lead with the `xxx_Xxxx` code. The round trip runs through `NFKMLXNLLB.network(directoryURL:)` after the merge. |
 | `NFKMLXMADLAD` | ships | LoRA | public | On the T5 decoder's projections. The 3B release is 11.8 GB at float32. |
 | `NFKMLXTranslateGemma` | ships | LoRA | public | With the prompt positions masked, the reference's `labels=-100` rule. 12B and 27B stay offline. |
 

@@ -1201,29 +1201,58 @@ final class NFKMLXTranslationTests: XCTestCase {
 
     func testMarianFineTuningAdaptsTheDecoderAndRoundTripsThroughTheFactory() throws {
         try requireMLXRuntime()
-        let net = try NFKMLXMarian.network(directoryURL: nil, configuration: .tinyMarian)
+        try checkFineTuningRoundTrip(
+            network: { try NFKMLXMarian.network(directoryURL: $0, configuration: .tinyMarian) },
+            fineTune: { net, source, target in try NFKMLXMarian.fineTune(net, examples: { _ in (source, target) }, rank: 2, steps: 12) },
+            source: [5, 6, 7, 0], target: [9, 10, 11, 0])
+    }
+
+    func testM2M100FineTuningAdaptsTheDecoderAndRoundTripsThroughTheFactory() throws {
+        try requireMLXRuntime()
+        try checkFineTuningRoundTrip(
+            network: { try NFKMLXM2M100.network(directoryURL: $0, configuration: .tinyM2M100) },
+            fineTune: { net, source, target in try NFKMLXM2M100.fineTune(net, examples: { _ in (source, target) }, rank: 2, steps: 12) },
+            source: [60, 5, 6, 7, 2], target: [61, 9, 10, 11, 2])
+    }
+
+    func testNLLBFineTuningAdaptsTheDecoderAndRoundTripsThroughTheFactory() throws {
+        try requireMLXRuntime()
+        try checkFineTuningRoundTrip(
+            network: { try NFKMLXNLLB.network(directoryURL: $0, configuration: .tinyM2M100) },
+            fineTune: { net, source, target in try NFKMLXNLLB.fineTune(net, examples: { _ in (source, target) }, rank: 2, steps: 12) },
+            source: [60, 5, 6, 7, 2], target: [61, 9, 10, 11, 2])
+    }
+
+    /// Fine-tunes a tiny network on one pair, merges the adapters, saves, and reloads the checkpoint
+    /// through the model's own `network(directoryURL:)`.
+    private func checkFineTuningRoundTrip(network: (URL?) throws -> NFKMLXSeq2SeqNet,
+                                          fineTune: (NFKMLXSeq2SeqNet, MLXArray, MLXArray) throws -> [Float],
+                                          source sourceIds: [Int32], target targetIds: [Int32],
+                                          file: StaticString = #filePath, line: UInt = #line) throws {
+        let net = try network(nil)
         let encoderBefore = net.encoder!.layers[0].fc1.weight
         eval(encoderBefore)
-        let source = MLXArray([Int32(5), 6, 7, 0])
-        let target = MLXArray([Int32(9), 10, 11, 0])
+        let source = MLXArray(sourceIds)
+        let target = MLXArray(targetIds)
         let objective = NFKMLXTranslationObjective()
         let before = objective(net, source, target).item(Float.self)
-        let losses = try NFKMLXMarian.fineTune(net, examples: { _ in (source, target) }, rank: 2, steps: 12)
-        XCTAssertEqual(losses.count, 12)
-        XCTAssertLessThan(losses.last!, before, "the loss falls on the pair it trains on")
-        XCTAssertEqual(abs(net.encoder!.layers[0].fc1.weight - encoderBefore).max().item(Float.self), 0, "the encoder stays frozen")
+        let losses = try fineTune(net, source, target)
+        XCTAssertEqual(losses.count, 12, file: file, line: line)
+        XCTAssertLessThan(losses.last!, before, "the loss falls on the pair it trains on", file: file, line: line)
+        XCTAssertEqual(abs(net.encoder!.layers[0].fc1.weight - encoderBefore).max().item(Float.self), 0, "the encoder stays frozen", file: file, line: line)
         let adapted = net.leafModules().flattened().filter { $0.1 is NFKMLXLoRALinear }.map(\.0)
-        XCTAssertFalse(adapted.isEmpty)
-        XCTAssertTrue(adapted.allSatisfy { $0.hasPrefix("decoder.layers.") && ($0.hasSuffix(".q_proj") || $0.hasSuffix(".v_proj")) })
+        XCTAssertFalse(adapted.isEmpty, file: file, line: line)
+        XCTAssertTrue(adapted.allSatisfy { $0.hasPrefix("decoder.layers.") && ($0.hasSuffix(".q_proj") || $0.hasSuffix(".v_proj")) }, file: file, line: line)
         let merged = try NFKMLXLoRA.merge(into: net)
-        XCTAssertEqual(merged, adapted.count)
+        XCTAssertEqual(merged, adapted.count, file: file, line: line)
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         try NFKMLXWeights.save(net, to: scratch.appendingPathComponent("model.safetensors"))
-        let reloaded = try NFKMLXMarian.network(directoryURL: scratch, configuration: .tinyMarian)
-        let a = net(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
-        let b = reloaded(source: source.reshaped([1, 4]), target: target.reshaped([1, 4]))
-        XCTAssertLessThan(abs(a - b).max().item(Float.self), 1e-5, "the merged checkpoint reloads through the factory")
+        let reloaded = try network(scratch)
+        let shape = [1, sourceIds.count]
+        let a = net(source: source.reshaped(shape), target: target.reshaped([1, targetIds.count]))
+        let b = reloaded(source: source.reshaped(shape), target: target.reshaped([1, targetIds.count]))
+        XCTAssertLessThan(abs(a - b).max().item(Float.self), 1e-5, "the merged checkpoint reloads through the factory", file: file, line: line)
     }
 
     func testTheNetworkFactoryTakesTheReleasesOwnGeometry() throws {
