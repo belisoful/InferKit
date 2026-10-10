@@ -154,6 +154,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   key as `prompt_cache_key`, and `NFKInferenceServer`'s chat route reads `prompt_cache_key` into it.
   Its `backendStatus` reports the policy, each server's health and outstanding requests, the
   conversations it keeps, and how many times one moved.
+- `NFKBalancedBackend` keeps a server's previous status reading when a reading times out, so a slow
+  server stays a candidate. A server whose first reading times out is not a candidate until a
+  reading succeeds.
 - The core links Network and Security, and IOKit on macOS.
 
 #### Several clips in one request
