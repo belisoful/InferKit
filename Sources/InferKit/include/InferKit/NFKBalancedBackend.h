@@ -48,6 +48,8 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 				- The backend reads a server's status route when its last reading is older than
 				  statusInterval, and learns its load from every reply's X-InferKit-* headers in
 				  between. GPU utilization takes no part.
+				- A status reading that times out keeps the server's previous reading, so a slow
+				  server stays a candidate. A server whose first reading times out is not one yet.
 
 				Failing over: a request moves to the next candidate only when it never started on
 				the server it was sent to: the server could not be connected to, its queue was full
@@ -94,7 +96,8 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 	seconds. */
 @property (atomic, assign) NSTimeInterval statusInterval;
 
-/*! How long a status reading waits for a server. Defaults to 2 seconds. */
+/*! How long a status reading waits for a server. A reading that times out keeps the server's
+	previous reading. Defaults to 2 seconds. */
 @property (atomic, assign) NSTimeInterval statusTimeout;
 
 /*! The request timeout passed to each server's client. Defaults to 600 seconds. */

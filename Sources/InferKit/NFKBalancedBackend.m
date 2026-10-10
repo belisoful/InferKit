@@ -48,6 +48,16 @@ static BOOL NFKBalancedNeverConnected(NSError *error)
 	return [underlying.domain isEqualToString:NSURLErrorDomain] && [unconnected containsObject:@(underlying.code)];
 }
 
+/*! Whether a status reading reached no answer within its timeout, so the server may still be up. */
+static BOOL NFKBalancedTimedOut(NSError *error)
+{
+	if (![error.domain isEqualToString:NFKInferenceErrorDomain] || error.code != kNFKError_RemoteUnreachable) {
+		return NO;
+	}
+	NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+	return [underlying.domain isEqualToString:NSURLErrorDomain] && underlying.code == NSURLErrorTimedOut;
+}
+
 /*! Whether a failure left the request unstarted, so another server may take it. */
 static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 {
@@ -322,12 +332,17 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 	dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, (int64_t)((self.statusTimeout * 2.0 + 1.0) * NSEC_PER_SEC)));
 }
 
+/*! Records a status reading. A reading that timed out keeps the previous reading and its date, so the
+	next request reads the server again. */
 - (void)recordStatus:(nullable NFKServerStatus *)status error:(nullable NSError *)error forServer:(NFKBalancedServer *)server
 {
 	NFKServerModelStatus *model = status != nil ? [self modelInStatus:status] : nil;
 	@synchronized (self) {
 		if (status == nil && error != nil && NFKBalancedNeverConnected(error)) {
 			[self markDown:server];
+			return;
+		}
+		if (status == nil && error != nil && NFKBalancedTimedOut(error)) {
 			return;
 		}
 		server.statusDate = [NSDate date];

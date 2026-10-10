@@ -126,6 +126,28 @@
 	loaded machine before the server answers. */
 static const NSTimeInterval NFKBalancedTestPatience = 60.0;
 
+/*! A balancer whose status readings time out while timesOut is set. */
+@interface NFKBalancedTimingOutBackend : NFKBalancedBackend
+@property (atomic, assign) BOOL timesOut;
+@end
+
+@implementation NFKBalancedTimingOutBackend
+
+- (nullable NFKServerStatus *)fetchStatusFromBaseURL:(NSURL *)baseURL apiKey:(nullable NSString *)apiKey error:(NSError **)error
+{
+	if (!self.timesOut) {
+		return [super fetchStatusFromBaseURL:baseURL apiKey:apiKey error:error];
+	}
+	if (error != NULL) {
+		NSError *timedOut = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorTimedOut userInfo:nil];
+		*error = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_RemoteUnreachable
+								 userInfo:@{ NSUnderlyingErrorKey: timedOut }];
+	}
+	return nil;
+}
+
+@end
+
 @interface NFKBalancedBackendTests : XCTestCase
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
@@ -438,6 +460,38 @@ static const NSTimeInterval NFKBalancedTestPatience = 60.0;
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:1] error:&error].text, @"first", @"%@", error);
 	XCTAssertNil(first.lastConversationKey, @"without affinity the balancer names no conversation");
 	XCTAssertEqualObjects([balancer runInferenceForRequest:[self chat:@"hello" turn:2] error:&error].text, @"second", @"%@", error);
+}
+
+- (void)testAStatusReadingThatTimesOutKeepsThePreviousReading
+{
+	NFKInferenceServer *server = [self serverHosting:[self backendNamed:@"slow"] queueLimit:0];
+	NFKBalancedTimingOutBackend *balancer = [self balancerOfClass:NFKBalancedTimingOutBackend.class];
+	balancer.statusInterval = 0;
+	[balancer addServerWithBaseURL:server.localBaseURL apiKey:nil];
+	NSError *error = nil;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self request] error:&error].text, @"slow", @"%@", error);
+	balancer.timesOut = YES;
+	for (NSInteger index = 0; index < 2; index++) {
+		XCTAssertEqualObjects([balancer runInferenceForRequest:[self request] error:&error].text, @"slow",
+							  @"a reading that timed out leaves the server a candidate: %@", error);
+	}
+	NSDictionary *only = [balancer.backendStatus[@"servers"] firstObject];
+	XCTAssertEqualObjects(only[@"hosts_model"], @YES);
+	XCTAssertNil(only[@"resting_seconds"], @"a timeout is not a refused connection");
+}
+
+- (void)testAServerWhoseFirstStatusReadingTimesOutIsNotACandidate
+{
+	NFKInferenceServer *server = [self serverHosting:[self backendNamed:@"slow"] queueLimit:0];
+	NFKBalancedTimingOutBackend *balancer = [self balancerOfClass:NFKBalancedTimingOutBackend.class];
+	balancer.timesOut = YES;
+	[balancer addServerWithBaseURL:server.localBaseURL apiKey:nil];
+	NSError *error = nil;
+	XCTAssertNil([balancer runInferenceForRequest:[self request] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceNotReady, @"%@", error);
+	balancer.timesOut = NO;
+	XCTAssertEqualObjects([balancer runInferenceForRequest:[self request] error:&error].text, @"slow",
+						  @"the next request reads the server again: %@", error);
 }
 
 #pragma mark Failing over

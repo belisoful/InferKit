@@ -749,7 +749,7 @@ machine's remote clients reach a model this process hosts. Files:
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
   `tls`, `auth`, and `version`.
 
-Measured on this machine (`NFKInferenceServerTests`, 34 tests, and `NFKBalancedBackendTests`, 18, every one against a real listener):
+Measured on this machine (`NFKInferenceServerTests`, 34 tests, and `NFKBalancedBackendTests`, 20, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback
 together, and a connect from the machine's LAN address is refused. Bonjour advertises and resolves
 inside `swift test` with no permission prompt, and the resolved host name reaches the server.
@@ -839,6 +839,11 @@ and start times on `systemUptime`, and the job's last reported progress.
   `kNFKError_RemoteUnreachable` whose underlying `NSURLError` is one of cannot-connect, cannot-find-
   host, DNS failure, or not-connected. A lost connection or a timeout is not, since the run may be
   executing. The streamed form fails over only before any progress above 0 or partial result.
+- A status reading that times out (`kNFKError_RemoteUnreachable` over `NSURLErrorTimedOut`) changes
+  nothing: the server keeps its previous reading and that reading's date, so the next request reads
+  it again. Recording the timeout as "does not host the model" made every request fail for
+  `statusInterval` on a loaded machine, whose status route answered in over 2 s (2026-10-10). A server
+  with no reading yet stays out until one succeeds.
 - Choosing: a load reading is the status entry or the last reply's `NFKServerLoad`, whichever is
   newer, plus every request sent after it and not yet finished. Expected wait = the reading's
   `estimated_wait_seconds` + sent-since × average run ÷ limit, or, without an estimate,
