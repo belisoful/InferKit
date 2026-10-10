@@ -142,6 +142,24 @@
 	XCTAssertNotNil([result outputForKey:NFKOutputImage]);
 }
 
+- (void)testTwoSpeakersGoInTheSpeakersObjectAndOverrideTheVoice
+{
+	[self.backend stage:@"{\"status\":\"completed\",\"steps\":[]}"];
+	self.backend.modelName = @"gemini-3.8-flash-tts";
+	self.backend.voice = @"Kore";
+	NSArray *speakers = @[ @{ @"speaker": @"Joe", @"voice": @"Puck" }, @{ @"speaker": @"Jane", @"voice": @"Kore" } ];
+	NFKInferenceRequest *dialogue = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Joe: Hi.\nJane: Hello." }
+																parameters:@{ @"speakers": speakers } outputModality:NFKModalityAudio];
+	[self.backend runInferenceForRequest:dialogue error:NULL];
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"generation_config"][@"speech_config"], (@{ @"speakers": speakers }));
+
+	NSDictionary *wire = @{ @"speakers": speakers, @"mode": @"conversational" };
+	NFKInferenceRequest *shaped = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Joe: Hi." }
+															  parameters:@{ @"speakers": wire } outputModality:NFKModalityAudio];
+	[self.backend runInferenceForRequest:shaped error:NULL];
+	XCTAssertEqualObjects([self.backend bodyAt:1][@"generation_config"][@"speech_config"], wire, @"a dictionary passes through");
+}
+
 - (void)testSpeechNamesItsVoiceAndThePCMReplyIsWrittenAsWAV
 {
 	NSData *pcm = [NSData dataWithBytes:"\x01\x00\x02\x00" length:4];

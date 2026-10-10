@@ -380,9 +380,13 @@ static double NFKInteractionsSeconds(id offset)
 			break;
 		case NFKModalityAudio: {
 			format[@"type"] = @"audio";
-			NSArray *speakers = [parameters[@"speakers"] isKindOfClass:NSArray.class] ? parameters[@"speakers"] : nil;
+			id speakers = parameters[@"speakers"];
 			NSString *voice = [parameters[@"voice"] isKindOfClass:NSString.class] ? parameters[@"voice"] : self.voice;
-			if (speakers != nil) {
+			// A single voice is a one-entry list; several speakers go in the {speakers} object, the
+			// multi-speaker form Google documents. A dictionary is taken as already in that shape.
+			if ([speakers isKindOfClass:NSArray.class]) {
+				generation[@"speech_config"] = @{ @"speakers": speakers };
+			} else if ([speakers isKindOfClass:NSDictionary.class]) {
 				generation[@"speech_config"] = speakers;
 			} else if (voice.length > 0) {
 				generation[@"speech_config"] = @[ @{ @"voice": voice } ];

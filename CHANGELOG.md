@@ -43,6 +43,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Each voice is an `NFKRemoteVoice` whose identifier `NFKGeminiInteractionsBackend` speaks with.
   `voiceLibraryForProvider:apiKey:` builds it for the `gemini` preset.
 - `NFKRemoteVoice.sampleAudioData` is the preview clip a service returns inline with a voice, decoded.
+- `NFKGeminiInteractionsBackend` sends a two-speaker reply's `speakers` parameter as `speech_config`
+  `{speakers: […]}`, the multi-speaker form Google documents, rather than a bare array. A `speakers`
+  dictionary passes through as written.
 
 #### Claude Sonnet 5.5 structured output
 

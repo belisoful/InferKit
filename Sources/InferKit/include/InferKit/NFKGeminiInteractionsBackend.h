@@ -63,7 +63,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The voice a speech reply speaks in: a prebuilt name such as Kore, or a custom voice's voice_… id or
 	voicekey_… key from NFKGeminiVoiceLibrary. A request parameter named "voice" overrides it; a
-	"speakers" parameter (NSArray of {speaker, voice}, prebuilt voices only) asks for several. */
+	"speakers" parameter (NSArray of {speaker, voice}, prebuilt voices only, at most two) asks for
+	several and is sent as speech_config {speakers}. */
 @property (nonatomic, copy, nullable) NSString *voice;
 
 /*! Creates the interaction in the background and polls it until it ends. Off by default. */

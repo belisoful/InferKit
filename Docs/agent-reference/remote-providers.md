@@ -364,8 +364,9 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   uses although the reference page shows a Bearer header): a prompt alone goes as the string `input`;
   otherwise steps `{type: user_input | model_output, content: [blocks]}` with `system_instruction`, and
   media blocks `{type: image | audio | video | document, mime_type, data}`. `outputModality` picks
-  `response_format`: image (`aspect_ratio`, `image_size`, `mime_type`), audio (`speech_config` is an
-  array of `{voice}` or `{speaker, voice}`), video (`aspect_ratio`, `resolution`), or JSON text
+  `response_format`: image (`aspect_ratio`, `image_size`, `mime_type`), audio (`speech_config` is a
+  one-entry array `[{voice}]` for one voice and the object `{speakers: [{speaker, voice}]}` for two),
+  video (`aspect_ratio`, `resolution`), or JSON text
   (`mime_type: application/json`, `schema`). Transcription: `transcription_config {language_codes,
   custom_vocabulary, mode: {type: verbatim, diarization_mode: speaker, timestamp_granularities:
   [word]}}`, read back from `word_info` annotations (`start_offset` / `end_offset` as `"1.2s"` strings
@@ -699,9 +700,14 @@ The library reads a clip's type from a file's extension or from the bytes' signa
 `ID3` or an MPEG frame sync). Anything else is refused before sending, because the service needs the
 type named. The voice identifier is the id, or the key when there is no id. That string goes into
 the Interactions backend's `speech_config[].voice` unchanged; a custom voice works in a
-single-speaker reply only. Google's speech guide now shows the multi-speaker `speech_config` as an
-object `{mode?, speakers: [...]}`, where the backend sends an array of `{speaker, voice}`. That has
-not been checked against a live call. The live test (`testALiveListingNamesThePrebuiltVoices`) is
+single-speaker reply only.
+
+`speech_config` is typed in the SDK (`_gaos/types/interactions/generationconfig.py`, v2.29.0) as a list
+of `{voice, speaker?, language?}` or the object `{speakers: [...]}` (`speakerconfig.py`). The speech
+guide's multi-speaker example uses the object, with an optional `mode: conversational` that the SDK
+type omits. So a `speakers` array parameter goes out as `{speakers}` without `mode`, and a
+`speakers` dictionary passes through, which is how a caller sends `mode`. Neither form has been
+checked against a live call. The live test (`testALiveListingNamesThePrebuiltVoices`) is
 gated on `INFERKIT_GEMINI_API_KEY`.
 
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
