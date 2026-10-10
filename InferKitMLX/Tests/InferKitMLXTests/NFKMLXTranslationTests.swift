@@ -693,6 +693,7 @@ final class NFKMLXTranslationTests: XCTestCase {
     func testTranslateGemmaReadsTheLanguageTableFromTheTemplate() throws {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
         let template = "{%- set languages = {\n    \"de\": \"German\",\n    \"de-DE\": \"German\",\n    \"en\": \"English\",\n}\n-%}\n{{ bos_token }}\n{%- if messages[0][\"role\"] != \"user\" -%}{{ raise_exception(\"x\") }}{%- endif -%}"
         try template.write(to: scratch.appendingPathComponent("chat_template.jinja"), atomically: true, encoding: .utf8)
         let table = NFKMLXTranslateGemmaTranslator.languageTable(inDirectory: scratch)
@@ -1247,6 +1248,7 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(merged, adapted.count, file: file, line: line)
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
         try NFKMLXWeights.save(net, to: scratch.appendingPathComponent("model.safetensors"))
         let reloaded = try network(scratch)
         let shape = [1, sourceIds.count]
