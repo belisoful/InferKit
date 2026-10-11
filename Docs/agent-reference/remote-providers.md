@@ -795,6 +795,37 @@ machine's remote clients reach a model this process hosts. Files:
   notification. The session id the server assigns goes back with each later request, beside
   `MCP-Protocol-Version`. A JSON-RPC error is nil plus an error whose description is
   `<method>: <message>`. `NFKMCPClientTool` re-runs the schema check locally before the remote call.
+- `NFKAgentCLI.h/.m` (public, macOS only, 2026-10-11): registers an MCP server with an agent CLI
+  by running its `mcp` subcommands through `NSTask`. It edits no configuration file itself; the
+  user left config-file agents (Cursor, VS Code's remove, Claude Desktop) out for now. Each CLI
+  differs, measured against Claude Code 2.1.90 and read from the other CLIs' sources:
+  | CLI | add | duplicate name on add | read back | absent |
+  |---|---|---|---|---|
+  | `claude` | `mcp add --transport http --scope S N URL --header H` | refused, exit 1 | `mcp get N` text: `Scope:`, `Status: ✓ Connected`, `URL:`, headers under `Headers:` | exit 1, "No MCP server found with name" |
+  | `codex` | `mcp add N --url URL --bearer-token-env-var V` (no header flag, global only) | overwritten | `mcp get N --json`: `transport.{type: streamable_http, url, bearer_token_env_var, http_headers}` | non-zero, "No MCP server named" |
+  | `gemini` | `mcp add --scope S --transport http N URL --header H` (writes `url` + `type`) | overwritten | `mcp list` text only, no headers, connects to each server | not listed |
+  | `qwen` | same flags as gemini (writes `httpUrl`) | overwritten | `mcp list`, same line format | not listed |
+  - Tokens: Claude Code stores `Authorization: Bearer ${V}` literally and expands it when it connects
+    (local scope included, which the live test proves by a connect with the right key and a refused
+    one with the wrong key). Gemini CLI and Qwen Code resolve `${V}` in every settings string at load.
+    Codex takes the variable name. No path passes a literal key.
+  - Repeatable header options (Commander's `-H <header...>`, yargs arrays) take the words after
+    them, so the header goes last on the command line.
+  - Link: Claude Code checks with `get`, returns when current, else `remove --scope` then `add`.
+    Codex checks with `get --json` and adds (overwrite). Gemini and Qwen add without a check: their
+    list shows no headers and connects to every server.
+  - Claude's `get` finds a name in any scope; a registration whose `Scope:` names another scope
+    reads as absent for the requested one. Remove "not found" counts as success.
+  - A GUI app's PATH is `/usr/bin:/bin:/usr/sbin:/sbin`, so the search adds `~/.local/bin`,
+    `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`, npm-global, Bun, Volta, Cargo, and nvm
+    bins, and puts them on the child's PATH, since the Node CLIs run `#!/usr/bin/env node`.
+  - A timed-out command gets SIGTERM, then SIGKILL after 2 s. A grandchild can keep the pipes open
+    after the child dies, so the pipe readers stop 2 s after exit regardless.
+  - `APP_SANDBOX_CONTAINER_ID` in the environment means the App Sandbox, which cannot run the CLI.
+  - Tests: a stub executable per preset records argv and the working directory and answers each
+    subcommand in that CLI's format. The live Claude Code test runs only with
+    `INFERKIT_LIVE_AGENT_CLI=1`, since it writes a local-scope entry to `~/.claude.json` (removed at
+    the end).
 - **Provider-run MCP (`NFKParameterMCPServers`, 2026-10-11).** Each server is
   `{url, name, authorizationToken?, allowedTools?, description?}`.
   - Claude: `mcp_servers: [{type: url, url, name, authorization_token}]` plus one

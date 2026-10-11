@@ -121,6 +121,8 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKToolResult``
 - ``NFKToolMessages``
 - ``NFKMCPClient``
+- ``NFKAgentCLI``
+- ``NFKAgentMCPLink``
 
 ### Serving
 

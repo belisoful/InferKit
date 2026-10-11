@@ -5160,6 +5160,24 @@ Claude Code connects to it by URL:
 claude mcp add --transport http inferkit http://localhost:8765/mcp --header "Authorization: Bearer $INFERKIT_KEY"
 ```
 
+On macOS an application registers the server itself. `NFKAgentCLI` runs a coding agent's own `mcp`
+commands: Claude Code, Codex, Gemini CLI, and Qwen Code. `linkServer:…` leaves a registration that
+already reaches the server alone and replaces one that names an earlier port. A token travels by
+environment variable name, which the agent reads when it connects, so no key lands in its
+configuration. A loopback server that leaves `requiresAPIKeyOnLoopback` off takes none.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; -->
+```objc
+NFKAgentCLI *claude = NFKAgentCLI.claudeCode;
+if (claude.isInstalled) {
+    [claude linkServer:server name:@"inferkit" scope:NFKAgentCLIScopeUser
+        bearerTokenEnvironmentVariable:nil error:&error];
+}
+NFKAgentMCPLink *link = [claude MCPLinkNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error];  // nil when absent
+BOOL reached = link.isConnected;                     // Claude Code's check reached the server
+[claude unlinkMCPServerNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error];
+```
+
 `NFKMCPClient` is the other end: any MCP server's tools become `NFKInferenceTool`, which a loop offers
 to any model, local or remote. A remote tool's audio arrives as an `NFKAudioAsset` and its images as
 images.

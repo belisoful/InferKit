@@ -36,6 +36,7 @@
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKToolLoop.h>
 #import <InferKit/NFKMCPClient.h>
+#import <InferKit/NFKAgentCLI.h>
 #import <InferKit/NFKDynamicBackend.h>
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>

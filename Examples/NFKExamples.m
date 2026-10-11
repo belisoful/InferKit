@@ -500,6 +500,34 @@
 	[server stop];
 }
 
+- (void)testExampleLinkingTheServerToAnAgentCLI
+{
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+
+	// A stand-in for claude that holds no registration, so the example runs on any machine.
+	NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+	[NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+	NSString *stub = [directory stringByAppendingPathComponent:@"claude"];
+	[@"#!/bin/sh\n[ \"$2\" = get ] && { echo \"No MCP server found with name: $3\"; exit 1; }\nexit 0\n"
+		writeToFile:stub atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+	[NSFileManager.defaultManager setAttributes:@{ NSFilePosixPermissions: @0755 } ofItemAtPath:stub error:NULL];
+
+	NFKAgentCLI *claude = NFKAgentCLI.claudeCode;
+	claude.executableURL = [NSURL fileURLWithPath:stub];
+	XCTAssertTrue(claude.isInstalled);
+	XCTAssertTrue([claude linkServer:server name:@"inferkit" scope:NFKAgentCLIScopeUser
+	  bearerTokenEnvironmentVariable:nil error:&error], @"%@", error);
+	NFKAgentMCPLink *link = [claude MCPLinkNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error];
+	XCTAssertNil(link, @"the stand-in keeps nothing");
+	XCTAssertTrue([claude unlinkMCPServerNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error], @"%@", error);
+	[NSFileManager.defaultManager removeItemAtPath:directory error:NULL];
+	[server stop];
+}
+
 - (void)testExampleBalancingAcrossServers
 {
 	NFKInferenceServer *first = [[NFKInferenceServer alloc] init];

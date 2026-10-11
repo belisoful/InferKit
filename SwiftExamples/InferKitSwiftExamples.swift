@@ -378,6 +378,35 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(client.serverInfo?["name"] as? String, "InferKit")
     }
 
+    // An agent's CLI from Swift: link(_:name:scope:bearerTokenEnvironmentVariable:) throws, and
+    // mcpLink(named:scope:) returns nil for an absent registration and throws only on a failed command.
+    func testLinkingTheServerToAnAgentCLI() throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        try server.start()
+        defer { server.stop() }
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let stub = directory.appendingPathComponent("codex")
+        try "#!/bin/sh\n[ \"$2\" = get ] && { echo \"Error: No MCP server named '$3' found.\"; exit 1; }\nexit 0\n"
+            .write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+        let codex = NFKAgentCLI.codex
+        codex.executableURL = stub
+        XCTAssertFalse(codex.supportsScope(.project))
+        try codex.link(server, name: "inferkit", scope: .user, bearerTokenEnvironmentVariable: nil)
+        XCTAssertNil(try codex.mcpLink(named: "inferkit", scope: .user))
+        try codex.unlinkMCPServer(named: "inferkit", scope: .user)
+        XCTAssertThrowsError(try codex.linkMCPServer(named: "in ferkit", url: try XCTUnwrap(server.localMCPURL),
+                                                     bearerTokenEnvironmentVariable: nil, scope: .user)) { error in
+            XCTAssertEqual((error as? NFKAgentCLIError)?.code, .invalidArgument)
+        }
+    }
+
     // The status client from Swift: the blocking fetch throws, and the awaited form is
     // fetchStatus(baseURL:apiKey:) so it does not take the blocking call's name.
     func testLoadAndModelStatus() async throws {

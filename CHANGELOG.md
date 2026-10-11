@@ -71,6 +71,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMCPClient` reads any MCP server's tools as `NFKInferenceTool`, over JSON or event-stream
   replies and with the session a server assigns, so `NFKToolLoop` offers a remote server's tools to
   any model. A remote tool's audio and video arrive as asset files, and its images as images.
+- `NFKAgentCLI` registers an MCP server with a coding agent's command-line tool on macOS by running
+  the tool's own `mcp` commands: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`), and
+  Qwen Code (`qwen`). `linkServer:name:scope:bearerTokenEnvironmentVariable:error:` registers a
+  running server's `localMCPURL`, leaves a current registration alone, and replaces one that names
+  another URL. `MCPLinkNamed:scope:error:` reads a registration back as an `NFKAgentMCPLink` (its URL,
+  its token variable, and whether the agent's check reached it), and `unlinkMCPServerNamed:scope:error:`
+  removes it. A token goes by environment variable name, so no key lands in a command line or an
+  agent's configuration.
 - `NFKParameterMCPServers` hands public MCP servers to a provider that calls them itself: Claude's
   MCP connector (`mcp_servers` and an `mcp_toolset` each, under the `mcp-client-2025-11-20` beta) and
   the Responses API's `mcp` tool, without an approval round trip. What the service ran comes back
