@@ -133,9 +133,9 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIScope) {
 				The executable is found under executableURL when it is set, otherwise on PATH and in
 				the directories installers use (~/.local/bin, ~/.claude/local, /opt/homebrew/bin,
 				/usr/local/bin, and the npm, Bun, Volta, Cargo, and nvm directories), since an
-				application launched from the Finder has a short PATH. Those directories also go on the command's PATH, which a
-				Node-based tool needs to find node. Commands block for up to timeout seconds; run
-				them off the main thread.
+				application launched from the Finder has a short PATH. Those directories also go on
+				the command's PATH, which a Node-based tool needs to find node. Commands block for up
+				to timeout seconds; run them off the main thread.
 
 				macOS only. A sandboxed process fails with NFKAgentCLIErrorSandboxed, since the App
 				Sandbox does not run another program's executable. Introduced in InferKit 0.4.0.
