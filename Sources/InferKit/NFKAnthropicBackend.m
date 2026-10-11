@@ -19,10 +19,10 @@
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
 	forced into a tool whose input schema is the caller's. */
+static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
+
 /*! The beta Claude's MCP connector is served under. */
 static NSString * const NFKAnthropicMCPConnectorBeta = @"mcp-client-2025-11-20";
-
-static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
 /*! The thinking budget each reasoning effort the contract names asks for. The Messages API takes a
 	token budget rather than a named level, so the three levels are a table of budgets. The API's own

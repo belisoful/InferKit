@@ -75,6 +75,9 @@ typedef NFKToolResult * _Nonnull (^NFKBackendToolResultDescriber)(NFKInferenceRe
 /*!
 	@method     toolWithBackend:name:outputModality:purpose:
 	@abstract   A tool with the default description and schema for what the backend produces.
+	@param      backend The backend each call runs.
+	@param      name The name the model calls the tool by.
+	@param      outputModality What the backend produces, which picks the default description and schema.
 	@param      purpose Completes "Use it when …", or nil for the modality's general case.
 */
 + (instancetype)toolWithBackend:(id<NFKInferenceBackend>)backend
