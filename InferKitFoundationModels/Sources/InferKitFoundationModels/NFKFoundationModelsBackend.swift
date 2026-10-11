@@ -282,7 +282,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                             reported = Self.runOutputs(of: partial)
                             job.reportProgress(-1, partialResult: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported)))
                         }
-                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported)))
+                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: latestText, reported: reported, recorder: recorder)))
 
                     case .schema(let schema):
                         let stream = Self.schemaStream(from: session, prompt: prompt, schema: schema,
@@ -301,7 +301,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                         guard let content = latest else {
                             throw NFKFoundationModelsError.noOutput
                         }
-                        var outputs = Self.outputs(text: content.jsonString, reported: reported)
+                        var outputs = Self.outputs(text: content.jsonString, reported: reported, recorder: recorder)
                         if let parsed = NFKSchema.jsonObject(from: content) {
                             outputs[NFKOutputStructured] = parsed
                         }
@@ -315,15 +315,16 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                             return
                         }
                         let chosen = (try? response.content.value(String.self)) ?? response.content.jsonString
-                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: chosen, reported: Self.runOutputs(of: response))))
+                        job.finish(with: NFKInferenceResult(outputs: Self.outputs(text: chosen, reported: Self.runOutputs(of: response),
+                                                                                  recorder: recorder)))
                     }
                 } catch let error as LanguageModelSession.ToolCallError where error.underlyingError is NFKUnhandledToolCall {
                     // The model called a tool the caller runs: the turn ends here, the way a remote
                     // backend returns a tool-call turn, and the caller answers with a `tool` message.
-                    var outputs = reported
+                    var outputs = Self.outputs(text: latestText, reported: reported, recorder: recorder)
                     outputs[NFKOutputToolCalls] = recorder.recorded.map(\.dictionary)
-                    if !latestText.isEmpty {
-                        outputs[NFKOutputText] = latestText
+                    if latestText.isEmpty {
+                        outputs.removeValue(forKey: NFKOutputText)
                     }
                     job.finish(with: NFKInferenceResult(outputs: outputs))
                 }
@@ -441,9 +442,12 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The outputs a reply carries: its text, and whatever the run reported beside it.
-    static func outputs(text: String, reported: [String: Any]) -> [String: Any] {
+    static func outputs(text: String, reported: [String: Any], recorder: NFKToolCallRecorder? = nil) -> [String: Any] {
         var outputs = reported
         outputs[NFKOutputText] = text
+        if let invocations = recorder?.invocations, !invocations.isEmpty {
+            outputs[NFKOutputToolInvocations] = invocations
+        }
         return outputs
     }
 
@@ -602,9 +606,12 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                     turns.append(.assistant(content))
                 }
             case "tool":
+                // The core's tool turn keeps its name and error flag beside the chat fields.
                 let id = message["tool_call_id"] as? String ?? ""
-                let name = message["name"] as? String ?? toolNamesByID[id] ?? ""
-                turns.append(.toolOutput(id: id, name: name, content: content))
+                let name = NFKToolMessages.toolName(ofMessage: message, inConversation: messages) ?? toolNamesByID[id] ?? ""
+                let text = NFKToolMessages.text(ofToolMessage: message)
+                turns.append(.toolOutput(id: id, name: name,
+                                         content: NFKToolMessages.isErrorToolMessage(message) ? "Error: " + text : text))
             default:
                 turns.append(.user(content))
             }
@@ -690,7 +697,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
                           code: NFKInferenceError.error_InferenceUnsupported.rawValue,
                           userInfo: [NSLocalizedDescriptionKey: "NFKParameterTools is an array of {name, description, parameters}"])
         }
-        let handlers = Dictionary(registered.map { ($0.name, $0.handler) }, uniquingKeysWith: { _, last in last })
+        let handlers = Dictionary(registered.map { ($0.name, $0.resultHandler) }, uniquingKeysWith: { _, last in last })
         return try declarations.map { declaration in
             guard let name = declaration["name"] as? String else {
                 throw NSError(domain: NFKInferenceErrorDomain,

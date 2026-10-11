@@ -308,6 +308,76 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertTrue(found.allSatisfy { $0.apiStyle == .inferKit })
     }
 
+    // MARK: Models as tools (Docs/examples.md: Models as tools)
+
+    // A Swift backend adopts the protocol by its imported names; this one calls the tool it is
+    // offered on its first turn and answers from the tool's result on its second.
+    final class ToolCallingModel: NSObject, NFKInferenceBackend {
+        var isReady: Bool { true }
+        var backendIdentifier: String { "swift-example-remote" }
+        func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+            if let last = request.messages?.last, last["role"] as? String == "tool" {
+                return NFKInferenceResult(outputs: [NFKOutputText: "Local: \(last["content"] as? String ?? "")"])
+            }
+            let tool = (request.parameter(forKey: NFKParameterTools) as? [[String: Any]])?.first?["name"] as? String ?? ""
+            return NFKInferenceResult(outputs: [NFKOutputToolCalls: [["id": "call_1", "name": tool,
+                                                                      "arguments": [NFKInputPrompt: "Say hi."]]]])
+        }
+    }
+
+    // The importer's names: the class factories are initializers, a handler block takes the error
+    // out-parameter as NSErrorPointer, and invokeWithArguments: is invoke(withArguments:).
+    func testModelsAsTools() throws {
+        let local = NFKPassthroughBackend()
+        let askLocal = NFKBackendTool(backend: local, name: "ask_local_model", outputModality: .text,
+                                      purpose: "the text must stay on this machine")
+        XCTAssertTrue(askLocal.toolDescription.contains("Use it when the text must stay on this machine."))
+        let weather = NFKInferenceTool(name: "get_weather",
+                                       description: "Current weather in a city. Returns the temperature and sky.",
+                                       parameters: ["type": "object",
+                                                    "properties": ["city": ["type": "string"]],
+                                                    "required": ["city"]],
+                                       handler: { arguments, _ in
+                                           NFKToolResult(text: "18 C in \(arguments["city"] as? String ?? "")")
+                                       })
+        XCTAssertTrue(weather.invoke(withArguments: [:]).isError)
+
+        let loop = NFKToolLoop(backend: ToolCallingModel(), tools: [weather])
+        loop.maximumTurns = 4
+        loop.approvalHandler = { name, arguments in true }
+        let result = try loop.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Weather?"],
+                                                                    parameters: nil, outputModality: .text))
+        let ran = result.output(forKey: NFKOutputToolInvocations) as? [NFKToolInvocation]
+        XCTAssertEqual(ran?.first?.toolName, "get_weather")
+        XCTAssertTrue(ran?.first?.result.isError ?? false, "the model's arguments lacked the city")
+        XCTAssertEqual((result.output(forKey: NFKOutputMessages) as? [[String: Any]])?.count, 4)
+
+        let turn = NFKToolMessages.assistantMessage(for: NFKInferenceResult(outputs: [NFKOutputText: "hi"]))
+        XCTAssertEqual(turn["role"] as? String, "assistant")
+        let answer = NFKToolMessages.message(forToolCallIdentifier: "call_1", name: "get_weather",
+                                             result: NFKToolResult.errorResult(withText: "no city"))
+        XCTAssertEqual(answer["role"] as? String, "tool")
+    }
+
+    // MCP from Swift: addTool(_:), localMCPURL, and the client's tools(), which throws.
+    func testServingToolsOverMCP() throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.addTool(NFKInferenceTool(name: "get_weather", description: "Current weather in a city.",
+                                        parameters: ["type": "object", "properties": ["city": ["type": "string"]]],
+                                        handler: { arguments, _ in NFKToolResult(text: "18 C in \(arguments["city"] as? String ?? "")") }))
+        try server.start()
+        defer { server.stop() }
+
+        let client = NFKMCPClient(endpointURL: try XCTUnwrap(server.localMCPURL), apiKey: nil)
+        let tools = try client.tools()
+        XCTAssertEqual(tools.map(\.name), ["get_weather"])
+        let result = try client.resultOfTool(named: "get_weather", arguments: ["city": "Oslo"])
+        XCTAssertEqual(result.text, "18 C in Oslo")
+        XCTAssertEqual(client.serverInfo?["name"] as? String, "InferKit")
+    }
+
     // The status client from Swift: the blocking fetch throws, and the awaited form is
     // fetchStatus(baseURL:apiKey:) so it does not take the blocking call's name.
     func testLoadAndModelStatus() async throws {

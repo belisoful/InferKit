@@ -58,6 +58,11 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// closing, and optionally what stands before the answer). Without the key the format comes
     /// from the release's own chat template. See ``NFKMLXReasoningFormat``.
     @objc public static let reasoningFormat = "NFKMLXParameterReasoningFormat"
+    /// The syntax the model writes a tool call in, as an `NSString` naming an ``NFKMLXToolCallFormat``
+    /// (`"hermes"`, `"qwen-xml"`, `"gemma"`, `"harmony"`, `"deepseek"`, `"mistral"`, `"granite"`,
+    /// `"llama"`) or `"none"`. Without the key the format comes from the release's own chat template.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let toolCallFormat = "NFKMLXParameterToolCallFormat"
 }
 
 /// The template that turns a message list into prompt text.
@@ -175,6 +180,13 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// Whether ``reasoningFormat`` was set deliberately, so a nil format means "no chain to split"
     /// rather than "take it from the template".
     var reasoningFormatIsStated = false
+
+    /// The syntax the model writes a tool call in, or nil to read it from the chat template. See
+    /// ``NFKMLXToolCallFormat``. Introduced in InferKit 0.4.0.
+    public var toolCallFormat: NFKMLXToolCallFormat?
+
+    /// Whether ``toolCallFormat`` was set deliberately, so a nil format means "read no calls".
+    var toolCallFormatIsStated = false
 
     /// A schema the JSON output must conform to, or nil. See ``NFKMLXJSONSchemaConstraint``.
     ///
@@ -306,6 +318,12 @@ public extension NFKMLXLanguageNet {
 /// Reads `NFKInputPrompt` or `NFKInputMessages` and returns `NFKOutputText`. `NFKParameterTemperature`,
 /// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults.
 ///
+/// Tools: `NFKParameterTools` renders into the release's chat template, and the calls the model
+/// writes come back under `NFKOutputToolCalls`, read in the syntax ``NFKMLXToolCallFormat`` names,
+/// with the text around them under `NFKOutputText`. A tool conversation in the chat shape renders
+/// back through the template, so the backend is the model of an `NFKToolLoop`. A tool request on a
+/// backend built without a chat template renders the release's own.
+///
 /// A reasoning model's chain comes back under `NFKOutputReasoning`, so `NFKOutputText` holds the
 /// answer alone; the markers come from the release's chat template, or from
 /// ``NFKMLXGenerationParameterKey/reasoningFormat``. `NFKParameterReasoningEffort` binds the
@@ -399,8 +417,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
          NFKMLXGenerationParameterKey.outputFormat,
          NFKMLXGenerationParameterKey.choices,
          NFKMLXGenerationParameterKey.reasoningFormat,
+         NFKMLXGenerationParameterKey.toolCallFormat,
          NFKParameterReasoningEffort,
-         NFKParameterConversationKey]
+         NFKParameterConversationKey,
+         NFKParameterTools]
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -508,9 +528,16 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             }
             options.jsonSchema = try NFKMLXJSONSchema(json: dictionary)
         }
+        options.chatTemplate = NFKMLXToolCalling.template(options.chatTemplate, for: request, releaseDirectoryURL: releaseURL)
+        if let stops = NFKMLXToolCalling.toolStops(for: request, chosen: options.stopTokens, endOfSequence: tokenizer.eosTokenId,
+                                                   releaseDirectoryURL: releaseURL) {
+            options.stopTokens = stops
+        }
 
         let variables = try Self.templateVariables(for: request, template: options.chatTemplate)
-        guard let text = Self.prompt(from: request, template: options.chatTemplate, variables: variables) else {
+        let toolCallFormat = Self.toolCallFormat(for: options)
+        guard let text = Self.prompt(from: request, template: options.chatTemplate, variables: variables,
+                                     source: identifier, toolCallFormat: toolCallFormat) else {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
@@ -518,27 +545,11 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reply = decode(produced)
 
-        // A reasoning model's chain is not its answer, so it comes back under its own key and
-        // NFKOutputText holds what the model concluded. Without a format there is nothing to split:
-        // the reply stands as it was generated, and the chain's share of it is unknown rather than
-        // zero, since the backend cannot say whether the text holds a chain at all.
-        var answer = reply
-        var reasoning = ""
-        var reasoningTokens: Int?
-        if let format = Self.reasoningFormat(for: options) {
-            (reasoning, answer) = format.split(reply)
-            let chainEnd: Int
-            if let end = reply.range(of: format.closing) {
-                chainEnd = reply.distance(from: reply.startIndex, to: end.upperBound)
-            } else if reasoning.isEmpty {
-                chainEnd = 0
-            } else {
-                chainEnd = reply.count      // the run ended inside the chain, so all of it is reasoning
-            }
-            reasoningTokens = NFKMLXUsage.tokenCount(inPrefixOf: produced, characters: chainEnd, decode: decode)
-        }
+        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: Self.reasoningFormat(for: options),
+                                                                     produced: produced, decode: decode)
 
-        var outputs: [String: Any] = [NFKOutputText: answer]
+        var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
+                                                format: toolCallFormat, source: identifier)
         if !reasoning.isEmpty {
             outputs[NFKOutputReasoning] = reasoning
         }
@@ -566,6 +577,18 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             return nil
         }
         return NFKMLXReasoningFormat.detected(inChatTemplate: template)
+    }
+
+    /// The syntax a run's calls are read in: the one the request named, or the one the release's own
+    /// chat template shows.
+    static func toolCallFormat(for options: NFKMLXGenerationOptions) -> NFKMLXToolCallFormat? {
+        if options.toolCallFormatIsStated {
+            return options.toolCallFormat
+        }
+        guard case .jinja(let template, _, _) = options.chatTemplate else {
+            return nil
+        }
+        return NFKMLXToolCallFormat.detected(inChatTemplate: template)
     }
 
     /// The template bindings a request's reasoning effort asks for.
@@ -724,15 +747,25 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.reasoningFormat = format
             options.reasoningFormatIsStated = true
         }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.toolCallFormat),
+           let format = NFKMLXToolCallFormat.named(value) {
+            options.toolCallFormat = format
+            options.toolCallFormatIsStated = true
+        }
     }
 
     /// The prompt text, from either input key. A raw `NFKInputPrompt` is used verbatim; a message
-    /// list is flattened plainly, or rendered through the chat template when one is asked for.
+    /// list is flattened plainly, or rendered through the chat template when one is asked for, with
+    /// the request's tools and its tool conversation in the shape templates read. `source` names the
+    /// backend whose assistant turns get their reasoning back.
     static func prompt(from request: NFKInferenceRequest,
                        template: NFKMLXChatTemplate = .none,
-                       variables: [String: Any] = [:]) -> String? {
+                       variables: [String: Any] = [:],
+                       source: String = "",
+                       toolCallFormat: NFKMLXToolCallFormat? = nil) -> String? {
         if let prompt = request.prompt { return prompt }
-        guard let messages = request.messages else { return nil }
+        guard let original = request.messages else { return nil }
+        let messages = NFKMLXToolCalling.templateMessages(original, format: toolCallFormat, source: source)
         switch template {
         case .none:
             return messages.compactMap { $0["content"] as? String }.joined(separator: "\n")
@@ -743,6 +776,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             return (try? NFKMLXChatTemplateRenderer.render(templateSource, messages: messages,
                                                            addGenerationPrompt: true,
                                                            bosToken: bosToken, eosToken: eosToken,
+                                                           tools: NFKMLXToolCalling.templateTools(for: request),
                                                            variables: variables))
                 ?? chatMLPrompt(from: messages)
         }

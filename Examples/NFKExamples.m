@@ -39,6 +39,39 @@
 }
 @end
 
+// Docs/examples.md: Models as tools. Two weight-free stand-ins: a "remote" model that calls the
+// local model's tool on its first turn and answers from the tool's result on its second, and a
+// "local" model that answers its prompt.
+@interface ExampleToolCallingModel : NSObject <NFKInferenceBackend>
+@end
+
+@implementation ExampleToolCallingModel
+- (BOOL)isReady { return YES; }
+- (NSString *)backendIdentifier { return @"example-remote"; }
+- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
+{
+	NSDictionary *last = request.messages.lastObject;
+	if ([last[@"role"] isEqual:@"tool"]) {
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [@"The local model says: " stringByAppendingString:last[@"content"]] }];
+	}
+	NSString *tool = [request.parameters[NFKParameterTools] firstObject][@"name"];
+	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputToolCalls: @[ @{ @"id": @"call_1", @"name": tool,
+																			  @"arguments": @{ NFKInputPrompt: @"Summarize: the meeting moved to Friday." } } ] }];
+}
+@end
+
+@interface ExampleLocalModel : NSObject <NFKInferenceBackend>
+@end
+
+@implementation ExampleLocalModel
+- (BOOL)isReady { return YES; }
+- (NSString *)backendIdentifier { return @"example-local"; }
+- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
+{
+	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [request.prompt containsString:@"Friday"] ? @"Friday." : @"No date given." }];
+}
+@end
+
 @interface NFKExamples : XCTestCase
 @end
 
@@ -390,6 +423,80 @@
 	// Discovery browses Bonjour for the timeout; this loopback-only server does not advertise.
 	NSArray<NFKRemoteProvider *> *found = [NFKRemoteProvider discoverInferKitServersWithTimeout:0.2];
 	XCTAssertNotNil(found);
+	[server stop];
+}
+
+#pragma mark Models as tools (Docs/examples.md: Models as tools)
+
+- (void)testExampleModelsAsTools
+{
+	id<NFKInferenceBackend> claude = [[ExampleToolCallingModel alloc] init];
+	id<NFKInferenceBackend> localQwen = [[ExampleLocalModel alloc] init];
+
+	NFKBackendTool *askQwen = [NFKBackendTool toolWithBackend:localQwen
+														 name:@"ask_local_model"
+											   outputModality:NFKModalityText
+													  purpose:@"the text is private and must stay on this machine"];
+	XCTAssertTrue([askQwen.toolDescription containsString:@"Use it when the text is private and must stay on this machine."]);
+	NFKToolLoop *loop = [[NFKToolLoop alloc] initWithBackend:claude tools:@[ askQwen ]];
+
+	NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize my notes with the local model." }
+														   parameters:nil
+													   outputModality:NFKModalityText];
+	NSError *error = nil;
+	NFKInferenceResult *result = [loop runInferenceForRequest:ask error:&error];
+	XCTAssertEqualObjects(result.text, @"The local model says: Friday.", @"%@", error);
+	NSArray<NFKToolInvocation *> *ran = [result outputForKey:NFKOutputToolInvocations];
+	XCTAssertEqualObjects(ran.firstObject.toolName, @"ask_local_model");
+	NSArray *conversation = [result outputForKey:NFKOutputMessages];
+	XCTAssertEqual(conversation.count, 4u, @"the question, the call, its answer, and the reply");
+
+	// A tool that is not a model is a handler block; the schema check runs before it.
+	NFKInferenceTool *weather =
+		[NFKInferenceTool toolWithName:@"get_weather"
+						   description:@"Current weather in a city. Use it when the user asks about weather now. Returns the temperature and sky."
+							parameters:@{ @"type": @"object",
+										  @"properties": @{ @"city": @{ @"type": @"string", @"description": @"The city name." } },
+										  @"required": @[ @"city" ] }
+							   handler:^NFKToolResult *(NSDictionary *arguments, NSError **handlerError) {
+			return [NFKToolResult resultWithText:[NSString stringWithFormat:@"18 C and clear in %@", arguments[@"city"]]];
+		}];
+	XCTAssertTrue([weather invokeWithArguments:@{}].isError, @"a missing city reaches the model as an error it can correct");
+	XCTAssertEqualObjects([weather invokeWithArguments:@{ @"city": @"Paris" }].text, @"18 C and clear in Paris");
+	loop.approvalHandler = ^BOOL(NSString *toolName, NSDictionary *arguments) {
+		return YES;
+	};
+	loop.invocationHandler = ^(NFKToolInvocation *invocation) {
+	};
+}
+
+- (void)testExampleServingToolsOverMCP
+{
+	// The server lists only the tools added to it; a hosted model is a tool once one is written for it.
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.MCPInstructions = @"Use ask_local_model for anything private.";
+	NFKBackendTool *askQwen = [NFKBackendTool toolWithBackend:[[ExampleLocalModel alloc] init] name:@"ask_local_model"
+											   outputModality:NFKModalityText purpose:@"the text is private"];
+	[server addTool:askQwen];
+	NSError *error = nil;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	XCTAssertEqualObjects(server.localMCPURL.path, @"/mcp");
+
+	// Any MCP server's tools become NFKInferenceTool for a loop; here the server above.
+	NFKMCPClient *client = [[NFKMCPClient alloc] initWithEndpointURL:server.localMCPURL apiKey:nil];
+	NSArray<NFKInferenceTool *> *remoteTools = [client toolsWithError:&error];
+	XCTAssertEqualObjects(remoteTools.firstObject.name, @"ask_local_model", @"%@", error);
+	XCTAssertEqualObjects(client.instructions, @"Use ask_local_model for anything private.");
+	NFKToolResult *answer = [remoteTools.firstObject invokeWithArguments:@{ NFKInputPrompt: @"When is the meeting? It moved to Friday." }];
+	XCTAssertEqualObjects(answer.text, @"Friday.");
+
+	// A provider that calls MCP servers itself takes a public one under NFKParameterMCPServers.
+	NFKInferenceRequest *viaConnector = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize my notes." }
+		parameters:@{ NFKParameterMCPServers: @[ @{ @"url": @"https://tools.example.com/mcp", @"name": @"inferkit" } ] }
+		outputModality:NFKModalityText];
+	XCTAssertEqual([[viaConnector parameterForKey:NFKParameterMCPServers] count], 1u);
 	[server stop];
 }
 

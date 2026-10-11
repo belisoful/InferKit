@@ -30,7 +30,10 @@ final class NFKDecoderBackendHolder: @unchecked Sendable {
 /// @discussion Reads a prompt under `NFKInputPrompt` or a message list under `NFKInputMessages`, and
 /// returns the reply under `NFKOutputText` with its token counts under `NFKOutputUsage`. A message
 /// list renders through the release's chat template, which is what an instruct release was trained
-/// on; a release without one has its messages joined as plain text. Generation stops at the
+/// on; a release without one has its messages joined as plain text. The chain a reasoning release
+/// shows comes back under `NFKOutputReasoning`, split at the markers its template writes. Tools under
+/// `NFKParameterTools` render into the template, and the calls the model writes come back under
+/// `NFKOutputToolCalls`, read in the syntax the template shows (``NFKMLXToolCallFormat``). Generation stops at the
 /// tokenizer's end-of-sequence marker or at any id the release's `generation_config.json` lists. Each
 /// step re-runs the whole sequence, so a reply's cost grows with its length; run inference off the
 /// render thread. Introduced in InferKit 0.4.0.
@@ -73,16 +76,8 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// The tokenizer's end-of-sequence id and every id `generation_config.json` names as one; an
     /// instruct release ends a turn on its own marker, which only the generation config lists.
     static func stopTokens(tokenizer: NFKTokenizer, directoryURL: URL) -> Set<Int> {
-        var stops = Set<Int>()
+        var stops = NFKMLXToolCalling.generationConfigStops(directoryURL: directoryURL)
         if tokenizer.eosTokenId >= 0 { stops.insert(tokenizer.eosTokenId) }
-        let url = directoryURL.appendingPathComponent("generation_config.json")
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return stops }
-        if let single = json["eos_token_id"] as? NSNumber {
-            stops.insert(single.intValue)
-        } else if let list = json["eos_token_id"] as? [NSNumber] {
-            stops.formUnion(list.map(\.intValue))
-        }
         return stops
     }
 
@@ -102,7 +97,17 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed]
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
+                                 NFKMLXGenerationParameterKey.toolCallFormat]
+        if templateReadsReasoningEffort { keys.insert(NFKParameterReasoningEffort) }
+        return keys
+    }
+
+    /// Whether the chat template reads a thinking switch or level, which a reasoning effort binds:
+    /// Qwen3.5 thinks only when `enable_thinking` is true, and Qwen4-Exp reads `reasoning_effort`.
+    private var templateReadsReasoningEffort: Bool {
+        guard let chatTemplate else { return false }
+        return chatTemplate.contains("enable_thinking") || chatTemplate.contains("reasoning_effort")
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -122,29 +127,51 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        let promptTokens = try tokens(for: request)
+        var variables: [String: Any] = [:]
+        if let chatTemplate, templateReadsReasoningEffort {
+            variables = try NFKMLXLanguageBackend.templateVariables(for: request, template: .jinja(template: chatTemplate))
+        } else {
+            try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        }
+        let format = toolCallFormat(for: request)
+        let promptTokens = try tokens(for: request, toolCallFormat: format, variables: variables)
         let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
-        return NFKInferenceResult(outputs: [
-            NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
-                                                outputTokens: produced.count, reasoningTokens: nil),
-        ])
+        let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
+        let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
+        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,
+                                                                     produced: produced, decode: decode)
+        var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
+                                                format: format, source: identifier)
+        if !reasoning.isEmpty {
+            outputs[NFKOutputReasoning] = reasoning
+        }
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+                                                      outputTokens: produced.count, reasoningTokens: reasoningTokens)
+        return NFKInferenceResult(outputs: outputs)
+    }
+
+    /// The syntax the model's calls are read in: the request's, or the one the chat template shows.
+    private func toolCallFormat(for request: NFKInferenceRequest) -> NFKMLXToolCallFormat? {
+        NFKMLXToolCalling.format(for: request, template: chatTemplate)
     }
 
     /// The prompt as token ids. A raw prompt follows the begin-of-sequence marker where the tokenizer
     /// defines one; a message list renders through the chat template, which places its own markers.
-    private func tokens(for request: NFKInferenceRequest) throws -> [Int] {
+    private func tokens(for request: NFKInferenceRequest, toolCallFormat: NFKMLXToolCallFormat?,
+                        variables: [String: Any]) throws -> [Int] {
         let prefix = beginOfSequence.map { [$0] } ?? []
         if let prompt = request.prompt {
             return prefix + holder.tokenizer.encode(prompt).map(\.intValue)
         }
-        guard let messages = request.messages else { throw NFKMLXError.unsupportedInput }
+        guard let original = request.messages else { throw NFKMLXError.unsupportedInput }
+        let messages = NFKMLXToolCalling.templateMessages(original, format: toolCallFormat, source: identifier)
         guard let chatTemplate else {
             let joined = messages.compactMap { $0["content"] as? String }.joined(separator: "\n\n")
             return prefix + holder.tokenizer.encode(joined).map(\.intValue)
         }
-        let rendered = try NFKMLXChatTemplateRenderer.render(chatTemplate, messages: messages)
+        let rendered = try NFKMLXChatTemplateRenderer.render(chatTemplate, messages: messages,
+                                                             tools: NFKMLXToolCalling.templateTools(for: request),
+                                                             variables: variables)
         return holder.tokenizer.encode(rendered).map(\.intValue)
     }
 

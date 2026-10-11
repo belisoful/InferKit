@@ -524,7 +524,22 @@ Anthropic splits them across `message_start` (input) and `message_delta` (output
 Anthropic `{name, description, input_schema}`; replies → `NFKOutputToolCalls` = `{id, name, arguments
 (parsed), argumentsJSON}` (`result.toolCalls`). The key is spelled `"tools"`, the wire field's own
 name, so an entry already in wire shape (has `type`, or `input_schema`) passes through unwrapped —
-otherwise a caller who folded OpenAI tools by name gets double-wrapped. **Schema:**
+otherwise a caller who folded OpenAI tools by name gets double-wrapped. **Tool conversations
+(2026-10-10):** a conversation in the chat shape (assistant `tool_calls`, `role: tool` answers; see
+`core-runtime-notes.md`, "Tools and the tool loop") converts per backend. OpenAI chat: sent as is,
+with an answer's error flag as an `Error: ` text prefix and a tool's images in a user turn after the
+answers (a `tool` message carries text only). Anthropic: calls → `tool_use` blocks after the turn's
+text; a run of answers → `tool_result` blocks (`is_error`, image blocks in `content`) opening the next
+user turn, which absorbs a following user message (conversion runs after the media attach, so request
+images stay on the real user turn). Responses: calls → `function_call` items, answers →
+`function_call_output` (`Error: ` prefix; `input_text` + `input_image` parts for images). Interactions:
+calls → `function_call` steps, answers → `function_result` (`call_id`, `name` looked up from the call
+when the answer lacks one, `is_error`, image content). Every chat backend returns
+`NFKOutputAssistantMessage` with its record: OpenAI chat keeps `content`, `reasoning_content`,
+`reasoning`, `reasoning_details`, and `audio.id` (DeepSeek and OpenRouter read reasoning back during
+tool use); Anthropic its content blocks minus the forced `structured_output` call (nothing answers
+it); Responses its whole `output` (reasoning items by id, which `store` keeps); Interactions every
+step but `user_input` (thought `signature`s). **Schema:**
 `NFKParameterJSONSchema` → `response_format: {type: json_schema, json_schema: {name: response, schema}}`
 (no `strict`, which demands `additionalProperties: false` throughout) / Anthropic has no response
 format on most models, so it is a forced tool `structured_output` (`tool_choice: {type: tool, name}`) whose `input` is
@@ -753,7 +768,47 @@ machine's remote clients reach a model this process hosts. Files:
 - `NFKInferKitDiscovery.h/.m` (private): `DNSServiceBrowse` then `DNSServiceResolve` on one serial
   queue for the timeout. Resolving yields the advertising machine's host name (`Studio.local`), which
   `NSURLSession` resolves over mDNS, so no scoped IPv6 literal is needed. The TXT record carries `path`,
-  `tls`, `auth`, and `version`.
+  `tls`, `auth`, `mcp`, and `version`.
+- `NFKServedMCP.h/.m` (private, 2026-10-11): MCP over Streamable HTTP at `/mcp`, outside `/v1`
+  because MCP clients take the endpoint as one URL. Choices:
+  - Stateless. No `Mcp-Session-Id` is issued, which the spec allows. GET and DELETE answer 405,
+    since the server opens no stream of its own. Every reply is plain JSON, never an event stream.
+  - A batch answers in order. Notifications get 202. A parse error is 400 with -32700, an unknown tool
+    is -32602 (the spec's protocol error), and an unknown method -32601.
+  - A failing call is an `isError` result, never a protocol error, so the client's model reads it.
+  - Versions: 2025-11-25, 2025-06-18, 2025-03-26, and 2024-11-05. `initialize` echoes a version the
+    client asks for when it is one of these, and the newest otherwise. An `MCP-Protocol-Version`
+    header outside them is 400.
+  - `Origin`: absent is allowed, since a non-browser client sends none. localhost, 127.0.0.1, `::1`,
+    or the request's own `Host` is allowed. Anything else, `null` included, is 403, against DNS
+    rebinding.
+  - A call runs on a user-initiated global queue through `invokeWithArguments:`, so the schema check
+    runs server-side too.
+  - Content: `NFKMCPCallResult` writes text, then each `imagePNGs` image, then `NFKOutputAudio`'s
+    file as `audio` with a MIME type by extension, `NFKOutputVideo` as an embedded resource
+    (`inferkit:///<file name>`), and a dictionary `NFKOutputStructured` as `structuredContent`.
+  Only `addTool:` tools are listed, which is the user's decision of 2026-10-10: a hosted model is not
+  exposed until the host writes it a tool with a description.
+- `NFKMCPClient.m` (public): blocking and serialized by a lock. It initializes on first use, sends
+  `notifications/initialized`, and pages `tools/list` by `nextCursor`. Each event's `data:` lines
+  join with newlines into one message, and the reply whose `id` matches is taken, past any progress
+  notification. The session id the server assigns goes back with each later request, beside
+  `MCP-Protocol-Version`. A JSON-RPC error is nil plus an error whose description is
+  `<method>: <message>`. `NFKMCPClientTool` re-runs the schema check locally before the remote call.
+- **Provider-run MCP (`NFKParameterMCPServers`, 2026-10-11).** Each server is
+  `{url, name, authorizationToken?, allowedTools?, description?}`.
+  - Claude: `mcp_servers: [{type: url, url, name, authorization_token}]` plus one
+    `{type: mcp_toolset, mcp_server_name}` per server in `tools`. An allowlist becomes
+    `default_config: {enabled: false}` with `configs: {tool: {enabled: true}}`. The
+    `anthropic-beta: mcp-client-2025-11-20` header goes only with a server. The docs list a newer
+    `mcp-client-2026-09-15` beta for pinned tool lists, which is not used. Replies' `mcp_tool_use`
+    blocks pair with their `mcp_tool_result` like server tools.
+  - Responses: `{type: mcp, server_label, server_url, require_approval: never, authorization?,
+    allowed_tools?, server_description?}`. `mcp_call` items read as server tools through the `*_call`
+    rule; `mcp_list_tools` is skipped.
+  Both providers fetch the URL themselves, so it must be public HTTPS. Shapes from the providers'
+  current docs (platform.claude.com MCP connector; developers.openai.com tools-connectors-mcp), read
+  2026-10-11.
 
 Measured on this machine (`NFKInferenceServerTests`, 34 tests, and `NFKBalancedBackendTests`, 20, every one against a real listener):
 `nw_parameters_set_required_interface_type(…, nw_interface_type_loopback)` binds IPv4 and IPv6 loopback

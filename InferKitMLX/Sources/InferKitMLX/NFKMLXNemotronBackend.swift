@@ -35,6 +35,11 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKNemotronBackendHolder
     private let identifier: String
     private let stopTokens: Set<Int>
+    /// The release's chat template, which a tool request renders through.
+    private let chatTemplate: String?
+    /// What ends a turn the template opened: the end-of-sequence id and every id the generation
+    /// config lists.
+    private let templateStopTokens: Set<Int>
     private let describedModules: [Module]
     private let releaseDirectoryURL: URL?
     private let modelInfoCache = NFKMLXModelInfoCache()
@@ -46,6 +51,8 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
         stopTokens = tokenizer.eosTokenId >= 0 ? Set([tokenizer.eosTokenId]) : []
+        chatTemplate = releaseDirectoryURL.flatMap(NFKMLXLanguage.chatTemplate(inDirectory:))
+        templateStopTokens = stopTokens.union(NFKMLXToolCalling.generationConfigStops(directoryURL: releaseDirectoryURL))
         super.init()
     }
 
@@ -63,7 +70,8 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed]
+        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
+         NFKMLXGenerationParameterKey.toolCallFormat]
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -84,8 +92,21 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         }
 
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        // A tool request renders the release's own template, which is what the model's tool format
+        // was trained on; a plain chat keeps the joined prompt.
+        if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier) {
+            let promptTokens = holder.tokenizer.encode(text).map(\.intValue)
+            let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+                                    stops: templateStopTokens)
+            var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
+                                                    reasoning: "", request: request, format: format, source: identifier)
+            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+                                                          outputTokens: produced.count, reasoningTokens: nil)
+            return NFKInferenceResult(outputs: outputs)
+        }
         let promptTokens = try tokens(for: request)
-        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+                                stops: stopTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -106,7 +127,8 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?,
+                          stops: Set<Int>) -> [Int] {
         var tokens = promptTokens
         var produced = [Int]()
         for step in 0 ..< max(maxTokens, 0) {
@@ -119,7 +141,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
                 if let seed { MLXRandom.seed(seed &+ UInt64(step)) }
                 next = MLXRandom.categorical(logits * (1 / temperature)).item(Int.self)
             }
-            if stopTokens.contains(next) { break }
+            if stops.contains(next) { break }
             produced.append(next)
             tokens.append(next)
         }

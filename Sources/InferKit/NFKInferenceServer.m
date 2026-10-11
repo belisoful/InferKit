@@ -11,6 +11,7 @@
 #import <InferKit/NFKImageCoding.h>
 #import "NFKHTTPServer.h"
 #import "NFKServedOpenAI.h"
+#import "NFKServedMCP.h"
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
 
@@ -527,6 +528,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 @interface NFKInferenceServer ()
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedModel *> *models;
+@property (nonatomic, strong) NSMutableArray<NFKInferenceTool *> *servedTools;
 @property (nonatomic, strong, nullable) NFKHTTPListener *listener;
 @property (nonatomic, strong, nullable) id identity;
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
@@ -542,6 +544,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	self = [super init];
 	if (self != nil) {
 		_models = [NSMutableDictionary dictionary];
+		_servedTools = [NSMutableArray array];
 		_port = NFKInferenceServerDefaultPort;
 		_requiresAPIKey = YES;
 		_advertisesService = YES;
@@ -575,6 +578,47 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 	NSString *scheme = self.identity != nil ? @"https" : @"http";
 	return [NSURL URLWithString:[NSString stringWithFormat:@"%@://localhost:%u%@", scheme, (unsigned)self.listeningPort, NFKServedBasePath]];
+}
+
+- (nullable NSURL *)localMCPURL
+{
+	if (!self.isRunning) {
+		return nil;
+	}
+	NSString *scheme = self.identity != nil ? @"https" : @"http";
+	return [NSURL URLWithString:[NSString stringWithFormat:@"%@://localhost:%u/mcp", scheme, (unsigned)self.listeningPort]];
+}
+
+#pragma mark Tools
+
+- (void)addTool:(NFKInferenceTool *)tool
+{
+	@synchronized (self.servedTools) {
+		NSUInteger existing = [self.servedTools indexOfObjectPassingTest:^BOOL(NFKInferenceTool *served, NSUInteger index, BOOL *stop) {
+			return [served.name isEqualToString:tool.name];
+		}];
+		if (existing != NSNotFound) {
+			self.servedTools[existing] = tool;
+		} else {
+			[self.servedTools addObject:tool];
+		}
+	}
+}
+
+- (void)removeToolNamed:(NSString *)name
+{
+	@synchronized (self.servedTools) {
+		[self.servedTools filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NFKInferenceTool *served, NSDictionary *bindings) {
+			return ![served.name isEqualToString:name];
+		}]];
+	}
+}
+
+- (NSArray<NFKInferenceTool *> *)tools
+{
+	@synchronized (self.servedTools) {
+		return [self.servedTools copy];
+	}
 }
 
 #pragma mark Models
@@ -732,6 +776,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		NSMutableDictionary<NSString *, NSString *> *record = [@{ @"path": NFKServedBasePath,
 																  @"tls": self.identity != nil ? @"1" : @"0",
 																  @"auth": self.requiresAPIKey ? @"1" : @"0",
+																  @"mcp": @"/mcp",
 																  @"version": NFKInferKit.version } mutableCopy];
 		if (self.reportsHostDetails) {
 			[record addEntriesFromDictionary:[NFKServedHostStatus TXTRecordEntries]];
@@ -801,6 +846,10 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	NSString *path = request.path;
 	while (path.length > 1 && [path hasSuffix:@"/"]) {
 		path = [path substringToIndex:path.length - 1];
+	}
+	if ([path isEqualToString:@"/mcp"]) {
+		[NFKServedMCP serveRequest:request response:response tools:self.tools instructions:self.MCPInstructions];
+		return;
 	}
 	NSString *modelsPrefix = [NFKServedBasePath stringByAppendingString:@"/models/"];
 	if ([path hasPrefix:modelsPrefix]) {

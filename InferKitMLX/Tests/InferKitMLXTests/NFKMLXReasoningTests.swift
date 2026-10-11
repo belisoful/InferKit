@@ -12,6 +12,16 @@ import InferKit
 
 final class NFKMLXReasoningTests: XCTestCase {
 
+    func testAHarmonyReplyWithoutAnAnalysisLosesItsFinalHeader() {
+        let harmony = NFKMLXReasoningFormat.harmonyChannels
+        XCTAssertEqual(harmony.split("<|channel|>final<|message|>It is sunny.").answer, "It is sunny.",
+                       "the generation prompt opened the assistant turn, so the final channel's header alone opens the reply")
+        let split = harmony.split("<|channel|>analysis<|message|>Check.<|end|><|start|>assistant<|channel|>final<|message|>Sunny.")
+        XCTAssertEqual(split.reasoning, "Check.")
+        XCTAssertEqual(split.answer, "Sunny.")
+        XCTAssertEqual(NFKMLXReasoningFormat.thinkTags.split("Plain.").answer, "Plain.")
+    }
+
     // MARK: The markers
 
     func testQwenStyleTagsSplitTheChainFromTheAnswer() {

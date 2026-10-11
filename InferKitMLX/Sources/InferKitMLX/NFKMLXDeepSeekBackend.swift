@@ -230,6 +230,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
             NFKParameterJSONSchema, NFKMLXGenerationParameterKey.chatTemplate,
             NFKMLXGenerationParameterKey.prefillChunkSize, NFKParameterConversationKey,
+            NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat,
         ]
         if draft != nil { keys.insert(NFKMLXGenerationParameterKey.draftTokens) }
         return keys
@@ -317,6 +318,11 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             as? String {
             options.chatTemplate = .jinja(template: value)
         }
+        if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.toolCallFormat),
+           let format = NFKMLXToolCallFormat.named(value) {
+            options.toolCallFormat = format
+            options.toolCallFormatIsStated = true
+        }
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.prefillChunkSize)
             as? NSNumber {
             options.prefillChunkSize = value.intValue
@@ -336,8 +342,16 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             options.stopTokens = [holder.tokenizer.eosTokenId]
         }
 
+        options.chatTemplate = NFKMLXToolCalling.template(options.chatTemplate, for: request, releaseDirectoryURL: releaseDirectoryURL)
+        if let stops = NFKMLXToolCalling.toolStops(for: request, chosen: [], endOfSequence: holder.tokenizer.eosTokenId,
+                                                   releaseDirectoryURL: releaseDirectoryURL) {
+            options.stopTokens = options.stopTokens.union(stops)
+        }
+        let toolCallFormat = NFKMLXLanguageBackend.toolCallFormat(for: options)
         guard let text = NFKMLXLanguageBackend.prompt(from: request,
-                                                      template: options.chatTemplate) else {
+                                                      template: options.chatTemplate,
+                                                      source: identifier,
+                                                      toolCallFormat: toolCallFormat) else {
             throw NFKMLXError.unsupportedInput
         }
         var promptTokens = holder.tokenizer.encode(text).map(\.intValue)
@@ -368,11 +382,11 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         }
         let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask,
                                           options: options, conversation: NFKMLXConversation.name(of: request))
-        return NFKInferenceResult(outputs: [
-            NFKOutputText: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
-                                                outputTokens: produced.count, reasoningTokens: nil),
-        ])
+        var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
+                                                reasoning: "", request: request, format: toolCallFormat, source: identifier)
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
+                                                      outputTokens: produced.count, reasoningTokens: nil)
+        return NFKInferenceResult(outputs: outputs)
     }
 
     /// One generation at a time. A run threads its own cache through the shared decoder, so two

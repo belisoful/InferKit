@@ -52,6 +52,30 @@ Under the hood the backend builds a runtime `GenerationSchema` per tool from the
 `@Generable` Swift type is declared. The model's arguments arrive already parsed in the handler's
 dictionary.
 
+### Crossing between Apple's tools and the core's
+
+A tool crosses between Apple's tool subsystem and the core's in both directions:
+
+- `NFKFoundationTool(tool:)` puts a core `NFKInferenceTool` on Apple's model, including an
+  `NFKBackendTool`, so the system model calls a local language, speech, or image model.
+- `NFKFoundationTool(appleTool:)` takes an app's own `Tool`, and `inferenceTool` presents any
+  Foundation tool as an `NFKInferenceTool`, so `NFKToolLoop` offers it to a remote or local model and
+  `NFKInferenceServer` serves it over MCP.
+
+```swift
+let speak = NFKBackendTool(backend: kokoro, name: "speak", outputModality: .audio,
+                           purpose: "the user asks to hear the answer")
+backend.tools = [NFKFoundationTool(tool: speak)]
+
+let forecast = try NFKFoundationTool(appleTool: ForecastTool())
+server.addTool(forecast.inferenceTool)
+```
+
+The tools the model ran in a turn come back under `NFKOutputToolInvocations`, each with the call and
+its `NFKToolResult`, whose outputs carry what the tool made for the app. `inferenceTool` waits on the
+handler at most `timeout` seconds (600 by default), and a handler that throws is an error result the
+calling model reads.
+
 ### Constraining the output
 
 `NFKParameterJSONSchema` switches a run to `session.streamResponse(to:schema:)`. The result carries the

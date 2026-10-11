@@ -39,6 +39,12 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let startOfTurn: Int?
     private let endOfTurn: Int?
     private let stopTokens: Set<Int>
+    /// The release's chat template, which a tool request renders through.
+    private let chatTemplate: String?
+    /// What ends a turn the template opened: the hand-built turn's stops, Gemma 4's `<turn|>`, the
+    /// `<|tool_response>` a model writes when it waits on a call, and every id the generation config
+    /// lists.
+    private let templateStopTokens: Set<Int>
     private let describedModules: [Module]
     private let releaseDirectoryURL: URL?
     private let modelInfoCache = NFKMLXModelInfoCache()
@@ -63,6 +69,10 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         endOfTurn = tokenizer.id(forToken: "<end_of_turn>")
         stopTokens = Set([tokenizer.id(forToken: "<eos>"), tokenizer.id(forToken: "<end_of_turn>")]
             .compactMap { $0 })
+        chatTemplate = releaseDirectoryURL.flatMap(NFKMLXLanguage.chatTemplate(inDirectory:))
+        templateStopTokens = stopTokens
+            .union([tokenizer.id(forToken: "<turn|>"), tokenizer.id(forToken: "<|tool_response>")].compactMap { $0 })
+            .union(NFKMLXToolCalling.generationConfigStops(directoryURL: releaseDirectoryURL))
         super.init()
     }
 
@@ -82,7 +92,8 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed]
+        [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
+         NFKMLXGenerationParameterKey.toolCallFormat]
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -103,8 +114,22 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
 
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        // A tool request renders the release's own template, which writes Gemma 4's tool syntax; a plain
+        // chat keeps the hand-built turns.
+        if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier,
+                                                                bosToken: "<bos>", eosToken: "<eos>") {
+            let promptTokens = holder.tokenizer.encode(text)
+            let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+                                    stops: templateStopTokens)
+            var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced), reasoning: "",
+                                                    request: request, format: format, source: identifier)
+            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+                                                          outputTokens: produced.count, reasoningTokens: nil)
+            return NFKInferenceResult(outputs: outputs)
+        }
         let promptTokens = try tokens(for: request)
-        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+                                stops: stopTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -139,7 +164,8 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?,
+                          stops: Set<Int>) -> [Int] {
         var tokens = promptTokens
         var produced = [Int]()
         for step in 0 ..< max(maxTokens, 0) {
@@ -152,7 +178,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
                 if let seed { MLXRandom.seed(seed &+ UInt64(step)) }
                 next = MLXRandom.categorical(logits * (1 / temperature)).item(Int.self)
             }
-            if stopTokens.contains(next) { break }
+            if stops.contains(next) { break }
             produced.append(next)
             tokens.append(next)
         }

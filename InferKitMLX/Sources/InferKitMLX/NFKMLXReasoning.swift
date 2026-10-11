@@ -109,7 +109,7 @@ public final class NFKMLXReasoningFormat: NSObject, @unchecked Sendable {
     func split(_ text: String) -> (reasoning: String, answer: String) {
         guard let end = text.range(of: closing) else {
             guard let start = text.range(of: opening) else {
-                return ("", text)
+                return ("", withoutAnswerPrefix(text))
             }
             return (String(text[start.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines), "")
         }
@@ -122,7 +122,23 @@ public final class NFKMLXReasoningFormat: NSObject, @unchecked Sendable {
             answer = String(answer[prefix.upperBound...])
         }
         return (chain.trimmingCharacters(in: .whitespacesAndNewlines),
-                answer.trimmingCharacters(in: .whitespacesAndNewlines))
+                withoutAnswerPrefix(answer).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// The answer without the marker that opens it. gpt-oss without an analysis message writes the
+    /// final channel's header straight after the generation prompt's `<|start|>assistant`, so the
+    /// header alone opens the reply.
+    private func withoutAnswerPrefix(_ text: String) -> String {
+        guard !answerPrefix.isEmpty else { return text }
+        var candidates = [answerPrefix]
+        if let channel = answerPrefix.range(of: "<|channel|>") {
+            candidates.append(String(answerPrefix[channel.lowerBound...]))
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        for candidate in candidates where trimmed.hasPrefix(candidate) {
+            return String(trimmed.dropFirst(candidate.count))
+        }
+        return text
     }
 }
 
@@ -171,6 +187,27 @@ enum NFKMLXUsage {
     static func refuseReasoningEffort(in request: NFKInferenceRequest, model: String) throws {
         guard request.parameter(forKey: NFKParameterReasoningEffort) != nil else { return }
         throw NFKMLXError.unsupportedConfiguration("\(model) is not a reasoning model")
+    }
+
+    /// A reply split into the chain the model showed, its answer, and the chain's token count.
+    ///
+    /// @discussion A reasoning model's chain is not its answer, so it comes back under its own key
+    /// and the answer holds what the model concluded. Without a format there is nothing to split:
+    /// the reply stands as it was generated, and the chain's share is unknown rather than zero,
+    /// since the backend cannot say whether the text holds a chain at all.
+    static func split(_ reply: String, format: NFKMLXReasoningFormat?, produced: [Int],
+                      decode: ([Int]) -> String) -> (reasoning: String, answer: String, reasoningTokens: Int?) {
+        guard let format else { return ("", reply, nil) }
+        let (reasoning, answer) = format.split(reply)
+        let chainEnd: Int
+        if let end = reply.range(of: format.closing) {
+            chainEnd = reply.distance(from: reply.startIndex, to: end.upperBound)
+        } else if reasoning.isEmpty {
+            chainEnd = 0
+        } else {
+            chainEnd = reply.count      // the run ended inside the chain, so all of it is reasoning
+        }
+        return (reasoning, answer, tokenCount(inPrefixOf: produced, characters: chainEnd, decode: decode))
     }
 
     /// How many of `produced` decode to the first `characters` characters of the reply.

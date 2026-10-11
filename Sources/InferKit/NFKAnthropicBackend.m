@@ -12,11 +12,16 @@
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import "NFKRemoteMediaSupport.h"
+#import "NFKToolMessageSupport.h"
+#import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFK_ARC.h"
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
 	forced into a tool whose input schema is the caller's. */
+/*! The beta Claude's MCP connector is served under. */
+static NSString * const NFKAnthropicMCPConnectorBeta = @"mcp-client-2025-11-20";
+
 static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
 /*! The thinking budget each reasoning effort the contract names asks for. The Messages API takes a
@@ -146,7 +151,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterTemperature,
 								  NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
 								  NFKParameterStopSequences, NFKParameterAudioOutput,
-								  NFKParameterReasoningEffort ]];
+								  NFKParameterReasoningEffort, NFKParameterMCPServers ]];
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -347,6 +352,9 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleAnthropicMessages];
 	// The transport sets the version this release was written against; apiVersion overrides it.
 	[urlRequest setValue:self.apiVersion forHTTPHeaderField:@"anthropic-version"];
+	if ([body[@"mcp_servers"] count] > 0) {
+		[urlRequest setValue:NFKAnthropicMCPConnectorBeta forHTTPHeaderField:@"anthropic-beta"];
+	}
 	return urlRequest;
 }
 
@@ -406,7 +414,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	if (!attachments.isEmpty && ![self attach:attachments toLastUserTurnIn:conversation citing:[[request parameterForKey:NFKParameterCitations] boolValue]]) {
 		return nil;
 	}
-	body[@"messages"] = conversation;
+	body[@"messages"] = [self wireConversationFor:conversation];
 
 	NSMutableArray *tools = [NSMutableArray array];
 	NSArray *declared = request.parameters[NFKParameterTools];
@@ -429,6 +437,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	} else if ([schema isKindOfClass:NSDictionary.class]) {
 		outputConfig[@"format"] = @{ @"type": @"json_schema", @"schema": schema };
 	}
+	[self addMCPServersOf:request toBody:body tools:tools];
 	if (tools.count > 0) {
 		body[@"tools"] = tools;
 	}
@@ -529,6 +538,38 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 
 // The contract's {name, description, parameters} is the API's {name, description, input_schema};
 // an entry already carrying input_schema is in the wire shape and passes through.
+// Claude's MCP connector names each server under mcp_servers and enables its tools through one
+// mcp_toolset; an allowlist turns the rest off.
+- (void)addMCPServersOf:(NFKInferenceRequest *)request toBody:(NSMutableDictionary *)body tools:(NSMutableArray *)tools
+{
+	NSArray *servers = [request parameterForKey:NFKParameterMCPServers];
+	NSMutableArray *wire = [NSMutableArray array];
+	for (NSDictionary *server in [servers isKindOfClass:NSArray.class] ? servers : @[]) {
+		NSString *url = [server isKindOfClass:NSDictionary.class] ? [server[@"url"] description] : nil;
+		NSString *name = [server isKindOfClass:NSDictionary.class] && [server[@"name"] isKindOfClass:NSString.class] ? server[@"name"] : nil;
+		if (url.length == 0 || name.length == 0) {
+			continue;
+		}
+		NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"url", @"url": url, @"name": name }];
+		entry[@"authorization_token"] = server[@"authorizationToken"];
+		[wire addObject:entry];
+		NSMutableDictionary *toolset = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"mcp_toolset", @"mcp_server_name": name }];
+		NSArray *allowed = [server[@"allowedTools"] isKindOfClass:NSArray.class] ? server[@"allowedTools"] : nil;
+		if (allowed.count > 0) {
+			toolset[@"default_config"] = @{ @"enabled": @NO };
+			NSMutableDictionary *configs = [NSMutableDictionary dictionary];
+			for (NSString *tool in allowed) {
+				configs[tool] = @{ @"enabled": @YES };
+			}
+			toolset[@"configs"] = configs;
+		}
+		[tools addObject:toolset];
+	}
+	if (wire.count > 0) {
+		body[@"mcp_servers"] = wire;
+	}
+}
+
 - (NSDictionary *)wireToolForTool:(NSDictionary *)tool
 {
 	if (tool[@"input_schema"] != nil) {
@@ -598,6 +639,92 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	return NO;
 }
 
+// The API carries a tool conversation as blocks: an assistant turn's calls are tool_use blocks, and
+// the answers to one turn's calls are tool_result blocks opening the user turn that follows. An
+// assistant turn this endpoint wrote replays its own blocks, thinking signatures included, which the
+// API requires back while a tool is in use.
+- (NSArray *)wireConversationFor:(NSArray *)conversation
+{
+	NSMutableArray *wire = [NSMutableArray arrayWithCapacity:conversation.count];
+	NSMutableArray *results = [NSMutableArray array];
+	for (NSDictionary *message in conversation) {
+		if (NFKMessageIsToolResult(message)) {
+			[results addObject:[self toolResultBlockFor:message]];
+			continue;
+		}
+		NSDictionary *turn = [self wireTurnFor:message];
+		if (results.count > 0 && [turn[@"role"] isEqual:@"user"]) {
+			NSMutableArray *blocks = [results mutableCopy];
+			id content = turn[@"content"];
+			if ([content isKindOfClass:NSString.class] && [content length] > 0) {
+				[blocks addObject:@{ @"type": @"text", @"text": content }];
+			} else if ([content isKindOfClass:NSArray.class]) {
+				[blocks addObjectsFromArray:content];
+			}
+			[wire addObject:@{ @"role": @"user", @"content": blocks }];
+			[results removeAllObjects];
+			continue;
+		}
+		if (results.count > 0) {
+			[wire addObject:@{ @"role": @"user", @"content": [results copy] }];
+			[results removeAllObjects];
+		}
+		[wire addObject:turn];
+	}
+	if (results.count > 0) {
+		[wire addObject:@{ @"role": @"user", @"content": [results copy] }];
+	}
+	return wire;
+}
+
+- (NSDictionary *)wireTurnFor:(NSDictionary *)message
+{
+	if (![message isKindOfClass:NSDictionary.class] || ![message[@"role"] isEqual:@"assistant"]) {
+		return NFKMessageWithoutMetadata(message);
+	}
+	id recorded = NFKMessageProviderTurn(message, NFKProviderTurnFormatAnthropicMessages, self.endpointURL.absoluteString);
+	if ([recorded isKindOfClass:NSArray.class]) {
+		return @{ @"role": @"assistant", @"content": recorded };
+	}
+	if (![message[@"tool_calls"] isKindOfClass:NSArray.class]) {
+		return NFKMessageWithoutMetadata(message);
+	}
+	NSMutableArray *blocks = [NSMutableArray array];
+	if ([message[@"content"] isKindOfClass:NSString.class] && [message[@"content"] length] > 0) {
+		[blocks addObject:@{ @"type": @"text", @"text": message[@"content"] }];
+	}
+	for (NSDictionary *call in [NFKToolMessages toolCallsOfAssistantMessage:message]) {
+		[blocks addObject:@{ @"type": @"tool_use", @"id": call[@"id"], @"name": call[@"name"], @"input": call[@"arguments"] }];
+	}
+	return @{ @"role": @"assistant", @"content": blocks };
+}
+
+- (NSDictionary *)toolResultBlockFor:(NSDictionary *)message
+{
+	NSMutableDictionary *block = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"tool_result",
+																				 @"tool_use_id": NFKToolMessageCallIdentifier(message) }];
+	NSString *text = NFKToolMessageText(message);
+	NSArray<NSData *> *images = NFKToolMessageImagePNGs(message);
+	if (images.count == 0) {
+		block[@"content"] = text;
+	} else {
+		NSMutableArray *content = [NSMutableArray array];
+		if (text.length > 0) {
+			[content addObject:@{ @"type": @"text", @"text": text }];
+		}
+		for (NSData *png in images) {
+			[content addObject:@{ @"type": @"image",
+								  @"source": @{ @"type": @"base64", @"media_type": @"image/png",
+												@"data": [png base64EncodedStringWithOptions:0] } }];
+		}
+		block[@"content"] = content;
+	}
+	if (NFKToolMessageIsError(message)) {
+		block[@"is_error"] = @YES;
+	}
+	return block;
+}
+
 - (BOOL)requestExpectsStructuredReply:(NFKInferenceRequest *)request
 {
 	return [request.parameters[NFKParameterJSONSchema] isKindOfClass:NSDictionary.class];
@@ -631,6 +758,14 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	NSMutableArray<NSDictionary *> *citations = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *serverCalls = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *serverResults = [NSMutableArray array];
+	NSMutableArray *turn = [NSMutableArray array];
+	for (NSDictionary *block in content) {
+		BOOL structuredBlock = expectsStructured && [block isKindOfClass:NSDictionary.class]
+			&& [block[@"type"] isEqual:@"tool_use"] && [block[@"name"] isEqual:NFKAnthropicStructuredToolName];
+		if (!structuredBlock) {
+			[turn addObject:block];
+		}
+	}
 	for (NSDictionary *block in content) {
 		if (![block isKindOfClass:NSDictionary.class]) {
 			continue;
@@ -640,7 +775,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 			[self addCitationsOfTextBlock:block to:citations];
 			continue;
 		}
-		if ([block[@"type"] isEqualToString:@"server_tool_use"]) {
+		if ([block[@"type"] isEqualToString:@"server_tool_use"] || [block[@"type"] isEqualToString:@"mcp_tool_use"]) {
 			[serverCalls addObject:block];
 			continue;
 		}
@@ -688,6 +823,9 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	if (toolCalls.count > 0) {
 		outputs[NFKOutputToolCalls] = toolCalls;
 	}
+	outputs[NFKOutputAssistantMessage] = NFKAssistantMessage(outputs[NFKRemoteBackendTextKey], toolCalls,
+															 NFKProviderTurnFormatAnthropicMessages,
+															 self.endpointURL.absoluteString, turn);
 	if (usage != nil) {
 		outputs[NFKOutputUsage] = usage;
 	}

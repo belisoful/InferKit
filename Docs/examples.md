@@ -25,6 +25,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
 - [Text → video](#text--video) — LTX-Video and Wan, staged
 - [Structured output and tools](#structured-output-and-tools) — Apple
+- [Models as tools](#models-as-tools) — one model calls another: `NFKBackendTool`, `NFKToolLoop`
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
 - [Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly) — no Python toolchain
@@ -3335,7 +3336,7 @@ NFKInferenceRequest *ask =
                             outputModality:NFKModalityText];
 NFKInferenceResult *turn = [backend runInferenceForRequest:ask error:&error];
 for (NSDictionary *call in turn.toolCalls) {          // {id, name, arguments (parsed), argumentsJSON}
-    // run the tool, then send its result back as a tool message
+    // run the tool, then send its result back as a tool message (NFKToolLoop does both)
 }
 
 NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
@@ -5025,6 +5026,22 @@ backend.tools = [
 // NFKOutputToolCalls, and the next request answers it with a `tool` message.
 ```
 
+A tool crosses between Apple's tool subsystem and the core's both ways: a core `NFKInferenceTool`
+runs on Apple's model, and an app's own Apple `Tool` reaches every other model, and MCP clients, as
+an `NFKInferenceTool`:
+
+```swift
+let speak = NFKBackendTool(backend: kokoro, name: "speak", outputModality: .audio,
+                           purpose: "the user asks to hear the answer")
+backend.tools = [NFKFoundationTool(tool: speak)]          // Apple's model calls a local speech model
+let reply = try backend.runInference(for: request)
+let ran = reply.output(forKey: NFKOutputToolInvocations) as? [NFKToolInvocation]   // with the audio it made
+
+let forecast = try NFKFoundationTool(appleTool: ForecastTool())   // any `Tool` the app already has
+let loop = NFKToolLoop(backend: claude, tools: [forecast.inferenceTool])
+server.addTool(forecast.inferenceTool)                    // and over MCP
+```
+
 ### Sampling
 
 ```swift
@@ -5034,6 +5051,149 @@ let request = NFKInferenceRequest(
 // NFKParameterTopK / NFKParameterTopP / NFKParameterSeed choose Apple's sampling mode;
 // NFKParameterTemperature: 0 is greedy decoding.
 ```
+
+## Models as tools
+
+One model reaches another as a tool. `NFKBackendTool` makes any backend a tool, and `NFKToolLoop`
+runs the conversation: it offers the tools, runs each call the model makes, returns each result to
+the model, and repeats until the model answers. Here a remote Claude model reaches a local model:
+
+<!-- objc-check: given id<NFKInferenceBackend> localQwen = nil; -->
+```objc
+NFKBackendTool *askQwen = [NFKBackendTool toolWithBackend:localQwen
+                                                     name:@"ask_local_model"
+                                           outputModality:NFKModalityText
+                                                  purpose:@"the text is private and must stay on this machine"];
+NFKToolLoop *loop = [[NFKToolLoop alloc] initWithBackend:claude tools:@[ askQwen ]];
+
+NFKInferenceRequest *ask = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize my notes with the local model." }
+                                                       parameters:nil
+                                                   outputModality:NFKModalityText];
+NSError *error = nil;
+NFKInferenceResult *result = [loop runInferenceForRequest:ask error:&error];   // off the main thread
+NSString *answer = result.text;
+NSArray<NFKToolInvocation *> *ran = [result outputForKey:NFKOutputToolInvocations];  // each call and its result
+NSArray *conversation = [result outputForKey:NFKOutputMessages];                     // append a user turn to continue
+```
+
+The tool's description is what the model reads to decide whether and when to call it, so the
+default states what the tool does, when to use it, and what it returns. `purpose` completes "Use it
+when …". The default for each output modality:
+
+| `outputModality` | Arguments | The model reads | The application receives |
+|---|---|---|---|
+| `NFKModalityText` | `prompt`, optional `system` | the reply's text | the whole result |
+| `NFKModalityAudio` | `prompt`, optional `durationSeconds` | the audio's length and format | the `NFKAudioAsset` |
+| `NFKModalityImage` | `prompt`, optional `negativePrompt`, `width`, `height`, `seed` | the image's size, and the image itself | the image |
+| `NFKModalityVideo` | `prompt`, optional `durationSeconds`, `seed` | the clip's length and frame size | the `NFKVideoAsset` |
+
+An argument named for an `NFKInput*` key becomes that input and any other becomes the parameter of
+that name, so the defaults need no mapping. `fixedParameters` holds the settings the application
+chooses (a voice, a token limit); `requestBuilder` and `resultDescriber` replace the mapping and the
+description of a result.
+
+A tool that is not a model is a handler block. The loop checks the arguments against the schema's
+required properties and top-level types before the handler runs, and a failure reaches the model as
+an error result it can correct:
+
+<!-- objc-check: continues -->
+```objc
+NFKInferenceTool *weather =
+    [NFKInferenceTool toolWithName:@"get_weather"
+                       description:@"Current weather in a city. Use it when the user asks about weather now. Returns the temperature and sky."
+                        parameters:@{ @"type": @"object",
+                                      @"properties": @{ @"city": @{ @"type": @"string", @"description": @"The city name." } },
+                                      @"required": @[ @"city" ] }
+                           handler:^NFKToolResult *(NSDictionary *arguments, NSError **error) {
+        return [NFKToolResult resultWithText:[NSString stringWithFormat:@"18 C and clear in %@", arguments[@"city"]]];
+    }];
+loop.approvalHandler = ^BOOL(NSString *toolName, NSDictionary *arguments) {
+    return YES;                                    // a declined call reaches the model as an error result
+};
+loop.invocationHandler = ^(NFKToolInvocation *invocation) {
+    // runs as each tool finishes: play the audio a speech tool made before the model answers
+};
+```
+
+**On device.** A local language model calls tools the same way: the MLX language backends render
+`NFKParameterTools` into the release's own chat template and read the calls back in the syntax that
+template shows (`NFKMLXToolCallFormat`: Hermes JSON for Qwen3 and Granite, XML parameters for
+Qwen3.5 and Qwen4, Gemma 4's `call:` form, harmony for gpt-oss, and the DeepSeek, Mistral, Granite 3,
+Llama, and Nemotron forms). Here Qwen3.5 speaks its answer through a local speech model:
+
+<!-- objc-check: given NSURL *qwen35Directory = nil; id<NFKInferenceBackend> speech = nil; NFKInferenceRequest *ask = nil; -->
+```objc
+id<NFKInferenceBackend> qwen = [NFKMLXHybridLanguage backendWithDirectoryURL:qwen35Directory error:&error];
+NFKBackendTool *speak = [NFKBackendTool toolWithBackend:speech
+                                                   name:@"speak"
+                                         outputModality:NFKModalityAudio
+                                                purpose:@"the user asks to hear the answer"];
+NFKToolLoop *onDevice = [[NFKToolLoop alloc] initWithBackend:qwen tools:@[ speak ]];
+NFKInferenceResult *spoken = [onDevice runInferenceForRequest:ask error:&error];
+NFKToolInvocation *speech0 = [[spoken outputForKey:NFKOutputToolInvocations] firstObject];
+NFKAudioAsset *clip = [speech0.result.outputs objectForKey:NFKOutputAudio];          // the audio to play
+```
+
+A tool request renders the release's own `chat_template` even on a backend built without one, since
+only that template writes the release's tool format. A caller rendering its own prompt names the
+syntax under `NFKMLXGenerationParameterKey.toolCallFormat`.
+
+**Over MCP.** `NFKInferenceServer` serves the tools added to it over the Model Context Protocol at
+`/mcp`, so an MCP client reaches a local model as a tool: Claude Code, Claude Desktop, an agent
+framework, or another InferKit process. Only the added tools are listed. A tool's text, the images it
+shows the model, and the audio it generates come back as MCP content.
+
+<!-- objc-check: given NFKBackendTool *askQwen = nil; NFKBackendTool *speak = nil; -->
+```objc
+NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+server.apiKey = apiKey;                      // the same key rules as the other routes
+server.MCPInstructions = @"Use ask_local_model for anything private.";
+[server addTool:askQwen];
+[server addTool:speak];
+[server startWithError:&error];
+NSURL *endpoint = server.localMCPURL;        // http://localhost:8765/mcp
+```
+
+Claude Code connects to it by URL:
+
+```bash
+claude mcp add --transport http inferkit http://localhost:8765/mcp --header "Authorization: Bearer $INFERKIT_KEY"
+```
+
+`NFKMCPClient` is the other end: any MCP server's tools become `NFKInferenceTool`, which a loop offers
+to any model, local or remote. A remote tool's audio arrives as an `NFKAudioAsset` and its images as
+images.
+
+<!-- objc-check: given NSURL *mcpEndpoint = nil; NFKInferenceRequest *ask = nil; -->
+```objc
+NFKMCPClient *client = [[NFKMCPClient alloc] initWithEndpointURL:mcpEndpoint apiKey:apiKey];
+NSArray<NFKInferenceTool *> *remoteTools = [client toolsWithError:&error];
+NFKToolLoop *withRemoteTools = [[NFKToolLoop alloc] initWithBackend:llm tools:remoteTools];
+NFKInferenceResult *done = [withRemoteTools runInferenceForRequest:ask error:&error];
+```
+
+A provider can call the server itself when it is public. Behind a tunnel that serves HTTPS,
+`NFKParameterMCPServers` hands it to Claude's MCP connector (`NFKAnthropicBackend`) or to the
+Responses API's `mcp` tool (`NFKRemoteResponsesBackend`), and what the service ran comes back under
+`NFKOutputServerToolResults`:
+
+```objc
+NFKInferenceRequest *viaConnector =
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Summarize my notes with the local model." }
+                                parameters:@{ NFKParameterMCPServers: @[ @{ @"url": @"https://tools.example.com/mcp",
+                                                                           @"name": @"inferkit",
+                                                                           @"authorizationToken": apiKey } ] }
+                            outputModality:NFKModalityText];
+NFKInferenceResult *ran = [claude runInferenceForRequest:viaConnector error:&error];
+NSArray *calls = [ran outputForKey:NFKOutputServerToolResults];   // {name, input, output} each
+```
+
+The loop is itself a backend, so `submitInferenceJobForRequest:` streams each model turn's partial
+text and cancels inside a turn, `NFKInferenceServer` serves a loop under a model name, and one loop is
+a tool of another. The conversation keeps the OpenAI chat shape (`tool_calls` on the assistant turn,
+a `tool` turn per answer); each chat backend converts it to its provider's form and replays its own
+record of an assistant turn, so Claude's signed thinking and Gemini's thought signatures go back
+intact. A caller running its own loop builds the same turns through `NFKToolMessages`.
 
 ## Audio → text (transcription)
 

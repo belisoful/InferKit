@@ -178,9 +178,9 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2268 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  136 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   52 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 2306 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  137 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   53 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
@@ -209,13 +209,13 @@ unguarded call.
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (768), `InferKitFoundationModels` (87), and `InferKitAppleSwift`
+   package declares, so the core (833), `InferKitFoundationModels` (95), and `InferKitAppleSwift`
    (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
-   covers all 87 tests across its three test targets. Through Xcode it collapses the same way MLX does
-   — the generated `InferKitFoundationModels` scheme runs 69 and skips the 18 in the two examples
+   covers all 95 tests across its three test targets. Through Xcode it collapses the same way MLX does
+   — the generated `InferKitFoundationModels` scheme runs 75 and skips the 20 in the two examples
    targets — so it carries the same per-target shared schemes
-   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 69 / 10 / 8). Nothing here needs
+   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 75 / 11 / 9). Nothing here needs
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers

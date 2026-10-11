@@ -5,6 +5,7 @@
 
 import Foundation
 import FoundationModels
+import InferKit
 
 /// The error a declared tool without a handler throws when the model calls it. The backend reads it
 /// as "the caller runs this tool" and ends the turn with the call under `NFKOutputToolCalls`.
@@ -24,10 +25,12 @@ struct NFKRecordedToolCall: @unchecked Sendable {
     }
 }
 
-/// Collects the calls the model made that no handler ran, across the adapters of one turn.
+/// Collects, across the adapters of one turn, the calls the model made that no handler ran and the
+/// tools a handler ran, in the order they ran.
 final class NFKToolCallRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var calls: [NFKRecordedToolCall] = []
+    private var runs: [NFKToolInvocation] = []
 
     func record(_ call: NFKRecordedToolCall) {
         lock.lock()
@@ -35,10 +38,22 @@ final class NFKToolCallRecorder: @unchecked Sendable {
         lock.unlock()
     }
 
+    func record(_ invocation: NFKToolInvocation) {
+        lock.lock()
+        runs.append(invocation)
+        lock.unlock()
+    }
+
     var recorded: [NFKRecordedToolCall] {
         lock.lock()
         defer { lock.unlock() }
         return calls
+    }
+
+    var invocations: [NFKToolInvocation] {
+        lock.lock()
+        defer { lock.unlock() }
+        return runs
     }
 }
 
@@ -54,13 +69,13 @@ struct NFKToolAdapter: Tool {
     let name: String
     let description: String
     let parameters: GenerationSchema
-    private let handler: (@Sendable ([String: Any]) async throws -> String)?
+    private let handler: (@Sendable ([String: Any]) async throws -> NFKToolResult)?
     private let recorder: NFKToolCallRecorder
 
     init(name: String,
          description: String,
          parameters: [String: Any],
-         handler: (@Sendable ([String: Any]) async throws -> String)?,
+         handler: (@Sendable ([String: Any]) async throws -> NFKToolResult)?,
          recorder: NFKToolCallRecorder) throws {
         self.name = name
         self.description = description
@@ -73,7 +88,7 @@ struct NFKToolAdapter: Tool {
         try self.init(name: tool.name,
                       description: tool.toolDescription,
                       parameters: tool.parameters,
-                      handler: tool.handler,
+                      handler: tool.resultHandler,
                       recorder: recorder)
     }
 
@@ -86,6 +101,10 @@ struct NFKToolAdapter: Tool {
                                                 argumentsJSON: arguments.jsonString))
             throw NFKUnhandledToolCall(name: name)
         }
-        return try await handler(values)
+        let started = Date()
+        let result = try await handler(values)
+        recorder.record(NFKToolInvocation(callIdentifier: UUID().uuidString, toolName: name, arguments: values,
+                                          result: result, durationSeconds: Date().timeIntervalSince(started)))
+        return result.isError ? "Error: " + result.text : result.text
     }
 }

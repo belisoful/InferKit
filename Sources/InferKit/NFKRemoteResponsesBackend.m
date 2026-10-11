@@ -14,6 +14,8 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteMediaSupport.h"
+#import "NFKToolMessageSupport.h"
+#import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
@@ -24,7 +26,7 @@ static NSSet<NSString *> *NFKResponsesMappedParameters(void)
 	dispatch_once(&once, ^{
 		mapped = [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
 										NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
-										NFKParameterPreviousResponseIdentifier ]];
+										NFKParameterPreviousResponseIdentifier, NFKParameterMCPServers ]];
 	});
 	return mapped;
 }
@@ -263,7 +265,9 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 }
 
 // A system turn becomes instructions; each other turn an input message whose text is input_text
-// (output_text for the assistant's); the media ride on the last user turn.
+// (output_text for the assistant's); the media ride on the last user turn. A tool conversation's
+// calls are function_call items and their answers function_call_output items; an assistant turn this
+// endpoint wrote replays its own output items, reasoning included.
 - (BOOL)addInputForRequest:(NFKInferenceRequest *)request attachments:(NFKRemoteAttachments *)attachments to:(NSMutableDictionary *)body
 {
 	NSArray *messages = request.messages;
@@ -277,6 +281,9 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		}
 		if ([message[@"role"] isEqual:@"system"] && [message[@"content"] isKindOfClass:NSString.class]) {
 			body[@"instructions"] = message[@"content"];
+			continue;
+		}
+		if ([self addToolTurn:message to:items]) {
 			continue;
 		}
 		NSString *partType = [message[@"role"] isEqual:@"assistant"] ? @"output_text" : @"input_text";
@@ -312,6 +319,77 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	}
 	body[@"input"] = items;
 	return YES;
+}
+
+// Each MCP server is an mcp tool the service calls itself. Passing a server is the caller's consent,
+// so its calls need no approval round trip.
+- (void)addMCPServersOf:(NSDictionary *)parameters to:(NSMutableDictionary *)body
+{
+	NSArray *servers = parameters[NFKParameterMCPServers];
+	NSMutableArray *tools = [body[@"tools"] mutableCopy] ?: [NSMutableArray array];
+	for (NSDictionary *server in [servers isKindOfClass:NSArray.class] ? servers : @[]) {
+		NSString *url = [server isKindOfClass:NSDictionary.class] ? [server[@"url"] description] : nil;
+		NSString *name = [server isKindOfClass:NSDictionary.class] && [server[@"name"] isKindOfClass:NSString.class] ? server[@"name"] : nil;
+		if (url.length == 0 || name.length == 0) {
+			continue;
+		}
+		NSMutableDictionary *tool = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"mcp", @"server_label": name,
+																					@"server_url": url, @"require_approval": @"never" }];
+		tool[@"authorization"] = server[@"authorizationToken"];
+		tool[@"allowed_tools"] = [server[@"allowedTools"] isKindOfClass:NSArray.class] ? server[@"allowedTools"] : nil;
+		tool[@"server_description"] = server[@"description"];
+		[tools addObject:tool];
+	}
+	if (tools.count > 0) {
+		body[@"tools"] = tools;
+	}
+}
+
+- (BOOL)addToolTurn:(NSDictionary *)message to:(NSMutableArray *)items
+{
+	if (NFKMessageIsToolResult(message)) {
+		[items addObject:@{ @"type": @"function_call_output", @"call_id": NFKToolMessageCallIdentifier(message),
+							@"output": [self functionOutputFor:message] }];
+		return YES;
+	}
+	if (![message[@"role"] isEqual:@"assistant"]) {
+		return NO;
+	}
+	id recorded = NFKMessageProviderTurn(message, NFKProviderTurnFormatOpenAIResponses, self.endpointURL.absoluteString);
+	if ([recorded isKindOfClass:NSArray.class]) {
+		[items addObjectsFromArray:recorded];
+		return YES;
+	}
+	if (![message[@"tool_calls"] isKindOfClass:NSArray.class]) {
+		return NO;
+	}
+	if ([message[@"content"] isKindOfClass:NSString.class] && [message[@"content"] length] > 0) {
+		[items addObject:@{ @"role": @"assistant", @"content": @[ @{ @"type": @"output_text", @"text": message[@"content"] } ] }];
+	}
+	for (NSDictionary *call in [NFKToolMessages toolCallsOfAssistantMessage:message]) {
+		[items addObject:@{ @"type": @"function_call", @"call_id": call[@"id"], @"name": call[@"name"], @"arguments": call[@"argumentsJSON"] }];
+	}
+	return YES;
+}
+
+// The output is the answer's text, or text and images as input parts when the tool returned images.
+// The item has no error flag, so a failed call says so in its text.
+- (id)functionOutputFor:(NSDictionary *)message
+{
+	NSString *text = NFKToolMessageText(message);
+	if (NFKToolMessageIsError(message)) {
+		text = [@"Error: " stringByAppendingString:text];
+	}
+	NSArray<NSData *> *images = NFKToolMessageImagePNGs(message);
+	if (images.count == 0) {
+		return text;
+	}
+	NSMutableArray *parts = [NSMutableArray arrayWithObject:@{ @"type": @"input_text", @"text": text }];
+	for (NSData *png in images) {
+		[parts addObject:@{ @"type": @"input_image",
+							@"image_url": [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]] }];
+	}
+	return parts;
 }
 
 - (NSDictionary *)filePartForDocument:(NSDictionary *)document
@@ -352,6 +430,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		}
 		body[@"tools"] = wire;
 	}
+	[self addMCPServersOf:parameters to:body];
 	NSDictionary *schema = parameters[NFKParameterJSONSchema];
 	if ([schema isKindOfClass:NSDictionary.class]) {
 		body[@"text"] = @{ @"format": @{ @"type": @"json_schema", @"name": @"response", @"schema": schema } };
@@ -489,6 +568,9 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	if (toolCalls.count > 0) {
 		outputs[NFKOutputToolCalls] = toolCalls;
 	}
+	NSArray *outputItems = [reply[@"output"] isKindOfClass:NSArray.class] ? reply[@"output"] : @[];
+	outputs[NFKOutputAssistantMessage] = NFKAssistantMessage(text, toolCalls, NFKProviderTurnFormatOpenAIResponses,
+															 self.endpointURL.absoluteString, outputItems);
 	if (citations.count > 0) {
 		outputs[NFKOutputCitations] = citations;
 	}

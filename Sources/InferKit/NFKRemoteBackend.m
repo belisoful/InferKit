@@ -14,6 +14,7 @@
 #import "NFKImageCoding.h"
 #import "NFKRemoteFileStore.h"
 #import "NFKErrors.h"
+#import "NFKToolMessageSupport.h"
 
 /*! The endpoint's spelling for each core text parameter the contract names. The core keys are
 	camelCase and an OpenAI-compatible service reads underscored names, so the key is renamed and the
@@ -339,7 +340,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 			return nil;
 		}
 	}
-	body[@"messages"] = messages;
+	body[@"messages"] = [self wireMessagesFor:messages];
 	if (request.outputModality == NFKModalityImage && request.parameters[@"modalities"] == nil) {
 		body[@"modalities"] = @[ @"image", @"text" ];
 	}
@@ -395,9 +396,10 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		body[@"reasoning_effort"] = NFKRemoteReasoningEfforts()[effort] ?: effort;
 	}
 
+	// Chat Completions has no MCP connector, so the servers a request names go nowhere here.
 	NSMutableSet<NSString *> *translated = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
 																		 NFKParameterAudioOutput, NFKParameterVideoFrameCount,
-																		   NFKParameterReasoningEffort ]];
+																		   NFKParameterReasoningEffort, NFKParameterMCPServers ]];
 	[translated addObjectsFromArray:wireNames.allKeys];
 	for (NSString *key in request.parameters) {
 		if (![translated containsObject:key]) {
@@ -552,6 +554,89 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	}
 }
 
+// A tool conversation's turns are this endpoint's own shape already. An assistant turn this endpoint
+// wrote replays its own record, which keeps fields such as DeepSeek's reasoning_content that it reads
+// back during tool use. A tool answer carries text only here, so the images a tool returned follow
+// the answers in a user turn.
+- (NSArray *)wireMessagesFor:(NSArray *)messages
+{
+	NSMutableArray *wire = [NSMutableArray arrayWithCapacity:messages.count];
+	NSMutableArray *pendingImages = [NSMutableArray array];
+	for (NSDictionary *message in messages) {
+		if (![message isKindOfClass:NSDictionary.class]) {
+			[wire addObject:message];
+			continue;
+		}
+		if (!NFKMessageIsToolResult(message)) {
+			[self flushToolImages:pendingImages into:wire];
+		}
+		id turn = NFKMessageProviderTurn(message, NFKProviderTurnFormatOpenAIChat, self.endpointURL.absoluteString);
+		if ([turn isKindOfClass:NSDictionary.class]) {
+			[wire addObject:turn];
+			continue;
+		}
+		if (NFKMessageIsToolResult(message)) {
+			NSString *text = NFKToolMessageText(message);
+			[wire addObject:@{ @"role": @"tool", @"tool_call_id": NFKToolMessageCallIdentifier(message),
+							   @"content": NFKToolMessageIsError(message) ? [@"Error: " stringByAppendingString:text] : text }];
+			[pendingImages addObjectsFromArray:NFKToolMessageImagePNGs(message)];
+			continue;
+		}
+		[wire addObject:NFKMessageWithoutMetadata(message)];
+	}
+	[self flushToolImages:pendingImages into:wire];
+	return wire;
+}
+
+- (void)flushToolImages:(NSMutableArray<NSData *> *)images into:(NSMutableArray *)wire
+{
+	if (images.count == 0) {
+		return;
+	}
+	NSMutableArray *parts = [NSMutableArray arrayWithObject:@{ @"type": @"text", @"text": @"The images the tools returned:" }];
+	for (NSData *png in images) {
+		NSString *dataURL = [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]];
+		[parts addObject:@{ @"type": @"image_url", @"image_url": @{ @"url": dataURL } }];
+	}
+	[wire addObject:@{ @"role": @"user", @"content": parts }];
+	[images removeAllObjects];
+}
+
+// The reply as the turn to append next, with the fields this endpoint reads back recorded for replay.
+// The record's calls are the turn's own, so an identifier the turn assigned is the one both name.
+- (NFKInferenceResult *)result:(NFKInferenceResult *)result recordingAssistantMessage:(nullable NSDictionary *)message
+{
+	if (result == nil || ![message isKindOfClass:NSDictionary.class]) {
+		return result;
+	}
+	NSDictionary *assistant = NFKAssistantMessage(result.text, result.toolCalls, nil, nil, nil);
+	NSMutableDictionary *turn = [NSMutableDictionary dictionaryWithObject:@"assistant" forKey:@"role"];
+	for (NSString *key in @[ @"content", @"reasoning_content", @"reasoning", @"reasoning_details" ]) {
+		turn[key] = message[key];
+	}
+	turn[@"content"] = turn[@"content"] ?: assistant[@"content"];
+	turn[@"tool_calls"] = assistant[@"tool_calls"];
+	NSDictionary *audio = [message[@"audio"] isKindOfClass:NSDictionary.class] ? message[@"audio"] : nil;
+	if ([audio[@"id"] isKindOfClass:NSString.class]) {
+		turn[@"audio"] = @{ @"id": audio[@"id"] };
+	}
+	NSDictionary *recorded = NFKAssistantMessage(result.text, [self toolCallsOfWireMessage:assistant], NFKProviderTurnFormatOpenAIChat,
+												 self.endpointURL.absoluteString, turn);
+	NSMutableDictionary *outputs = [result.outputs mutableCopy];
+	outputs[NFKOutputAssistantMessage] = recorded;
+	return [NFKInferenceResult resultWithOutputs:outputs];
+}
+
+- (NSArray<NSDictionary *> *)toolCallsOfWireMessage:(NSDictionary *)message
+{
+	NSMutableArray<NSDictionary *> *calls = [NSMutableArray array];
+	for (NSDictionary *wireCall in [message[@"tool_calls"] isKindOfClass:NSArray.class] ? message[@"tool_calls"] : @[]) {
+		[calls addObject:@{ @"id": wireCall[@"id"], @"name": wireCall[@"function"][@"name"],
+							@"argumentsJSON": wireCall[@"function"][@"arguments"] }];
+	}
+	return calls;
+}
+
 - (NSInteger)indexOfLastUserMessageIn:(NSArray *)messages
 {
 	for (NSInteger index = (NSInteger)messages.count - 1; index >= 0; index--) {
@@ -640,6 +725,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 									expectsStructured:[self requestExpectsStructuredReply:request]
 												  raw:responseBody
 												error:outError];
+	result = [self result:result recordingAssistantMessage:message];
 	NSDictionary<NSString *, id> *extras = [self extraOutputsInMessage:message];
 	if (result == nil || extras.count == 0) {
 		return result;
@@ -973,6 +1059,11 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 									expectsStructured:expectsStructured
 												  raw:message
 												error:&error];
+	NSMutableDictionary *turn = [message mutableCopy];
+	if (state.reasoning.length > 0) {
+		turn[@"reasoning_content"] = [state.reasoning copy];
+	}
+	result = [self result:result recordingAssistantMessage:turn];
 	if (result != nil) {
 		[job finishWithResult:result];
 	} else {

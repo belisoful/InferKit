@@ -30,11 +30,10 @@ final class NFKMLXDeclaredKeysTests: XCTestCase {
         for key in [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
                     NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
                     NFKMLXGenerationParameterKey.draftTokens, NFKMLXGenerationParameterKey.chatTemplate,
-                    NFKMLXGenerationParameterKey.reasoningFormat, NFKParameterReasoningEffort] {
+                    NFKMLXGenerationParameterKey.reasoningFormat, NFKParameterReasoningEffort,
+                    NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat] {
             XCTAssertTrue(backend.supportedParameterKeys.contains(key), key)
         }
-        XCTAssertFalse(backend.supportedParameterKeys.contains(NFKParameterTools),
-                       "the backend runs no tools")
         XCTAssertFalse(backend.supportedParameterKeys.contains(NFKParameterTopK),
                        "sampling takes top-p, not top-k")
     }

@@ -4,6 +4,35 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # InferKitFoundationModels (companion package)
 
+**Apple's tools and the core's (2026-10-11).** `NFKFoundationTool` crosses in both directions:
+- `init(tool:)` wraps a core `NFKInferenceTool`, running `invokeWithArguments:` on a user-initiated
+  dispatch queue through a checked continuation, so a model behind the tool does not hold a
+  cooperative thread. The core tool goes into the `@Sendable` handler in an unchecked-Sendable box;
+  the core's contract allows concurrent `invokeWithArguments:` calls.
+- `init(appleTool:)` (Swift only; `Tool` has associated types) encodes `appleTool.parameters` with
+  `JSONEncoder`, since `GenerationSchema` is `Codable`, and reads the result as a JSON Schema. A
+  call's JSON becomes `GeneratedContent(json:)` and then `Arguments(content)`. The output reads as
+  text: a `String` as itself, `ConvertibleToGeneratedContent` as its `jsonString`, and anything else
+  by `String(describing:)`, because `Prompt` has no string form.
+- `inferenceTool` builds an `NFKInferenceTool` whose handler waits on a detached user-initiated task
+  at most `timeout` seconds. This is the bounded-wait rule the Apple companions keep: a handler that
+  never answers must not hang a server's worker.
+
+The handler is now `resultHandler`, which returns `NFKToolResult`; `handler` stays as its text, for the
+existing tests. `NFKToolAdapter` records each run as an `NFKToolInvocation` beside the unhandled calls,
+and every result path, the unhandled-call path included, returns the runs under
+`NFKOutputToolInvocations`. An answer marked failed reaches the model as `Error: <text>`. `plan(for:)`
+reads a tool turn's text, error flag, and name through the core's `NFKToolMessages`, so a conversation
+`NFKToolLoop` built carries into the transcript.
+
+`NFKInferKitLanguageModel` already covered the third path, Apple's tools on an InferKit model: a
+`LanguageModelSession` with Apple tools runs on any backend that reads `NFKParameterTools`, the MLX
+language backends among them, and Apple's framework runs the loop.
+
+App Intents are not bridged. Foundation Models has no API that calls an App Intent as a tool, and an
+App Intent the system finds has to be declared in the app's own target, which a library cannot do for
+it.
+
 `InferKitFoundationModels/` is a separate SwiftPM package (macOS 26 / iOS 26 — the Foundation
 Models floor; the model itself needs Apple Intelligence enabled). It depends only on the core.
 

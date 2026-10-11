@@ -544,6 +544,26 @@
 
 // Docs/examples.md: An Objective-C caller configures every MLX generation option through request
 // parameters — parity with the Swift NFKMLXGenerationOptions struct.
+- (void)testObjectiveCGivesALocalModelALocalTool
+{
+	// Docs/examples.md: Models as tools, on device. The model is any MLX language backend; the tool is
+	// any backend, here a speech generator's stand-in.
+	//   id<NFKInferenceBackend> qwen = [NFKMLXHybridLanguage backendWithDirectoryURL:qwen35Directory error:&error];
+	XCTAssertTrue([NFKMLXHybridLanguage respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	id<NFKInferenceBackend> speech = [[NFKPassthroughBackend alloc] init];
+	NFKBackendTool *speak = [NFKBackendTool toolWithBackend:speech name:@"speak" outputModality:NFKModalityAudio
+													purpose:@"the user asks to hear the answer"];
+	XCTAssertTrue([speak.toolDescription containsString:@"goes to the application"]);
+
+	// The release's template states the call syntax; a request can name it instead.
+	XCTAssertEqualObjects([NFKMLXToolCallFormat detectedInChatTemplate:@"{{- '<|tool_call>call:' + function['name'] }}"],
+						  NFKMLXToolCallFormat.gemma);
+	NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+		initWithInputs:@{ NFKInputPrompt: @"Read me the forecast." }
+		parameters:@{ NFKMLXGenerationParameterKey.toolCallFormat: NFKMLXToolCallFormat.qwenXML.name }];
+	XCTAssertEqualObjects(request.parameters[NFKMLXGenerationParameterKey.toolCallFormat], @"qwen-xml");
+}
+
 - (void)testObjectiveCAsksForReasoningAndReadsWhatTheTurnCost
 {
 	// A reasoning model's chain comes back apart from its answer, and the level it thinks at is a

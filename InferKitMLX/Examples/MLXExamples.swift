@@ -356,6 +356,27 @@ final class MLXExamples: XCTestCase {
         XCTAssertEqual(backend.conversationCacheCount, 0)
     }
 
+    // Docs/examples.md: Models as tools, on device. A local language model calls a local generator
+    // through the same loop a remote model uses; the release's own chat template carries the tools
+    // and states the syntax the model writes its calls in.
+    func testExampleALocalModelCallsALocalTool() throws {
+        // let qwen = try NFKMLXHybridLanguage.backend(directoryURL: qwen35Directory)
+        let qwen = try XCTUnwrap(try NFKMLXLanguage.backend(weightsURL: nil, tokenizer: nil, configuration: .tiny)
+                                 as? NFKMLXLanguageBackend)
+        let speech: any NFKInferenceBackend = NFKPassthroughBackend()    // a speech backend, such as Kokoro
+        let speak = NFKBackendTool(backend: speech, name: "speak", outputModality: .audio,
+                                   purpose: "the user asks to hear the answer")
+        let loop = NFKToolLoop(backend: qwen, tools: [speak])
+        XCTAssertTrue(qwen.supportedParameterKeys.contains(NFKParameterTools))
+        XCTAssertEqual(loop.toolNamed("speak"), speak)
+
+        // The syntax comes from the template; a caller rendering its own prompt names it.
+        XCTAssertEqual(NFKMLXToolCallFormat.detected(inChatTemplate: "<tool_call>\n<function=speak>\n<parameter=prompt>"), .qwenXML)
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Read me the forecast."],
+                                          parameters: [NFKMLXGenerationParameterKey.toolCallFormat: NFKMLXToolCallFormat.hermes.name])
+        XCTAssertEqual(request.parameter(forKey: NFKMLXGenerationParameterKey.toolCallFormat) as? String, "hermes")
+    }
+
     // Docs/examples.md: A mixture-of-experts release reads through the same factory; the config
     // says it is one, and the loader stacks the released per-expert tensors.
     func testExampleAMixtureOfExpertsConfiguration() throws {

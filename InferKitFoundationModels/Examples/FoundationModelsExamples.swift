@@ -86,6 +86,30 @@ final class FoundationModelsExamples: XCTestCase {
     }
 
     // Docs/examples.md: Structured output — the core's JSON Schema key, as for a remote or MLX backend.
+    // Docs/examples.md: Apple's tools, both ways. A core tool on Apple's model, and an app's own
+    // Apple Tool reaching every other model as an NFKInferenceTool.
+    struct ForecastTool: Tool {
+        let name = "get_forecast"
+        let description = "Returns tomorrow's forecast for a city."
+        @Generable struct Arguments {
+            @Guide(description: "The city to forecast.") var city: String
+        }
+        func call(arguments: Arguments) async throws -> String { "Rain in \(arguments.city) tomorrow." }
+    }
+
+    func testExampleApplesToolsBothWays() throws {
+        let speech = NFKPassthroughBackend()                 // a speech backend, such as Kokoro
+        let speak = NFKBackendTool(backend: speech, name: "speak", outputModality: .audio,
+                                   purpose: "the user asks to hear the answer")
+        let backend = NFKFoundationModelsBackend()
+        backend.tools = [NFKFoundationTool(tool: speak)]      // Apple's model calls the core tool
+        XCTAssertEqual(backend.tools.first?.name, "speak")
+
+        let forecast = try NFKFoundationTool(appleTool: ForecastTool())
+        let shared = forecast.inferenceTool                   // for NFKToolLoop and NFKInferenceServer.addTool:
+        XCTAssertEqual(shared.invoke(withArguments: ["city": "Bergen"]).text, "Rain in Bergen tomorrow.")
+    }
+
     func testExampleStructuredOutputSchema() throws {
         let request = NFKInferenceRequest(
             inputs: [NFKInputPrompt: "Invent a fictional character."],

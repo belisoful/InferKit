@@ -94,6 +94,8 @@ Pure Apple frameworks, always available:
 - ``NFKAsyncGenerationBackend`` — a subclassable submit → poll → fetch base for job-style generation
   services. Map the service's JSON through its template methods; the base owns the loop and the
   ``NFKInferenceJob``.
+- ``NFKToolLoop`` — runs a conversation in which a model calls tools, with any backend that returns
+  tool calls. ``NFKBackendTool`` makes any backend a tool, so one model calls another.
 
 ### Companion (link to enable)
 
@@ -162,6 +164,16 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteModelCatalog``
 - ``NFKRemoteModel``
 - ``NFKRemoteTransport``
+
+### Tools
+
+- ``NFKToolLoop``
+- ``NFKToolInvocation``
+- ``NFKInferenceTool``
+- ``NFKBackendTool``
+- ``NFKToolResult``
+- ``NFKToolMessages``
+- ``NFKMCPClient``
 
 ### Serving
 

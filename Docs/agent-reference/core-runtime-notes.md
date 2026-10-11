@@ -4,8 +4,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 # Core runtime notes
 
-Value-type accessors, tokenizers, grammar-constrained sampling, what a backend declares, and dynamic
-backend discovery in the core.
+Value-type accessors, tokenizers, grammar-constrained sampling, what a backend declares, tools and the
+tool loop, and dynamic backend discovery in the core.
 
 ## Value-type convenience accessors
 
@@ -126,6 +126,46 @@ honors the key a request needs. A backend that declares nothing is used the way 
   `prepareWithError:` where the backend implements it and returns `YES` where it does not. Swift
   calls it rather than `backend.prepare?()`, which crashes swift-frontend 6.4 in IRGen (the
   reabstraction thunk for an imported throwing function used as a value).
+
+## Tools and the tool loop
+
+`NFKInferenceTool` (name, description, JSON Schema, handler), `NFKBackendTool` (any backend as a
+tool), `NFKToolLoop` (the call-and-answer loop, itself an `NFKInferenceBackend`), and `NFKToolMessages`
+(the turns) are the core's tool layer (0.4.0). The decisions behind them:
+
+- **The conversation is the OpenAI chat shape.** `NFKInputMessages` already took it, the server's
+  OpenAI route already passes it through to the hosted backend, and Qwen-family chat templates render
+  `tool_calls` and `role: tool` directly. Each chat backend converts it to its provider's form; the
+  per-provider forms are in `remote-providers.md` ("Tool conversations").
+- **What the chat shape cannot carry rides under `NFKMessageMetadataKey` (`"inferkit"`).** Sub-keys:
+  `format` + `source` + `turn` (a backend's own record of an assistant turn), `toolName`, `isError`,
+  and `images` (base64 PNG strings, so a conversation stays JSON and crosses the native route). Every
+  backend strips the key before the wire: OpenAI rejects unknown message fields. A record replays only
+  when `format` is the backend's and `source` is its `endpointURL.absoluteString`, so a conversation
+  moved to another service falls back to the plain fields.
+- **Call identifiers are fixed when the assistant turn is built.** A call without an id is given
+  `call_<uuid>` by `NFKAssistantMessage` (private, `NFKToolMessageSupport.h`), and the loop reads its
+  calls back from that turn (`toolCallsOfAssistantMessage:`), never from `result.toolCalls`, so the
+  answer names the identifier the turn carries. The OpenAI backend's replay record takes its
+  `tool_calls` from the same built turn for the same reason.
+- **The loop stops for a tool it does not hold.** That is the client-run contract the Foundation
+  Models backend already keeps for a declared tool without a handler, so a caller mixes its own tools
+  with the loop's. The request's own `NFKParameterTools` entries are declared after the loop's, minus
+  any name the loop holds.
+- **A tool failure is an error result, never a loop failure.** `invokeWithArguments:` checks
+  `required` and each top-level property's JSON `type` (an `NSNumber` that is a `CFBoolean` is a
+  boolean, not a number; an integral double is an integer), and an `NSError` from the handler becomes
+  `"<name> failed: <description>"`. The model reads both and corrects the call. Only a failing model
+  turn ends the loop with an error.
+- **The job path.** `submitInferenceJobForRequest:` runs on a `QOS_CLASS_USER_INITIATED` global queue,
+  submits each model turn through `NFKInferenceSubmit` and waits on its completion, forwards the turn's
+  partial results, and cancels the current turn's job from the outer job's cancellation handler. A
+  cancel between steps is read from the outer job's status.
+- **Wire forms.** `NFKInferenceWireCoding` tags `toolResult` and `toolInvocation`; a result's outputs
+  encode recursively, so the audio file a tool made crosses with the invocation.
+- **Default descriptions** follow the tool-use guidance providers publish: what the tool does, "Use it
+  when …" (`purpose`), what it returns, and per-argument descriptions. The audio and video defaults
+  tell the model it does not receive the media, so it does not describe sound it never heard.
 
 ## Dynamic backend discovery
 

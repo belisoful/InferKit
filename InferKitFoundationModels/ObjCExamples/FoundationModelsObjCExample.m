@@ -84,6 +84,25 @@
 	XCTAssertEqualObjects(weather.declaration[@"name"], @"lookup_weather");
 }
 
+- (void)testObjectiveCPutsACoreToolOnApplesModelAndBack
+{
+	// Docs/examples.md: Apple's tools, both ways.
+	NFKInferenceTool *weather = [NFKInferenceTool toolWithName:@"get_weather" description:@"Current weather in a city."
+													parameters:@{ @"type": @"object", @"properties": @{ @"city": @{ @"type": @"string" } } }
+													   handler:^NFKToolResult *(NSDictionary *arguments, NSError **error) {
+		return [NFKToolResult resultWithText:@"18 C"];
+	}];
+	NFKFoundationModelsBackend *backend = [[NFKFoundationModelsBackend alloc] init];
+	backend.tools = @[ [[NFKFoundationTool alloc] initWithInferenceTool:weather] ];
+	XCTAssertEqualObjects(backend.tools.firstObject.name, @"get_weather");
+
+	NFKFoundationTool *lookup = [[NFKFoundationTool alloc] initWithName:@"lookup" description:@"Looks a word up."
+															  parameters:@{ @"type": @"object" }
+															 syncHandler:^NSString *(NSDictionary *arguments) { return @"a definition"; }];
+	NFKInferenceTool *shared = lookup.inferenceTool;     // for NFKToolLoop and NFKInferenceServer
+	XCTAssertEqualObjects([shared invokeWithArguments:@{}].text, @"a definition");
+}
+
 - (void)testObjectiveCAsksForStructuredOutputThroughTheCoreKey
 {
 	// NFKParameterJSONSchema switches generation to the structured path: the result carries the

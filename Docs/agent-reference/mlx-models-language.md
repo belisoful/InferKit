@@ -1343,8 +1343,84 @@ attention and feed-forward.
   `a + b | trim + c` trims only `b`. Wired into the backend as `NFKMLXChatTemplate.jinja(template:
   bosToken:eosToken:)`; from ObjC a `chatTemplate` request parameter carrying Jinja delimiters
   (`{%`/`{{`) is rendered the same way (the associated-value enum case is Swift-only, per the parity
-  rule, and the string parameter is the bridge). **One documented divergence:** `tojson` emits an
-  object's keys sorted, where transformers emits insertion order — Foundation dictionaries do not
-  preserve it, so a faithful whole-object serialization needs an ordered-map pipeline; it affects a
-  tool schema's key order, not a plain or multi-turn chat. The `NFKJinja*` types (value, namespace,
-  parser, evaluator) are internal.
+  rule, and the string parameter is the bridge). **Key order (2026-10-11):** a template dictionary is
+  `NFKJinjaMap`, which keeps its keys in order. JSON read by `NFKJinjaOrderedJSON` (a tool call's
+  `argumentsJSON`, the parity record) keeps the order it was written in, and a template's own
+  dictionary literal its insertion order. A Foundation dictionary keeps none, so it takes
+  `NFKJinjaKeyOrder`: the keys of a declaration and a JSON Schema as they are written (`type`,
+  `function`, `name`, `description`, `parameters`, `properties`, `items`, `enum`, `required`), then the
+  rest alphabetically. The `NFKJinja*` types (value, map, namespace, macro, parser, evaluator) are
+  internal.
+
+  **The release-template parity (2026-10-11).** The engine was extended to every construct the
+  store's 27 distinct templates use, and the scope rules were fixed to Jinja's. Each extension was
+  measured against jinja2 3.1 under transformers 4.57.6 before it was written:
+  - Blocks: `macro` with defaults, keyword arguments, `varargs`, `kwargs`, and recursion; block `set`
+    … `endset`; `for` with unpacking, an `if` filter, and `else`; `break` and `continue` (transformers
+    loads `loopcontrols`); transformers' `generation` block renders its body.
+  - Scopes: a loop iteration and a macro call each open one, and an assignment inside either is
+    never seen after it. The old engine leaked loop assignments outward. A macro reads the
+    template's top level at call time and not the caller's loop.
+  - Printing and arithmetic follow Python: `{{ none }}` is `None`, a list or dictionary prints as its
+    repr, `/` divides exactly, `//` floors, and `%` takes the divisor's sign. The old engine printed
+    `None` as empty, printed containers as JSON, and divided integers.
+  - Number kinds: `value(from:)` reads a CFBoolean as a boolean and any other integral NSNumber as an
+    int. The old `as Bool` cast turned the integer 1 into `True`.
+  - Filters, tests, methods, and globals: `items`, `dictsort` (case-insensitive and stable), `map`
+    (by filter or `attribute=`), `select`/`reject`/`selectattr`/`rejectattr`, `list`, `join`, `safe`,
+    `replace`, `default(value, boolean)`, `tojson(indent=, separators=, sort_keys=)`, `int`/`float`,
+    and more; the tests `sequence` (true for strings and dictionaries) and `boolean`; the methods
+    `.get`/`.items`/`.keys`/`.values`; and `range`, `dict`, and `strftime_now`, which formats the
+    renderer's `date:` parameter.
+  - An unknown filter, test, method, or function is an error, so a template the engine cannot follow
+    surfaces rather than rendering a changed prompt.
+  - The tag lexer reads a closing marker inside a string literal as the string's.
+  `Tools/reference-parity/generate_tool_chat_templates.py` renders every store template through
+  transformers' `render_jinja_template` with `strftime_now` pinned to 2026-01-15 09:30, for three
+  cases: a chat, two declared tools, and a tool conversation. Key `IK_CHAT_TEMPLATE_TOOLS_REF`. Result:
+  55 cases from 27 templates, 53 byte-exact, and the 2 transformers refuses (Gemma 2's system turn,
+  TranslateGemma's opening turn) refused here too (`testReleaseTemplatesRenderEveryCaseAsTransformersDoes`).
+
+  **Tool calling on device (2026-10-11).** `NFKMLXToolCalling` (`NFKMLXToolCalling.swift`) renders
+  `NFKParameterTools` into the template as `{"type": "function", "function": …}`. It prepares the
+  conversation in the shape templates read:
+  - A call's arguments become an `NFKJinjaOrderedObject` read from `argumentsJSON`. Qwen3.5 iterates
+    them with `|items`, and Gemma 4 refuses a string.
+  - Each answer carries its tool's name and states a failure in its text.
+  - An assistant turn this backend wrote gets its reasoning back as `reasoning_content`, and as
+    `thinking` when it has no content, which gpt-oss reads.
+  - Harmony renders only `tool_calls[0]`, so a turn with several calls becomes several messages.
+
+  `NFKMLXToolCallFormat` reads the calls in the syntax the template shows: Hermes JSON (Qwen3,
+  Qwen3-VL, Granite 4), XML parameters typed by the schema (Qwen3.5, Qwen4), Gemma 4's
+  `call:name{key:<|"|>…<|"|>}`, harmony, DeepSeek V3 and V3.1+, Mistral's list and `[ARGS]` forms,
+  Granite 3, Llama, and Nemotron-H. Detection tests the XML before Hermes, because Qwen3.5 wraps its XML
+  in `<tool_call>`. gpt-oss writes its address in two pieces (`to=` and then `functions.`), so harmony
+  is detected by `<|channel|>` together with `functions.`. The first check looked for `to=functions`,
+  which missed the real template; `testEveryReleaseTemplateIsReadAsItsFamilysSyntax` now runs the
+  detection over every store template.
+
+  The calls are read after the reasoning split, from the answer. The reply's turn comes back under
+  `NFKOutputAssistantMessage`, with record format `mlx-chat-template` and source the backend's
+  identifier.
+
+  Every backend that renders a template takes the path: `NFKMLXLanguageBackend`,
+  `NFKMLXDecoderBackend`, and `NFKMLXDeepSeekBackend`. A tool request on a backend whose options name
+  no template renders the release's own `chat_template`, because the directory factory leaves the
+  template unset and a plain chat stays flattened. The backends that build their turns by hand
+  (Gemma 4, Granite 4, Nemotron-H) render the release template for a tool request only, stopping on
+  the generation config's ids, and on Gemma 4's `<turn|>` and `<|tool_response>`. Their plain chats
+  are unchanged, so their measured outputs stand. Gemma 3, Gemma 3n, Mamba, and Phi-4-multimodal ship
+  no tool format the toolkit reads.
+
+  Two fixes came with this:
+  - `NFKMLXDecoderBackend` (Qwen3.5, Qwen4-Exp) now splits the reasoning chain out of
+    `NFKOutputText` at the markers its template writes. Before, the chain stayed in the text.
+  - The decoder backend binds a reasoning effort where its template reads `enable_thinking` or
+    `reasoning_effort`. Before, it refused the effort outright, although both releases reason.
+
+  Weight-free tests: `NFKMLXToolCallingTests`, and
+  `NFKMLXDecoderBackendTests.testAToolLoopRunsOnTheDecoderBackendAndReadsItsCall`, in which three
+  added tokens spell a whole Hermes call, so a scripted forward writes a real one and a full
+  `NFKToolLoop` runs. Released-weight loops: `NFKMLXToolCallingLiveTests` on Qwen3-1.7B, Qwen3.5-2B,
+  and gpt-oss-20b.

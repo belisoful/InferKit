@@ -99,6 +99,14 @@ extern NSString * const NFKParameterHeight;
 	with parameters a JSON Schema object. A backend wraps them in its provider's wire shape and returns
 	what the model called under NFKOutputToolCalls. Introduced in InferKit 0.3.0. */
 extern NSString * const NFKParameterTools;
+/*! MCP servers the provider calls itself while answering (NSArray of NSDictionary), each {url, name}
+	and optionally {authorizationToken, allowedTools (NSArray of NSString), description}. The
+	provider reaches the URL, so it must be public and served over HTTPS, as an NFKInferenceServer
+	behind a tunnel is. NFKAnthropicBackend sends them through Claude's MCP connector and
+	NFKRemoteResponsesBackend as Responses mcp tools that need no approval; what the service ran
+	comes back under NFKOutputServerToolResults. A backend without a connector ignores the key.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterMCPServers;
 /*! A JSON Schema (NSDictionary) the text reply must conform to. The backend asks the provider for it
 	in the provider's way and returns the parsed reply under NFKOutputStructured. Introduced in
 	InferKit 0.3.0. */
@@ -261,6 +269,26 @@ extern NSString * const NFKOutputEmbedding;
 	arguments the parsed argument object, beside argumentsJSON, the provider's own text of it. Present
 	only when the model called a tool. Introduced in InferKit 0.3.0. */
 extern NSString * const NFKOutputToolCalls;
+/*! The reply as a message to append to the conversation for the next turn (NSDictionary), in the
+	OpenAI chat shape NFKInputMessages takes: role "assistant", the text under content, and each call
+	under tool_calls. The backend's own record of the turn rides under NFKMessageMetadataKey, so the
+	same backend replays it exactly (Anthropic's thinking signatures, Gemini's thought steps) while
+	any other backend reads the plain fields. A backend that omits it is served by
+	+[NFKToolMessages assistantMessageForResult:], which builds the plain fields from the text and
+	NFKOutputToolCalls. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputAssistantMessage;
+/*! The whole conversation after a tool loop (NSArray of NSDictionary, the NFKInputMessages shape):
+	the request's messages, each assistant turn, and each tool result, ending with the final reply.
+	A caller continues the conversation by appending a user turn to it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputMessages;
+/*! The tools a tool loop ran, in the order it ran them (NSArray<NFKToolInvocation *>). Each carries
+	the call, the tool's result, and the outputs the tool produced for the application, such as the
+	audio a speech tool generated. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputToolInvocations;
+/*! YES (NSNumber) when a tool loop stopped at its turn limit while the model was still calling
+	tools. The calls of that last turn are under NFKOutputToolCalls, not run. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKOutputToolTurnLimitReached;
 /*! Detected objects (NSArray<NFKDetection *>), for an object-detection backend. Each box is normalized
     to the input image. */
 extern NSString * const NFKOutputDetections;

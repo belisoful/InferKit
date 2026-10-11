@@ -113,6 +113,15 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKTypeSafeBackend``
 - ``NFKOpenAIDecisionsBackend``
 
+### Tools
+
+- ``NFKToolLoop``
+- ``NFKInferenceTool``
+- ``NFKBackendTool``
+- ``NFKToolResult``
+- ``NFKToolMessages``
+- ``NFKMCPClient``
+
 ### Serving
 
 - ``NFKInferenceServer``

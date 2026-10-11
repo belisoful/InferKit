@@ -9,25 +9,56 @@
 
 import Foundation
 
-// MARK: - JSON encoding (the `tojson` filter and list/dict stringification)
+// MARK: - JSON encoding (the `tojson` filter)
 
+/// `json.dumps` as transformers' `tojson` calls it: `ensure_ascii=False`, the default separators, and
+/// an optional indent.
 enum NFKJinjaJSON {
-    static func encode(_ value: NFKJinjaValue) -> String {
+    struct Style {
+        let indent: Int?
+        let itemSeparator: String
+        let keySeparator: String
+        let sortsKeys: Bool
+    }
+
+    /// `separators` defaults as `json.dumps` does: `(", ", ": ")`, or `(",", ": ")` with an indent.
+    static func encode(_ value: NFKJinjaValue, indent: Int? = nil, separators: (String, String)? = nil,
+                       sortsKeys: Bool = false) -> String {
+        let style = Style(indent: indent, itemSeparator: separators?.0 ?? (indent == nil ? ", " : ","),
+                          keySeparator: separators?.1 ?? ": ", sortsKeys: sortsKeys)
+        return encode(value, style: style, depth: 0)
+    }
+
+    private static func encode(_ value: NFKJinjaValue, style: Style, depth: Int) -> String {
         switch value {
         case .undefined, .none: return "null"
         case .bool(let value): return value ? "true" : "false"
         case .int(let value): return String(value)
-        case .double(let value): return String(value)
+        case .double(let value):
+            if value.isNaN { return "NaN" }
+            if value.isInfinite { return value < 0 ? "-Infinity" : "Infinity" }
+            return String(value)
         case .string(let value): return encodeString(value)
-        case .list(let items): return "[" + items.map(encode).joined(separator: ", ") + "]"
+        case .list(let items):
+            return container("[", "]", items.map { encode($0, style: style, depth: depth + 1) }, style: style, depth: depth)
         case .dictionary(let map):
-            let body = map.keys.sorted().map { "\(encodeString($0)): \(encode(map[$0]!))" }
-            return "{" + body.joined(separator: ", ") + "}"
+            return container("{", "}", members(map, style: style, depth: depth), style: style, depth: depth)
         case .namespace(let object):
-            let map = object.attributes
-            let body = map.keys.sorted().map { "\(encodeString($0)): \(encode(map[$0]!))" }
-            return "{" + body.joined(separator: ", ") + "}"
+            return container("{", "}", members(NFKJinjaMap(object.attributes), style: style, depth: depth), style: style, depth: depth)
+        case .macro: return "null"
         }
+    }
+
+    private static func members(_ map: NFKJinjaMap, style: Style, depth: Int) -> [String] {
+        let keys = style.sortsKeys ? map.keys.sorted() : map.keys
+        return keys.map { encodeString($0) + style.keySeparator + encode(map[$0]!, style: style, depth: depth + 1) }
+    }
+
+    private static func container(_ open: String, _ close: String, _ members: [String], style: Style, depth: Int) -> String {
+        guard let indent = style.indent, !members.isEmpty else { return open + members.joined(separator: style.itemSeparator) + close }
+        let inner = "\n" + String(repeating: " ", count: indent * (depth + 1))
+        let outer = "\n" + String(repeating: " ", count: indent * depth)
+        return open + inner + members.joined(separator: style.itemSeparator + inner) + outer + close
     }
 
     private static func encodeString(_ string: String) -> String {
@@ -39,7 +70,14 @@ enum NFKJinjaJSON {
             case "\n": out += "\\n"
             case "\r": out += "\\r"
             case "\t": out += "\\t"
-            default: out.unicodeScalars.append(scalar)
+            case "\u{08}": out += "\\b"
+            case "\u{0C}": out += "\\f"
+            default:
+                if scalar.value < 0x20 {
+                    out += String(format: "\\u%04x", scalar.value)
+                } else {
+                    out.unicodeScalars.append(scalar)
+                }
             }
         }
         return out + "\""
@@ -51,19 +89,21 @@ enum NFKJinjaJSON {
 indirect enum NFKJinjaExpr {
     case stringLiteral(String)
     case intLiteral(Int)
+    case doubleLiteral(Double)
     case boolLiteral(Bool)
     case noneLiteral
     case listLiteral([NFKJinjaExpr])
+    case dictLiteral([(NFKJinjaExpr, NFKJinjaExpr)])
     case variable(String)
     case attribute(NFKJinjaExpr, String)
     case index(NFKJinjaExpr, NFKJinjaExpr)
     case slice(NFKJinjaExpr, NFKJinjaExpr?, NFKJinjaExpr?, NFKJinjaExpr?)
     case call(NFKJinjaExpr, [NFKJinjaExpr], [(String, NFKJinjaExpr)])
-    case filter(NFKJinjaExpr, String, [NFKJinjaExpr])
+    case filter(NFKJinjaExpr, String, [NFKJinjaExpr], [(String, NFKJinjaExpr)])
     case unary(String, NFKJinjaExpr)
     case binary(String, NFKJinjaExpr, NFKJinjaExpr)
-    case test(NFKJinjaExpr, String, Bool, NFKJinjaExpr?)
-    case ternary(NFKJinjaExpr, NFKJinjaExpr, NFKJinjaExpr)
+    case test(NFKJinjaExpr, String, Bool, [NFKJinjaExpr])
+    case ternary(NFKJinjaExpr, NFKJinjaExpr, NFKJinjaExpr?)
 }
 
 enum NFKJinjaSetTarget {
@@ -71,12 +111,26 @@ enum NFKJinjaSetTarget {
     case attribute(String, String)
 }
 
+/// A `for` loop: its targets (one name, or several unpacked from each element), the sequence, the
+/// optional `if` that filters it, the body, and the `else` body run when nothing was iterated.
+struct NFKJinjaLoop {
+    let targets: [String]
+    let sequence: NFKJinjaExpr
+    let condition: NFKJinjaExpr?
+    let body: [NFKJinjaNode]
+    let otherwise: [NFKJinjaNode]
+}
+
 indirect enum NFKJinjaNode {
     case text(String)
     case output(NFKJinjaExpr)
-    case forLoop(String, NFKJinjaExpr, [NFKJinjaNode])
+    case forLoop(NFKJinjaLoop)
     case conditional([(NFKJinjaExpr?, [NFKJinjaNode])])
     case set(NFKJinjaSetTarget, NFKJinjaExpr)
+    case setBlock(String, [NFKJinjaNode])
+    case macro(NFKJinjaMacro)
+    case breakLoop
+    case continueLoop
 }
 
 // MARK: - Template lexer + parser
@@ -125,14 +179,37 @@ final class NFKJinjaParser {
                 let closeA: Character = marker == "{" ? "}" : (marker == "%" ? "%" : "#")
                 var body = String.UnicodeScalarView()
                 var trimRight = false
+                var quote: Character?
                 while j < scalars.count {
-                    if Character(scalars[j]) == "-" && j + 2 < scalars.count
+                    let character = Character(scalars[j])
+                    // A closing marker inside a string literal belongs to the string.
+                    if marker != "#" {
+                        if let open = quote {
+                            if character == "\\" && j + 1 < scalars.count {
+                                body.append(scalars[j])
+                                body.append(scalars[j + 1])
+                                j += 2
+                                continue
+                            }
+                            if character == open { quote = nil }
+                            body.append(scalars[j])
+                            j += 1
+                            continue
+                        }
+                        if character == "'" || character == "\"" {
+                            quote = character
+                            body.append(scalars[j])
+                            j += 1
+                            continue
+                        }
+                    }
+                    if character == "-" && j + 2 < scalars.count
                         && Character(scalars[j + 1]) == closeA && Character(scalars[j + 2]) == "}" {
                         trimRight = true
                         j += 3
                         break
                     }
-                    if j + 1 < scalars.count && Character(scalars[j]) == closeA && Character(scalars[j + 1]) == "}" {
+                    if j + 1 < scalars.count && character == closeA && Character(scalars[j + 1]) == "}" {
                         j += 2
                         break
                     }
@@ -143,9 +220,7 @@ final class NFKJinjaParser {
                 current = String.UnicodeScalarView()
                 let source = String(body).trimmingCharacters(in: .whitespacesAndNewlines)
                 if marker == "#" {
-                    // A comment: contributes no tag; splice its surrounding literals back together
-                    // by leaving a marker the trimming pass treats as a block boundary that emits
-                    // nothing. Simpler: append an empty block that the parser ignores.
+                    // A comment emits nothing, but its tag boundary still trims the literals around it.
                     tags.append(NFKJinjaRawTag(kind: .block, source: "#", trimLeft: trimLeft, trimRight: trimRight))
                 } else {
                     tags.append(NFKJinjaRawTag(kind: marker == "{" ? .output : .block,
@@ -257,7 +332,7 @@ final class NFKJinjaParser {
                 position += 1
                 nodes.append(.output(try parseExpressionString(source)))
             case .block(let source):
-                let keyword = source.split(separator: " ", maxSplits: 1).first.map(String.init) ?? source
+                let keyword = source.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).first.map(String.init) ?? source
                 if terminators.contains(keyword) {
                     return (nodes, keyword)
                 }
@@ -266,6 +341,15 @@ final class NFKJinjaParser {
                 case "for": nodes.append(try parseFor(source))
                 case "if": nodes.append(try parseIf(source))
                 case "set": nodes.append(try parseSet(source))
+                case "macro": nodes.append(try parseMacro(source))
+                case "break": nodes.append(.breakLoop)
+                case "continue": nodes.append(.continueLoop)
+                case "generation":
+                    // transformers' assistant-mask marker renders its body unchanged.
+                    let (body, terminator) = try parseNodes(until: ["endgeneration"])
+                    guard terminator == "endgeneration" else { throw NFKJinjaError.syntax("generation without endgeneration") }
+                    position += 1
+                    nodes.append(contentsOf: body)
                 default: throw NFKJinjaError.syntax("unknown block '\(keyword)'")
                 }
             }
@@ -274,16 +358,29 @@ final class NFKJinjaParser {
     }
 
     private func parseFor(_ source: String) throws -> NFKJinjaNode {
-        // for <var> in <expr>
+        // for <target>[, <target>…] in <expr> [if <condition>]
         let rest = source.dropFirst("for".count)
         guard let inRange = rest.range(of: " in ") else { throw NFKJinjaError.syntax("malformed for") }
-        let varName = rest[rest.startIndex..<inRange.lowerBound].trimmingCharacters(in: .whitespaces)
-        let seqSource = String(rest[inRange.upperBound...])
-        let seq = try parseExpressionString(seqSource)
-        let (body, terminator) = try parseNodes(until: ["endfor"])
-        guard terminator == "endfor" else { throw NFKJinjaError.syntax("for without endfor") }
+        let targets = rest[rest.startIndex..<inRange.lowerBound]
+            .trimmingCharacters(in: CharacterSet(charactersIn: " ()"))
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        var lexer = NFKJinjaExprLexer(String(rest[inRange.upperBound...]))
+        var parser = NFKJinjaExprParser(try lexer.all())
+        let sequence = try parser.parseExpression(allowingConditional: false)
+        let condition = try parser.consumeKeywordIf("if") ? parser.parseExpression() : nil
+        try parser.expectEnd()
+        let (body, terminator) = try parseNodes(until: ["endfor", "else"])
+        var otherwise: [NFKJinjaNode] = []
+        if terminator == "else" {
+            position += 1
+            let (elseBody, elseTerminator) = try parseNodes(until: ["endfor"])
+            guard elseTerminator == "endfor" else { throw NFKJinjaError.syntax("for else without endfor") }
+            otherwise = elseBody
+        } else if terminator != "endfor" {
+            throw NFKJinjaError.syntax("for without endfor")
+        }
         position += 1
-        return .forLoop(varName, seq, body)
+        return .forLoop(NFKJinjaLoop(targets: targets, sequence: sequence, condition: condition, body: body, otherwise: otherwise))
     }
 
     private func parseIf(_ source: String) throws -> NFKJinjaNode {
@@ -318,7 +415,14 @@ final class NFKJinjaParser {
 
     private func parseSet(_ source: String) throws -> NFKJinjaNode {
         let rest = source.dropFirst("set".count)
-        guard let equals = rest.firstIndex(of: "=") else { throw NFKJinjaError.syntax("malformed set") }
+        guard let equals = rest.firstIndex(of: "=") else {
+            // {% set name %}…{% endset %} captures its rendered body.
+            let name = rest.trimmingCharacters(in: .whitespaces)
+            let (body, terminator) = try parseNodes(until: ["endset"])
+            guard terminator == "endset" else { throw NFKJinjaError.syntax("set without endset") }
+            position += 1
+            return .setBlock(name, body)
+        }
         let target = rest[rest.startIndex..<equals].trimmingCharacters(in: .whitespaces)
         let valueSource = String(rest[rest.index(after: equals)...])
         let value = try parseExpressionString(valueSource)
@@ -328,6 +432,21 @@ final class NFKJinjaParser {
             return .set(.attribute(base, attr), value)
         }
         return .set(.name(target), value)
+    }
+
+    private func parseMacro(_ source: String) throws -> NFKJinjaNode {
+        // macro <name>(<parameter>[=<default>], …)
+        let rest = source.dropFirst("macro".count).trimmingCharacters(in: .whitespaces)
+        guard let open = rest.firstIndex(of: "("), rest.hasSuffix(")") else { throw NFKJinjaError.syntax("malformed macro") }
+        let name = rest[rest.startIndex..<open].trimmingCharacters(in: .whitespaces)
+        var lexer = NFKJinjaExprLexer(String(rest[open...]))
+        var parser = NFKJinjaExprParser(try lexer.all())
+        let parameters = try parser.parseParameterList()
+        try parser.expectEnd()
+        let (body, terminator) = try parseNodes(until: ["endmacro"])
+        guard terminator == "endmacro" else { throw NFKJinjaError.syntax("macro without endmacro") }
+        position += 1
+        return .macro(NFKJinjaMacro(name: name, parameters: parameters, body: body))
     }
 
     // MARK: Expression parsing

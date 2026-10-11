@@ -18,6 +18,7 @@
 #import <InferKit/NFKMIDINote.h>
 #import <InferKit/NFKMusicBeat.h>
 #import <InferKit/NFKQuadrilateral.h>
+#import <InferKit/NFKToolLoop.h>
 #import <InferKit/NFKErrors.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreML/CoreML.h>
@@ -225,6 +226,12 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if ([value isKindOfClass:NFKDecisionQuestion.class]) {
 		return @{ NFKWireTag: @"decisionQuestion", @"value": [value dictionaryRepresentation] };
 	}
+	if ([value isKindOfClass:NFKToolResult.class]) {
+		return [self JSONValueForToolResult:value key:key error:outError];
+	}
+	if ([value isKindOfClass:NFKToolInvocation.class]) {
+		return [self JSONValueForToolInvocation:value key:key error:outError];
+	}
 	if ([value isKindOfClass:MLMultiArray.class]) {
 		return [self JSONValueForMultiArray:value];
 	}
@@ -249,6 +256,32 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		return @{ NFKWireTag: tag, @"png": [png base64EncodedStringWithOptions:0] };
 	}
 	return [self failForKey:key reason:[NSString stringWithFormat:@"a value of class %@ has no wire form", [value class]] error:outError];
+}
+
+// A tool's result crosses with its outputs encoded like any other values, so the audio a tool made
+// arrives as the audio file it was.
+- (nullable id)JSONValueForToolResult:(NFKToolResult *)result key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSDictionary *outputs = [self JSONDictionaryForDictionary:result.outputs error:outError];
+	if (outputs == nil) {
+		return nil;
+	}
+	NSMutableArray<NSString *> *images = [NSMutableArray arrayWithCapacity:result.imagePNGs.count];
+	for (NSData *png in result.imagePNGs) {
+		[images addObject:[png base64EncodedStringWithOptions:0]];
+	}
+	return @{ NFKWireTag: @"toolResult", @"text": result.text, @"isError": @(result.isError), @"images": images, @"outputs": outputs };
+}
+
+- (nullable id)JSONValueForToolInvocation:(NFKToolInvocation *)invocation key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	id result = [self JSONValueForToolResult:invocation.result key:key error:outError];
+	NSDictionary *arguments = [self JSONDictionaryForDictionary:invocation.arguments error:outError];
+	if (result == nil || arguments == nil) {
+		return nil;
+	}
+	return @{ NFKWireTag: @"toolInvocation", @"callIdentifier": invocation.callIdentifier, @"toolName": invocation.toolName,
+			  @"arguments": arguments, @"durationSeconds": @(invocation.durationSeconds), @"result": result };
 }
 
 // JSON carries integers exactly, and NSJSONSerialization rounds some doubles in the last bit on the
@@ -524,6 +557,12 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 		return [NFKDecisionQuestion questionWithDictionary:entry[@"value"]]
 			?: [self failForKey:key reason:@"a malformed decision question" error:outError];
 	}
+	if ([tag isEqualToString:@"toolResult"]) {
+		return [self toolResultFromEntry:entry key:key error:outError];
+	}
+	if ([tag isEqualToString:@"toolInvocation"]) {
+		return [self toolInvocationFromEntry:entry key:key error:outError];
+	}
 	NSData *bytes = [self bytesIn:entry forKey:@"base64"];
 	if ([tag isEqualToString:@"data"] && bytes != nil) {
 		return bytes;
@@ -560,6 +599,44 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 		return [self PCMBufferFromEntry:entry key:key error:outError];
 	}
 	return [self failForKey:key reason:[NSString stringWithFormat:@"the wire tag \"%@\" is unknown or malformed", tag] error:outError];
+}
+
+- (nullable NFKToolResult *)toolResultFromEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	if (![entry[@"text"] isKindOfClass:NSString.class]) {
+		return [self failForKey:key reason:@"a tool result without text" error:outError];
+	}
+	NSDictionary *outputs = [entry[@"outputs"] isKindOfClass:NSDictionary.class]
+		? [self dictionaryFromJSONDictionary:entry[@"outputs"] error:outError] : @{};
+	if (outputs == nil) {
+		return nil;
+	}
+	NSMutableArray<NSData *> *images = [NSMutableArray array];
+	for (NSString *encoded in [entry[@"images"] isKindOfClass:NSArray.class] ? entry[@"images"] : @[]) {
+		NSData *png = [encoded isKindOfClass:NSString.class] ? [[NSData alloc] initWithBase64EncodedString:encoded options:0] : nil;
+		if (png == nil) {
+			return [self failForKey:key reason:@"a tool result image is not base64" error:outError];
+		}
+		[images addObject:png];
+	}
+	return [[NFKToolResult alloc] initWithText:entry[@"text"] outputs:outputs imagePNGs:images isError:[entry[@"isError"] boolValue]];
+}
+
+- (nullable NFKToolInvocation *)toolInvocationFromEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	BOOL named = [entry[@"callIdentifier"] isKindOfClass:NSString.class] && [entry[@"toolName"] isKindOfClass:NSString.class];
+	NSDictionary *wireResult = [entry[@"result"] isKindOfClass:NSDictionary.class] ? entry[@"result"] : nil;
+	if (!named || wireResult == nil) {
+		return [self failForKey:key reason:@"a malformed tool invocation" error:outError];
+	}
+	NFKToolResult *result = [self toolResultFromEntry:wireResult key:key error:outError];
+	NSDictionary *arguments = [entry[@"arguments"] isKindOfClass:NSDictionary.class]
+		? [self dictionaryFromJSONDictionary:entry[@"arguments"] error:outError] : @{};
+	if (result == nil || arguments == nil) {
+		return nil;
+	}
+	return [[NFKToolInvocation alloc] initWithCallIdentifier:entry[@"callIdentifier"] toolName:entry[@"toolName"] arguments:arguments
+													  result:result durationSeconds:[entry[@"durationSeconds"] doubleValue]];
 }
 
 - (nullable NSData *)bytesIn:(NSDictionary *)entry forKey:(NSString *)field

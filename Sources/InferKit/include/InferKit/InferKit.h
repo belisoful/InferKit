@@ -31,6 +31,11 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceBackend.h>
+#import <InferKit/NFKInferenceTool.h>
+#import <InferKit/NFKBackendTool.h>
+#import <InferKit/NFKToolMessages.h>
+#import <InferKit/NFKToolLoop.h>
+#import <InferKit/NFKMCPClient.h>
 #import <InferKit/NFKDynamicBackend.h>
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>

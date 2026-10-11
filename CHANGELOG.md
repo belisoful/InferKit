@@ -35,6 +35,50 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Models as tools
+
+- `NFKInferenceTool` is a tool a language model calls: a name, a description, a JSON Schema for the
+  arguments, and a handler. `invokeWithArguments:` checks the schema's required properties and
+  top-level types before the handler runs, and turns a failure into an error result the model reads.
+  `NFKToolResult` carries the text the model reads, the images it is shown, and the outputs the
+  application keeps.
+- `NFKBackendTool` makes any backend a tool, so one model calls another: a remote Claude model calls
+  a local language model, and a local model calls a speech or image generator. Its default
+  description states what the tool does, when to use it (`purpose`), and what comes back, for each
+  output modality. Arguments named for the core's keys become those inputs and parameters.
+- `NFKToolLoop` runs a tool conversation with any backend that returns `NFKOutputToolCalls`: it offers
+  the tools, runs each call, returns each result, and repeats until the model answers, up to
+  `maximumTurns`. It returns the conversation (`NFKOutputMessages`), each call with its result
+  (`NFKOutputToolInvocations`), and the usage summed over the turns. It adopts `NFKInferenceBackend`,
+  so a server hosts it and its job streams and cancels.
+- A tool conversation keeps the OpenAI chat shape under `NFKInputMessages`. `NFKAnthropicBackend`,
+  `NFKRemoteResponsesBackend`, and `NFKGeminiInteractionsBackend` convert its calls and answers to
+  their provider's form. Each chat backend returns its reply as the next assistant turn under
+  `NFKOutputAssistantMessage`, with its own record under `NFKMessageMetadataKey`, and replays that
+  record to the endpoint that wrote it: Claude's signed thinking, Gemini's thought signatures, the
+  Responses reasoning items, and DeepSeek's `reasoning_content` return intact. `NFKToolMessages`
+  builds the turns for a caller that runs its own loop.
+- The native route carries `NFKToolResult` and `NFKToolInvocation`, so a served tool loop's result
+  crosses to another machine with the media its tools made.
+- `NFKInferenceServer` serves the tools added with `addTool:` over the Model Context Protocol at
+  `/mcp` (Streamable HTTP: `initialize`, `ping`, `tools/list`, `tools/call`, batches, and
+  notifications). Claude Code, Claude Desktop, and other MCP clients reach a local model as a tool.
+  Only the added tools are listed. A call's text, the images it shows the model, and the audio it
+  generates come back as MCP `text`, `image`, and `audio` content, a video as an embedded resource,
+  and structured output as `structuredContent`. The route takes the server's key, and refuses a
+  browser request whose `Origin` names another host. `MCPInstructions` tells a client's model about
+  the server, and `localMCPURL` names the endpoint.
+- `NFKMCPClient` reads any MCP server's tools as `NFKInferenceTool`, over JSON or event-stream
+  replies and with the session a server assigns, so `NFKToolLoop` offers a remote server's tools to
+  any model. A remote tool's audio and video arrive as asset files, and its images as images.
+- `NFKParameterMCPServers` hands public MCP servers to a provider that calls them itself: Claude's
+  MCP connector (`mcp_servers` and an `mcp_toolset` each, under the `mcp-client-2025-11-20` beta) and
+  the Responses API's `mcp` tool, without an approval round trip. What the service ran comes back
+  under `NFKOutputServerToolResults`, Claude's `mcp_tool_use` blocks included.
+- `NFKToolMessages` gives a backend outside the core the same turns: `assistantMessageWithText:…`
+  records a backend's own form of a turn, `recordOfMessage:format:source:` reads it back, and the tool
+  turn's name, text, error flag, and images are read through the class.
+
 #### Gemini's voice library
 
 - `NFKGeminiVoiceLibrary` reaches the Gemini API's Voices endpoint (`/v1beta/voices`). It lists the
@@ -529,6 +573,29 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Local language models call tools
+
+- The MLX language backends render `NFKParameterTools` into the release's own chat template and
+  return the calls the model writes under `NFKOutputToolCalls`, with the text around them under
+  `NFKOutputText`. They take the tool conversation `NFKToolLoop` builds, so a local model calls a
+  local speech, image, or language model as a tool, or serves as the tool of a remote model.
+- `NFKMLXToolCallFormat` reads each family's call syntax: Hermes JSON (Qwen3, Qwen3-VL, Granite 4),
+  XML parameters typed by the tool's schema (Qwen3.5, Qwen4), Gemma 4's `call:` form, harmony
+  (gpt-oss), DeepSeek, Mistral, Granite 3, Llama, and Nemotron-H. The format comes from the release's
+  template, or from `NFKMLXGenerationParameterKey.toolCallFormat`.
+- A tool request renders the release's own `chat_template` on a backend built without one. Gemma 4,
+  Granite 4, and Nemotron-H render it for tool requests and keep their own turns for plain chats.
+- The chat-template renderer follows Jinja and Python where it did not before: assignments inside a
+  loop stay in the loop, macros (recursive ones included), block `set`, loop unpacking and
+  `break`/`continue`, Python's printing (`None`, reprs) and arithmetic (`/`, `//`, `%`), and the
+  filters, tests, and methods the shipped templates use. A dictionary keeps its key order, so a
+  call's arguments render back as the model wrote them. An unknown filter is an error. Every
+  template in the validation store renders byte-for-byte as transformers renders it over a chat,
+  declared tools, and a tool conversation.
+- `NFKMLXDecoderBackend` (Qwen3.5, Qwen4-Exp) returns the reasoning chain under `NFKOutputReasoning`
+  rather than inside `NFKOutputText`, and takes `NFKParameterReasoningEffort` where the release's
+  template reads one.
 
 #### NLLB-200 translates 202 languages on the M2M-100 network
 
@@ -2412,6 +2479,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
+
+#### Apple's tools and the core's, both ways
+
+- `NFKFoundationTool(tool:)` (`initWithInferenceTool:`) puts any core `NFKInferenceTool` on Apple's
+  on-device model, an `NFKBackendTool` among them, so the system model calls a local language,
+  speech, or image model.
+- `NFKFoundationTool(appleTool:)` takes an app's own Foundation Models `Tool`. Its `GenerationSchema`
+  becomes the JSON Schema, and the model's JSON becomes its `Arguments`. `inferenceTool` presents any
+  Foundation tool as an `NFKInferenceTool` for `NFKToolLoop`, remote models, and `NFKInferenceServer`'s
+  MCP endpoint, waiting on the handler at most `timeout` seconds.
+- `NFKFoundationModelsBackend` returns the tools the model ran in a turn under
+  `NFKOutputToolInvocations`, with what each made for the app. A failed run reaches the model as an
+  error, and a tool turn from the core's conversation keeps its name and its error flag in the
+  transcript.
 
 #### The backend describes its model
 

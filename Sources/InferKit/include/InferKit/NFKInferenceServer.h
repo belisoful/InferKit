@@ -9,6 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <Security/Security.h>
 #import <InferKit/NFKInferenceBackend.h>
+#import <InferKit/NFKInferenceTool.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -86,6 +87,14 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				  and partial results.
 				- The status route, GET /inferkit/status, which reports each model's load and the
 				  machine's state for a load balancer or a dashboard (see Status).
+
+				Beside them, POST /mcp serves the tools added with addTool: over the Model Context
+				Protocol (Streamable HTTP), so an MCP client reaches them: Claude Code, Claude
+				Desktop, an agent framework, or NFKMCPClient. Only the added tools are listed; a hosted
+				model is a tool when an NFKBackendTool for it is added. A tool's text, the images it
+				shows the model, and the audio it generates come back as MCP content. The route takes
+				the same key as the others, and refuses a browser request whose Origin names another
+				host.
 
 				A request names its model in the body's model field. When the server hosts exactly
 				one model, a request that names none runs on it.
@@ -236,6 +245,23 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 
 /*! The hosted model names, sorted. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *modelNames;
+
+/*! Serves a tool over MCP, replacing any tool of the same name. Introduced in InferKit 0.4.0. */
+- (void)addTool:(NFKInferenceTool *)tool;
+
+/*! Stops serving the tool of that name over MCP. Introduced in InferKit 0.4.0. */
+- (void)removeToolNamed:(NSString *)name;
+
+/*! The tools served over MCP, in the order they were added. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKInferenceTool *> *tools;
+
+/*! What an MCP client's model is told about the server as a whole when it connects, such as which
+	tools to prefer, or nil for nothing. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) NSString *MCPInstructions;
+
+/*! The MCP endpoint a client on this machine uses (http://localhost:<port>/mcp, or https), or nil
+	while stopped. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSURL *localMCPURL;
 
 /*!
 	@method     startWithError:

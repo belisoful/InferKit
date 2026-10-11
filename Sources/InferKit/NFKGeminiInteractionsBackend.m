@@ -16,6 +16,8 @@
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteMediaSupport.h"
+#import "NFKToolMessageSupport.h"
+#import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
 
 /*! The contract keys this backend translates; every other parameter goes into generation_config. */
@@ -29,7 +31,7 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 										NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 										NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
-										NFKParameterVideoFrameCount, @"voice", @"speakers" ]];
+										NFKParameterVideoFrameCount, NFKParameterMCPServers, @"voice", @"speakers" ]];
 	});
 	return mapped;
 }
@@ -280,7 +282,9 @@ static double NFKInteractionsSeconds(id offset)
 }
 
 // A prompt alone goes as a string. Otherwise each turn is a step (user_input or model_output) of
-// content blocks, the system turn is system_instruction, and the media ride on the last user turn.
+// content blocks, the system turn is system_instruction, and the media ride on the last user turn. A
+// tool conversation's calls are function_call steps and their answers function_result steps; an
+// assistant turn this endpoint wrote replays its own steps, whose thought signatures the API checks.
 - (BOOL)addInputForRequest:(NFKInferenceRequest *)request attachments:(NFKRemoteAttachments *)attachments to:(NSMutableDictionary *)body
 {
 	NSArray *messages = request.messages;
@@ -302,6 +306,9 @@ static double NFKInteractionsSeconds(id offset)
 		NSString *content = [message[@"content"] isKindOfClass:NSString.class] ? message[@"content"] : nil;
 		if ([message[@"role"] isEqual:@"system"]) {
 			body[@"system_instruction"] = content;
+			continue;
+		}
+		if ([self addToolTurn:message conversation:messages to:steps]) {
 			continue;
 		}
 		NSMutableArray *blocks = [NSMutableArray array];
@@ -527,6 +534,54 @@ static double NFKInteractionsSeconds(id offset)
 
 #pragma mark Response
 
+- (BOOL)addToolTurn:(NSDictionary *)message conversation:(NSArray *)conversation to:(NSMutableArray *)steps
+{
+	if (NFKMessageIsToolResult(message)) {
+		NSMutableDictionary *step = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"function_result",
+																					@"call_id": NFKToolMessageCallIdentifier(message),
+																					@"result": [self functionResultFor:message] }];
+		step[@"name"] = NFKToolMessageNameIn(message, conversation);
+		if (NFKToolMessageIsError(message)) {
+			step[@"is_error"] = @YES;
+		}
+		[steps addObject:step];
+		return YES;
+	}
+	if (![message[@"role"] isEqual:@"assistant"]) {
+		return NO;
+	}
+	id recorded = NFKMessageProviderTurn(message, NFKProviderTurnFormatGeminiInteractions, self.endpointURL.absoluteString);
+	if ([recorded isKindOfClass:NSArray.class]) {
+		[steps addObjectsFromArray:recorded];
+		return YES;
+	}
+	if (![message[@"tool_calls"] isKindOfClass:NSArray.class]) {
+		return NO;
+	}
+	if ([message[@"content"] isKindOfClass:NSString.class] && [message[@"content"] length] > 0) {
+		[steps addObject:@{ @"type": @"model_output", @"content": @[ @{ @"type": @"text", @"text": message[@"content"] } ] }];
+	}
+	for (NSDictionary *call in [NFKToolMessages toolCallsOfAssistantMessage:message]) {
+		[steps addObject:@{ @"type": @"function_call", @"id": call[@"id"], @"name": call[@"name"], @"arguments": call[@"arguments"] }];
+	}
+	return YES;
+}
+
+// The result is the answer's text, or text and image content when the tool returned images.
+- (id)functionResultFor:(NSDictionary *)message
+{
+	NSString *text = NFKToolMessageText(message);
+	NSArray<NSData *> *images = NFKToolMessageImagePNGs(message);
+	if (images.count == 0) {
+		return text;
+	}
+	NSMutableArray *content = [NSMutableArray arrayWithObject:@{ @"type": @"text", @"text": text }];
+	for (NSData *png in images) {
+		[content addObject:@{ @"type": @"image", @"mime_type": @"image/png", @"data": [png base64EncodedStringWithOptions:0] }];
+	}
+	return content;
+}
+
 - (nullable NFKInferenceResult *)resultFromInteraction:(NSDictionary *)interaction request:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
 {
 	if ([interaction[@"status"] isEqual:@"failed"] || [interaction[@"status"] isEqual:@"cancelled"]) {
@@ -606,6 +661,14 @@ static double NFKInteractionsSeconds(id offset)
 	if (toolCalls.count > 0) {
 		outputs[NFKOutputToolCalls] = toolCalls;
 	}
+	NSMutableArray *modelSteps = [NSMutableArray array];
+	for (NSDictionary *step in [interaction[@"steps"] isKindOfClass:NSArray.class] ? interaction[@"steps"] : @[]) {
+		if ([step isKindOfClass:NSDictionary.class] && ![step[@"type"] isEqual:@"user_input"]) {
+			[modelSteps addObject:step];
+		}
+	}
+	outputs[NFKOutputAssistantMessage] = NFKAssistantMessage(text, toolCalls, NFKProviderTurnFormatGeminiInteractions,
+															 self.endpointURL.absoluteString, modelSteps);
 	if (serverTools.count > 0) {
 		outputs[NFKOutputServerToolResults] = serverTools;
 	}

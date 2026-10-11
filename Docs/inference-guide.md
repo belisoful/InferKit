@@ -31,6 +31,7 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
   - [The provider bridge](#the-provider-bridge)
 - [Remote providers](#remote-providers)
 - [Serving a model to other machines](#serving-a-model-to-other-machines)
+- [Models as tools](#models-as-tools)
 - [Speech in, text out](#speech-in-text-out)
 - [Optional engines discovered at runtime](#optional-engines-discovered-at-runtime)
 - [Choosing and combining engines](#choosing-and-combining-engines)
@@ -458,6 +459,15 @@ built from the JSON Schema; the model's arguments arrive as `GeneratedContent`, 
 `[String: Any]`, and passed to the handler. Objective-C callers use the synchronous `syncHandler:`
 initializer.
 
+Tools cross between Apple's tool subsystem and the core's both ways. `NFKFoundationTool(tool:)` puts a
+core `NFKInferenceTool` on Apple's model, so the system model calls a local Qwen or a speech
+generator through an `NFKBackendTool`. `NFKFoundationTool(appleTool:)` takes an app's own `Tool`, and
+`inferenceTool` presents any Foundation tool as an `NFKInferenceTool`, which `NFKToolLoop` offers to a
+remote or local model and `NFKInferenceServer` serves over MCP. The tools the model ran come back under
+`NFKOutputToolInvocations`. The provider bridge covers the third path: a `LanguageModelSession` with
+Apple tools runs on an InferKit backend that reads tools, such as a local MLX model, and Apple's
+framework runs the loop.
+
 ### Structured output
 
 Ask the model for a JSON object instead of free text. Apple's `@Generable` marks a type the model
@@ -683,6 +693,8 @@ answers HTTP on one port, under `/v1`:
   route reads what the core's matching client sends and hands the hosted backend the keys that client
   was given, so `NFKRemoteBackend` on another machine reaches a hosted MLX language model with its
   tools, schema, images, and sampling parameters intact.
+- The MCP endpoint, `POST /mcp`, which serves the tools added with `addTool:` to MCP clients (see
+  [Models as tools](#models-as-tools)).
 - The native route, `POST /v1/inferkit/run`, which carries a whole `NFKInferenceRequest` and
   `NFKInferenceResult` as tagged JSON. Pixel buffers cross with their format and rows, so a float depth
   map arrives exactly; multi-arrays, the core's value types, and audio and video files cross too.
@@ -785,6 +797,74 @@ worker too slow. On a worker, `cached_input_share` is the share of input its cac
 backend's `status` gives its conversation caches against the budget; a share near 0 on multi-turn
 traffic means chats are not returning to the worker that holds them, or the budget evicts them
 before their next turn.
+
+## Models as tools
+
+A model calls another model the way it calls any tool. The calling model is any backend that
+returns `NFKOutputToolCalls`: a remote chat model, or an on-device language model. The tool is any
+`NFKInferenceTool`, and `NFKBackendTool` makes any backend one: a second language model, or a
+speech, music, image, or video generator.
+
+<!-- objc-check: given id<NFKInferenceBackend> localQwen = nil; -->
+```objc
+NFKBackendTool *askQwen = [NFKBackendTool toolWithBackend:localQwen name:@"ask_local_model"
+                                           outputModality:NFKModalityText
+                                                  purpose:@"the text is private and must stay on this machine"];
+NFKToolLoop *loop = [[NFKToolLoop alloc] initWithBackend:claude tools:@[ askQwen ]];
+NFKInferenceResult *result = [loop runInferenceForRequest:request error:&error];
+```
+
+**What the model is told.** A model chooses a tool from its description, so the description states
+what the tool does, when to use it, and what comes back, and each argument's schema entry says what
+the argument means. `NFKBackendTool`'s default follows that pattern for the backend's output
+modality. `purpose` completes "Use it when …", and it is where an application says what the model is
+good at. The default schema names the core's own keys (`prompt`, `negativePrompt`, `width`,
+`durationSeconds`), so each argument reaches the backend as the input or parameter of that name with
+no mapping. A generated image is shown to the calling model; generated audio and video are
+described to it by length and format, and the media itself reaches the application.
+
+**The loop.** `NFKToolLoop` sends the conversation and the tools' declarations, appends the model's
+turn, runs each call, appends each result, and repeats until a turn makes no call. A call to a tool
+the loop does not hold ends the loop with that call under `NFKOutputToolCalls`, for the caller to
+run; the request's own `NFKParameterTools` entries are offered for that purpose. `maximumTurns`
+(default 8) bounds the model turns, and the last turn's calls come back unrun under
+`NFKOutputToolTurnLimitReached`. A tool's failure reaches the model as an error result, and the
+model corrects its arguments or answers without the tool. The result carries the whole conversation
+(`NFKOutputMessages`), each call with its result (`NFKOutputToolInvocations`, where the audio a tool
+generated rides in `result.outputs`), and the usage summed over every turn. `approvalHandler` decides
+whether each call runs, and `invocationHandler` reports each one as it finishes.
+
+**The conversation's shape.** The turns keep the OpenAI chat shape that `NFKInputMessages` already
+takes: the assistant turn's `tool_calls`, then one `{role: "tool", tool_call_id, content}` per call.
+`NFKAnthropicBackend` sends them as `tool_use` and `tool_result` blocks, `NFKRemoteResponsesBackend`
+as `function_call` and `function_call_output` items, and `NFKGeminiInteractionsBackend` as
+`function_call` and `function_result` steps. Each backend records its own form of an assistant turn
+under `NFKMessageMetadataKey` and replays it to the endpoint that wrote it, which keeps what the
+provider requires back during tool use: Claude's signed thinking blocks, Gemini's thought signatures,
+the Responses reasoning items, and DeepSeek's `reasoning_content`. A tool's error flag and images go
+where the provider takes them, and into the text where it does not. `NFKToolMessages` builds the
+same turns for a caller that runs its own loop.
+
+**On device.** The MLX language backends take tools the same way: the declarations render into the
+release's own chat template, and the calls come back in the syntax that template shows
+(`NFKMLXToolCallFormat`), read after the reasoning chain is split off. A local Qwen3.5 that calls a
+local speech model, or a local model a remote Claude calls, runs through the same loop. A tool request
+renders the release's own template even on a backend built without one, since only that template
+writes the release's tool format.
+
+**Over MCP.** `NFKInferenceServer` serves the tools added with `addTool:` over the Model Context
+Protocol at `/mcp` (Streamable HTTP), so Claude Code, Claude Desktop, and any MCP client call a local
+model as a tool. Only the added tools are listed, each with its description and schema, and a call's
+text, images, and audio come back as MCP content. The route takes the server's key, and refuses a
+browser request whose `Origin` names another host, which closes DNS rebinding against a loopback
+server. `NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
+model a remote server's tools beside its own. A provider that calls MCP servers itself reaches a public
+server through `NFKParameterMCPServers`: Claude's MCP connector and the Responses API's `mcp` tool.
+
+**A loop is a backend.** `submitInferenceJobForRequest:` streams each model turn's partial text and
+cancels inside a turn. `NFKInferenceServer` serves a loop under a model name, and the native route
+carries its invocations, so another machine runs the whole tool conversation by name. One loop is a
+tool of another through `NFKBackendTool`.
 
 ## Speech in, text out
 
