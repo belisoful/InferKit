@@ -56,7 +56,7 @@ public final class NFKMLXSD3ControlNetPipeline {
     /// The VAE-encoded, scaled control latent `[1, C, h, w]` from a control image `[1, H, W, 3]`.
     private func controlLatent(from controlImage: MLXArray) -> MLXArray {
         let mean = holder.vae.encode(controlImage).mean                    // [1, h, w, C]
-        return ((mean - shiftFactor) * scaleFactor).transposed(0, 3, 1, 2)
+        return NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(mean, by: -shiftFactor), by: scaleFactor).transposed(0, 3, 1, 2)
     }
 
     /// Runs the ControlNet for one guidance branch and returns its per-block residuals.
@@ -106,7 +106,7 @@ public final class NFKMLXSD3ControlNetPipeline {
         }
 
         let decoded = latent[0]                                            // [C, H, W]
-        let nhwc = (decoded / scaleFactor + shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
+        let nhwc = NFKReferenceRounding.shifted(NFKReferenceRounding.divided(decoded, by: scaleFactor), by: shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
         let image = holder.vae.decode(nhwc)
         eval(image)
         return image

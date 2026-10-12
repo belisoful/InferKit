@@ -776,6 +776,85 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 madlad-3b pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // FLUX.1's autoencoder (`IK_VAL_FLUX_SCHNELL_FULL`'s `vae/`, released bf16) at bf16 as the FLUX pipeline
+    // loads it, against diffusers' `AutoencoderKL` at bf16 (`sd_vae_probe`, the float32 side on the same bf16
+    // weights) at 256 pixels: every decoder stage over a seeded latent and every encoder stage over a plate,
+    // then each piece of the decoder's first mid resnet and of its mid attention, on the reference's input.
+    func testFluxAutoencoderInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_FLUX_SCHNELL_FULL"], "IK_VAL_FLUX_SCHNELL_FULL"))
+        let bf16 = try record("flux_vae_bf16.safetensors"), f32 = try record("flux_vae_f32.safetensors")
+        let vae = NFKMLXSDAutoencoder(configuration: .flux)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(
+            into: vae, from: directory.appendingPathComponent("vae/diffusion_pytorch_model.safetensors"), precision: .checkpoint)
+        vae.train(false)
+        /// A recorded channels-first map as the port's channels-last batch.
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).transposed(1, 2, 0).expandedDimensions(axis: 0)
+        }
+        func channelsFirst(_ x: MLXArray) -> MLXArray { x[0].transposed(2, 0, 1) }
+
+        var states = [(String, MLXArray)](), keys = [String]()
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        func run(_ prefix: String, _ input: MLXArray, _ steps: [(String, (MLXArray) -> MLXArray)]) throws {
+            var hidden = input, previous: MLXArray? = nil
+            for (name, step) in steps {
+                let key = "\(prefix).\(name)"
+                hidden = step(hidden)
+                states.append((key, channelsFirst(hidden)))
+                keys.append(key)
+                isolated.append((key, channelsFirst(step(previous ?? input))))
+                isolatedKeys.append(key)
+                previous = try recorded(key)
+            }
+        }
+        let decoder = vae.decoder, encoder = vae.encoder
+        var decoding: [(String, (MLXArray) -> MLXArray)] = [
+            ("conv_in", { decoder.convIn($0) }), ("mid.resnet0", { decoder.midBlock.resnets[0]($0) }),
+            ("mid.attention", { decoder.midBlock.attentions[0]($0) }), ("mid.resnet1", { decoder.midBlock.resnets[1]($0) })]
+        for (index, block) in decoder.upBlocks.enumerated() {
+            decoding += block.resnets.enumerated().map { j, resnet in ("up.\(index).resnet.\(j)", { resnet($0) }) }
+            decoding += block.upsamplers.map { upsampler in ("up.\(index).upsample", { upsampler($0) }) }
+        }
+        decoding += [("norm_out", { decoder.normOut($0) }), ("act", { NFKReferenceRounding.silu($0) }),
+                     ("out", { decoder.convOut($0) })]
+        try run("dec", try recorded("latent"), decoding)
+        var encoding: [(String, (MLXArray) -> MLXArray)] = [("conv_in", { encoder.convIn($0) })]
+        for (index, block) in encoder.downBlocks.enumerated() {
+            encoding += block.resnets.enumerated().map { j, resnet in ("down.\(index).resnet.\(j)", { resnet($0) }) }
+            encoding += block.downsamplers.map { downsampler in ("down.\(index).downsample", { downsampler($0) }) }
+        }
+        encoding += [("mid.resnet0", { encoder.midBlock.resnets[0]($0) }), ("mid.attention", { encoder.midBlock.attentions[0]($0) }),
+                     ("mid.resnet1", { encoder.midBlock.resnets[1]($0) }), ("norm_out", { encoder.normOut($0) }),
+                     ("act", { NFKReferenceRounding.silu($0) }), ("out", { encoder.convOut($0) })]
+        try run("enc", try recorded("image"), encoding)
+        XCTAssertEqual(states[0].1.dtype, .bfloat16, "a bf16 load decodes at bf16")
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("flux-vae", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("flux-vae isolated", isolatedRows)
+        assertRoundingPlacement("flux-vae", endToEnd: rows, isolated: isolatedRows)
+
+        let resnet = decoder.midBlock.resnets[0].block, attention = decoder.midBlock.attentions[0]
+        func tokens(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let r = "dec.mid.resnet0.", a = "dec.mid.attention."
+        let normedTokens = try tokens(a + "group_norm.in")                       // [channels, positions]
+        let grouped = attention.groupNorm(normedTokens.transposed(1, 0).reshaped([1, 1, normedTokens.dim(1), normedTokens.dim(0)]))
+        let lines = [
+            try piece("resnet norm1", channelsFirst(resnet.norm1(recorded(r + "norm1.in"))), bf16, r + "norm1.out"),
+            try piece("resnet conv1", channelsFirst(resnet.conv1(recorded(r + "conv1.in"))), bf16, r + "conv1.out"),
+            try piece("resnet norm2", channelsFirst(resnet.norm2(recorded(r + "norm2.in"))), bf16, r + "norm2.out"),
+            try piece("resnet conv2", channelsFirst(resnet.conv2(recorded(r + "conv2.in"))), bf16, r + "conv2.out"),
+            try piece("attention group_norm", grouped.reshaped([normedTokens.dim(1), -1]).transposed(1, 0), bf16, a + "group_norm.out"),
+            try piece("attention to_q", matmul(tokens(a + "to_q.in"), attention.toQ.weight.T) + attention.toQ.bias!, bf16, a + "to_q.out"),
+            try piece("attention to_k", matmul(tokens(a + "to_k.in"), attention.toK.weight.T) + attention.toK.bias!, bf16, a + "to_k.out"),
+            try piece("attention to_v", matmul(tokens(a + "to_v.in"), attention.toV.weight.T) + attention.toV.bias!, bf16, a + "to_v.out"),
+            try piece("attention to_out", attention.toOut(tokens(a + "to_out.0.in")), bf16, a + "to_out.0.out"),
+        ]
+        print("VALIDATION bf16 flux-vae pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,
@@ -2183,6 +2262,23 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let rows = try seams([("velocity", output)], bf16: bf16, f32: f32, keys: ["output"])
         report("flux", rows)
         assertRoundingPlacement("flux", endToEnd: rows, isolated: rows)
+    }
+
+    // The SD3 MMDiT at `run_reference.py sd3`'s tiny configuration (RMS query/key norm, a dual-attention first
+    // layer, the last block's `context_pre_only`), at bf16 against diffusers at bf16 (`IK_DIT_DTYPE`).
+    func testSD3TransformerInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (bf16, f32, weights) = try tinyDiT("sd3")
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let net = NFKMLXSD3TransformerNet(.tiny)
+        try NFKMLXWeights.apply(weights.map { ($0.0, $0.1.ndim == 4 ? $0.1.transposed(0, 2, 3, 1) : $0.1) }, to: net)
+        let output = net(try input("latent"), encoderHidden: try input("encoder"), pooled: try input("pooled"),
+                         timestep: try input("timestep"))
+        eval(output)
+        XCTAssertEqual(output.dtype, .bfloat16, "a bf16 load runs the transformer at bf16")
+        let rows = try seams([("velocity", output)], bf16: bf16, f32: f32, keys: ["output"])
+        report("sd3", rows)
+        assertRoundingPlacement("sd3", endToEnd: rows, isolated: rows)
     }
 
     func testFlux2TransformerInBFloat16MatchesTheBFloat16Reference() throws {

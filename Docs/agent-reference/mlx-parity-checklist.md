@@ -294,6 +294,13 @@ piece without one is only reported.
 - A module without parameters (an activation) is re-run when its input is half precision. A seam a
   release forms inline from two recorded terms (Qwen-VL's patch plus position embedding) takes their sum
   in float32 as its floor.
+- torch's half-precision `linear` with a bias fuses the bias into one rounding only on a contiguous 2-D or
+  3-D input. A strided input (a transposed view, a slice of a batch past one) takes `matmul` and then adds
+  the bias, two roundings. diffusers' autoencoder attention and SD3's joint attention hit the strided case.
+  A record settles it: recompute a probed linear's output from its recorded input both ways.
+- torch's CPU `conv2d` at bf16 takes a reference kernel some 500 times slower than float32's and
+  accumulates in float32 with one rounding. An oracle over a large convolutional net at bf16 computes each
+  convolution that way in float32 (`sd_vae_probe`), equal to torch to accumulation order.
 - A probed layer's pieces (`_piece_floor_hooks`) keep a floor only where the piece's first half-precision
   output is the recorded seam, since a module called twice (Gemma 3n's AltUp router) is recorded at its
   last call. The eager attention function's floor (`L.attn.out`) is the same call on its inputs widened.

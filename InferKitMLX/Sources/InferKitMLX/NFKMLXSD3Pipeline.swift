@@ -97,7 +97,7 @@ public final class NFKMLXSD3Pipeline {
     /// Decodes a latent `[1, C, H, W]` into an image `[1, H, W, 3]` in `[-1, 1]` at ``pixelsPerLatent``,
     /// undoing the autoencoder's latent scale and shift first.
     public func decode(_ latent: MLXArray) -> MLXArray {
-        let nhwc = (latent[0] / scaleFactor + shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
+        let nhwc = NFKReferenceRounding.shifted(NFKReferenceRounding.divided(latent[0], by: scaleFactor), by: shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
         let image = holder.vae.decode(nhwc.asType(NFKReferenceRounding.parameterType(of: holder.vae)))
         eval(image)
         return image

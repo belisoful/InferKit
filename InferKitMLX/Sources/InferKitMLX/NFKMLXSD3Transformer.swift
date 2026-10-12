@@ -148,7 +148,7 @@ final class NFKSD3PatchEmbed: Module {
     init(_ config: NFKMLXSD3Configuration) {
         self.patchSize = config.patchSize
         self.maxSize = config.posEmbedMaxSize
-        _proj.wrappedValue = Conv2d(inputChannels: config.inChannels, outputChannels: config.innerDim,
+        _proj.wrappedValue = NFKConv2d(inputChannels: config.inChannels, outputChannels: config.innerDim,
                                     kernelSize: IntOrPair(config.patchSize), stride: IntOrPair(config.patchSize))
         _posEmbed.wrappedValue = MLXArray.zeros([1, config.posEmbedMaxSize * config.posEmbedMaxSize, config.innerDim])
     }
@@ -195,7 +195,8 @@ final class NFKSD3TimeTextEmbed: Module {
 
     /// `timestep` `[B]`, `pooled` `[B, pooledDim]` → `[B, inner]`.
     func callAsFunction(timestep: MLXArray, pooled: MLXArray) -> MLXArray {
-        let proj = sd3TimestepEmbedding(timestep, dimensions: 256)         // [B, 256]
+        // The float32 sinusoids take the pooled projection's type, as the reference casts them.
+        let proj = sd3TimestepEmbedding(timestep, dimensions: 256).asType(pooled.dtype)   // [B, 256]
         return timestepEmbedder(proj) + textEmbedder(pooled)
     }
 }
@@ -277,14 +278,21 @@ final class NFKSD3Attention: Module {
             k = concatenated([k, ek], axis: 2)
             v = concatenated([v, ev], axis: 2)
         }
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.flashAttention(
             queries: q, keys: k, values: v, scale: 1 / sqrt(Float(headDim)), mask: nil)
         let merged = attended.transposed(0, 2, 1, 3).reshaped([b, -1, heads * headDim])
         if encoder != nil {
             let imagePart = merged[0..., 0 ..< imageLength, 0...]
             let contextPart = merged[0..., imageLength..., 0...]
-            let image = (toOut[0] as! Linear)(imagePart)
-            let context = contextPreOnly ? nil : toAddOut!(contextPart)
+            // The reference projects each stream from a slice of the joint sequence. Past a batch of one
+            // the slice is not contiguous, and torch's half-precision `linear` then rounds the product and
+            // then the bias, where on a contiguous input it rounds once.
+            func projected(_ layer: Linear, _ x: MLXArray) -> MLXArray {
+                guard b > 1, NFKReferenceRounding.isReduced(x), let bias = layer.bias else { return layer(x) }
+                return matmul(x, layer.weight.T) + bias
+            }
+            let image = projected(toOut[0] as! Linear, imagePart)
+            let context = contextPreOnly ? nil : projected(toAddOut!, contextPart)
             return (image, context)
         }
         return ((toOut[0] as! Linear)(merged), nil)

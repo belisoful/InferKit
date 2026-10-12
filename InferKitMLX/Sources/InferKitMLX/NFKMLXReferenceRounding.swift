@@ -38,6 +38,12 @@ enum NFKReferenceRounding {
         return (x.asType(.float32) / divisor).asType(x.dtype)
     }
 
+    /// `x + offset` as torch adds a Python float to a tensor: in float32, rounded once.
+    static func shifted(_ x: MLXArray, by offset: Float) -> MLXArray {
+        guard isReduced(x) else { return x + offset }
+        return (x.asType(.float32) + offset).asType(x.dtype)
+    }
+
     /// transformers' Gemma RMS norm: `x · rsqrt(mean(x²) + eps) · (1 + w)` in float32 throughout,
     /// rounded once to `x`'s type.
     static func gemmaNorm(_ x: MLXArray, weight: MLXArray, eps: Float) -> MLXArray {

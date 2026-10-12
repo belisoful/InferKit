@@ -77,7 +77,7 @@ public final class NFKMLXSANAPipeline {
             eval(latent)
         }
 
-        let nhwc = (latent / scaleFactor).transposed(1, 2, 0).expandedDimensions(axis: 0) // [1, h, w, C]
+        let nhwc = NFKReferenceRounding.divided(latent, by: scaleFactor).transposed(1, 2, 0).expandedDimensions(axis: 0) // [1, h, w, C]
         let image = holder.vae.decode(nhwc)
         eval(image)
         return image

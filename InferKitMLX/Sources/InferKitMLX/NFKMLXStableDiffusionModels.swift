@@ -213,7 +213,14 @@ final class NFKSDGroupNorm: Module {
         self._bias.wrappedValue = MLXArray.zeros([channels])
     }
 
+    /// On a half-precision input the statistics, the normalization, and the affine run in float32 and the
+    /// result rounds once, as torch's `group_norm` computes it.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else { return normalized(x) }
+        return normalized(x.asType(.float32)).asType(x.dtype)
+    }
+
+    private func normalized(_ x: MLXArray) -> MLXArray {
         let shape = x.shape                                     // [batch, height, width, channel]
         let channels = shape[3]
         let perGroup = channels / groups
@@ -229,7 +236,7 @@ final class NFKSDGroupNorm: Module {
             .reshaped([shape[0], groups, shape[1] * shape[2], perGroup])
             .transposed(0, 2, 1, 3)
             .reshaped(shape)
-        return normalized * weight + bias
+        return normalized * weight.asType(x.dtype) + bias.asType(x.dtype)
     }
 }
 
@@ -259,7 +266,7 @@ final class NFKSDTimestepEmbedding: Module {
         self._linear2.wrappedValue = Linear(timeChannels, timeChannels)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
 }
 
 /// `ResnetBlock2D`: two normalized convolutions with the timestep embedding added between them, over a
@@ -278,23 +285,23 @@ final class NFKSDResnetBlock: Module {
     init(inputChannels: Int, outputChannels: Int, timeChannels: Int?, groups: Int,
          eps: Float = 1e-5) {
         self._norm1.wrappedValue = NFKSDGroupNorm(groups: groups, channels: inputChannels, eps: eps)
-        self._conv1.wrappedValue = Conv2d(inputChannels: inputChannels, outputChannels: outputChannels,
+        self._conv1.wrappedValue = NFKConv2d(inputChannels: inputChannels, outputChannels: outputChannels,
                                           kernelSize: 3, padding: 1)
         self._timeProjection.wrappedValue = timeChannels.map { Linear($0, outputChannels) }
         self._norm2.wrappedValue = NFKSDGroupNorm(groups: groups, channels: outputChannels, eps: eps)
-        self._conv2.wrappedValue = Conv2d(inputChannels: outputChannels, outputChannels: outputChannels,
+        self._conv2.wrappedValue = NFKConv2d(inputChannels: outputChannels, outputChannels: outputChannels,
                                           kernelSize: 3, padding: 1)
         self._shortcut.wrappedValue = inputChannels == outputChannels
             ? nil
-            : Conv2d(inputChannels: inputChannels, outputChannels: outputChannels, kernelSize: 1)
+            : NFKConv2d(inputChannels: inputChannels, outputChannels: outputChannels, kernelSize: 1)
     }
 
     func callAsFunction(_ x: MLXArray, time: MLXArray?) -> MLXArray {
-        var h = conv1(silu(norm1(x)))
+        var h = conv1(NFKReferenceRounding.silu(norm1(x)))
         if let timeProjection, let time {
-            h = h + timeProjection(silu(time)).reshaped([time.shape[0], 1, 1, -1])
+            h = h + timeProjection(NFKReferenceRounding.silu(time)).reshaped([time.shape[0], 1, 1, -1])
         }
-        h = conv2(silu(norm2(h)))
+        h = conv2(NFKReferenceRounding.silu(norm2(h)))
         return (shortcut.map { $0(x) } ?? x) + h
     }
 }
@@ -447,9 +454,9 @@ final class NFKSDTransformer2D: Module {
             self._projInLinear.wrappedValue = Linear(channels, channels)
             self._projOutLinear.wrappedValue = Linear(channels, channels)
         } else {
-            self._projInConv.wrappedValue = Conv2d(inputChannels: channels, outputChannels: channels,
+            self._projInConv.wrappedValue = NFKConv2d(inputChannels: channels, outputChannels: channels,
                                                    kernelSize: 1)
-            self._projOutConv.wrappedValue = Conv2d(inputChannels: channels, outputChannels: channels,
+            self._projOutConv.wrappedValue = NFKConv2d(inputChannels: channels, outputChannels: channels,
                                                     kernelSize: 1)
         }
         self._blocks.wrappedValue = (0 ..< depth).map { _ in
@@ -483,7 +490,7 @@ final class NFKSDDownsample: Module {
 
     init(channels: Int, padsAsymmetrically: Bool) {
         self.padsAsymmetrically = padsAsymmetrically
-        self._conv.wrappedValue = Conv2d(inputChannels: channels, outputChannels: channels,
+        self._conv.wrappedValue = NFKConv2d(inputChannels: channels, outputChannels: channels,
                                          kernelSize: 3, stride: 2,
                                          padding: padsAsymmetrically ? 0 : 1)
     }
@@ -499,7 +506,7 @@ final class NFKSDUpsample: Module {
     @ModuleInfo(key: "conv") var conv: Conv2d
 
     init(channels: Int) {
-        self._conv.wrappedValue = Conv2d(inputChannels: channels, outputChannels: channels,
+        self._conv.wrappedValue = NFKConv2d(inputChannels: channels, outputChannels: channels,
                                          kernelSize: 3, padding: 1)
     }
 
@@ -645,7 +652,7 @@ public final class NFKMLXSDUNet: Module {
         self._addEmbedding.wrappedValue = c.additionEmbedding.map {
             NFKSDTimestepEmbedding(inputChannels: $0.projectionInputDimensions, timeChannels: timeChannels)
         }
-        self._convIn.wrappedValue = Conv2d(inputChannels: c.inputChannels,
+        self._convIn.wrappedValue = NFKConv2d(inputChannels: c.inputChannels,
                                            outputChannels: c.blockChannels[0],
                                            kernelSize: 3, padding: 1)
 
@@ -693,7 +700,7 @@ public final class NFKMLXSDUNet: Module {
 
         self._normOut.wrappedValue = NFKSDGroupNorm(groups: c.normalizationGroups,
                                                     channels: c.blockChannels[0], eps: 1e-5)
-        self._convOut.wrappedValue = Conv2d(inputChannels: c.blockChannels[0],
+        self._convOut.wrappedValue = NFKConv2d(inputChannels: c.blockChannels[0],
                                             outputChannels: c.outputChannels,
                                             kernelSize: 3, padding: 1)
     }
@@ -751,7 +758,7 @@ public final class NFKMLXSDUNet: Module {
         for block in upBlocks {
             h = block(h, skips: &skips, time: time, context: context, ip: imageConditioning)
         }
-        return convOut(silu(normOut(h)))
+        return convOut(NFKReferenceRounding.silu(normOut(h)))
     }
 }
 
@@ -792,11 +799,20 @@ final class NFKSDVAEAttention: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let shape = x.shape
         let tokens = groupNorm(x).reshaped([shape[0], shape[1] * shape[2], shape[3]])
-        let out = MLXFast.scaledDotProductAttention(
-            queries: toQ(tokens).expandedDimensions(axis: 1),
-            keys: toK(tokens).expandedDimensions(axis: 1),
-            values: toV(tokens).expandedDimensions(axis: 1),
-            scale: 1 / sqrt(Float(shape[3])), mask: nil)
+        // diffusers hands the projections the normalized map transposed in place. torch's half-precision
+        // `linear` on such a strided input rounds the product and then the bias, where on a contiguous one
+        // (`to_out`'s) it rounds once.
+        func projected(_ layer: Linear) -> MLXArray {
+            guard NFKReferenceRounding.isReduced(tokens), let bias = layer.bias else { return layer(tokens) }
+            return matmul(tokens, layer.weight.T) + bias
+        }
+        // At half precision diffusers' `scaled_dot_product_attention` takes torch's CPU flash kernel,
+        // which `flashAttention` follows; a float32 input takes MLX's fused kernel either way.
+        let out = NFKReferenceRounding.flashAttention(
+            queries: projected(toQ).expandedDimensions(axis: 1),
+            keys: projected(toK).expandedDimensions(axis: 1),
+            values: projected(toV).expandedDimensions(axis: 1),
+            scale: 1 / sqrt(Float(shape[3])), mask: nil, queryBlock: 1024)
         return x + toOut(out.squeezed(axis: 1)).reshaped(shape)
     }
 }
@@ -868,7 +884,7 @@ final class NFKSDVAEEncoder: Module {
 
     init(_ c: NFKMLXSDVAEConfiguration) {
         let levels = c.blockChannels.count
-        self._convIn.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.blockChannels[0],
+        self._convIn.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.blockChannels[0],
                                            kernelSize: 3, padding: 1)
         self._downBlocks.wrappedValue = (0 ..< levels).map { level in
             NFKSDVAEDownBlock(inputChannels: level == 0 ? c.blockChannels[0] : c.blockChannels[level - 1],
@@ -880,7 +896,7 @@ final class NFKSDVAEEncoder: Module {
         self._normOut.wrappedValue = NFKSDGroupNorm(groups: c.normalizationGroups,
                                                     channels: c.blockChannels[levels - 1], eps: 1e-6)
         // The encoder emits a mean and a log-variance, so twice the latent width.
-        self._convOut.wrappedValue = Conv2d(inputChannels: c.blockChannels[levels - 1],
+        self._convOut.wrappedValue = NFKConv2d(inputChannels: c.blockChannels[levels - 1],
                                             outputChannels: 2 * c.latentChannels,
                                             kernelSize: 3, padding: 1)
     }
@@ -889,7 +905,7 @@ final class NFKSDVAEEncoder: Module {
         var h = convIn(x)
         for block in downBlocks { h = block(h) }
         h = midBlock(h)
-        return convOut(silu(normOut(h)))
+        return convOut(NFKReferenceRounding.silu(normOut(h)))
     }
 }
 
@@ -904,7 +920,7 @@ final class NFKSDVAEDecoder: Module {
         let widths = c.decoderBlockChannels ?? c.blockChannels
         let levels = widths.count
         let reversed = widths.reversed().map { $0 }
-        self._convIn.wrappedValue = Conv2d(inputChannels: c.latentChannels,
+        self._convIn.wrappedValue = NFKConv2d(inputChannels: c.latentChannels,
                                            outputChannels: reversed[0], kernelSize: 3, padding: 1)
         self._midBlock.wrappedValue = NFKSDVAEMidBlock(channels: reversed[0],
                                                        groups: c.normalizationGroups)
@@ -915,14 +931,14 @@ final class NFKSDVAEDecoder: Module {
         }
         self._normOut.wrappedValue = NFKSDGroupNorm(groups: c.normalizationGroups,
                                                     channels: reversed[levels - 1], eps: 1e-6)
-        self._convOut.wrappedValue = Conv2d(inputChannels: reversed[levels - 1], outputChannels: 3,
+        self._convOut.wrappedValue = NFKConv2d(inputChannels: reversed[levels - 1], outputChannels: 3,
                                             kernelSize: 3, padding: 1)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var h = midBlock(convIn(x))
         for block in upBlocks { h = block(h) }
-        return convOut(silu(normOut(h)))
+        return convOut(NFKReferenceRounding.silu(normOut(h)))
     }
 }
 
@@ -940,10 +956,10 @@ public final class NFKMLXSDAutoencoder: Module {
         self._encoder.wrappedValue = NFKSDVAEEncoder(configuration)
         self._decoder.wrappedValue = NFKSDVAEDecoder(configuration)
         if configuration.useQuantConv {
-            self._quantConv.wrappedValue = Conv2d(inputChannels: 2 * configuration.latentChannels,
+            self._quantConv.wrappedValue = NFKConv2d(inputChannels: 2 * configuration.latentChannels,
                                                   outputChannels: 2 * configuration.latentChannels,
                                                   kernelSize: 1)
-            self._postQuantConv.wrappedValue = Conv2d(inputChannels: configuration.latentChannels,
+            self._postQuantConv.wrappedValue = NFKConv2d(inputChannels: configuration.latentChannels,
                                                       outputChannels: configuration.latentChannels,
                                                       kernelSize: 1)
         } else {

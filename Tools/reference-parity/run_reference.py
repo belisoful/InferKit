@@ -9747,6 +9747,81 @@ def run_clip_probe(image):
     return (image_features / image_features.norm(dim=-1, keepdim=True))[0].float().contiguous()
 
 
+def run_sd_vae_probe(image, checkpoint):
+    """A diffusers `AutoencoderKL` release (`--checkpoint` its `vae/` directory: FLUX.1's, SD3.5's) at bf16 or on
+    its float32 floor (`IK_PROBE_DTYPE`, see `_probe_precision`), stage by stage: the decoder over a seeded
+    latent and the encoder over a plate, both at `IK_VAE_SIZE` pixels (default 256, where the mid attention's
+    1,024 positions span two of torch's flash-attention key blocks). Records `latent` and
+    `image` (channels first, no batch); for the decoder `dec.conv_in`, `dec.mid.resnet0`, `dec.mid.attention`,
+    `dec.mid.resnet1`, each up block's `dec.up.<i>.resnet.<j>` and `dec.up.<i>.upsample`, `dec.norm_out`,
+    `dec.act`, and `dec.out`; for the encoder `enc.conv_in`, each down block's `enc.down.<i>.resnet.<j>` and
+    `enc.down.<i>.downsample`, `enc.mid.resnet0`, `enc.mid.attention`, `enc.mid.resnet1`, `enc.norm_out`,
+    `enc.act`, and `enc.out`; and every submodule of the decoder's first mid resnet and of its mid attention as
+    `dec.mid.<resnet0|attention>.<name>.in` / `.out`. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to each stage and
+    piece. The bf16 run computes each convolution in float32 and rounds once, as torch's CPU kernel does
+    up to accumulation order. Returns the decoded image. Runs under the `sd` oracle env. `image` unused."""
+    from diffusers import AutoencoderKL
+
+    size = int(os.environ.get("IK_VAE_SIZE", "256"))
+    vae = AutoencoderKL.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    bf16 = _probe_precision([vae])
+    dtype = torch.bfloat16 if bf16 else torch.float32
+    generator = torch.Generator().manual_seed(0)
+    latent = torch.randn(1, vae.config.latent_channels, size // 8, size // 8, generator=generator)
+    latent = latent.to(torch.bfloat16).to(dtype)
+    yy, xx = torch.meshgrid(torch.linspace(-1, 1, size), torch.linspace(-1, 1, size), indexing="ij")
+    plate = torch.stack([xx, yy, (xx * yy).sin()]).unsqueeze(0).to(torch.bfloat16).to(dtype)
+
+    extra = {}
+    def keep(value):
+        return value[0].detach().float().clone().contiguous()
+    def stages(coder, prefix):
+        named = [("conv_in", coder.conv_in), ("mid.resnet0", coder.mid_block.resnets[0]),
+                 ("mid.attention", coder.mid_block.attentions[0]), ("mid.resnet1", coder.mid_block.resnets[1]),
+                 ("norm_out", coder.conv_norm_out), ("act", coder.conv_act), ("out", coder.conv_out)]
+        up = prefix == "dec"
+        for i, block in enumerate(coder.up_blocks if up else coder.down_blocks):
+            named += [(f"{'up' if up else 'down'}.{i}.resnet.{j}", resnet) for j, resnet in enumerate(block.resnets)]
+            for sampler in (block.upsamplers if up else block.downsamplers) or []:
+                named.append((f"{'up' if up else 'down'}.{i}.{'upsample' if up else 'downsample'}", sampler))
+        for name, module in named:
+            module.register_forward_hook(lambda m, a, o, key=f"{prefix}.{name}": extra.__setitem__(key, keep(o)) and None)
+        _block_floor_hooks([module for _, module in named], [f"{prefix}.{name}" for name, _ in named], extra,
+                           verify=True)
+    stages(vae.decoder, "dec")
+    stages(vae.encoder, "enc")
+    for name, root in (("resnet0", vae.decoder.mid_block.resnets[0]), ("attention", vae.decoder.mid_block.attentions[0])):
+        pieces = [(n, m) for n, m in root.named_modules() if n]
+        for n, module in pieces:
+            def hook(m, a, o, label=f"dec.mid.{name}.{n}"):
+                if a and torch.is_tensor(a[0]):
+                    extra[f"{label}.in"] = keep(a[0])
+                if torch.is_tensor(o):
+                    extra[f"{label}.out"] = keep(o)
+            module.register_forward_hook(hook)
+        _block_floor_hooks([m for _, m in pieces], [f"dec.mid.{name}.{n}.out" for n, _ in pieces], extra, verify=True)
+    # torch's CPU `conv2d` at bf16 takes a reference kernel some 500 times slower than float32's. It
+    # accumulates in float32 and rounds once, so the bf16 run computes each convolution that way; the two
+    # agree to accumulation order (a few elements in 10^4, a step apart).
+    convolution = torch.nn.functional.conv2d
+    def widened_conv2d(input, weight, bias=None, *args, **kwargs):
+        if input.dtype != torch.bfloat16:
+            return convolution(input, weight, bias, *args, **kwargs)
+        return convolution(input.float(), weight.float(), None if bias is None else bias.float(),
+                           *args, **kwargs).to(torch.bfloat16)
+    torch.nn.functional.conv2d = widened_conv2d
+    try:
+        with torch.no_grad():
+            decoded = vae.decode(latent).sample
+            vae.encode(plate)
+    finally:
+        torch.nn.functional.conv2d = convolution
+    extra["latent"] = keep(latent)
+    extra["image"] = keep(plate)
+    globals()["_extra"] = extra
+    return keep(decoded)
+
+
 def run_clip_text_probe(image, checkpoint):
     """A CLIP text encoder release on its own, at a half precision or on its float32 floor (`IK_PROBE_DTYPE` /
     `IK_PROBE_FLOOR`, as `clip_probe` reads them), layer by layer with eager attention, over one prompt padded
@@ -21156,7 +21231,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

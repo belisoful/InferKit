@@ -98,7 +98,7 @@ public final class NFKMLXFluxPipeline {
 
         let unpacked = Self.unpack(packed, channels: latentChannels, height: latentHeight, width: latentWidth)
         let decoded = unpacked[0]                                          // [C, H, W]
-        let nhwc = (decoded / scaleFactor + shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
+        let nhwc = NFKReferenceRounding.shifted(NFKReferenceRounding.divided(decoded, by: scaleFactor), by: shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
         let image = holder.vae.decode(nhwc)
         eval(image)
         return image

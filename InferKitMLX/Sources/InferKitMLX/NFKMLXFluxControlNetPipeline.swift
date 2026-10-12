@@ -62,7 +62,7 @@ public final class NFKMLXFluxControlNetPipeline {
             return controlImage.transposed(0, 3, 1, 2)                      // NHWC → NCHW
         }
         let mean = holder.vae.encode(controlImage).mean                    // [1, h, w, C]
-        let latent = ((mean - shiftFactor) * scaleFactor).transposed(0, 3, 1, 2)
+        let latent = NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(mean, by: -shiftFactor), by: scaleFactor).transposed(0, 3, 1, 2)
         return NFKMLXFluxPipeline.pack(latent)
     }
 
@@ -103,7 +103,7 @@ public final class NFKMLXFluxControlNetPipeline {
         let unpacked = NFKMLXFluxPipeline.unpack(packed, channels: latentChannels, height: latentHeight,
                                                  width: latentWidth)
         let decoded = unpacked[0]                                          // [C, H, W]
-        let nhwc = (decoded / scaleFactor + shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
+        let nhwc = NFKReferenceRounding.shifted(NFKReferenceRounding.divided(decoded, by: scaleFactor), by: shiftFactor).transposed(1, 2, 0).expandedDimensions(axis: 0)
         let image = holder.vae.decode(nhwc)
         eval(image)
         return image

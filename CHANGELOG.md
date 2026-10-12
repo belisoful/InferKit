@@ -582,6 +582,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The FLUX autoencoder and the SD3 transformer compute in bfloat16 as diffusers does
+
+- The autoencoder FLUX and SD3.5 share, and the Stable Diffusion UNet's blocks, round as torch does at a
+  half-precision load: the group norm computes in float32 and rounds once, each convolution rounds once
+  with its bias, SiLU rounds once, and the autoencoder's mid attention walks torch's 512-key blocks. A
+  float32 load is unchanged.
+- torch's half-precision `linear` with a bias rounds once on a contiguous input and twice, the product
+  and then the bias, on a strided one. diffusers feeds the autoencoder's query, key, and value
+  projections a transposed view, and SD3's joint attention projects slices of its joint sequence, which
+  are strided past a batch of one. Those projections round twice, as the reference's do.
+- SD3's timestep sinusoids take the pooled projection's type before the conditioning MLP, as diffusers
+  casts them. A float32 table had promoted the whole conditioning to float32 under a bf16 load. The
+  patch embedding's convolution rounds once.
+- The FLUX, FLUX ControlNet, SD3, SD3 ControlNet, and SANA pipelines scale and shift a half-precision
+  latent with the factor held in float32 and the result rounded once.
+- Measured at bf16: the FLUX.1 autoencoder holds every resnet, sampler, and attention of both coders
+  within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
+  bit.
+
 #### Local language models call tools
 
 - The MLX language backends render `NFKParameterTools` into the release's own chat template and

@@ -5641,9 +5641,14 @@
       "command": "IK_MUSIC_DEPTH_DTYPE=bfloat16 | bfloat16-inputs music_depth --checkpoint <release>/rvq_depth_decoder"
     },
     {
-      "records": "flux_bf16 / _bf16in, wan_bf16 / _bf16in",
+      "records": "flux_bf16 / _bf16in, wan_bf16 / _bf16in, sd3_bf16 / _bf16in",
       "environment": "ltx",
-      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux | wan"
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux | wan | sd3"
+    },
+    {
+      "records": "flux_vae_bf16 / flux_vae_f32",
+      "environment": "sd",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_vae_probe --checkpoint $IK_VAL_FLUX_SCHNELL_FULL/vae (256 pixels; the bf16 run computes each convolution in float32 and rounds once, as torch's CPU kernel does to accumulation order, which at bf16 takes a reference kernel some 500 times slower; the float32 run rounds every parameter to bf16 and back)"
     },
     {
       "records": "flux2_bf16 / _bf16in, qwenimage21_bf16 / _bf16in",
