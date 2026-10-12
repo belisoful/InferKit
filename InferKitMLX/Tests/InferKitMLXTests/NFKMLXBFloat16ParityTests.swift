@@ -941,6 +941,90 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 gemma3n-audio pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // SDXL-Turbo's UNet (`IK_VAL_SDXL_DIR`'s `unet/`, released float16) at float16 as the Objective-C factories
+    // load it, against diffusers' `UNet2DConditionModel` at float16 (`sd_unet_probe`, each convolution in
+    // float32 rounded once; the float32 side widens the same float16 weights) over a seeded 32×32 latent:
+    // every resnet, sampler, and transformer block, with each transformer's norm and projections, on the
+    // reference's own input, the noise end to end, then each piece of the first transformer block.
+    func testSDXLTurboUNetInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SDXL_DIR"], "IK_VAL_SDXL_DIR"))
+        let half = try record("sdxl_turbo_unet_f16.safetensors"), f32 = try record("sdxl_turbo_unet_f32.safetensors")
+        let unet = NFKMLXSDUNet(configuration: NFKMLXSDTextToImageConfiguration.sdxlTurbo.unet)
+        try NFKMLXStableDiffusionModels.loadUNetWeights(
+            into: unet, from: directory.appendingPathComponent("unet/diffusion_pytorch_model.fp16.safetensors"),
+            precision: .checkpoint)
+        unet.train(false)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(half[key], "no \(key)").asType(.float16).expandedDimensions(axis: 0)
+        }
+        let time = try recorded("temb"), context = try recorded("context")
+
+        var isolated = [(String, MLXArray)](), keys = [String]()
+        func stage(_ name: String, _ run: (MLXArray) -> MLXArray) throws {
+            isolated.append((name, run(try recorded(name + ".in"))[0]))
+            keys.append(name + ".out")
+        }
+        func transformer(_ name: String, _ t: NFKSDTransformer2D) throws {
+            try stage(name + ".norm") { t.norm($0) }
+            try stage(name + ".proj_in") { t.projectedIn($0, t.projInLinear!) }
+            for (k, block) in t.blocks.enumerated() {
+                try stage(name + ".transformer_blocks.\(k)") { block($0, context: context) }
+            }
+            try stage(name + ".proj_out") { t.projOutLinear!($0) }
+        }
+        try stage("conv_in") { unet.convIn($0) }
+        for (i, block) in unet.downBlocks.enumerated() {
+            for (j, resnet) in block.resnets.enumerated() {
+                try stage("down.\(i).resnets.\(j)") { resnet($0, time: time) }
+                if j < block.attentions.count { try transformer("down.\(i).attentions.\(j)", block.attentions[j]) }
+            }
+            for sampler in block.downsamplers { try stage("down.\(i).sampler") { sampler($0) } }
+        }
+        let mid = unet.midBlock
+        try stage("mid.resnets.0") { mid.resnets[0]($0, time: time) }
+        try transformer("mid.attentions.0", mid.attentions[0])
+        try stage("mid.resnets.1") { mid.resnets[1]($0, time: time) }
+        for (i, block) in unet.upBlocks.enumerated() {
+            for (j, resnet) in block.resnets.enumerated() {
+                try stage("up.\(i).resnets.\(j)") { resnet($0, time: time) }
+                if j < block.attentions.count { try transformer("up.\(i).attentions.\(j)", block.attentions[j]) }
+            }
+            for sampler in block.upsamplers { try stage("up.\(i).sampler") { sampler($0) } }
+        }
+        try stage("conv_norm_out") { unet.normOut($0) }
+        try stage("conv_act") { NFKReferenceRounding.silu($0) }
+        try stage("conv_out") { unet.convOut($0) }
+
+        let added = NFKSDAddedConditioning(pooled: try XCTUnwrap(half["pooled"]).asType(.float16).expandedDimensions(axis: 0),
+                                           timeIds: try XCTUnwrap(half["time_ids"]).expandedDimensions(axis: 0))
+        let noise = unet(try recorded("latent"), timestep: try XCTUnwrap(half["timestep"]), context: context, added: added)
+        XCTAssertEqual(noise.dtype, .float16, "a float16 load runs the UNet at float16")
+        let states = [("noise", noise[0])]
+        eval(isolated.map(\.1) + states.map(\.1))
+        let rows = try seams(states, bf16: half, f32: f32, keys: ["output"])
+        report("sdxl-turbo-unet f16", rows)
+        let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: keys)
+        report("sdxl-turbo-unet f16 isolated", isolatedRows)
+        assertRoundingPlacement("sdxl-turbo-unet f16", endToEnd: rows, isolated: isolatedRows)
+
+        let block = try XCTUnwrap(unet.downBlocks.first { !$0.attentions.isEmpty }).attentions[0].blocks[0]
+        func input(_ name: String) throws -> MLXArray { try recorded("piece." + name + ".in") }
+        let lines = [
+            try piece("norm1", block.norm1(input("norm1")), half, "piece.norm1.out"),
+            try piece("to_q", block.attn1.toQ(input("attn1.to_q")), half, "piece.attn1.to_q.out"),
+            try piece("self-attention", block.attn1(input("attn1")), half, "piece.attn1.out"),
+            try piece("to_out", block.attn1.toOut(input("attn1.to_out.0")), half, "piece.attn1.to_out.0.out"),
+            try piece("norm2", block.norm2(input("norm2")), half, "piece.norm2.out"),
+            try piece("cross-attention", block.attn2(input("attn2"), context: context), half, "piece.attn2.out"),
+            try piece("norm3", block.norm3(input("norm3")), half, "piece.norm3.out"),
+            try piece("geglu proj", block.ff.proj(input("ff.net.0.proj")), half, "piece.ff.net.0.proj.out"),
+            try piece("feed-forward", block.ff(input("ff")), half, "piece.ff.out"),
+            try piece("ff out", block.ff.out(input("ff.net.2")), half, "piece.ff.net.2.out"),
+        ]
+        print("VALIDATION f16 sdxl-turbo-unet pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,

@@ -415,7 +415,10 @@ final class NFKMLXSDTextToImageModel {
                  _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
         guard let conditional = context.conditioning["context"] else { return latent }
         let channels = latent.shape[latent.ndim - 1]
+        // The UNet runs at its own type, as a diffusers pipeline casts the latents to it; the prediction
+        // returns to the sampler's type.
         let batched = latent.reshaped([1, context.height, context.width, channels])
+            .asType(NFKReferenceRounding.parameterType(of: pipeline.unet))
         let step = MLXArray([Int32(timestep.train)])
 
         guard guidanceScale > 1, let unconditional = context.conditioning["uncontext"] else {
@@ -424,7 +427,7 @@ final class NFKMLXSDTextToImageModel {
             }
             return pipeline.unet(batched, timestep: step, context: conditional,
                                  added: added(context, key: "pooled", batch: 1),
-                                 imageConditioning: image).reshaped(latent.shape)
+                                 imageConditioning: image).reshaped(latent.shape).asType(latent.dtype)
         }
         // The reference orders the batch unconditional first, and reads the pair back the same way. The
         // adapter's image tokens ride the same order: zero-image for the unconditional row, the
@@ -439,7 +442,7 @@ final class NFKMLXSDTextToImageModel {
                                        added: added(context, key: "unpooled", other: "pooled", batch: 2),
                                        imageConditioning: image)
         let guided = prediction[0] + guidanceScale * (prediction[1] - prediction[0])
-        return guided.reshaped(latent.shape)
+        return guided.reshaped(latent.shape).asType(latent.dtype)
     }
 
     /// The per-request reference-image embedding for the IP-Adapter, `[1, embedDim]`, read from the

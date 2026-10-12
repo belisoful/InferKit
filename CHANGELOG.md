@@ -601,6 +601,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
 
+#### The Stable Diffusion UNet computes at float16 at a float16 load
+
+- The UNet's timestep sinusoids, and SDXL's size descriptor beside the pooled embedding, take the
+  sample's type before their embeddings, as diffusers casts them. A float32 table had promoted the time
+  embedding to float32, and through every resnet's time add the whole network, so a float16 load ran in
+  float32.
+- The text-to-image loop hands the UNet the latent in the UNet's own type and takes the prediction back in
+  the sampler's.
+- The transformer blocks' layer norms, their GEGLU's GELU, and their attention round as torch does at
+  float16. torch's CPU flash attention at float16 rounds each key block's raw scores and each block's
+  product with the values, which `flashAttention` now follows, and the projection into tokens rounds its
+  product and then its bias, as torch's `linear` does on the strided view diffusers hands it.
+- Measured at float16 on SDXL-Turbo: every resnet, sampler, and each of the 70 transformer blocks within
+  0.62 of its own block floor.
+
 #### SDXL decodes in float32 where its release asks
 
 - A two-tower Stable Diffusion release (SDXL, SDXL-Turbo) loaded at its published float16 widens its

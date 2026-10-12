@@ -182,8 +182,10 @@ enum NFKReferenceRounding {
     /// in blocks of `keyBlock` (512): each block's scores formed and scaled in float32 with the mask
     /// added, the running row max and the float32 sum of the exponentials updated, the exponentials
     /// rounded to the operands' type for the product with the values, and the float32 accumulator
-    /// rescaled when the max moves; the output divides by the sum and rounds once. A float32 input
-    /// takes the fused kernel. `queryBlock` attends that many query rows at a time, each row computed as
+    /// rescaled when the max moves; the output divides by the sum and rounds once. At float16 the kernel's
+    /// matrix products round as well: each block's raw scores, before the scale, and each block's product
+    /// with the values, before it joins the accumulator. A float32 input takes the fused kernel.
+    /// `queryBlock` attends that many query rows at a time, each row computed as
     /// before, and evaluates each block before the next: MLX schedules one lazy graph as a whole and holds
     /// every block's float32 scores at once, which over a long sequence is the whole score matrix.
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
@@ -211,14 +213,17 @@ enum NFKReferenceRounding {
         var maximum: MLXArray?, total: MLXArray?, accumulated: MLXArray?
         for start in stride(from: 0, to: length, by: keyBlock) {
             let block = start ..< min(start + keyBlock, length)
-            var scores = matmul(wideQueries, wideKeys[.ellipsis, block, 0...].swappedAxes(-1, -2)) * scale
+            var raw = matmul(wideQueries, wideKeys[.ellipsis, block, 0...].swappedAxes(-1, -2))
+            if queries.dtype == .float16 { raw = raw.asType(.float16).asType(.float32) }
+            var scores = raw * scale
             if let wideMask {
                 scores = scores + (wideMask.dim(-1) == length ? wideMask[.ellipsis, block] : wideMask)
             }
             let blockMaximum = scores.max(axis: -1, keepDims: true)
             let updated = maximum.map { MLX.maximum($0, blockMaximum) } ?? blockMaximum
             let exponentials = exp(scores - updated)
-            let product = matmul(exponentials.asType(queries.dtype).asType(.float32), wideValues[.ellipsis, block, 0...])
+            var product = matmul(exponentials.asType(queries.dtype).asType(.float32), wideValues[.ellipsis, block, 0...])
+            if queries.dtype == .float16 { product = product.asType(.float16).asType(.float32) }
             if let previous = maximum, let sum = total, let running = accumulated {
                 let correction = exp(previous - updated)
                 total = sum * correction + exponentials.sum(axis: -1, keepDims: true)

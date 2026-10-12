@@ -323,7 +323,7 @@ final class NFKSDFeedForward: Module {
         let inner = projected.shape[projected.ndim - 1] / 2
         let value = projected[.ellipsis, 0 ..< inner]
         let gate = projected[.ellipsis, inner ..< (2 * inner)]
-        return out(value * gelu(gate))
+        return out(value * NFKReferenceRounding.wide(gate) { gelu($0) })
     }
 }
 
@@ -387,7 +387,7 @@ final class NFKSDAttention: Module {
             value.reshaped([value.shape[0], value.shape[1], heads, headDimensions]).transposed(0, 2, 1, 3)
         }
         let queries = split(toQ(x))
-        var out = MLXFast.scaledDotProductAttention(
+        var out = NFKReferenceRounding.flashAttention(
             queries: queries, keys: split(toK(source)), values: split(toV(source)),
             scale: 1 / sqrt(Float(headDimensions)), mask: nil)
         // The image-conditioned attention shares the query and reads its own projections of the image
@@ -395,7 +395,7 @@ final class NFKSDAttention: Module {
         if let ip, let toKIP, let toVIP {
             let tokens = ip.tokens.shape[0] == batch ? ip.tokens
                 : broadcast(ip.tokens, to: [batch, ip.tokens.shape[1], ip.tokens.shape[2]])
-            let imageAttention = MLXFast.scaledDotProductAttention(
+            let imageAttention = NFKReferenceRounding.flashAttention(
                 queries: queries, keys: split(toKIP(tokens)), values: split(toVIP(tokens)),
                 scale: 1 / sqrt(Float(headDimensions)), mask: nil)
             out = out + ip.scale * imageAttention
@@ -417,14 +417,14 @@ final class NFKSDTransformerBlock: Module {
 
     init(dimensions: Int, contextDimensions: Int, heads: Int, onlyCrossAttention: Bool) {
         self.onlyCrossAttention = onlyCrossAttention
-        self._norm1.wrappedValue = LayerNorm(dimensions: dimensions)
+        self._norm1.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         self._attn1.wrappedValue = NFKSDAttention(
             dimensions: dimensions,
             contextDimensions: onlyCrossAttention ? contextDimensions : dimensions, heads: heads)
-        self._norm2.wrappedValue = LayerNorm(dimensions: dimensions)
+        self._norm2.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         self._attn2.wrappedValue = NFKSDAttention(dimensions: dimensions,
                                                   contextDimensions: contextDimensions, heads: heads)
-        self._norm3.wrappedValue = LayerNorm(dimensions: dimensions)
+        self._norm3.wrappedValue = NFKLayerNorm(dimensions: dimensions)
         self._ff.wrappedValue = NFKSDFeedForward(dimensions: dimensions)
     }
 
@@ -465,6 +465,14 @@ final class NFKSDTransformer2D: Module {
         }
     }
 
+    /// The linear projection into tokens. diffusers flattens the normalized map channels-first through a
+    /// permute that leaves a strided view, and torch's half-precision `linear` on a strided input rounds
+    /// the product and then the bias.
+    func projectedIn(_ tokens: MLXArray, _ projection: Linear) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(tokens), let bias = projection.bias else { return projection(tokens) }
+        return matmul(tokens, projection.weight.T) + bias
+    }
+
     func callAsFunction(_ x: MLXArray, context: MLXArray?,
                         ip: NFKSDImageConditioning? = nil) -> MLXArray {
         let shape = x.shape
@@ -472,7 +480,7 @@ final class NFKSDTransformer2D: Module {
         // A convolution projects before the tokens are flattened; a linear layer projects after.
         if let projInConv { h = projInConv(h) }
         h = h.reshaped([shape[0], shape[1] * shape[2], shape[3]])
-        if let projInLinear { h = projInLinear(h) }
+        if let projInLinear { h = projectedIn(h, projInLinear) }
         for block in blocks { h = block(h, context: context, ip: ip) }
         if let projOutLinear { h = projOutLinear(h) }
         h = h.reshaped(shape)
@@ -732,10 +740,12 @@ public final class NFKMLXSDUNet: Module {
                                classLabel: MLXArray? = nil,
                                added: NFKSDAddedConditioning? = nil,
                                imageConditioning: NFKSDImageConditioning? = nil) -> MLXArray {
-        var time = timeEmbedding(NFKSDTimesteps.embedding(timestep,
-                                                          channels: configuration.blockChannels[0]))
+        // The float32 sinusoids take the sample's type before the embedding, as diffusers casts them; a
+        // float32 table would promote the time path, and through every resnet the whole network.
+        var time = timeEmbedding(NFKSDTimesteps.embedding(timestep, channels: configuration.blockChannels[0])
+            .asType(x.dtype))
         if let classEmbedding, let classLabel {
-            time = time + classEmbedding(classLabel)
+            time = time + classEmbedding(classLabel).asType(x.dtype)
         }
         if let addEmbedding, let added, let addition = configuration.additionEmbedding {
             // Every entry of the descriptor embeds separately and the results run together, so six
@@ -744,7 +754,8 @@ public final class NFKMLXSDUNet: Module {
             let descriptor = NFKSDTimesteps.embedding(added.timeIds.reshaped([-1]),
                                                       channels: addition.timeEmbeddingDimensions)
                 .reshaped([batch, -1])
-            time = time + addEmbedding(concatenated([added.pooled, descriptor], axis: -1))
+            let joined = concatenated([added.pooled.asType(.float32), descriptor], axis: -1).asType(time.dtype)
+            time = time + addEmbedding(joined)
         }
 
         var h = convIn(x)

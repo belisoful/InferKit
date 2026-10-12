@@ -298,7 +298,14 @@ piece without one is only reported.
   3-D input. A strided input (a transposed view, a slice of a batch past one) takes `matmul` and then adds
   the bias, two roundings. diffusers' autoencoder attention and SD3's joint attention hit the strided case.
   A record settles it: recompute a probed linear's output from its recorded input both ways.
-- torch's CPU `conv2d` at bf16 takes a reference kernel some 500 times slower than float32's and
+  The same rule reaches a linear fed a merged `permute(...).reshape(...)`, which stays a view: the SD
+  UNet's `proj_in`.
+- torch's CPU flash `scaled_dot_product_attention` rounds differently by type. At bf16 only the
+  exponentials round before the product with the values. At float16 the raw scores of each key block and
+  each block's product with the values round as well (`flashAttention` models both).
+- A stage holding many blocks (a 10-block transformer, an up block of three resnets and a sampler)
+  compounds each block's one-step differences past its own floor; isolate at the real block.
+- torch's CPU `conv2d` at bf16 or float16 takes a reference kernel some 500 times slower than float32's and
   accumulates in float32 with one rounding. An oracle over a large convolutional net at bf16 computes each
   convolution that way in float32 (`sd_vae_probe`), equal to torch to accumulation order.
 - A probed layer's pieces (`_piece_floor_hooks`) keep a floor only where the piece's first half-precision
